@@ -51,6 +51,10 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
   PyO3's extension-module feature leaves Python symbols to the host
   interpreter, so a test binary fails to link, on Linux with a confusing
   unresolved-symbol error.
+- The integration tests of a facade crate are one binary, one module per
+  area: `crates/oxoffice-docx/tests/docx/` (`--test docx`) and
+  `crates/oxoffice-pptx/tests/pptx/` (`--test pptx`). A new area is a new
+  module, not a new file under `tests/`, so each crate links one binary.
 - Run the tests you touched locally. CI runs the whole suite.
 - Never `cargo clean` the shared target directory. Use one target
   directory per worktree.

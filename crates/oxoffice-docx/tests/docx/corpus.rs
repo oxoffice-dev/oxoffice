@@ -4,33 +4,11 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
 
 use oxoffice_docx::Document;
 use oxoffice_opc::OpcPackage;
 
-fn corpus_files(extension: &str) -> Vec<PathBuf> {
-    fn walk(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-        for entry in fs::read_dir(dir).expect("corpus folder is readable") {
-            let path = entry.expect("corpus entry is readable").path();
-            if path.is_dir() {
-                walk(&path, extension, out);
-            } else if path.extension().is_some_and(|ext| ext == extension) {
-                out.push(path);
-            }
-        }
-    }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/files");
-    let mut files = Vec::new();
-    walk(&root, extension, &mut files);
-    files.sort();
-    assert!(
-        !files.is_empty(),
-        "no .{extension} file in {}",
-        root.display()
-    );
-    files
-}
+use crate::support::corpus_files;
 
 fn part_names(bytes: &[u8]) -> BTreeSet<String> {
     let package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
