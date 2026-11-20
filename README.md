@@ -87,8 +87,21 @@ doc.save("hello.docx")?;
 
 ## 📦 Install
 
-Every [release](https://github.com/oxoffice-dev/oxoffice/releases) carries the `oxoffice` binary for Linux,
-macOS and Windows, the Python wheels and a `SHA256SUMS` file. PyPI, crates.io and conda-forge come later.
+The command line, on Linux and macOS:
+
+```bash
+curl -fsSL https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.sh | sh
+```
+
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.ps1 | iex"
+```
+
+Every [release](https://github.com/oxoffice-dev/oxoffice/releases) also carries the Python wheels (which
+install the `oxoffice` command too), an SBOM, `SHA256SUMS` and a signed build provenance. Check any file with
+`gh attestation verify <file> --repo oxoffice-dev/oxoffice`. PyPI, crates.io and conda-forge come later.
 
 ## 🗺️ Status
 

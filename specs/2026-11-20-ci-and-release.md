@@ -37,8 +37,10 @@ since squash merges turn titles into the commits of `main`.
    abi3 wheels for the same platforms (manylinux 2.28 on Linux); and the
    source distribution.
 3. It publishes a GitHub release named `oxoffice vX.Y.Z` with git-cliff notes
-   for that version, every artifact, and `SHA256SUMS`. 0.x releases are
-   marked as pre-releases.
+   for that version, every artifact, the two installers, an SPDX SBOM,
+   `SHA256SUMS`, and a build provenance attestation signed through Sigstore
+   that covers every file listed in `SHA256SUMS`. The release is marked
+   latest, so `releases/latest/download/...` always points at it.
 
 `dry_run` builds everything from `main` and publishes nothing.
 
@@ -59,7 +61,39 @@ The contract with oxoffice-skills and any installer:
 | CLI, Windows | `oxoffice-<version>-x86_64-pc-windows-msvc.zip`, holding `oxoffice.exe` |
 | Wheels | maturin's names, `oxoffice-<version>-cp310-abi3-<platform>.whl` |
 | Source | `oxoffice-<version>.tar.gz` |
+| Installers | `install.sh` (Linux, macOS) and `install.ps1` (Windows) |
+| SBOM | `oxoffice-<version>.spdx.json`, the dependencies of the release |
 | Checksums | `SHA256SUMS`, one `sha256sum` line per asset |
+| Provenance | `oxoffice-<version>.provenance.sigstore.json`, the signed SLSA provenance bundle, also stored in GitHub's attestation registry |
+
+### Proving where a file comes from
+
+Every asset can be checked two ways:
+
+- `sha256sum -c SHA256SUMS --ignore-missing`: the file is the one the release
+  lists.
+- `gh attestation verify <file> --repo oxoffice-dev/oxoffice`: the file was
+  built by `release.yml` in this repository, from the tagged commit, on a
+  GitHub-hosted runner. This is what rules out a tampered asset: a file
+  uploaded by hand, or built anywhere else, has no valid attestation.
+
+The installers check the checksum always, and the attestation when the
+GitHub CLI is installed and signed in.
+
+### Installing the CLI
+
+Like pixi, one line per platform, always from the latest release (or
+`OXOFFICE_VERSION`):
+
+```bash
+curl -fsSL https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.sh | sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.ps1 | iex"
+```
+
+They install `oxoffice` into `~/.oxoffice/bin` and add it to the `PATH`.
 
 The wheel also installs the `oxoffice` command, so a Python install gives
 both the API and the CLI.
@@ -67,7 +101,9 @@ both the API and the CLI.
 ### Not now
 
 PyPI, crates.io and conda-forge publication. They come as extra jobs of
-`release.yml` when the API settles, each with its own spec.
+`release.yml` when the API settles, each with its own spec. PyPI will use a
+trusted publisher bound to `release.yml` and a `pypi` environment, so no
+token is stored anywhere.
 
 ## Plan
 

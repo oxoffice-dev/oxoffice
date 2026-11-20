@@ -24,7 +24,13 @@ breaking change bumps the minor version and anything else the patch version.
 | `oxoffice-X.Y.Z-<target>.tar.gz` / `.zip` | the `oxoffice` binary for Linux (x86_64, aarch64, glibc 2.28+), macOS (arm64, x86_64), Windows (x86_64) |
 | `oxoffice-X.Y.Z-cp310-abi3-*.whl` | the Python package with the `oxoffice` command, Python 3.10+ |
 | `oxoffice-X.Y.Z.tar.gz` | the source distribution |
+| `install.sh`, `install.ps1` | the one-line installers of the CLI |
+| `oxoffice-X.Y.Z.spdx.json` | the SBOM |
 | `SHA256SUMS` | checksums of every asset |
+| `oxoffice-X.Y.Z.provenance.sigstore.json` | the signed build provenance of every asset |
+
+Check a downloaded file with `sha256sum -c SHA256SUMS --ignore-missing` and
+`gh attestation verify <file> --repo oxoffice-dev/oxoffice`.
 
 PyPI, crates.io and conda-forge are not published yet.
 

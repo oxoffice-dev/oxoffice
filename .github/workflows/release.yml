@@ -3,7 +3,8 @@ name: Release
 # Manual only. Give the version, the workflow does the rest:
 #   1. sets the version, regenerates CHANGELOG.md, commits and tags vX.Y.Z
 #   2. builds the `oxoffice` binary and the Python wheels for every platform
-#   3. publishes a GitHub release with every artifact and SHA256SUMS
+#   3. publishes a GitHub release with every artifact, the installers, an SBOM,
+#      SHA256SUMS and a signed build provenance attestation covering them all
 # With dry_run, it builds from main and publishes nothing.
 
 on:
@@ -181,6 +182,10 @@ jobs:
     name: GitHub release
     needs: [prepare, cli, wheels, sdist]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -190,11 +195,32 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Installers
+        run: cp install/install.sh install/install.ps1 dist/
+      - name: SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/oxoffice-${{ inputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - name: Checksums
         run: |
           cd dist
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+      - name: Build provenance
+        id: provenance
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Provenance bundle
+        if: ${{ !inputs.dry_run }}
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" "dist/oxoffice-$VERSION.provenance.sigstore.json"
       - name: Release notes
         uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
         with:
@@ -213,4 +239,4 @@ jobs:
           name: oxoffice v${{ inputs.version }}
           body_path: RELEASE_NOTES.md
           files: dist/*
-          prerelease: ${{ startsWith(inputs.version, '0.') }}
+          make_latest: true
