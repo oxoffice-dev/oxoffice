@@ -142,11 +142,13 @@ spec.
 
 ## Learnings
 
-- Pull requests are rebase merged since 2026-11-20, so the commits of a
-  branch, not its title, become the commits of `main`. The title check stays,
-  run only when a pull request is opened, renamed or marked ready, because
-  running it on every push was noise. Rebase merges land unsigned on `main`:
-  GitHub rewrites the commits and does not sign them.
+- Pull requests were rebase merged for a few hours on 2026-11-20, then went
+  back to squash merges: rebase merges land unsigned on `main` (GitHub
+  rewrites the commits and does not sign them) and make every commit of a
+  branch a changelog line that would need its own check. Squash keeps one
+  signed commit per pull request, named by the checked title. The title check
+  now runs only when a pull request is opened, renamed or marked ready, since
+  running it on every push was noise.
 
 - If `main` gets branch protection that forbids direct pushes, the release
   commit needs a GitHub App token or a release pull request. Not needed yet.
