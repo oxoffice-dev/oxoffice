@@ -42,6 +42,6 @@ channel is in [INSTALL.md](INSTALL.md).
 
 `CHANGELOG.md` is generated from the conventional commits of `main` by
 git-cliff (`cliff.toml`). Commit titles are the changelog, and pull requests
-are rebase merged, so every commit subject must be conventional. A commit
-that is not is left out of the changelog. Preview it locally with
+are squash merged under their title, which is why pull request titles are
+checked. Preview it locally with
 `uvx git-cliff --unreleased`.
