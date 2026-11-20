@@ -15,9 +15,10 @@ How work lands in oxoffice. Short on purpose.
    tests, next, a few short bullets each, readable at a glance. Long notes,
    tables and measurements go in a `<details>` block. Issues follow the same
    shape.
-5. **CI green**, review, squash merge. The squash commit keeps the title, so
-   `main` reads as a list of conventional commits and the changelog is
-   generated from it.
+5. **CI green**, review, rebase merge. Every commit of the branch lands on
+   `main` as it is, so each one is a conventional commit that stands on its
+   own: squash fixups and work in progress before merging. The changelog is
+   generated from these commits.
 6. **Update** `docs/` when a structural fact changes, and the spec's status
    and Learnings when it ships.
 

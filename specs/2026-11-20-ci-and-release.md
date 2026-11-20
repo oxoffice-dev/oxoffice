@@ -142,5 +142,11 @@ spec.
 
 ## Learnings
 
+- Pull requests are rebase merged since 2026-11-20, so the commits of a
+  branch, not its title, become the commits of `main`. The title check stays,
+  run only when a pull request is opened, renamed or marked ready, because
+  running it on every push was noise. Rebase merges land unsigned on `main`:
+  GitHub rewrites the commits and does not sign them.
+
 - If `main` gets branch protection that forbids direct pushes, the release
   commit needs a GitHub App token or a release pull request. Not needed yet.
