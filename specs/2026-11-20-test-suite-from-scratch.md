@@ -1,6 +1,6 @@
 ---
 date: 2026-11-20
-status: draft
+status: accepted
 scope: tests
 ---
 
@@ -95,8 +95,14 @@ a manifest: producer and version, features it carries, licence, size.
    shapes and text, tables, charts, pictures, notes and comments, rendering.
 5. Binding parity checks, then CLI tests.
 
-## Open questions
+## Decided with the review
 
-- Do the skills' recipes (oxoffice-skills has no tests of its own) run here
-  on `main` against the built wheel and CLI?
-- Is a nightly job worth it, or is `main` enough?
+- The corpus is committed in the repository, within its budget. No Git LFS,
+  no download step.
+- Producers: Word and PowerPoint on a Mac, Google Docs and Slides, and
+  LibreOffice, after a pilot of one file per producer.
+- The recipes of oxoffice-skills, which has no tests of its own, run on every
+  push to `main` against the wheel and the CLI just built. Not on pull
+  requests.
+- No nightly job. `main` runs the full set. A nightly job comes only if
+  `main` gets too long.
