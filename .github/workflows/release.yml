@@ -324,5 +324,5 @@ jobs:
             extra=(--generate-attestation)
           fi
           pixi exec -s rattler-build==0.80.2 rattler-build publish conda/recipe.yaml \
-            --to "$to" -c conda-forge --skip-existing all "${extra[@]}"
+            --to "$to" -c conda-forge --skip-existing all --output-dir "$RUNNER_TEMP/rattler-output" "${extra[@]}"
           echo "${{ matrix.subdir }}: published to $to" >> "$GITHUB_STEP_SUMMARY"

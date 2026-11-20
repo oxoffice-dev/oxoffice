@@ -1,0 +1,45 @@
+# One entry per file under files/. Every file is ours: authored by
+# generate/author.py, then opened and saved by the producer named here
+# (generate/produce.py). They are released under the repository's licence.
+#
+# features: what the content exercises, so a failure points at an area.
+
+[[file]]
+path = "authored/report.docx"
+producer = "python-docx 1.2.0"
+features = ["headings", "bullet-list", "numbered-list", "table-style", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "core-properties"]
+
+[[file]]
+path = "word/report.docx"
+producer = "Microsoft Word for Mac 16.115"
+features = ["headings", "bullet-list", "numbered-list", "table-style", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "rsid", "paraId"]
+
+[[file]]
+path = "libreoffice/report.docx"
+producer = "LibreOffice 26.8.3.1"
+features = ["headings", "bullet-list", "numbered-list", "table-style", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape"]
+
+[[file]]
+path = "google/report.docx"
+producer = "Google Docs export"
+features = ["headings", "bullet-list", "numbered-list", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape"]
+
+[[file]]
+path = "authored/deck.pptx"
+producer = "python-pptx 1.0.2"
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+
+[[file]]
+path = "powerpoint/deck.pptx"
+producer = "Microsoft PowerPoint for Mac 16.115"
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+
+[[file]]
+path = "libreoffice/deck.pptx"
+producer = "LibreOffice 26.8.3.1"
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+
+[[file]]
+path = "google/deck.pptx"
+producer = "Google Slides export"
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
