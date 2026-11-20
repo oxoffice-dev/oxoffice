@@ -27,11 +27,19 @@ parallel jobs:
 - pull requests run on Linux only, `main` runs the same jobs on Linux, macOS
   and Windows
 
-The `ci` cargo profile has no LTO, opt-level 1 and debug assertions on. The
-`release` profile (fat LTO, one codegen unit) is only used by the release
-workflow: building the wheel with it took more than 10 minutes on a cold
-runner. rust-cache also keeps the workspace crates, so a commit that does
-not touch a crate does not rebuild it.
+The `ci` cargo profile has no LTO, debug assertions on, the workspace crates
+unoptimised and the dependencies at opt-level 1. The `release` profile (fat
+LTO, one codegen unit) is only used by the release workflow: building the
+wheel with it took more than 10 minutes on a cold runner, against 6 minutes
+with `ci` at opt-level 1, and about 30 % less again with unoptimised
+workspace crates. rust-cache also keeps the workspace crates, so a commit
+that does not touch a crate does not rebuild it, and a change that only
+touches documentation builds nothing.
+
+What remains is dominated by three very large crates compiled one after the
+other: `oxoffice-docx` (59 s on a fast laptop), `oxoffice-docx-oxml` (45 s)
+and `oxoffice-pptx` (33 s). Splitting them is part of the code inspection on
+the roadmap, and is the lever that will shorten CI further.
 
 **`pr-title.yml`** checks that a pull request title is a conventional commit,
 since squash merges turn titles into the commits of `main`.

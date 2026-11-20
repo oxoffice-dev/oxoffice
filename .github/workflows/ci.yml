@@ -2,15 +2,18 @@ name: CI
 
 # Every pull request and every push to main. Pull requests build on Linux only
 # to keep the answer fast, main runs the same jobs on the three platforms.
-# Everything is built once, with the `ci` profile (no LTO, opt-level 1, debug
-# assertions on): the wheel carries both the Python package and the `oxoffice`
+# Everything is built once, with the `ci` profile (no LTO, workspace crates
+# unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
 # for the release workflow.
 
+# Changes that only touch documentation do not build anything.
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   workflow_dispatch:
 
 # A pull request keeps only its latest run. Every commit of main gets its own

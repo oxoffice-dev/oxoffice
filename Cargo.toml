@@ -139,14 +139,19 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
-# CI builds: quick to compile, fast enough to run the tests, with debug
-# assertions and overflow checks on. Never used for a release.
+# CI builds: quick to compile, with debug assertions and overflow checks on.
+# The workspace crates are not optimised (most of the build time is in them),
+# the dependencies are, so tests still run at a decent speed. Never used for
+# a release.
 [profile.ci]
 inherits = "release"
-opt-level = 1
+opt-level = 0
 lto = false
-codegen-units = 16
+codegen-units = 256
 incremental = false
 debug-assertions = true
 overflow-checks = true
 strip = false
+
+[profile.ci.package."*"]
+opt-level = 1
