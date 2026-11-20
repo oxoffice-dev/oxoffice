@@ -10,8 +10,11 @@ How work lands in oxoffice. Short on purpose.
 2. **Branch** off `main`: `feat/...`, `fix/...`, `perf/...`, `refactor/...`.
 3. **Implement** with tests in the same pull request. A feature reaches the
    Rust facade, then the CLI where it makes sense and Python.
-4. **Pull request** with a conventional title (checked by CI). Its body says
-   what changes, why, and links the spec or the issue.
+4. **Pull request** with a conventional title (checked by CI). Its body
+   follows `.github/pull_request_template.md`: why, what changes, impact,
+   tests, next, a few short bullets each, readable at a glance. Long notes,
+   tables and measurements go in a `<details>` block. Issues follow the same
+   shape.
 5. **CI green**, review, squash merge. The squash commit keeps the title, so
    `main` reads as a list of conventional commits and the changelog is
    generated from it.
