@@ -33,4 +33,4 @@ let pdf = render_to_pdf(&layout);
 assert!(pdf.starts_with(b"%PDF-"));
 ```
 
-Add `oxoffice-pdf = "0.15.0"` and `oxoffice-layout = "0.15.0"` to your dependencies. See the [renderer API](https://docs.rs/oxoffice-pdf) for the accepted layout model.
+Add `oxoffice-pdf = "0.1.0"` and `oxoffice-layout = "0.1.0"` to your dependencies. See the [renderer API](https://docs.rs/oxoffice-pdf) for the accepted layout model.

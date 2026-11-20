@@ -2975,7 +2975,7 @@ pub enum ST_NumberFormat {
     RussianLower,
     RussianUpper,
     None,
-    /// A producer-defined format value that rdocx does not model.
+    /// A producer-defined format value that oxoffice does not model.
     Other(String),
 }
 

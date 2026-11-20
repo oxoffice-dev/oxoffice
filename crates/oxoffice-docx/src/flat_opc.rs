@@ -99,7 +99,7 @@ impl Document {
         write_atomic_file(
             path.as_ref(),
             &bytes,
-            "rdocx",
+            "oxoffice",
             "invalid Flat OPC file name",
             "could not allocate Flat OPC save staging file",
         )?;

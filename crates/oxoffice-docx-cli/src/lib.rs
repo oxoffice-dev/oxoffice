@@ -400,7 +400,7 @@ enum FieldsCommand {
     ///
     /// Field results that need a value the document does not hold, such as a
     /// mail-merge field, keep their cached result. Page numbers come from
-    /// rdocx's own pagination.
+    /// oxoffice's own pagination.
     Update {
         /// Path to the DOCX file
         file: PathBuf,

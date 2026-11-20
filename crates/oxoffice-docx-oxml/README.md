@@ -16,11 +16,11 @@ schema order, and retains unmodelled XML alongside typed edits.
 ## Use it when
 
 Use this crate when a tool already owns the XML model. Most applications should
-use the package-preserving [`rdocx`](https://docs.rs/rdocx) facade instead.
+use the package-preserving [`oxoffice-docx`](https://docs.rs/oxoffice-docx) facade instead.
 
 ## Relationship
 
-`rdocx` owns complete DOCX packages and uses these types for WordprocessingML
+`oxoffice-docx` owns complete DOCX packages and uses these types for WordprocessingML
 parts. The shared format-neutral `oxoffice-*` crates remain format-neutral.
 
 ## Example
@@ -38,5 +38,5 @@ assert_eq!(document.body.paragraphs().count(), 1);
 
 ```toml
 [dependencies]
-oxoffice-docx-oxml = "0.17.0"
+oxoffice-docx-oxml = "0.1.0"
 ```

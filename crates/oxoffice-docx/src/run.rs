@@ -358,7 +358,7 @@ pub enum RunItemRef<'a> {
     /// Read only. It is never authored, and it stays in positioned raw
     /// capture so a no-op save writes back exactly what was read.
     LastRenderedPageBreak(&'a [u8]),
-    /// A preserved run child that rdocx does not model.
+    /// A preserved run child that oxoffice does not model.
     UnsupportedXml(&'a [u8]),
 }
 

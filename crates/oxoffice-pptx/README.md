@@ -1,6 +1,6 @@
-# rpptx
+# oxoffice-pptx
 
-`rpptx` gives Rust applications one `Presentation` for complete
+`oxoffice-pptx` gives Rust applications one `Presentation` for complete
 PowerPoint-compatible package workflows. Open or create decks, edit content,
 retain unmodelled package data, validate invariants, and produce deterministic
 presentation, notes, handout, PDF, and animation outputs.
@@ -44,7 +44,7 @@ Use this crate for complete PPTX applications. Choose the lower-level `oxoffice-
 ## Relationship
 
 The facade owns package preservation and delegates part modeling, inheritance
-resolution, charts, and layout lowering to the specialist `rpptx-*` and
+resolution, charts, and layout lowering to the specialist `oxoffice-pptx-*` and
 format-neutral `oxoffice-*` crates.
 
 ## Example
@@ -59,14 +59,14 @@ let bytes = deck.to_bytes()?;
 
 ```toml
 [dependencies]
-rpptx = "0.15.0"
+oxoffice-pptx = "0.1.0"
 ```
 
 Enable native encryption and signing explicitly:
 
 ```toml
 [dependencies]
-rpptx = { version = "0.15.0", features = ["agile-encryption", "digital-signatures"] }
+oxoffice-pptx = { version = "0.1.0", features = ["agile-encryption", "digital-signatures"] }
 ```
 
 ## Licensed font embedding

@@ -16,7 +16,7 @@ without a server.
 
 ## Use it when
 
-Build the local `@tensorbee/oxoffice-docx-wasm` package for browser or bundler projects.
+Build the local `@oxoffice-dev/oxoffice-docx-wasm` package for browser or bundler projects.
 It is deliberately unpublished to npm and crates.io.
 
 ## Relationship
@@ -26,7 +26,7 @@ The wrapper owns a real `oxoffice_docx::Document` and uses deterministic bundled
 ## Example
 
 ```javascript
-import init, { WasmDocument } from "@tensorbee/oxoffice-docx-wasm";
+import init, { WasmDocument } from "@oxoffice-dev/oxoffice-docx-wasm";
 
 await init();
 const doc = new WasmDocument();
@@ -36,5 +36,5 @@ const bytes = doc.toDocxBytes();
 Build the checked bundler package locally:
 
 ```sh
-wasm-pack build --target bundler --scope tensorbee crates/oxoffice-docx-wasm --out-name oxoffice_docx_wasm
+wasm-pack build --target bundler --scope oxoffice-dev crates/oxoffice-docx-wasm --out-name oxoffice_docx_wasm
 ```

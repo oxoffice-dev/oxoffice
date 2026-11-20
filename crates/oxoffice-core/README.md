@@ -14,7 +14,7 @@ models.
 
 ## Use it when
 
-Use this crate when implementing OOXML infrastructure shared by WordprocessingML and PresentationML. End-user document applications should prefer `rdocx` or `rpptx`.
+Use this crate when implementing OOXML infrastructure shared by WordprocessingML and PresentationML. End-user document applications should prefer `oxoffice-docx` or `oxoffice-pptx`.
 
 ## Relationship
 
@@ -32,4 +32,4 @@ let page_width = Length::inches(8.5);
 assert_eq!(page_width.to_twips(), 12_240);
 ```
 
-Add `oxoffice-core = "0.15.0"` to your dependencies. See the [API documentation](https://docs.rs/oxoffice-core) for XML and property types.
+Add `oxoffice-core = "0.1.0"` to your dependencies. See the [API documentation](https://docs.rs/oxoffice-core) for XML and property types.

@@ -443,7 +443,7 @@ fn generate_styled_tables(path: &Path) {
     }
 
     doc.set_title("Styled Tables Showcase");
-    doc.set_author("rdocx");
+    doc.set_author("oxoffice");
 
     doc.save(path).unwrap();
 }

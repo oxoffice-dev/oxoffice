@@ -112,7 +112,7 @@ fn policy_diagnostic_path(xml: &str, target: usize) -> String {
 }
 #[cfg(test)]
 fn policy_diagnostic(event: &str, value: serde_json::Value) {
-    if std::env::var_os("RDOCX_POLICY_DIAGNOSTICS").is_some() {
+    if std::env::var_os("OXOFFICE_POLICY_DIAGNOSTICS").is_some() {
         POLICY_DIAGNOSTIC_SCOPES.with(|scopes| {
             eprintln!(
                 "POLICY3_DIAGNOSTIC {}",
@@ -6538,7 +6538,7 @@ fn comparison_postcondition_error(
     wanted: &NormalizedPackage,
 ) -> Error {
     #[cfg(debug_assertions)]
-    if std::env::var_os("RDOCX_POLICY_DIAGNOSTICS").is_some() {
+    if std::env::var_os("OXOFFICE_POLICY_DIAGNOSTICS").is_some() {
         eprintln!(
             "COMPARISON_GUARD_DIAGNOSTIC outcome={outcome} actual={actual:?} wanted={wanted:?}"
         );
@@ -7021,7 +7021,7 @@ fn validate_field_conversion_role(
             .collect::<Vec<_>>();
         if current.len() != 1 {
             #[cfg(debug_assertions)]
-            if std::env::var_os("RDOCX_POLICY_DIAGNOSTICS").is_some() {
+            if std::env::var_os("OXOFFICE_POLICY_DIAGNOSTICS").is_some() {
                 eprintln!(
                     "FIELD_TARGET_DIAGNOSTIC role={role} source={source:?} actual={current_observations:?}"
                 );

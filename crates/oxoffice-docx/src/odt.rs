@@ -144,7 +144,7 @@ impl Document {
         oxoffice_opc::write_atomic_file(
             path.as_ref(),
             &result.bytes,
-            "rdocx",
+            "oxoffice",
             "invalid file name",
             "could not allocate ODT-save staging file",
         )?;

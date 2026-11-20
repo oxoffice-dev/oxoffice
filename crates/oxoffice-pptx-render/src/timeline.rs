@@ -32,7 +32,7 @@ pub fn layout_timeline_slide_deterministic(
     layout_timeline_slide_with_font_manager(input, index, timeline, text_directions, &mut fonts)
 }
 
-/// Internal facade hook for `rpptx` prepared timeline rendering.
+/// Internal facade hook for `oxoffice-pptx` prepared timeline rendering.
 ///
 /// `fonts` must be the same manager that resolved and shaped `timeline`,
 /// including any dynamic fallback labels. Rasterization must use the font data

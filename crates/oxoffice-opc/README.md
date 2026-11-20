@@ -14,7 +14,7 @@ files.
 
 ## Use it when
 
-Use this crate when implementing an OOXML package reader or writer. Use `rdocx` or `rpptx` for complete document APIs.
+Use this crate when implementing an OOXML package reader or writer. Use `oxoffice-docx` or `oxoffice-pptx` for complete document APIs.
 
 ## Relationship
 
@@ -37,4 +37,4 @@ assert_eq!(content_types.defaults["xml"], "application/xml");
 # Ok::<(), oxoffice_opc::OpcError>(())
 ```
 
-Add `oxoffice-opc = "0.15.0"` to your dependencies. Start with the [package API documentation](https://docs.rs/oxoffice-opc).
+Add `oxoffice-opc = "0.1.0"` to your dependencies. Start with the [package API documentation](https://docs.rs/oxoffice-opc).

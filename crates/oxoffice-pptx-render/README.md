@@ -16,7 +16,7 @@ rendering pipelines.
 
 ## Use it when
 
-Use this crate when integrating presentation layout below the `rpptx` facade.
+Use this crate when integrating presentation layout below the `oxoffice-pptx` facade.
 Applications normally call deterministic output methods on
 `oxoffice_pptx::Presentation`.
 
@@ -36,4 +36,4 @@ let missing = relationships.get(RelScope::Slide, "rId1");
 assert!(missing.is_err());
 ```
 
-Add `oxoffice-pptx-render = "0.15.0"` to your dependencies. See the [rendering API](https://docs.rs/oxoffice-pptx-render) for input and output types.
+Add `oxoffice-pptx-render = "0.1.0"` to your dependencies. See the [rendering API](https://docs.rs/oxoffice-pptx-render) for input and output types.

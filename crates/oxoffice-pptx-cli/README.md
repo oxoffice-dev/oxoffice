@@ -1,5 +1,8 @@
 # oxoffice-pptx-cli
 
+This crate is the `oxoffice pptx` command tree of the `oxoffice` binary,
+built by the `oxoffice-cli` crate.
+
 `oxoffice-pptx-cli` makes complete PPTX workflows available to shell scripts. It
 inspects and extracts deck content, validates package invariants, compares or
 replaces text, and produces deterministic fixed output.
@@ -16,7 +19,7 @@ replaces text, and produces deterministic fixed output.
 - Scriptable output covers slide order, notes, comments, recursive group
   content, relationship-backed media, and deterministic rendering diagnostics.
 
-`rpptx validate FILE` validates the stored package through its original XML
+`oxoffice pptx validate FILE` validates the stored package through its original XML
 bytes: XML 1.0 lexical and character faults, one complete root per XML part
 including package metadata, the `p:presentation` root child sequence, unknown
 direct shape-tree children, required unqualified `cNvPr` id and name on
@@ -27,8 +30,8 @@ overrides, and the parsed-model issues. It is not a full schema validator.
 ## Package signatures
 
 ```sh
-rpptx sign input.pptx --key private-key.pem --cert certificate.pem -o signed.pptx --json
-rpptx verify-signatures signed.pptx --json
+oxoffice pptx sign input.pptx --key private-key.pem --cert certificate.pem -o signed.pptx --json
+oxoffice pptx verify-signatures signed.pptx --json
 ```
 
 The key must be PKCS#8 RSA and the certificate X.509, as DER or one unencrypted
@@ -44,24 +47,24 @@ Signing publishes before reporting, so this error can leave a valid new output.
 
 ## Use it when
 
-Use the CLI for shell automation. Use `rpptx` when the same operations belong inside a Rust application.
+Use the CLI for shell automation. Use `oxoffice-pptx` when the same operations belong inside a Rust application.
 
 ## Relationship
 
-It uses `oxoffice-cli-support` for shared command conventions and the real `rpptx` facade for document behavior.
+It uses `oxoffice-cli-support` for shared command conventions and the real `oxoffice-pptx` facade for document behavior.
 
 ## Example
 
 ```sh
-cargo install oxoffice-pptx-cli --version '^0.15.0'
-rpptx inspect deck.pptx --json
-rpptx text deck.pptx --json
-rpptx outline deck.pptx --notes
-rpptx comment add deck.pptx --slide 2 --author Reviewer \
+cargo install oxoffice-cli --version '^0.1.0'
+oxoffice pptx inspect deck.pptx --json
+oxoffice pptx text deck.pptx --json
+oxoffice pptx outline deck.pptx --notes
+oxoffice pptx comment add deck.pptx --slide 2 --author Reviewer \
   --text "Check the figures" --date 2026-09-25T10:00:00Z -o reviewed.pptx
-rpptx comment list reviewed.pptx --json
-rpptx convert deck.pptx --to pdf -o deck.pdf
-rpptx thumbnail deck.pptx -o thumbnail.png
+oxoffice pptx comment list reviewed.pptx --json
+oxoffice pptx convert deck.pptx --to pdf -o deck.pdf
+oxoffice pptx thumbnail deck.pptx -o thumbnail.png
 ```
 
 `inspect --json` keeps its existing keys and adds `shape_details` beside each
@@ -117,22 +120,22 @@ package class the output declares. A `.potx` template written to `deck.pptx`
 becomes a presentation, and a deck that carries a VBA project cannot change to
 a macro-free extension.
 
-Run `rpptx --help` or `rpptx <command> --help` for the complete command surface.
+Run `oxoffice pptx --help` or `oxoffice pptx <command> --help` for the complete command surface.
 
 ## One-shot editing and fit reports
 
 ```sh
-rpptx replace deck.pptx --map pairs.json --json -o filled.pptx
-rpptx slide add deck.pptx --layout 7 --at 1 --json -o added.pptx
-rpptx slide duplicate deck.pptx 2 -o copied.pptx
-rpptx slide remove deck.pptx 2 -o removed.pptx
-rpptx slide move deck.pptx 3 --to 1 -o reordered.pptx
-rpptx slide hide deck.pptx 2 -o hidden.pptx
-rpptx slide show hidden.pptx 2 -o shown.pptx
-rpptx notes set deck.pptx 1 --from-file notes.txt -o noted.pptx
-rpptx fit deck.pptx --json
-rpptx meta get deck.pptx --json
-rpptx meta set deck.pptx --title "Quarterly report" --author Ada -o titled.pptx
+oxoffice pptx replace deck.pptx --map pairs.json --json -o filled.pptx
+oxoffice pptx slide add deck.pptx --layout 7 --at 1 --json -o added.pptx
+oxoffice pptx slide duplicate deck.pptx 2 -o copied.pptx
+oxoffice pptx slide remove deck.pptx 2 -o removed.pptx
+oxoffice pptx slide move deck.pptx 3 --to 1 -o reordered.pptx
+oxoffice pptx slide hide deck.pptx 2 -o hidden.pptx
+oxoffice pptx slide show hidden.pptx 2 -o shown.pptx
+oxoffice pptx notes set deck.pptx 1 --from-file notes.txt -o noted.pptx
+oxoffice pptx fit deck.pptx --json
+oxoffice pptx meta get deck.pptx --json
+oxoffice pptx meta set deck.pptx --title "Quarterly report" --author Ada -o titled.pptx
 ```
 
 Replacement maps are ordered JSON arrays of objects with `placeholder`,
@@ -201,12 +204,12 @@ Embedding requires explicit authorization and exact license identity. Commands
 write a new output and refuse input/font aliases or existing destinations.
 
 ```bash
-rpptx font embed input.pptx --name "My Face" --font ./MyFace-Regular.ttf \
+oxoffice pptx font embed input.pptx --name "My Face" --font ./MyFace-Regular.ttf \
   --license-authorized --license-identity "SIL Open Font License 1.1" \
   --output embedded.pptx
-rpptx font list embedded.pptx --json
-rpptx font settings embedded.pptx --embed-true-type-fonts false --output disabled.pptx
-rpptx font remove embedded.pptx --name "My Face" --kind regular --output removed.pptx
+oxoffice pptx font list embedded.pptx --json
+oxoffice pptx font settings embedded.pptx --embed-true-type-fonts false --output disabled.pptx
+oxoffice pptx font remove embedded.pptx --name "My Face" --kind regular --output removed.pptx
 ```
 
 The four CLI kinds are regular, bold, italic and bold-italic. Settings accept

@@ -1,4 +1,4 @@
-//! Error types for the rdocx high-level API.
+//! Error types for the oxoffice-docx high-level API.
 
 use thiserror::Error;
 

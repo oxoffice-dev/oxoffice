@@ -14,7 +14,7 @@ depending on a document format.
 
 ## Use it when
 
-Use this crate when reading or writing DrawingML shared by DOCX and PPTX packages. Use `rpptx` or `rdocx` for complete documents.
+Use this crate when reading or writing DrawingML shared by DOCX and PPTX packages. Use `oxoffice-pptx` or `oxoffice-docx` for complete documents.
 
 ## Relationship
 
@@ -35,4 +35,4 @@ assert!(matches!(fill, Fill::NoFill(_)));
 # Ok::<(), oxoffice_drawing::fill::FillError>(())
 ```
 
-Add `oxoffice-drawing = "0.15.0"` to your dependencies. Browse the [typed DrawingML API](https://docs.rs/oxoffice-drawing) before constructing schema-level values directly.
+Add `oxoffice-drawing = "0.1.0"` to your dependencies. Browse the [typed DrawingML API](https://docs.rs/oxoffice-drawing) before constructing schema-level values directly.

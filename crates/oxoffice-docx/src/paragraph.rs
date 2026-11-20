@@ -70,7 +70,7 @@ pub enum ParagraphItemRef<'a> {
         /// Whether the marker wraps content instead of being empty.
         has_child_content: bool,
     },
-    /// A preserved paragraph child that rdocx does not model.
+    /// A preserved paragraph child that oxoffice does not model.
     UnsupportedXml(&'a [u8]),
 }
 
@@ -81,7 +81,7 @@ pub enum HyperlinkItemRef<'a> {
     Run(RunRef<'a>),
     /// A tracked insertion, deletion, or move in the hyperlink.
     Revision(RevisionRef<'a>),
-    /// A preserved hyperlink child that rdocx does not model.
+    /// A preserved hyperlink child that oxoffice does not model.
     UnsupportedXml(&'a [u8]),
 }
 

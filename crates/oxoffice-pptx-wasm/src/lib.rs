@@ -1,4 +1,4 @@
-//! WebAssembly bindings for rpptx.
+//! WebAssembly bindings for oxoffice-pptx.
 
 use wasm_bindgen::prelude::*;
 

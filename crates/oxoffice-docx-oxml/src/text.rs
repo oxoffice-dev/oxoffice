@@ -1611,7 +1611,7 @@ fn root_attribute_record_without_w14_identities(raw: &[u8]) -> Result<Option<Vec
 ///
 /// A retained root-attribute record writes `w14:paraId` and `w14:textId`
 /// without their declaration, because Word and python-docx declare `w14` on
-/// the part root. A root rdocx wrote does not, and a producer may declare the
+/// the part root. A root oxoffice wrote does not, and a producer may declare the
 /// prefix on the element that uses it, so the part declares it here once. A
 /// root that binds `w14` itself is left as it is.
 #[doc(hidden)]

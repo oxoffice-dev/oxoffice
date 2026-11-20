@@ -16,12 +16,12 @@ notes, comments, diagrams, and timing data.
 ## Use it when
 
 Use this crate for schema-level slide, shape, text, relationship, and
-presentation-part work. Use the incubating `rpptx` facade for complete deck
+presentation-part work. Use the `oxoffice-pptx` facade for complete deck
 operations.
 
 ## Relationship
 
-`rpptx` owns complete package behavior, while layout and rendering crates
+`oxoffice-pptx` owns complete package behavior, while layout and rendering crates
 consume this typed model. `oxoffice-pptx-oxml` promises part-level parsing and
 serialization, not whole-package preservation by itself.
 
@@ -39,4 +39,4 @@ assert!(presentation.slide_ids.is_empty());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Add `oxoffice-pptx-oxml = "0.15.0"` to your dependencies. The [API documentation](https://docs.rs/oxoffice-pptx-oxml) lists the modeled PresentationML types.
+Add `oxoffice-pptx-oxml = "0.1.0"` to your dependencies. The [API documentation](https://docs.rs/oxoffice-pptx-oxml) lists the modeled PresentationML types.

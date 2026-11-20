@@ -1,4 +1,4 @@
-//! WebAssembly bindings for rdocx.
+//! WebAssembly bindings for oxoffice-docx.
 //!
 //! Provides JavaScript-friendly API for creating, opening, and converting
 //! DOCX documents entirely in the browser or Node.js — no server needed.

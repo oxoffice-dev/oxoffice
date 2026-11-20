@@ -210,7 +210,7 @@ pub(crate) fn archival_xmp(
     let creator = xml_escape(
         metadata
             .and_then(|value| value.creator.as_deref())
-            .unwrap_or("rdocx-pdf"),
+            .unwrap_or("oxoffice"),
     );
     let mut properties = format!(
         "<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{title}</rdf:li></rdf:Alt></dc:title>\n"
@@ -229,7 +229,7 @@ pub(crate) fn archival_xmp(
         properties.push_str(&format!("<pdf:Keywords>{keywords}</pdf:Keywords>\n"));
     }
     properties.push_str(&format!(
-        "<xmp:CreatorTool>{creator}</xmp:CreatorTool>\n<pdf:Producer>rdocx-pdf</pdf:Producer>\n"
+        "<xmp:CreatorTool>{creator}</xmp:CreatorTool>\n<pdf:Producer>oxoffice</pdf:Producer>\n"
     ));
     properties.push_str(&format!(
         "<pdfaid:part>{}</pdfaid:part>\n<pdfaid:conformance>B</pdfaid:conformance>\n",

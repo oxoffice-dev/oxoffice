@@ -74,7 +74,7 @@ impl Document {
         oxoffice_opc::write_atomic_file(
             path.as_ref(),
             &result.bytes,
-            "rdocx",
+            "oxoffice",
             "invalid EPUB file name",
             "could not allocate EPUB-save staging file",
         )?;

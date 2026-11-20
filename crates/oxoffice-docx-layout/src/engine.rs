@@ -6133,7 +6133,7 @@ impl Engine {
             author: cp.creator.clone(),
             subject: cp.subject.clone(),
             keywords: cp.keywords.clone(),
-            creator: Some("rdocx".to_string()),
+            creator: Some("oxoffice".to_string()),
         });
 
         if restart_record_eligible
@@ -15596,7 +15596,7 @@ fn vml_color(value: &str) -> Option<Color> {
 /// One of the four `w:rFonts` script slots, as this engine resolves them.
 ///
 /// `oxoffice_docx::RunFontSlot` is the same four slots on the authoring side, but
-/// `oxoffice-docx-layout` sits below `rdocx` and cannot name it. The shape here
+/// `oxoffice-docx-layout` sits below `oxoffice-docx` and cannot name it. The shape here
 /// deliberately mirrors `WordLanguageSlot` next to it, so a reader meets one
 /// pattern rather than two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

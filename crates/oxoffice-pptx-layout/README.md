@@ -15,7 +15,7 @@ resource state into owned shapes with concrete visual properties.
 
 ## Use it when
 
-Use this crate when resolving slide, layout, master, theme, and placeholder state into a renderable slide model. Use `rpptx` for complete deck operations.
+Use this crate when resolving slide, layout, master, theme, and placeholder state into a renderable slide model. Use `oxoffice-pptx` for complete deck operations.
 
 ## Relationship
 
@@ -31,4 +31,4 @@ let media = ScopedMediaIds::default();
 assert_eq!(media.get(FlattenedSource::Slide, "rId1"), None);
 ```
 
-Add `oxoffice-pptx-layout = "0.15.0"` to your dependencies. See the [resolver API](https://docs.rs/oxoffice-pptx-layout) for the resolved-slide contract.
+Add `oxoffice-pptx-layout = "0.1.0"` to your dependencies. See the [resolver API](https://docs.rs/oxoffice-pptx-layout) for the resolved-slide contract.

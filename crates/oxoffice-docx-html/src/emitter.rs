@@ -443,7 +443,7 @@ fn emit_field_display(out: &mut String, text: &str, properties: Option<&CT_RPr>)
 fn emit_image(out: &mut String, img: &ImageData) {
     let base64 = base64_encode(&img.data);
     // `content_type` is a public field, so it is not necessarily one of the
-    // literals rdocx derives from the part name.
+    // literals oxoffice derives from the part name.
     out.push_str(&format!(
         "<img src=\"data:{};base64,{}\" style=\"max-width:100%\">",
         escape_html_attr(&img.content_type),

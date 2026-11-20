@@ -25,7 +25,7 @@ thread_local! {
     pub(crate) static TEMPLATE_RETAINED_SOURCE_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// The bounded content-control type markers that rdocx reports.
+/// The bounded content-control type markers that oxoffice reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdtType {
     RichText,

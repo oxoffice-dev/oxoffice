@@ -33,4 +33,4 @@ let format = resolve(b"\x89PNG\r\n\x1a\n", "image.bin");
 assert_eq!(format, ImageFormat::Png);
 ```
 
-Add `oxoffice-media = "0.15.0"` to your dependencies. See the [API documentation](https://docs.rs/oxoffice-media) for supported formats and sizing functions.
+Add `oxoffice-media = "0.1.0"` to your dependencies. See the [API documentation](https://docs.rs/oxoffice-media) for supported formats and sizing functions.

@@ -14,7 +14,7 @@ ignore = [
     # the crate is feature-complete and widely deployed.
     #
     # We cannot drop it yet: `fontdb`, which provides system font discovery,
-    # depends on it unconditionally, so removing rdocx's own direct usage would
+    # depends on it unconditionally, so removing our own direct usage would
     # not remove it from the tree. Clearing this means replacing fontdb (with
     # fontique, say) and moving our font parsing to skrifa — which is already in
     # the graph via subsetter, so it would add no new dependencies.
@@ -24,8 +24,8 @@ ignore = [
 ]
 
 [licenses]
-# Permissive licences only. rdocx is dual MIT/Apache-2.0 and must stay
-# redistributable under both.
+# Permissive licences only. oxoffice is MIT licensed and must stay
+# redistributable under it.
 allow = [
     "MIT",
     "Apache-2.0",

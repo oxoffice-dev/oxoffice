@@ -109,7 +109,7 @@ impl Presentation {
         write_atomic_file(
             path.as_ref(),
             &result.bytes,
-            "rpptx-odp",
+            "oxoffice-odp",
             "invalid ODP file name",
             "could not allocate ODP save staging file",
         )

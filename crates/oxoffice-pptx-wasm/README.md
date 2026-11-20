@@ -17,7 +17,7 @@ PDF.
 
 ## Use it when
 
-Build the local `@tensorbee/oxoffice-pptx-wasm` package for browser or bundler projects.
+Build the local `@oxoffice-dev/oxoffice-pptx-wasm` package for browser or bundler projects.
 It is deliberately unpublished to npm and crates.io.
 
 ## Relationship
@@ -27,7 +27,7 @@ The wrapper owns a real `oxoffice_pptx::Presentation`. Its default profile exclu
 ## Example
 
 ```javascript
-import init, { WasmPresentation } from "@tensorbee/oxoffice-pptx-wasm";
+import init, { WasmPresentation } from "@oxoffice-dev/oxoffice-pptx-wasm";
 
 await init();
 const deck = new WasmPresentation();
@@ -37,5 +37,5 @@ const bytes = deck.toBytes();
 Build the checked bundler package locally:
 
 ```sh
-wasm-pack build --target bundler --scope tensorbee crates/oxoffice-pptx-wasm --out-name oxoffice_pptx_wasm
+wasm-pack build --target bundler --scope oxoffice-dev crates/oxoffice-pptx-wasm --out-name oxoffice_pptx_wasm
 ```

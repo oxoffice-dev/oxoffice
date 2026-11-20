@@ -1,7 +1,7 @@
 //! Style resolution: cascade styles and generate numbering markers.
 //!
-//! Ports the logic from `crates/rdocx/src/style.rs` since oxoffice-docx-layout
-//! depends on oxoffice-docx-oxml directly (not rdocx).
+//! Ports the logic from `crates/oxoffice-docx/src/style.rs` since oxoffice-docx-layout
+//! depends on oxoffice-docx-oxml directly (not oxoffice-docx).
 
 use std::collections::{HashMap, HashSet};
 

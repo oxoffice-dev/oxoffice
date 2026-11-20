@@ -359,7 +359,7 @@ const VML_DRAWING_RELATIONSHIP: &str =
 const TAGS_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags";
 
-/// A result returned by the `rpptx` read facade.
+/// A result returned by the `oxoffice-pptx` read facade.
 pub type Result<T> = std::result::Result<T, Error>;
 
 // Decoding is validation only. Original owned bytes are exported unchanged.
@@ -1165,7 +1165,7 @@ pub struct Theme {
     pub name: Option<String>,
     /// The colour scheme in `dk1`, `lt1`, `dk2`, `lt2`, `accent1` to
     /// `accent6`, `hlink`, `folHlink` order. A system colour reads as its
-    /// last computed value, and a colour rpptx cannot resolve as `None`.
+    /// last computed value, and a colour oxoffice cannot resolve as `None`.
     pub colors: Vec<(&'static str, Option<RgbColor>)>,
     /// The heading fonts, `+mj-lt` and its East Asian and complex-script peers.
     pub major_font: ThemeFonts,
@@ -5816,7 +5816,7 @@ impl Presentation {
         write_atomic_file(
             path.as_ref(),
             &self.to_bytes_for_path(path.as_ref())?,
-            "rpptx",
+            "oxoffice",
             "invalid PowerPoint package file name",
             "could not allocate PowerPoint package save staging file",
         )
@@ -5831,7 +5831,7 @@ impl Presentation {
         write_atomic_file(
             path.as_ref(),
             &bytes,
-            "rpptx",
+            "oxoffice",
             "invalid file name",
             "could not allocate encrypted-save staging file",
         )
@@ -5855,7 +5855,7 @@ impl Presentation {
         write_atomic_file(
             path.as_ref(),
             &self.to_bytes_as(class)?,
-            "rpptx",
+            "oxoffice",
             "invalid PowerPoint package file name",
             "could not allocate PowerPoint package save staging file",
         )
@@ -23737,7 +23737,7 @@ fn fit_group_to_members(group: &mut CT_GroupShape, occupied: bool) {
 /// members as before after that centre moved by `(dx, dy)`.
 ///
 /// PowerPoint flips, then rotates, so for that linear part `L` the shift is
-/// `(L - I)(dx, dy)`, which is zero without rotation and flips. The rpptx
+/// `(L - I)(dx, dy)`, which is zero without rotation and flips. The oxoffice
 /// renderer applies the same flip-then-rotation order for transformed groups.
 fn pivot_shift(transform: &CT_Transform2D, dx: f64, dy: f64) -> (i64, i64) {
     let (sin, cos) = (f64::from(transform.rotation.0) / 60_000.0)
@@ -30732,7 +30732,7 @@ pub enum HeaderFooterDate {
     Fixed(String),
     /// A `datetime1` to `datetime13` field that PowerPoint refreshes when it
     /// opens the file. `text` is the cached value other readers show and
-    /// rpptx renders, see [`date_field_text`].
+    /// oxoffice renders, see [`date_field_text`].
     Automatic {
         field_type: String,
         text: Option<String>,
@@ -31999,7 +31999,7 @@ pub enum TransitionKind {
     Uncover,
     Cut,
     Zoom,
-    /// An effect rpptx reads but does not author, by its element name, such
+    /// An effect oxoffice reads but does not author, by its element name, such
     /// as `blinds` or `morph`.
     Other(String),
 }

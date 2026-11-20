@@ -163,7 +163,7 @@ fn generate_header_banner_doc(path: &Path) {
     );
 
     doc.set_title("Header Banner Example");
-    doc.set_author("rdocx");
+    doc.set_author("oxoffice");
 
     doc.save(path).unwrap();
 }

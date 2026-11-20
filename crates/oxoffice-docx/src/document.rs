@@ -1,4 +1,4 @@
-//! The main Document type — entry point for the rdocx API.
+//! The main Document type — entry point for the oxoffice-docx API.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -245,7 +245,8 @@ pub enum WordPackageClass {
 /// Completeness and package class for a newly authored Word document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordCreationProfile {
-    /// The compact package graph historically emitted by `rdocx`.
+    /// The compact package graph historically emitted by rdocx, the predecessor
+    /// of oxoffice.
     ///
     /// It has no settings part, so it names no compatibility mode.
     Minimal(WordPackageClass),
@@ -441,7 +442,7 @@ pub enum BodyItemRef<'a> {
     Table(TableRef<'a>),
     /// A body-level content control.
     ContentControl(ContentControlRef<'a>),
-    /// A preserved body child that rdocx does not model.
+    /// A preserved body child that oxoffice does not model.
     UnsupportedXml(&'a [u8]),
 }
 
@@ -8864,15 +8865,15 @@ fn new_word_compatible_package(
 
 fn default_application_properties() -> AppProperties {
     let mut properties = AppProperties::default();
-    properties.application = Some("rdocx".to_owned());
-    properties.application_version = Some(rdocx_app_version());
+    properties.application = Some("oxoffice".to_owned());
+    properties.application_version = Some(app_version());
     properties
 }
 
-/// The AppVersion rdocx stamps. ECMA-376 Part 1, 22.2.2.3 fixes AppVersion to
+/// The AppVersion oxoffice stamps. ECMA-376 Part 1, 22.2.2.3 fixes AppVersion to
 /// the form XX.YYYY, and Word refuses to open a package whose AppVersion has
 /// another shape, such as 0.14.0.
-fn rdocx_app_version() -> String {
+fn app_version() -> String {
     format!(
         "{:0>2}.{:0>4}",
         env!("CARGO_PKG_VERSION_MAJOR"),
@@ -8880,17 +8881,21 @@ fn rdocx_app_version() -> String {
     )
 }
 
-/// Repair an AppVersion Word would refuse, as rdocx 0.14.0 wrote it: rdocx's
-/// own properties take the current stamp, and any other producer's value is
-/// dropped. A valid AppVersion is left alone, so its part stays byte-identical.
+/// Repair an AppVersion Word would refuse, as rdocx 0.14.0 wrote it: the
+/// properties of oxoffice, or of rdocx before it, take the current stamp,
+/// and any other producer's value is dropped. A valid AppVersion is left
+/// alone, so its part stays byte-identical.
 fn repair_application_version(mut properties: AppProperties) -> AppProperties {
     if properties
         .application_version
         .as_deref()
         .is_some_and(|version| !is_app_version(version))
     {
-        properties.application_version =
-            (properties.application.as_deref() == Some("rdocx")).then(rdocx_app_version);
+        properties.application_version = matches!(
+            properties.application.as_deref(),
+            Some("oxoffice" | "rdocx")
+        )
+        .then(app_version);
     }
     properties
 }
@@ -15517,7 +15522,7 @@ pub(crate) fn close_content_fragment_namespaces(
         false
     };
     #[cfg(test)]
-    if std::env::var_os("RDOCX_DESTINATION_REPAIR_DIAGNOSTICS").is_some()
+    if std::env::var_os("OXOFFICE_DESTINATION_REPAIR_DIAGNOSTICS").is_some()
         && mc_added
         && [
             b"NewCell".as_slice(),
@@ -27019,7 +27024,7 @@ impl Document {
         write_atomic_file(
             path.as_ref(),
             &bytes,
-            "rdocx",
+            "oxoffice",
             "invalid Word package file name",
             "could not allocate Word package save staging file",
         )?;
@@ -27906,7 +27911,7 @@ impl Document {
         write_atomic_file(
             path.as_ref(),
             &bytes,
-            "rdocx",
+            "oxoffice",
             "invalid file name",
             "could not allocate encrypted-save staging file",
         )?;
@@ -41835,7 +41840,7 @@ impl Document {
     /// the surrounding bookkeeping — part name, content type, relationship,
     /// section reference — is identical, and lives here.
     ///
-    /// Note the fixed `1` in the part name: rdocx manages one header and one
+    /// Note the fixed `1` in the part name: oxoffice manages one header and one
     /// footer per [`HdrFtrType`] for the document's single section. Setting a
     /// header of the same type again replaces the existing part.
     fn hdr_ftr_slot_metadata(
@@ -52829,7 +52834,7 @@ pub enum NumberingFormat<'a> {
     RussianLower,
     RussianUpper,
     None,
-    /// A producer-defined format value retained by rdocx.
+    /// A producer-defined format value retained by oxoffice.
     Other(&'a str),
 }
 

@@ -18,7 +18,7 @@ sections, and retains source provenance.
 
 Use `layout_document_deterministic` for reproducible output with bundled fonts.
 Applications that start from a DOCX file should normally call the rendering
-methods on [`oxoffice_docx::Document`](https://docs.rs/rdocx) instead.
+methods on [`oxoffice_docx::Document`](https://docs.rs/oxoffice-docx) instead.
 
 The provenance variants return `WordLayoutResult`. Its
 `body_layout_fragments` accessor reports the point-space block extent on every
@@ -50,5 +50,5 @@ fn page_count(input: &LayoutInput) -> Result<usize> {
 
 ```toml
 [dependencies]
-oxoffice-docx-layout = "0.17.0"
+oxoffice-docx-layout = "0.1.0"
 ```

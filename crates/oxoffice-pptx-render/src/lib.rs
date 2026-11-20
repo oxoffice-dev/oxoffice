@@ -289,7 +289,7 @@ pub fn layout_presentation_with_font_manager_and_text_directions(
     )
 }
 
-/// Internal facade hook for `rpptx` prepared rendering.
+/// Internal facade hook for `oxoffice-pptx` prepared rendering.
 ///
 /// `font_manager` must be the same instance that assigned every
 /// [`oxoffice_layout::FontId`]

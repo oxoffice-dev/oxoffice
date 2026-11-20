@@ -3188,7 +3188,7 @@ pub enum CellItemRef<'a> {
     Table(TableRef<'a>),
     /// A cell-level content control.
     ContentControl(ContentControlRef<'a>),
-    /// A preserved cell child that rdocx does not model.
+    /// A preserved cell child that oxoffice does not model.
     UnsupportedXml(&'a [u8]),
 }
 

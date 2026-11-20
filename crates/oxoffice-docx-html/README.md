@@ -16,12 +16,12 @@ from semantic Word content without running pagination.
 ## Use it when
 
 Use this crate when an application already owns `HtmlInput`. Use the high-level
-[`rdocx`](https://docs.rs/rdocx) facade when starting from a DOCX package or
+[`oxoffice-docx`](https://docs.rs/oxoffice-docx) facade when starting from a DOCX package or
 when HTML import is required.
 
 ## Relationship
 
-`rdocx` prepares the `HtmlInput` consumed here. This conversion path is
+`oxoffice-docx` prepares the `HtmlInput` consumed here. This conversion path is
 independent of pagination and PDF rendering.
 
 ## Example
@@ -39,5 +39,5 @@ fn export(input: &HtmlInput) -> (String, String) {
 
 ```toml
 [dependencies]
-oxoffice-docx-html = "0.17.0"
+oxoffice-docx-html = "0.1.0"
 ```

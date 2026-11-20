@@ -15,7 +15,7 @@ and geometry.
 ## Use it when
 
 Use this crate when an application needs ChartML models or chart rendering
-without depending on DOCX or PPTX APIs. Use `rpptx` for charts inside a
+without depending on DOCX or PPTX APIs. Use `oxoffice-pptx` for charts inside a
 complete presentation.
 
 ## Relationship
@@ -35,4 +35,4 @@ assert_ne!(category_axis, value_axis);
 # Ok::<(), oxoffice_chart::ChartError>(())
 ```
 
-Add `oxoffice-chart = "0.15.0"` to your dependencies. See the [chart API](https://docs.rs/oxoffice-chart) for supported plot families.
+Add `oxoffice-chart = "0.1.0"` to your dependencies. See the [chart API](https://docs.rs/oxoffice-chart) for supported plot families.

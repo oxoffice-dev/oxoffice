@@ -56,7 +56,7 @@ pub enum DiagramLayoutFamily {
 
 /// Render-only values projected from schema-owned diagram layout positions.
 ///
-/// This low-level projection is consumed by `rpptx`. It deliberately
+/// This low-level projection is consumed by `oxoffice-pptx`. It deliberately
 /// exposes decoded values rather than preserved XML.
 #[doc(hidden)]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

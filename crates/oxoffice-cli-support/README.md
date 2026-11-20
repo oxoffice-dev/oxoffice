@@ -23,7 +23,7 @@ publication, and JSON contracts.
 
 Use this crate when building a repository DOCX or PPTX CLI that must follow the
 same output-path and structured-output conventions. Application code should
-use `rdocx` or `rpptx` instead.
+use `oxoffice-docx` or `oxoffice-pptx` instead.
 
 ## Relationship
 

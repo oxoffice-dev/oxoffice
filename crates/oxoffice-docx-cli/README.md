@@ -1,5 +1,8 @@
 # oxoffice-docx-cli
 
+This crate is the `oxoffice docx` command tree of the `oxoffice` binary,
+built by the `oxoffice-cli` crate.
+
 `oxoffice-docx-cli` turns DOCX files into inspectable and scriptable shell artifacts.
 It extracts content, reports structure, validates packages, applies changes,
 and produces fixed or flow output without an Office host.
@@ -27,8 +30,8 @@ and produces fixed or flow output without an Office host.
 ## Package signatures
 
 ```sh
-rdocx sign input.docx --key private-key.pem --cert certificate.pem -o signed.docx --json
-rdocx verify-signatures signed.docx --json
+oxoffice docx sign input.docx --key private-key.pem --cert certificate.pem -o signed.docx --json
+oxoffice docx verify-signatures signed.docx --json
 ```
 
 The key must be PKCS#8 RSA and the certificate X.509, as DER or one unencrypted
@@ -45,44 +48,44 @@ Signing publishes before reporting, so this error can leave a valid new output.
 ## Use it when
 
 Use this crate for shell automation. Use the
-[`rdocx`](https://docs.rs/rdocx) library when these operations need to run
+[`oxoffice-docx`](https://docs.rs/oxoffice-docx) library when these operations need to run
 inside a Rust application.
 
 ## Relationship
 
-The binary delegates document behavior to `rdocx` and shares path and JSON
+The binary delegates document behavior to `oxoffice-docx` and shares path and JSON
 conventions with `oxoffice-pptx-cli` through `oxoffice-cli-support`.
 
 ## Example
 
 ```sh
-cargo install oxoffice-docx-cli --version '^0.17.0'
+cargo install oxoffice-cli --version '^0.1.0'
 
-rdocx inspect report.docx
-rdocx text report.docx
-rdocx text report.docx --json
-rdocx layout report.docx --json
-rdocx replace template.docx -p TOKEN -v ready --expect 1 -o report.docx
-rdocx convert report.docx --to pdf -o report.pdf
-rdocx convert redline.docx --to pdf --revision-view tracked -o redline.pdf
-rdocx render redline.docx --revision-view tracked --revision-style legal
-rdocx diff before.docx after.docx
-rdocx diff before.docx after.docx --exit-code --json
-rdocx validate report.docx
-rdocx render report.docx --page 0 -o rendered
-rdocx comment list report.docx --json
-rdocx comment add report.docx --start-paragraph 0 --start-run 0 \
+oxoffice docx inspect report.docx
+oxoffice docx text report.docx
+oxoffice docx text report.docx --json
+oxoffice docx layout report.docx --json
+oxoffice docx replace template.docx -p TOKEN -v ready --expect 1 -o report.docx
+oxoffice docx convert report.docx --to pdf -o report.pdf
+oxoffice docx convert redline.docx --to pdf --revision-view tracked -o redline.pdf
+oxoffice docx render redline.docx --revision-view tracked --revision-style legal
+oxoffice docx diff before.docx after.docx
+oxoffice docx diff before.docx after.docx --exit-code --json
+oxoffice docx validate report.docx
+oxoffice docx render report.docx --page 0 -o rendered
+oxoffice docx comment list report.docx --json
+oxoffice docx comment add report.docx --start-paragraph 0 --start-run 0 \
   --end-paragraph 0 --end-run 1 --author Reviewer --text 'Check this' \
   --date 2026-09-13T12:00:00Z -o commented.docx
-rdocx comment add report.docx --anchor 'target words' --occurrence 1 \
+oxoffice docx comment add report.docx --anchor 'target words' --occurrence 1 \
   --author Reviewer --text 'Check this' -o commented.docx
-rdocx revision accept reviewed.docx --author Reviewer -o accepted.docx
-rdocx compare original.docx edited.docx --author Reviewer \
+oxoffice docx revision accept reviewed.docx --author Reviewer -o accepted.docx
+oxoffice docx compare original.docx edited.docx --author Reviewer \
   --timestamp 2026-09-13T12:00:00Z -o redline.docx
-rdocx compare original.docx edited.docx --author Reviewer \
+oxoffice docx compare original.docx edited.docx --author Reviewer \
   --timestamp 2026-09-13T12:00:00Z --granularity word --ignore-comments \
   --ignore-story header -o redline.docx
-rdocx toc rebuild report.docx -o refreshed.docx
+oxoffice docx toc rebuild report.docx -o refreshed.docx
 ```
 
 Comment `add` ranges use zero-based body paragraph and run boundaries. The
@@ -127,9 +130,9 @@ prior revisions on two independent input copies, then compare those resolved
 copies. This removes the selected prior markup from the new baseline:
 
 ```bash
-rdocx revision accept original-redline.docx --author "Reviewer A" --output original-resolved.docx
-rdocx revision accept edited-redline.docx --author "Reviewer A" --output edited-resolved.docx
-rdocx compare original-resolved.docx edited-resolved.docx --author "Reviewer B" --timestamp 2026-10-27T13:00:00Z --output second-review.docx
+oxoffice docx revision accept original-redline.docx --author "Reviewer A" --output original-resolved.docx
+oxoffice docx revision accept edited-redline.docx --author "Reviewer A" --output edited-resolved.docx
+oxoffice docx compare original-resolved.docx edited-resolved.docx --author "Reviewer B" --timestamp 2026-10-27T13:00:00Z --output second-review.docx
 ```
 
 Use the existing `--id` selector when the same author has several reviews.
@@ -283,7 +286,7 @@ and literal forbidden XML characters, naming the affected part. Validators
 report the character fault without rewriting it to an OOXML escape.
 
 
-Run `rdocx --help` or `rdocx <command> --help` for the complete option set.
+Run `oxoffice docx --help` or `oxoffice docx <command> --help` for the complete option set.
 
 ## Ordered one-shot edits
 
@@ -316,11 +319,11 @@ index, placeholder, value, count and nullable expected count, total_count and
 output. Errors go to stderr with a nonzero exit and no success JSON.
 
 ```bash
-rdocx fields update input.docx --now 2026-10-10T08:30:00 -o fields.docx --json
-rdocx fill input.docx --tag client=Ada --tag status=ready -o filled.docx --json
-rdocx meta get input.docx --json
-rdocx meta set input.docx --title Report --custom count=int:4 -o metadata.docx --json
-rdocx images extract input.docx images --json
+oxoffice docx fields update input.docx --now 2026-10-10T08:30:00 -o fields.docx --json
+oxoffice docx fill input.docx --tag client=Ada --tag status=ready -o filled.docx --json
+oxoffice docx meta get input.docx --json
+oxoffice docx meta set input.docx --title Report --custom count=int:4 -o metadata.docx --json
+oxoffice docx images extract input.docx images --json
 ```
 
 `fields update` atomically combines ordinary and deterministic layout cache
@@ -383,12 +386,12 @@ Embedding requires explicit authorization and exact license identity. Commands
 write a new output and refuse input/font aliases or existing destinations.
 
 ```bash
-rdocx font embed input.docx --name "My Face" --font ./MyFace-Regular.ttf \
+oxoffice docx font embed input.docx --name "My Face" --font ./MyFace-Regular.ttf \
   --license-authorized --license-identity "SIL Open Font License 1.1" \
   --output embedded.docx
-rdocx font list embedded.docx --json
-rdocx font settings embedded.docx --embed-true-type-fonts false --output disabled.docx
-rdocx font remove embedded.docx --name "My Face" --kind regular --output removed.docx
+oxoffice docx font list embedded.docx --json
+oxoffice docx font settings embedded.docx --embed-true-type-fonts false --output disabled.docx
+oxoffice docx font remove embedded.docx --name "My Face" --kind regular --output removed.docx
 ```
 
 The four CLI kinds are regular, bold, italic and bold-italic. Settings accept

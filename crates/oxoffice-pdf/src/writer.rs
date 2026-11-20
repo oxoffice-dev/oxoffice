@@ -645,11 +645,11 @@ pub(crate) fn write_pdf_impl(
         if let Some(creator) = &meta.creator {
             info.creator(TextStr(creator));
         }
-        info.producer(TextStr("rdocx-pdf"));
+        info.producer(TextStr("oxoffice"));
     } else if tagged.is_some() || profile.is_some() {
         let mut info = pdf.document_info(info_id);
         info.title(TextStr("Untitled document"));
-        info.producer(TextStr("rdocx-pdf"));
+        info.producer(TextStr("oxoffice"));
     }
 
     if let Some(metadata_id) = metadata_id {
