@@ -1,8 +1,10 @@
 name: PR title
 
+# Only when a pull request is opened, renamed or marked ready: a push does not
+# change the title, and a run on every push is noise.
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, edited, reopened, ready_for_review]
 
 permissions:
   pull-requests: read
