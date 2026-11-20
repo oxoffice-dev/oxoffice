@@ -53,11 +53,14 @@ save refusal (#10), each in a binary of its own.
   machine), Google Docs and Slides (an rclone remote), and Word and
   PowerPoint for Mac (AppleScript driven by `produce.py`, run on a Mac; every
   document is closed after its save, the apps quit even on error).
-- **Manifest from the generator.** `generate/manifest.py` rewrites
-  `manifest.toml` from the files on disk, the features each family declares
-  and the producer versions recorded by `produce.py`, so that a run on the Mac
-  only needs a commit. A file that fails a corpus check carries
-  `known_failure = <issue>`.
+- **Manifest from the files.** `generate/manifest.py` rewrites
+  `manifest.toml` from the files on disk: the producer versions recorded by
+  `author.py` and `produce.py`, the size, and the features found in each
+  file's XML (a producer that drops content controls shows it). A run on the
+  Mac only needs a commit. A file that fails the round trip carries
+  `known_failure = <issue>`, and the test fails when it passes again.
+- **Deterministic sources.** Fixed dates and seeds, zip entries with fixed
+  timestamps: rerunning `author.py` leaves git quiet.
 - **Budget.** About 16 families times 4 or 5 producers, about 70 files.
   Under 1 MB per file and 20 MB in total, checked by a test.
 
