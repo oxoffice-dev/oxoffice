@@ -106,3 +106,28 @@ a manifest: producer and version, features it carries, licence, size.
   requests.
 - No nightly job. `main` runs the full set. A nightly job comes only if
   `main` gets too long.
+
+## Outcome
+
+### Scaling (plan step 1, #11)
+
+- Ported from rdocx-skills with the same protocol and thresholds:
+  `crates/oxoffice-py/tests/test_{docx,pptx}_scaling.py`, 259 docx and 248
+  pptx calls, plus the check that every mutating call of the stubs is timed.
+- **Timings need a build without debug assertions.** In the `ci` profile the
+  debug checks compare every edit with a copy of the whole document, so every
+  call grows: 148 docx and 122 pptx calls went over 2.5 times, and pptx
+  Presentation calls cost 0.3 to 0.9 s at 5 slides, 3.5 times that at 20. In a
+  release build the same pptx calls cost under 1 ms and are flat. A
+  `scaling` cargo profile (the `ci` profile without debug assertions) gives
+  the release picture at the `ci` build cost, so the scaling tests run in a
+  `scaling` CI job of their own, beside `build`.
+- **Measured on that build** (Linux, two serial runs, 2026-11-20): every pptx
+  call is flat. 81 docx calls grow with the body, 2.0 to 4.0 times from 25 to
+  100 paragraphs, none faster than linear: they are strict xfails tied to #6
+  (`GROWING`), and a fix shows as an XPASS. The old accepted list is gone.
+  No pptx issue was opened, the growth was the debug checks.
+- `OXOFFICE_SCALING=quick` (31 calls, pull requests) and `full` (main), both
+  on Linux, macOS and Windows. Local wall times on a fast Linux machine: quick
+  13 s, full 3 min 44 s (428 passed, 81 xfailed). CI runners are slower, and
+  macOS and Windows were first measured by the CI runs of this pull request.

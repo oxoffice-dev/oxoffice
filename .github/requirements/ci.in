@@ -1,2 +1,5 @@
 maturin
 pytest
+python-docx
+python-pptx
+pillow

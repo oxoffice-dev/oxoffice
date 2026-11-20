@@ -1,7 +1,8 @@
 name: CI
 
-# Every pull request and every push to main. Pull requests build on Linux only
-# to keep the answer fast, main runs the same jobs on the three platforms.
+# Every pull request and every push to main, on Linux, macOS and Windows: a
+# platform-only failure (paths, line endings) shows before the merge. The jobs
+# run in parallel, so Windows, the slowest, bounds the wait.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
@@ -66,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,3 +103,35 @@ jobs:
         shell: bash
         run: |
           if [ -d crates/oxoffice-py/tests ]; then python -m pytest crates/oxoffice-py/tests -q; else echo "no Python tests yet"; fi
+
+  # The scaling tests time every mutating call at N and 4N. They need a build
+  # without debug assertions (the `scaling` profile), built here beside the
+  # `ci` one so that pull requests wait no longer. Pull requests time the
+  # QUICK set, main every call.
+  scaling:
+    name: Scaling (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-workspace-crates: true
+      - name: Build the wheel without debug assertions
+        shell: bash
+        run: |
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          maturin build --profile scaling --locked -m crates/oxoffice-py/Cargo.toml -o dist
+          python -m pip install dist/*.whl
+      - name: Scaling tests
+        shell: bash
+        env:
+          OXOFFICE_SCALING: ${{ github.event_name == 'pull_request' && 'quick' || 'full' }}
+        run: python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py -q -rxX
