@@ -25,6 +25,13 @@ fn run_cli(py: Python<'_>, argv: Vec<OsString>) -> i32 {
     0
 }
 
+/// The known limitations of this build as a JSON array, see
+/// `oxoffice.limitations()`.
+#[pyfunction]
+fn limitations_json() -> &'static str {
+    oxoffice_cli::LIMITATIONS_JSON
+}
+
 fn register_family(
     parent: &Bound<'_, PyModule>,
     qualified: &str,
@@ -56,5 +63,6 @@ fn _oxoffice(module: &Bound<'_, PyModule>) -> PyResult<()> {
         oxoffice_pptx_py::register,
     )?;
     module.add_function(wrap_pyfunction!(run_cli, module)?)?;
+    module.add_function(wrap_pyfunction!(limitations_json, module)?)?;
     Ok(())
 }

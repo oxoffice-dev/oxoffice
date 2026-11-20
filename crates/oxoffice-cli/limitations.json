@@ -1,0 +1,56 @@
+[
+  {
+    "id": "docx-compare-toc-bookmarks",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses two versions whose TOC heading bookmarks were renumbered",
+    "symptom": "compare refuses with \"duplicate bookmark id N in authored XML\" or \"cannot revise paragraph boundary structures\"",
+    "workaround": "remove the _Toc bookmarks from both copies, compare, then rebuild the table of contents on the result",
+    "issue": 3
+  },
+  {
+    "id": "docx-compare-moved-footnote",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses two versions where a footnote reference moved",
+    "symptom": "compare refuses and writes nothing (\"its reference moved to another site\")",
+    "workaround": "compare that pair in Word",
+    "issue": 4
+  },
+  {
+    "id": "docx-python-replace-slower",
+    "format": "docx",
+    "area": "replace",
+    "title": "Text replacement through Python is slower than the CLI",
+    "symptom": "about 1.5 times the time of the CLI for the same pairs",
+    "workaround": "when only replacing, use `oxoffice docx replace FILE --map pairs.json`",
+    "issue": 5
+  },
+  {
+    "id": "docx-edit-cost-grows",
+    "format": "docx",
+    "area": "performance",
+    "title": "Edits cost more as the document grows, most on files saved by Word or Google Docs",
+    "symptom": "Run.text, Paragraph.text, add_run, Table.add_row, remove_content and notes cost the whole body: tens of milliseconds per call, up to seconds on long reports",
+    "workaround": "batch the edits, or build the content aside and insert it once",
+    "issue": 6
+  },
+  {
+    "id": "docx-form-cost",
+    "format": "docx",
+    "area": "forms",
+    "title": "Form operations cost seconds on long documents",
+    "symptom": "about 0.1 s at 25 paragraphs, 3 to 9 s at 1,000",
+    "workaround": "pass every rule in one call",
+    "issue": 7
+  },
+  {
+    "id": "pptx-control-character-part",
+    "format": "pptx",
+    "area": "open",
+    "title": "A presentation part with a control character is refused at open",
+    "symptom": "open fails with \"PackageError ... holds U+0001\" and `oxoffice pptx validate` exits 1, while PowerPoint opens the file",
+    "workaround": "remove the character from that part's bytes, then open the file",
+    "issue": 8
+  }
+]
