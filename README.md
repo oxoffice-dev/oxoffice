@@ -74,7 +74,7 @@ The Python API follows python-docx and python-pptx, so most code moves over by c
 
 ```toml
 [dependencies]
-oxoffice-docx = { git = "https://github.com/oxoffice-dev/oxoffice" }
+oxoffice-docx = { git = "https://github.com/oxoffice-dev/oxoffice", tag = "v0.1.0" }
 ```
 
 ```rust
@@ -87,21 +87,19 @@ doc.save("hello.docx")?;
 
 ## 📦 Install
 
-The command line, on Linux and macOS:
+| Channel | Command |
+| --- | --- |
+| 🐚 Installer, Linux and macOS | `curl -fsSL https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.sh \| sh` |
+| 🪟 Installer, Windows | `powershell -ExecutionPolicy Bypass -c "irm https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.ps1 \| iex"` |
+| 🐍 PyPI | `pip install oxoffice`, `uv add oxoffice` or `uv tool install oxoffice` |
+| 🟢 conda | `pixi global install -c https://prefix.dev/hadim/oxoffice -c conda-forge oxoffice` |
+| 📦 GitHub release | binaries, wheels and checksums on the [releases page](https://github.com/oxoffice-dev/oxoffice/releases) |
+| 🦀 Rust | `oxoffice-docx = { git = "https://github.com/oxoffice-dev/oxoffice", tag = "v0.1.0" }` |
 
-```bash
-curl -fsSL https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.sh | sh
-```
-
-On Windows:
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.ps1 | iex"
-```
-
-Every [release](https://github.com/oxoffice-dev/oxoffice/releases) also carries the Python wheels (which
-install the `oxoffice` command too), an SBOM, `SHA256SUMS` and a signed build provenance. Check any file with
-`gh attestation verify <file> --repo oxoffice-dev/oxoffice`. PyPI, crates.io and conda-forge come later.
+The installers and the Python channels all give you the `oxoffice` command, and the Python channels also give
+you the `oxoffice` package. Every release ships `SHA256SUMS`, an SBOM and a signed build provenance: check any
+file with `gh attestation verify <file> --repo oxoffice-dev/oxoffice`. Details, pinning and verification:
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ## 🗺️ Status
 

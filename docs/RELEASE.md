@@ -32,8 +32,11 @@ breaking change bumps the minor version and anything else the patch version.
 Check a downloaded file with `sha256sum -c SHA256SUMS --ignore-missing` and
 `gh attestation verify <file> --repo oxoffice-dev/oxoffice`.
 
-The same wheels are repackaged for conda and uploaded to the `hadim/oxoffice`
-channel on prefix.dev. PyPI, crates.io and conda-forge are not published yet.
+The same wheels and the sdist go to PyPI, and the wheels are repackaged for
+conda and uploaded to the `hadim/oxoffice` channel on prefix.dev, both through
+trusted publishers (environments `pypi` and `conda`) with attestations.
+crates.io and conda-forge are not published yet. How users install each
+channel is in [INSTALL.md](INSTALL.md).
 
 ## Changelog
 

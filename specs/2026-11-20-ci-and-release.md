@@ -114,12 +114,16 @@ They install `oxoffice` into `~/.oxoffice/bin` and add it to the `PATH`.
 The wheel also installs the `oxoffice` command, so a Python install gives
 both the API and the CLI.
 
+5. It publishes the wheels and the sdist to PyPI through a trusted publisher
+   (workflow `release.yml`, environment `pypi`), with PyPI attestations.
+
+No token is stored anywhere: PyPI and prefix.dev trust the workflow through
+OIDC. The install channels are documented in `docs/INSTALL.md`.
+
 ### Not now
 
-PyPI, crates.io and conda-forge publication. They come as extra jobs of
-`release.yml` when the API settles, each with its own spec. PyPI will use a
-trusted publisher bound to `release.yml` and a `pypi` environment, so no
-token is stored anywhere.
+crates.io and conda-forge. They come when the API settles, each with its own
+spec.
 
 ## Plan
 

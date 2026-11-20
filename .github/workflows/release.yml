@@ -5,6 +5,8 @@ name: Release
 #   2. builds the `oxoffice` binary and the Python wheels for every platform
 #   3. publishes a GitHub release with every artifact, the installers, an SBOM,
 #      SHA256SUMS and a signed build provenance attestation covering them all
+#   4. publishes the wheels and the sdist to PyPI and the conda packages to
+#      prefix.dev, both through trusted publishers
 # With dry_run, it builds from main and publishes nothing.
 
 on:
@@ -240,6 +242,27 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: dist/*
           make_latest: true
+
+  pypi:
+    name: PyPI
+    needs: [prepare, wheels, sdist, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # PyPI's trusted publisher, no token stored anywhere
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{wheel-*,sdist}"
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist
+          attestations: true
+          skip-existing: true
 
   conda:
     name: Conda ${{ matrix.subdir }}
