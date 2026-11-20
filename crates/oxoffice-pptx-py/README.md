@@ -114,9 +114,6 @@ python -m pip install mypy
 python -m mypy your_application.py
 ```
 
-The release gate validates the installed package with strict mypy and
-`stubtest` in addition to its runtime suite.
-
 ## Project links
 
 - [Source repository](https://github.com/oxoffice-dev/oxoffice)

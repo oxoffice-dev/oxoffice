@@ -157,9 +157,6 @@ python -m pip install mypy
 python -m mypy your_application.py
 ```
 
-The release gate validates the installed package with strict mypy and
-`stubtest` in addition to its runtime suite.
-
 `Document.set_header(text)` and `Document.set_footer(text)` replace a complete
 story through one checked transaction. Removing a complete owned comment thread
 cleans its definitions and companion metadata. Partial ranges or malformed
