@@ -16,14 +16,6 @@ categories.workspace = true
 default = ["system-fonts"]
 system-fonts = ["oxoffice-docx/system-fonts"]
 
-[[bin]]
-name = "oxoffice-docx"
-path = "src/main.rs"
-# The binary shares its name with the `rdocx` library crate, which makes
-# `cargo doc --workspace` collide on the output path. The CLI has no API docs
-# worth publishing, so skip it.
-doc = false
-
 [dependencies]
 oxoffice-docx = { workspace = true, features = ["digital-signatures"] }
 oxoffice-docx-oxml = { workspace = true }

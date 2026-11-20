@@ -1,0 +1,31 @@
+[package]
+name = "oxoffice-cli"
+description = "The oxoffice command line: inspect, convert, edit and render DOCX and PPTX files"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["docx", "pptx", "word", "powerpoint", "cli"]
+categories = ["command-line-utilities", "parser-implementations"]
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxoffice-docx-cli/system-fonts", "oxoffice-pptx-cli/system-fonts"]
+
+[lib]
+name = "oxoffice_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oxoffice"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+clap.workspace = true
+oxoffice-docx-cli = { workspace = true, default-features = false }
+oxoffice-pptx-cli = { workspace = true, default-features = false }

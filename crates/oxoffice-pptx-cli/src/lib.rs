@@ -1,4 +1,5 @@
-//! Command-line access to the public `rpptx` facade.
+//! The `oxoffice pptx` command tree: command-line access to the public
+//! `oxoffice-pptx` facade.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -9,8 +10,8 @@ use clap::{Parser, Subcommand};
 mod commands;
 
 #[derive(Parser)]
-#[command(name = "rpptx", version, about = "CLI tool for PPTX files")]
-struct Cli {
+#[command(version, about = "CLI tool for PPTX files")]
+pub struct Cli {
     #[command(subcommand)]
     command: Command,
 }
@@ -516,23 +517,9 @@ enum CommentCommand {
     },
 }
 
-fn main() {
-    #[cfg(windows)]
-    {
-        // A full validation can exceed the one MiB Windows main-thread stack.
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(run_cli)
-            .expect("start rpptx CLI thread")
-            .join()
-            .expect("rpptx CLI thread panicked");
-    }
-    #[cfg(not(windows))]
-    run_cli();
-}
-
-fn run_cli() {
-    let cli = Cli::parse();
+/// Run one parsed command. Errors are printed to standard error and end
+/// the process with the documented exit status.
+pub fn run(cli: Cli) {
     let signing_command = matches!(&cli.command, Command::Sign { .. });
     if let Command::VerifySignatures { file, json } = &cli.command {
         let result = commands::verify_signatures(file, *json);

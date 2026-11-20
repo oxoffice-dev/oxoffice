@@ -1,6 +1,5 @@
-//! rdocx CLI — "jq for DOCX"
-//!
-//! Inspect, convert, diff, and manipulate DOCX files from the command line.
+//! The `oxoffice docx` command tree: inspect, convert, diff, and manipulate
+//! DOCX files from the command line.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -11,8 +10,8 @@ use clap::{Args, Parser, Subcommand};
 mod commands;
 
 #[derive(Parser)]
-#[command(name = "rdocx", version, about = "CLI tool for DOCX files")]
-struct Cli {
+#[command(version, about = "CLI tool for DOCX files")]
+pub struct Cli {
     #[command(subcommand)]
     command: Command,
 }
@@ -703,23 +702,9 @@ enum TocCommand {
     },
 }
 
-fn main() {
-    #[cfg(windows)]
-    {
-        // Full document comparison can exceed the one MiB Windows main-thread stack.
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(run_cli)
-            .expect("start rdocx CLI thread")
-            .join()
-            .expect("rdocx CLI thread panicked");
-    }
-    #[cfg(not(windows))]
-    run_cli();
-}
-
-fn run_cli() {
-    let cli = Cli::parse();
+/// Run one parsed command. Errors are printed to standard error and end
+/// the process with the documented exit status.
+pub fn run(cli: Cli) {
     let signing_command = matches!(&cli.command, Command::Sign { .. });
     if let Command::VerifySignatures { file, json } = &cli.command {
         let result = commands::verify_signatures(file, *json);

@@ -17,11 +17,6 @@ publish = true
 default = ["system-fonts"]
 system-fonts = ["oxoffice-pptx/system-fonts"]
 
-[[bin]]
-name = "oxoffice-pptx"
-path = "src/main.rs"
-doc = false
-
 [dependencies]
 clap.workspace = true
 oxoffice-cli-support = { workspace = true, features = ["digital-signatures"] }

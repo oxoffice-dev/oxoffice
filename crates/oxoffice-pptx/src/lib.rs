@@ -23146,6 +23146,7 @@ impl<'a> SlideMut<'a> {
     }
 
     /// Appends a preset shape without a theme style for HTML and ODP imports.
+    #[cfg(feature = "default-template")]
     pub(crate) fn add_unstyled_shape(
         &mut self,
         preset: &str,
@@ -23440,6 +23441,7 @@ fn preset_member(
     Ok(ShapeTreeChild::Shape(shape))
 }
 
+#[cfg(feature = "default-template")]
 fn unstyled_preset_member(
     id: u32,
     preset: &str,
