@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: draft
+status: accepted
 scope: tests
 ---
 
