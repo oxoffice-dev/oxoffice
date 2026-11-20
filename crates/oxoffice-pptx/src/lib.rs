@@ -18,7 +18,7 @@ pub use embedded::{
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[cfg(feature = "render")]
@@ -77,7 +77,7 @@ pub use oxoffice_opc::{
     CoveredRelationship, SignatureIssue, SignatureReport, SignerCertificateIdentity,
 };
 use oxoffice_opc::{OpcError, Relationships, write_atomic_file};
-pub use oxoffice_opc::{OpcPackage, PackageReadLimits};
+pub use oxoffice_opc::{OpcPackage, PackageReadLimits, SaveOptions};
 #[cfg(feature = "render")]
 pub use oxoffice_pdf::{PdfConformance, RasterFormat, RasterOptions, RasterOutput};
 #[cfg(feature = "render")]
@@ -857,6 +857,12 @@ pub enum Error {
     #[error("presentation package has no officeDocument relationship")]
     MissingMainDocument,
 
+    #[error(
+        "refusing to save over {}, the file this presentation was opened from; pass overwrite_source to replace it",
+        path.display()
+    )]
+    OverwritesSource { path: PathBuf },
+
     #[error("unsupported presentation main content type: {content_type:?}")]
     UnsupportedPackageClass { content_type: Option<String> },
 
@@ -1214,6 +1220,9 @@ pub struct Presentation {
     handout_master_dirty: bool,
     embedded_invalidated_signatures: HashSet<(String, String)>,
     package_signatures_invalidated: bool,
+    // The file this presentation was opened from, canonical, which `save`
+    // refuses to replace. Clones and reopened candidates carry it.
+    source_path: Option<PathBuf>,
     // Slide, layout and master records are shared between clones and copied
     // on write, so a candidate copy costs one pointer per part and an edit
     // copies only its own part.
@@ -4051,15 +4060,24 @@ impl Presentation {
     }
 
     /// Opens a presentation from a `.pptx` path.
+    ///
+    /// The presentation remembers the file, and [`Presentation::save`]
+    /// refuses to replace it unless asked, see
+    /// [`Presentation::save_with_options`].
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Self::from_read_package(OpcPackage::open(path)?)
+        let mut presentation = Self::from_read_package(OpcPackage::open(path.as_ref())?)?;
+        presentation.source_path = std::fs::canonicalize(path).ok();
+        Ok(presentation)
     }
 
     /// Opens a password-protected Agile-encrypted presentation from a path.
     #[cfg(all(feature = "agile-encryption", not(target_arch = "wasm32")))]
     pub fn open_encrypted<P: AsRef<Path>>(path: P, password: &str) -> Result<Self> {
-        let file = std::fs::File::open(path).map_err(OpcError::from)?;
-        Self::from_read_package(OpcPackage::from_encrypted_reader(file, password)?)
+        let file = std::fs::File::open(path.as_ref()).map_err(OpcError::from)?;
+        let mut presentation =
+            Self::from_read_package(OpcPackage::from_encrypted_reader(file, password)?)?;
+        presentation.source_path = std::fs::canonicalize(path).ok();
+        Ok(presentation)
     }
 
     /// Opens a presentation from in-memory `.pptx` bytes.
@@ -4249,6 +4267,7 @@ impl Presentation {
             handout_master_dirty: false,
             embedded_invalidated_signatures: HashSet::new(),
             package_signatures_invalidated,
+            source_path: None,
             layouts,
             masters,
             themes,
@@ -5807,7 +5826,26 @@ impl Presentation {
     /// would remain in a file that claims to carry none.
     /// [`Presentation::save_as_package_class`] performs that conversion
     /// explicitly and keeps the VBA part.
+    ///
+    /// A presentation opened from a file refuses to be saved over that file,
+    /// whatever the spelling of `path` (a symbolic link, a relative path, a
+    /// hard link), with [`Error::OverwritesSource`]. This differs from
+    /// python-pptx. [`Presentation::save_with_options`] with
+    /// [`SaveOptions::overwrite_source`] replaces it.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.save_with_options(path, SaveOptions::default())
+    }
+
+    /// Saves to a path, as [`Presentation::save`] does, with `options`.
+    pub fn save_with_options<P: AsRef<Path>>(&self, path: P, options: SaveOptions) -> Result<()> {
+        if !options.overwrite_source
+            && let Some(source) = &self.source_path
+            && oxoffice_opc::is_same_file(source, path.as_ref())
+        {
+            return Err(Error::OverwritesSource {
+                path: path.as_ref().to_path_buf(),
+            });
+        }
         debug_assert!(
             self.save_invariants_preserved(),
             "invalid presentation at path save boundary: {:?}",
@@ -8160,12 +8198,15 @@ impl Presentation {
             note_commit_work(|work| work.zip_writes += 1);
             let mut output = Cursor::new(Vec::new());
             package.write_to(&mut output)?;
-            return Self::from_bytes(output.get_ref());
+            let mut reopened = Self::from_bytes(output.get_ref())?;
+            reopened.source_path = self.source_path.clone();
+            return Ok(reopened);
         };
         ensure_reread_zip_note();
         let package = package.reread(&parsed.package)?;
         let mut reopened = Self::from_package_reusing(package, Some((parsed, &self.media_store)))?;
         reopened.parsed = Some(Arc::new(Parsed::of(&reopened, Some(parsed))));
+        reopened.source_path = self.source_path.clone();
         Ok(reopened)
     }
 

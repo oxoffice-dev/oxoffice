@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oxoffice_chart::{CT_ChartSpace, ChartData, ChartKind};
@@ -46,7 +46,7 @@ use oxoffice_docx_oxml::units::Twips;
 use oxoffice_docx_oxml::web_settings::CT_WebSettings;
 use oxoffice_opc::content_types;
 use oxoffice_opc::relationship::rel_types;
-use oxoffice_opc::{OpcPackage, PackageReadLimits, write_atomic_file};
+use oxoffice_opc::{OpcPackage, PackageReadLimits, SaveOptions, write_atomic_file};
 use oxoffice_sml::Workbook;
 use quick_xml::Writer;
 use quick_xml::XmlVersion;
@@ -8013,6 +8013,9 @@ pub struct Document {
     pub(crate) embedded_invalidated_signatures: HashSet<(String, String)>,
     /// Whether retained package signature evidence is known invalid.
     pub(crate) package_signatures_invalidated: bool,
+    /// The file this document was opened from, canonical, which `save`
+    /// refuses to replace. Every staged clone and reopened candidate carries it.
+    source_path: Option<PathBuf>,
     /// Relationship-resolved glossary and building-block entries.
     pub(crate) glossary: Option<oxoffice_docx_oxml::glossary::CT_GlossaryDocument>,
     /// Existing glossary relationship target.
@@ -24724,6 +24727,7 @@ impl Document {
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
             package_signatures_invalidated: false,
+            source_path: None,
             glossary: None,
             glossary_part_name: None,
             glossary_dirty: false,
@@ -24890,6 +24894,7 @@ impl Document {
             comments_extended_owned: self.comments_extended_owned,
             embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
             package_signatures_invalidated: self.package_signatures_invalidated,
+            source_path: self.source_path.clone(),
             glossary: self.glossary.clone(),
             glossary_part_name: self.glossary_part_name.clone(),
             glossary_dirty: self.glossary_dirty,
@@ -26928,6 +26933,7 @@ impl Document {
     }
 
     pub(crate) fn commit_staged_mutation(&mut self, candidate: Self) {
+        let source_path = self.source_path.take();
         *self = Self::finish_staged_candidate(
             &self.package,
             self.package_signatures_invalidated,
@@ -26935,20 +26941,34 @@ impl Document {
             &mut self.bundled_fallback_layout_engine,
             candidate,
         );
+        self.source_path = source_path;
     }
 
     /// Open a document from a file path.
+    ///
+    /// The document remembers the file, and [`Document::save`] refuses to
+    /// replace it unless asked, see [`Document::save_with_options`].
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let package = OpcPackage::open(path)?;
-        Self::from_opened_package(package, true, None)
+        let package = OpcPackage::open(path.as_ref())?;
+        let mut document = Self::from_opened_package(package, true, None)?;
+        document.remember_source(path.as_ref());
+        Ok(document)
     }
 
     /// Open a password-protected agile-encrypted document from a file path.
     #[cfg(all(feature = "agile-encryption", not(target_arch = "wasm32")))]
     pub fn open_encrypted<P: AsRef<Path>>(path: P, password: &str) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
+        let file = std::fs::File::open(path.as_ref())?;
         let package = OpcPackage::from_encrypted_reader(file, password)?;
-        Self::from_package(package)
+        let mut document = Self::from_package(package)?;
+        document.remember_source(path.as_ref());
+        Ok(document)
+    }
+
+    /// Record `path` as the file this document was opened from. A path that
+    /// cannot be resolved records nothing.
+    pub(crate) fn remember_source(&mut self, path: &Path) {
+        self.source_path = std::fs::canonicalize(path).ok();
     }
 
     /// Open a document from bytes.
@@ -27478,6 +27498,7 @@ impl Document {
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
             package_signatures_invalidated,
+            source_path: None,
             glossary,
             glossary_part_name,
             glossary_dirty: false,
@@ -27643,9 +27664,32 @@ impl Document {
     /// claims to carry none. [`Document::save_as_package_class`] performs
     /// that conversion explicitly and keeps the VBA part.
     ///
+    /// A document opened from a file refuses to be saved over that file,
+    /// whatever the spelling of `path` (a symbolic link, a relative path, a
+    /// hard link), with [`Error::OverwritesSource`]. This differs from
+    /// python-docx. [`Document::save_with_options`] with
+    /// [`SaveOptions::overwrite_source`] replaces it.
     pub fn save<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        self.validate_model_resource_limits()?;
+        self.save_with_options(path, SaveOptions::default())
+    }
+
+    /// Save the document to a file path, as [`Document::save`] does, with
+    /// `options`.
+    pub fn save_with_options<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        options: SaveOptions,
+    ) -> Result<()> {
         let path = path.as_ref();
+        if !options.overwrite_source
+            && let Some(source) = &self.source_path
+            && oxoffice_opc::is_same_file(source, path)
+        {
+            return Err(Error::OverwritesSource {
+                path: path.to_path_buf(),
+            });
+        }
+        self.validate_model_resource_limits()?;
         if let Some(class) = self.package_class_for_path(path)? {
             return self.save_as_package_class(path, class);
         }
@@ -28233,6 +28277,7 @@ impl Document {
         let comments_extended_owned = self.comments_extended_owned;
         let embedded_invalidated_signatures = self.embedded_invalidated_signatures.clone();
         let package_signatures_invalidated = self.package_signatures_invalidated;
+        let source_path = self.source_path.clone();
         let opened = self.parsed.as_deref().filter(|_| in_memory);
         let mut reopened = match opened {
             Some(opened) => Self::from_package_reusing(
@@ -28277,6 +28322,7 @@ impl Document {
         reopened.comments_extended_owned = comments_extended_owned;
         reopened.embedded_invalidated_signatures = embedded_invalidated_signatures;
         reopened.package_signatures_invalidated = package_signatures_invalidated;
+        reopened.source_path = source_path;
         reopened.install_carried_body_scans(carried_scans);
         reopened.install_carried_blocks(carried_blocks);
         Ok(reopened)

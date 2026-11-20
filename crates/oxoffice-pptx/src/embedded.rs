@@ -335,6 +335,7 @@ impl Presentation {
         let mut staged = Self::from_package(package)?;
         staged.embedded_invalidated_signatures = self.embedded_invalidated_signatures.clone();
         staged.package_signatures_invalidated = self.package_signatures_invalidated;
+        staged.source_path = self.source_path.clone();
         Ok(staged)
     }
 
@@ -546,6 +547,7 @@ impl Presentation {
         }
         reopened.embedded_invalidated_signatures = embedded_invalidated_signatures;
         reopened.package_signatures_invalidated = package_signatures_invalidated;
+        reopened.source_path = self.source_path.take();
         *self = reopened;
         Ok(())
     }

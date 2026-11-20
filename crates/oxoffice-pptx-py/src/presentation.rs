@@ -994,7 +994,10 @@ impl PyPresentation {
         Ok(PyTuple::new(py, reports)?.unbind())
     }
 
-    fn save(&self, path: PathBuf, py: Python<'_>) -> PyResult<()> {
+    /// Save to a path. A presentation opened from a file refuses to replace
+    /// that file unless `overwrite_source` is true, unlike python-pptx.
+    #[pyo3(signature = (path, *, overwrite_source = false))]
+    fn save(&self, path: PathBuf, overwrite_source: bool, py: Python<'_>) -> PyResult<()> {
         if path
             .extension()
             .and_then(|value| value.to_str())
@@ -1005,7 +1008,7 @@ impl PyPresentation {
             ));
         }
         self.inner
-            .save(path)
+            .save_with_options(path, oxoffice_pptx::SaveOptions { overwrite_source })
             .map_err(|error| pptx_to_pyerr(py, error))
     }
 

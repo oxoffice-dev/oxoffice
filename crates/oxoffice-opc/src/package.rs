@@ -1296,6 +1296,38 @@ pub fn write_atomic_file(
     ))
 }
 
+/// How a facade's `save` treats its destination.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SaveOptions {
+    /// Replace the file the document was opened from. Off by default: `save`
+    /// refuses that file, so an edit never silently replaces its own input.
+    pub overwrite_source: bool,
+}
+
+/// Whether `a` and `b` name the same existing file, whatever their spelling.
+///
+/// Unix compares the device and inode, so a symbolic link, a `..` spelling or
+/// a hard link of a file is that file. Elsewhere the canonical paths are
+/// compared, which resolves links and, on Windows, the case of each name. A
+/// path that names no file is never the same file as another.
+pub fn is_same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 /// Name a staged file `.{file name}{suffix}`, keeping it within 255 bytes.
 ///
 /// Common file systems refuse a longer name, so a long file name keeps only

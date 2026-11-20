@@ -152,11 +152,11 @@ pub use oxoffice_docx_oxml::text::{
     SpecialCharacter,
 };
 pub use oxoffice_drawing::theme::CT_OfficeStyleSheet;
-pub use oxoffice_opc::PackageReadLimits;
 #[cfg(feature = "digital-signatures")]
 pub use oxoffice_opc::{
     CoveredRelationship, SignatureIssue, SignatureReport, SignerCertificateIdentity,
 };
+pub use oxoffice_opc::{PackageReadLimits, SaveOptions};
 pub use oxoffice_pdf::{PdfConformance, RasterFormat, RasterOptions, RasterOutput};
 pub use paragraph::{
     Alignment, BorderStyle, DropCap, FrameAnchor, FrameWrap, HyperlinkItemRef, HyperlinkRef,

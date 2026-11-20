@@ -114,6 +114,11 @@ document.add_paragraph("Approved")
 document.save("approved.docx")
 ```
 
+Unlike python-docx, `save` refuses to replace the file the document was opened
+from, so an edit never silently overwrites its input. Save under another name,
+or pass `overwrite_source=True` to replace it on purpose. The file is written
+atomically: a failed save leaves the destination as it was.
+
 ## Package XML escape hatch
 
 For an unmodelled package part, edit the DOCX ZIP with lxml, then reopen it
