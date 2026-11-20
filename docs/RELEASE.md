@@ -8,8 +8,9 @@ One manual workflow, no manual tags, no hand-edited changelog.
 2. Actions, **Release**, **Run workflow**, give the version (`0.2.0`,
    without `v`). Tick **dry_run** to build everything without publishing.
 3. The workflow sets the version, regenerates `CHANGELOG.md` with git-cliff,
-   commits `chore(release): vX.Y.Z`, tags `vX.Y.Z`, builds and publishes the
-   GitHub release.
+   commits `chore(release): vX.Y.Z`, tags `vX.Y.Z`, builds, checks each wheel
+   on its platform with `scripts/wheel_smoke.py` (the corpus opened, edited,
+   saved and rendered on the main thread) and publishes the GitHub release.
 
 ## Versions
 

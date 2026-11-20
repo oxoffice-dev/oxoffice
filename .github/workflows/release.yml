@@ -180,9 +180,48 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  # Each wheel, installed on its own platform, opens, edits, saves and renders
+  # the corpus on the main thread: 1 MiB of stack on Windows, where the tests
+  # run on an 8 MiB thread instead. The script and the corpus come from the
+  # commit the workflow runs on (main, or the branch of a dry run).
+  smoke:
+    name: Smoke ${{ matrix.wheel }}
+    needs: wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, wheel: wheel-ubuntu-latest-x86_64 }
+          - { runner: ubuntu-24.04-arm, wheel: wheel-ubuntu-latest-aarch64 }
+          - { runner: macos-latest, wheel: wheel-macos-latest-aarch64 }
+          - { runner: macos-15-intel, wheel: wheel-macos-latest-x86_64 }
+          - { runner: windows-latest, wheel: wheel-windows-latest-x64 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.wheel }}
+          path: dist
+      - run: python -m pip install --no-index --find-links dist oxoffice
+      - name: Open, edit, save and render the corpus on the main thread
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # A dry run builds main as it is, without the new version.
+          extra=()
+          if [ "$DRY_RUN" != true ]; then extra=(--version "$VERSION"); fi
+          python -I scripts/wheel_smoke.py tests/corpus/files --measure "${extra[@]}"
+
   publish:
     name: GitHub release
-    needs: [prepare, cli, wheels, sdist]
+    needs: [prepare, cli, wheels, sdist, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
