@@ -155,3 +155,15 @@ strip = false
 
 [profile.ci.package."*"]
 opt-level = 1
+
+# Timing builds for the scaling tests: the `ci` profile without debug
+# assertions. Debug builds check every edit against a copy of the whole
+# document, so every call grows with it and the timings say nothing about the
+# library.
+[profile.scaling]
+inherits = "ci"
+debug-assertions = false
+overflow-checks = false
+
+[profile.scaling.package."*"]
+opt-level = 1

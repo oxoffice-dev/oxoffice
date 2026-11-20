@@ -57,6 +57,24 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 - Rendering checks use the bundled fonts only. System fonts differ between
   machines.
 
+## Scaling tests
+
+`crates/oxoffice-py/tests/test_{docx,pptx}_scaling.py` time every public
+mutating call in a document of N paragraphs (or slides) and in one of 4N. They
+need a build without debug assertions: debug builds check every edit against
+a copy of the whole document, so every call grows with it.
+
+```bash
+maturin build --profile scaling -m crates/oxoffice-py/Cargo.toml -o dist
+pip install --force-reinstall dist/*.whl
+OXOFFICE_SCALING=quick pytest crates/oxoffice-py/tests   # the QUICK sets
+OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call
+```
+
+Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
+runs. A docx call of `GROWING` is a strict xfail tied to its issue: when a fix
+makes it flat, the XPASS fails the run until the call leaves the set.
+
 ## Known limitations
 
 A limitation users can hit, with a workaround, goes in
@@ -73,6 +91,9 @@ entry and closes the issue.
   compiled with hashes: `uv pip compile --universal --python-version 3.12
   --generate-hashes X.in -o X.txt`, installed with `pip install
   --require-hashes -r X.txt`.
+- The `scaling` job builds a second wheel with the `scaling` profile, beside
+  the `ci` one, and runs the scaling tests: the QUICK sets on pull requests,
+  every call on `main`.
 - Dependabot opens the monthly updates. Review them like any change.
 
 ## Documents and Office apps
