@@ -68,7 +68,7 @@ for slide in deck.slides:
             print(shape.text_frame.text)
 ```
 
-The Python API follows python-docx and python-pptx, so most code moves over by changing the import.
+The Python API starts from the names of python-docx and python-pptx, so most code reads the same, but it is not bound to them: it differs where that makes it safer or simpler, for example `save` refuses to overwrite the file a document was opened from.
 
 ### Rust
 

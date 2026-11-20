@@ -15,6 +15,9 @@ of dates.
 - Rust, CLI and Python go together. None is preferred over the others, and a
   feature is done when it reaches all three where it makes sense.
 - Word and PowerPoint stand as equals, and spreadsheets will join them.
+- **python-docx and python-pptx are a starting point, not a contract.**
+  Their names make the API familiar, but we do not keep parity with them:
+  the API differs wherever that makes it safer, simpler or faster.
 
 ## 1. Bootstrap
 
