@@ -36,6 +36,22 @@ from Rust, the command line or Python.**
 
 ## 🚀 Quick start
 
+### 📦 Install
+
+| Channel | Command |
+| --- | --- |
+| 🐚 Installer, Linux and macOS | `curl -fsSL https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.sh \| sh` |
+| 🪟 Installer, Windows | `powershell -ExecutionPolicy Bypass -c "irm https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.ps1 \| iex"` |
+| 🐍 PyPI | `pip install oxoffice`, `uv add oxoffice` or `uv tool install oxoffice` |
+| 🟢 conda | `pixi global install -c https://prefix.dev/hadim/oxoffice -c conda-forge oxoffice` |
+| 📦 GitHub release | binaries, wheels and checksums on the [releases page](https://github.com/oxoffice-dev/oxoffice/releases) |
+| 🦀 Rust | `oxoffice-docx = { git = "https://github.com/oxoffice-dev/oxoffice", tag = "v0.1.0" }` |
+
+The installers and the Python channels all give you the `oxoffice` command, and the Python channels also give
+you the `oxoffice` package. Every release ships `SHA256SUMS`, an SBOM and a signed build provenance: check any
+file with `gh attestation verify <file> --repo oxoffice-dev/oxoffice`. Details, pinning and verification:
+[docs/INSTALL.md](docs/INSTALL.md).
+
 ### Command line
 
 ```bash
@@ -84,22 +100,6 @@ let mut doc = Document::new();
 doc.add_paragraph("Hello from Rust");
 doc.save("hello.docx")?;
 ```
-
-## 📦 Install
-
-| Channel | Command |
-| --- | --- |
-| 🐚 Installer, Linux and macOS | `curl -fsSL https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.sh \| sh` |
-| 🪟 Installer, Windows | `powershell -ExecutionPolicy Bypass -c "irm https://github.com/oxoffice-dev/oxoffice/releases/latest/download/install.ps1 \| iex"` |
-| 🐍 PyPI | `pip install oxoffice`, `uv add oxoffice` or `uv tool install oxoffice` |
-| 🟢 conda | `pixi global install -c https://prefix.dev/hadim/oxoffice -c conda-forge oxoffice` |
-| 📦 GitHub release | binaries, wheels and checksums on the [releases page](https://github.com/oxoffice-dev/oxoffice/releases) |
-| 🦀 Rust | `oxoffice-docx = { git = "https://github.com/oxoffice-dev/oxoffice", tag = "v0.1.0" }` |
-
-The installers and the Python channels all give you the `oxoffice` command, and the Python channels also give
-you the `oxoffice` package. Every release ships `SHA256SUMS`, an SBOM and a signed build provenance: check any
-file with `gh attestation verify <file> --repo oxoffice-dev/oxoffice`. Details, pinning and verification:
-[docs/INSTALL.md](docs/INSTALL.md).
 
 ## 🗺️ Status
 
