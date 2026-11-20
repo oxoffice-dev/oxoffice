@@ -1,4 +1,4 @@
-"""Length values used by the public rpptx API."""
+"""Length values used by the public oxoffice.pptx API."""
 
 
 class Length(int):

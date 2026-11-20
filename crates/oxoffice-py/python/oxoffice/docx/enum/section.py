@@ -1,7 +1,7 @@
 """Word section enum names and values from python-docx 1.2.0.
 
 This module supplies enum constants only. It does not change the existing
-rdocx section ownership, string-valued properties or insertion semantics.
+oxoffice.docx section ownership, string-valued properties or insertion semantics.
 """
 
 from enum import IntEnum

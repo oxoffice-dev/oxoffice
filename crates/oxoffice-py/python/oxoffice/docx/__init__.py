@@ -1,4 +1,4 @@
-"""Python bindings for rdocx."""
+"""Word documents: the Python API of oxoffice-docx."""
 
 from __future__ import annotations
 
@@ -10,27 +10,27 @@ from .enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_TAB_LEADER, WD_U
 from .shared import Cm, Emu, Inches, Length, Mm, Pt, RGBColor, Twips
 
 
-class RdocxError(Exception):
-    """Base class for errors raised by rdocx."""
+class DocxError(Exception):
+    """Base class for errors raised by oxoffice.docx."""
 
 
-class PackageError(RdocxError):
+class PackageError(DocxError):
     """An OPC package, file, or document-part operation failed."""
 
 
-class XmlError(RdocxError):
+class XmlError(DocxError):
     """WordprocessingML could not be parsed or serialized."""
 
 
-class StaleElementError(RdocxError):
+class StaleElementError(DocxError):
     """A held content handle was invalidated by structural mutation."""
 
 
-class LayoutError(RdocxError):
+class LayoutError(DocxError):
     """Document layout or rendering failed."""
 
 
-class ReplacementCountError(RdocxError):
+class ReplacementCountError(DocxError):
     """A counted replacement matched a different number of times than expected.
 
     ``index`` is the position of the failing pair in a ``Document.replace_all``
@@ -49,7 +49,7 @@ class ReplacementCountError(RdocxError):
         return str(self.args[0])
 
 
-from ._rdocx import (
+from ._native import (
     HtmlDiagnostic,
     FontEmbeddingLicense,
     EmbeddedFont,
@@ -238,7 +238,7 @@ __all__ = [
     "ParagraphFormat",
     "Pt",
     "RGBColor",
-    "RdocxError",
+    "DocxError",
     "ReplacementCountError",
     "Revision",
     "Row",

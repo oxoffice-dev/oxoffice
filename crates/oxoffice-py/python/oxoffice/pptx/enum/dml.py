@@ -24,7 +24,7 @@ class MSO_LINE_DASH_STYLE(IntEnum):
     The first nine members carry the python-pptx 1.0.2 values and write the
     same `a:prstDash` value python-pptx writes. python-pptx cannot read
     `dot`, `sysDashDot` or `sysDashDotDot`, which PowerPoint for Mac's
-    scripting interface writes, so rpptx adds `DOT`, `SYSTEM_DASH_DOT` and
+    scripting interface writes, so oxoffice.pptx adds `DOT`, `SYSTEM_DASH_DOT` and
     `SYSTEM_DASH_DOT_DOT` to read every preset back. `SYSTEM_DASH_DOT` takes
     the value that scripting interface gives `sysDashDot`, the other two take
     values outside `MsoLineDashStyle`.

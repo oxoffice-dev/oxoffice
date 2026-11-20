@@ -1,4 +1,4 @@
-"""Unit and color values shared by the public rdocx API."""
+"""Unit and color values shared by the public oxoffice.docx API."""
 
 
 def _truncating_division(value: int, divisor: int) -> int:

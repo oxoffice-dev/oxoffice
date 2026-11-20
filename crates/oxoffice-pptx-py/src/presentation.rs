@@ -53,7 +53,7 @@ use crate::shape::length;
 use crate::slide::{
     PySlideCollection, PySlideLayoutCollection, PySlideMaster, PySlideMasterCollection,
 };
-use crate::{replacement_count_to_pyerr, rpptx_to_pyerr, rpptx_value_to_pyerr};
+use crate::{pptx_to_pyerr, pptx_value_to_pyerr, replacement_count_to_pyerr};
 
 /// The bundled 16:9 slide size, paired with the first dimension set on a deck
 /// that has no `p:sldSz`.
@@ -161,7 +161,7 @@ impl PyComment {
 }
 
 /// One issue `Presentation::validate` reports, with the snake_case variant
-/// name and the line `rpptx validate` prints for it.
+/// name and the line `oxoffice pptx validate` prints for it.
 #[pyclass(name = "ValidationIssue", frozen, get_all, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq, Eq)]
 pub struct PyValidationIssue {
@@ -359,7 +359,7 @@ impl PyAppProperties {
         presentation
             .inner
             .set_application_properties(properties)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 #[pymethods]
@@ -664,7 +664,7 @@ impl PyCustomProperties {
                 name: Some(name),
                 value: converted,
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
     fn delete(&self, py: Python<'_>, name: &str) -> PyResult<()> {
         self.presentation
@@ -672,7 +672,7 @@ impl PyCustomProperties {
             .inner
             .remove_custom_property(name)
             .map(|_| ())
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -708,7 +708,7 @@ impl PyCoreProperties {
         presentation
             .inner
             .set_core_properties(properties)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     fn text(&self, py: Python<'_>, field: CoreField) -> String {
@@ -931,7 +931,7 @@ impl PyPresentation {
                 oxoffice_pptx::Emu(width.unwrap_or(current_width)),
                 oxoffice_pptx::Emu(height.unwrap_or(current_height)),
             )
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -942,10 +942,10 @@ impl PyPresentation {
     fn new(path: Option<PathBuf>, py: Python<'_>) -> PyResult<Self> {
         match path {
             Some(path) => oxoffice_pptx::Presentation::open(path)
-                .map_err(|error| rpptx_to_pyerr(py, error))
+                .map_err(|error| pptx_to_pyerr(py, error))
                 .and_then(Self::from_presentation_owned),
             None => oxoffice_pptx::Presentation::new()
-                .map_err(|error| rpptx_to_pyerr(py, error))
+                .map_err(|error| pptx_to_pyerr(py, error))
                 .and_then(Self::from_presentation_owned),
         }
     }
@@ -953,7 +953,7 @@ impl PyPresentation {
     #[staticmethod]
     fn from_bytes(bytes: &[u8], py: Python<'_>) -> PyResult<Self> {
         oxoffice_pptx::Presentation::from_bytes(bytes)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
             .and_then(Self::from_presentation_owned)
     }
 
@@ -967,7 +967,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         let report = py
             .detach(|| candidate.sign(private_key, certificate))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let result = oxoffice_py_support::signature_report_to_py(py, &report)?;
         let survivors = self.unchanged_owners()?;
         let prepared = self.prepare_owners(
@@ -986,7 +986,7 @@ impl PyPresentation {
     fn verify_signatures(&self, py: Python<'_>) -> PyResult<Py<PyTuple>> {
         let reports = py
             .detach(|| self.inner.verify_signatures())
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let reports = reports
             .iter()
             .map(|report| oxoffice_py_support::signature_report_to_py(py, report))
@@ -1006,7 +1006,7 @@ impl PyPresentation {
         }
         self.inner
             .save(path)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[pyo3(name = "to_bytes")]
@@ -1014,7 +1014,7 @@ impl PyPresentation {
         self.inner
             .to_bytes()
             .map(|bytes| PyBytes::new(py, &bytes))
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -1103,12 +1103,12 @@ impl PyPresentation {
             let ids = indices.iter().map(|index| slide_ids[*index]).collect();
             native.push(
                 oxoffice_pptx::Section::new(id, name, ids)
-                    .map_err(|error| rpptx_value_to_pyerr(py, error.to_string()))?,
+                    .map_err(|error| pptx_value_to_pyerr(py, error.to_string()))?,
             );
         }
         self.inner
             .set_sections(native)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None))]
@@ -1132,7 +1132,7 @@ impl PyPresentation {
             Some(fonts) => self.inner.to_pdf_deterministic_with_fonts(fonts),
         })
         .map(|bytes| PyBytes::new(py, &bytes))
-        .map_err(|error| rpptx_to_pyerr(py, error))
+        .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None))]
@@ -1153,7 +1153,7 @@ impl PyPresentation {
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
             .detach(|| self.inner.to_pdf_with_diagnostics(font_refs))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((PyBytes::new(py, &payload), messages))
     }
@@ -1183,7 +1183,7 @@ impl PyPresentation {
                 .slide_png_deterministic_with_fonts(slide_index, dpi, fonts),
         })
         .map(|bytes| bytes.map(|bytes| PyBytes::new(py, &bytes)))
-        .map_err(|error| rpptx_to_pyerr(py, error))
+        .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (slide_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
@@ -1210,7 +1210,7 @@ impl PyPresentation {
                 self.inner
                     .render_slide_to_png_with_diagnostics(slide_index, dpi, font_refs)
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((payload.map(|bytes| PyBytes::new(py, &bytes)), messages))
     }
@@ -1236,7 +1236,7 @@ impl PyPresentation {
                 None => self.inner.slide_pngs_deterministic(dpi),
                 Some(fonts) => self.inner.slide_pngs_deterministic_with_fonts(dpi, fonts),
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         PyList::new(py, slides.iter().map(|slide| PyBytes::new(py, slide)))
     }
 
@@ -1262,7 +1262,7 @@ impl PyPresentation {
                 self.inner
                     .render_all_slides_with_diagnostics(dpi, font_refs)
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((
             PyList::new(py, payload.iter().map(|bytes| PyBytes::new(py, bytes)))?,
@@ -1293,7 +1293,7 @@ impl PyPresentation {
                     .inner
                     .text_layout_deterministic_with_fonts(width_factor, fonts),
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         PyTuple::new(py, frames.iter().map(PyTextFrameLayout::from))
     }
 
@@ -1330,7 +1330,7 @@ impl PyPresentation {
                     &refs,
                 )
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         match rendered {
             oxoffice_pptx::RasterOutput::SeparatePages(pages) => Ok(PyList::new(
                 py,
@@ -1360,7 +1360,7 @@ impl PyPresentation {
             .collect::<Vec<_>>();
         let result = py
             .detach(|| self.inner.fit_report(&refs))
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         Ok(crate::layout::PyFitReport::from(&result))
     }
 
@@ -1380,7 +1380,7 @@ impl PyPresentation {
             .collect::<Vec<_>>();
         let result = py
             .detach(|| self.inner.refresh_autofit(&refs))
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         Ok(crate::layout::PyAutofitRefreshResult::from(&result))
     }
 
@@ -1405,7 +1405,7 @@ impl PyPresentation {
             Some(fonts) => self.inner.to_notes_pdf_deterministic_with_fonts(fonts),
         })
         .map(|bytes| PyBytes::new(py, &bytes))
-        .map_err(|error| rpptx_to_pyerr(py, error))
+        .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Archival PDF from one caller-font bundle with the selected exact profile.
@@ -1430,7 +1430,7 @@ impl PyPresentation {
             .collect::<Vec<_>>();
         py.detach(|| self.inner.to_pdfa_deterministic_with_fonts(profile, &refs))
             .map(|bytes| PyBytes::new(py, &bytes))
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Audience handout PDF. Legal absent masters use read-only neutral defaults.
@@ -1454,7 +1454,7 @@ impl PyPresentation {
                 .to_handout_pdf_deterministic_with_fonts(arrangement, &refs)
         })
         .map(|bytes| PyBytes::new(py, &bytes))
-        .map_err(|error| rpptx_to_pyerr(py, error))
+        .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (slides_per_page = 6, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
@@ -1478,7 +1478,7 @@ impl PyPresentation {
                 self.inner
                     .handout_page_pngs_deterministic_with_fonts(arrangement, dpi, &refs)
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         PyList::new(py, pages.iter().map(|bytes| PyBytes::new(py, bytes)))
     }
 
@@ -1503,7 +1503,7 @@ impl PyPresentation {
         };
         py.detach(|| self.inner.to_html_with_options(&options))
             .map(|result| result.text)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Returns detached semantic text, image assets, and diagnostics.
@@ -1522,7 +1522,7 @@ impl PyPresentation {
         };
         py.detach(|| self.inner.to_html_with_options(&options))
             .map(|result| PyPresentationTextExport { result })
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Atomically saves semantic text and adjacent assets, returning diagnostics.
@@ -1542,7 +1542,7 @@ impl PyPresentation {
         };
         let diagnostics = py
             .detach(|| self.inner.save_html(&path, &options))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         PyTuple::new(py, diagnostics)
     }
 
@@ -1567,7 +1567,7 @@ impl PyPresentation {
         };
         py.detach(|| self.inner.to_markdown_with_options(&options))
             .map(|result| result.text)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Returns detached semantic text, image assets, and diagnostics.
@@ -1586,7 +1586,7 @@ impl PyPresentation {
         };
         py.detach(|| self.inner.to_markdown_with_options(&options))
             .map(|result| PyPresentationTextExport { result })
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Atomically saves semantic text and adjacent assets, returning diagnostics.
@@ -1606,7 +1606,7 @@ impl PyPresentation {
         };
         let diagnostics = py
             .detach(|| self.inner.save_markdown(&path, &options))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         PyTuple::new(py, diagnostics)
     }
 
@@ -1623,7 +1623,7 @@ impl PyPresentation {
             let path = file.extract::<PathBuf>()?;
             py.detach(|| oxoffice_pptx::Presentation::open_odp(path))
         }
-        .map_err(|error| rpptx_to_pyerr(py, error))?;
+        .map_err(|error| pptx_to_pyerr(py, error))?;
         let diagnostics = odp_diagnostics(&result.diagnostics);
         Ok((
             Self::from_presentation_owned(result.presentation)?,
@@ -1636,7 +1636,7 @@ impl PyPresentation {
     fn to_odp<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyBytes>, OdpDiagnostics)> {
         let result = py
             .detach(|| self.inner.to_odp_bytes())
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         Ok((
             PyBytes::new(py, &result.bytes),
             odp_diagnostics(&result.diagnostics),
@@ -1648,7 +1648,7 @@ impl PyPresentation {
     fn save_odp(&self, py: Python<'_>, path: PathBuf) -> PyResult<OdpDiagnostics> {
         py.detach(|| self.inner.save_odp(path))
             .map(|diagnostics| odp_diagnostics(&diagnostics))
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
@@ -1675,7 +1675,7 @@ impl PyPresentation {
                     .inner
                     .notes_page_pngs_deterministic_with_fonts(dpi, fonts),
             })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         PyList::new(py, notes.iter().map(|page| PyBytes::new(py, page)))
     }
 
@@ -1697,7 +1697,7 @@ impl PyPresentation {
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
             .detach(|| self.inner.to_notes_pdf_with_diagnostics(font_refs))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((PyBytes::new(py, &payload), messages))
     }
@@ -1720,7 +1720,7 @@ impl PyPresentation {
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
             .detach(|| self.inner.render_all_notes_with_diagnostics(dpi, font_refs))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((
             PyList::new(py, payload.iter().map(|bytes| PyBytes::new(py, bytes)))?,
@@ -1775,7 +1775,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         let counts = py
             .detach(|| candidate.try_replace_all_expected(&pairs))
-            .map_err(|error| rpptx_to_pyerr(py, error))?
+            .map_err(|error| pptx_to_pyerr(py, error))?
             .map_err(|mismatch| {
                 let error = replacement_count_to_pyerr(
                     py,
@@ -1795,7 +1795,7 @@ impl PyPresentation {
         let result = PyTuple::new(py, counts)?;
         let changed = py
             .detach(|| -> oxoffice_pptx::Result<bool> { Ok(!self.inner.saves_as(&candidate)?) })
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         if changed {
             let survivors = self.replaced_text_owners(&candidate)?;
             let prepared = self.prepare_owners(
@@ -1884,7 +1884,7 @@ impl PyPresentation {
                 .map_err(|error| pyo3::exceptions::PyOSError::new_err(error.to_string()))?
         };
         let package = oxoffice_pptx::OpcPackage::from_reader(std::io::Cursor::new(bytes))
-            .map_err(|error| rpptx_to_pyerr(py, error.into()))?;
+            .map_err(|error| pptx_to_pyerr(py, error.into()))?;
         let mut candidate = self.inner.clone();
         candidate
             .apply_theme(
@@ -1893,7 +1893,7 @@ impl PyPresentation {
                 import_masters,
                 layout_map.as_deref().unwrap_or(&[]),
             )
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let proofs = self.unchanged_owners()?;
         let prepared = self.prepare_owners(
             &candidate,
@@ -1917,11 +1917,11 @@ impl PyPresentation {
         py: Python<'_>,
     ) -> PyResult<()> {
         let author = oxoffice_pptx::CommentAuthor::new(id, name, initials, user_id, provider_id)
-            .map_err(|error| rpptx_value_to_pyerr(py, error.to_string()))?;
+            .map_err(|error| pptx_value_to_pyerr(py, error.to_string()))?;
         let mut candidate = self.inner.clone();
         candidate
             .add_comment_author(author)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = self.unchanged_owners()?;
         let prepared = self.prepare_owners(
             &candidate,
@@ -1957,7 +1957,7 @@ impl PyPresentation {
         let mut candidate = presentation.inner.clone();
         if candidate
             .set_header_footer(&settings, hide_on_title)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             let proofs = presentation.footer_owners(&candidate)?;
             let prepared = presentation.prepare_owners(
@@ -1977,7 +1977,7 @@ impl PyPresentation {
     fn slide_number_start(&self, py: Python<'_>) -> PyResult<Option<u32>> {
         self.inner
             .slide_number_start()
-            .map_err(|e| rpptx_to_pyerr(py, e))
+            .map_err(|e| pptx_to_pyerr(py, e))
     }
 
     #[setter]
@@ -1985,7 +1985,7 @@ impl PyPresentation {
         if self
             .inner
             .slide_number_start()
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
             == value
         {
             return Ok(());
@@ -1993,7 +1993,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         candidate
             .set_slide_number_start(value)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let proofs = self.unchanged_owners()?;
         let prepared = self.prepare_owners(
             &candidate,
@@ -2047,7 +2047,7 @@ impl PyPresentation {
         let fonts = self
             .inner
             .embedded_fonts()
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let mut snapshots = Vec::new();
         snapshots.try_reserve_exact(fonts.len()).map_err(|_| {
             pyo3::exceptions::PyMemoryError::new_err("font listing allocation failed")
@@ -2086,7 +2086,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         candidate
             .embed_font(name, oxoffice_pptx::EmbeddedFont::new(kind, data, license))
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         self.publish_font_candidate(py, candidate, "Presentation.embed_font")
     }
     #[pyo3(signature = (name, kind="regular"))]
@@ -2100,7 +2100,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         let removed = candidate
             .remove_embedded_font(name, kind)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
             .map(|font| {
                 PyEmbeddedFontFace::snapshot(py, font, &mut std::collections::BTreeMap::new())
             })
@@ -2116,7 +2116,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         let removed = candidate
             .remove_font(name)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
             .map(|font| {
                 PyEmbeddedTypeface::snapshot(py, font, &mut std::collections::BTreeMap::new())
             })
@@ -2129,28 +2129,28 @@ impl PyPresentation {
     fn embed_true_type_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.inner
             .embed_true_type_fonts()
-            .map_err(|e| rpptx_to_pyerr(py, e))
+            .map_err(|e| pptx_to_pyerr(py, e))
     }
     #[setter]
     fn set_embed_true_type_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
         let mut candidate = self.inner.clone();
         candidate
             .set_embed_true_type_fonts(value)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         self.publish_font_candidate(py, candidate, "Presentation.set_embed_true_type_fonts")
     }
     #[getter]
     fn save_subset_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.inner
             .save_subset_fonts()
-            .map_err(|e| rpptx_to_pyerr(py, e))
+            .map_err(|e| pptx_to_pyerr(py, e))
     }
     #[setter]
     fn set_save_subset_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
         let mut candidate = self.inner.clone();
         candidate
             .set_save_subset_fonts(value)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         self.publish_font_candidate(py, candidate, "Presentation.set_save_subset_fonts")
     }
 }
@@ -2319,7 +2319,7 @@ impl PyPptElement {
                 inner.master_xml(i)
             }
         };
-        result.map_err(|error| rpptx_to_pyerr(py, error))
+        result.map_err(|error| pptx_to_pyerr(py, error))
     }
     fn write_xml(
         &self,
@@ -2410,7 +2410,7 @@ impl PyPptElement {
                 inner.replace_master_xml(i, xml)
             }
         };
-        result.map_err(|error| rpptx_to_pyerr(py, error))
+        result.map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -4801,7 +4801,7 @@ impl PyPresentation {
         let mut candidate = self.inner.clone();
         let count = py
             .detach(|| candidate.try_replace_text(placeholder, replacement))
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         if let Some(expected) = expect.filter(|expected| *expected != count) {
             return Err(replacement_count_to_pyerr(py, placeholder, expected, count));
         }
@@ -5379,7 +5379,7 @@ impl PyPresentation {
 // let parent = smallvec![PathSeg::Slide(slide_index)];
 // let mut presentation = self.presentation.borrow_mut(py);
 // let mut candidate = presentation.inner.clone();
-// candidate.move_shape(slide_index, from_, to).map_err(|e| rpptx_to_pyerr(py, e))?;
+// candidate.move_shape(slide_index, from_, to).map_err(|e| pptx_to_pyerr(py, e))?;
 // let proofs = presentation.moved_shape_owners(&parent, from_, to)?;
 // let prepared = presentation.prepare_owners(&candidate, "ShapeCollection.move", &proofs, false, false, false)?;
 // presentation.publish_owners(candidate, prepared)
@@ -5549,7 +5549,7 @@ pub(crate) fn collect_caller_fonts<'py>(
             selected.extend(explicit);
             Ok::<_, oxoffice_layout::LayoutError>(selected)
         })
-        .map_err(|error| rpptx_value_to_pyerr(py, error.to_string()))?;
+        .map_err(|error| pptx_value_to_pyerr(py, error.to_string()))?;
     Ok((!selected.is_empty()).then_some(selected))
 }
 
@@ -5820,7 +5820,7 @@ impl PyPresentation {
         if self
             .inner
             .saves_as(&candidate)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             return Ok(());
         }

@@ -11,14 +11,6 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[lib]
-name = "_rpptx"
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = []
-extension-module = ["pyo3/extension-module"]
-
 [dependencies]
 oxoffice-drawing = { workspace = true }
 oxoffice-layout = { workspace = true }

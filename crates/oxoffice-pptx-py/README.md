@@ -1,14 +1,15 @@
 # oxoffice-pptx-py
 
-Native rpptx for Python
+The Rust bindings behind `oxoffice.pptx`, the PowerPoint API of the `oxoffice` Python
+package. The `oxoffice-py` crate builds the wheel.
 
-`rpptx` gives Python applications a native PPTX workflow for creating,
+`oxoffice.pptx` gives Python applications a native PPTX workflow for creating,
 opening, editing, and saving PowerPoint-compatible presentations. It also
 supports comments, speaker notes, and deterministic rendering. It works
 directly with OOXML packages and does not require Microsoft PowerPoint,
 LibreOffice, a conversion service, or a Java or .NET runtime.
 
-The package runs the Rust `rpptx` presentation engine locally, exposes a typed
+The package runs the Rust `oxoffice-pptx` presentation engine locally, exposes a typed
 Python API, and ships a default template for from-scratch deck creation. It
 renders slides and speaker notes without a remote service, supports review
 through notes and modern comment threads, and preserves safe package content
@@ -19,18 +20,18 @@ outside the focused Python editing surface.
 Install the current release from PyPI:
 
 ```sh
-python -m pip install rpptx
+python -m pip install oxoffice
 ```
 
-`rpptx` requires CPython 3.9 or newer. Its platform wheels use the Python 3.9
+`oxoffice` requires CPython 3.10 or newer. Its platform wheels use the Python 3.10
 stable ABI, so one wheel supports multiple compatible Python versions. Source
 installation requires a Rust toolchain and maturin.
 
 ## Quick start
 
 ```python
-from rpptx import Presentation
-from rpptx.util import Inches
+from oxoffice.pptx import Presentation
+from oxoffice.pptx.util import Inches
 
 presentation = Presentation()
 slide = presentation.slides.add_slide(presentation.slide_layouts[6])
@@ -55,7 +56,7 @@ with open("review.pdf", "wb") as output:
   on one slide or in one text frame, with an optional expected count that
   leaves the deck unchanged on a mismatch.
 - Package and PresentationML validation that returns the issues
-  `rpptx validate` reports as typed values.
+  `oxoffice pptx validate` reports as typed values.
 - Speaker-note text plus modern comment authors, threads, replies, thread
   resolution and removal, and ordered comment movement.
 - Master, layout, placeholder, theme, shape, chart, media, and relationship
@@ -78,13 +79,13 @@ with open("review.pdf", "wb") as output:
 
 ## Use it when
 
-Use `rpptx` when a Python service, desktop application, or automation task
+Use `oxoffice.pptx` when a Python service, desktop application, or automation task
 needs to create, inspect, update, comment on, or render presentations locally.
 It is suited to generated decks, template workflows, review, and previews.
 
 ## Relationship
 
-The Python API is intentionally focused. It covers the documented `rpptx`
+The Python API is intentionally focused. It covers the documented `oxoffice.pptx`
 surface and the reviewed python-pptx Getting Started workflows, but it is not a
 drop-in replacement for every python-pptx method or private lxml object.
 
@@ -93,7 +94,7 @@ drop-in replacement for every python-pptx method or private lxml object.
 Open and inspect an existing presentation:
 
 ```python
-from rpptx import Presentation
+from oxoffice.pptx import Presentation
 
 presentation = Presentation("deck.pptx")
 print(len(presentation.slides))
@@ -118,16 +119,14 @@ The release gate validates the installed package with strict mypy and
 
 ## Project links
 
-- [Source repository](https://github.com/tensorbee/rdocx)
-- [Issue tracker](https://github.com/tensorbee/rdocx/issues)
-- [Changelog](https://github.com/tensorbee/rdocx/blob/main/CHANGELOG.md)
+- [Source repository](https://github.com/oxoffice-dev/oxoffice)
+- [Issue tracker](https://github.com/oxoffice-dev/oxoffice/issues)
+- [Changelog](https://github.com/oxoffice-dev/oxoffice/blob/main/CHANGELOG.md)
 
 ## License
 
-Licensed under either the
-[MIT License](https://github.com/tensorbee/rdocx/blob/main/LICENSE) or the
-[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), at your
-option.
+Licensed under the
+[MIT License](https://github.com/oxoffice-dev/oxoffice/blob/main/LICENSE).
 
 ## Licensed font embedding
 
@@ -136,7 +135,7 @@ license identity. Binary readers are bounded and consumed through actual EOF.
 
 ```python
 from pathlib import Path
-from rpptx import Presentation, FontEmbeddingLicense
+from oxoffice.pptx import Presentation, FontEmbeddingLicense
 
 value = Presentation()
 license = FontEmbeddingLicense(authorized=True, identity="SIL Open Font License 1.1")

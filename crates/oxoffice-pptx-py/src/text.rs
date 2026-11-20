@@ -12,9 +12,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyFloat, PyList, PySlice, PyString};
 
 use crate::normalize_index;
+use crate::pptx_to_pyerr;
 use crate::presentation::PyPresentation;
 use crate::replacement_count_to_pyerr;
-use crate::rpptx_to_pyerr;
 use crate::shape::{shape_ref_at, slide_index};
 use crate::slide::PySlide;
 use crate::table::cell_ref_at;
@@ -32,7 +32,7 @@ const MAX_FONT_SIZE: i64 = 400_000;
 const MAX_SPACING_LINES: f64 = 132.0;
 
 fn length_object(py: Python<'_>, emu: i64) -> PyResult<Py<PyAny>> {
-    py.import("rpptx")?
+    py.import("oxoffice.pptx")?
         .getattr("Length")?
         .call1((emu,))
         .map(Bound::unbind)
@@ -63,7 +63,7 @@ pub(crate) fn anchor_from_value(value: i32) -> PyResult<TextAnchor> {
 }
 
 fn text_enum(py: Python<'_>, name: &str, value: i32) -> PyResult<Py<PyAny>> {
-    py.import("rpptx.enum.text")?
+    py.import("oxoffice.pptx.enum.text")?
         .getattr(name)?
         .call1((value,))
         .map(Bound::unbind)
@@ -95,7 +95,7 @@ fn points_spacing(emu: i64) -> PyResult<TextSpacing> {
     let centipoints = emu / EMU_PER_CENTIPOINT;
     if emu != 0 && centipoints == 0 {
         return Err(PyValueError::new_err(
-            "spacing bare int is EMU; storage is 0.01 point; use rpptx.util.Pt(6) or an explicit float line multiple",
+            "spacing bare int is EMU; storage is 0.01 point; use oxoffice.pptx.util.Pt(6) or an explicit float line multiple",
         ));
     }
     Ok(TextSpacing::Points(centipoints as i32))
@@ -231,7 +231,7 @@ fn update_style_level(
     let mut properties = presentation
         .inner
         .master_text_style(master, style, level)
-        .map_err(|error| crate::rpptx_to_pyerr(py, error))?
+        .map_err(|error| crate::pptx_to_pyerr(py, error))?
         .cloned()
         .unwrap_or_default();
     let before = properties.clone();
@@ -242,7 +242,7 @@ fn update_style_level(
     let mut candidate = presentation.inner.clone();
     candidate
         .set_master_text_style(master, style, level, properties)
-        .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+        .map_err(|error| crate::pptx_to_pyerr(py, error))?;
     let proofs = presentation.unchanged_owners()?;
     let prepared = presentation.prepare_owners(
         &candidate,
@@ -363,7 +363,7 @@ impl PyTextFrame {
         *side(&mut insets) = value.map(Emu);
         let (left, right, top, bottom) = insets;
         self.update(py, |frame| frame.set_insets(left, right, top, bottom))?
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -504,11 +504,11 @@ impl PyTextFrame {
         let location = presentation
             .inner
             .text_frame_location(slide, &children, row.zip(column))
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let inner = &mut presentation.inner;
         let result = py
             .detach(|| inner.fit_text_at(&location, font_family.as_deref(), size, &refs))
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         Ok(crate::layout::PyAutofitUpdate::from(&result))
     }
 
@@ -563,7 +563,7 @@ impl PyTextFrame {
             cell_ref_at(&presentation, &self.path)
                 .ok_or_else(|| PyIndexError::new_err("cell index out of range"))?;
             if placeholder.is_empty() {
-                return Err(rpptx_to_pyerr(
+                return Err(pptx_to_pyerr(
                     py,
                     oxoffice_pptx::Error::InvalidSlideMutation {
                         operation: "replace text",
@@ -583,7 +583,7 @@ impl PyTextFrame {
         let count = native_text_frame_mut_at(&mut candidate, &current)
             .ok_or_else(|| PyValueError::new_err("shape has no text frame"))?
             .try_replace_text(placeholder, replacement, expect)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         if let Some(expected) = expect.filter(|&expected| expected != count) {
             return Err(replacement_count_to_pyerr(py, placeholder, expected, count));
         }
@@ -772,7 +772,7 @@ impl PyParagraph {
             let properties = presentation
                 .inner
                 .master_text_style(master, style, level)
-                .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+                .map_err(|error| crate::pptx_to_pyerr(py, error))?;
             return Ok(read(properties));
         }
         text_frame_ref_at(&presentation, &self.path)
@@ -835,7 +835,7 @@ fn paragraph_spacing(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<TextSp
         None => Ok(None),
         Some(value) if value.is_none() => Ok(None),
         Some(value) if value.is_instance_of::<PyBool>() => Err(PyTypeError::new_err(
-            "spacing rejects bool as EMU; use rpptx.util.Pt(6) or an explicit float line multiple",
+            "spacing rejects bool as EMU; use oxoffice.pptx.util.Pt(6) or an explicit float line multiple",
         )),
         Some(value) if value.is_instance_of::<PyFloat>() => {
             lines_spacing(value.extract()?).map(Some)
@@ -1034,7 +1034,7 @@ impl PyParagraph {
                 field_type,
                 text.as_deref(),
             )
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let proofs = p.appended_text_owners(&self.path)?;
         let prepared = p.prepare_owners(
             &candidate,
@@ -1109,10 +1109,12 @@ impl PyParagraph {
             Some(value) if value.is_none() => None,
             Some(value) if value.is_instance_of::<PyBool>() => {
                 return Err(PyTypeError::new_err(
-                    "line_spacing rejects bool; use a positive line multiple such as 1.5 or rpptx.util.Pt(18)",
+                    "line_spacing rejects bool; use a positive line multiple such as 1.5 or oxoffice.pptx.util.Pt(18)",
                 ));
             }
-            Some(value) if value.is_instance(&py.import("rpptx")?.getattr("Length")?)? => {
+            Some(value)
+                if value.is_instance(&py.import("oxoffice.pptx")?.getattr("Length")?)? =>
+            {
                 Some(points_spacing(value.extract()?)?)
             }
             Some(value) => Some(lines_spacing(value.extract()?)?),
@@ -1122,7 +1124,7 @@ impl PyParagraph {
             TextSpacing::Percent(value) => value == "0",
         }) {
             return Err(PyValueError::new_err(
-                "line_spacing must store a positive value; use a positive line multiple such as 1.5 or rpptx.util.Pt(18)",
+                "line_spacing must store a positive value; use a positive line multiple such as 1.5 or oxoffice.pptx.util.Pt(18)",
             ));
         }
         self.update(py, |properties| properties.line_spacing = spacing)
@@ -1328,7 +1330,7 @@ impl PyParagraph {
         color
             .map(|color| {
                 let [red, green, blue] = color.components();
-                py.import("rpptx.dml.color")?
+                py.import("oxoffice.pptx.dml.color")?
                     .getattr("RGBColor")?
                     .call1((red, green, blue))
                     .map(Bound::unbind)
@@ -1390,10 +1392,12 @@ impl PyParagraph {
             Some(value) if value.is_none() => None,
             Some(value) if value.is_instance_of::<PyBool>() => {
                 return Err(PyTypeError::new_err(
-                    "bullet size rejects bool. Use a fraction from 0.25 to 4.0 or rpptx.util.Pt(17.85)",
+                    "bullet size rejects bool. Use a fraction from 0.25 to 4.0 or oxoffice.pptx.util.Pt(17.85)",
                 ));
             }
-            Some(value) if value.is_instance(&py.import("rpptx")?.getattr("Length")?)? => {
+            Some(value)
+                if value.is_instance(&py.import("oxoffice.pptx")?.getattr("Length")?)? =>
+            {
                 let emu = value.extract::<i64>()?;
                 let centipoints = i32::try_from(emu / EMU_PER_CENTIPOINT).map_err(|_| {
                     PyValueError::new_err("bullet point size is outside the stored range")
@@ -1761,7 +1765,7 @@ impl PyHyperlink {
         let Some(target) = presentation
             .inner
             .run_target_slide(slide_index(&current)?, shape_id, paragraph, run)
-            .map_err(|error| rpptx_to_pyerr(py, error))?
+            .map_err(|error| pptx_to_pyerr(py, error))?
         else {
             return Ok(None);
         };
@@ -1796,7 +1800,7 @@ impl PyHyperlink {
         presentation
             .inner
             .set_run_target_slide(slide_index(&current)?, shape_id, paragraph, run, target)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Points the run's click hyperlink at `value`, or removes it for `None`
@@ -1832,7 +1836,7 @@ impl PyHyperlink {
                 address,
             )
         };
-        result.map_err(|error| rpptx_to_pyerr(py, error))
+        result.map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -2439,12 +2443,12 @@ impl PyFont {
         let spacing = value
             .map(|value| -> PyResult<TextPointValue> {
                 if value.is_instance_of::<PyBool>() {
-                    return Err(PyTypeError::new_err("character spacing rejects bool as EMU; use rpptx.util.Pt(2)"));
+                    return Err(PyTypeError::new_err("character spacing rejects bool as EMU; use oxoffice.pptx.util.Pt(2)"));
                 }
                 let emu = value.extract::<i64>()?;
                 let centipoints = emu / EMU_PER_CENTIPOINT;
                 if emu != 0 && centipoints == 0 {
-                    return Err(PyValueError::new_err("character spacing bare int is EMU; storage is 0.01 point; use rpptx.util.Pt(2), with signed Length values supported"));
+                    return Err(PyValueError::new_err("character spacing bare int is EMU; storage is 0.01 point; use oxoffice.pptx.util.Pt(2), with signed Length values supported"));
                 }
                 if (-MAX_FONT_SIZE..=MAX_FONT_SIZE).contains(&centipoints) {
                     Ok(TextPointValue::Centipoints(centipoints as i32))
@@ -2461,7 +2465,7 @@ impl PyFont {
     #[getter]
     fn language_id(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let tag = self.language(py)?;
-        py.import("rpptx.enum.lang")?
+        py.import("oxoffice.pptx.enum.lang")?
             .getattr("_from_tag")?
             .call1((tag,))
             .map(Bound::unbind)
@@ -2471,7 +2475,7 @@ impl PyFont {
     fn set_language_id(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         self.validate(py)?;
         let tag = py
-            .import("rpptx.enum.lang")?
+            .import("oxoffice.pptx.enum.lang")?
             .getattr("_to_tag")?
             .call1((value,))?
             .extract::<Option<String>>()?;

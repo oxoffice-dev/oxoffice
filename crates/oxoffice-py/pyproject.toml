@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "oxoffice"
+dynamic = ["version"]
+requires-python = ">=3.10"
+description = "Read, write, edit, compare and render Word and PowerPoint files, natively"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "oxoffice contributors" }]
+keywords = ["docx", "pptx", "word", "powerpoint", "ooxml", "pdf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Office/Business",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.scripts]
+oxoffice = "oxoffice.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/oxoffice-dev/oxoffice"
+Repository = "https://github.com/oxoffice-dev/oxoffice"
+Issues = "https://github.com/oxoffice-dev/oxoffice/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "oxoffice._oxoffice"
+features = ["extension-module"]

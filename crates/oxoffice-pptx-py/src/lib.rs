@@ -1,4 +1,4 @@
-//! Python bindings for the rpptx facade.
+//! Python bindings for the oxoffice-pptx facade, published as `oxoffice.pptx`.
 
 mod dml;
 mod layout;
@@ -31,7 +31,7 @@ pub(crate) fn normalize_index(index: isize, len: usize, kind: &str) -> PyResult<
 }
 
 fn public_exception_type<'py>(py: Python<'py>, class_name: &str) -> PyResult<Bound<'py, PyType>> {
-    py.import("rpptx")
+    py.import("oxoffice.pptx")
         .and_then(|module| module.getattr(class_name))
         .and_then(|class| class.cast_into::<PyType>().map_err(Into::into))
 }
@@ -44,7 +44,7 @@ fn public_error(py: Python<'_>, class_name: &str, message: String) -> PyErr {
 }
 
 /// A counted replacement that matched a different number of times than the
-/// caller expected, worded like `rpptx replace --expect`.
+/// caller expected, worded like `oxoffice pptx replace --expect`.
 pub(crate) fn replacement_count_to_pyerr(
     py: Python<'_>,
     placeholder: &str,
@@ -114,7 +114,7 @@ pub(crate) fn validate_path(
     Ok(())
 }
 
-pub(crate) fn rpptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyErr {
+pub(crate) fn pptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyErr {
     let class_name = match &error {
         oxoffice_pptx::Error::MalformedPart { .. } => "XmlError",
         oxoffice_pptx::Error::Package(_)
@@ -125,17 +125,17 @@ pub(crate) fn rpptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyE
         | oxoffice_pptx::Error::MissingPart { .. }
         | oxoffice_pptx::Error::CorePropertiesPartCollision { .. }
         | oxoffice_pptx::Error::DuplicateNotesSlides { .. } => "PackageError",
-        _ => "RpptxError",
+        _ => "PptxError",
     };
     public_error(py, class_name, error.to_string())
 }
 
-pub(crate) fn rpptx_value_to_pyerr(py: Python<'_>, message: String) -> PyErr {
-    public_error(py, "RpptxError", message)
+pub(crate) fn pptx_value_to_pyerr(py: Python<'_>, message: String) -> PyErr {
+    public_error(py, "PptxError", message)
 }
 
-#[pymodule]
-fn _rpptx(module: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register every class and function of the pptx bindings on `module`.
+pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyPresentation>()?;
     module.add_class::<slide::PyNotesSlide>()?;
     module.add_class::<slide::PyNotesTextFrame>()?;

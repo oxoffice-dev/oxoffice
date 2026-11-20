@@ -8,8 +8,8 @@ use smallvec::smallvec;
 
 use crate::dml::{FillTarget, PyFillFormat, PyLineFormat, PyShadowFormat};
 use crate::normalize_index;
+use crate::pptx_to_pyerr;
 use crate::presentation::PyPresentation;
-use crate::rpptx_to_pyerr;
 use crate::slide::PySlide;
 use crate::table::PyTable;
 use crate::text::PyTextFrame;
@@ -71,7 +71,7 @@ pub(crate) fn length(
 ) -> PyResult<Option<Py<PyAny>>> {
     value
         .map(|value| {
-            py.import("rpptx")?
+            py.import("oxoffice.pptx")?
                 .getattr("Length")?
                 .call1((value.0,))
                 .map(Bound::unbind)
@@ -114,7 +114,7 @@ fn preset_name(py: Python<'_>, shape_type: &Bound<'_, PyAny>) -> PyResult<String
         return shape_type.extract::<String>();
     }
     let value = shape_type.extract::<i64>()?;
-    py.import("rpptx.enum.shapes")?
+    py.import("oxoffice.pptx.enum.shapes")?
         .getattr("MSO_SHAPE")?
         .call1((value,))
         .map_err(|_| PyValueError::new_err("unsupported MSO_SHAPE value"))?
@@ -274,7 +274,7 @@ impl PyShape {
                 shape_owner(&current)?,
                 &shape_indices(&current).collect::<Vec<_>>(),
             )
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let flags = native_shape_ref_at(&candidate, &current)
             .and_then(|shape| shape.flips())
             .ok_or_else(|| PyValueError::new_err("opaque shape has no flip flags"))?;
@@ -286,10 +286,10 @@ impl PyShape {
         native_shape_mut_at(&mut candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?
             .set_flips(flags.0, flags.1)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -342,10 +342,10 @@ impl PyShape {
                 id,
                 site,
             )
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -382,7 +382,7 @@ impl PyShape {
                     shape_owner(current)?,
                     &shape_indices(current).collect::<Vec<_>>(),
                 )
-                .map_err(|error| rpptx_to_pyerr(py, error))?;
+                .map_err(|error| pptx_to_pyerr(py, error))?;
             let Ok(mut preview) = oxoffice_pptx_oxml::shape_tree::CT_Shape::from_xml(&xml) else {
                 return Ok(None);
             };
@@ -453,14 +453,14 @@ impl PyShape {
                 let revision = presentation.prepare_local_property(operation)?;
                 let mut shape = native_shape_mut_at(&mut presentation.inner, &current)
                     .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?;
-                change(&mut shape).map_err(|error| rpptx_to_pyerr(py, error))?;
+                change(&mut shape).map_err(|error| pptx_to_pyerr(py, error))?;
                 return presentation.commit_local_property(revision);
             }
             None => {}
         }
         let owner = shape_owner(&current)?;
         let before_xml =
-            part_xml(&presentation.inner, owner).map_err(|error| rpptx_to_pyerr(py, error))?;
+            part_xml(&presentation.inner, owner).map_err(|error| pptx_to_pyerr(py, error))?;
         let before_identity = {
             let shape = native_shape_ref_at(&presentation.inner, &current)
                 .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?;
@@ -469,7 +469,7 @@ impl PyShape {
         let mut candidate = presentation.inner.clone();
         let mut shape = native_shape_mut_at(&mut candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?;
-        change(&mut shape).map_err(|error| rpptx_to_pyerr(py, error))?;
+        change(&mut shape).map_err(|error| pptx_to_pyerr(py, error))?;
         let after_identity = {
             let shape = native_shape_ref_at(&candidate, &current)
                 .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?;
@@ -480,7 +480,7 @@ impl PyShape {
                 "survival proof changes physical owner identity",
             ));
         }
-        let after_xml = part_xml(&candidate, owner).map_err(|error| rpptx_to_pyerr(py, error))?;
+        let after_xml = part_xml(&candidate, owner).map_err(|error| pptx_to_pyerr(py, error))?;
         if before_xml == after_xml {
             return Ok(());
         }
@@ -581,15 +581,15 @@ impl PyShape {
             return presentation
                 .inner
                 .effective_geometry_at(owner, &path)
-                .map_err(|error| rpptx_to_pyerr(py, error));
+                .map_err(|error| pptx_to_pyerr(py, error));
         }
         let mut candidate = presentation.inner.clone();
         candidate
             .materialize_owner_geometry(owner, &path)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         candidate
             .effective_geometry_at(owner, &path)
-            .map_err(|e| rpptx_to_pyerr(py, e))
+            .map_err(|e| pptx_to_pyerr(py, e))
     }
 
     fn picture_id(&self, py: Python<'_>) -> PyResult<(oxoffice_pptx::ShapeOwner, u32)> {
@@ -696,9 +696,9 @@ impl PyShape {
         let mut candidate = presentation.inner.clone();
         let range = candidate
             .shapes_mut_at(slide, &group)
-            .map_err(|error| rpptx_to_pyerr(py, error))?
+            .map_err(|error| pptx_to_pyerr(py, error))?
             .ungroup(*index)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let survivors = presentation.ungrouped_shape_owners(parent, *index, range.len())?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -770,7 +770,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::Begin)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         length(py, Some(point.0))
     }
     #[setter]
@@ -780,7 +780,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::Begin)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         point.0 = oxoffice_pptx::Emu(value);
         self.edit(py, ShapeEdit::Staged, "Shape.begin_x", |shape| {
             shape.set_connector_endpoint(oxoffice_pptx::ConnectorEnd::Begin, point.0, point.1)
@@ -792,7 +792,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::Begin)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         length(py, Some(point.1))
     }
     #[setter]
@@ -802,7 +802,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::Begin)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         point.1 = oxoffice_pptx::Emu(value);
         self.edit(py, ShapeEdit::Staged, "Shape.begin_y", |shape| {
             shape.set_connector_endpoint(oxoffice_pptx::ConnectorEnd::Begin, point.0, point.1)
@@ -814,7 +814,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::End)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         length(py, Some(point.0))
     }
     #[setter]
@@ -824,7 +824,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::End)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         point.0 = oxoffice_pptx::Emu(value);
         self.edit(py, ShapeEdit::Staged, "Shape.end_x", |shape| {
             shape.set_connector_endpoint(oxoffice_pptx::ConnectorEnd::End, point.0, point.1)
@@ -836,7 +836,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::End)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         length(py, Some(point.1))
     }
     #[setter]
@@ -846,7 +846,7 @@ impl PyShape {
             .read(py, |shape| {
                 shape.connector_endpoint(oxoffice_pptx::ConnectorEnd::End)
             })?
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         point.1 = oxoffice_pptx::Emu(value);
         self.edit(py, ShapeEdit::Staged, "Shape.end_y", |shape| {
             shape.set_connector_endpoint(oxoffice_pptx::ConnectorEnd::End, point.0, point.1)
@@ -975,11 +975,11 @@ impl PyShape {
             .borrow(py)
             .inner
             .effective_geometry_at(shape_owner(&resolved)?, &shape_path)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let Some((left, top, width, height)) = geometry else {
             return Ok(None);
         };
-        let length = py.import("rpptx")?.getattr("Length")?;
+        let length = py.import("oxoffice.pptx")?.getattr("Length")?;
         let values = [left, top, width, height]
             .into_iter()
             .map(|value| length.call1((value.0,)))
@@ -1108,7 +1108,7 @@ impl PyShape {
             oxoffice_pptx::ShapeType::TextBox => 17,
             oxoffice_pptx::ShapeType::Table => 19,
         };
-        py.import("rpptx.enum.shapes")?
+        py.import("oxoffice.pptx.enum.shapes")?
             .getattr("MSO_SHAPE_TYPE")?
             .call1((value,))
             .map(|member| Some(member.unbind()))
@@ -1125,7 +1125,7 @@ impl PyShape {
         })?;
         match (kind, preset) {
             (_, Some(preset)) => py
-                .import("rpptx.enum.shapes")?
+                .import("oxoffice.pptx.enum.shapes")?
                 .getattr("MSO_SHAPE")?
                 .call_method1("from_xml", (preset,))
                 .map(|member| Some(member.unbind())),
@@ -1268,7 +1268,7 @@ impl PyShape {
     fn xml<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let xml = self
             .read(py, |shape| shape.xml())?
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         Ok(PyBytes::new(py, &xml))
     }
 
@@ -1279,7 +1279,7 @@ impl PyShape {
         let image = presentation
             .inner
             .picture_image_at(slide, shape_id)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         Ok(PyImage {
             ext: image_extension(&image.content_type, &image.part_name),
             content_type: image.content_type,
@@ -1360,7 +1360,7 @@ impl PyShape {
                 &bytes,
                 &filename,
             )
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = presentation.replaced_shape_owners(&current.segs)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1384,7 +1384,7 @@ impl PyShape {
             .borrow_mut(py)
             .inner
             .replace_picture_image_at(slide, shape_id, &bytes)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -1422,7 +1422,7 @@ impl PyShape {
         native_shape_mut_at(&mut candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?
             .set_text(text)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = presentation.text_changed_owners(&self.path)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1559,7 +1559,7 @@ impl PyPlaceholderFormat {
         })?;
         idx.ok_or_else(|| PyValueError::new_err("shape is not a placeholder"))?;
         Ok(py
-            .import("rpptx.enum.shapes")?
+            .import("oxoffice.pptx.enum.shapes")?
             .getattr("PP_PLACEHOLDER")?
             .call_method1("from_xml", (token.unwrap_or_else(|| "obj".into()),))?
             .unbind())
@@ -1611,7 +1611,7 @@ impl PyShapeClickAction {
         let Some(target) = presentation
             .inner
             .shape_target_slide(slide_index(&resolved)?, shape_id)
-            .map_err(|error| rpptx_to_pyerr(py, error))?
+            .map_err(|error| pptx_to_pyerr(py, error))?
         else {
             return Ok(None);
         };
@@ -1646,7 +1646,7 @@ impl PyShapeClickAction {
         presentation
             .inner
             .set_shape_target_slide(slide_index(&resolved)?, shape_id, target)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -1676,7 +1676,7 @@ impl PyShapeHyperlink {
             .inner
             .shape_hyperlink_address_at(shape_owner(&resolved)?, shape_id)
             .map(|address| address.map(str::to_owned))
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     #[setter]
@@ -1700,7 +1700,7 @@ impl PyShapeHyperlink {
                 shape_id,
                 value.filter(|value| !value.is_empty()),
             )
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -1909,8 +1909,8 @@ impl PyShapeCollection {
                 let mut shapes = presentation
                     .inner
                     .shapes_mut_at(slide_index, &group)
-                    .map_err(|error| rpptx_to_pyerr(py, error))?;
-                add(&mut shapes).map_err(|error| rpptx_to_pyerr(py, error))?;
+                    .map_err(|error| pptx_to_pyerr(py, error))?;
+                add(&mut shapes).map_err(|error| pptx_to_pyerr(py, error))?;
             }
             presentation.bind_appended_textbox(&mut prepared, slide, index);
             presentation.commit_prepared(prepared)?;
@@ -1921,8 +1921,8 @@ impl PyShapeCollection {
         {
             let mut shapes = candidate
                 .shapes_mut_at(slide_index, &group)
-                .map_err(|error| rpptx_to_pyerr(py, error))?;
-            add(&mut shapes).map_err(|error| rpptx_to_pyerr(py, error))?;
+                .map_err(|error| pptx_to_pyerr(py, error))?;
+            add(&mut shapes).map_err(|error| pptx_to_pyerr(py, error))?;
         }
         let survivors = presentation.unchanged_owners()?;
         let prepared =
@@ -2002,7 +2002,7 @@ impl PyShapeCollection {
                 oxoffice_pptx::Emu(height),
                 oxoffice_pptx::MediaPlaybackSettings::default(),
             )
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -2040,7 +2040,7 @@ impl PyShapeCollection {
             .map_err(|_| PyValueError::new_err("missing group"))?
             .group(&indices)
             .map(drop)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         let survivors = presentation.grouped_shape_owners(&parent, start, indices.len())?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -2095,10 +2095,10 @@ impl PyShapeCollection {
             .shapes_mut_at(slide, &group)
             .map_err(|_| PyValueError::new_err("missing group"))?
             .align(&indices, alignment, reference)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -2147,10 +2147,10 @@ impl PyShapeCollection {
             .shapes_mut_at(slide, &group)
             .map_err(|_| PyValueError::new_err("missing group"))?
             .distribute(&indices, direction, reference)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -2259,7 +2259,7 @@ impl PyShapeCollection {
                 &data,
             )
             .map(drop)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -2388,7 +2388,7 @@ impl PyShapeCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .remove_shape_at(owner, shape_index)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = presentation.removed_shape_owners(&parent.segs, shape_index)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -2423,7 +2423,7 @@ impl PyShapeCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .move_shape_at(owner, from_, to)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let survivors = presentation.moved_shape_owners(&parent.segs, from_, to)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -2719,7 +2719,7 @@ impl PyAdjustmentCollection {
         shape_ref_at(&presentation, &self.path)
             .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?
             .adjustments()
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -2751,7 +2751,7 @@ impl PyAdjustmentCollection {
         shape_mut_at(&mut presentation, &self.path)
             .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?
             .set_adjust_value(&values[index].0, raw)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyIterator>> {
@@ -2840,7 +2840,7 @@ impl PyChart {
             .borrow(py)
             .inner
             .chart_legend(slide, id)
-            .map_err(|e| rpptx_to_pyerr(py, e))
+            .map_err(|e| pptx_to_pyerr(py, e))
     }
     fn set_legend(
         &self,
@@ -2854,10 +2854,10 @@ impl PyChart {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_chart_legend(slide, id, visible, position, overlay)
-            .map_err(|e| rpptx_to_pyerr(py, e))?;
+            .map_err(|e| pptx_to_pyerr(py, e))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|e| rpptx_to_pyerr(py, e))?
+            .map_err(|e| pptx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -2881,7 +2881,7 @@ impl PyChart {
             .borrow(py)
             .inner
             .chart_data(slide, id)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -2926,7 +2926,7 @@ impl PyChart {
             .borrow(py)
             .inner
             .chart_type(slide, id)
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
     #[getter]
     fn categories<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
@@ -2956,10 +2956,10 @@ impl PyChart {
         let mut candidate = presentation.inner.clone();
         candidate
             .replace_chart_data(slide, id, &data)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|error| rpptx_to_pyerr(py, error))?
+            .map_err(|error| pptx_to_pyerr(py, error))?
         {
             return Ok(());
         }

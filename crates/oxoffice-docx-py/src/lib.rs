@@ -1,4 +1,4 @@
-//! Python bindings for the rdocx facade.
+//! Python bindings for the oxoffice-docx facade, published as `oxoffice.docx`.
 
 mod document;
 mod formatting;
@@ -42,14 +42,14 @@ pub(crate) fn normalize_index(index: isize, len: usize, kind: &str) -> PyResult<
 }
 
 pub(crate) fn length_object(py: Python<'_>, value: oxoffice_docx::Length) -> PyResult<Py<PyAny>> {
-    py.import("rdocx")?
+    py.import("oxoffice.docx")?
         .getattr("Length")?
         .call1((value.to_emu(),))
         .map(Bound::unbind)
 }
 
 pub(crate) fn enum_object(py: Python<'_>, name: &str, value: i32) -> PyResult<Py<PyAny>> {
-    py.import("rdocx")?
+    py.import("oxoffice.docx")?
         .getattr(name)?
         .call1((value,))
         .map(Bound::unbind)
@@ -66,14 +66,14 @@ pub(crate) fn color_object(py: Python<'_>, value: &str) -> PyResult<Py<PyAny>> {
     if value.eq_ignore_ascii_case("auto") {
         return Ok(pyo3::types::PyString::new(py, "auto").into_any().unbind());
     }
-    py.import("rdocx")?
+    py.import("oxoffice.docx")?
         .getattr("RGBColor")?
         .call_method1("from_string", (value,))
         .map(Bound::unbind)
 }
 
 fn public_exception_type<'py>(py: Python<'py>, class_name: &str) -> PyResult<Bound<'py, PyType>> {
-    py.import("rdocx")
+    py.import("oxoffice.docx")
         .and_then(|module| module.getattr(class_name))
         .and_then(|class| class.cast_into::<PyType>().map_err(Into::into))
 }
@@ -87,7 +87,7 @@ fn public_error(py: Python<'_>, class_name: &str, message: String) -> PyErr {
 
 /// A counted replacement that matched a different number of times than the
 /// caller expected. A single replacement uses the wording of
-/// `rdocx replace --expect`, and a batch names the failing pair.
+/// `oxoffice docx replace --expect`, and a batch names the failing pair.
 pub(crate) fn replacement_count_to_pyerr(
     py: Python<'_>,
     mismatch: &oxoffice_docx::ReplacementCountMismatch,
@@ -114,7 +114,7 @@ pub(crate) fn stale_to_pyerr(py: Python<'_>, error: StaleElementError) -> PyErr 
     public_error(py, "StaleElementError", error.to_string())
 }
 
-pub(crate) fn rdocx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyErr {
+pub(crate) fn docx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyErr {
     let class_name = match &error {
         oxoffice_docx::Error::Opc(_)
         | oxoffice_docx::Error::Io(_)
@@ -130,13 +130,13 @@ pub(crate) fn rdocx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyE
         | oxoffice_docx::Error::Odt { .. }
         | oxoffice_docx::Error::InvalidEmbeddedMutation { .. }
         | oxoffice_docx::Error::Story(_)
-        | oxoffice_docx::Error::Other(_) => "RdocxError",
+        | oxoffice_docx::Error::Other(_) => "DocxError",
     };
     public_error(py, class_name, error.to_string())
 }
 
-#[pymodule]
-fn _rdocx(module: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register every class and function of the docx bindings on `module`.
+pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyDocument>()?;
     #[cfg(debug_assertions)]
     module.add_function(wrap_pyfunction!(document::word_whole_body_work, module)?)?;

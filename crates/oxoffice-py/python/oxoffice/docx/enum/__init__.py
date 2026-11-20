@@ -1,4 +1,4 @@
-"""Public enumeration namespaces for rdocx."""
+"""Public enumeration namespaces for oxoffice.docx."""
 
 from enum import IntEnum
 

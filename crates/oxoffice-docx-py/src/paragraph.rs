@@ -465,7 +465,7 @@ impl PyParagraph {
         )?;
         let location = document
             .paragraph_route(&location, Some((prepared, candidate)))
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let (path, owner) = document.capture_prepared_owner(
             prepared,
             &crate::document::WordOwnerLocation::Paragraph(location),
@@ -539,19 +539,19 @@ impl PyParagraph {
         let mut document = self.document.borrow_mut(py);
         let native = location
             .native(&document.inner)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let mut candidate = document.inner.clone_for_staging();
         let position = candidate
             .add_internal_hyperlink_at(&native, text, bookmark, tooltip)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let run_path = candidate
             .read_story_paragraph(&position.location, |p| p.run_path(position.run_index))
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+            .map_err(|error| crate::docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("inserted link run was not found"))?;
         let publication = crate::document::WordPublication::ParagraphAppend(
             document
                 .paragraph_route(&location, None)
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))?,
+                .map_err(|error| crate::docx_to_pyerr(py, error))?,
         );
         let prepared = document.prepare_word_revision(
             py,
@@ -605,14 +605,14 @@ impl PyParagraph {
                     // orphaned relationship behind.
                     location
                         .read(&candidate, |_| ())
-                        .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| crate::docx_to_pyerr(py, error))?;
                     Some(match &location {
                         ParagraphLocation::Related(location) => {
                             let location = ParagraphLocation::refreshed(&candidate, location)
-                                .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+                                .map_err(|error| crate::docx_to_pyerr(py, error))?;
                             candidate
                                 .add_hyperlink_relationship_to_story(location.story(), url)
-                                .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+                                .map_err(|error| crate::docx_to_pyerr(py, error))?
                         }
                         _ => candidate.add_hyperlink_relationship(url),
                     })
@@ -636,7 +636,7 @@ impl PyParagraph {
             };
             let (run_index, run_path) = location
                 .edit(&mut candidate, append)
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+                .map_err(|error| crate::docx_to_pyerr(py, error))?;
             let operation = if url.is_some() {
                 "Paragraph.add_hyperlink"
             } else {
@@ -645,7 +645,7 @@ impl PyParagraph {
             let publication = crate::document::WordPublication::ParagraphAppend(
                 document
                     .paragraph_route(&location, None)
-                    .map_err(|error| crate::rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| crate::docx_to_pyerr(py, error))?,
             );
             let prepared =
                 document.prepare_word_revision(py, &candidate, operation, publication)?;
@@ -700,7 +700,7 @@ impl PyParagraph {
             document
                 .inner
                 .paragraph_element_xml(&location)
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))
+                .map_err(|error| crate::docx_to_pyerr(py, error))
         };
         // A direct body paragraph serializes alone, without the `w14`
         // declaration that only the rest of the body can bring. Any other
@@ -786,7 +786,7 @@ impl PyParagraph {
                 match document
                     .inner
                     .try_replace_plain_body_paragraph(slot, xml)
-                    .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+                    .map_err(|error| crate::docx_to_pyerr(py, error))?
                 {
                     Some(false) => return Ok(()),
                     Some(true) => {
@@ -807,7 +807,7 @@ impl PyParagraph {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .replace_paragraph_xml(&location, xml)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         document.publish_owner_candidate(
             py,
             candidate,
@@ -828,7 +828,7 @@ impl PyParagraph {
                     .map(|inner| PyEquation { inner })
                     .collect::<Vec<_>>()
             })
-            .map_err(|e| crate::rdocx_to_pyerr(py, e))?;
+            .map_err(|e| crate::docx_to_pyerr(py, e))?;
         let values = equations
             .into_iter()
             .map(|v| Py::new(py, v))
@@ -852,7 +852,7 @@ impl PyParagraph {
                 ));
             }
         }
-        .map_err(|e| crate::rdocx_to_pyerr(py, e))?;
+        .map_err(|e| crate::docx_to_pyerr(py, e))?;
         let equation = if display {
             oxoffice_docx::OfficeMath::display(vec![oxoffice_docx::CT_OMath::new(
                 converted.value.expressions,
@@ -878,11 +878,11 @@ impl PyParagraph {
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |p| p.add_equation(equation))
-            .map_err(|e| crate::rdocx_to_pyerr(py, e))?;
+            .map_err(|e| crate::docx_to_pyerr(py, e))?;
         let publication = crate::document::WordPublication::ParagraphAppend(
             document
                 .paragraph_route(&location, None)
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))?,
+                .map_err(|error| crate::docx_to_pyerr(py, error))?,
         );
         let prepared = document.prepare_word_revision(
             py,
@@ -909,7 +909,7 @@ impl PyParagraph {
         match location {
             ParagraphLocation::Related(location) => {
                 let location = ParagraphLocation::refreshed(&document.inner, &location)
-                    .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| crate::docx_to_pyerr(py, error))?;
                 document.scoped_replacement(py, "Paragraph.replace_text", |document| {
                     document.try_replace_text_at_owned(&location, old, new, expect)
                 })
@@ -918,7 +918,7 @@ impl PyParagraph {
                 let location = document
                     .inner
                     .paragraph_story_location(index)
-                    .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+                    .map_err(|error| crate::docx_to_pyerr(py, error))?
                     .ok_or_else(|| PyIndexError::new_err("paragraph index out of range"))?;
                 document.scoped_replacement(py, "Paragraph.replace_text", |document| {
                     document.try_replace_text_at_owned(&location, old, new, expect)
@@ -962,7 +962,7 @@ impl PyParagraph {
         let document = self.document.borrow(py);
         location
             .read(&document.inner, |paragraph| paragraph.text())
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))
+            .map_err(|error| crate::docx_to_pyerr(py, error))
     }
 
     // Replace the content with one run holding `text`, keeping the paragraph
@@ -976,14 +976,14 @@ impl PyParagraph {
         let mut document = self.document.borrow_mut(py);
         let native = document
             .paragraph_route(&location, None)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         if document.try_local_cell_paragraph_text(py, &native, text)? {
             return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| paragraph.set_text(text))
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let publication = crate::document::WordPublication::ParagraphText(native);
         let prepared =
             document.prepare_word_revision(py, &candidate, "Paragraph.text", publication)?;
@@ -1025,7 +1025,7 @@ impl PyParagraph {
         let document = self.document.borrow(py);
         let alignment = location
             .read(&document.inner, |paragraph| paragraph.alignment())
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         alignment
             .map(|value| {
                 crate::enum_object(
@@ -1049,7 +1049,7 @@ impl PyParagraph {
                 paragraph.set_alignment_value(value);
                 Ok(())
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         Ok(())
     }
 

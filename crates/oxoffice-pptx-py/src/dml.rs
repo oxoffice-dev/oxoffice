@@ -18,7 +18,7 @@ use crate::shape::{
     shape_mut_at, shape_owner, shape_ref_at,
 };
 use crate::table::{cell_mut_at, cell_ref_at};
-use crate::{normalize_index, rpptx_to_pyerr, validate_path};
+use crate::{normalize_index, pptx_to_pyerr, validate_path};
 
 const MAX_LINE_WIDTH_EMU: i64 = 20_116_800;
 
@@ -113,7 +113,7 @@ fn write_line(
         _ => shape_mut_at(presentation, path)
             .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?
             .set_line(line)
-            .map_err(|error| rpptx_to_pyerr(py, error)),
+            .map_err(|error| pptx_to_pyerr(py, error)),
     }
 }
 
@@ -222,13 +222,13 @@ fn write_fill(
         presentation
             .inner
             .set_fill_at(&owner, fill)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         return presentation.commit_local_property(revision);
     }
     let mut candidate = presentation.inner.clone();
     candidate
         .set_fill_at(&owner, fill)
-        .map_err(|error| rpptx_to_pyerr(py, error))?;
+        .map_err(|error| pptx_to_pyerr(py, error))?;
     let proofs = presentation.unchanged_owners()?;
     let prepared =
         presentation.prepare_owners(&candidate, "FillFormat.fill", &proofs, false, false, false)?;
@@ -256,7 +256,7 @@ fn update_line(
 }
 
 fn dml_enum(py: Python<'_>, name: &str, value: i32) -> PyResult<Py<PyAny>> {
-    py.import("rpptx.enum.dml")?
+    py.import("oxoffice.pptx.enum.dml")?
         .getattr(name)?
         .call1((value,))
         .map(Bound::unbind)
@@ -620,7 +620,7 @@ impl PyFillFormat {
     }
 
     /// Sets a pattern fill, five percent black dots on white, keeping an
-    /// existing pattern fill as it is. PowerPoint, LibreOffice and rpptx draw
+    /// existing pattern fill as it is. PowerPoint, LibreOffice and oxoffice draw
     /// the supported pattern presets. Google Slides degrades them.
     fn patterned(&self, py: Python<'_>) -> PyResult<()> {
         if matches!(self.fill(py)?, Some(oxoffice_pptx::Fill::Pattern(_))) {
@@ -641,7 +641,7 @@ impl PyFillFormat {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_picture_fill(&owner, &bytes, &filename)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let proofs = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -838,7 +838,7 @@ impl PyFillFormat {
     /// for a linear gradient. Assigning a shape makes the gradient radiate
     /// from the centre, and `None` makes it linear, left to right.
     /// PowerPoint and LibreOffice draw a path gradient, Google Slides
-    /// degrades it, and rpptx's own renderer draws supported
+    /// degrades it, and oxoffice's own renderer draws supported
     /// path gradients.
     #[getter]
     fn gradient_path(&self, py: Python<'_>) -> PyResult<Option<&'static str>> {
@@ -1318,7 +1318,7 @@ impl PyColorFormat {
             return Ok(None);
         };
         let [red, green, blue] = value.components();
-        py.import("rpptx.dml.color")?
+        py.import("oxoffice.pptx.dml.color")?
             .getattr("RGBColor")?
             .call1((red, green, blue))
             .map(|color| Some(color.unbind()))
@@ -1831,7 +1831,7 @@ fn write_effects(
     shape_mut_at(presentation, path)
         .ok_or_else(|| PyIndexError::new_err("shape index out of range"))?
         .set_effects(effects)
-        .map_err(|error| rpptx_to_pyerr(py, error))
+        .map_err(|error| pptx_to_pyerr(py, error))
 }
 
 /// The outer shadow PowerPoint for Mac writes for its Offset Diagonal
@@ -2032,7 +2032,7 @@ impl PyShadowFormat {
 
     /// The shadow opacity from 0.0, transparent, to 1.0, opaque.
     ///
-    /// A colour rpptx does not model, `a:scrgbClr` or `a:hslClr`, reads
+    /// A colour oxoffice does not model, `a:scrgbClr` or `a:hslClr`, reads
     /// `None` and refuses a new opacity until `color.rgb` replaces it.
     #[getter]
     fn alpha(&self, py: Python<'_>) -> PyResult<Option<f64>> {
@@ -2071,7 +2071,7 @@ impl PyShadowFormat {
         )? == Some(true)
         {
             return Err(PyValueError::new_err(
-                "shadow colour is an a:scrgbClr or a:hslClr, which rpptx does not model, \
+                "shadow colour is an a:scrgbClr or a:hslClr, which oxoffice does not model, \
                  set color.rgb first",
             ));
         }

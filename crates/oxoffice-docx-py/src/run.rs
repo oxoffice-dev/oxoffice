@@ -104,7 +104,7 @@ impl PyRun {
         )?;
         let location = document
             .paragraph_route(&paragraph, Some((prepared, candidate)))
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let (path, owner) = document.capture_prepared_owner(
             prepared,
             &crate::document::WordOwnerLocation::Run(location, self.run_path.clone()),
@@ -154,7 +154,7 @@ impl PyRun {
                 (0..paragraph.run_count())
                     .find(|index| paragraph.run_path(*index).as_ref() == Some(&self.run_path))
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+            .map_err(|error| crate::docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("run physical owner is no longer present"))?;
         Ok((location, index))
     }
@@ -176,10 +176,10 @@ impl PyRun {
             .edit(&mut candidate, |paragraph| {
                 paragraph.edit_run(&self.run_path, edit)
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let text = location
             .read(&candidate, |paragraph| paragraph.text())
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         document.publish_run_content_candidate(candidate, self.owner.as_ref(), text)
     }
 }
@@ -205,7 +205,7 @@ impl PyRun {
             document
                 .inner
                 .run_element_xml(&location, &path)
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))
+                .map_err(|error| crate::docx_to_pyerr(py, error))
         };
         // A run of a direct body paragraph serializes with that paragraph alone.
         let bytes = match document
@@ -254,9 +254,9 @@ impl PyRun {
         let current = document
             .inner
             .story_range_paragraph_snapshot(&location)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let paragraph = oxoffice_docx_oxml::CT_P::from_xml_fragment(current.xml())
-            .map_err(|error| crate::rdocx_to_pyerr(py, error.into()))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error.into()))?;
         let run_index = paragraph
             .accepted_run_paths()
             .iter()
@@ -271,7 +271,7 @@ impl PyRun {
                 },
                 xml,
             )
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         document.publish_owner_candidate(
             py,
             candidate,
@@ -290,7 +290,7 @@ impl PyRun {
             .read(&document.inner, |paragraph| {
                 paragraph.run(run_index).map(|run| run.text())
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+            .map_err(|error| crate::docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("run index out of range"))
     }
 
@@ -318,7 +318,7 @@ impl PyRun {
             .edit(&mut candidate, |paragraph| {
                 paragraph.edit_run(&self.run_path, |run| run.set_text(text))
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         match slot {
             Some(slot) => {
                 document.publish_block_candidate(py, candidate, "Run.text", publication, slot)
@@ -347,7 +347,7 @@ impl PyRun {
         let position = oxoffice_docx::StoryRunPosition {
             location: location
                 .native(&document.inner)
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))?,
+                .map_err(|error| crate::docx_to_pyerr(py, error))?,
             run_index: index + 1,
         };
         let mut candidate = document.inner.clone_for_staging();
@@ -360,7 +360,7 @@ impl PyRun {
                 height,
                 options.map(|o| o.inner.clone()),
             )
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -408,7 +408,7 @@ impl PyRun {
                 let in_header = document
                     .inner
                     .stories()
-                    .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+                    .map_err(|error| crate::docx_to_pyerr(py, error))?
                     .iter()
                     .any(|story| {
                         story.kind() == oxoffice_docx::StoryKind::Header
@@ -437,7 +437,7 @@ impl PyRun {
                 })?;
                 added
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -465,7 +465,7 @@ impl PyRun {
                 })?;
                 added
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -484,7 +484,7 @@ impl PyRun {
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| paragraph.remove_run(run_index))
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -618,7 +618,7 @@ impl PyRunCollection {
         let document = self.document.borrow(py);
         location
             .read(&document.inner, |paragraph| paragraph.run_count())
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))
+            .map_err(|error| crate::docx_to_pyerr(py, error))
     }
 
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyRun>> {
@@ -629,7 +629,7 @@ impl PyRunCollection {
             segments.push(PathSeg::Run(index));
             let run_path = location
                 .read(&document.inner, |paragraph| paragraph.run_path(index))
-                .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+                .map_err(|error| crate::docx_to_pyerr(py, error))?
                 .ok_or_else(|| PyIndexError::new_err("run index out of range"))?;
             (document.revisions.capture(segments), run_path)
         };

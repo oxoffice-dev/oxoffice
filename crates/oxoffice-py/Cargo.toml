@@ -1,0 +1,26 @@
+[package]
+name = "oxoffice-py"
+description = "The oxoffice Python extension: oxoffice.docx, oxoffice.pptx and the oxoffice command line"
+readme = "README.md"
+version.workspace = true
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "_oxoffice"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+oxoffice-cli = { workspace = true, features = ["system-fonts"] }
+oxoffice-docx-py = { workspace = true }
+oxoffice-pptx-py = { workspace = true }
+pyo3 = { workspace = true }

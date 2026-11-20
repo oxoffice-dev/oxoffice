@@ -13,7 +13,7 @@ class WD_ALIGN_PARAGRAPH(IntEnum):
 
 
 class WD_UNDERLINE(IntEnum):
-    """Underline styles supported by the rdocx run facade."""
+    """Underline styles supported by the oxoffice.docx run facade."""
 
     NONE = 0
     SINGLE = 1

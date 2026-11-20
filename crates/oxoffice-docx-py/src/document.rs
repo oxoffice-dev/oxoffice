@@ -357,10 +357,10 @@ use smallvec::smallvec;
 
 use oxoffice_docx_oxml::{ST_PageOrientation, ST_SectionType};
 
+use crate::docx_to_pyerr;
 use crate::paragraph::{
     ParagraphLocation, PyParagraph, PyParagraphCollection, defined_style, style_id_of_type,
 };
-use crate::rdocx_to_pyerr;
 use crate::table::{PyTable, PyTableCollection};
 
 const CHART_TYPES: [(i64, oxoffice_docx::ChartKind); 7] = [
@@ -633,10 +633,10 @@ fn open_document_input(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<oxoffice_docx::Document> {
     if let Ok(path) = value.extract::<PathBuf>() {
-        return oxoffice_docx::Document::open(path).map_err(|error| rdocx_to_pyerr(py, error));
+        return oxoffice_docx::Document::open(path).map_err(|error| docx_to_pyerr(py, error));
     }
     oxoffice_docx::Document::from_bytes(&binary_stream_bytes(value, true)?)
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
 }
 
 fn checked_heading_level(value: &Bound<'_, PyAny>) -> PyResult<i64> {
@@ -1749,7 +1749,7 @@ impl PySectionHandle {
             .borrow(py)
             .inner
             .section_properties_xml(self.index)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         String::from_utf8(bytes).map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
@@ -1759,7 +1759,7 @@ impl PySectionHandle {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .replace_section_properties_xml(self.index, xml)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.publish_owner_candidate(
             py,
             candidate,
@@ -1950,10 +1950,10 @@ impl PySectionHandle {
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_note_policy(family, policy)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         candidate
             .to_bytes()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -1991,11 +1991,11 @@ impl PySectionHandle {
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_page_border(edge, style, width, space, color)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         note_word_save_compare();
         candidate
             .saves_as(&candidate)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2063,7 +2063,7 @@ impl PySectionHandle {
                 },
                 oxoffice_docx::Length::emu(font_size),
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2125,7 +2125,7 @@ impl PySectionHandle {
                     opacity,
                 },
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2163,7 +2163,7 @@ impl PySectionHandle {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .remove_drawingml_watermark_for(self.index, variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2364,7 +2364,7 @@ impl PyHeaderFooter {
             .borrow(py)
             .inner
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .is_none_or(|story| story.is_inherited()))
     }
     #[setter]
@@ -2379,7 +2379,7 @@ impl PyHeaderFooter {
             candidate.inherit_section_story(self.index, self.kind, self.variant)
         } else if candidate
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .is_none()
         {
             candidate
@@ -2390,7 +2390,7 @@ impl PyHeaderFooter {
                 .unlink_section_story(self.index, self.kind, self.variant)
                 .map(|_| ())
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2419,12 +2419,12 @@ impl PyHeaderFooter {
         if let Some(story) = document
             .inner
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             for item in document
                 .inner
                 .story_items(story.story())
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
             {
                 if item.kind() == oxoffice_docx::StoryItemKind::Paragraph {
                     let location = item.location().clone();
@@ -2478,12 +2478,12 @@ impl PyHeaderFooter {
         };
         let story = match candidate
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             Some(story) => story.story().clone(),
             None => candidate
                 .create_section_story(self.index, self.kind, self.variant)
-                .map_err(|error| rdocx_to_pyerr(py, error))?,
+                .map_err(|error| docx_to_pyerr(py, error))?,
         };
         let mut paragraph = oxoffice_docx_oxml::text::CT_P::new();
         if !text.is_empty() {
@@ -2497,18 +2497,18 @@ impl PyHeaderFooter {
         }
         let index = candidate
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .len();
         candidate
             .insert_content(
                 &oxoffice_docx::ContentLocation::end(story.clone()),
                 oxoffice_docx::ContentFragment::paragraph(paragraph)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| docx_to_pyerr(py, error))?,
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let current = candidate
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyValueError::new_err("header/footer disappeared during insertion"))?;
         let location = oxoffice_docx::ContentLocation::new(
             current.story().clone(),
@@ -2557,12 +2557,12 @@ impl PyHeaderFooter {
         if let Some(story) = document
             .inner
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             for item in document
                 .inner
                 .story_items(story.story())
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
             {
                 if item.kind() == oxoffice_docx::StoryItemKind::Table {
                     let location = item.location().clone();
@@ -2586,23 +2586,23 @@ impl PyHeaderFooter {
         let mut candidate = document.inner.clone_for_staging();
         let story = match candidate
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             Some(story) => story.story().clone(),
             None => candidate
                 .create_section_story(self.index, self.kind, self.variant)
-                .map_err(|error| rdocx_to_pyerr(py, error))?,
+                .map_err(|error| docx_to_pyerr(py, error))?,
         };
         let index = candidate
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .len();
         candidate
             .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let story = candidate
             .section_story(self.index, self.kind, self.variant)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyValueError::new_err("header/footer disappeared during insertion"))?;
         let location = oxoffice_docx::ContentLocation::new(
             story.story().clone(),
@@ -2668,7 +2668,7 @@ impl PyNote {
             document.inner.footnote_story(self.id)
         };
         story
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyValueError::new_err("note owner no longer exists"))
     }
 }
@@ -2686,7 +2686,7 @@ impl PyNote {
         for item in document
             .inner
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             if item.kind() == oxoffice_docx::StoryItemKind::Paragraph {
                 let location = item.location().clone();
@@ -2711,7 +2711,7 @@ impl PyNote {
         } else {
             candidate.remove_footnote(self.id)
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2730,7 +2730,7 @@ impl PyNote {
         for item in document
             .inner
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             if item.kind() == oxoffice_docx::StoryItemKind::Table {
                 let location = item.location().clone();
@@ -2757,21 +2757,21 @@ impl PyNote {
         let mut candidate = document.inner.clone_for_staging();
         let index = candidate
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .len();
         candidate
             .insert_content(
                 &oxoffice_docx::ContentLocation::end(story),
                 oxoffice_docx::ContentFragment::paragraph(paragraph)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| docx_to_pyerr(py, error))?,
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let story = if self.endnote {
             candidate.endnote_story(self.id)
         } else {
             candidate.footnote_story(self.id)
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?
+        .map_err(|error| docx_to_pyerr(py, error))?
         .ok_or_else(|| PyValueError::new_err("note disappeared during insertion"))?;
         let location = oxoffice_docx::ContentLocation::new(
             story,
@@ -2809,17 +2809,17 @@ impl PyNote {
         let mut candidate = document.inner.clone_for_staging();
         let index = candidate
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .len();
         candidate
             .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let story = if self.endnote {
             candidate.endnote_story(self.id)
         } else {
             candidate.footnote_story(self.id)
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?
+        .map_err(|error| docx_to_pyerr(py, error))?
         .ok_or_else(|| PyValueError::new_err("note disappeared during insertion"))?;
         let location = oxoffice_docx::ContentLocation::new(
             story,
@@ -2872,7 +2872,7 @@ impl PySettings {
             Some(value) => document.inner.set_track_revisions(value),
             None => document.inner.remove_track_revisions().map(|_| ()),
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
     #[getter]
     fn odd_and_even_pages_header_footer(&self, py: Python<'_>) -> bool {
@@ -2887,7 +2887,7 @@ impl PySettings {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .set_even_and_odd_headers(value)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -3084,7 +3084,7 @@ impl PyChart {
     }
     #[getter]
     fn series<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        let class = py.import("rdocx")?.getattr("CategorySeriesData")?;
+        let class = py.import("oxoffice.docx")?.getattr("CategorySeriesData")?;
         let values = self
             .data
             .series
@@ -3388,7 +3388,7 @@ impl StyleFormatting {
                     if value.is_instance_of::<PyBool>() {
                         return Err(PyTypeError::new_err(message));
                     }
-                    if value.is_instance(&py.import("rdocx")?.getattr("Length")?)? {
+                    if value.is_instance(&py.import("oxoffice.docx")?.getattr("Length")?)? {
                         properties.line_spacing = Some(twips(value.extract()?)?);
                         properties.line_rule = Some("exact".to_owned());
                     } else if value.is_instance_of::<PyInt>() || value.is_instance_of::<PyFloat>() {
@@ -3845,7 +3845,7 @@ fn length_keyword(
         return Ok(None);
     }
     let message = format!("{name} requires a Length or None");
-    let length_type = py.import("rdocx")?.getattr("Length")?;
+    let length_type = py.import("oxoffice.docx")?.getattr("Length")?;
     if value.is_instance_of::<PyBool>()
         || value.is_instance_of::<PyFloat>()
         || !value.is_instance(&length_type)?
@@ -3873,7 +3873,7 @@ fn line_spacing_keyword(
     if value.is_instance_of::<PyBool>() {
         return Err(PyTypeError::new_err(message));
     }
-    if value.is_instance(&py.import("rdocx")?.getattr("Length")?)? {
+    if value.is_instance(&py.import("oxoffice.docx")?.getattr("Length")?)? {
         return Ok(length_keyword(py, value, "line_spacing")?.map(|twips| (twips, "exact")));
     }
     if !value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyFloat>() {
@@ -4017,7 +4017,7 @@ impl PyCustomProperties {
         document
             .inner
             .set_custom_property(property)
-            .map_err(|e| rdocx_to_pyerr(py, e))
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     fn delete(&self, py: Python<'_>, name: &str) -> PyResult<bool> {
         self.document
@@ -4025,7 +4025,7 @@ impl PyCustomProperties {
             .inner
             .remove_custom_property(name)
             .map(|p| p.is_some())
-            .map_err(|e| rdocx_to_pyerr(py, e))
+            .map_err(|e| docx_to_pyerr(py, e))
     }
 }
 
@@ -4060,7 +4060,7 @@ impl PyAppProperties {
         document
             .inner
             .set_application_properties(p)
-            .map_err(|e| rdocx_to_pyerr(py, e))
+            .map_err(|e| docx_to_pyerr(py, e))
     }
 }
 #[pymethods]
@@ -4396,7 +4396,7 @@ impl PyCoreProperties {
         document
             .inner
             .set_core_properties(properties)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn text(&self, py: Python<'_>, field: CoreField) -> String {
@@ -8610,7 +8610,7 @@ fn validate_word_facts(
             (locations, Some(projections))
         }
         None => (
-            word_owner_locations(inner, None).map_err(|error| rdocx_to_pyerr(py, error))?,
+            word_owner_locations(inner, None).map_err(|error| docx_to_pyerr(py, error))?,
             None,
         ),
     };
@@ -8752,7 +8752,7 @@ impl PyDocumentFragment {
             include_final_section_properties,
         )
         .map(|inner| Self { inner })
-        .map_err(|e| rdocx_to_pyerr(py, e))
+        .map_err(|e| docx_to_pyerr(py, e))
     }
 }
 
@@ -8980,7 +8980,7 @@ impl PyLegacyFormFieldDefinition {
         definition: oxoffice_docx::LegacyFormFieldDefinition,
     ) -> PyResult<Self> {
         let field = oxoffice_docx::Field::from_legacy_form(options, definition)
-            .map_err(|error| rdocx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))?;
+            .map_err(|error| docx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))?;
         Ok(Self { field })
     }
 
@@ -9482,7 +9482,7 @@ impl PyDocumentProtection {
 fn checked_form_text(py: Python<'_>, value: String) -> PyResult<String> {
     oxoffice_docx_oxml::CT_SdtPr::default()
         .prepare_text_value(&value)
-        .map_err(|error| rdocx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))?;
+        .map_err(|error| docx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))?;
     Ok(value)
 }
 
@@ -9655,7 +9655,7 @@ fn embedded_package_source(
         let name = exact_str(&item, "column")?;
         budget
             .add_column(&name)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         owned_columns.push(name.into_owned());
     }
     let mut owned_records = Vec::with_capacity(row_len);
@@ -9665,22 +9665,22 @@ fn embedded_package_source(
         let cell_len = row.len()?.min(owned_columns.len());
         budget
             .begin_record()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut owned_row = Vec::with_capacity(cell_len);
         for cell in row.try_iter()? {
             let cell = cell?;
             let text = exact_str(&cell, "cell")?;
             budget
                 .add_cell(&text)
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             owned_row.push(text.into_owned());
         }
         budget
             .end_record()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         owned_records.push(owned_row);
     }
-    budget.finish().map_err(|error| rdocx_to_pyerr(py, error))?;
+    budget.finish().map_err(|error| docx_to_pyerr(py, error))?;
     Ok(oxoffice_docx::MailMergePackageSource::Embedded {
         columns: owned_columns,
         records: owned_records,
@@ -9773,7 +9773,7 @@ impl PyMailMergePackageSource {
     fn external(py: Python<'_>, uri: &Bound<'_, PyAny>) -> PyResult<Self> {
         let uri = exact_str(uri, "uri")?;
         oxoffice_docx::validate_mail_merge_external_uri(&uri)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(Self {
             inner: oxoffice_docx::MailMergePackageSource::External {
                 uri: uri.into_owned(),
@@ -10593,7 +10593,7 @@ impl PyDocument {
             Some(value) => {
                 let path = value.extract::<PathBuf>()?;
                 loaded = oxoffice_docx::Document::open(path)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 Some(&loaded)
             }
         };
@@ -10605,7 +10605,7 @@ impl PyDocument {
                     oxoffice_docx::Document::from_html_with_options(text, template, &resources)
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let diagnostics = html_diagnostics(py, result.diagnostics)?;
         Ok((
             Py::new(py, Self::from_document(result.document, py)?)?,
@@ -11612,13 +11612,13 @@ impl PyDocument {
             }
             None => (
                 word_owner_locations(candidate, forms.then_some(&mut new_sources))
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| docx_to_pyerr(py, error))?,
                 None,
             ),
         };
         if forms {
             word_owner_locations(&self.inner, Some(&mut old_sources))
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
         }
         let selected = match &publication {
             WordPublication::HeaderFooterAppend(index) => Some(WordOwnerLocation::Section(*index)),
@@ -11674,7 +11674,7 @@ impl PyDocument {
         };
         let (eligible_parts, modern_snapshot) = if modern {
             unchanged_related_owner_parts(&self.inner, candidate, &self.owners, &locations)
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
         } else {
             (std::collections::HashSet::new(), false)
         };
@@ -11712,17 +11712,17 @@ impl PyDocument {
                 && self
                     .inner
                     .stories()
-                    .map_err(|error| rdocx_to_pyerr(py, error))?
+                    .map_err(|error| docx_to_pyerr(py, error))?
                     == candidate
                         .stories()
-                        .map_err(|error| rdocx_to_pyerr(py, error))?
+                        .map_err(|error| docx_to_pyerr(py, error))?
                 && self
                     .inner
                     .story_item_snapshots()
-                    .map_err(|error| rdocx_to_pyerr(py, error))?
+                    .map_err(|error| docx_to_pyerr(py, error))?
                     == candidate
                         .story_item_snapshots()
-                        .map_err(|error| rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| docx_to_pyerr(py, error))?;
         let mut retained = Vec::new();
         let mut births = Vec::new();
         for (index, address) in locations.iter().enumerate() {
@@ -11927,7 +11927,7 @@ impl PyDocument {
         if self
             .inner
             .saves_as(&candidate)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         {
             return Ok(());
         }
@@ -12072,7 +12072,7 @@ impl PyDocument {
                     })?
                     .set_text(text)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
         else {
             return Ok(false);
         };
@@ -12232,7 +12232,7 @@ impl PyDocument {
         let block = oxoffice_docx_oxml::BodyContent::Table(Box::new(candidate));
         note_word_piece_read();
         let Some(after) =
-            word_block_owners(&self.inner, &block).map_err(|error| rdocx_to_pyerr(py, error))?
+            word_block_owners(&self.inner, &block).map_err(|error| docx_to_pyerr(py, error))?
         else {
             return Ok(false);
         };
@@ -12860,8 +12860,7 @@ impl PyDocument {
                 (locations, Some(projections))
             }
             None => (
-                word_owner_locations(&candidate, None)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                word_owner_locations(&candidate, None).map_err(|error| docx_to_pyerr(py, error))?,
                 None,
             ),
         };
@@ -12893,7 +12892,7 @@ impl PyDocument {
         } else {
             candidate.remove_footnote(id)
         }
-        .map_err(|e| rdocx_to_pyerr(py, e))?;
+        .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.remove_note")
     }
 
@@ -12911,7 +12910,7 @@ impl PyDocument {
         let location = location.native(py, self)?;
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| edit(&mut candidate, &location))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, operation)
     }
 
@@ -12925,7 +12924,7 @@ impl PyDocument {
         if self
             .inner
             .saves_as(&candidate)
-            .map_err(|e| rdocx_to_pyerr(py, e))?
+            .map_err(|e| docx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -12950,7 +12949,7 @@ impl PyDocument {
         if self
             .inner
             .saves_as(&candidate)
-            .map_err(|e| rdocx_to_pyerr(py, e))?
+            .map_err(|e| docx_to_pyerr(py, e))?
         {
             return Ok(());
         }
@@ -12984,7 +12983,7 @@ impl PyDocument {
             oxoffice_docx::Error::Oxml(oxoffice_docx_oxml::OxmlError::InvalidValue(message)) => {
                 PyValueError::new_err(message)
             }
-            other => rdocx_to_pyerr(py, other),
+            other => docx_to_pyerr(py, other),
         })?;
         self.publish_api_candidate(py, candidate, "Document.set_content_control_value")?;
         Ok(count)
@@ -13009,11 +13008,11 @@ impl PyDocument {
             let document = slf.borrow();
             let run_index = location
                 .read(&document.inner, |paragraph| paragraph.run_count())
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             (
                 location
                     .native(&document.inner)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| docx_to_pyerr(py, error))?,
                 run_index,
             )
         } else if let Ok(reference) = reference.cast::<crate::run::PyRun>() {
@@ -13028,7 +13027,7 @@ impl PyDocument {
             (
                 location
                     .native(&document.inner)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| docx_to_pyerr(py, error))?,
                 index + 1,
             )
         } else {
@@ -13047,7 +13046,7 @@ impl PyDocument {
         } else {
             candidate.create_footnote_at(&position, text)
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -13076,10 +13075,10 @@ impl PyDocument {
         // Keep all eager fallible checks, without building dormant read facts.
         let (_, _, paragraphs, _) = inner
             .story_owner_snapshots()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         for (_, xml) in paragraphs {
             oxoffice_docx_oxml::CT_P::from_xml_fragment(&xml)
-                .map_err(|error| rdocx_to_pyerr(py, error.into()))?;
+                .map_err(|error| docx_to_pyerr(py, error.into()))?;
         }
         Ok(Self {
             inner,
@@ -13156,11 +13155,11 @@ impl PyDocument {
         self.validate_owned_story(py, story)?;
         self.inner
             .stories()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .find(|candidate| story_snapshot(candidate) == *story)
             .ok_or_else(|| {
-                rdocx_to_pyerr(
+                docx_to_pyerr(
                     py,
                     oxoffice_docx::Error::Other(format!(
                         "document has no {} story {} at owner index {}",
@@ -13207,7 +13206,7 @@ impl PyDocument {
             let story = self
                 .inner
                 .stories()
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
                 .into_iter()
                 .find(|story| same_story_owner(story, location.story()))
                 .ok_or_else(|| {
@@ -13222,7 +13221,7 @@ impl PyDocument {
         let links = self
             .inner
             .story_links(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let matches =
             |(location, link): &(oxoffice_docx::ContentLocation, oxoffice_docx::LinkInfo)| {
                 location.index_path() == hyperlink.index_path.as_slice()
@@ -13255,7 +13254,7 @@ impl PyDocument {
                 }
             };
         index.map(|index| (story, index)).ok_or_else(|| {
-            rdocx_to_pyerr(
+            docx_to_pyerr(
                 py,
                 oxoffice_docx::Error::Other(
                     "the hyperlink does not match exactly one link of the document, re-fetch it with document.hyperlinks"
@@ -13268,11 +13267,11 @@ impl PyDocument {
     fn body_story(&self, py: Python<'_>) -> PyResult<oxoffice_docx::StoryId> {
         self.inner
             .stories()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .find(|story| story.kind() == oxoffice_docx::StoryKind::Body)
             .ok_or_else(|| {
-                rdocx_to_pyerr(
+                docx_to_pyerr(
                     py,
                     oxoffice_docx::Error::Other("document body story is missing".to_owned()),
                 )
@@ -13336,10 +13335,10 @@ impl PyDocument {
             let location = self
                 .inner
                 .direct_body_item_location(*index)
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
                 .filter(|location| location.story() == &story)
                 .ok_or_else(|| {
-                    rdocx_to_pyerr(
+                    docx_to_pyerr(
                         py,
                         oxoffice_docx::Error::Other(format!(
                             "direct body content at index {index} has no checked location"
@@ -13362,7 +13361,7 @@ impl PyDocument {
             let snapshot = self
                 .inner
                 .story_range_paragraph_snapshot(&position.location)
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             items.insert(position.location.clone(), snapshot);
         }
         let item = &items[&position.location];
@@ -13391,7 +13390,7 @@ impl PyDocument {
         let item = self
             .inner
             .standalone_story_item_snapshots()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .find(|item| item.location() == location)
             .ok_or_else(|| PyIndexError::new_err("inserted story item was not found"))?;
@@ -13419,7 +13418,7 @@ impl PyDocument {
         let location = document
             .inner
             .paragraph_story_location(paragraph_index)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("paragraph index out of range"))?;
         let owner = std::sync::Arc::new(paragraph.document.clone_ref(py));
         let [_, _] = location.index_path() else {
@@ -13428,7 +13427,7 @@ impl PyDocument {
         let item = document
             .inner
             .story_range_paragraph_snapshot(&location)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(PyStoryItem {
             story: document.owned_story_snapshot(item.location().story())?,
             kind: story_item_kind_name(item.location().item_kind()).to_owned(),
@@ -13503,7 +13502,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let boundary = candidate
             .split_run(body_index, run_index, character_offset)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate) != before {
             let prepared = self.prepare_word_revision(
                 py,
@@ -13533,7 +13532,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let count = py
             .detach(|| mutation(&mut candidate))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if count > 0 {
             let prepared = self.prepare_word_revision(
                 py,
@@ -13556,7 +13555,7 @@ impl PyDocument {
         let candidate = self.inner.clone_for_staging();
         let changed = py
             .detach(|| candidate.try_replace_all_expected_owned(pairs))
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, batch))?;
         if let Some((candidate, _)) = &changed {
             drop(validate_word_facts(candidate, py)?);
@@ -13593,7 +13592,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let counts = py
             .detach(|| candidate.try_replace_all_expected(pairs))
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, batch))?;
         Ok((candidate, counts))
     }
@@ -13619,7 +13618,7 @@ impl PyDocument {
         let candidate = self.inner.clone_for_staging();
         let changed = py
             .detach(|| mutation(candidate))
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, false))?;
         let Some((candidate, count)) = changed else {
             return Ok(0);
@@ -13763,7 +13762,7 @@ fn checked_update_section_length(
     let emu = checked_section_length(value, name)?;
     if let Some(value) = value
         && emu != Some(0)
-        && !value.is_instance(&py.import("rdocx.shared")?.getattr("Length")?)?
+        && !value.is_instance(&py.import("oxoffice.docx.shared")?.getattr("Length")?)?
     {
         return Err(PyValueError::new_err(format!(
             "update_section {name} nonzero geometry requires explicit Length; use Twips(1440) or Emu(value)"
@@ -13860,7 +13859,7 @@ impl PyDocument {
     fn set_default_font_name(&mut self, py: Python<'_>, value: Option<&str>) -> PyResult<()> {
         self.inner
             .set_default_font_name_value(value)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -13883,7 +13882,7 @@ impl PyDocument {
         }
         self.inner
             .set_default_font_size_value(value)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[new]
@@ -13904,7 +13903,7 @@ impl PyDocument {
     #[staticmethod]
     fn from_bytes(bytes: &[u8], py: Python<'_>) -> PyResult<Self> {
         oxoffice_docx::Document::from_bytes(bytes)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
             .and_then(|inner| Self::from_document(inner, py))
     }
 
@@ -13967,11 +13966,11 @@ impl PyDocument {
         let mut document = slf.borrow_mut(py);
         let location = paragraph
             .native(&document.inner)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let snapshots = document
             .inner
             .story_item_snapshots()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let direct = snapshots
             .iter()
             .filter(|item| {
@@ -14004,7 +14003,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         let result = py
             .detach(|| candidate.insert_html_fragment(&destination, html, &resources))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let diagnostics = html_diagnostics(py, result.diagnostics)?;
         document.publish_api_candidate(py, candidate, "Document.insert_html")?;
         Ok(diagnostics)
@@ -14020,7 +14019,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let report = py
             .detach(|| candidate.sign(private_key, certificate))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let result = oxoffice_py_support::signature_report_to_py(py, &report)?;
         let prepared =
             self.prepare_word_revision(py, &candidate, "Document.sign", WordPublication::Signing)?;
@@ -14039,7 +14038,7 @@ impl PyDocument {
                     .verify_signatures()
                     .map_err(oxoffice_docx::Error::from)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let reports = reports
             .iter()
             .map(|report| oxoffice_py_support::signature_report_to_py(py, report))
@@ -14060,7 +14059,7 @@ impl PyDocument {
             }
             return py
                 .detach(|| self.inner.save(path))
-                .map_err(|error| rdocx_to_pyerr(py, error));
+                .map_err(|error| docx_to_pyerr(py, error));
         }
         let write = path.getattr("write").map_err(|_| PyTypeError::new_err(
             "save requires a filesystem path or binary writable stream; use stream.write(document.to_bytes())",
@@ -14068,7 +14067,7 @@ impl PyDocument {
         let bytes = self
             .inner
             .to_bytes()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let written = write.call1((PyBytes::new(py, &bytes),))?;
         if written.extract::<usize>().ok() != Some(bytes.len()) {
             return Err(pyo3::exceptions::PyOSError::new_err(
@@ -14082,7 +14081,7 @@ impl PyDocument {
     fn serialize<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         py.detach(|| self.inner.to_bytes())
             .map(|bytes| PyBytes::new(py, &bytes))
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn to_html(&self, py: Python<'_>) -> String {
@@ -14107,12 +14106,12 @@ impl PyDocument {
     fn validate(&self, py: Python<'_>) -> PyResult<PyValidationReport> {
         py.detach(|| self.inner.validate())
             .map(Into::into)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
     fn to_odt(&self, py: Python<'_>) -> PyResult<PyOdtExportResult> {
         let result = py
             .detach(|| self.inner.to_odt_bytes())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(PyOdtExportResult {
             bytes: result.bytes,
             diagnostics: result
@@ -14128,7 +14127,7 @@ impl PyDocument {
     fn to_rtf(&self, py: Python<'_>) -> PyResult<PyRtfExportResult> {
         let result = py
             .detach(|| self.inner.to_rtf_bytes())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(PyRtfExportResult {
             bytes: result.bytes,
             diagnostics: result
@@ -14145,7 +14144,7 @@ impl PyDocument {
     fn to_epub(&self, py: Python<'_>) -> PyResult<PyEpubExportResult> {
         let result = py
             .detach(|| self.inner.to_epub_bytes())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(PyEpubExportResult {
             bytes: result.bytes,
             diagnostics: result
@@ -14199,7 +14198,7 @@ impl PyDocument {
                 .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)
                 .map(|layout| layout.layout.pages.len()),
         })
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
     #[pyo3(signature = (data, *, grammar_version=None))]
     fn render_template(
@@ -14217,7 +14216,7 @@ impl PyDocument {
         let before = self
             .inner
             .to_bytes()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = self.inner.clone_for_staging();
         let count = py
             .detach(|| match grammar_version {
@@ -14227,7 +14226,7 @@ impl PyDocument {
             .map_err(|error| template_render_pyerr(py, error))?;
         let after = candidate
             .to_bytes()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if after != before {
             let prepared = self.prepare_word_revision(
                 py,
@@ -14250,7 +14249,7 @@ impl PyDocument {
         let issues = self
             .inner
             .validate_form(&rules)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let issues = issues
             .into_iter()
             .map(|issue| issue_to_py(py, issue))
@@ -14269,7 +14268,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let counts = candidate
             .fill_form(&rules, &assignments)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let result = PyTuple::new(py, counts)?.unbind();
         self.publish_form_candidate(
             py,
@@ -14285,7 +14284,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let counts = candidate
             .reset_form(&rules)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let result = PyTuple::new(py, counts)?.unbind();
         self.publish_form_candidate(
             py,
@@ -14307,7 +14306,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .protect_form(&rules, protection)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_form_candidate(
             py,
             candidate,
@@ -14334,7 +14333,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_document_protection(value)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_form_candidate(
             py,
             candidate,
@@ -14359,7 +14358,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_document_protection()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if removed.is_none() {
             return Ok(None);
         }
@@ -14403,7 +14402,7 @@ impl PyDocument {
                 group.as_deref(),
                 oxoffice_docx::StoryRunRange { start, end },
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let id = id.into_pyobject(py)?.unbind();
         self.publish_api_candidate(py, candidate, "Document.add_story_permission_range")?;
         Ok(id)
@@ -14421,7 +14420,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let count = py
             .detach(|| candidate.bind_content_controls(&values))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let result = count.into_pyobject(py)?.unbind();
         self.publish_form_candidate(
             py,
@@ -14436,7 +14435,7 @@ impl PyDocument {
         let fields = self
             .inner
             .legacy_form_fields_with_defaults()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let fields = fields
             .into_iter()
             .map(|(field, default_value)| {
@@ -14462,7 +14461,7 @@ impl PyDocument {
             run_index: position.run_index,
         };
         py.detach(|| candidate.insert_field(&native, field))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.insert_legacy_form_field")?;
         Ok(())
     }
@@ -14499,7 +14498,7 @@ impl PyDocument {
         let fields = self
             .inner
             .legacy_form_fields()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut matches = fields.into_iter().filter(|field| {
             if let (Some(part), Some(ordinal)) = (source_part, ordinal) {
                 field.source_part == part
@@ -14542,10 +14541,10 @@ impl PyDocument {
             .detach(|| {
                 candidate.set_legacy_form_field_value(&field.source_part, field.ordinal, value)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let default_value = candidate
             .legacy_form_fields_with_defaults()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .find(|(info, _)| {
                 info.source_part == reopened.source_part && info.ordinal == reopened.ordinal
@@ -14594,7 +14593,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let counts = py
             .detach(|| candidate.fill_content_control_tags(&pairs))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
 
         let result = PyTuple::new(py, counts)?;
         self.publish_api_candidate(py, candidate, "Document.fill_content_control_tags")?;
@@ -14634,7 +14633,7 @@ impl PyDocument {
         };
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.insert_content_control(&destination, spec))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.insert_content_control")
     }
 
@@ -14758,7 +14757,7 @@ impl PyDocument {
         let destination = destination.native(py, self)?;
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.move_content_control(&source, &destination))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.move_content_control")
     }
 
@@ -14772,7 +14771,7 @@ impl PyDocument {
         let destination = destination.native(py, self)?;
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.clone_content_control(&source, &destination))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.clone_content_control")
     }
 
@@ -14817,7 +14816,7 @@ impl PyDocument {
                 let uris = schema_uris.iter().map(String::as_str).collect::<Vec<_>>();
                 candidate.add_custom_xml_store(item_xml, &uris)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.add_custom_xml_store")?;
         Ok(item_id)
     }
@@ -14870,7 +14869,7 @@ impl PyDocument {
                 &fragment.inner,
                 policy.map(|p| p.inner).unwrap_or_default(),
             )
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.import_fragment")
     }
     #[pyo3(signature = (other, *, at, policy=None))]
@@ -14895,7 +14894,7 @@ impl PyDocument {
         let end = oxoffice_docx::ContentLocation::end(other.body_story(py)?);
         let fragment =
             oxoffice_docx::DocumentFragment::from_range(&other.inner, &start, &end, false)
-                .map_err(|e| rdocx_to_pyerr(py, e))?;
+                .map_err(|e| docx_to_pyerr(py, e))?;
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .import_fragment(
@@ -14903,7 +14902,7 @@ impl PyDocument {
                 &fragment,
                 oxoffice_docx::FragmentConflictPolicy::for_insert_document(policy.map(|p| p.inner)),
             )
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.insert_document")
     }
     #[getter]
@@ -14929,7 +14928,7 @@ impl PyDocument {
     fn set_update_fields_on_open(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
         self.inner
             .set_update_fields_on_open(value)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn image_data<'py>(
@@ -14951,7 +14950,7 @@ impl PyDocument {
         // No content moves, so live handles stay valid.
         self.inner
             .replace_image(relationship_id, data)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn replace_image_for_story(
@@ -14964,7 +14963,7 @@ impl PyDocument {
         let story = self.native_story(py, &story)?;
         self.inner
             .replace_image_for_story(&story, relationship_id, data)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (paragraph, heading, text, *, tooltip=None))]
@@ -14986,17 +14985,17 @@ impl PyDocument {
         let mut document = slf.borrow_mut(py);
         let source = source
             .native(&document.inner)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let destination = destination
             .native(&document.inner)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = document.inner.clone_for_staging();
         let position = candidate
             .add_heading_hyperlink_at(&source, &destination, text, tooltip)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let run_path = candidate
             .read_story_paragraph(&position.location, |p| p.run_path(position.run_index))
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("heading link run was not found"))?;
         let prepared = document.prepare_word_revision(
             py,
@@ -15030,7 +15029,7 @@ impl PyDocument {
         let values = self
             .inner
             .pictures()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .map(|inner| {
                 Py::new(
@@ -15080,7 +15079,7 @@ impl PyDocument {
                 oxoffice_docx::Length::emu(width),
                 oxoffice_docx::Length::emu(height),
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if (width, height) == (picture.inner.width, picture.inner.height) {
             return Ok(());
         }
@@ -15110,7 +15109,7 @@ impl PyDocument {
                 oxoffice_docx::Length::emu(height),
             )
         })
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn split_run(
@@ -15162,7 +15161,7 @@ impl PyDocument {
             .paragraph_mut(paragraph_index)
             .ok_or_else(|| PyIndexError::new_err("paragraph index out of range"))?
             .split_run(run_index, character_offset)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate) != before {
             let prepared = document.prepare_word_revision(
                 py,
@@ -15213,7 +15212,7 @@ impl PyDocument {
             }
         })
         .map(|bytes| PyBytes::new(py, &bytes))
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
@@ -15250,7 +15249,7 @@ impl PyDocument {
                     Ok((bytes, layout.layout.diagnostics.clone()))
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((PyBytes::new(py, &payload), messages))
     }
@@ -15271,7 +15270,7 @@ impl PyDocument {
         };
         py.detach(|| self.inner.to_pdfa_deterministic(profile))
             .map(|bytes| PyBytes::new(py, &bytes))
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
@@ -15320,7 +15319,7 @@ impl PyDocument {
             }
         })
         .map(|bytes| bytes.map(|bytes| PyBytes::new(py, &bytes)))
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
@@ -15365,7 +15364,7 @@ impl PyDocument {
                     ))
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((payload.map(|bytes| PyBytes::new(py, &bytes)), messages))
     }
@@ -15409,7 +15408,7 @@ impl PyDocument {
                     Ok(oxoffice_docx::render_page(&layout.layout, page_index))
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(rendered.map(|result| PySvgRenderResult {
             svg: result.svg,
             diagnostics: result
@@ -15463,7 +15462,7 @@ impl PyDocument {
                     Ok(oxoffice_pdf::render_all_pages(&layout.layout, dpi))
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         PyList::new(py, pages.iter().map(|page| PyBytes::new(py, page)))
     }
 
@@ -15507,7 +15506,7 @@ impl PyDocument {
                     ))
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((
             PyList::new(py, payload.iter().map(|bytes| PyBytes::new(py, bytes)))?,
@@ -15611,7 +15610,7 @@ impl PyDocument {
                     }
                 }
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let payload = match rendered {
             oxoffice_docx::RasterOutput::SeparatePages(pages) => {
                 PyList::new(py, pages.iter().map(|bytes| PyBytes::new(py, bytes)))?
@@ -15672,7 +15671,7 @@ impl PyDocument {
                 let changed = candidate.to_bytes()? != before;
                 Ok::<_, oxoffice_docx::Error>((diagnostics, changed))
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let result = PyTuple::new(
             py,
             diagnostics.into_iter().map(|item| PyComparisonDiagnostic {
@@ -15702,11 +15701,11 @@ impl PyDocument {
         let mut anchors = this
             .inner
             .comment_anchor_snapshot_results()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut items = this
             .inner
             .standalone_story_item_snapshots()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .map(|item| (item.location().clone(), item))
             .collect::<HashMap<_, _>>();
@@ -15969,7 +15968,7 @@ impl PyDocument {
         })();
         if let Err(error) = applied {
             *section.properties_mut() = saved;
-            return Err(rdocx_to_pyerr(py, error));
+            return Err(docx_to_pyerr(py, error));
         }
         Ok(self
             .inner
@@ -16012,7 +16011,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_note_policy(family, policy)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -16028,7 +16027,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_page_color(color)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -16045,7 +16044,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_text_watermark(text)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -16078,7 +16077,7 @@ impl PyDocument {
                 oxoffice_docx::Length::emu(width),
                 oxoffice_docx::Length::emu(height),
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -16123,7 +16122,7 @@ impl PyDocument {
         }
         candidate
             .insert_section(index)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -16142,7 +16141,7 @@ impl PyDocument {
         }
         candidate
             .remove_section(index)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -16157,7 +16156,7 @@ impl PyDocument {
     #[getter]
     fn styles<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let snapshots = PyTuple::new(py, self.inner.styles().into_iter().map(style_snapshot))?;
-        py.import("rdocx")?
+        py.import("oxoffice.docx")?
             .getattr("_StyleSnapshots")?
             .call1((snapshots,))?
             .cast_into::<PyTuple>()
@@ -16331,7 +16330,7 @@ impl PyDocument {
         }
         self.inner
             .add_style(builder)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(style_snapshot(
             self.inner
                 .style(&style_id)
@@ -16474,7 +16473,7 @@ impl PyDocument {
         }
         self.inner
             .set_style(builder)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(style_snapshot(
             self.inner
                 .style(&style_id)
@@ -16490,14 +16489,14 @@ impl PyDocument {
         };
         self.inner
             .remove_style(&style_id)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn set_default_style(&mut self, py: Python<'_>, style: &str) -> PyResult<()> {
         let (style_type, style_id) = defined_style(&self.inner, style)?;
         self.inner
             .set_default_style(style_type, &style_id)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -16562,7 +16561,7 @@ impl PyDocument {
         }
         self.inner
             .set_default_paragraph_properties(Some(next))
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn part_names<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
@@ -16570,14 +16569,14 @@ impl PyDocument {
             py,
             self.inner
                 .part_names()
-                .map_err(|error| rdocx_to_pyerr(py, error))?,
+                .map_err(|error| docx_to_pyerr(py, error))?,
         )
     }
 
     fn part_xml(&self, py: Python<'_>, name: &str) -> PyResult<String> {
         self.inner
             .part_xml(name)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn add_numbering_definition(
@@ -16591,7 +16590,7 @@ impl PyDocument {
             .collect::<Vec<_>>();
         self.inner
             .add_numbering_definition(&levels)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (definition_id, *, start = None, level = 0))]
@@ -16621,7 +16620,7 @@ impl PyDocument {
             .collect::<Vec<_>>();
         self.inner
             .add_numbering_instance(definition_id, &overrides)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -16629,7 +16628,7 @@ impl PyDocument {
         let values = self
             .inner
             .charts()
-            .map_err(|e| rdocx_to_pyerr(py, e))?
+            .map_err(|e| docx_to_pyerr(py, e))?
             .into_iter()
             .map(|(chart_type, data)| Py::new(py, PyChart { chart_type, data }))
             .collect::<PyResult<Vec<_>>>()?;
@@ -16662,7 +16661,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         let id = candidate
             .restart_numbering(index, start)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         document.publish_api_candidate(py, candidate, "Document.restart_numbering")?;
         Ok(id)
     }
@@ -16695,7 +16694,7 @@ impl PyDocument {
             .borrow(py)
             .inner
             .chart_legend(index)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let result = PyDict::new(py);
         result.set_item("visible", settings.visible)?;
         result.set_item("position", settings.position.as_str())?;
@@ -16744,11 +16743,11 @@ impl PyDocument {
         let mut document = slf.borrow_mut(py);
         let location = document
             .paragraph_route(&ParagraphLocation::Body(index), None)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .set_chart_legend(index, visible, position, overlay)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         document.publish_owner_candidate(
             py,
             candidate,
@@ -16797,7 +16796,7 @@ impl PyDocument {
             None => candidate.add_chart(kind, width, height, &data),
         }
         .map(drop)
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -16841,7 +16840,7 @@ impl PyDocument {
         candidate
             .try_add_bullet_list_item(text, level as u32)
             .map(|_| ())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -16882,7 +16881,7 @@ impl PyDocument {
         candidate
             .try_add_numbered_list_item_with_restart(text, level as u32, restart)
             .map(|_| ())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -16916,7 +16915,7 @@ impl PyDocument {
         let style_id = style_id_of_type(&self.inner, style, oxoffice_docx::StyleType::Paragraph)?;
         self.inner
             .link_style_to_numbering(&style_id, num_id, level)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -16925,7 +16924,7 @@ impl PyDocument {
         let stories = self
             .inner
             .stories()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         PyTuple::new(
             py,
             stories
@@ -16944,7 +16943,7 @@ impl PyDocument {
         let items = this
             .inner
             .standalone_story_item_snapshots()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let snapshots = items
             .into_iter()
             .map(|item| {
@@ -16981,7 +16980,7 @@ impl PyDocument {
                     let resolved = self
                         .inner
                         .section_story(section_index, kind, variant)
-                        .map_err(|error| rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| docx_to_pyerr(py, error))?;
                     snapshots.push(PyHeaderFooterVariant {
                         section_index,
                         kind: kind_name.to_owned(),
@@ -17014,7 +17013,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let story = py
             .detach(|| candidate.create_section_story(section_index, kind, variant))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17042,7 +17041,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let linked = py
             .detach(|| candidate.link_section_story(section_index, kind, variant, &story))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17068,7 +17067,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let story = py
             .detach(|| candidate.unlink_section_story(section_index, kind, variant))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17089,7 +17088,7 @@ impl PyDocument {
         let links = self
             .inner
             .story_link_snapshots()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut story_links = HashMap::<_, Vec<_>>::new();
         for (location, link) in &links {
             story_links
@@ -17149,7 +17148,7 @@ impl PyDocument {
         let (story, link_index) = self.native_hyperlink(py, &hyperlink)?;
         // No content moves, so live handles stay valid.
         py.detach(|| self.inner.set_hyperlink_url(&story, link_index, url))
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn remove_hyperlink(
@@ -17160,7 +17159,7 @@ impl PyDocument {
         let (story, link_index) = self.native_hyperlink(py, &hyperlink)?;
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.remove_hyperlink(&story, link_index))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.ensure_word_authority(py)?;
         let selected = self
             .owners
@@ -17188,7 +17187,7 @@ impl PyDocument {
     fn set_header(&mut self, py: Python<'_>, text: &str) -> PyResult<()> {
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.try_set_header(text))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17203,7 +17202,7 @@ impl PyDocument {
     fn set_footer(&mut self, py: Python<'_>, text: &str) -> PyResult<()> {
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.try_set_footer(text))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17224,7 +17223,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let location = self.native_location(py, &item)?;
         py.detach(|| candidate.set_story_text(&location, text))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17246,7 +17245,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let story = self.native_story(py, &story)?;
         py.detach(|| candidate.add_hyperlink_to_story(&story, text, url))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17275,7 +17274,7 @@ impl PyDocument {
         let height =
             checked_section_length(height, "picture height")?.map(oxoffice_docx::Length::emu);
         if width.is_some() != height.is_some() {
-            return Err(crate::rdocx_to_pyerr(
+            return Err(crate::docx_to_pyerr(
                 py,
                 oxoffice_docx::Error::Other(
                     "use add_picture(..., width=..., height=...) with both dimensions; omit both for the native image size".to_owned(),
@@ -17299,7 +17298,7 @@ impl PyDocument {
                     let current = self
                         .inner
                         .pictures()
-                        .map_err(|error| rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| docx_to_pyerr(py, error))?;
                     if !current.contains(&picture.inner) {
                         return Err(PyValueError::new_err("picture placement source changed"));
                     }
@@ -17323,7 +17322,7 @@ impl PyDocument {
                 height,
                 options.map(|options| options.inner.clone()),
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let picture = pictures
             .into_iter()
             .find(|picture| picture.location == location)
@@ -17381,7 +17380,7 @@ impl PyDocument {
                 "range must be a RunRange or StoryRunRange",
             ));
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17412,7 +17411,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let id = candidate
             .add_comment_on_text(anchor, occurrence, author, initials, text, date)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17442,7 +17441,7 @@ impl PyDocument {
             run_index: range.end.run_index,
         };
         py.detach(|| candidate.move_comment(id, oxoffice_docx::StoryRunRange { start, end }))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17466,7 +17465,7 @@ impl PyDocument {
     ) -> PyResult<()> {
         let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.move_comment_to_text(id, anchor, occurrence))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17491,7 +17490,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let id = candidate
             .reply_to_with_initials(parent_id, author, initials, text, date)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -17508,7 +17507,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let updated = candidate
             .resolve_comment(id, resolved)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if updated {
             let prepared = self.prepare_word_revision(
                 py,
@@ -17526,7 +17525,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_comment(id)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if removed {
             let prepared = self.prepare_word_revision(
                 py,
@@ -17568,7 +17567,7 @@ impl PyDocument {
         // handles stay valid.
         self.inner
             .add_bookmark(name, (*range).into())
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false))]
@@ -17628,7 +17627,7 @@ impl PyDocument {
                 }
                 Ok::<_, oxoffice_docx::Error>(fragments)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         PyTuple::new(py, fragments)
     }
 
@@ -17681,7 +17680,7 @@ impl PyDocument {
                     height: page.height,
                 }))
         })
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn rebuild_toc(&mut self, py: Python<'_>) -> PyResult<Py<PyTocRebuildReport>> {
@@ -17693,7 +17692,7 @@ impl PyDocument {
                 let changed = candidate.to_bytes()? != before;
                 Ok::<_, oxoffice_docx::Error>((report, changed))
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let result = Py::new(
             py,
             PyTocRebuildReport {
@@ -17721,7 +17720,7 @@ impl PyDocument {
         let revisions = self
             .inner
             .story_revisions()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         PyTuple::new(
             py,
             revisions
@@ -17874,7 +17873,7 @@ impl PyDocument {
             }) {
                 // The native singular API owns this exact upfront error and ordering.
                 oxoffice_docx::Document::new().try_replace_text(placeholder, replacement)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
             }
             let Some((candidate, counts)) =
                 self.dormant_replacements(py, &[(placeholder, replacement, expect)], false)?
@@ -17993,7 +17992,7 @@ impl PyDocument {
             let mut candidate = self.inner.clone_for_staging();
             let counts = py
                 .detach(|| candidate.try_replace_all_regex_expected(&pairs))
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
                 .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, true))?;
             (candidate, counts)
         };
@@ -18112,7 +18111,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let report = py
             .detach(|| candidate.update_all_fields(&context))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
 
         // Every returned object, including nested outcomes and tuples, exists
         // before publishing. Returning this owned Py object needs no allocation.
@@ -18169,7 +18168,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let updated = py
             .detach(|| candidate.update_page_fields())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if updated != 0 {
             let prepared = self.prepare_word_revision(
                 py,
@@ -18190,7 +18189,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let report = py
             .detach(|| candidate.update_layout_backed_fields())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let changed = report.updated_count() != 0;
         let result = Py::new(
             py,
@@ -18227,7 +18226,7 @@ impl PyDocument {
         }
         candidate
             .insert_toc(index, max_level)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -18371,7 +18370,7 @@ impl PyDocument {
         {
             let removed = py
                 .detach(|| self.inner.try_remove_content(index))
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             if removed {
                 self.commit_tail_body_removal(index, range, revision)?;
             }
@@ -18390,7 +18389,7 @@ impl PyDocument {
                 self.prepare_body_splice(plan, "Document.remove_content", &publication)?;
             let removed = py
                 .detach(|| self.inner.try_remove_content(index))
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             if removed {
                 self.commit_body_splice(prepared, &publication)?;
             }
@@ -18399,7 +18398,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let removed = py
             .detach(|| candidate.try_remove_content(index))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         if removed {
             let prepared = self.prepare_word_revision(
                 py,
@@ -18421,7 +18420,7 @@ impl PyDocument {
     ) -> PyResult<usize> {
         let len = self.inner.content_count();
         if start > end || end > len {
-            return Err(rdocx_to_pyerr(
+            return Err(docx_to_pyerr(
                 py,
                 oxoffice_docx::Error::Other("content range is reversed or out of range".to_owned()),
             ));
@@ -18442,14 +18441,14 @@ impl PyDocument {
                 self.prepare_body_splice(plan, "Document.remove_content_range", &publication)?;
             let removed = py
                 .detach(|| self.inner.remove_content_range(start, end))
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             self.commit_body_splice(prepared, &publication)?;
             return Ok(removed);
         }
         let mut candidate = self.inner.clone_for_staging();
         let removed = py
             .detach(|| candidate.remove_content_range(start, end))
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
             &candidate,
@@ -18677,7 +18676,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         let fragment = candidate
             .remove_content_at(&location)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -18713,7 +18712,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .insert_content(&location, fragment)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -18746,7 +18745,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .clone_content(&source, &destination)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -18779,7 +18778,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .move_content(&source, &destination)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -18793,7 +18792,7 @@ impl PyDocument {
 
     #[getter]
     fn fonts(&self, py: Python<'_>) -> PyResult<Py<PyTuple>> {
-        let fonts = self.inner.try_fonts().map_err(|e| rdocx_to_pyerr(py, e))?;
+        let fonts = self.inner.try_fonts().map_err(|e| docx_to_pyerr(py, e))?;
         let mut snapshots = Vec::new();
         snapshots.try_reserve_exact(fonts.len()).map_err(|_| {
             pyo3::exceptions::PyMemoryError::new_err("font listing allocation failed")
@@ -18819,7 +18818,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_font(native)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.set_font")
     }
     fn remove_font(
@@ -18830,7 +18829,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_font(name)
-            .map_err(|e| rdocx_to_pyerr(py, e))?
+            .map_err(|e| docx_to_pyerr(py, e))?
             .map(|font| PyFontDefinition::snapshot(py, font))
             .transpose()?;
         self.publish_api_candidate(py, candidate, "Document.remove_font")?;
@@ -18847,7 +18846,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_embedded_font(name, kind)
-            .map_err(|e| rdocx_to_pyerr(py, e))?
+            .map_err(|e| docx_to_pyerr(py, e))?
             .map(|font| PyEmbeddedFont::snapshot(py, font))
             .transpose()?;
         self.publish_api_candidate(py, candidate, "Document.remove_embedded_font")?;
@@ -18870,14 +18869,14 @@ impl PyDocument {
         let data = checked_font_input(font)?;
         let key = match font_key {
             Some(key) => key,
-            None => oxoffice_docx::derive_font_key(&data).map_err(|e| rdocx_to_pyerr(py, e))?,
+            None => oxoffice_docx::derive_font_key(&data).map_err(|e| docx_to_pyerr(py, e))?,
         };
         let font =
             oxoffice_docx::EmbeddedFont::new(kind, data, key, license).with_subsetted(subsetted);
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .embed_font(name, font)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.embed_font")
     }
 
@@ -18885,42 +18884,42 @@ impl PyDocument {
     fn embed_true_type_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.inner
             .embed_true_type_fonts()
-            .map_err(|e| rdocx_to_pyerr(py, e))
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     #[setter]
     fn set_embed_true_type_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_embed_true_type_fonts(value)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.set_embed_true_type_fonts")
     }
     #[getter]
     fn embed_system_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.inner
             .embed_system_fonts()
-            .map_err(|e| rdocx_to_pyerr(py, e))
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     #[setter]
     fn set_embed_system_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_embed_system_fonts(value)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.set_embed_system_fonts")
     }
     #[getter]
     fn save_subset_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.inner
             .save_subset_fonts()
-            .map_err(|e| rdocx_to_pyerr(py, e))
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     #[setter]
     fn set_save_subset_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_save_subset_fonts(value)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         self.publish_api_candidate(py, candidate, "Document.set_save_subset_fonts")
     }
 
@@ -18932,7 +18931,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_mail_merge_package(options.borrow().inner.clone())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.set_mail_merge_package")
     }
 
@@ -18940,7 +18939,7 @@ impl PyDocument {
         Ok(self
             .inner
             .mail_merge_package()
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .map(|inner| PyMailMergePackageOptions { inner }))
     }
 
@@ -18948,7 +18947,7 @@ impl PyDocument {
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_mail_merge_package()
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.remove_mail_merge_package")?;
         Ok(removed)
     }
@@ -18977,19 +18976,19 @@ impl PyDocument {
             let probe = self
                 .inner
                 .prepare_mail_merge_data(native_policy, Some(&[]))
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             if !probe.diagnostics.is_empty() {
                 probe
             } else {
                 let rows = copied_external_rows(py, external_records)?;
                 self.inner
                     .prepare_mail_merge_data(native_policy, Some(&rows))
-                    .map_err(|error| rdocx_to_pyerr(py, error))?
+                    .map_err(|error| docx_to_pyerr(py, error))?
             }
         } else {
             self.inner
                 .prepare_mail_merge_data(native_policy, None)
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
         };
         Ok(PyMailMergePreparedData { inner: prepared })
     }
@@ -19205,7 +19204,7 @@ fn collect_caller_fonts<'py>(
             selected.extend(explicit);
             Ok::<_, oxoffice_layout::LayoutError>(selected)
         })
-        .map_err(|error| rdocx_to_pyerr(py, oxoffice_docx::Error::Layout(error)))?;
+        .map_err(|error| docx_to_pyerr(py, oxoffice_docx::Error::Layout(error)))?;
     Ok((!selected.is_empty()).then_some(selected))
 }
 
@@ -19379,13 +19378,13 @@ impl PyValidationReport {
 pub fn validate_bytes(data: &[u8], py: Python<'_>) -> PyResult<PyValidationReport> {
     py.detach(|| oxoffice_docx::validate_document_bytes(data))
         .map(Into::into)
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
 }
 #[pyfunction]
 pub fn validate_file(path: PathBuf, py: Python<'_>) -> PyResult<PyValidationReport> {
     py.detach(|| oxoffice_docx::validate_document_file(path))
         .map(Into::into)
-        .map_err(|error| rdocx_to_pyerr(py, error))
+        .map_err(|error| docx_to_pyerr(py, error))
 }
 
 fn type_name(value: &Bound<'_, PyAny>) -> String {
@@ -19412,7 +19411,7 @@ fn template_render_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyErr {
     {
         return PyValueError::new_err(message.clone());
     }
-    rdocx_to_pyerr(py, error)
+    docx_to_pyerr(py, error)
 }
 
 /// Convert template data to JSON. `path` names the value in error messages,
@@ -19750,7 +19749,7 @@ impl PyFontDefinition {
 impl PyDocument {
     fn refuse_unsavable_body_edit(&self, py: Python<'_>) -> PyResult<()> {
         match self.inner.unsavable_body_edit() {
-            Some(error) => Err(rdocx_to_pyerr(
+            Some(error) => Err(docx_to_pyerr(
                 py,
                 oxoffice_docx::Error::Other(error.to_owned()),
             )),
@@ -19764,10 +19763,10 @@ impl PyDocument {
     fn refuse_non_xml_paragraph_text(&self, py: Python<'_>, text: &str) -> PyResult<()> {
         match self.inner.preflight_checked_paragraph(None, text) {
             Err(oxoffice_docx::Error::Oxml(error)) => {
-                Err(rdocx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))
+                Err(docx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))
             }
             Err(oxoffice_docx::Error::Other(_)) => Ok(()),
-            Err(error) => Err(rdocx_to_pyerr(py, error)),
+            Err(error) => Err(docx_to_pyerr(py, error)),
             Ok(()) => Ok(()),
         }
     }

@@ -1,4 +1,4 @@
-"""Enumerations exposed by rpptx."""
+"""Enumerations exposed by oxoffice.pptx."""
 
 from .shapes import MSO_SHAPE
 

@@ -61,7 +61,7 @@ fn checked_spacing_length(
         }
         let emu = value.extract::<i64>()?;
         let twips = emu / 635;
-        let explicit = value.is_instance(&py.import("rdocx.shared")?.getattr("Length")?)?;
+        let explicit = value.is_instance(&py.import("oxoffice.docx.shared")?.getattr("Length")?)?;
         if emu != 0 && twips == 0 && !explicit {
             return Err(PyValueError::new_err(format!(
                 "{name} bare integer EMU would store zero twips; use Pt, Twips or explicit Emu"
@@ -420,7 +420,7 @@ impl PyFont {
                 (0..paragraph.run_count())
                     .find(|index| paragraph.run_path(*index).as_ref() == Some(&self.run_path))
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+            .map_err(|error| crate::docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("font run physical owner is no longer present"))?;
         Ok((location, index))
     }
@@ -448,7 +448,7 @@ pub(crate) fn run_snapshot(
         .read(&document.inner, |paragraph| {
             paragraph.run(run_index).map(FontSnapshot::from_run)
         })
-        .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+        .map_err(|error| crate::docx_to_pyerr(py, error))?
         .ok_or_else(|| PyIndexError::new_err("run index out of range"))
 }
 
@@ -467,7 +467,7 @@ pub(crate) fn apply_run_update(
             paragraph.edit_run(run_path, |run| result = update.apply(run))?;
             result
         })
-        .map_err(|error| crate::rdocx_to_pyerr(py, error))
+        .map_err(|error| crate::docx_to_pyerr(py, error))
 }
 
 #[pymethods]
@@ -632,12 +632,12 @@ impl PyFont {
     fn set_size(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let points = value.map(|value| -> PyResult<f64> {
             if value.is_instance_of::<pyo3::types::PyBool>() {
-                return Err(PyTypeError::new_err("font.size rejects bool as EMU; use rdocx.shared.Pt(12)"));
+                return Err(PyTypeError::new_err("font.size rejects bool as EMU; use oxoffice.docx.shared.Pt(12)"));
             }
             let emu = value.extract::<i64>()?;
             let points = oxoffice_docx::Length::emu(emu).to_pt();
             if emu != 0 && (points * 2.0) as u32 == 0 {
-                return Err(PyValueError::new_err("font.size bare int is EMU; Word stores 0.5 point steps; use rdocx.shared.Pt(12) or a Length at least Pt(0.5)"));
+                return Err(PyValueError::new_err("font.size bare int is EMU; Word stores 0.5 point steps; use oxoffice.docx.shared.Pt(12) or a Length at least Pt(0.5)"));
             }
             Ok(points)
         }).transpose()?;
@@ -738,7 +738,7 @@ impl PyFont {
                     .ok_or_else(|| {
                         PyValueError::new_err("use font.highlight for this retained color")
                     })?;
-                py.import("rdocx.enum.text")?
+                py.import("oxoffice.docx.enum.text")?
                     .getattr("WD_COLOR_INDEX")?
                     .call1((index,))
                     .map(Bound::unbind)
@@ -857,7 +857,7 @@ impl PyColorFormat {
             })
         };
         kind.map(|kind| {
-            py.import("rdocx.enum.dml")?
+            py.import("oxoffice.docx.enum.dml")?
                 .getattr("MSO_COLOR_TYPE")?
                 .call1((kind,))
                 .map(Bound::unbind)
@@ -1107,7 +1107,7 @@ impl PyTabStops {
                         .expect("index is within native tab count");
                     let (alignment, leader) = tab
                         .checked_values()
-                        .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| crate::docx_to_pyerr(py, error))?;
                     Ok(PyTabStop {
                         position: tab.position(),
                         alignment,
@@ -1118,7 +1118,7 @@ impl PyTabStops {
         };
         location
             .read(&document.inner, read)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?
+            .map_err(|error| crate::docx_to_pyerr(py, error))?
     }
 }
 
@@ -1172,7 +1172,7 @@ impl PyTabStops {
                         .is_some_and(|tab| tab.position() == position)
                 })
             })
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         if duplicate {
             return Err(PyValueError::new_err(
                 "a tab stop already exists at this stored position",
@@ -1253,7 +1253,7 @@ pub(crate) fn paragraph_snapshot(
     let document = document.borrow(py);
     location
         .read(&document.inner, ParagraphSnapshot::from_paragraph)
-        .map_err(|error| crate::rdocx_to_pyerr(py, error))
+        .map_err(|error| crate::docx_to_pyerr(py, error))
 }
 
 /// Apply one paragraph property update at a location the caller has validated.
@@ -1273,10 +1273,10 @@ pub(crate) fn apply_paragraph_update(
         let mut candidate = document.inner.clone_for_staging();
         ParagraphLocation::Related(related.clone())
             .edit(&mut candidate, |paragraph| update.apply(paragraph))
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let native = document
             .paragraph_route(&location, None)
-            .map_err(|error| crate::rdocx_to_pyerr(py, error))?;
+            .map_err(|error| crate::docx_to_pyerr(py, error))?;
         return document.publish_owner_candidate(
             py,
             candidate,
@@ -1286,7 +1286,7 @@ pub(crate) fn apply_paragraph_update(
     }
     location
         .edit(&mut document.inner, |paragraph| update.apply(paragraph))
-        .map_err(|error| crate::rdocx_to_pyerr(py, error))
+        .map_err(|error| crate::docx_to_pyerr(py, error))
 }
 
 #[pymethods]
@@ -1512,7 +1512,7 @@ impl PyParagraphFormat {
                 "line_spacing rejects bool; use a numeric line multiple or Pt/Length",
             ));
         }
-        if value.is_instance(&py.import("rdocx.shared")?.getattr("Length")?)? {
+        if value.is_instance(&py.import("oxoffice.docx.shared")?.getattr("Length")?)? {
             let emu = value.extract::<i64>()?;
             i32::try_from(emu / 635).map_err(|_| {
                 PyValueError::new_err(

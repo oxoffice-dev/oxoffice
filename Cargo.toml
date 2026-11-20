@@ -25,6 +25,7 @@ members = [
     "crates/oxoffice-pptx-render",
     "crates/oxoffice-pptx-cli",
     "crates/oxoffice-pptx-py",
+    "crates/oxoffice-py",
     "crates/oxoffice-pptx-wasm",
 ]
 
@@ -128,7 +129,7 @@ tiff = { version = "0.11.3", default-features = false }
 wasm-bindgen = "0.2.126"
 wasm-bindgen-test = "=0.3.76"
 js-sys = "0.3.103"
-pyo3 = { version = "=0.29.0", features = ["abi3-py39"] }
+pyo3 = { version = "=0.29.0", features = ["abi3-py310"] }
 
 [profile.release]
 opt-level = 3

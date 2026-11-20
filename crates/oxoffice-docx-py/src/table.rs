@@ -7,7 +7,7 @@ use smallvec::smallvec;
 use crate::document::PyDocument;
 use crate::paragraph::PyParagraph;
 use crate::{
-    color_hex, color_object, enum_object, length_object, normalize_index, rdocx_to_pyerr,
+    color_hex, color_object, docx_to_pyerr, enum_object, length_object, normalize_index,
     stale_to_pyerr,
 };
 
@@ -30,7 +30,7 @@ pub(crate) fn checked_table_style(
 ) -> PyResult<String> {
     candidate
         .ensure_builtin_table_style(value)
-        .map_err(|e| rdocx_to_pyerr(py, e))?;
+        .map_err(|e| docx_to_pyerr(py, e))?;
     let style_id = {
         let styles = candidate.styles();
         let exact_id = styles.iter().any(|style| {
@@ -162,7 +162,7 @@ fn prepared_table_location(
             crate::document::assert_indexed_route(&indexed, native, "table");
             Ok(indexed)
         }
-        None => native().map_err(|error| rdocx_to_pyerr(py, error)),
+        None => native().map_err(|error| docx_to_pyerr(py, error)),
     }
 }
 
@@ -589,18 +589,18 @@ impl PyTable {
         let index = self.validate(py)?;
         TableLocation::new(index, &self.current_related(py)?)
             .read(&self.document.borrow(py).inner, read)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
     pub(crate) fn direct_body_index(&self, py: Python<'_>) -> PyResult<usize> {
         let index = self.validate(py)?;
         let document = self.document.borrow(py);
         if let Some(location) = &self.current_related(py)? {
             let location = TableLocation::refreshed(&document.inner, location)
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             return document
                 .inner
                 .story_item_snapshots()
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
                 .into_iter()
                 .find(|item| {
                     item.location() == &location
@@ -643,7 +643,7 @@ impl PyTable {
         let mut candidate = document.inner.clone_for_staging();
         let result = TableLocation::new(index, &current_related.clone())
             .edit(&mut candidate, edit)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.adopt_property_edit(py, candidate, "Table property edit")?;
         Ok(result)
     }
@@ -683,7 +683,7 @@ impl PyTable {
             document
                 .inner
                 .table_element_xml(&location)
-                .map_err(|error| rdocx_to_pyerr(py, error))
+                .map_err(|error| docx_to_pyerr(py, error))
         };
         // A direct body table serializes alone, without the `w14`
         // declaration that only the rest of the body can bring.
@@ -712,7 +712,7 @@ impl PyTable {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .replace_table_xml(&location, xml)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.publish_owner_candidate(
             py,
             candidate,
@@ -799,7 +799,7 @@ impl PyTable {
                 table.set_style(&style_id);
                 Ok(())
             })
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         document.install_inner(candidate);
         Ok(())
     }
@@ -1168,7 +1168,7 @@ impl PyTable {
                     table.set_cell_grid_span_checked(row, col, span)?;
                     Ok(table.row(row).map(|row| row.cell_count()) != before)
                 })
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
         };
         if changed {
             let prepared = document.prepare_word_revision(
@@ -1207,7 +1207,7 @@ impl PyTable {
             None => candidate.add_empty_table_row(index),
             Some(location) => {
                 let location = TableLocation::refreshed(&candidate, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 candidate.edit_story_table(&location, |table| {
                     let index = table.row_count();
                     table.add_row()?;
@@ -1215,11 +1215,11 @@ impl PyTable {
                 })
             }
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let publication = crate::document::WordPublication::TableGrid(
             document
                 .table_route(index, &current_related)
-                .map_err(|error| rdocx_to_pyerr(py, error))?,
+                .map_err(|error| docx_to_pyerr(py, error))?,
         );
         let prepared =
             document.prepare_word_revision(py, &candidate, "Table.add_row", publication)?;
@@ -1259,12 +1259,12 @@ impl PyTable {
             None => candidate.insert_table_column(table_index, index, before),
             Some(location) => {
                 let location = TableLocation::refreshed(&candidate, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 candidate
                     .edit_story_table(&location, |table| table.insert_column(index, before, None))
             }
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -1285,11 +1285,11 @@ impl PyTable {
             None => candidate.delete_table_column(table_index, index),
             Some(location) => candidate.delete_story_table_column(
                 &TableLocation::refreshed(&candidate, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?,
+                    .map_err(|error| docx_to_pyerr(py, error))?,
                 index,
             ),
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -1310,7 +1310,7 @@ impl PyTable {
             let mut candidate = document.inner.clone_for_staging();
             let row_count = TableLocation::new(table_index, &current_related.clone())
                 .read(&candidate, |table| table.row_count())
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             let source = normalize_index(index, row_count, "row")?;
             let insert_at = at.unwrap_or(source + 1);
             if insert_at > row_count {
@@ -1319,12 +1319,12 @@ impl PyTable {
             let inserted = match &current_related.clone() {
                 Some(location) => {
                     let location = TableLocation::refreshed(&candidate, location)
-                        .map_err(|error| rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| docx_to_pyerr(py, error))?;
                     candidate.clone_story_table_row(&location, source, insert_at)
                 }
                 None => candidate.clone_table_row(table_index, source, insert_at),
             }
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
             let prepared = document.prepare_word_revision(
                 py,
                 &candidate,
@@ -1362,21 +1362,21 @@ impl PyTable {
         let mut candidate = document.inner.clone_for_staging();
         let row_count = TableLocation::new(table_index, &current_related.clone())
             .read(&candidate, |table| table.row_count())
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let row_index = normalize_index(index, row_count, "row")?;
         match &current_related.clone() {
             Some(location) => {
                 let location = TableLocation::refreshed(&candidate, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 candidate.remove_story_table_row(&location, row_index)
             }
             None => candidate.remove_table_row(table_index, row_index),
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let publication = crate::document::WordPublication::TableGrid(
             document
                 .table_route(table_index, &current_related)
-                .map_err(|error| rdocx_to_pyerr(py, error))?,
+                .map_err(|error| docx_to_pyerr(py, error))?,
         );
         let prepared =
             document.prepare_word_revision(py, &candidate, "Table.remove_row", publication)?;
@@ -1450,7 +1450,7 @@ impl PyRowCollection {
         }
         TableLocation::new(index, &self.current_related(py)?)
             .read(&self.document.borrow(py).inner, |table| table.row_count())
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyRow>> {
         self.validate(py)?;
@@ -1671,7 +1671,7 @@ impl PyRow {
                     .ok_or_else(|| PyIndexError::new_err("row index out of range"))?;
                 Ok(read(row))
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
     }
 
     /// Apply one checked native row edit that moves no content, so live
@@ -1692,7 +1692,7 @@ impl PyRow {
                 })?;
                 edit(&mut row)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.adopt_property_edit(py, candidate, "Row property edit")?;
         Ok(())
     }
@@ -1854,7 +1854,7 @@ impl PyCellCollection {
             .read(&self.document.borrow(py).inner, |table| {
                 table.row(row).map(|row| row.cell_count())
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("row index out of range"))
     }
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyCell>> {
@@ -1968,10 +1968,10 @@ impl PyCell {
     ) -> PyResult<oxoffice_docx::StoryId> {
         let location = TableLocation::new(table, related)
             .native(document)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document
             .story_table_cell(&location, row, cell)
-            .map_err(|error| rdocx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn new(
@@ -2010,11 +2010,11 @@ impl PyCell {
                             // An inventory's body story has no fingerprint.
                             let native = TableLocation::Related(table.clone())
                                 .native(&document.inner)
-                                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                                .map_err(|error| docx_to_pyerr(py, error))?;
                             let story = document
                                 .inner
                                 .story_table_cell(&native, row, cell)
-                                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                                .map_err(|error| docx_to_pyerr(py, error))?;
                             crate::document::WordOwnerLocation::Cell {
                                 table,
                                 row,
@@ -2089,7 +2089,7 @@ impl PyCell {
                     .ok_or_else(|| PyIndexError::new_err("cell index out of range"))?;
                 Ok(read(cell))
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
     }
 
     /// Apply one checked native cell edit that moves no content, so live
@@ -2107,7 +2107,7 @@ impl PyCell {
             && let Some(candidate) = document
                 .inner
                 .direct_body_table_cell_candidate(slot, row, cell, &edit)
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
             && document.apply_local_cell_edit(
                 py,
                 slot,
@@ -2129,7 +2129,7 @@ impl PyCell {
                 })?;
                 edit(&mut cell)
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.adopt_property_edit(py, candidate, "Cell property edit")?;
         Ok(())
     }
@@ -2156,7 +2156,7 @@ impl PyCell {
             document
                 .inner
                 .cell_element_xml(&location, row, cell)
-                .map_err(|error| rdocx_to_pyerr(py, error))
+                .map_err(|error| docx_to_pyerr(py, error))
         };
         // A cell of a direct body table serializes with that table alone.
         let bytes = match document
@@ -2189,11 +2189,11 @@ impl PyCell {
         let story = document
             .inner
             .story_table_cell(&location, row, cell)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .replace_cell_xml(&location, row, cell, xml)
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.publish_owner_candidate(
             py,
             candidate,
@@ -2234,7 +2234,7 @@ impl PyCell {
                 .inner
                 .content_index_of_table(table)
                 .ok_or_else(|| {
-                    rdocx_to_pyerr(
+                    docx_to_pyerr(
                         py,
                         oxoffice_docx::Error::Other(
                             "table has no checked direct physical owner".into(),
@@ -2244,9 +2244,9 @@ impl PyCell {
             document
                 .inner
                 .direct_body_cell_story(slot, row, cell)
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
                 .ok_or_else(|| {
-                    rdocx_to_pyerr(
+                    docx_to_pyerr(
                         py,
                         oxoffice_docx::Error::Other(
                             "table has no checked physical source owner".into(),
@@ -2267,7 +2267,7 @@ impl PyCell {
                 height,
                 options.map(|o| o.inner.clone()),
             )
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let picture = pictures
             .into_iter()
             .find(|p| p.location == location)
@@ -2307,12 +2307,12 @@ impl PyCell {
             Some(location) => {
                 let document = self.document.borrow(py);
                 let location = TableLocation::refreshed(&document.inner, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 Some(
                     document
                         .inner
                         .story_table_cell(&location, row, cell)
-                        .map_err(|error| rdocx_to_pyerr(py, error))?,
+                        .map_err(|error| docx_to_pyerr(py, error))?,
                 )
             }
             None => None,
@@ -2352,10 +2352,10 @@ impl PyCell {
         let mut document = this.document.borrow_mut(py);
         let location = TableLocation::new(table, &related)
             .native(&document.inner)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let other_location = TableLocation::new(other_table, &other_related)
             .native(&document.inner)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         if location != other_location {
             return Err(PyValueError::new_err(
                 "merge cells belong to different physical tables",
@@ -2369,13 +2369,13 @@ impl PyCell {
             .edit_story_table(&location, |table| {
                 table.merge_cells((row, cell), (other_row, other_cell))
             })
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let candidate_location = TableLocation::new(table, &related)
             .native(&candidate)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let story = candidate
             .story_table_cell(&candidate_location, merged.0, merged.1)
-            .map_err(|e| rdocx_to_pyerr(py, e))?;
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2424,7 +2424,7 @@ impl PyCell {
         match &current_related.clone() {
             Some(location) => {
                 let location = TableLocation::refreshed(&candidate, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 candidate.edit_story_table(&location, |table| {
                     table.split_cell(row, cell)?;
                     Ok(())
@@ -2451,7 +2451,7 @@ impl PyCell {
                     .map(|_| ())
             }
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -2484,7 +2484,7 @@ impl PyCell {
                 document
                     .inner
                     .story_items(&story)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?
+                    .map_err(|error| docx_to_pyerr(py, error))?
                     .into_iter()
                     .filter(|item| item.kind() == oxoffice_docx::StoryItemKind::Table)
                     .map(|item| item.location().clone())
@@ -2515,7 +2515,7 @@ impl PyCell {
         let story = self.physical_story(py, &candidate, &current_related, table, row, cell)?;
         let before = candidate
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .filter(|item| item.kind() == oxoffice_docx::StoryItemKind::Table)
             .count();
@@ -2529,11 +2529,11 @@ impl PyCell {
                     .add_table_checked(rows, cols)?;
                 Ok(())
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let story = self.physical_story(py, &candidate, &current_related, table, row, cell)?;
         let tables = candidate
             .story_items(&story)
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .filter(|item| item.kind() == oxoffice_docx::StoryItemKind::Table)
             .map(|item| item.location().clone())
@@ -2585,7 +2585,7 @@ impl PyCell {
             && let Some(candidate) = document
                 .inner
                 .direct_body_table_cell_candidate(slot, row, cell, |cell| cell.try_set_text(value))
-                .map_err(|error| rdocx_to_pyerr(py, error))?
+                .map_err(|error| docx_to_pyerr(py, error))?
             && document.apply_local_cell_edit(
                 py,
                 slot,
@@ -2615,7 +2615,7 @@ impl PyCell {
             }
             None => candidate.try_set_cell_text(table, row, cell, value),
         }
-        .map_err(|error| rdocx_to_pyerr(py, error))?;
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let publication = document
             .table_route(table, &current_related)
             .map(|location| crate::document::WordPublication::CellText(location, row, cell))
@@ -2666,7 +2666,7 @@ impl PyCell {
                     cell.add_paragraph(text);
                     Ok(paragraph)
                 })
-                .map_err(|error| rdocx_to_pyerr(py, error))?;
+                .map_err(|error| docx_to_pyerr(py, error))?;
             let prepared = document.prepare_word_revision(
                 py,
                 &candidate,
@@ -2688,10 +2688,10 @@ impl PyCell {
             let paragraph = match &current_related.clone() {
                 Some(location) => {
                     let location = TableLocation::refreshed(&candidate, location)
-                        .map_err(|error| rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| docx_to_pyerr(py, error))?;
                     let location = candidate
                         .story_table_cell_paragraph_location(&location, row, cell, paragraph)
-                        .map_err(|error| rdocx_to_pyerr(py, error))?;
+                        .map_err(|error| docx_to_pyerr(py, error))?;
                     PyParagraph::for_story(self.document.clone_ref(py), path, location)
                         .bind_prepared(
                             py,
@@ -2891,7 +2891,7 @@ impl PyCellParagraphCollection {
             .read(&self.document.borrow(py).inner, |table| {
                 table.cell(row, cell).map(|cell| cell.paragraph_count())
             })
-            .map_err(|error| rdocx_to_pyerr(py, error))?
+            .map_err(|error| docx_to_pyerr(py, error))?
             .ok_or_else(|| PyIndexError::new_err("cell index out of range"))
     }
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyParagraph>> {
@@ -2919,12 +2919,12 @@ impl PyCellParagraphCollection {
                 let (_, row, cell) = self.validate(py)?;
                 let document = self.document.borrow(py);
                 let location = TableLocation::refreshed(&document.inner, location)
-                    .map_err(|error| rdocx_to_pyerr(py, error))?;
+                    .map_err(|error| docx_to_pyerr(py, error))?;
                 Some(
                     document
                         .inner
                         .story_table_cell_paragraph_location(&location, row, cell, index)
-                        .map_err(|error| rdocx_to_pyerr(py, error))?,
+                        .map_err(|error| docx_to_pyerr(py, error))?,
                 )
             }
             None => None,

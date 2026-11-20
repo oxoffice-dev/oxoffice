@@ -77,7 +77,7 @@ impl PySlideLayout {
             .borrow_mut(py)
             .inner
             .set_layout_name(index, name)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))
+            .map_err(|error| crate::pptx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -88,7 +88,7 @@ impl PySlideLayout {
             .borrow(py)
             .inner
             .layout_master_index(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         PySlideMasterCollection::new(
             self.presentation.clone_ref(py),
             self.presentation
@@ -106,7 +106,7 @@ impl PySlideLayout {
             .borrow(py)
             .inner
             .layout_used_by_slides(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let items = indices
             .into_iter()
             .map(|index| {
@@ -144,7 +144,7 @@ impl PySlideLayout {
             .inner
             .has_explicit_background_at(oxoffice_pptx::ShapeOwner::Layout(index))
             .map(|explicit| !explicit)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))
+            .map_err(|error| crate::pptx_to_pyerr(py, error))
     }
 
     #[setter]
@@ -154,7 +154,7 @@ impl PySlideLayout {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_follow_master_background_at(oxoffice_pptx::ShapeOwner::Layout(index), value)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -174,7 +174,7 @@ impl PySlideLayout {
             .borrow(py)
             .inner
             .show_master_shapes_at(oxoffice_pptx::ShapeOwner::Layout(index))
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))
+            .map_err(|error| crate::pptx_to_pyerr(py, error))
     }
 
     #[setter]
@@ -184,7 +184,7 @@ impl PySlideLayout {
         let mut candidate = p.inner.clone();
         candidate
             .set_show_master_shapes_at(oxoffice_pptx::ShapeOwner::Layout(index), value)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = p.unchanged_owners()?;
         let prepared = p.prepare_owners(
             &candidate,
@@ -315,7 +315,7 @@ impl PySlideLayoutCollection {
         let mut candidate = presentation.inner.clone();
         let inserted = candidate
             .duplicate_layout(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -354,7 +354,7 @@ impl PySlideLayoutCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .remove_layout(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = presentation.removed_layout_owners(index)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -487,7 +487,7 @@ impl PySlide {
             .borrow(py)
             .inner
             .media(index)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?;
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?;
         let mut result = Vec::with_capacity(inventory.len());
         for info in inventory {
             let (part_name, content_type, target) = match info.source {
@@ -553,7 +553,7 @@ impl PySlide {
             .borrow(py)
             .inner
             .extract_media(index, shape_id)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
             .map(|bytes| PyBytes::new(py, &bytes).unbind()))
     }
 
@@ -571,7 +571,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .replace_media(index, shape_id, media.input())
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?;
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -599,7 +599,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .remove_media(index, shape_id)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?;
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?;
         let survivors = presentation.removed_shape_owners(&[PathSeg::Slide(index)], shape_index)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -700,7 +700,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_notes_text(index, "")
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.text_changed_owners(&self.path)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -745,7 +745,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_notes_text(index, text)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.text_changed_owners(&self.path)?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -782,7 +782,7 @@ impl PySlide {
         let inner = &mut candidate;
         let count = py
             .detach(|| inner.try_replace_slide_text(index, placeholder, replacement, notes, expect))
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         if let Some(expected) = expect.filter(|&expected| expected != count) {
             return Err(replacement_count_to_pyerr(py, placeholder, expected, count));
         }
@@ -809,7 +809,7 @@ impl PySlide {
             .inner
             .slide_layout_index(index)
             .ok_or_else(|| {
-                crate::rpptx_value_to_pyerr(
+                crate::pptx_value_to_pyerr(
                     py,
                     format!("slide {index} has no layout reachable through the slide masters"),
                 )
@@ -847,7 +847,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_slide_layout(index, layout_index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -906,7 +906,7 @@ impl PySlide {
             .borrow(py)
             .inner
             .show_master_shapes_at(oxoffice_pptx::ShapeOwner::Slide(index))
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))
+            .map_err(|error| crate::pptx_to_pyerr(py, error))
     }
 
     #[setter]
@@ -916,7 +916,7 @@ impl PySlide {
         let mut candidate = p.inner.clone();
         candidate
             .set_show_master_shapes_at(oxoffice_pptx::ShapeOwner::Slide(index), value)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = p.unchanged_owners()?;
         let prepared = p.prepare_owners(
             &candidate,
@@ -948,7 +948,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_follow_master_background_at(oxoffice_pptx::ShapeOwner::Slide(index), value)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -993,7 +993,7 @@ impl PySlide {
     ) -> PyResult<()> {
         let index = self.validate(py)?;
         let comment = oxoffice_pptx::Comment::new(id, author_id, created, text)
-            .map_err(|error| crate::rpptx_value_to_pyerr(py, error.to_string()))?;
+            .map_err(|error| crate::pptx_value_to_pyerr(py, error.to_string()))?;
         if text_start.is_some() != text_length.is_some()
             || (text_start.is_some() && shape_id.is_none())
         {
@@ -1012,7 +1012,7 @@ impl PySlide {
             ),
             None => candidate.add_comment(index, comment),
         }
-        .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+        .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1038,12 +1038,12 @@ impl PySlide {
     ) -> PyResult<()> {
         let index = self.validate(py)?;
         let reply = oxoffice_pptx::CommentReply::new(id, author_id, created, text)
-            .map_err(|error| crate::rpptx_value_to_pyerr(py, error.to_string()))?;
+            .map_err(|error| crate::pptx_value_to_pyerr(py, error.to_string()))?;
         let mut presentation = self.presentation.borrow_mut(py);
         let mut candidate = presentation.inner.clone();
         candidate
             .reply_to_comment(index, comment_id, reply)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1064,7 +1064,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .resolve_comment(index, comment_id)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1085,7 +1085,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .remove_comment(index, comment_id)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1108,7 +1108,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .move_comment(index, from_, to)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1137,7 +1137,7 @@ impl PySlide {
         let mut candidate = presentation.inner.clone();
         candidate
             .move_reply(index, comment_id, from_, to)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1281,7 +1281,7 @@ impl PySlideCollection {
                 &request.options,
                 &request.slide_map,
             )
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let diagnostics = PyTuple::new(py, diagnostics)?;
         if indexes.is_empty() {
             let slides = PyTuple::empty(py);
@@ -1368,7 +1368,7 @@ impl PySlideCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .add_slide(layout_index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -1407,7 +1407,7 @@ impl PySlideCollection {
         let mut candidate = presentation.inner.clone();
         let index = candidate
             .add_slide_at(layout_index, position)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors =
             presentation.slide_owner_edit(crate::presentation::SlideOwnerEdit::Insert(index))?;
         let prepared = presentation.prepare_owners(
@@ -1555,7 +1555,7 @@ impl PySlideCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .remove_slide(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors =
             presentation.slide_owner_edit(crate::presentation::SlideOwnerEdit::Remove(index))?;
         let prepared = presentation.prepare_owners(
@@ -1583,7 +1583,7 @@ impl PySlideCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .duplicate_slide(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation
             .slide_owner_edit(crate::presentation::SlideOwnerEdit::Insert(index + 1))?;
         let prepared = presentation.prepare_owners(
@@ -1617,7 +1617,7 @@ impl PySlideCollection {
         let mut candidate = presentation.inner.clone();
         candidate
             .move_slide(from_, to)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let survivors = presentation
             .slide_owner_edit(crate::presentation::SlideOwnerEdit::Move { from: from_, to })?;
         let prepared = presentation.prepare_owners(
@@ -1731,7 +1731,7 @@ impl PySlideMaster {
         for index in 0..p.inner.slide_master_count() {
             if p.inner
                 .slide_master_part_name(index)
-                .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+                .map_err(|e| crate::pptx_to_pyerr(py, e))?
                 .as_deref()
                 == Some(self.part_name.as_str())
             {
@@ -1838,7 +1838,7 @@ impl PySlideMaster {
             .borrow(py)
             .inner
             .master_layout_indices(index)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let collection =
             PySlideLayoutCollection::new(self.presentation.clone_ref(py), self.path.clone());
         let items = layouts
@@ -1890,7 +1890,7 @@ impl PySlideMasterCollection {
                     .borrow(py)
                     .inner
                     .slide_master_part_name(index)
-                    .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+                    .map_err(|e| crate::pptx_to_pyerr(py, e))?
                     .ok_or_else(|| PyIndexError::new_err("slide master index out of range"))?,
                 path: self
                     .presentation
@@ -1944,7 +1944,7 @@ impl PyTheme {
             .borrow(py)
             .inner
             .theme(index)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
             .ok_or_else(|| PyIndexError::new_err("slide master owner is absent"))
     }
 }
@@ -1968,10 +1968,10 @@ impl PyTheme {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_theme_name(index, value)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?
         {
             return Ok(());
         }
@@ -2027,7 +2027,7 @@ impl PyThemeColors {
         match color {
             Some(color) => {
                 let [r, g, b] = color.components();
-                py.import("rpptx.dml.color")?
+                py.import("oxoffice.pptx.dml.color")?
                     .getattr("RGBColor")?
                     .call1((r, g, b))
                     .map(Bound::unbind)
@@ -2048,7 +2048,7 @@ impl PyThemeColors {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_theme_color(index, key, oxoffice_pptx::RgbColor::new(r, g, b))
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
             &candidate,
@@ -2153,7 +2153,7 @@ impl PyThemeFontSet {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_theme_font(index, self.major, script, typeface)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         let proofs = presentation.unchanged_owners()?;
         let prepared =
             presentation.prepare_owners(&candidate, "Theme.fonts", &proofs, false, false, false)?;
@@ -2245,7 +2245,7 @@ impl PyHeaderFooter {
         let mut candidate = p.inner.clone();
         if candidate
             .set_slide_header_footer(index, &settings)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
         {
             let proofs = p.footer_owners(&candidate)?;
             let prepared = p.prepare_owners(
@@ -2302,7 +2302,7 @@ impl PyHeaderFooter {
             .borrow(py)
             .inner
             .slide_header_footer_policy(index)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
             .map_or("absent", |(source, _)| source))
     }
 
@@ -2314,7 +2314,7 @@ impl PyHeaderFooter {
             .borrow(py)
             .inner
             .slide_header_footer_policy(index)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
             .and_then(|(_, flags)| flags.slide_number))
     }
 
@@ -2326,7 +2326,7 @@ impl PyHeaderFooter {
             .borrow(py)
             .inner
             .slide_header_footer_policy(index)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
             .and_then(|(_, flags)| flags.footer))
     }
 
@@ -2338,7 +2338,7 @@ impl PyHeaderFooter {
             .borrow(py)
             .inner
             .slide_header_footer_policy(index)
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
             .and_then(|(_, flags)| flags.date))
     }
 
@@ -2424,7 +2424,7 @@ impl PyHeaderFooter {
     }
 }
 
-/// One slide's transition, read and written live (rpptx extension).
+/// One slide's transition, read and written live (oxoffice extension).
 ///
 /// `type` is one of `fade`, `push`, `wipe`, `split`, `cover`, `uncover`,
 /// `cut`, `zoom`, or `None`. Another producer's effect reads as its element
@@ -2461,7 +2461,7 @@ impl PySlideTransition {
         let mut candidate = presentation.inner.clone();
         if candidate
             .set_slide_transition(index, Some(&transition))
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
         {
             let proofs = presentation.footer_owners(&candidate)?;
             let prepared = presentation.prepare_owners(
@@ -2612,7 +2612,7 @@ impl PySlideTransition {
         let mut candidate = presentation.inner.clone();
         if candidate
             .set_all_transitions(Some(&transition))
-            .map_err(|e| crate::rpptx_to_pyerr(py, e))?
+            .map_err(|e| crate::pptx_to_pyerr(py, e))?
         {
             let proofs = presentation.footer_owners(&candidate)?;
             let prepared = presentation.prepare_owners(
@@ -2648,7 +2648,7 @@ impl PyNotesSlide {
             .slide(index)
             .ok_or_else(|| PyIndexError::new_err("slide owner is absent"))?
             .notes_text_frame_text()
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         text.map(|_| {
             Py::new(
                 py,
@@ -2675,7 +2675,7 @@ impl PyNotesTextFrame {
             PySlide::new(self.presentation.clone_ref(py), self.path.clone()).validate(py)?;
         let presentation = self.presentation.borrow(py);
         let text = presentation.inner.slide(index).ok_or_else(|| PyIndexError::new_err("slide owner is absent"))?
-            .notes_text_frame_text().map_err(|error| crate::rpptx_to_pyerr(py, error))?
+            .notes_text_frame_text().map_err(|error| crate::pptx_to_pyerr(py, error))?
             .ok_or_else(|| PyValueError::new_err("notes body is absent; inspect slide.notes_slide.notes_text_frame again or use Slide.notes_text"))?;
         Ok((index, text))
     }
@@ -2695,10 +2695,10 @@ impl PyNotesTextFrame {
         let mut candidate = presentation.inner.clone();
         candidate
             .set_notes_text(index, text)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?;
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?;
         if candidate
             .saves_as(&presentation.inner)
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))?
+            .map_err(|error| crate::pptx_to_pyerr(py, error))?
         {
             return Ok(());
         }

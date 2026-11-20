@@ -1,4 +1,4 @@
-"""Colour values used by the public rpptx API."""
+"""Colour values used by the public oxoffice.pptx API."""
 
 
 class RGBColor(tuple[int, int, int]):

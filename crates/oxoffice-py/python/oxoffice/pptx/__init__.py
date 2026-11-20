@@ -1,4 +1,4 @@
-"""Python bindings for rpptx."""
+"""PowerPoint presentations: the Python API of oxoffice-pptx."""
 
 from .enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR_INDEX, MSO_THEME_COLOR, MSO_PATTERN_TYPE, MSO_PATTERN
 from .dml.color import RGBColor
@@ -7,23 +7,23 @@ from .enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, MSO_UNDERLINE, PP_ALIGN
 from .util import Inches, Length, Pt
 
 
-class RpptxError(Exception):
-    """Base class for errors raised by rpptx."""
+class PptxError(Exception):
+    """Base class for errors raised by oxoffice.pptx."""
 
 
-class PackageError(RpptxError):
+class PackageError(PptxError):
     """An OPC package, file, or presentation operation failed."""
 
 
-class XmlError(RpptxError):
+class XmlError(PptxError):
     """PresentationML could not be parsed or serialized."""
 
 
-class StaleElementError(RpptxError):
+class StaleElementError(PptxError):
     """A held content handle was invalidated by structural mutation."""
 
 
-class ReplacementCountError(RpptxError):
+class ReplacementCountError(PptxError):
     """A counted replacement matched a different number of times than expected."""
 
     def __init__(self, message: str, expected: int, found: int) -> None:
@@ -37,10 +37,10 @@ class ReplacementCountError(RpptxError):
         return str(self.args[0])
 
 
-from ._rpptx import FontEmbeddingLicense, EmbeddedFont, EmbeddedFontFace, EmbeddedTypeface
-from ._rpptx import Element, Comment, CommentAuthor, CommentReply, Presentation, PresentationTextExport, CoreProperties, AppProperties, CustomProperties, CustomProperty, CustomFileTime, Section, MediaInfo, GradientStops, GradientStop
-from ._rpptx import NotesSlide, NotesTextFrame, SlideTransition, HeaderFooter, PlaceholderFormat, SlideMaster, SlideMasterCollection, Theme, ThemeFonts, ThemeFontSet, ThemeColors, MasterTextStyles, TextStyleList
-from ._rpptx import FitReport, FitFrameReport, FitTrial, AutofitRefreshResult, AutofitUpdate, BoundingBox, TextFrameLayout, TextLineLayout, ValidationIssue
+from ._native import FontEmbeddingLicense, EmbeddedFont, EmbeddedFontFace, EmbeddedTypeface
+from ._native import Element, Comment, CommentAuthor, CommentReply, Presentation, PresentationTextExport, CoreProperties, AppProperties, CustomProperties, CustomProperty, CustomFileTime, Section, MediaInfo, GradientStops, GradientStop
+from ._native import NotesSlide, NotesTextFrame, SlideTransition, HeaderFooter, PlaceholderFormat, SlideMaster, SlideMasterCollection, Theme, ThemeFonts, ThemeFontSet, ThemeColors, MasterTextStyles, TextStyleList
+from ._native import FitReport, FitFrameReport, FitTrial, AutofitRefreshResult, AutofitUpdate, BoundingBox, TextFrameLayout, TextLineLayout, ValidationIssue
 
 __all__ = [
     "Element",
@@ -84,7 +84,7 @@ __all__ = [
     "Pt",
     "RGBColor",
     "ReplacementCountError",
-    "RpptxError",
+    "PptxError",
     "StaleElementError",
     "TextFrameLayout",
     "TextLineLayout",
@@ -257,7 +257,7 @@ class XL_CHART_TYPE(IntEnum):
     XY_SCATTER = 74
 
 
-from ._rpptx import Chart, ChartSeries, Shape
+from ._native import Chart, ChartSeries, Shape
 
 GraphicFrame = Shape
 

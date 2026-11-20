@@ -1,13 +1,14 @@
 # oxoffice-docx-py
 
-Native rdocx for Python
+The Rust bindings behind `oxoffice.docx`, the Word API of the `oxoffice` Python
+package. The `oxoffice-py` crate builds the wheel.
 
-`rdocx` gives Python applications a native DOCX workflow for creating,
+`oxoffice.docx` gives Python applications a native DOCX workflow for creating,
 opening, editing, comparing, laying out, and rendering Word documents. It
 works directly with OOXML packages and does not require Microsoft Word,
 LibreOffice, a conversion service, or a Java or .NET runtime.
 
-The package runs the Rust `rdocx` document engine locally, presents a typed
+The package runs the Rust `oxoffice-docx` document engine locally, presents a typed
 Python API, and needs no remote service for editing, layout, or rendering.
 Review workflows cover comments, tracked revisions, comparison, and table of
 contents rebuilding. Complete package saves preserve safe producer XML and
@@ -18,17 +19,17 @@ parts that the focused Python surface does not model.
 Install the current release from PyPI:
 
 ```sh
-python -m pip install rdocx
+python -m pip install oxoffice
 ```
 
-`rdocx` requires CPython 3.9 or newer. Its platform wheels use the Python 3.9
+`oxoffice` requires CPython 3.10 or newer. Its platform wheels use the Python 3.10
 stable ABI, so one wheel supports multiple compatible Python versions. Source
 installation requires a Rust toolchain and maturin.
 
 ## Quick start
 
 ```python
-from rdocx import Document
+from oxoffice.docx import Document
 
 doc = Document()
 doc.add_paragraph("Hello from Python")
@@ -91,14 +92,14 @@ native refusals of signed input and external relationships remain in force.
 
 ## Use it when
 
-Use `rdocx` when a Python service, desktop application, or automation task
+Use `oxoffice.docx` when a Python service, desktop application, or automation task
 needs to work with Word documents locally. It is suited to template updates,
 document assembly, review workflows, comparison, and deterministic output.
 
 ## Relationship
 
 The Python API is intentionally focused. It is source compatible with the
-documented `rdocx` surface, but it is not a drop-in replacement for every
+documented `oxoffice.docx` surface, but it is not a drop-in replacement for every
 python-docx method or private lxml object.
 
 ## Example
@@ -106,7 +107,7 @@ python-docx method or private lxml object.
 Open and update an existing document:
 
 ```python
-from rdocx import Document
+from oxoffice.docx import Document
 
 document = Document("template.docx")
 document.add_paragraph("Approved")
@@ -116,7 +117,7 @@ document.save("approved.docx")
 ## Package XML escape hatch
 
 For an unmodelled package part, edit the DOCX ZIP with lxml, then reopen it
-with `rdocx`. Keep the original ZIP members and update package relationships
+with `oxoffice.docx`. Keep the original ZIP members and update package relationships
 and content types if an edit adds or removes a part. For example, to change
 an existing application property:
 
@@ -124,7 +125,7 @@ an existing application property:
 from io import BytesIO
 from zipfile import ZipFile
 from lxml import etree
-from rdocx import Document
+from oxoffice.docx import Document
 
 source = Document("report.docx").to_bytes()
 output = BytesIO()
@@ -162,21 +163,19 @@ The release gate validates the installed package with strict mypy and
 `Document.set_header(text)` and `Document.set_footer(text)` replace a complete
 story through one checked transaction. Removing a complete owned comment thread
 cleans its definitions and companion metadata. Partial ranges or malformed
-ownership raise `RdocxError` and preserve the document and live handles.
+ownership raise `DocxError` and preserve the document and live handles.
 Successful replacement invalidates earlier handles once.
 
 ## Project links
 
-- [Source repository](https://github.com/tensorbee/rdocx)
-- [Issue tracker](https://github.com/tensorbee/rdocx/issues)
-- [Changelog](https://github.com/tensorbee/rdocx/blob/main/CHANGELOG.md)
+- [Source repository](https://github.com/oxoffice-dev/oxoffice)
+- [Issue tracker](https://github.com/oxoffice-dev/oxoffice/issues)
+- [Changelog](https://github.com/oxoffice-dev/oxoffice/blob/main/CHANGELOG.md)
 
 ## License
 
-Licensed under either the
-[MIT License](https://github.com/tensorbee/rdocx/blob/main/LICENSE) or the
-[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), at your
-option.
+Licensed under the
+[MIT License](https://github.com/oxoffice-dev/oxoffice/blob/main/LICENSE).
 
 ## Licensed font embedding
 
@@ -185,7 +184,7 @@ license identity. Binary readers are bounded and consumed through actual EOF.
 
 ```python
 from pathlib import Path
-from rdocx import Document, FontEmbeddingLicense
+from oxoffice.docx import Document, FontEmbeddingLicense
 
 value = Document()
 license = FontEmbeddingLicense(authorized=True, identity="SIL Open Font License 1.1")

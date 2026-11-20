@@ -8,7 +8,7 @@ use crate::normalize_index;
 use crate::presentation::PyPresentation;
 use crate::shape::{length, shape_mut_at, shape_ref_at};
 use crate::text::{PyTextFrame, anchor_from_value, anchor_object};
-use crate::{rpptx_to_pyerr, validate_path};
+use crate::{pptx_to_pyerr, validate_path};
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyTable>()?;
@@ -73,7 +73,7 @@ fn restructure(
         let mut table = crate::shape::native_shape_mut_at(&mut candidate, &current)
             .and_then(oxoffice_pptx::ShapeMut::into_table_mut)
             .ok_or_else(|| PyValueError::new_err("shape has no table"))?;
-        edit(&mut table).map_err(|error| rpptx_to_pyerr(py, error))?;
+        edit(&mut table).map_err(|error| pptx_to_pyerr(py, error))?;
     }
     let survivors = presentation.grid_changed_owners(path)?;
     let prepared =
@@ -193,7 +193,7 @@ impl PyTable {
         let mut table = crate::shape::native_shape_mut_at(&mut candidate, &current)
             .and_then(oxoffice_pptx::ShapeMut::into_table_mut)
             .ok_or_else(|| PyValueError::new_err("shape has no table"))?;
-        edit(&mut table).map_err(|error| rpptx_to_pyerr(py, error))?;
+        edit(&mut table).map_err(|error| pptx_to_pyerr(py, error))?;
         drop(table);
         let proofs = presentation.unchanged_owners()?;
         let prepared = presentation.prepare_owners(
@@ -606,7 +606,7 @@ impl PyColumn {
             .and_then(oxoffice_pptx::ShapeMut::into_table_mut)
             .ok_or_else(|| PyValueError::new_err("shape has no table"))?
             .set_column_width(column, oxoffice_pptx::Emu(width))
-            .map_err(|error| crate::rpptx_to_pyerr(py, error))
+            .map_err(|error| crate::pptx_to_pyerr(py, error))
     }
 }
 
@@ -846,7 +846,7 @@ impl PyRow {
             .and_then(oxoffice_pptx::ShapeMut::into_table_mut)
             .ok_or_else(|| PyValueError::new_err("shape has no table"))?
             .set_row_height(row, oxoffice_pptx::Emu(height))
-            .map_err(|error| rpptx_to_pyerr(py, error))
+            .map_err(|error| pptx_to_pyerr(py, error))
     }
 }
 
@@ -1057,15 +1057,15 @@ impl PyCell {
         native_cell_mut_at(&mut candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("cell index out of range"))?
             .merge_to(row, column)
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let before = crate::shape::native_shape_ref_at(&presentation.inner, &current)
             .ok_or_else(|| PyIndexError::new_err("table owner is absent"))?
             .xml()
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let after = crate::shape::native_shape_ref_at(&candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("table owner is absent"))?
             .xml()
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         if before == after {
             return Ok(());
         }
@@ -1105,15 +1105,15 @@ impl PyCell {
         native_cell_mut_at(&mut candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("cell index out of range"))?
             .split()
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let before = crate::shape::native_shape_ref_at(&presentation.inner, &current)
             .ok_or_else(|| PyIndexError::new_err("table owner is absent"))?
             .xml()
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         let after = crate::shape::native_shape_ref_at(&candidate, &current)
             .ok_or_else(|| PyIndexError::new_err("table owner is absent"))?
             .xml()
-            .map_err(|error| rpptx_to_pyerr(py, error))?;
+            .map_err(|error| pptx_to_pyerr(py, error))?;
         if before == after {
             return Ok(());
         }

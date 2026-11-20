@@ -1407,6 +1407,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxoffice-py"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-cli",
+ "oxoffice-docx-py",
+ "oxoffice-pptx-py",
+ "pyo3",
+]
+
+[[package]]
 name = "oxoffice-py-support"
 version = "0.1.0"
 dependencies = [
