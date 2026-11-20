@@ -45,6 +45,6 @@ dependency bumps and documentation.
 | Date | Title | Status |
 | --- | --- | --- |
 | 2026-11-20 | [A friendly fork of rdocx](2026-11-20-friendly-fork-of-rdocx.md) | accepted |
-| 2026-11-20 | [Names, packaging and versions](2026-11-20-names-packaging-versions.md) | accepted |
+| 2026-11-20 | [Names, packaging and versions](2026-11-20-names-packaging-versions.md) | shipped |
 | 2026-11-20 | [CI and release from scratch](2026-11-20-ci-and-release.md) | accepted |
 | 2026-11-20 | [A test suite from scratch](2026-11-20-test-suite-from-scratch.md) | accepted |

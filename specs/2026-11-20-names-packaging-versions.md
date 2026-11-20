@@ -1,6 +1,6 @@
 ---
 date: 2026-11-20
-status: accepted
+status: shipped
 scope: release
 ---
 
@@ -69,4 +69,34 @@ CLI round trip and a wheel smoke test (import, create, edit, save, reopen).
 
 ## Kept document identifiers
 
-To be listed when the rename lands.
+These keep their `rdocx` spelling because they are written into documents or
+read back from them:
+
+- `urn:rdocx:*` (comparison, mail-merge data, font embedding, preserved
+  properties, invalidated signature relationships, EPUB identifiers),
+  `urn:rdocx-compare`, `xmlns:rdocx`, the `rdocx:` and `rdocxcmp:` prefixes
+  and the `rdocx` `mc:Ignorable` prefix
+- `rdocx:license`, `rdocx:authorized`, `rdocx.mailMerge.storeItemId`
+- `rdocx-watermark*` names and ids, `rdocx-textbox*`, `rdocx-scope`,
+  `rdocx-note-scope`, `rdocx-bibliography-properties`,
+  `rdocx-modeled-relationship-*` and relationship ids such as `rdocxSettings`
+- `{stem}-rdocx-comment-*` file names, `/ppt/rdocx-*-export.xml`
+- SVG `rdocx-font-*` and `rdocx-def-*`, MHTML `@rdocx` content ids and
+  `https://rdocx.invalid/`, the HTML class `.rpptx-semantic-*`
+- `__RDOCX_TOC_PAGE_*` and the PDF/A file identifier `rdocx-pdfa-00001`
+
+## Outcome
+
+- Five commits: shim crates removed, crates renamed, one `oxoffice` binary,
+  one `oxoffice` wheel with `oxoffice.docx` and `oxoffice.pptx`, product
+  strings. Every commit builds.
+- The wheel also installs the `oxoffice` command (`python -m oxoffice`
+  works too) through the same entry point as the binary. Exit codes, output
+  and closed-pipe behaviour match the native binary.
+- docProps `Application`, the PDF producer and the XMP producer now say
+  oxoffice. The `AppVersion` repair recognises both `oxoffice` and `rdocx`.
+- Environment variables are `OXOFFICE_*`.
+- Python classes still report `__module__ == "builtins"`, as they did in
+  rdocx. Setting `module=` on every `#[pyclass]` is left for later.
+- `oxoffice pptx --version` prints `oxoffice-pptx 0.1.0`, clap's naming for
+  a subcommand.
