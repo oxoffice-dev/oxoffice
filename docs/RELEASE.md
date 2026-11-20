@@ -32,8 +32,8 @@ breaking change bumps the minor version and anything else the patch version.
 Check a downloaded file with `sha256sum -c SHA256SUMS --ignore-missing` and
 `gh attestation verify <file> --repo oxoffice-dev/oxoffice`.
 
-The same wheels are repackaged for conda and uploaded to the `oxoffice` channel
-on prefix.dev. PyPI, crates.io and conda-forge are not published yet.
+The same wheels are repackaged for conda and uploaded to the `hadim/oxoffice`
+channel on prefix.dev. PyPI, crates.io and conda-forge are not published yet.
 
 ## Changelog
 

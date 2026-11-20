@@ -262,7 +262,7 @@ jobs:
       run:
         shell: bash
     env:
-      CONDA_CHANNEL: oxoffice
+      CONDA_CHANNEL: hadim/oxoffice
       OXOFFICE_VERSION: ${{ inputs.version }}
     steps:
       - name: Check out with LF line endings
@@ -285,25 +285,21 @@ jobs:
           pixi-version: v0.84.2
           run-install: false
           cache: false
-      # built into a local channel and tested from there before anything is uploaded
-      - name: Package
-        run: |
-          channel="$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })/conda-channel"
-          echo "LOCAL_CHANNEL=$channel" >> "$GITHUB_ENV"
-          pixi exec -s rattler-build==0.80.2 rattler-build build --recipe conda/recipe.yaml \
-            --output-dir "$channel" -c conda-forge
-          ls -l "$channel/${{ matrix.subdir }}"/*.conda
-      - name: The package imports and runs on the oldest and the newest Python
+      # rattler-build builds the package, runs the recipe's tests (imports and
+      # `oxoffice --version`) and uploads it through the trusted publisher with
+      # an attestation. A dry run publishes into a local channel instead.
+      - name: Build, test and publish
         env:
-          CONDA_OVERRIDE_GLIBC: "2.28"
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          for py in 3.10 3.13; do
-            pixi exec -c "$LOCAL_CHANNEL" -c conda-forge -s "oxoffice==$OXOFFICE_VERSION" -s "python=$py" \
-              python -c "import sys, oxoffice.docx, oxoffice.pptx; print(sys.version.split()[0], 'ok')"
-          done
-          pixi exec -c "$LOCAL_CHANNEL" -c conda-forge -s "oxoffice==$OXOFFICE_VERSION" oxoffice --version
-      - name: Upload to prefix.dev
-        if: ${{ !inputs.dry_run }}
-        run: |
-          pixi upload prefix --channel "$CONDA_CHANNEL" --skip-existing "$LOCAL_CHANNEL/${{ matrix.subdir }}"/*.conda
-          echo "${{ matrix.subdir }}: uploaded to https://prefix.dev/channels/$CONDA_CHANNEL" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = true ]; then
+            dir="$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })/conda-channel"
+            case "$dir" in /*) to="file://$dir" ;; *) to="file:///$dir" ;; esac
+            extra=()
+          else
+            to="https://prefix.dev/$CONDA_CHANNEL"
+            extra=(--generate-attestation)
+          fi
+          pixi exec -s rattler-build==0.80.2 rattler-build publish conda/recipe.yaml \
+            --to "$to" -c conda-forge --skip-existing all "${extra[@]}"
+          echo "${{ matrix.subdir }}: published to $to" >> "$GITHUB_STEP_SUMMARY"

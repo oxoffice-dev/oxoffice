@@ -43,9 +43,10 @@ since squash merges turn titles into the commits of `main`.
    latest, so `releases/latest/download/...` always points at it.
 
 4. It repackages each platform's wheel as a conda package
-   (`conda/recipe.yaml`, built with rattler-build), tests it on Python 3.10
-   and 3.13, and uploads it to the `oxoffice` channel on prefix.dev through
-   a trusted publisher (workflow `release.yml`, environment `conda`).
+   (`conda/recipe.yaml`) and publishes it with `rattler-build publish`, which
+   builds it, runs the recipe's tests and uploads it to the `hadim/oxoffice`
+   channel on prefix.dev through a trusted publisher (workflow `release.yml`,
+   environment `conda`), with an attestation.
 
 `dry_run` builds everything from `main` and publishes nothing.
 
