@@ -1,0 +1,26 @@
+[package]
+name = "oxoffice-chart"
+description = "Format-neutral ChartML modeling, editing, and rendering geometry"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ooxml", "chart", "xml", "graphics"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[dependencies]
+oxoffice-core.workspace = true
+oxoffice-drawing.workspace = true
+oxoffice-layout.workspace = true
+oxoffice-sml.workspace = true
+quick-xml.workspace = true
+
+[dev-dependencies]
+oxoffice-opc.workspace = true
+oxoffice-pdf.workspace = true
+tiny-skia.workspace = true

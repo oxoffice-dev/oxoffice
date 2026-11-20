@@ -1,75 +1,67 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/oxml-core",
-    "crates/oxml-py-support",
-    "crates/oxml-drawing",
-    "crates/oxml-layout",
-    "crates/oxml-media",
-    "crates/oxml-opc",
-    "crates/oxml-pdf",
-    "crates/oxml-sml",
-    "crates/oxml-cli-support",
-    "crates/oxml-chart",
-    "crates/rpptx",
-    "crates/rpptx-cli",
-    "crates/rpptx-layout",
-    "crates/rpptx-oxml",
-    "crates/rpptx-render",
-    "crates/rpptx-wasm",
-    "crates/rpptx-py",
-    "crates/rdocx-oxml",
-    "crates/rdocx",
-    "crates/rdocx-layout",
-    "crates/rdocx-html",
-    "crates/rdocx-py",
-    "crates/rdocx-cli",
-    "crates/rdocx-wasm",
+    "crates/oxoffice-core",
+    "crates/oxoffice-opc",
+    "crates/oxoffice-drawing",
+    "crates/oxoffice-layout",
+    "crates/oxoffice-media",
+    "crates/oxoffice-pdf",
+    "crates/oxoffice-sml",
+    "crates/oxoffice-chart",
+    "crates/oxoffice-cli-support",
+    "crates/oxoffice-py-support",
+    "crates/oxoffice-docx",
+    "crates/oxoffice-docx-oxml",
+    "crates/oxoffice-docx-layout",
+    "crates/oxoffice-docx-html",
+    "crates/oxoffice-docx-cli",
+    "crates/oxoffice-docx-py",
+    "crates/oxoffice-docx-wasm",
+    "crates/oxoffice-pptx",
+    "crates/oxoffice-pptx-oxml",
+    "crates/oxoffice-pptx-layout",
+    "crates/oxoffice-pptx-render",
+    "crates/oxoffice-pptx-cli",
+    "crates/oxoffice-pptx-py",
+    "crates/oxoffice-pptx-wasm",
 ]
 
 [workspace.package]
-version = "0.17.0"
+version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 rust-version = "1.93"
-authors = ["Atul Sharma"]
-repository = "https://github.com/tensorbee/rdocx"
-homepage = "https://github.com/tensorbee/rdocx"
-keywords = ["docx", "word", "pdf", "ooxml", "document"]
+authors = ["oxoffice contributors"]
+repository = "https://github.com/oxoffice-dev/oxoffice"
+homepage = "https://github.com/oxoffice-dev/oxoffice"
+keywords = ["docx", "pptx", "word", "powerpoint", "ooxml"]
 categories = ["parser-implementations", "text-processing"]
-
-[workspace.metadata.release]
-consolidate-commits = true
-dependent-version = "upgrade"
-pre-release-commit-message = "Prepare release {{version}}"
-verify = true
-publish = false
-tag = false
-push = false
 
 [workspace.dependencies]
 # Internal crates
-oxml-core = { path = "crates/oxml-core", version = "0.15.0" }
-oxml-py-support = { path = "crates/oxml-py-support", version = "0.17.0" }
-oxml-drawing = { path = "crates/oxml-drawing", version = "0.15.0" }
-oxml-layout = { path = "crates/oxml-layout", version = "0.15.0", default-features = false }
-oxml-media = { path = "crates/oxml-media", version = "0.15.0" }
-oxml-opc = { path = "crates/oxml-opc", version = "0.15.0" }
-oxml-pdf = { path = "crates/oxml-pdf", version = "0.15.0", default-features = false }
-oxml-sml = { path = "crates/oxml-sml", version = "0.15.0" }
-oxml-cli-support = { path = "crates/oxml-cli-support", version = "0.15.0" }
-oxml-chart = { path = "crates/oxml-chart", version = "0.15.0" }
-rpptx = { path = "crates/rpptx", version = "0.15.0", default-features = false }
-rpptx-cli = { path = "crates/rpptx-cli", version = "0.15.0" }
-rpptx-layout = { path = "crates/rpptx-layout", version = "0.15.0" }
-rpptx-oxml = { path = "crates/rpptx-oxml", version = "0.15.0" }
-rpptx-render = { path = "crates/rpptx-render", version = "0.15.0", default-features = false }
-rpptx-py = { path = "crates/rpptx-py", version = "0.15.0" }
-rdocx-oxml = { path = "crates/rdocx-oxml", version = "0.17.0" }
-rdocx = { path = "crates/rdocx", version = "0.17.0", default-features = false }
-rdocx-layout = { path = "crates/rdocx-layout", version = "0.17.0", default-features = false }
-rdocx-html = { path = "crates/rdocx-html", version = "0.17.0" }
-rdocx-py = { path = "crates/rdocx-py", version = "0.17.0" }
+oxoffice-core = { path = "crates/oxoffice-core", version = "0.1.0" }
+oxoffice-opc = { path = "crates/oxoffice-opc", version = "0.1.0" }
+oxoffice-drawing = { path = "crates/oxoffice-drawing", version = "0.1.0" }
+oxoffice-layout = { path = "crates/oxoffice-layout", version = "0.1.0", default-features = false }
+oxoffice-media = { path = "crates/oxoffice-media", version = "0.1.0" }
+oxoffice-pdf = { path = "crates/oxoffice-pdf", version = "0.1.0", default-features = false }
+oxoffice-sml = { path = "crates/oxoffice-sml", version = "0.1.0" }
+oxoffice-chart = { path = "crates/oxoffice-chart", version = "0.1.0" }
+oxoffice-cli-support = { path = "crates/oxoffice-cli-support", version = "0.1.0" }
+oxoffice-py-support = { path = "crates/oxoffice-py-support", version = "0.1.0" }
+oxoffice-docx = { path = "crates/oxoffice-docx", version = "0.1.0", default-features = false }
+oxoffice-docx-oxml = { path = "crates/oxoffice-docx-oxml", version = "0.1.0" }
+oxoffice-docx-layout = { path = "crates/oxoffice-docx-layout", version = "0.1.0", default-features = false }
+oxoffice-docx-html = { path = "crates/oxoffice-docx-html", version = "0.1.0" }
+oxoffice-docx-cli = { path = "crates/oxoffice-docx-cli", version = "0.1.0" }
+oxoffice-docx-py = { path = "crates/oxoffice-docx-py", version = "0.1.0" }
+oxoffice-pptx = { path = "crates/oxoffice-pptx", version = "0.1.0", default-features = false }
+oxoffice-pptx-oxml = { path = "crates/oxoffice-pptx-oxml", version = "0.1.0" }
+oxoffice-pptx-layout = { path = "crates/oxoffice-pptx-layout", version = "0.1.0" }
+oxoffice-pptx-render = { path = "crates/oxoffice-pptx-render", version = "0.1.0", default-features = false }
+oxoffice-pptx-cli = { path = "crates/oxoffice-pptx-cli", version = "0.1.0" }
+oxoffice-pptx-py = { path = "crates/oxoffice-pptx-py", version = "0.1.0" }
 
 # External dependencies
 #

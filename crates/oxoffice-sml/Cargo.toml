@@ -1,0 +1,17 @@
+[package]
+name = "oxoffice-sml"
+description = "SpreadsheetML workbook primitives for OOXML documents"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = true
+
+[dependencies]
+oxoffice-opc.workspace = true
+quick-xml.workspace = true
+thiserror.workspace = true

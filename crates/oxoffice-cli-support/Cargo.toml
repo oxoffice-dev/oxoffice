@@ -1,0 +1,23 @@
+[package]
+name = "oxoffice-cli-support"
+description = "Shared command-line helpers for OOXML tools"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ooxml", "cli", "office"]
+categories = ["command-line-utilities"]
+publish = true
+
+[features]
+default = []
+digital-signatures = ["dep:oxoffice-opc", "oxoffice-opc/digital-signatures"]
+
+[dependencies]
+oxoffice-opc = { workspace = true, optional = true }
+serde_json.workspace = true
+thiserror.workspace = true

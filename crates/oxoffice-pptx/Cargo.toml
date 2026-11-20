@@ -1,0 +1,63 @@
+[package]
+name = "oxoffice-pptx"
+description = "Read, edit, create, and render PowerPoint-compatible presentations"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["pptx", "powerpoint", "ooxml", "presentation"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[features]
+default = ["default-template", "render", "system-fonts"]
+agile-encryption = ["oxoffice-opc/agile-encryption"]
+default-template = ["dep:scraper"]
+digital-signatures = ["oxoffice-opc/digital-signatures"]
+render = [
+    "dep:jpeg-encoder",
+    "dep:lopdf",
+    "lopdf/wasm_js",
+    "dep:miniz_oxide",
+    "dep:oxoffice-pdf",
+    "dep:oxoffice-pptx-layout",
+    "dep:oxoffice-pptx-render",
+]
+system-fonts = ["oxoffice-layout/system-fonts", "oxoffice-pptx-render?/system-fonts"]
+
+[dependencies]
+oxoffice-core.workspace = true
+oxoffice-drawing.workspace = true
+oxoffice-layout = { workspace = true, default-features = false }
+oxoffice-media.workspace = true
+oxoffice-opc.workspace = true
+oxoffice-pdf = { workspace = true, optional = true }
+oxoffice-sml.workspace = true
+gif.workspace = true
+jpeg-encoder = { workspace = true, optional = true, features = ["std"] }
+miniz_oxide = { workspace = true, optional = true }
+lopdf = { workspace = true, optional = true }
+oxoffice-chart.workspace = true
+oxoffice-pptx-layout = { workspace = true, optional = true }
+oxoffice-pptx-oxml.workspace = true
+oxoffice-pptx-render = { workspace = true, default-features = false, optional = true }
+quick-xml.workspace = true
+scraper = { workspace = true, optional = true }
+sha2.workspace = true
+thiserror.workspace = true
+tiny-skia.workspace = true
+zune-jpeg.workspace = true
+tiff.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+miniz_oxide.workspace = true
+oxoffice-drawing.workspace = true
+oxoffice-layout.workspace = true
+oxoffice-pdf.workspace = true
+oxoffice-pptx-layout.workspace = true
+oxoffice-pptx-render = { workspace = true, features = ["system-fonts"] }

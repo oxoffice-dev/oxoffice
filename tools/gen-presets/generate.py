@@ -99,7 +99,7 @@ TOOL_DIR = Path(__file__).resolve().parent
 WORKSPACE = TOOL_DIR.parents[1]
 SOURCE = TOOL_DIR / "presetShapeDefinitions.xml"
 LICENSE = TOOL_DIR / "LICENSE-ECMA.txt"
-OUTPUT = WORKSPACE / "crates/oxml-drawing/src/preset_shape_data.rs"
+OUTPUT = WORKSPACE / "crates/oxoffice-drawing/src/preset_shape_data.rs"
 
 
 def fail(message: str) -> None:

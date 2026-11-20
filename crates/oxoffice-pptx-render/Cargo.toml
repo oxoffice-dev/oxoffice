@@ -1,0 +1,29 @@
+[package]
+name = "oxoffice-pptx-render"
+description = "Presentation rendering bridge from oxoffice-pptx models to shared output"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["pptx", "powerpoint", "rendering", "presentation"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxoffice-layout/system-fonts"]
+
+[dependencies]
+oxoffice-drawing.workspace = true
+oxoffice-layout = { workspace = true, default-features = false }
+oxoffice-media.workspace = true
+oxoffice-pptx-layout.workspace = true
+oxoffice-pptx-oxml.workspace = true
+
+[dev-dependencies]
+oxoffice-pdf.workspace = true
+tiny-skia.workspace = true

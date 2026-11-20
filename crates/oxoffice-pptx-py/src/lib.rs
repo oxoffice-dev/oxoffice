@@ -1,0 +1,170 @@
+//! Python bindings for the rpptx facade.
+
+mod dml;
+mod layout;
+mod presentation;
+mod shape;
+mod slide;
+mod table;
+mod text;
+
+use pyo3::exceptions::{PyIndexError, PyRuntimeError};
+use pyo3::prelude::*;
+use pyo3::types::PyType;
+
+use oxoffice_py_support::{ContentPath, PathSeg, StaleElementError};
+use presentation::{
+    PyComment, PyCommentAuthor, PyCommentReply, PyPresentation, PyPresentationTextExport,
+    PyValidationIssue,
+};
+
+pub(crate) fn normalize_index(index: isize, len: usize, kind: &str) -> PyResult<usize> {
+    let normalized = if index < 0 {
+        len as isize + index
+    } else {
+        index
+    };
+    if normalized < 0 || normalized >= len as isize {
+        return Err(PyIndexError::new_err(format!("{kind} index out of range")));
+    }
+    Ok(normalized as usize)
+}
+
+fn public_exception_type<'py>(py: Python<'py>, class_name: &str) -> PyResult<Bound<'py, PyType>> {
+    py.import("rpptx")
+        .and_then(|module| module.getattr(class_name))
+        .and_then(|class| class.cast_into::<PyType>().map_err(Into::into))
+}
+
+fn public_error(py: Python<'_>, class_name: &str, message: String) -> PyErr {
+    match public_exception_type(py, class_name) {
+        Ok(class) => PyErr::from_type(class, (message,)),
+        Err(_) => PyRuntimeError::new_err(message),
+    }
+}
+
+/// A counted replacement that matched a different number of times than the
+/// caller expected, worded like `rpptx replace --expect`.
+pub(crate) fn replacement_count_to_pyerr(
+    py: Python<'_>,
+    placeholder: &str,
+    expected: usize,
+    found: usize,
+) -> PyErr {
+    let message = format!("expected {expected} replacement(s) of \"{placeholder}\", found {found}");
+    match public_exception_type(py, "ReplacementCountError") {
+        Ok(class) => PyErr::from_type(class, (message, expected, found)),
+        Err(_) => PyRuntimeError::new_err(message),
+    }
+}
+
+pub(crate) fn stale_to_pyerr(py: Python<'_>, error: StaleElementError) -> PyErr {
+    public_error(py, "StaleElementError", error.to_string())
+}
+
+pub(crate) fn recovery_hint(path: &ContentPath, suffix: &str) -> String {
+    let mut public_path = String::from("prs");
+    let mut pending_row = None;
+    for segment in &path.segs {
+        match segment {
+            PathSeg::Slide(index) => public_path.push_str(&format!(".slides[{index}]")),
+            PathSeg::Layout(index) => public_path.push_str(&format!(".slide_layouts[{index}]")),
+            PathSeg::TextStyle(index) => public_path.push_str(&format!(
+                ".text_styles.{}",
+                ["title", "body", "other"].get(*index).unwrap_or(&"invalid")
+            )),
+            PathSeg::Master(index) => public_path.push_str(&format!(".slide_masters[{index}]")),
+            PathSeg::Shape(index) => public_path.push_str(&format!(".shapes[{index}]")),
+            PathSeg::Body(index) => public_path.push_str(&format!(".body[{index}]")),
+            PathSeg::Row(index) => pending_row = Some(*index),
+            PathSeg::Cell(index) => {
+                if let Some(row) = pending_row.take() {
+                    public_path.push_str(&format!(".table.cell({row}, {index})"));
+                } else {
+                    public_path.push_str(&format!(".table.columns[{index}]"));
+                }
+            }
+            PathSeg::Para(index) => {
+                public_path.push_str(&format!(".text_frame.paragraphs[{index}]"));
+            }
+            PathSeg::Run(index) => public_path.push_str(&format!(".runs[{index}]")),
+        }
+    }
+    if let Some(row) = pending_row {
+        public_path.push_str(&format!(".table.rows[{row}]"));
+    }
+    public_path.push_str(suffix);
+    format!("Re-fetch it with {public_path}.")
+}
+
+pub(crate) fn validate_path(
+    py: Python<'_>,
+    presentation: &PyPresentation,
+    path: &ContentPath,
+    kind: &str,
+    suffix: &str,
+) -> PyResult<()> {
+    if !path.belongs_to(&presentation.revisions) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "handle belongs to a different presentation",
+        ));
+    }
+    path.validate_scopes(&presentation.revisions, kind, &recovery_hint(path, suffix))
+        .map_err(|error| stale_to_pyerr(py, error))?;
+    Ok(())
+}
+
+pub(crate) fn rpptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyErr {
+    let class_name = match &error {
+        oxoffice_pptx::Error::MalformedPart { .. } => "XmlError",
+        oxoffice_pptx::Error::Package(_)
+        | oxoffice_pptx::Error::MissingMainDocument
+        | oxoffice_pptx::Error::MissingRelationship { .. }
+        | oxoffice_pptx::Error::WrongRelationshipType { .. }
+        | oxoffice_pptx::Error::ExternalRelationship { .. }
+        | oxoffice_pptx::Error::MissingPart { .. }
+        | oxoffice_pptx::Error::CorePropertiesPartCollision { .. }
+        | oxoffice_pptx::Error::DuplicateNotesSlides { .. } => "PackageError",
+        _ => "RpptxError",
+    };
+    public_error(py, class_name, error.to_string())
+}
+
+pub(crate) fn rpptx_value_to_pyerr(py: Python<'_>, message: String) -> PyErr {
+    public_error(py, "RpptxError", message)
+}
+
+#[pymodule]
+fn _rpptx(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<PyPresentation>()?;
+    module.add_class::<slide::PyNotesSlide>()?;
+    module.add_class::<slide::PyNotesTextFrame>()?;
+    module.add_class::<presentation::PyPptElement>()?;
+    module.add_class::<presentation::PyFontEmbeddingLicense>()?;
+    module.add_class::<presentation::PyEmbeddedFont>()?;
+    module.add_class::<presentation::PyEmbeddedFontFace>()?;
+    module.add_class::<presentation::PyEmbeddedTypeface>()?;
+
+    module.add_class::<PyPresentationTextExport>()?;
+    module.add_class::<presentation::PyCoreProperties>()?;
+    module.add_class::<presentation::PyAppProperties>()?;
+    module.add_class::<presentation::PyCustomFileTime>()?;
+    module.add_class::<presentation::PyCustomProperty>()?;
+    module.add_class::<presentation::PyCustomProperties>()?;
+    module.add_class::<presentation::PySection>()?;
+    module.add_class::<PyCommentAuthor>()?;
+    module.add_class::<PyComment>()?;
+    module.add_class::<PyCommentReply>()?;
+    module.add_class::<PyValidationIssue>()?;
+    slide::register(module)?;
+    shape::register(module)?;
+    dml::register(module)?;
+    text::register(module)?;
+    table::register(module)?;
+    layout::register(module)?;
+    #[cfg(debug_assertions)]
+    module.add_function(wrap_pyfunction!(presentation::inventory_work, module)?)?;
+    #[cfg(debug_assertions)]
+    module.add_function(wrap_pyfunction!(presentation::commit_work, module)?)?;
+    Ok(())
+}

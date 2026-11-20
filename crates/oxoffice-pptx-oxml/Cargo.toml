@@ -1,0 +1,20 @@
+[package]
+name = "oxoffice-pptx-oxml"
+description = "PresentationML object model and round-trip serialization"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["pptx", "powerpoint", "ooxml", "presentation"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[dependencies]
+oxoffice-core.workspace = true
+oxoffice-drawing.workspace = true
+oxoffice-opc.workspace = true
+quick-xml.workspace = true

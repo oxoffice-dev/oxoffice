@@ -1,0 +1,22 @@
+[package]
+name = "oxoffice-docx-oxml"
+description = "WordprocessingML XML element types for OOXML"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+oxoffice-core = { workspace = true }
+oxoffice-drawing = { workspace = true }
+quick-xml = { workspace = true }
+thiserror = { workspace = true }
+itoa = { workspace = true }
+regex = { workspace = true }
+serde_json = { workspace = true }

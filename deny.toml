@@ -46,7 +46,7 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Codecs a DOCX never uses. They arrived through `zip`'s default features and
 # were removed by narrowing those. Denying them keeps the door shut. The `aes`
-# crate is a named, default-off consumer of oxml-opc agile encryption and is
+# crate is a named, default-off consumer of oxoffice-opc agile encryption and is
 # intentionally not banned with the unused ZIP codecs.
 deny = [
     { name = "zstd" },

@@ -1,0 +1,35 @@
+[package]
+name = "oxoffice-pptx-cli"
+description = "CLI tool for inspecting, converting, and manipulating PPTX files"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["pptx", "powerpoint", "ooxml", "presentation"]
+categories = ["command-line-utilities", "parser-implementations"]
+publish = true
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxoffice-pptx/system-fonts"]
+
+[[bin]]
+name = "oxoffice-pptx"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+clap.workspace = true
+oxoffice-cli-support = { workspace = true, features = ["digital-signatures"] }
+oxoffice-layout.workspace = true
+oxoffice-pdf.workspace = true
+oxoffice-pptx = { workspace = true, features = ["render", "digital-signatures"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+oxoffice-opc.workspace = true
+oxoffice-pptx = { workspace = true, features = ["default-template", "render", "digital-signatures"] }

@@ -1,0 +1,29 @@
+[package]
+name = "oxoffice-pptx-py"
+description = "Native PPTX creation, editing, comments, notes, and rendering for Python"
+readme = "README.md"
+version.workspace = true
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "_rpptx"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+oxoffice-drawing = { workspace = true }
+oxoffice-layout = { workspace = true }
+oxoffice-py-support = { workspace = true }
+pyo3 = { workspace = true }
+oxoffice-pptx = { workspace = true, features = ["default-template", "render", "system-fonts", "digital-signatures"] }
+oxoffice-pptx-oxml = { workspace = true }
+smallvec = { workspace = true }

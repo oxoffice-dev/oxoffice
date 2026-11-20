@@ -1,0 +1,48 @@
+[package]
+name = "oxoffice-docx"
+description = "High-level API for reading, writing, and converting DOCX documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxoffice-layout/system-fonts", "oxoffice-docx-layout/system-fonts"]
+agile-encryption = ["oxoffice-opc/agile-encryption"]
+digital-signatures = ["oxoffice-opc/digital-signatures"]
+
+[dependencies]
+base64 = { workspace = true }
+encoding_rs = { workspace = true }
+oxoffice-chart = { workspace = true }
+oxoffice-core = { workspace = true }
+oxoffice-drawing = { workspace = true }
+oxoffice-layout = { workspace = true, default-features = false }
+oxoffice-media = { workspace = true }
+oxoffice-opc = { workspace = true }
+oxoffice-pdf = { workspace = true, default-features = false }
+oxoffice-sml = { workspace = true }
+quick-xml = { workspace = true }
+pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html"] }
+oxoffice-docx-oxml = { workspace = true }
+oxoffice-docx-layout = { workspace = true, default-features = false }
+oxoffice-docx-html = { workspace = true }
+thiserror = { workspace = true }
+ttf-parser = { workspace = true }
+regex = { workspace = true }
+serde_json = { workspace = true }
+scraper = { workspace = true }
+sha2 = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+miniz_oxide = { workspace = true }
+resvg = { version = "=0.48.1", default-features = false, features = ["raster-images", "text"] }
+oxoffice-pptx = { workspace = true, features = ["default-template", "render"] }

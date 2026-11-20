@@ -1,0 +1,36 @@
+[package]
+name = "oxoffice-docx-cli"
+description = "CLI tool for inspecting, converting, and manipulating DOCX files"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxoffice-docx/system-fonts"]
+
+[[bin]]
+name = "oxoffice-docx"
+path = "src/main.rs"
+# The binary shares its name with the `rdocx` library crate, which makes
+# `cargo doc --workspace` collide on the output path. The CLI has no API docs
+# worth publishing, so skip it.
+doc = false
+
+[dependencies]
+oxoffice-docx = { workspace = true, features = ["digital-signatures"] }
+oxoffice-docx-oxml = { workspace = true }
+oxoffice-layout = { workspace = true }
+oxoffice-pdf = { workspace = true }
+oxoffice-opc = { workspace = true }
+oxoffice-cli-support = { workspace = true, features = ["digital-signatures"] }
+quick-xml = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }

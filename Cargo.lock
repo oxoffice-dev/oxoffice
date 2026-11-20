@@ -1101,48 +1101,152 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "oxml-chart"
-version = "0.15.0"
+name = "oxoffice-chart"
+version = "0.1.0"
 dependencies = [
- "oxml-core",
- "oxml-drawing",
- "oxml-layout",
- "oxml-opc",
- "oxml-pdf",
- "oxml-sml",
+ "oxoffice-core",
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "oxoffice-opc",
+ "oxoffice-pdf",
+ "oxoffice-sml",
  "quick-xml",
  "tiny-skia",
 ]
 
 [[package]]
-name = "oxml-cli-support"
-version = "0.15.0"
+name = "oxoffice-cli-support"
+version = "0.1.0"
 dependencies = [
- "oxml-opc",
+ "oxoffice-opc",
  "serde_json",
  "thiserror",
 ]
 
 [[package]]
-name = "oxml-core"
-version = "0.15.0"
+name = "oxoffice-core"
+version = "0.1.0"
 dependencies = [
  "quick-xml",
  "thiserror",
 ]
 
 [[package]]
-name = "oxml-drawing"
-version = "0.15.0"
+name = "oxoffice-docx"
+version = "0.1.0"
 dependencies = [
- "oxml-core",
- "oxml-opc",
+ "base64",
+ "encoding_rs",
+ "miniz_oxide 0.9.1",
+ "oxoffice-chart",
+ "oxoffice-core",
+ "oxoffice-docx-html",
+ "oxoffice-docx-layout",
+ "oxoffice-docx-oxml",
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "oxoffice-media",
+ "oxoffice-opc",
+ "oxoffice-pdf",
+ "oxoffice-pptx",
+ "oxoffice-sml",
+ "pulldown-cmark",
+ "quick-xml",
+ "regex",
+ "resvg",
+ "scraper",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "ttf-parser",
+ "zip",
+]
+
+[[package]]
+name = "oxoffice-docx-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "oxoffice-cli-support",
+ "oxoffice-docx",
+ "oxoffice-docx-oxml",
+ "oxoffice-layout",
+ "oxoffice-opc",
+ "oxoffice-pdf",
+ "quick-xml",
+ "serde_json",
+]
+
+[[package]]
+name = "oxoffice-docx-html"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-docx-oxml",
+]
+
+[[package]]
+name = "oxoffice-docx-layout"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-chart",
+ "oxoffice-docx-oxml",
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "quick-xml",
+ "ttf-parser",
+]
+
+[[package]]
+name = "oxoffice-docx-oxml"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "oxoffice-core",
+ "oxoffice-drawing",
+ "quick-xml",
+ "regex",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "oxoffice-docx-py"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-core",
+ "oxoffice-docx",
+ "oxoffice-docx-oxml",
+ "oxoffice-layout",
+ "oxoffice-pdf",
+ "oxoffice-py-support",
+ "pyo3",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "oxoffice-docx-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "oxoffice-docx",
+ "oxoffice-opc",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "oxoffice-drawing"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-core",
+ "oxoffice-opc",
  "quick-xml",
 ]
 
 [[package]]
-name = "oxml-layout"
-version = "0.15.0"
+name = "oxoffice-layout"
+version = "0.1.0"
 dependencies = [
  "fontdb 0.23.0",
  "harfrust",
@@ -1155,12 +1259,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxml-media"
-version = "0.15.0"
+name = "oxoffice-media"
+version = "0.1.0"
 
 [[package]]
-name = "oxml-opc"
-version = "0.15.0"
+name = "oxoffice-opc"
+version = "0.1.0"
 dependencies = [
  "aes",
  "base64",
@@ -1178,13 +1282,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxml-pdf"
-version = "0.15.0"
+name = "oxoffice-pdf"
+version = "0.1.0"
 dependencies = [
  "jpeg-encoder",
  "miniz_oxide 0.9.1",
- "oxml-layout",
- "oxml-media",
+ "oxoffice-layout",
+ "oxoffice-media",
  "pdf-writer",
  "subsetter",
  "tiff",
@@ -1194,21 +1298,121 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxml-py-support"
-version = "0.17.0"
+name = "oxoffice-pptx"
+version = "0.1.0"
 dependencies = [
- "oxml-core",
- "oxml-opc",
+ "gif",
+ "jpeg-encoder",
+ "lopdf",
+ "miniz_oxide 0.9.1",
+ "oxoffice-chart",
+ "oxoffice-core",
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "oxoffice-media",
+ "oxoffice-opc",
+ "oxoffice-pdf",
+ "oxoffice-pptx-layout",
+ "oxoffice-pptx-oxml",
+ "oxoffice-pptx-render",
+ "oxoffice-sml",
+ "quick-xml",
+ "scraper",
+ "sha2",
+ "thiserror",
+ "tiff",
+ "tiny-skia",
+ "zip",
+ "zune-jpeg",
+]
+
+[[package]]
+name = "oxoffice-pptx-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "oxoffice-cli-support",
+ "oxoffice-layout",
+ "oxoffice-opc",
+ "oxoffice-pdf",
+ "oxoffice-pptx",
+ "serde_json",
+]
+
+[[package]]
+name = "oxoffice-pptx-layout"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-chart",
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "oxoffice-opc",
+ "oxoffice-pptx-oxml",
+]
+
+[[package]]
+name = "oxoffice-pptx-oxml"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-core",
+ "oxoffice-drawing",
+ "oxoffice-opc",
+ "quick-xml",
+]
+
+[[package]]
+name = "oxoffice-pptx-py"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "oxoffice-pptx",
+ "oxoffice-pptx-oxml",
+ "oxoffice-py-support",
+ "pyo3",
+ "smallvec",
+]
+
+[[package]]
+name = "oxoffice-pptx-render"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-drawing",
+ "oxoffice-layout",
+ "oxoffice-media",
+ "oxoffice-pdf",
+ "oxoffice-pptx-layout",
+ "oxoffice-pptx-oxml",
+ "tiny-skia",
+]
+
+[[package]]
+name = "oxoffice-pptx-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "oxoffice-opc",
+ "oxoffice-pptx",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "oxoffice-py-support"
+version = "0.1.0"
+dependencies = [
+ "oxoffice-core",
+ "oxoffice-opc",
  "pyo3",
  "smallvec",
  "thiserror",
 ]
 
 [[package]]
-name = "oxml-sml"
-version = "0.15.0"
+name = "oxoffice-sml"
+version = "0.1.0"
 dependencies = [
- "oxml-opc",
+ "oxoffice-opc",
  "quick-xml",
  "thiserror",
 ]
@@ -1502,110 +1706,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
 
 [[package]]
-name = "rdocx"
-version = "0.17.0"
-dependencies = [
- "base64",
- "encoding_rs",
- "miniz_oxide 0.9.1",
- "oxml-chart",
- "oxml-core",
- "oxml-drawing",
- "oxml-layout",
- "oxml-media",
- "oxml-opc",
- "oxml-pdf",
- "oxml-sml",
- "pulldown-cmark",
- "quick-xml",
- "rdocx-html",
- "rdocx-layout",
- "rdocx-oxml",
- "regex",
- "resvg",
- "rpptx",
- "scraper",
- "serde_json",
- "sha2",
- "thiserror",
- "ttf-parser",
- "zip",
-]
-
-[[package]]
-name = "rdocx-cli"
-version = "0.17.0"
-dependencies = [
- "clap",
- "oxml-cli-support",
- "oxml-layout",
- "oxml-opc",
- "oxml-pdf",
- "quick-xml",
- "rdocx",
- "rdocx-oxml",
- "serde_json",
-]
-
-[[package]]
-name = "rdocx-html"
-version = "0.17.0"
-dependencies = [
- "rdocx-oxml",
-]
-
-[[package]]
-name = "rdocx-layout"
-version = "0.17.0"
-dependencies = [
- "oxml-chart",
- "oxml-drawing",
- "oxml-layout",
- "quick-xml",
- "rdocx-oxml",
- "ttf-parser",
-]
-
-[[package]]
-name = "rdocx-oxml"
-version = "0.17.0"
-dependencies = [
- "itoa",
- "oxml-core",
- "oxml-drawing",
- "quick-xml",
- "regex",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "rdocx-py"
-version = "0.17.0"
-dependencies = [
- "oxml-core",
- "oxml-layout",
- "oxml-pdf",
- "oxml-py-support",
- "pyo3",
- "rdocx",
- "rdocx-oxml",
- "serde_json",
- "smallvec",
-]
-
-[[package]]
-name = "rdocx-wasm"
-version = "0.17.0"
-dependencies = [
- "js-sys",
- "oxml-opc",
- "rdocx",
- "wasm-bindgen",
- "wasm-bindgen-test",
-]
-
-[[package]]
 name = "read-fonts"
 version = "0.39.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,106 +1818,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "rpptx"
-version = "0.15.0"
-dependencies = [
- "gif",
- "jpeg-encoder",
- "lopdf",
- "miniz_oxide 0.9.1",
- "oxml-chart",
- "oxml-core",
- "oxml-drawing",
- "oxml-layout",
- "oxml-media",
- "oxml-opc",
- "oxml-pdf",
- "oxml-sml",
- "quick-xml",
- "rpptx-layout",
- "rpptx-oxml",
- "rpptx-render",
- "scraper",
- "sha2",
- "thiserror",
- "tiff",
- "tiny-skia",
- "zip",
- "zune-jpeg",
-]
-
-[[package]]
-name = "rpptx-cli"
-version = "0.15.0"
-dependencies = [
- "clap",
- "oxml-cli-support",
- "oxml-layout",
- "oxml-opc",
- "oxml-pdf",
- "rpptx",
- "serde_json",
-]
-
-[[package]]
-name = "rpptx-layout"
-version = "0.15.0"
-dependencies = [
- "oxml-chart",
- "oxml-drawing",
- "oxml-layout",
- "oxml-opc",
- "rpptx-oxml",
-]
-
-[[package]]
-name = "rpptx-oxml"
-version = "0.15.0"
-dependencies = [
- "oxml-core",
- "oxml-drawing",
- "oxml-opc",
- "quick-xml",
-]
-
-[[package]]
-name = "rpptx-py"
-version = "0.15.0"
-dependencies = [
- "oxml-drawing",
- "oxml-layout",
- "oxml-py-support",
- "pyo3",
- "rpptx",
- "rpptx-oxml",
- "smallvec",
-]
-
-[[package]]
-name = "rpptx-render"
-version = "0.15.0"
-dependencies = [
- "oxml-drawing",
- "oxml-layout",
- "oxml-media",
- "oxml-pdf",
- "rpptx-layout",
- "rpptx-oxml",
- "tiny-skia",
-]
-
-[[package]]
-name = "rpptx-wasm"
-version = "0.12.1"
-dependencies = [
- "js-sys",
- "oxml-opc",
- "rpptx",
- "wasm-bindgen",
- "wasm-bindgen-test",
 ]
 
 [[package]]

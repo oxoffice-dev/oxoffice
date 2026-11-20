@@ -1,0 +1,426 @@
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
+
+use oxoffice_core::{OxmlError, Result};
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::{Reader, Writer, XmlVersion};
+
+use crate::namespace::{NamespaceBindings, R_NS};
+
+#[derive(Debug)]
+struct Replacement {
+    range: Range<usize>,
+    escaped_value: String,
+}
+
+/// Rewrite mapped relationship ids inside an XML payload.
+///
+/// Only attributes in the office document relationships namespace whose
+/// decoded values match `rId` followed by ASCII digits are candidates. The
+/// original bytes are copied around the replaced attribute values so all
+/// other syntax remains exact.
+pub fn rewrite_rel_ids(raw: &[u8], map: &HashMap<String, String>) -> Result<Vec<u8>> {
+    rewrite_rel_ids_inner(raw, map, true, &[])
+}
+
+/// Rewrites only relationship-namespace values present as exact keys in `map`.
+///
+/// This retains the same byte-splicing preservation contract as
+/// [`rewrite_rel_ids`] while allowing a caller to normalize a known
+/// nonnumeric relationship id without touching any other nonnumeric value.
+pub fn rewrite_exact_rel_ids(raw: &[u8], map: &HashMap<String, String>) -> Result<Vec<u8>> {
+    rewrite_rel_ids_inner(raw, map, false, &[])
+}
+
+pub(crate) fn rewrite_exact_rel_ids_with_namespaces(
+    raw: &[u8],
+    map: &HashMap<String, String>,
+    inherited: &[(String, String)],
+) -> Result<Vec<u8>> {
+    rewrite_rel_ids_inner(raw, map, false, inherited)
+}
+
+fn rewrite_rel_ids_inner(
+    raw: &[u8],
+    map: &HashMap<String, String>,
+    numeric_only: bool,
+    inherited: &[(String, String)],
+) -> Result<Vec<u8>> {
+    let mut reader = Reader::from_reader(raw);
+    reader.config_mut().check_comments = true;
+    let mut buffer = Vec::new();
+    let mut scopes = vec![NamespaceBindings::from_entries(inherited)];
+    let mut replacements = Vec::new();
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    let mut version = XmlVersion::Implicit1_0;
+    let mut declaration_allowed = true;
+    let mut seen_declaration = false;
+    let mut seen_doctype = false;
+
+    loop {
+        let event_start = reader.buffer_position() as usize;
+        match reader.read_event_into(&mut buffer)? {
+            Event::Decl(declaration) => {
+                if !declaration_allowed || seen_declaration {
+                    return Err(invalid_xml("XML declaration is not first"));
+                }
+                version = declaration.xml_version()?;
+                seen_declaration = true;
+                declaration_allowed = false;
+            }
+            Event::Start(element) => {
+                declaration_allowed = false;
+                if depth == 0 {
+                    roots += 1;
+                    if roots > 1 {
+                        return Err(invalid_xml("XML payload has more than one root"));
+                    }
+                }
+                let scope = scopes
+                    .last()
+                    .expect("the document namespace frame always exists")
+                    .with_start(&element)?;
+                replacements.extend(collect_replacements(
+                    raw,
+                    event_start,
+                    &element,
+                    &scope,
+                    version,
+                    map,
+                    numeric_only,
+                )?);
+                scopes.push(scope);
+                depth += 1;
+            }
+            Event::Empty(element) => {
+                declaration_allowed = false;
+                if depth == 0 {
+                    roots += 1;
+                    if roots > 1 {
+                        return Err(invalid_xml("XML payload has more than one root"));
+                    }
+                }
+                let scope = scopes
+                    .last()
+                    .expect("the document namespace frame always exists")
+                    .with_start(&element)?;
+                replacements.extend(collect_replacements(
+                    raw,
+                    event_start,
+                    &element,
+                    &scope,
+                    version,
+                    map,
+                    numeric_only,
+                )?);
+            }
+            Event::End(_) => {
+                declaration_allowed = false;
+                if depth == 0 {
+                    return Err(invalid_xml("XML payload has an unmatched closing tag"));
+                }
+                depth -= 1;
+                scopes.pop();
+            }
+            Event::Text(text) => {
+                declaration_allowed = false;
+                let bytes: &[u8] = text.as_ref();
+                if !bytes.iter().all(|byte| byte.is_ascii_whitespace()) && depth == 0 {
+                    return Err(invalid_xml("text is not allowed outside the root"));
+                }
+            }
+            Event::CData(_) | Event::GeneralRef(_) => {
+                declaration_allowed = false;
+                if depth == 0 {
+                    return Err(invalid_xml("content is not allowed outside the root"));
+                }
+            }
+            Event::DocType(_) => {
+                declaration_allowed = false;
+                if depth != 0 || roots != 0 || seen_doctype {
+                    return Err(invalid_xml("document type is not in the prolog"));
+                }
+                seen_doctype = true;
+            }
+            Event::PI(_) | Event::Comment(_) => {
+                declaration_allowed = false;
+            }
+            Event::Eof => {
+                if depth != 0 {
+                    return Err(invalid_xml("XML payload ended before its root closed"));
+                }
+                if roots != 1 {
+                    return Err(invalid_xml("XML payload must contain exactly one root"));
+                }
+                break;
+            }
+        }
+        buffer.clear();
+    }
+
+    splice_replacements(raw, replacements)
+}
+
+/// Turns every `hlinkClick`, `hlinkHover`, and `hlinkMouseOver` whose
+/// relationship id is in
+/// `relationship_ids` into a hyperlink that does nothing, as PowerPoint does
+/// when the slide a hyperlink jumps to is deleted.
+///
+/// Each such element, children included, becomes an empty element with an
+/// empty relationship id and the action `ppaction://noaction`. Every other
+/// byte of the payload is kept.
+pub fn release_hyperlinks(raw: &[u8], relationship_ids: &HashSet<String>) -> Result<Vec<u8>> {
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    let mut scopes = vec![NamespaceBindings::default()];
+    let mut replacements = Vec::new();
+    // The start and markup of a released element whose end tag is pending,
+    // with the depth of its parent.
+    let mut open: Option<(usize, String, usize)> = None;
+    loop {
+        let event_start = reader.buffer_position() as usize;
+        let event = reader.read_event_into(&mut buffer)?;
+        let event_end = reader.buffer_position() as usize;
+        match event {
+            Event::Start(element) => {
+                let scope = scopes
+                    .last()
+                    .expect("the document namespace frame always exists")
+                    .with_start(&element)?;
+                if open.is_none()
+                    && let Some(markup) = released_hyperlink(&element, &scope, relationship_ids)?
+                {
+                    open = Some((event_start, markup, scopes.len()));
+                }
+                scopes.push(scope);
+            }
+            Event::Empty(element) => {
+                let scope = scopes
+                    .last()
+                    .expect("the document namespace frame always exists")
+                    .with_start(&element)?;
+                if open.is_none()
+                    && let Some(markup) = released_hyperlink(&element, &scope, relationship_ids)?
+                {
+                    replacements.push(Replacement {
+                        range: event_start..event_end,
+                        escaped_value: markup,
+                    });
+                }
+            }
+            Event::End(_) => {
+                scopes.pop();
+                if open
+                    .as_ref()
+                    .is_some_and(|(_, _, depth)| *depth == scopes.len())
+                    && let Some((start, markup, _)) = open.take()
+                {
+                    replacements.push(Replacement {
+                        range: start..event_end,
+                        escaped_value: markup,
+                    });
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    splice_replacements(raw, replacements)
+}
+
+/// Returns the markup that replaces `element` when it is a hyperlink naming
+/// one of `relationship_ids`.
+fn released_hyperlink(
+    element: &BytesStart<'_>,
+    scope: &NamespaceBindings,
+    relationship_ids: &HashSet<String>,
+) -> Result<Option<String>> {
+    if !matches!(
+        element.local_name().as_ref(),
+        b"hlinkClick" | b"hlinkHover" | b"hlinkMouseOver"
+    ) {
+        return Ok(None);
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        if scope.attribute_uri(attribute.key.as_ref()) != Some(R_NS)
+            || attribute.key.local_name().as_ref() != b"id"
+        {
+            continue;
+        }
+        let value =
+            attribute.decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?;
+        if !relationship_ids.contains(value.as_ref()) {
+            return Ok(None);
+        }
+        let name = std::str::from_utf8(element.name().as_ref())?.to_owned();
+        let key = std::str::from_utf8(attribute.key.as_ref())?.to_owned();
+        let mut start = BytesStart::new(name);
+        for declaration in element.attributes() {
+            let declaration = declaration?;
+            if declaration.key.as_ref() == b"xmlns"
+                || declaration.key.as_ref().starts_with(b"xmlns:")
+            {
+                start.push_attribute(declaration);
+            }
+        }
+        start.push_attribute((key.as_str(), ""));
+        start.push_attribute(("action", "ppaction://noaction"));
+        let mut writer = Writer::new(Vec::new());
+        writer.write_event(Event::Empty(start))?;
+        return Ok(Some(std::str::from_utf8(&writer.into_inner())?.to_owned()));
+    }
+    Ok(None)
+}
+
+/// Collects every attribute value in the office relationship namespace.
+pub fn relationship_ids(raw: &[u8]) -> Result<Vec<String>> {
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    let mut scopes = vec![NamespaceBindings::default()];
+    let mut ids = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) => {
+                let parent = scopes
+                    .last()
+                    .ok_or_else(|| invalid_xml("missing namespace scope"))?;
+                let scope = parent.with_start(&element)?;
+                collect_relationship_ids(&element, &scope, &mut ids)?;
+                scopes.push(scope);
+            }
+            Event::Empty(element) => {
+                let parent = scopes
+                    .last()
+                    .ok_or_else(|| invalid_xml("missing namespace scope"))?;
+                let scope = parent.with_start(&element)?;
+                collect_relationship_ids(&element, &scope, &mut ids)?;
+            }
+            Event::End(_) => {
+                if scopes.len() == 1 {
+                    return Err(invalid_xml("XML payload has an unmatched closing tag"));
+                }
+                scopes.pop();
+            }
+            Event::Eof => {
+                if scopes.len() != 1 {
+                    return Err(invalid_xml("XML payload ended before its root closed"));
+                }
+                return Ok(ids);
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn collect_relationship_ids(
+    element: &BytesStart<'_>,
+    scope: &NamespaceBindings,
+    ids: &mut Vec<String>,
+) -> Result<()> {
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        if scope.attribute_uri(attribute.key.as_ref()) == Some(R_NS) {
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?
+                .into_owned();
+            if !value.is_empty() {
+                ids.push(value);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_replacements(
+    raw: &[u8],
+    event_start: usize,
+    element: &BytesStart<'_>,
+    scope: &NamespaceBindings,
+    version: XmlVersion,
+    map: &HashMap<String, String>,
+    numeric_only: bool,
+) -> Result<Vec<Replacement>> {
+    if raw.get(event_start) != Some(&b'<') {
+        return Err(invalid_xml("XML event position does not begin at markup"));
+    }
+    let mut replacements = Vec::new();
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        if scope.attribute_uri(attribute.key.as_ref()) != Some(R_NS) {
+            continue;
+        }
+        let decoded = attribute.decoded_and_normalized_value(version, element.decoder())?;
+        if numeric_only && !is_numeric_relationship_id(&decoded) {
+            continue;
+        }
+        let Some(target) = map.get(decoded.as_ref()) else {
+            continue;
+        };
+        let value = attribute.value.as_ref();
+        let element_address = element.as_ptr() as usize;
+        let value_address = value.as_ptr() as usize;
+        let relative_start = value_address
+            .checked_sub(element_address)
+            .filter(|start| {
+                start
+                    .checked_add(value.len())
+                    .is_some_and(|end| end <= element.len())
+            })
+            .ok_or_else(|| invalid_xml("attribute value is outside its start tag"))?;
+        let start = event_start
+            .checked_add(1)
+            .and_then(|start| start.checked_add(relative_start))
+            .ok_or_else(|| invalid_xml("attribute byte range overflowed"))?;
+        let end = start
+            .checked_add(value.len())
+            .ok_or_else(|| invalid_xml("attribute byte range overflowed"))?;
+        if raw.get(start..end) != Some(value) {
+            return Err(invalid_xml("attribute byte range did not match the source"));
+        }
+        replacements.push(Replacement {
+            range: start..end,
+            escaped_value: quick_xml::escape::escape(target).into_owned(),
+        });
+    }
+    Ok(replacements)
+}
+
+fn splice_replacements(raw: &[u8], replacements: Vec<Replacement>) -> Result<Vec<u8>> {
+    if replacements.is_empty() {
+        return Ok(raw.to_vec());
+    }
+    let added_capacity = replacements.iter().fold(0usize, |capacity, replacement| {
+        capacity.saturating_add(
+            replacement
+                .escaped_value
+                .len()
+                .saturating_sub(replacement.range.len()),
+        )
+    });
+    let mut rewritten = Vec::with_capacity(raw.len().saturating_add(added_capacity));
+    let mut copied_through = 0usize;
+    for replacement in replacements {
+        if replacement.range.start < copied_through || replacement.range.end > raw.len() {
+            return Err(invalid_xml("relationship replacement ranges overlap"));
+        }
+        rewritten.extend_from_slice(&raw[copied_through..replacement.range.start]);
+        rewritten.extend_from_slice(replacement.escaped_value.as_bytes());
+        copied_through = replacement.range.end;
+    }
+    rewritten.extend_from_slice(&raw[copied_through..]);
+    Ok(rewritten)
+}
+
+fn is_numeric_relationship_id(value: &str) -> bool {
+    value.strip_prefix("rId").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn invalid_xml(message: &str) -> OxmlError {
+    OxmlError::InvalidValue(message.to_owned())
+}

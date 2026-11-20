@@ -1,0 +1,32 @@
+The Noto font files bundled by oxoffice-layout are distributed under the SIL Open
+Font License 1.1 in LICENSE-Noto.
+
+Upstream project: https://github.com/google/fonts
+Upstream revision: main, retrieved 2026-08-26, and retrieved 2026-09-19 for the
+three subsets
+
+Source file SHA-256 values:
+
+- NotoSansArabic[wdth,wght].ttf: 63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e
+- NotoSansDevanagari[wdth,wght].ttf: 9ce7b04f60e363d8870e5997744cf85cf69d38a4d7d129d364d92a3b14b461d7
+- NotoSansThai[wdth,wght].ttf: 5a1c559bb539583c8a1fd99d1c5b9491e5e14478c9cd2bd0970d5c3096cc9ef8
+- NotoSansSC[wght].ttf: a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da
+- NotoSansHebrew[wdth,wght].ttf: 7ef36a2c3593758cdb622e1bdef4f84523e92fbc3ccc667438dd80ff54c2de88
+- NotoSansKR[wght].ttf: 194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252
+- NotoSansJP[wght].ttf: c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f
+
+The Noto Sans SC, Noto Sans Hebrew, Noto Sans KR and Noto Sans JP files in this
+package are deterministic subsets. Their exact reproduction commands and
+repertoires are recorded in SUBSET-NotoSansSC.md, SUBSET-NotoSansHebrew.md,
+SUBSET-NotoSansKR.md and SUBSET-NotoSansJP.md.
+
+Noto Sans Symbols 2 bullet and checkbox subset:
+Upstream: https://github.com/notofonts/symbols
+Commit: 51303ca9e8ac9dcea7b12d307ba568fd0e6fcfca
+Source SHA-256: 7d5fb73b7ca67a6798101741f5d280a3d016a56a197afcd4199dbb57b4b82a21
+Subset SHA-256: a95e7d7421e30e8ad304a0eb48aa18aefabcfec568a0f652c1039d72da999373
+The subset retains original naming and only the 17 codepoints below. It is a
+monochrome semantic fallback, not original Symbol or Wingdings outline parity.
+Reproduction uses FontTools 4.66.1 with this command:
+
+pyftsubset NotoSansSymbols2-Regular.ttf --output-file=NotoSansSymbols2-bullets-subset.ttf --unicodes=U+21E8,U+25C6,U+25FB,U+2610,U+2611,U+2612,U+2713,U+2717,U+274D,U+2751,U+2752,U+2756,U+2794,U+27A2,U+29EB,U+2B25,U+2B27 --glyph-names --symbol-cmap --legacy-cmap --notdef-glyph --notdef-outline --recommended-glyphs --name-IDs=* --name-legacy --name-languages=* --layout-features=* --no-hinting

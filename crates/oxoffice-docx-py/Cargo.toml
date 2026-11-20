@@ -1,0 +1,31 @@
+[package]
+name = "oxoffice-docx-py"
+description = "Native DOCX creation, editing, comparison, layout, and rendering for Python"
+readme = "README.md"
+version.workspace = true
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "_rdocx"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+oxoffice-core = { workspace = true }
+oxoffice-pdf = { workspace = true }
+oxoffice-layout = { workspace = true }
+oxoffice-py-support = { workspace = true }
+pyo3 = { workspace = true }
+oxoffice-docx = { workspace = true, features = ["system-fonts", "digital-signatures"] }
+oxoffice-docx-oxml = { workspace = true }
+smallvec = { workspace = true }
+serde_json = { workspace = true }

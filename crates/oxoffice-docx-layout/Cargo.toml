@@ -1,0 +1,25 @@
+[package]
+name = "oxoffice-docx-layout"
+description = "Layout engine for converting DOCX flow model to positioned frames"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxoffice-layout/system-fonts"]
+
+[dependencies]
+oxoffice-chart = { workspace = true }
+oxoffice-drawing = { workspace = true }
+oxoffice-layout = { workspace = true, default-features = false }
+oxoffice-docx-oxml = { workspace = true }
+quick-xml = { workspace = true }
+ttf-parser = { workspace = true }
