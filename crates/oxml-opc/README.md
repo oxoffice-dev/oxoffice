@@ -18,7 +18,7 @@ Use this crate when implementing an OOXML package reader or writer. Use `rdocx` 
 
 ## Relationship
 
-This is the shared successor to the deprecated `rdocx-opc` shim and is used by
+This is the shared package layer used by
 both document families. OPC manages containers, parts, and relationships. It
 does not interpret document-format XML. Encryption and digital signature APIs
 are optional feature-gated capabilities.

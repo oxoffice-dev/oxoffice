@@ -18,7 +18,7 @@ Use this crate when a custom OOXML frontend already produces shared layout frame
 
 ## Relationship
 
-This is the shared successor to the deprecated `rdocx-pdf` shim. It is an
+It is an
 output backend and does not open OOXML packages or lay out DOCX and PPTX
 content. Raster page indices are zero-based.
 

@@ -1567,13 +1567,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rdocx-opc"
-version = "0.17.0"
-dependencies = [
- "oxml-opc",
-]
-
-[[package]]
 name = "rdocx-oxml"
 version = "0.17.0"
 dependencies = [
@@ -1584,13 +1577,6 @@ dependencies = [
  "regex",
  "serde_json",
  "thiserror",
-]
-
-[[package]]
-name = "rdocx-pdf"
-version = "0.17.0"
-dependencies = [
- "oxml-pdf",
 ]
 
 [[package]]
@@ -1761,13 +1747,6 @@ dependencies = [
  "tiny-skia",
  "zip",
  "zune-jpeg",
-]
-
-[[package]]
-name = "rpptx-chart"
-version = "0.15.0"
-dependencies = [
- "oxml-chart",
 ]
 
 [[package]]
