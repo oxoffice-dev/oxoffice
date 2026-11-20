@@ -1,7 +1,8 @@
 name: CI
 
-# Every pull request and every push to main. Pull requests build on Linux only
-# to keep the answer fast, main runs the same jobs on the three platforms.
+# Every pull request and every push to main, on Linux, macOS and Windows: a
+# platform-only failure (paths, line endings) shows before the merge. The jobs
+# run in parallel, so Windows, the slowest, bounds the wait.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
@@ -66,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,13 +107,13 @@ jobs:
   # The scaling tests time every mutating call at N and 4N. They need a build
   # without debug assertions (the `scaling` profile), built here beside the
   # `ci` one so that pull requests wait no longer. Pull requests time the
-  # QUICK set on Linux, main every call on the three platforms.
+  # QUICK set, main every call.
   scaling:
     name: Scaling (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

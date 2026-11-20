@@ -149,6 +149,10 @@ spec.
   signed commit per pull request, named by the checked title. The title check
   now runs only when a pull request is opened, renamed or marked ready, since
   running it on every push was noise.
+- Pull requests run on Linux, macOS and Windows too since 2026-11-20, not on
+  Linux only: the repository is public, so the runners cost nothing, the jobs
+  run in parallel and Windows (about 10 minutes) bounds the wait, and a
+  Windows-only failure would otherwise first show on a red `main`.
 
 - If `main` gets branch protection that forbids direct pushes, the release
   commit needs a GitHub App token or a release pull request. Not needed yet.
