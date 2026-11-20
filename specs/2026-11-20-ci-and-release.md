@@ -42,6 +42,11 @@ since squash merges turn titles into the commits of `main`.
    that covers every file listed in `SHA256SUMS`. The release is marked
    latest, so `releases/latest/download/...` always points at it.
 
+4. It repackages each platform's wheel as a conda package
+   (`conda/recipe.yaml`, built with rattler-build), tests it on Python 3.10
+   and 3.13, and uploads it to the `oxoffice` channel on prefix.dev through
+   a trusted publisher (workflow `release.yml`, environment `conda`).
+
 `dry_run` builds everything from `main` and publishes nothing.
 
 **Everything is pinned.** Every action is referenced by its full commit SHA

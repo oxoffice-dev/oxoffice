@@ -1,0 +1,64 @@
+# The conda package of an oxoffice release: the release's abi3 wheel for one
+# platform, installed as it is (no build). release.yml (job `conda`) puts the
+# wheel in conda/dist, builds this recipe with rattler-build, tests it and uploads it to
+# the oxoffice channel on prefix.dev. The wheel carries both the Python package
+# and the `oxoffice` command.
+schema_version: 1
+
+context:
+  version: ${{ env.get("OXOFFICE_VERSION") }}
+  python_min: "3.10"
+
+package:
+  name: oxoffice
+  version: ${{ version }}
+
+source:
+  # relative to this folder: an absolute path makes pixi walk the whole file system
+  path: dist
+
+build:
+  number: 0
+  python:
+    version_independent: true
+  script:
+    - if: win
+      then: '"%PYTHON%" "%RECIPE_DIR%\build.py"'
+      else: '"$PYTHON" "$RECIPE_DIR/build.py"'
+
+requirements:
+  host:
+    - python ${{ python_min }}.*
+    - python-abi3
+    - pip
+  run:
+    - python >=${{ python_min }}
+    - if: linux
+      then: __glibc >=2.28
+    - if: osx
+      then: __osx >=11.0
+  ignore_run_exports:
+    by_name:
+      - python_abi  # abi3: the module runs on every CPython from 3.10
+
+tests:
+  - python:
+      imports:
+        - oxoffice.docx
+        - oxoffice.pptx
+      pip_check: false
+  - script:
+      - oxoffice --version
+
+about:
+  summary: Word and PowerPoint files in pure Rust, from Rust, the command line or Python
+  description: |
+    oxoffice reads, writes, edits, compares and renders .docx and .pptx files without an office suite.
+    This package holds the `oxoffice` Python package (oxoffice.docx, oxoffice.pptx) and the `oxoffice`
+    command line.
+  homepage: https://github.com/oxoffice-dev/oxoffice
+  repository: https://github.com/oxoffice-dev/oxoffice
+  # The code is MIT, the bundled fonts Apache-2.0 and OFL-1.1, the embedded ICC profile has its own licence.
+  license: MIT AND Apache-2.0 AND OFL-1.1 AND LicenseRef-sRGB2014
+  license_file:
+    - licenses/

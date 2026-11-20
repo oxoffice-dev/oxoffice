@@ -22,3 +22,6 @@ Thumbs.db
 
 # Local agent settings
 .claude/settings.local.json
+
+# Conda staging
+conda/dist/
