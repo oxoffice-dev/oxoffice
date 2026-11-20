@@ -1,0 +1,50 @@
+[package]
+name = "rdocx-cli"
+description = "CLI tool for inspecting, converting, and manipulating DOCX files"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.release]
+shared-version = "workspace"
+tag-name = "v{{version}}"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/rdocx-{ target }.tar.gz"
+bin-dir = "rdocx{ binary-ext }"
+pkg-fmt = "tgz"
+disabled-strategies = ["quick-install", "compile"]
+
+[package.metadata.binstall.overrides.'x86_64-pc-windows-msvc']
+pkg-url = "{ repo }/releases/download/v{ version }/rdocx-{ target }.zip"
+pkg-fmt = "zip"
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["rdocx/system-fonts"]
+
+[[bin]]
+name = "rdocx"
+path = "src/main.rs"
+# The binary shares its name with the `rdocx` library crate, which makes
+# `cargo doc --workspace` collide on the output path. The CLI has no API docs
+# worth publishing, so skip it.
+doc = false
+
+[dependencies]
+rdocx = { workspace = true, features = ["digital-signatures"] }
+rdocx-oxml = { workspace = true }
+oxml-layout = { workspace = true }
+oxml-pdf = { workspace = true }
+oxml-opc = { workspace = true }
+oxml-cli-support = { workspace = true, features = ["digital-signatures"] }
+quick-xml = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,3581 @@
+//! Typed support for the Transitional OfficeMath vocabulary.
+
+use std::io::Write;
+
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::{Reader, Writer, XmlVersion};
+
+use crate::error::{OxmlError, Result};
+use crate::namespace::M_NS;
+use crate::raw_xml::capture_element;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Preservation {
+    attributes: Vec<(String, String)>,
+    raw_children: Vec<(usize, Vec<u8>)>,
+    modeled_children: Vec<PreservedChild>,
+    inherited_bindings: Vec<(String, String)>,
+    property_raw_children: Vec<(usize, Vec<u8>)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreservedChild {
+    name: String,
+    raw: Vec<u8>,
+    bindings: Vec<(String, String)>,
+}
+
+#[derive(Debug)]
+struct ParsedElement {
+    preservation: Preservation,
+    bindings: Vec<(String, String)>,
+    children: Vec<Vec<u8>>,
+}
+
+/// One inline OfficeMath equation.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CT_OMath {
+    pub expressions: Vec<MathExpression>,
+    preservation: Preservation,
+}
+
+impl CT_OMath {
+    pub fn new(expressions: Vec<MathExpression>) -> Self {
+        Self {
+            expressions,
+            preservation: Preservation::default(),
+        }
+    }
+
+    pub fn from_xml(xml: &[u8]) -> Result<Self> {
+        Self::from_raw(xml, &[])
+    }
+
+    pub(crate) fn from_raw(xml: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        validate_xml_depth(xml)?;
+        require_safe_fixed_math_prefix(xml, inherited)?;
+        let mut parsed = parse_element(xml, inherited)?;
+        require_root(xml, &parsed.bindings, b"oMath")?;
+        let mut expressions = Vec::new();
+        for child in parsed.children {
+            if let Some(expression) = MathExpression::from_raw(&child, &parsed.bindings)? {
+                expressions.push(expression);
+            } else {
+                parsed
+                    .preservation
+                    .raw_children
+                    .push((expressions.len(), child));
+            }
+        }
+        Ok(Self {
+            expressions,
+            preservation: parsed.preservation,
+        })
+    }
+
+    pub fn to_xml(&self) -> Result<Vec<u8>> {
+        let mut writer = Writer::new(Vec::new());
+        self.write_xml_in(&mut writer, true, None)?;
+        Ok(writer.into_inner())
+    }
+
+    /// Whether this equation retains content outside the typed OfficeMath subset.
+    pub fn has_unsupported_content(&self) -> bool {
+        preservation_has_unsupported_content(&self.preservation)
+            || self
+                .expressions
+                .iter()
+                .any(MathExpression::has_unsupported_content)
+    }
+
+    pub(crate) fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        declare_math: bool,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let root = math_start("oMath", &self.preservation, declare_math, emission)?;
+        root.write(writer, false)?;
+        write_raw_slot(writer, &self.preservation, 0)?;
+        for (index, expression) in self.expressions.iter().enumerate() {
+            expression.write_xml_in(writer, emission)?;
+            write_raw_slot(writer, &self.preservation, index + 1)?;
+        }
+        write_raw_tail(writer, &self.preservation, self.expressions.len() + 1)?;
+        writer.write_event(Event::End(BytesEnd::new("m:oMath")))?;
+        Ok(())
+    }
+}
+
+/// One display OfficeMath paragraph.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CT_OMathPara {
+    pub properties: MathParagraphProperties,
+    pub equations: Vec<CT_OMath>,
+    preservation: Preservation,
+}
+
+impl CT_OMathPara {
+    pub fn new(equations: Vec<CT_OMath>) -> Self {
+        Self {
+            equations,
+            ..Self::default()
+        }
+    }
+
+    pub fn from_xml(xml: &[u8]) -> Result<Self> {
+        Self::from_raw(xml, &[])
+    }
+
+    pub(crate) fn from_raw(xml: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        validate_xml_depth(xml)?;
+        require_safe_fixed_math_prefix(xml, inherited)?;
+        if !valid_officemath_paragraph_shape(xml, inherited)? {
+            return Err(OxmlError::InvalidValue(
+                "invalid OfficeMath paragraph child sequence".to_owned(),
+            ));
+        }
+        let mut parsed = parse_element(xml, inherited)?;
+        require_root(xml, &parsed.bindings, b"oMathPara")?;
+        let mut properties = MathParagraphProperties::default();
+        let mut equations = Vec::new();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("oMathParaPr") if modeled == 0 => {
+                    properties = MathParagraphProperties::from_raw(&child, &parsed.bindings)?;
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "oMathParaPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("oMath") => {
+                    equations.push(CT_OMath::from_raw(&child, &parsed.bindings)?);
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            properties,
+            equations,
+            preservation: parsed.preservation,
+        })
+    }
+
+    pub fn to_xml(&self) -> Result<Vec<u8>> {
+        let mut writer = Writer::new(Vec::new());
+        self.write_xml_in(&mut writer, true, None)?;
+        Ok(writer.into_inner())
+    }
+
+    /// Whether this display equation retains content outside the typed subset.
+    pub fn has_unsupported_content(&self) -> bool {
+        preservation_has_unsupported_content(&self.preservation)
+            || property_preservation_has_unsupported_content(
+                &self.properties.preservation,
+                "oMathParaPr",
+            )
+            || self.equations.iter().any(CT_OMath::has_unsupported_content)
+    }
+
+    pub(crate) fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        declare_math: bool,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.equations.is_empty() {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath display requires at least one equation".to_owned(),
+            ));
+        }
+        let root = math_start("oMathPara", &self.preservation, declare_math, emission)?;
+        root.write(writer, false)?;
+        let had_properties = has_preserved_modeled_child(&self.preservation, "oMathParaPr");
+        let has_properties = !self.properties.is_empty() || had_properties;
+        if has_properties && !had_properties {
+            self.properties.write_xml_in(writer, emission)?;
+        }
+        let mut modeled = 0usize;
+        write_raw_slot(writer, &self.preservation, modeled)?;
+        if has_properties && had_properties {
+            self.properties.write_xml_in(writer, emission)?;
+            modeled += 1;
+            write_raw_slot(writer, &self.preservation, modeled)?;
+        }
+        for equation in &self.equations {
+            equation.write_xml_in(writer, false, emission)?;
+            modeled += 1;
+            write_raw_slot(writer, &self.preservation, modeled)?;
+        }
+        write_raw_tail(writer, &self.preservation, modeled + 1)?;
+        writer.write_event(Event::End(BytesEnd::new("m:oMathPara")))?;
+        Ok(())
+    }
+}
+
+/// Inline or display OfficeMath at a paragraph boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OfficeMath {
+    Inline(CT_OMath),
+    Display(CT_OMathPara),
+}
+
+impl OfficeMath {
+    pub fn inline(expressions: Vec<MathExpression>) -> Self {
+        Self::Inline(CT_OMath::new(expressions))
+    }
+
+    pub fn display(equations: Vec<CT_OMath>) -> Self {
+        Self::Display(CT_OMathPara::new(equations))
+    }
+
+    pub fn to_xml(&self) -> Result<Vec<u8>> {
+        match self {
+            Self::Inline(value) => value.to_xml(),
+            Self::Display(value) => value.to_xml(),
+        }
+    }
+
+    /// Whether this value retains content outside the typed OfficeMath subset.
+    pub fn has_unsupported_content(&self) -> bool {
+        match self {
+            Self::Inline(value) => value.has_unsupported_content(),
+            Self::Display(value) => value.has_unsupported_content(),
+        }
+    }
+
+    pub(crate) fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Option<Self>> {
+        if !fixed_math_prefix_is_safe(raw, inherited)? {
+            return Ok(None);
+        }
+        Ok(match math_local_name(raw, inherited)?.as_deref() {
+            Some("oMath") => Some(Self::Inline(CT_OMath::from_raw(raw, inherited)?)),
+            Some("oMathPara") if valid_officemath_paragraph_shape(raw, inherited)? => {
+                Some(Self::Display(CT_OMathPara::from_raw(raw, inherited)?))
+            }
+            Some("oMathPara") => None,
+            _ => None,
+        })
+    }
+
+    pub(crate) fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        match self {
+            Self::Inline(value) => value.write_xml_in(writer, true, emission),
+            Self::Display(value) => value.write_xml_in(writer, true, emission),
+        }
+    }
+}
+
+/// One expression in the normalized OfficeMath tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MathExpression {
+    Run(MathRun),
+    Fraction(MathFraction),
+    Subscript(MathScript),
+    Superscript(MathScript),
+    SubSuperscript(MathSubSuperscript),
+    PreSubSuperscript(MathPreSubSuperscript),
+    Radical(MathRadical),
+    Matrix(MathMatrix),
+    LowerLimit(MathLimit),
+    UpperLimit(MathLimit),
+    Nary(MathNary),
+    Delimiter(MathDelimiter),
+    Accent(MathAccent),
+}
+
+impl MathExpression {
+    /// Whether this expression or one of its arguments retains unsupported content.
+    pub fn has_unsupported_content(&self) -> bool {
+        match self {
+            Self::Run(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_preservation_has_unsupported_content(
+                        &value.properties.preservation,
+                        "rPr",
+                    )
+                    || math_text_has_unsupported_content(&value.preservation)
+            }
+            Self::Fraction(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "fPr")
+                    || value.numerator.has_unsupported_content()
+                    || value.denominator.has_unsupported_content()
+            }
+            Self::Subscript(value) => script_has_unsupported_content(value, "sSubPr"),
+            Self::Superscript(value) => script_has_unsupported_content(value, "sSupPr"),
+            Self::SubSuperscript(value) => three_argument_script_has_unsupported_content(
+                &value.preservation,
+                "sSubSupPr",
+                &value.base,
+                &value.subscript,
+                &value.superscript,
+            ),
+            Self::PreSubSuperscript(value) => three_argument_script_has_unsupported_content(
+                &value.preservation,
+                "sPrePr",
+                &value.base,
+                &value.subscript,
+                &value.superscript,
+            ),
+            Self::Radical(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "radPr")
+                    || value.degree.has_unsupported_content()
+                    || value.base.has_unsupported_content()
+            }
+            Self::Matrix(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "mPr")
+                    || value.rows.iter().any(|row| {
+                        preservation_has_unsupported_content(&row.preservation)
+                            || row.cells.iter().any(MathArgument::has_unsupported_content)
+                    })
+            }
+            Self::LowerLimit(value) => limit_has_unsupported_content(value, "limLowPr"),
+            Self::UpperLimit(value) => limit_has_unsupported_content(value, "limUppPr"),
+            Self::Nary(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "naryPr")
+                    || value.base.has_unsupported_content()
+                    || value.subscript.has_unsupported_content()
+                    || value.superscript.has_unsupported_content()
+            }
+            Self::Delimiter(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "dPr")
+                    || value
+                        .arguments
+                        .iter()
+                        .any(MathArgument::has_unsupported_content)
+            }
+            Self::Accent(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "accPr")
+                    || value.base.has_unsupported_content()
+            }
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Option<Self>> {
+        if !valid_expression_shape(raw, inherited)? {
+            return Ok(None);
+        }
+        Ok(match math_local_name(raw, inherited)?.as_deref() {
+            Some("r") => Some(Self::Run(MathRun::from_raw(raw, inherited)?)),
+            Some("f") => Some(Self::Fraction(MathFraction::from_raw(raw, inherited)?)),
+            Some("sSub") => Some(Self::Subscript(MathScript::from_raw(raw, inherited)?)),
+            Some("sSup") => Some(Self::Superscript(MathScript::from_raw(raw, inherited)?)),
+            Some("sSubSup") => Some(Self::SubSuperscript(MathSubSuperscript::from_raw(
+                raw, inherited,
+            )?)),
+            Some("sPre") => Some(Self::PreSubSuperscript(MathPreSubSuperscript::from_raw(
+                raw, inherited,
+            )?)),
+            Some("rad") => Some(Self::Radical(MathRadical::from_raw(raw, inherited)?)),
+            Some("m") => Some(Self::Matrix(MathMatrix::from_raw(raw, inherited)?)),
+            Some("limLow") => Some(Self::LowerLimit(MathLimit::from_raw(raw, inherited)?)),
+            Some("limUpp") => Some(Self::UpperLimit(MathLimit::from_raw(raw, inherited)?)),
+            Some("nary") => Some(Self::Nary(MathNary::from_raw(raw, inherited)?)),
+            Some("d") => Some(Self::Delimiter(MathDelimiter::from_raw(raw, inherited)?)),
+            Some("acc") => Some(Self::Accent(MathAccent::from_raw(raw, inherited)?)),
+            _ => None,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        match self {
+            Self::Run(value) => value.write_xml_in(writer, emission),
+            Self::Fraction(value) => value.write_xml_in(writer, emission),
+            Self::Subscript(value) => value.write_xml_in(writer, "sSub", emission),
+            Self::Superscript(value) => value.write_xml_in(writer, "sSup", emission),
+            Self::SubSuperscript(value) => value.write_xml_in(writer, emission),
+            Self::PreSubSuperscript(value) => value.write_xml_in(writer, emission),
+            Self::Radical(value) => value.write_xml_in(writer, emission),
+            Self::Matrix(value) => value.write_xml_in(writer, emission),
+            Self::LowerLimit(value) => value.write_xml_in(writer, "limLow", emission),
+            Self::UpperLimit(value) => value.write_xml_in(writer, "limUpp", emission),
+            Self::Nary(value) => value.write_xml_in(writer, emission),
+            Self::Delimiter(value) => value.write_xml_in(writer, emission),
+            Self::Accent(value) => value.write_xml_in(writer, emission),
+        }
+    }
+}
+
+impl From<MathRun> for MathExpression {
+    fn from(value: MathRun) -> Self {
+        Self::Run(value)
+    }
+}
+
+/// A recursively nested OfficeMath argument.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathArgument {
+    pub expressions: Vec<MathExpression>,
+    preservation: Preservation,
+}
+
+impl MathArgument {
+    pub fn new(expressions: Vec<MathExpression>) -> Self {
+        Self {
+            expressions,
+            preservation: Preservation::default(),
+        }
+    }
+
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::new(vec![MathRun::new(text).into()])
+    }
+
+    /// Whether this argument retains content outside the typed OfficeMath subset.
+    pub fn has_unsupported_content(&self) -> bool {
+        preservation_has_unsupported_content(&self.preservation)
+            || self
+                .expressions
+                .iter()
+                .any(MathExpression::has_unsupported_content)
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut expressions = Vec::new();
+        for child in parsed.children {
+            if let Some(expression) = MathExpression::from_raw(&child, &parsed.bindings)? {
+                expressions.push(expression);
+            } else {
+                parsed
+                    .preservation
+                    .raw_children
+                    .push((expressions.len(), child));
+            }
+        }
+        Ok(Self {
+            expressions,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        tag: &str,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_container(
+            writer,
+            tag,
+            &self.preservation,
+            |writer| {
+                write_raw_slot(writer, &self.preservation, 0)?;
+                for (index, expression) in self.expressions.iter().enumerate() {
+                    expression.write_xml_in(writer, emission)?;
+                    write_raw_slot(writer, &self.preservation, index + 1)?;
+                }
+                write_raw_tail(writer, &self.preservation, self.expressions.len() + 1)
+            },
+            emission,
+        )
+    }
+}
+
+/// OfficeMath run formatting needed by authoring and layout.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathRunProperties {
+    pub style: Option<MathStyle>,
+    pub normal: Option<bool>,
+    pub literal: Option<bool>,
+    pub script: Option<MathScriptStyle>,
+    pub break_before: bool,
+    pub break_alignment: Option<u8>,
+    preservation: Preservation,
+}
+
+/// Mathematical glyph style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathStyle {
+    Plain,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl MathStyle {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "p" => Some(Self::Plain),
+            "b" => Some(Self::Bold),
+            "i" => Some(Self::Italic),
+            "bi" => Some(Self::BoldItalic),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Plain => "p",
+            Self::Bold => "b",
+            Self::Italic => "i",
+            Self::BoldItalic => "bi",
+        }
+    }
+}
+
+/// Script category for a math run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathScriptStyle {
+    Roman,
+    Script,
+    Fraktur,
+    DoubleStruck,
+    SansSerif,
+    Monospace,
+}
+
+impl MathScriptStyle {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "roman" => Some(Self::Roman),
+            "script" => Some(Self::Script),
+            "fraktur" => Some(Self::Fraktur),
+            "double-struck" => Some(Self::DoubleStruck),
+            "sans-serif" => Some(Self::SansSerif),
+            "monospace" => Some(Self::Monospace),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Roman => "roman",
+            Self::Script => "script",
+            Self::Fraktur => "fraktur",
+            Self::DoubleStruck => "double-struck",
+            Self::SansSerif => "sans-serif",
+            Self::Monospace => "monospace",
+        }
+    }
+}
+
+/// Text-bearing OfficeMath run.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathRun {
+    pub text: String,
+    pub properties: MathRunProperties,
+    preservation: Preservation,
+}
+
+impl MathRun {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Self::default()
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut properties = MathRunProperties::default();
+        let mut text = String::new();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("rPr") if modeled == 0 => {
+                    properties = parse_run_properties(&child, &parsed.bindings)?;
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "rPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("t") => {
+                    text.push_str(&element_text(&child)?);
+                    preserve_modeled_child(&mut parsed.preservation, "t", &child, &parsed.bindings);
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            text,
+            properties,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_container(
+            writer,
+            "r",
+            &self.preservation,
+            |writer| {
+                let had_properties = has_preserved_modeled_child(&self.preservation, "rPr");
+                let emit_properties = !self.properties.is_empty() || had_properties;
+                if emit_properties && !had_properties {
+                    write_run_properties(writer, &self.properties, emission)?;
+                }
+                let mut modeled = 0usize;
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                if emit_properties && had_properties {
+                    write_run_properties(writer, &self.properties, emission)?;
+                    modeled += 1;
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                }
+                write_math_text(writer, &self.text, &self.preservation, emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+impl MathRunProperties {
+    fn is_empty(&self) -> bool {
+        self.style.is_none()
+            && self.normal.is_none()
+            && self.literal.is_none()
+            && self.script.is_none()
+            && !self.break_before
+            && self.break_alignment.is_none()
+            && self.preservation == Preservation::default()
+    }
+}
+
+/// Fraction bar form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FractionType {
+    #[default]
+    Bar,
+    Skewed,
+    Linear,
+    NoBar,
+}
+
+impl FractionType {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "bar" => Some(Self::Bar),
+            "skw" => Some(Self::Skewed),
+            "lin" => Some(Self::Linear),
+            "noBar" => Some(Self::NoBar),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Skewed => "skw",
+            Self::Linear => "lin",
+            Self::NoBar => "noBar",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathFraction {
+    pub fraction_type: FractionType,
+    pub numerator: MathArgument,
+    pub denominator: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathFraction {
+    pub fn new(numerator: MathArgument, denominator: MathArgument) -> Self {
+        Self {
+            fraction_type: FractionType::Bar,
+            numerator,
+            denominator,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut fraction_type = FractionType::Bar;
+        let mut numerator = MathArgument::default();
+        let mut denominator = MathArgument::default();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("fPr") if modeled == 0 => {
+                    if let Some(value) =
+                        child_property_value(&child, &parsed.bindings, "fPr", "type")?
+                    {
+                        fraction_type = FractionType::parse(&value).unwrap_or_default();
+                    }
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "fPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("num") => {
+                    numerator = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                Some("den") => {
+                    denominator = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            fraction_type,
+            numerator,
+            denominator,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_container(
+            writer,
+            "f",
+            &self.preservation,
+            |writer| {
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    "fPr",
+                    &[Property::text("type", self.fraction_type.as_str())],
+                    &self.preservation,
+                    true,
+                    emission,
+                )?;
+                self.numerator.write_xml_in(writer, "num", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                self.denominator.write_xml_in(writer, "den", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+/// Base and one script argument, used for subscript and superscript forms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathScript {
+    pub base: MathArgument,
+    pub script: MathArgument,
+    pub alignment: Option<bool>,
+    preservation: Preservation,
+}
+
+impl MathScript {
+    pub fn new(base: MathArgument, script: MathArgument) -> Self {
+        Self {
+            base,
+            script,
+            alignment: None,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let root = math_local_name(raw, inherited)?.unwrap_or_default();
+        let script_tag = if root == "sSub" { "sub" } else { "sup" };
+        let property_tag = if root == "sSub" { "sSubPr" } else { "sSupPr" };
+        let mut base = MathArgument::default();
+        let mut script = MathArgument::default();
+        let mut alignment = None;
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some(local) if local == property_tag && modeled == 0 => {
+                    alignment = child_on_off_value(&child, &parsed.bindings, "alnScr")?;
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        property_tag,
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("e") => {
+                    base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                Some(local) if local == script_tag => {
+                    script = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            base,
+            script,
+            alignment,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        tag: &str,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let property_tag = if tag == "sSub" { "sSubPr" } else { "sSupPr" };
+        let script_tag = if tag == "sSub" { "sub" } else { "sup" };
+        write_container(
+            writer,
+            tag,
+            &self.preservation,
+            |writer| {
+                let properties = self
+                    .alignment
+                    .map(|value| Property::boolean("alnScr", value))
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                let emit_properties = self.alignment.is_some()
+                    || has_preserved_modeled_child(&self.preservation, property_tag);
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    property_tag,
+                    &properties,
+                    &self.preservation,
+                    emit_properties,
+                    emission,
+                )?;
+                self.base.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                self.script.write_xml_in(writer, script_tag, emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathSubSuperscript {
+    pub base: MathArgument,
+    pub subscript: MathArgument,
+    pub superscript: MathArgument,
+    pub alignment: Option<bool>,
+    preservation: Preservation,
+}
+
+impl MathSubSuperscript {
+    pub fn new(base: MathArgument, subscript: MathArgument, superscript: MathArgument) -> Self {
+        Self {
+            base,
+            subscript,
+            superscript,
+            alignment: None,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        parse_three_argument_script(raw, inherited, false).map(|value| Self {
+            base: value.0,
+            subscript: value.1,
+            superscript: value.2,
+            alignment: value.3,
+            preservation: value.4,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_three_argument_script(
+            writer,
+            "sSubSup",
+            "sSubSupPr",
+            &self.base,
+            &self.subscript,
+            &self.superscript,
+            self.alignment,
+            &self.preservation,
+            false,
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathPreSubSuperscript {
+    pub base: MathArgument,
+    pub subscript: MathArgument,
+    pub superscript: MathArgument,
+    pub alignment: Option<bool>,
+    preservation: Preservation,
+}
+
+impl MathPreSubSuperscript {
+    pub fn new(base: MathArgument, subscript: MathArgument, superscript: MathArgument) -> Self {
+        Self {
+            base,
+            subscript,
+            superscript,
+            alignment: None,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        parse_three_argument_script(raw, inherited, true).map(|value| Self {
+            base: value.0,
+            subscript: value.1,
+            superscript: value.2,
+            alignment: value.3,
+            preservation: value.4,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_three_argument_script(
+            writer,
+            "sPre",
+            "sPrePr",
+            &self.base,
+            &self.subscript,
+            &self.superscript,
+            self.alignment,
+            &self.preservation,
+            true,
+            emission,
+        )
+    }
+}
+
+type ThreeArgumentScript = (
+    MathArgument,
+    MathArgument,
+    MathArgument,
+    Option<bool>,
+    Preservation,
+);
+
+fn parse_three_argument_script(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    pre: bool,
+) -> Result<ThreeArgumentScript> {
+    let mut parsed = parse_element(raw, inherited)?;
+    let property_tag = if pre { "sPrePr" } else { "sSubSupPr" };
+    let mut base = MathArgument::default();
+    let mut subscript = MathArgument::default();
+    let mut superscript = MathArgument::default();
+    let mut alignment = None;
+    let mut modeled = 0usize;
+    for child in parsed.children {
+        match math_local_name(&child, &parsed.bindings)?.as_deref() {
+            Some(local) if local == property_tag && modeled == 0 => {
+                alignment = child_on_off_value(&child, &parsed.bindings, "alnScr")?;
+                preserve_modeled_child(
+                    &mut parsed.preservation,
+                    property_tag,
+                    &child,
+                    &parsed.bindings,
+                );
+                modeled += 1;
+            }
+            Some("e") => {
+                base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                modeled += 1;
+            }
+            Some("sub") => {
+                subscript = MathArgument::from_raw(&child, &parsed.bindings)?;
+                modeled += 1;
+            }
+            Some("sup") => {
+                superscript = MathArgument::from_raw(&child, &parsed.bindings)?;
+                modeled += 1;
+            }
+            _ => parsed.preservation.raw_children.push((modeled, child)),
+        }
+    }
+    Ok((base, subscript, superscript, alignment, parsed.preservation))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_three_argument_script<W: Write>(
+    writer: &mut Writer<W>,
+    root_tag: &str,
+    property_tag: &str,
+    base: &MathArgument,
+    subscript: &MathArgument,
+    superscript: &MathArgument,
+    alignment: Option<bool>,
+    preservation: &Preservation,
+    pre: bool,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    write_container(
+        writer,
+        root_tag,
+        preservation,
+        |writer| {
+            let properties = alignment
+                .map(|value| Property::boolean("alnScr", value))
+                .into_iter()
+                .collect::<Vec<_>>();
+            let emit_properties =
+                alignment.is_some() || has_preserved_modeled_child(preservation, property_tag);
+            let mut modeled = write_leading_property_container(
+                writer,
+                property_tag,
+                &properties,
+                preservation,
+                emit_properties,
+                emission,
+            )?;
+            if pre {
+                subscript.write_xml_in(writer, "sub", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, preservation, modeled)?;
+                superscript.write_xml_in(writer, "sup", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, preservation, modeled)?;
+                base.write_xml_in(writer, "e", emission)?;
+            } else {
+                base.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, preservation, modeled)?;
+                subscript.write_xml_in(writer, "sub", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, preservation, modeled)?;
+                superscript.write_xml_in(writer, "sup", emission)?;
+            }
+            modeled += 1;
+            write_raw_slot(writer, preservation, modeled)
+        },
+        emission,
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathRadical {
+    pub degree: MathArgument,
+    pub base: MathArgument,
+    pub hide_degree: bool,
+    degree_present: bool,
+    preservation: Preservation,
+}
+
+impl MathRadical {
+    pub fn new(base: MathArgument) -> Self {
+        Self {
+            degree: MathArgument::default(),
+            base,
+            hide_degree: true,
+            degree_present: true,
+            preservation: Preservation::default(),
+        }
+    }
+
+    pub fn with_degree(degree: MathArgument, base: MathArgument) -> Self {
+        Self {
+            degree,
+            base,
+            hide_degree: false,
+            degree_present: true,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut degree = MathArgument::default();
+        let mut base = MathArgument::default();
+        let mut hide_degree = false;
+        let mut degree_present = false;
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("radPr") if modeled == 0 => {
+                    hide_degree =
+                        child_on_off_value(&child, &parsed.bindings, "degHide")?.unwrap_or(false);
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "radPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("deg") => {
+                    degree = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    degree_present = true;
+                    modeled += 1;
+                }
+                Some("e") => {
+                    base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            degree,
+            base,
+            hide_degree,
+            degree_present,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_container(
+            writer,
+            "rad",
+            &self.preservation,
+            |writer| {
+                let mut modeled = write_leading_property_container_before_raw(
+                    writer,
+                    "radPr",
+                    &[Property::boolean("degHide", self.hide_degree)],
+                    &self.preservation,
+                    true,
+                    emission,
+                )?;
+                let emit_degree = self.degree_present
+                    || !self.degree.expressions.is_empty()
+                    || self.degree.has_unsupported_content();
+                if self.degree_present {
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                    self.degree.write_xml_in(writer, "deg", emission)?;
+                    modeled += 1;
+                } else if emit_degree {
+                    self.degree.write_xml_in(writer, "deg", emission)?;
+                }
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                self.base.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathJustification {
+    Left,
+    Center,
+    Right,
+    CenterGroup,
+}
+
+impl MathJustification {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "left" => Some(Self::Left),
+            "center" => Some(Self::Center),
+            "right" => Some(Self::Right),
+            "centerGroup" => Some(Self::CenterGroup),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+            Self::CenterGroup => "centerGroup",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathParagraphProperties {
+    pub justification: Option<MathJustification>,
+    preservation: Preservation,
+}
+
+impl MathParagraphProperties {
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        Ok(Self {
+            justification: child_property_value(raw, inherited, "oMathParaPr", "jc")?
+                .and_then(|value| MathJustification::parse(&value)),
+            preservation: preserve_unrecognized_property_children(raw, inherited, &["jc"])?,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.justification.is_none() && self.preservation == Preservation::default()
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let properties = self
+            .justification
+            .map(|value| Property::text("jc", value.as_str()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        write_property_container_with_preservation(
+            writer,
+            "oMathParaPr",
+            &properties,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixBaseJustification {
+    Top,
+    Center,
+    Bottom,
+}
+
+impl MatrixBaseJustification {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "top" => Some(Self::Top),
+            "center" => Some(Self::Center),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Center => "center",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathMatrixProperties {
+    pub base_justification: Option<MatrixBaseJustification>,
+    pub row_spacing: Option<u16>,
+    pub column_spacing: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathMatrixRow {
+    pub cells: Vec<MathArgument>,
+    preservation: Preservation,
+}
+
+impl MathMatrixRow {
+    pub fn new(cells: Vec<MathArgument>) -> Self {
+        Self {
+            cells,
+            preservation: Preservation::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathMatrix {
+    pub properties: MathMatrixProperties,
+    pub rows: Vec<MathMatrixRow>,
+    preservation: Preservation,
+}
+
+impl MathMatrix {
+    pub fn new(rows: Vec<MathMatrixRow>) -> Self {
+        Self {
+            rows,
+            ..Self::default()
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut properties = MathMatrixProperties::default();
+        let mut rows = Vec::new();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("mPr") if modeled == 0 => {
+                    properties.base_justification =
+                        child_property_value(&child, &parsed.bindings, "mPr", "baseJc")?
+                            .and_then(|value| MatrixBaseJustification::parse(&value));
+                    properties.row_spacing =
+                        child_property_value(&child, &parsed.bindings, "mPr", "rSp")?
+                            .and_then(|value| value.parse().ok());
+                    properties.column_spacing =
+                        child_property_value(&child, &parsed.bindings, "mPr", "cSp")?
+                            .and_then(|value| value.parse().ok());
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "mPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("mr") => {
+                    rows.push(parse_matrix_row(&child, &parsed.bindings)?);
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            properties,
+            rows,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.rows.is_empty() || self.rows.iter().any(|row| row.cells.is_empty()) {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath matrix requires at least one nonempty row".to_owned(),
+            ));
+        }
+        write_container(
+            writer,
+            "m",
+            &self.preservation,
+            |writer| {
+                let properties = [
+                    self.properties
+                        .base_justification
+                        .map(|value| Property::text("baseJc", value.as_str())),
+                    self.properties
+                        .row_spacing
+                        .map(|value| Property::unsigned("rSp", value.into())),
+                    self.properties
+                        .column_spacing
+                        .map(|value| Property::unsigned("cSp", value.into())),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+                let emit_properties = !properties.is_empty()
+                    || has_preserved_modeled_child(&self.preservation, "mPr");
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    "mPr",
+                    &properties,
+                    &self.preservation,
+                    emit_properties,
+                    emission,
+                )?;
+                for row in &self.rows {
+                    write_container(
+                        writer,
+                        "mr",
+                        &row.preservation,
+                        |writer| {
+                            write_raw_slot(writer, &row.preservation, 0)?;
+                            for (index, cell) in row.cells.iter().enumerate() {
+                                cell.write_xml_in(writer, "e", emission)?;
+                                write_raw_slot(writer, &row.preservation, index + 1)?;
+                            }
+                            write_raw_tail(writer, &row.preservation, row.cells.len() + 1)
+                        },
+                        emission,
+                    )?;
+                    modeled += 1;
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                }
+                write_raw_tail(writer, &self.preservation, modeled + 1)
+            },
+            emission,
+        )
+    }
+}
+
+fn parse_matrix_row(raw: &[u8], inherited: &[(String, String)]) -> Result<MathMatrixRow> {
+    let mut parsed = parse_element(raw, inherited)?;
+    let mut cells = Vec::new();
+    for child in parsed.children {
+        if math_local_name(&child, &parsed.bindings)?.as_deref() == Some("e") {
+            cells.push(MathArgument::from_raw(&child, &parsed.bindings)?);
+        } else {
+            parsed.preservation.raw_children.push((cells.len(), child));
+        }
+    }
+    Ok(MathMatrixRow {
+        cells,
+        preservation: parsed.preservation,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathLimit {
+    pub base: MathArgument,
+    pub limit: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathLimit {
+    pub fn new(base: MathArgument, limit: MathArgument) -> Self {
+        Self {
+            base,
+            limit,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut base = MathArgument::default();
+        let mut limit = MathArgument::default();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some(property @ ("limLowPr" | "limUppPr")) if modeled == 0 => {
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        property,
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("e") => {
+                    base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                Some("lim") => {
+                    limit = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            base,
+            limit,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        tag: &str,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_container(
+            writer,
+            tag,
+            &self.preservation,
+            |writer| {
+                let property_tag = if tag == "limLow" {
+                    "limLowPr"
+                } else {
+                    "limUppPr"
+                };
+                let mut modeled = 0usize;
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                if has_preserved_modeled_child(&self.preservation, property_tag) {
+                    write_property_container_from_parent(
+                        writer,
+                        property_tag,
+                        &[],
+                        &self.preservation,
+                        emission,
+                    )?;
+                    modeled += 1;
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                }
+                self.base.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                self.limit.write_xml_in(writer, "lim", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitLocation {
+    SubSuperscript,
+    UnderOver,
+}
+
+impl LimitLocation {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "subSup" => Some(Self::SubSuperscript),
+            "undOvr" => Some(Self::UnderOver),
+            _ => None,
+        }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SubSuperscript => "subSup",
+            Self::UnderOver => "undOvr",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathNary {
+    pub character: String,
+    pub base: MathArgument,
+    pub subscript: MathArgument,
+    pub superscript: MathArgument,
+    pub hide_subscript: bool,
+    pub hide_superscript: bool,
+    pub grow: Option<bool>,
+    pub limit_location: Option<LimitLocation>,
+    subscript_present: bool,
+    superscript_present: bool,
+    preservation: Preservation,
+}
+
+impl MathNary {
+    pub fn new(character: impl Into<String>, base: MathArgument) -> Self {
+        Self {
+            character: character.into(),
+            base,
+            subscript: MathArgument::default(),
+            superscript: MathArgument::default(),
+            hide_subscript: true,
+            hide_superscript: true,
+            grow: None,
+            limit_location: None,
+            subscript_present: false,
+            superscript_present: false,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut value = Self::new("∫", MathArgument::default());
+        value.hide_subscript = false;
+        value.hide_superscript = false;
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("naryPr") if modeled == 0 => {
+                    value.character =
+                        child_property_value(&child, &parsed.bindings, "naryPr", "chr")?
+                            .unwrap_or(value.character);
+                    value.hide_subscript =
+                        child_on_off_value(&child, &parsed.bindings, "subHide")?.unwrap_or(false);
+                    value.hide_superscript =
+                        child_on_off_value(&child, &parsed.bindings, "supHide")?.unwrap_or(false);
+                    value.grow = child_on_off_value(&child, &parsed.bindings, "grow")?;
+                    value.limit_location =
+                        child_property_value(&child, &parsed.bindings, "naryPr", "limLoc")?
+                            .and_then(|value| LimitLocation::parse(&value));
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "naryPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("sub") => {
+                    value.subscript = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    value.subscript_present = true;
+                    modeled += 1;
+                }
+                Some("sup") => {
+                    value.superscript = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    value.superscript_present = true;
+                    modeled += 1;
+                }
+                Some("e") => {
+                    value.base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        value.preservation = parsed.preservation;
+        Ok(value)
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.character.chars().count() > 1 {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath n-ary character must contain at most one Unicode scalar".to_owned(),
+            ));
+        }
+        write_container(
+            writer,
+            "nary",
+            &self.preservation,
+            |writer| {
+                let mut properties = vec![Property::text("chr", &self.character)];
+                if let Some(value) = self.limit_location {
+                    properties.push(Property::text("limLoc", value.as_str()));
+                }
+                if let Some(value) = self.grow {
+                    properties.push(Property::boolean("grow", value));
+                }
+                properties.push(Property::boolean("subHide", self.hide_subscript));
+                properties.push(Property::boolean("supHide", self.hide_superscript));
+                let mut modeled = write_leading_property_container_before_raw(
+                    writer,
+                    "naryPr",
+                    &properties,
+                    &self.preservation,
+                    true,
+                    emission,
+                )?;
+                let emit_subscript = self.subscript_present
+                    || !self.subscript.expressions.is_empty()
+                    || self.subscript.has_unsupported_content();
+                if self.subscript_present {
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                    self.subscript.write_xml_in(writer, "sub", emission)?;
+                    modeled += 1;
+                } else if emit_subscript {
+                    self.subscript.write_xml_in(writer, "sub", emission)?;
+                }
+                let emit_superscript = self.superscript_present
+                    || !self.superscript.expressions.is_empty()
+                    || self.superscript.has_unsupported_content();
+                if self.superscript_present {
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                    self.superscript.write_xml_in(writer, "sup", emission)?;
+                    modeled += 1;
+                } else if emit_superscript {
+                    self.superscript.write_xml_in(writer, "sup", emission)?;
+                }
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                self.base.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathDelimiter {
+    pub begin_character: String,
+    pub end_character: String,
+    pub separator_character: String,
+    pub grow: Option<bool>,
+    pub arguments: Vec<MathArgument>,
+    preservation: Preservation,
+}
+
+impl MathDelimiter {
+    pub fn new(
+        begin: impl Into<String>,
+        end: impl Into<String>,
+        arguments: Vec<MathArgument>,
+    ) -> Self {
+        Self {
+            begin_character: begin.into(),
+            end_character: end.into(),
+            separator_character: "|".to_owned(),
+            grow: None,
+            arguments,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut value = Self::new("(", ")", Vec::new());
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("dPr") if modeled == 0 => {
+                    value.begin_character =
+                        child_property_value(&child, &parsed.bindings, "dPr", "begChr")?
+                            .unwrap_or(value.begin_character);
+                    value.end_character =
+                        child_property_value(&child, &parsed.bindings, "dPr", "endChr")?
+                            .unwrap_or(value.end_character);
+                    value.separator_character =
+                        child_property_value(&child, &parsed.bindings, "dPr", "sepChr")?
+                            .unwrap_or(value.separator_character);
+                    value.grow = child_on_off_value(&child, &parsed.bindings, "grow")?;
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "dPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("e") => {
+                    value
+                        .arguments
+                        .push(MathArgument::from_raw(&child, &parsed.bindings)?);
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        value.preservation = parsed.preservation;
+        Ok(value)
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.arguments.is_empty()
+            || [
+                &self.begin_character,
+                &self.separator_character,
+                &self.end_character,
+            ]
+            .iter()
+            .any(|value| value.chars().count() > 1)
+        {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath delimiter requires arguments and scalar characters".to_owned(),
+            ));
+        }
+        write_container(
+            writer,
+            "d",
+            &self.preservation,
+            |writer| {
+                let mut properties = vec![
+                    Property::text("begChr", &self.begin_character),
+                    Property::text("sepChr", &self.separator_character),
+                    Property::text("endChr", &self.end_character),
+                ];
+                if let Some(value) = self.grow {
+                    properties.push(Property::boolean("grow", value));
+                }
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    "dPr",
+                    &properties,
+                    &self.preservation,
+                    true,
+                    emission,
+                )?;
+                for argument in &self.arguments {
+                    argument.write_xml_in(writer, "e", emission)?;
+                    modeled += 1;
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                }
+                write_raw_tail(writer, &self.preservation, modeled + 1)
+            },
+            emission,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathAccent {
+    pub character: String,
+    pub base: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathAccent {
+    pub fn new(character: impl Into<String>, base: MathArgument) -> Self {
+        Self {
+            character: character.into(),
+            base,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut character = "̂".to_owned();
+        let mut base = MathArgument::default();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("accPr") if modeled == 0 => {
+                    character = child_property_value(&child, &parsed.bindings, "accPr", "chr")?
+                        .unwrap_or(character);
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "accPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("e") => {
+                    base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            character,
+            base,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.character.chars().count() > 1 {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath accent character must contain at most one Unicode scalar".to_owned(),
+            ));
+        }
+        write_container(
+            writer,
+            "acc",
+            &self.preservation,
+            |writer| {
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    "accPr",
+                    &[Property::text("chr", &self.character)],
+                    &self.preservation,
+                    true,
+                    emission,
+                )?;
+                self.base.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+/// Document-wide defaults from `w:settings/m:mathPr`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MathProperties {
+    pub math_font: Option<String>,
+    pub justification: Option<MathJustification>,
+    pub left_margin: Option<u32>,
+    pub right_margin: Option<u32>,
+    pub pre_spacing: Option<u32>,
+    pub post_spacing: Option<u32>,
+    pub inter_spacing: Option<u32>,
+    pub intra_spacing: Option<u32>,
+    pub wrap_indent: Option<u32>,
+    pub small_fraction: Option<bool>,
+    pub display_defaults: Option<bool>,
+    pub integral_limit_location: Option<LimitLocation>,
+    pub nary_limit_location: Option<LimitLocation>,
+    preservation: Preservation,
+}
+
+impl MathProperties {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether the settings subtree retains content outside the typed subset.
+    pub fn has_unsupported_content(&self) -> bool {
+        property_preservation_has_unsupported_content(&self.preservation, "mathPr")
+    }
+
+    pub(crate) fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        require_safe_fixed_math_prefix(raw, inherited)?;
+        let mut parsed = parse_element(raw, inherited)?;
+        require_root(raw, &parsed.bindings, b"mathPr")?;
+        let mut value = Self::default();
+        let mut modeled = 0usize;
+        let mut seen = Vec::new();
+        let mut last_rank = None;
+        for child in parsed.children {
+            let local = math_local_name(&child, &parsed.bindings)?;
+            let Some(name) = local.as_deref() else {
+                let key = property_raw_key("mathPr", None, &mut last_rank, false);
+                parsed.preservation.property_raw_children.push((key, child));
+                continue;
+            };
+            let duplicate = seen.iter().any(|seen_name| seen_name == name);
+            if !supported_properties("mathPr").contains(&name)
+                || duplicate
+                || !property_leaf_is_valid("mathPr", name, &child, &parsed.bindings)?
+            {
+                let key = property_raw_key("mathPr", Some(name), &mut last_rank, duplicate);
+                parsed.preservation.property_raw_children.push((key, child));
+                continue;
+            }
+            property_raw_key("mathPr", Some(name), &mut last_rank, false);
+            let parsed_value = root_value(&child, &parsed.bindings)?
+                .or_else(|| property_value_default("mathPr", name).map(str::to_owned));
+            let recognized = match name {
+                "mathFont" => {
+                    value.math_font = parsed_value;
+                    true
+                }
+                "defJc" => {
+                    value.justification =
+                        parsed_value.as_deref().and_then(MathJustification::parse);
+                    true
+                }
+                "lMargin" => {
+                    value.left_margin = parse_u32(parsed_value);
+                    true
+                }
+                "rMargin" => {
+                    value.right_margin = parse_u32(parsed_value);
+                    true
+                }
+                "preSp" => {
+                    value.pre_spacing = parse_u32(parsed_value);
+                    true
+                }
+                "postSp" => {
+                    value.post_spacing = parse_u32(parsed_value);
+                    true
+                }
+                "interSp" => {
+                    value.inter_spacing = parse_u32(parsed_value);
+                    true
+                }
+                "intraSp" => {
+                    value.intra_spacing = parse_u32(parsed_value);
+                    true
+                }
+                "wrapIndent" => {
+                    value.wrap_indent = parse_u32(parsed_value);
+                    true
+                }
+                "smallFrac" => {
+                    value.small_fraction = parse_present_on_off(parsed_value.as_deref());
+                    true
+                }
+                "dispDef" => {
+                    value.display_defaults = parse_present_on_off(parsed_value.as_deref());
+                    true
+                }
+                "intLim" => {
+                    value.integral_limit_location =
+                        parsed_value.as_deref().and_then(LimitLocation::parse);
+                    true
+                }
+                "naryLim" => {
+                    value.nary_limit_location =
+                        parsed_value.as_deref().and_then(LimitLocation::parse);
+                    true
+                }
+                _ => false,
+            };
+            if recognized {
+                seen.push(name.to_owned());
+                preserve_modeled_child(&mut parsed.preservation, name, &child, &parsed.bindings);
+                modeled += 1;
+            } else {
+                parsed.preservation.raw_children.push((modeled, child));
+            }
+        }
+        value.preservation = parsed.preservation;
+        Ok(value)
+    }
+
+    pub(crate) fn write_xml<W: Write>(&self, writer: &mut Writer<W>) -> Result<()> {
+        self.write_xml_in(writer, None)
+    }
+
+    pub(crate) fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let mut properties = Vec::new();
+        if let Some(value) = &self.math_font {
+            properties.push(Property::text("mathFont", value));
+        }
+        if let Some(value) = self.small_fraction {
+            properties.push(Property::boolean("smallFrac", value));
+        }
+        if let Some(value) = self.display_defaults {
+            properties.push(Property::boolean("dispDef", value));
+        }
+        if let Some(value) = self.left_margin {
+            properties.push(Property::unsigned("lMargin", value.into()));
+        }
+        if let Some(value) = self.right_margin {
+            properties.push(Property::unsigned("rMargin", value.into()));
+        }
+        if let Some(value) = self.justification {
+            properties.push(Property::text("defJc", value.as_str()));
+        }
+        for (name, value) in [
+            ("preSp", self.pre_spacing),
+            ("postSp", self.post_spacing),
+            ("interSp", self.inter_spacing),
+            ("intraSp", self.intra_spacing),
+            ("wrapIndent", self.wrap_indent),
+        ] {
+            if let Some(value) = value {
+                properties.push(Property::unsigned(name, value.into()));
+            }
+        }
+        if let Some(value) = self.integral_limit_location {
+            properties.push(Property::text("intLim", value.as_str()));
+        }
+        if let Some(value) = self.nary_limit_location {
+            properties.push(Property::text("naryLim", value.as_str()));
+        }
+        write_property_container_with_preservation(
+            writer,
+            "mathPr",
+            &properties,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+pub(crate) fn is_math_element(name: &[u8], local: &[u8], scope: &[String]) -> bool {
+    let (prefix, actual_local) = name
+        .iter()
+        .position(|byte| *byte == b':')
+        .map_or((&b""[..], name), |at| (&name[..at], &name[at + 1..]));
+    actual_local == local
+        && scope.iter().any(|binding| {
+            binding
+                .strip_prefix('\0')
+                .and_then(|binding| binding.split_once('\0'))
+                .is_some_and(|(candidate, namespace)| {
+                    candidate.as_bytes() == prefix && namespace == M_NS
+                })
+        })
+}
+
+fn parse_run_properties(raw: &[u8], inherited: &[(String, String)]) -> Result<MathRunProperties> {
+    let mut parsed = parse_element(raw, inherited)?;
+    let mut value = MathRunProperties::default();
+    let mut modeled = 0usize;
+    let mut seen = Vec::new();
+    let mut last_rank = None;
+    for child in parsed.children {
+        let local = math_local_name(&child, &parsed.bindings)?;
+        let Some(name) = local.as_deref() else {
+            let key = property_raw_key("rPr", None, &mut last_rank, false);
+            parsed.preservation.property_raw_children.push((key, child));
+            continue;
+        };
+        let duplicate = seen.iter().any(|seen_name| seen_name == name);
+        if !supported_properties("rPr").contains(&name)
+            || duplicate
+            || !property_leaf_is_valid("rPr", name, &child, &parsed.bindings)?
+        {
+            let key = property_raw_key("rPr", Some(name), &mut last_rank, duplicate);
+            parsed.preservation.property_raw_children.push((key, child));
+            continue;
+        }
+        property_raw_key("rPr", Some(name), &mut last_rank, false);
+        let parsed_value = root_value(&child, &parsed.bindings)?
+            .or_else(|| property_value_default("rPr", name).map(str::to_owned));
+        let recognized = match name {
+            "sty" => {
+                value.style = parsed_value.as_deref().and_then(MathStyle::parse);
+                true
+            }
+            "nor" => {
+                value.normal = parse_present_on_off(parsed_value.as_deref());
+                true
+            }
+            "lit" => {
+                value.literal = parse_present_on_off(parsed_value.as_deref());
+                true
+            }
+            "scr" => {
+                value.script = parsed_value.as_deref().and_then(MathScriptStyle::parse);
+                true
+            }
+            "brk" => {
+                let alignment = root_attribute(&child, &parsed.bindings, b"alnAt")?;
+                match alignment {
+                    Some(alignment) => match alignment.parse::<u8>() {
+                        Ok(0) | Err(_) => false,
+                        Ok(alignment) => {
+                            value.break_before = true;
+                            value.break_alignment = Some(alignment);
+                            true
+                        }
+                    },
+                    None => {
+                        value.break_before = true;
+                        true
+                    }
+                }
+            }
+            _ => false,
+        };
+        if recognized {
+            seen.push(name.to_owned());
+            preserve_modeled_child(&mut parsed.preservation, name, &child, &parsed.bindings);
+            modeled += 1;
+        } else {
+            parsed.preservation.raw_children.push((modeled, child));
+        }
+    }
+    value.preservation = parsed.preservation;
+    Ok(value)
+}
+
+fn write_run_properties<W: Write>(
+    writer: &mut Writer<W>,
+    value: &MathRunProperties,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let mut properties = Vec::new();
+    if let Some(literal) = value.literal {
+        properties.push(Property::boolean("lit", literal));
+    }
+    if let Some(normal) = value.normal {
+        properties.push(Property::boolean("nor", normal));
+    }
+    if let Some(script) = value.script {
+        properties.push(Property::text("scr", script.as_str()));
+    }
+    if let Some(style) = value.style {
+        properties.push(Property::text("sty", style.as_str()));
+    }
+    if let Some(alignment) = value.break_alignment {
+        properties.push(Property::attribute("brk", "alnAt", alignment.into()));
+    } else if value.break_before {
+        properties.push(Property::marker("brk"));
+    }
+    write_property_container_with_preservation(
+        writer,
+        "rPr",
+        &properties,
+        &value.preservation,
+        emission,
+    )
+}
+
+enum PropertyValue<'a> {
+    Text(&'a str),
+    Unsigned(u64),
+}
+struct Property<'a> {
+    name: &'a str,
+    attribute: Option<(&'a str, PropertyValue<'a>)>,
+}
+impl<'a> Property<'a> {
+    fn text(name: &'a str, value: &'a str) -> Self {
+        Self {
+            name,
+            attribute: Some(("val", PropertyValue::Text(value))),
+        }
+    }
+    fn boolean(name: &'a str, value: bool) -> Self {
+        Self {
+            name,
+            attribute: Some(("val", PropertyValue::Text(if value { "1" } else { "0" }))),
+        }
+    }
+    fn unsigned(name: &'a str, value: u64) -> Self {
+        Self {
+            name,
+            attribute: Some(("val", PropertyValue::Unsigned(value))),
+        }
+    }
+    fn attribute(name: &'a str, attribute: &'a str, value: u64) -> Self {
+        Self {
+            name,
+            attribute: Some((attribute, PropertyValue::Unsigned(value))),
+        }
+    }
+    fn marker(name: &'a str) -> Self {
+        Self {
+            name,
+            attribute: None,
+        }
+    }
+    fn attribute_value<'b>(&'b self, decimal: &'b mut itoa::Buffer) -> Option<(&'b str, &'b str)> {
+        let (name, value) = self.attribute.as_ref()?;
+        let value = match value {
+            PropertyValue::Text(value) => *value,
+            PropertyValue::Unsigned(value) => decimal.format(*value),
+        };
+        Some((name, value))
+    }
+}
+
+fn write_property_container<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    properties: &[Property<'_>],
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    write_property_container_with_preservation(
+        writer,
+        tag,
+        properties,
+        &Preservation::default(),
+        emission,
+    )
+}
+
+fn write_math_text<W: Write>(
+    writer: &mut Writer<W>,
+    text_value: &str,
+    parent: &Preservation,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let mut preservation = if let Some(source) = parent
+        .modeled_children
+        .iter()
+        .find(|child| child.name == "t")
+    {
+        parse_element(&source.raw, &source.bindings)?.preservation
+    } else {
+        Preservation::default()
+    };
+    preservation
+        .attributes
+        .retain(|(name, _)| name != "xml:space");
+    let mut start = math_start("t", &preservation, false, emission)?;
+    if text_value.starts_with(char::is_whitespace) || text_value.ends_with(char::is_whitespace) {
+        start.push("xml:space", "preserve")?;
+    }
+    start.write(writer, false)?;
+    if let Some(emission) = emission {
+        emission.write_text(writer, text_value, None)?;
+    } else {
+        let text = BytesText::new(text_value);
+        #[cfg(test)]
+        if text.len() != text_value.len() {
+            crate::text::WORD_TEXT_ESCAPE_MATERIALIZATIONS
+                .set(crate::text::WORD_TEXT_ESCAPE_MATERIALIZATIONS.get() + 1);
+        }
+        writer.write_event(Event::Text(text))?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("m:t")))?;
+    Ok(())
+}
+
+fn preserve_modeled_child(
+    preservation: &mut Preservation,
+    name: &str,
+    raw: &[u8],
+    bindings: &[(String, String)],
+) {
+    preservation.modeled_children.push(PreservedChild {
+        name: name.to_owned(),
+        raw: raw.to_vec(),
+        bindings: bindings.to_vec(),
+    });
+}
+
+fn preservation_has_unsupported_content(preservation: &Preservation) -> bool {
+    preservation
+        .attributes
+        .iter()
+        .any(|(name, _)| name != "xmlns" && !name.starts_with("xmlns:"))
+        || !preservation.raw_children.is_empty()
+        || !preservation.property_raw_children.is_empty()
+}
+
+fn property_preservation_has_unsupported_content(
+    preservation: &Preservation,
+    container: &str,
+) -> bool {
+    preservation_has_unsupported_content(preservation)
+        || preservation.modeled_children.iter().any(|child| {
+            parse_element(&child.raw, &child.bindings).map_or(true, |parsed| {
+                let modeled_attribute = property_modeled_attribute(container, &child.name);
+                parsed.preservation.attributes.iter().any(|(name, _)| {
+                    if name == "xmlns" || name.starts_with("xmlns:") {
+                        return false;
+                    }
+                    expanded_attribute_name(name.as_bytes(), &parsed.bindings).is_none_or(
+                        |(namespace, local)| {
+                            namespace != M_NS || local.as_slice() != modeled_attribute
+                        },
+                    )
+                }) || !parsed.children.is_empty()
+            })
+        })
+}
+
+fn property_container_has_unsupported_content(preservation: &Preservation, tag: &str) -> bool {
+    let Some(source) = preservation
+        .modeled_children
+        .iter()
+        .find(|child| child.name == tag)
+    else {
+        return false;
+    };
+    preserve_property_container(
+        &source.raw,
+        &source.bindings,
+        tag,
+        supported_properties(tag),
+    )
+    .map_or(true, |value| {
+        property_preservation_has_unsupported_content(&value, tag)
+    })
+}
+
+fn math_text_has_unsupported_content(preservation: &Preservation) -> bool {
+    let Some(source) = preservation
+        .modeled_children
+        .iter()
+        .find(|child| child.name == "t")
+    else {
+        return false;
+    };
+    parse_element(&source.raw, &source.bindings).map_or(true, |parsed| {
+        parsed.preservation.attributes.iter().any(|(name, value)| {
+            if name == "xmlns" || name.starts_with("xmlns:") {
+                false
+            } else if name == "xml:space" {
+                !matches!(value.as_str(), "default" | "preserve")
+            } else {
+                true
+            }
+        })
+    })
+}
+
+fn script_has_unsupported_content(value: &MathScript, property_tag: &str) -> bool {
+    preservation_has_unsupported_content(&value.preservation)
+        || property_container_has_unsupported_content(&value.preservation, property_tag)
+        || value.base.has_unsupported_content()
+        || value.script.has_unsupported_content()
+}
+
+fn three_argument_script_has_unsupported_content(
+    preservation: &Preservation,
+    property_tag: &str,
+    base: &MathArgument,
+    subscript: &MathArgument,
+    superscript: &MathArgument,
+) -> bool {
+    preservation_has_unsupported_content(preservation)
+        || property_container_has_unsupported_content(preservation, property_tag)
+        || base.has_unsupported_content()
+        || subscript.has_unsupported_content()
+        || superscript.has_unsupported_content()
+}
+
+fn limit_has_unsupported_content(value: &MathLimit, property_tag: &str) -> bool {
+    preservation_has_unsupported_content(&value.preservation)
+        || property_container_has_unsupported_content(&value.preservation, property_tag)
+        || value.base.has_unsupported_content()
+        || value.limit.has_unsupported_content()
+}
+
+fn has_preserved_modeled_child(preservation: &Preservation, name: &str) -> bool {
+    preservation
+        .modeled_children
+        .iter()
+        .any(|child| child.name == name)
+}
+
+fn write_leading_property_container<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    properties: &[Property<'_>],
+    preservation: &Preservation,
+    emit: bool,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<usize> {
+    let modeled = write_leading_property_container_before_raw(
+        writer,
+        tag,
+        properties,
+        preservation,
+        emit,
+        emission,
+    )?;
+    write_raw_slot(writer, preservation, modeled)?;
+    Ok(modeled)
+}
+
+fn write_leading_property_container_before_raw<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    properties: &[Property<'_>],
+    preservation: &Preservation,
+    emit: bool,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<usize> {
+    let existed_in_source = has_preserved_modeled_child(preservation, tag);
+    if emit && existed_in_source {
+        write_raw_slot(writer, preservation, 0)?;
+        write_property_container_from_parent(writer, tag, properties, preservation, emission)?;
+        Ok(1)
+    } else {
+        if emit {
+            write_property_container_from_parent(writer, tag, properties, preservation, emission)?;
+        }
+        Ok(0)
+    }
+}
+
+fn write_property_container_from_parent<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    properties: &[Property<'_>],
+    parent: &Preservation,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let Some(source) = parent
+        .modeled_children
+        .iter()
+        .find(|child| child.name == tag)
+    else {
+        return write_property_container(writer, tag, properties, emission);
+    };
+    let preservation = preserve_property_container(
+        &source.raw,
+        &source.bindings,
+        tag,
+        supported_properties(tag),
+    )?;
+    write_property_container_with_preservation(writer, tag, properties, &preservation, emission)
+}
+
+fn write_property_container_with_preservation<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    properties: &[Property<'_>],
+    preservation: &Preservation,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let declare_math = tag == "mathPr";
+    let start = math_start(tag, preservation, declare_math, emission)?;
+    start.write(writer, false)?;
+    let result = if preservation.property_raw_children.is_empty() {
+        (|| {
+            write_raw_slot(writer, preservation, 0)?;
+            for (index, property) in properties.iter().enumerate() {
+                write_property(writer, property, preservation, emission)?;
+                if index + 1 < properties.len() {
+                    write_raw_slot(writer, preservation, index + 1)?;
+                }
+            }
+            write_raw_tail(writer, preservation, properties.len())
+        })()
+    } else {
+        let full_order = full_property_order(tag);
+        let mut emissions = preservation
+            .property_raw_children
+            .iter()
+            .enumerate()
+            .map(|(source_order, (key, raw))| (*key, source_order, None, Some(raw)))
+            .collect::<Vec<_>>();
+        emissions.extend(properties.iter().enumerate().map(|(index, property)| {
+            let rank = full_order
+                .iter()
+                .position(|name| *name == property.name)
+                .unwrap_or(full_order.len());
+            (rank * 3 + 1, index, Some(property), None)
+        }));
+        emissions.sort_by_key(|(key, source_order, _, _)| (*key, *source_order));
+        for (_, _, property, raw) in emissions {
+            if let Some(source) = preservation
+                .modeled_children
+                .iter()
+                .find(|child| property.is_some_and(|property| child.name == property.name))
+            {
+                write_property_leaf(
+                    writer,
+                    property.expect("source requires a property"),
+                    &source.raw,
+                    &source.bindings,
+                    emission,
+                )?;
+            } else if let Some(property) = property {
+                write_new_property(writer, property, emission)?;
+            } else if let Some(raw) = raw {
+                writer.get_mut().write_all(raw)?;
+            }
+        }
+        Ok(())
+    };
+    result?;
+    write_math_end(writer, tag, emission)?;
+    Ok(())
+}
+
+fn write_property<W: Write>(
+    writer: &mut Writer<W>,
+    property: &Property<'_>,
+    preservation: &Preservation,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    if let Some(source) = preservation
+        .modeled_children
+        .iter()
+        .find(|child| child.name == property.name)
+    {
+        write_property_leaf(writer, property, &source.raw, &source.bindings, emission)
+    } else {
+        write_new_property(writer, property, emission)
+    }
+}
+
+fn write_new_property<W: Write>(
+    writer: &mut Writer<W>,
+    property: &Property<'_>,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let mut child = crate::text::FieldXmlStart::word("m", property.name, emission)?;
+    let mut decimal = itoa::Buffer::new();
+    if let Some((name, value)) = property.attribute_value(&mut decimal) {
+        child.push_word("m", name, value)?;
+    }
+    child.write(writer, true)?;
+    Ok(())
+}
+
+fn write_property_leaf<W: Write>(
+    writer: &mut Writer<W>,
+    property: &Property<'_>,
+    raw: &[u8],
+    inherited: &[(String, String)],
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let parsed = parse_element(raw, inherited)?;
+    let mut preservation = parsed.preservation;
+    let modeled_attribute = property
+        .attribute
+        .as_ref()
+        .map(|(name, _)| name.as_bytes())
+        .unwrap_or(b"alnAt");
+    preservation.attributes.retain(|(name, _)| {
+        expanded_attribute_name(name.as_bytes(), &parsed.bindings)
+            .is_none_or(|(namespace, local)| namespace != M_NS || local != modeled_attribute)
+    });
+    let mut start = math_start(property.name, &preservation, false, emission)?;
+    let mut decimal = itoa::Buffer::new();
+    if let Some((name, value)) = property.attribute_value(&mut decimal) {
+        start.push_word("m", name, value)?;
+    }
+    if parsed.children.is_empty() {
+        start.write(writer, true)?;
+    } else {
+        start.write(writer, false)?;
+        for child in parsed.children {
+            writer.get_mut().write_all(&child)?;
+        }
+        write_math_end(writer, property.name, emission)?;
+    }
+    Ok(())
+}
+
+fn write_raw_tail<W: Write>(
+    writer: &mut Writer<W>,
+    preservation: &Preservation,
+    from_slot: usize,
+) -> Result<()> {
+    for (_, raw) in preservation
+        .raw_children
+        .iter()
+        .filter(|(position, _)| *position >= from_slot)
+    {
+        writer.get_mut().write_all(raw)?;
+    }
+    Ok(())
+}
+
+fn supported_properties(tag: &str) -> &'static [&'static str] {
+    match tag {
+        "rPr" => &["lit", "nor", "scr", "sty", "brk"],
+        "fPr" => &["type"],
+        "sSubPr" | "sSupPr" | "sSubSupPr" | "sPrePr" => &["alnScr"],
+        "radPr" => &["degHide"],
+        "mPr" => &["baseJc", "rSp", "cSp"],
+        "limLowPr" | "limUppPr" => &[],
+        "naryPr" => &["chr", "limLoc", "grow", "subHide", "supHide"],
+        "dPr" => &["begChr", "sepChr", "endChr", "grow"],
+        "accPr" => &["chr"],
+        "oMathParaPr" => &["jc"],
+        "mathPr" => &[
+            "mathFont",
+            "smallFrac",
+            "dispDef",
+            "lMargin",
+            "rMargin",
+            "defJc",
+            "preSp",
+            "postSp",
+            "interSp",
+            "intraSp",
+            "wrapIndent",
+            "intLim",
+            "naryLim",
+        ],
+        _ => &[],
+    }
+}
+
+fn property_value_default(container: &str, property: &str) -> Option<&'static str> {
+    match (container, property) {
+        ("rPr", "scr") => Some("roman"),
+        ("rPr", "sty") => Some("i"),
+        ("fPr", "type") => Some("bar"),
+        ("mPr", "baseJc") => Some("center"),
+        ("mPr", "rSp" | "cSp") => Some("0"),
+        ("naryPr" | "accPr", "chr") => Some(""),
+        ("naryPr", "limLoc") => Some("undOvr"),
+        ("dPr", "begChr" | "sepChr" | "endChr") => Some(""),
+        ("oMathParaPr", "jc") => Some("centerGroup"),
+        ("mathPr", "defJc") => Some("centerGroup"),
+        ("mathPr", "intLim") => Some("subSup"),
+        ("mathPr", "naryLim") => Some("undOvr"),
+        ("mathPr", "lMargin" | "rMargin" | "wrapIndent") => Some("1440"),
+        _ => None,
+    }
+}
+
+fn property_modeled_attribute(container: &str, property: &str) -> &'static [u8] {
+    if container == "rPr" && property == "brk" {
+        b"alnAt"
+    } else {
+        b"val"
+    }
+}
+
+fn full_property_order(tag: &str) -> &'static [&'static str] {
+    match tag {
+        "rPr" => &["lit", "nor", "scr", "sty", "brk", "aln"],
+        "fPr" => &["type", "ctrlPr"],
+        "sSubPr" | "sSupPr" | "sSubSupPr" | "sPrePr" => &["alnScr", "ctrlPr"],
+        "radPr" => &["degHide", "ctrlPr"],
+        "mPr" => &[
+            "baseJc", "plcHide", "rSpRule", "cGpRule", "rSp", "cSp", "cGp", "mcs", "ctrlPr",
+        ],
+        "limLowPr" | "limUppPr" => &["ctrlPr"],
+        "naryPr" => &["chr", "limLoc", "grow", "subHide", "supHide", "ctrlPr"],
+        "dPr" => &["begChr", "sepChr", "endChr", "grow", "shp", "ctrlPr"],
+        "accPr" => &["chr", "ctrlPr"],
+        "oMathParaPr" => &["jc"],
+        "mathPr" => &[
+            "mathFont",
+            "brkBin",
+            "brkBinSub",
+            "smallFrac",
+            "dispDef",
+            "lMargin",
+            "rMargin",
+            "defJc",
+            "preSp",
+            "postSp",
+            "interSp",
+            "intraSp",
+            "wrapIndent",
+            "wrapRight",
+            "intLim",
+            "naryLim",
+        ],
+        _ => &[],
+    }
+}
+
+fn property_raw_key(
+    tag: &str,
+    local: Option<&str>,
+    last_rank: &mut Option<usize>,
+    duplicate: bool,
+) -> usize {
+    if let Some(rank) = local.and_then(|local| {
+        full_property_order(tag)
+            .iter()
+            .position(|name| *name == local)
+    }) {
+        *last_rank = Some(rank);
+        if duplicate {
+            rank * 3 + 2
+        } else {
+            rank * 3 + 1
+        }
+    } else {
+        last_rank.map_or(0, |rank| rank * 3 + 2)
+    }
+}
+
+fn preserve_property_container(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    tag: &str,
+    recognized: &[&str],
+) -> Result<Preservation> {
+    let mut parsed = parse_element(raw, inherited)?;
+    let mut seen = Vec::new();
+    let mut last_rank = None;
+    for child in parsed.children {
+        let local = math_local_name(&child, &parsed.bindings)?;
+        if let Some(local) = local
+            .as_deref()
+            .filter(|local| recognized.contains(local) && !seen.iter().any(|name| name == local))
+        {
+            seen.push(local.to_owned());
+            property_raw_key(tag, Some(local), &mut last_rank, false);
+            preserve_modeled_child(&mut parsed.preservation, local, &child, &parsed.bindings);
+        } else {
+            let duplicate = local
+                .as_deref()
+                .is_some_and(|local| seen.iter().any(|name| name == local));
+            let key = property_raw_key(tag, local.as_deref(), &mut last_rank, duplicate);
+            parsed.preservation.property_raw_children.push((key, child));
+        }
+    }
+    Ok(parsed.preservation)
+}
+
+fn write_container<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    preservation: &Preservation,
+    children: impl FnOnce(&mut Writer<W>) -> Result<()>,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let start = math_start(tag, preservation, false, emission)?;
+    start.write(writer, false)?;
+    children(writer)?;
+    write_math_end(writer, tag, emission)?;
+    Ok(())
+}
+
+fn math_start<'e>(
+    tag: &str,
+    preservation: &Preservation,
+    declare_math: bool,
+    emission: Option<&'e crate::text::FieldXmlEmission>,
+) -> Result<crate::text::FieldXmlStart<'e, 'static>> {
+    let mut start = crate::text::FieldXmlStart::word("m", tag, emission)?;
+    if declare_math {
+        start.push("xmlns:m", M_NS)?;
+        for (prefix, namespace) in &preservation.inherited_bindings {
+            let retained = preservation.attributes.iter().any(|(candidate, _)| {
+                if prefix.is_empty() {
+                    candidate == "xmlns"
+                } else {
+                    candidate.strip_prefix("xmlns:") == Some(prefix.as_str())
+                }
+            });
+            if prefix != "m" && prefix != "xml" && !retained {
+                if prefix.is_empty() {
+                    start.push("xmlns", namespace)?;
+                } else {
+                    start.push_word("xmlns", prefix, namespace)?;
+                }
+            }
+        }
+    }
+    for (name, value) in &preservation.attributes {
+        if name != "xmlns:m" {
+            start.push(name, value)?;
+        }
+    }
+    Ok(start)
+}
+
+fn write_math_end<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    if let Some(emission) = emission {
+        emission.write_word_end(writer, "m", tag)
+    } else {
+        writer.write_event(Event::End(BytesEnd::new(format!("m:{tag}"))))?;
+        Ok(())
+    }
+}
+
+fn write_raw_slot<W: Write>(
+    writer: &mut Writer<W>,
+    preservation: &Preservation,
+    slot: usize,
+) -> Result<()> {
+    for (_, raw) in preservation
+        .raw_children
+        .iter()
+        .filter(|(position, _)| *position == slot)
+    {
+        writer.get_mut().write_all(raw)?;
+    }
+    Ok(())
+}
+
+fn parse_element(raw: &[u8], inherited: &[(String, String)]) -> Result<ParsedElement> {
+    let mut reader = Reader::from_reader(raw);
+    reader.config_mut().trim_text(false);
+    let mut bindings = inherited.to_vec();
+    let mut preservation = Preservation {
+        inherited_bindings: inherited.to_vec(),
+        ..Preservation::default()
+    };
+    let mut children = Vec::new();
+    let mut inside = false;
+    let mut saw_root = false;
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) if !inside => {
+                saw_root = true;
+                merge_bindings(&mut bindings, &element)?;
+                preservation.attributes = extra_attributes(&element)?;
+                inside = true;
+            }
+            Event::Empty(element) if !inside => {
+                saw_root = true;
+                merge_bindings(&mut bindings, &element)?;
+                preservation.attributes = extra_attributes(&element)?;
+                break;
+            }
+            Event::Start(element) if inside => {
+                children.push(capture_element(&mut reader, &element)?)
+            }
+            Event::Empty(element) if inside => children.push(capture_empty(&element)?),
+            Event::Text(text) if inside && !text.as_ref().iter().all(u8::is_ascii_whitespace) => {
+                children.push(capture_event(Event::Text(text.into_owned()))?)
+            }
+            Event::Comment(comment) if inside => {
+                children.push(capture_event(Event::Comment(comment.into_owned()))?)
+            }
+            Event::PI(pi) if inside => children.push(capture_event(Event::PI(pi.into_owned()))?),
+            Event::End(_) if inside => break,
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if !saw_root {
+        return Err(OxmlError::MissingElement("OfficeMath element".to_owned()));
+    }
+    Ok(ParsedElement {
+        preservation,
+        bindings,
+        children,
+    })
+}
+
+const MAX_OFFICEMATH_XML_DEPTH: usize = 128;
+
+fn validate_xml_depth(raw: &[u8]) -> Result<()> {
+    let mut reader = Reader::from_reader(raw);
+    let mut depth = 0usize;
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(_) => {
+                depth += 1;
+                if depth > MAX_OFFICEMATH_XML_DEPTH {
+                    return Err(OxmlError::InvalidValue(format!(
+                        "OfficeMath XML nesting exceeds {MAX_OFFICEMATH_XML_DEPTH} elements"
+                    )));
+                }
+            }
+            Event::End(_) => depth = depth.saturating_sub(1),
+            Event::Eof if depth == 0 => return Ok(()),
+            Event::Eof => {
+                return Err(OxmlError::MissingElement(
+                    "OfficeMath closing element".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn valid_expression_shape(raw: &[u8], inherited: &[(String, String)]) -> Result<bool> {
+    let Some(root) = math_local_name(raw, inherited)? else {
+        return Ok(true);
+    };
+    let parsed = parse_element(raw, inherited)?;
+    let property_tag = match root.as_str() {
+        "r" => Some("rPr"),
+        "f" => Some("fPr"),
+        "sSub" => Some("sSubPr"),
+        "sSup" => Some("sSupPr"),
+        "sSubSup" => Some("sSubSupPr"),
+        "sPre" => Some("sPrePr"),
+        "rad" => Some("radPr"),
+        "m" => Some("mPr"),
+        "limLow" => Some("limLowPr"),
+        "limUpp" => Some("limUppPr"),
+        "nary" => Some("naryPr"),
+        "d" => Some("dPr"),
+        "acc" => Some("accPr"),
+        _ => None,
+    };
+    if let Some(property_tag) = property_tag {
+        for child in &parsed.children {
+            if math_local_name(child, &parsed.bindings)?.as_deref() == Some(property_tag)
+                && !property_container_is_valid(child, &parsed.bindings, property_tag)?
+            {
+                return Ok(false);
+            }
+        }
+    }
+    if root == "r" {
+        for child in &parsed.children {
+            if math_local_name(child, &parsed.bindings)?.as_deref() == Some("t")
+                && math_text_has_non_text_nodes(child)?
+            {
+                return Ok(false);
+            }
+        }
+    }
+    let allowed: &[&str] = match root.as_str() {
+        "r" => &["rPr", "t"],
+        "f" => &["fPr", "num", "den"],
+        "sSub" => &["sSubPr", "e", "sub"],
+        "sSup" => &["sSupPr", "e", "sup"],
+        "sSubSup" => &["sSubSupPr", "e", "sub", "sup"],
+        "sPre" => &["sPrePr", "sub", "sup", "e"],
+        "rad" => &["radPr", "deg", "e"],
+        "m" => &["mPr", "mr"],
+        "limLow" => &["limLowPr", "e", "lim"],
+        "limUpp" => &["limUppPr", "e", "lim"],
+        "nary" => &["naryPr", "sub", "sup", "e"],
+        "d" => &["dPr", "e"],
+        "acc" => &["accPr", "e"],
+        _ => return Ok(true),
+    };
+    let sequence = parsed
+        .children
+        .iter()
+        .filter_map(|child| math_local_name(child, &parsed.bindings).transpose())
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|local| allowed.contains(&local.as_str()))
+        .collect::<Vec<_>>();
+    let valid = match root.as_str() {
+        "r" => {
+            let text_start = usize::from(sequence.first().is_some_and(|value| value == "rPr"));
+            sequence.len() == text_start + 1 && sequence[text_start] == "t"
+        }
+        "f" => sequence_matches(&sequence, "fPr", &["num", "den"]),
+        "sSub" => sequence_matches(&sequence, "sSubPr", &["e", "sub"]),
+        "sSup" => sequence_matches(&sequence, "sSupPr", &["e", "sup"]),
+        "sSubSup" => sequence_matches(&sequence, "sSubSupPr", &["e", "sub", "sup"]),
+        "sPre" => sequence_matches(&sequence, "sPrePr", &["sub", "sup", "e"]),
+        "rad" => sequence_matches_with_optional(&sequence, "radPr", &["deg"], &["e"]),
+        "limLow" => sequence_matches(&sequence, "limLowPr", &["e", "lim"]),
+        "limUpp" => sequence_matches(&sequence, "limUppPr", &["e", "lim"]),
+        "nary" => sequence_matches_with_optional(&sequence, "naryPr", &["sub", "sup"], &["e"]),
+        "acc" => sequence_matches(&sequence, "accPr", &["e"]),
+        "d" => {
+            let argument_start = usize::from(sequence.first().is_some_and(|value| value == "dPr"));
+            sequence.len() > argument_start
+                && sequence[argument_start..].iter().all(|value| value == "e")
+        }
+        "m" => {
+            let row_start = usize::from(sequence.first().is_some_and(|value| value == "mPr"));
+            let mut rows_are_valid = true;
+            for child in &parsed.children {
+                if math_local_name(child, &parsed.bindings)?.as_deref() == Some("mr") {
+                    rows_are_valid &= valid_matrix_row(child, &parsed.bindings)?;
+                }
+            }
+            sequence.len() > row_start
+                && sequence[row_start..].iter().all(|value| value == "mr")
+                && rows_are_valid
+        }
+        _ => true,
+    };
+    Ok(valid)
+}
+
+fn valid_officemath_paragraph_shape(raw: &[u8], inherited: &[(String, String)]) -> Result<bool> {
+    let parsed = parse_element(raw, inherited)?;
+    let sequence = parsed
+        .children
+        .iter()
+        .filter_map(|child| math_local_name(child, &parsed.bindings).transpose())
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|local| local == "oMathParaPr" || local == "oMath")
+        .collect::<Vec<_>>();
+    let equation_start = usize::from(sequence.first().is_some_and(|value| value == "oMathParaPr"));
+    if sequence.len() <= equation_start
+        || !sequence[equation_start..]
+            .iter()
+            .all(|value| value == "oMath")
+    {
+        return Ok(false);
+    }
+    for child in &parsed.children {
+        if math_local_name(child, &parsed.bindings)?.as_deref() == Some("oMathParaPr")
+            && !property_container_is_valid(child, &parsed.bindings, "oMathParaPr")?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn property_container_is_valid(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    tag: &str,
+) -> Result<bool> {
+    let parsed = parse_element(raw, inherited)?;
+    let supported = supported_properties(tag);
+    let mut last_index = None;
+    for child in &parsed.children {
+        let Some(local) = math_local_name(child, &parsed.bindings)? else {
+            continue;
+        };
+        let Some(index) = supported.iter().position(|name| *name == local) else {
+            continue;
+        };
+        if last_index.is_some_and(|previous| index <= previous)
+            || !property_leaf_is_valid(tag, &local, child, &parsed.bindings)?
+        {
+            return Ok(false);
+        }
+        last_index = Some(index);
+    }
+    Ok(true)
+}
+
+fn property_leaf_is_valid(
+    container: &str,
+    property: &str,
+    raw: &[u8],
+    inherited: &[(String, String)],
+) -> Result<bool> {
+    let modeled_attribute = property_modeled_attribute(container, property);
+    if root_has_ambiguous_modeled_attribute(raw, inherited, modeled_attribute)? {
+        return Ok(false);
+    }
+    let value = root_value(raw, inherited)?
+        .or_else(|| property_value_default(container, property).map(str::to_owned));
+    Ok(match (container, property) {
+        ("rPr", "lit" | "nor")
+        | ("sSubPr" | "sSupPr" | "sSubSupPr" | "sPrePr", "alnScr")
+        | ("radPr", "degHide")
+        | ("naryPr", "grow" | "subHide" | "supHide")
+        | ("dPr", "grow") => value
+            .as_deref()
+            .is_none_or(|value| parse_bool(value).is_some()),
+        ("rPr", "scr") => value
+            .as_deref()
+            .is_some_and(|value| MathScriptStyle::parse(value).is_some()),
+        ("rPr", "sty") => value
+            .as_deref()
+            .is_some_and(|value| MathStyle::parse(value).is_some()),
+        ("rPr", "brk") => root_attribute(raw, inherited, b"alnAt")?
+            .as_deref()
+            .is_none_or(|value| value.parse::<u8>().is_ok_and(|value| value > 0)),
+        ("fPr", "type") => value
+            .as_deref()
+            .is_some_and(|value| FractionType::parse(value).is_some()),
+        ("mPr", "baseJc") => value
+            .as_deref()
+            .is_some_and(|value| MatrixBaseJustification::parse(value).is_some()),
+        ("mPr", "rSp") => value
+            .as_deref()
+            .is_some_and(|value| value.parse::<u16>().is_ok()),
+        ("mPr", "cSp") => value
+            .as_deref()
+            .is_some_and(|value| value.parse::<u32>().is_ok()),
+        ("naryPr", "limLoc") => value
+            .as_deref()
+            .is_some_and(|value| LimitLocation::parse(value).is_some()),
+        ("oMathParaPr", "jc") => value
+            .as_deref()
+            .is_some_and(|value| MathJustification::parse(value).is_some()),
+        ("naryPr" | "accPr", "chr") | ("dPr", "begChr" | "sepChr" | "endChr") => value
+            .as_deref()
+            .is_none_or(|value| value.chars().count() <= 1),
+        ("mathPr", "mathFont") => value.as_deref().is_some_and(|value| !value.is_empty()),
+        ("mathPr", "smallFrac" | "dispDef") => value
+            .as_deref()
+            .is_none_or(|value| parse_bool(value).is_some()),
+        (
+            "mathPr",
+            "lMargin" | "rMargin" | "preSp" | "postSp" | "interSp" | "intraSp" | "wrapIndent",
+        ) => value
+            .as_deref()
+            .is_some_and(|value| value.parse::<u32>().is_ok()),
+        ("mathPr", "defJc") => value
+            .as_deref()
+            .is_some_and(|value| MathJustification::parse(value).is_some()),
+        ("mathPr", "intLim" | "naryLim") => value
+            .as_deref()
+            .is_some_and(|value| LimitLocation::parse(value).is_some()),
+        _ => true,
+    })
+}
+
+fn sequence_matches(sequence: &[String], optional: &str, required: &[&str]) -> bool {
+    let start = usize::from(sequence.first().is_some_and(|value| value == optional));
+    sequence.len() == start + required.len()
+        && sequence[start..]
+            .iter()
+            .zip(required)
+            .all(|(actual, expected)| actual == expected)
+}
+
+fn sequence_matches_with_optional(
+    sequence: &[String],
+    property: &str,
+    optional: &[&str],
+    required: &[&str],
+) -> bool {
+    let mut index = usize::from(sequence.first().is_some_and(|value| value == property));
+    for child in optional {
+        if sequence.get(index).is_some_and(|value| value == child) {
+            index += 1;
+        }
+    }
+    sequence.len() == index + required.len()
+        && sequence[index..]
+            .iter()
+            .zip(required)
+            .all(|(actual, expected)| actual == expected)
+}
+
+fn valid_matrix_row(raw: &[u8], inherited: &[(String, String)]) -> Result<bool> {
+    let parsed = parse_element(raw, inherited)?;
+    let cells = parsed
+        .children
+        .iter()
+        .filter_map(|child| math_local_name(child, &parsed.bindings).transpose())
+        .collect::<Result<Vec<_>>>()?;
+    Ok(!cells.is_empty() && cells.iter().all(|local| local == "e"))
+}
+
+fn element_text(raw: &[u8]) -> Result<String> {
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    let mut inside = false;
+    let mut text = String::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(_) if !inside => inside = true,
+            Event::Empty(_) if !inside => return Ok(text),
+            Event::Start(_) if inside => {
+                return Err(OxmlError::UnexpectedElement(
+                    "nested element in OfficeMath text".to_owned(),
+                ));
+            }
+            Event::Text(value) if inside => text.push_str(std::str::from_utf8(value.as_ref())?),
+            Event::CData(value) if inside => text.push_str(std::str::from_utf8(value.as_ref())?),
+            Event::GeneralRef(value) if inside => {
+                let name = std::str::from_utf8(value.as_ref())?;
+                let entity = format!("&{name};");
+                let decoded = quick_xml::escape::unescape(&entity).map_err(|error| {
+                    OxmlError::InvalidValue(format!("invalid OfficeMath text entity: {error}"))
+                })?;
+                text.push_str(&decoded);
+            }
+            Event::End(_) if inside => return Ok(text),
+            Event::Empty(_) if inside => {
+                return Err(OxmlError::UnexpectedElement(
+                    "nested empty element in OfficeMath text".to_owned(),
+                ));
+            }
+            Event::Eof => {
+                return Err(OxmlError::MissingElement("OfficeMath text end".to_owned()));
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn math_text_has_non_text_nodes(raw: &[u8]) -> Result<bool> {
+    let mut reader = Reader::from_reader(raw);
+    let mut inside = false;
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) if !inside => {
+                if math_text_has_invalid_space(&element)? {
+                    return Ok(true);
+                }
+                inside = true;
+            }
+            Event::Empty(element) if !inside => {
+                return math_text_has_invalid_space(&element);
+            }
+            Event::Start(_) | Event::Empty(_) if inside => return Ok(true),
+            Event::Comment(_) | Event::PI(_) if inside => return Ok(true),
+            Event::End(_) if inside => return Ok(false),
+            Event::Eof => return Ok(false),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn math_text_has_invalid_space(element: &BytesStart<'_>) -> Result<bool> {
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        if attribute.key.as_ref() == b"xml:space" {
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?;
+            if !matches!(value.as_ref(), "default" | "preserve") {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn capture_empty(element: &BytesStart<'_>) -> Result<Vec<u8>> {
+    capture_event(Event::Empty(element.to_owned().into_owned()))
+}
+fn capture_event(event: Event<'static>) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    Writer::new(&mut output).write_event(event)?;
+    Ok(output)
+}
+
+fn merge_bindings(bindings: &mut Vec<(String, String)>, element: &BytesStart<'_>) -> Result<()> {
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        let name = attribute.key.as_ref();
+        let prefix = if name == b"xmlns" {
+            Some("")
+        } else {
+            name.strip_prefix(b"xmlns:")
+                .and_then(|value| std::str::from_utf8(value).ok())
+        };
+        if let Some(prefix) = prefix {
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?
+                .into_owned();
+            bindings.retain(|(candidate, _)| candidate != prefix);
+            bindings.push((prefix.to_owned(), value));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn fixed_math_prefix_is_safe(
+    raw: &[u8],
+    inherited: &[(String, String)],
+) -> Result<bool> {
+    let mut reader = Reader::from_reader(raw);
+    let mut root_m_binding = inherited
+        .iter()
+        .rev()
+        .find(|(prefix, _)| prefix == "m")
+        .map(|(_, namespace)| namespace.clone());
+    let mut saw_root = false;
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) | Event::Empty(element) => {
+                let mut local_m_binding = None;
+                for attribute in element.attributes() {
+                    let attribute = attribute?;
+                    if attribute.key.as_ref() == b"xmlns:m" {
+                        local_m_binding = Some(
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    element.decoder(),
+                                )?
+                                .into_owned(),
+                        );
+                    }
+                }
+                if !saw_root {
+                    if local_m_binding.is_some() {
+                        root_m_binding = local_m_binding;
+                    }
+                    if root_m_binding.as_deref().is_some_and(|value| value != M_NS) {
+                        return Ok(false);
+                    }
+                    saw_root = true;
+                } else if local_m_binding
+                    .as_deref()
+                    .is_some_and(|value| value != M_NS)
+                {
+                    return Ok(false);
+                }
+            }
+            Event::Eof => return Ok(true),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn require_safe_fixed_math_prefix(raw: &[u8], inherited: &[(String, String)]) -> Result<()> {
+    if fixed_math_prefix_is_safe(raw, inherited)? {
+        Ok(())
+    } else {
+        Err(OxmlError::InvalidValue(
+            "OfficeMath source conflicts with the canonical m prefix".to_owned(),
+        ))
+    }
+}
+
+fn extra_attributes(element: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
+    let mut attributes = Vec::new();
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        let name = std::str::from_utf8(attribute.key.as_ref())?.to_owned();
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?
+            .into_owned();
+        attributes.push((name, value));
+    }
+    Ok(attributes)
+}
+
+fn expanded_name(name: &[u8], bindings: &[(String, String)]) -> Option<(String, Vec<u8>)> {
+    let (prefix, local) = name
+        .iter()
+        .position(|byte| *byte == b':')
+        .map_or((&b""[..], name), |at| (&name[..at], &name[at + 1..]));
+    let prefix = std::str::from_utf8(prefix).ok()?;
+    let namespace = bindings
+        .iter()
+        .rev()
+        .find(|(candidate, _)| candidate == prefix)?
+        .1
+        .clone();
+    Some((namespace, local.to_vec()))
+}
+
+fn expanded_attribute_name(
+    name: &[u8],
+    bindings: &[(String, String)],
+) -> Option<(String, Vec<u8>)> {
+    if !name.contains(&b':') {
+        return None;
+    }
+    expanded_name(name, bindings)
+}
+
+fn root_name(raw: &[u8], inherited: &[(String, String)]) -> Result<Option<(String, Vec<u8>)>> {
+    let mut reader = Reader::from_reader(raw);
+    let mut bindings = inherited.to_vec();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) | Event::Empty(element) => {
+                merge_bindings(&mut bindings, &element)?;
+                return Ok(expanded_name(element.name().as_ref(), &bindings));
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn math_local_name(raw: &[u8], inherited: &[(String, String)]) -> Result<Option<String>> {
+    Ok(root_name(raw, inherited)?.and_then(|(namespace, local)| {
+        (namespace == M_NS).then(|| String::from_utf8_lossy(&local).into_owned())
+    }))
+}
+
+fn require_root(raw: &[u8], inherited: &[(String, String)], expected: &[u8]) -> Result<()> {
+    if root_name(raw, inherited)?
+        .is_some_and(|(namespace, local)| namespace == M_NS && local == expected)
+    {
+        Ok(())
+    } else {
+        Err(OxmlError::MissingElement(format!(
+            "OfficeMath {} root",
+            String::from_utf8_lossy(expected)
+        )))
+    }
+}
+
+fn root_value(raw: &[u8], inherited: &[(String, String)]) -> Result<Option<String>> {
+    root_attribute(raw, inherited, b"val")
+}
+
+fn root_has_ambiguous_modeled_attribute(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    expected: &[u8],
+) -> Result<bool> {
+    let parsed = parse_element(raw, inherited)?;
+    let mut modeled_count = 0;
+    for (name, _) in &parsed.preservation.attributes {
+        if name == "xmlns" || name.starts_with("xmlns:") {
+            continue;
+        }
+        let local = name
+            .as_bytes()
+            .rsplit(|byte| *byte == b':')
+            .next()
+            .unwrap_or_default();
+        if local != expected {
+            continue;
+        }
+        if expanded_attribute_name(name.as_bytes(), &parsed.bindings)
+            .is_some_and(|(namespace, local)| namespace == M_NS && local == expected)
+        {
+            modeled_count += 1;
+        } else {
+            return Ok(true);
+        }
+    }
+    Ok(modeled_count > 1)
+}
+
+fn root_attribute(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    expected: &[u8],
+) -> Result<Option<String>> {
+    let mut reader = Reader::from_reader(raw);
+    let mut bindings = inherited.to_vec();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(element) | Event::Empty(element) => {
+                merge_bindings(&mut bindings, &element)?;
+                for attribute in element.attributes() {
+                    let attribute = attribute?;
+                    if expanded_attribute_name(attribute.key.as_ref(), &bindings)
+                        .is_some_and(|(namespace, local)| namespace == M_NS && local == expected)
+                    {
+                        return Ok(Some(
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    element.decoder(),
+                                )?
+                                .into_owned(),
+                        ));
+                    }
+                }
+                return Ok(None);
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn child_property_value(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    container: &str,
+    property: &str,
+) -> Result<Option<String>> {
+    let parsed = parse_element(raw, inherited)?;
+    for child in parsed.children {
+        if math_local_name(&child, &parsed.bindings)?.as_deref() == Some(property) {
+            return Ok(root_value(&child, &parsed.bindings)?
+                .or_else(|| property_value_default(container, property).map(str::to_owned)));
+        }
+    }
+    Ok(None)
+}
+
+fn child_on_off_value(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    property: &str,
+) -> Result<Option<bool>> {
+    let parsed = parse_element(raw, inherited)?;
+    for child in parsed.children {
+        if math_local_name(&child, &parsed.bindings)?.as_deref() == Some(property) {
+            return Ok(parse_present_on_off(
+                root_value(&child, &parsed.bindings)?.as_deref(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+fn preserve_unrecognized_property_children(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    recognized: &[&str],
+) -> Result<Preservation> {
+    let mut parsed = parse_element(raw, inherited)?;
+    let mut seen = Vec::new();
+    let mut last_rank = None;
+    for child in parsed.children {
+        let local = math_local_name(&child, &parsed.bindings)?;
+        if let Some(local) = local
+            .as_deref()
+            .filter(|local| recognized.contains(local) && !seen.iter().any(|name| name == local))
+        {
+            seen.push(local.to_owned());
+            property_raw_key("oMathParaPr", Some(local), &mut last_rank, false);
+            preserve_modeled_child(&mut parsed.preservation, local, &child, &parsed.bindings);
+        } else {
+            let duplicate = local
+                .as_deref()
+                .is_some_and(|local| seen.iter().any(|name| name == local));
+            let key = property_raw_key("oMathParaPr", local.as_deref(), &mut last_rank, duplicate);
+            parsed.preservation.property_raw_children.push((key, child));
+        }
+    }
+    Ok(parsed.preservation)
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value {
+        "1" | "true" | "on" => Some(true),
+        "0" | "false" | "off" => Some(false),
+        _ => None,
+    }
+}
+fn parse_present_on_off(value: Option<&str>) -> Option<bool> {
+    match value {
+        Some(value) => parse_bool(value),
+        None => Some(true),
+    }
+}
+fn parse_u32(value: Option<String>) -> Option<u32> {
+    value.and_then(|value| value.parse().ok())
+}

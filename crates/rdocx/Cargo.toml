@@ -1,0 +1,52 @@
+[package]
+name = "rdocx"
+description = "High-level API for reading, writing, and converting DOCX documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[package.metadata.release]
+shared-version = "workspace"
+tag-name = "v{{version}}"
+
+[features]
+default = ["system-fonts"]
+system-fonts = ["oxml-layout/system-fonts", "rdocx-layout/system-fonts"]
+agile-encryption = ["oxml-opc/agile-encryption"]
+digital-signatures = ["oxml-opc/digital-signatures"]
+
+[dependencies]
+base64 = { workspace = true }
+encoding_rs = { workspace = true }
+oxml-chart = { workspace = true }
+oxml-core = { workspace = true }
+oxml-drawing = { workspace = true }
+oxml-layout = { workspace = true, default-features = false }
+oxml-media = { workspace = true }
+oxml-opc = { workspace = true }
+oxml-pdf = { workspace = true, default-features = false }
+oxml-sml = { workspace = true }
+quick-xml = { workspace = true }
+pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html"] }
+rdocx-oxml = { workspace = true }
+rdocx-layout = { workspace = true, default-features = false }
+rdocx-html = { workspace = true }
+thiserror = { workspace = true }
+ttf-parser = { workspace = true }
+regex = { workspace = true }
+serde_json = { workspace = true }
+scraper = { workspace = true }
+sha2 = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+miniz_oxide = { workspace = true }
+resvg = { version = "=0.48.1", default-features = false, features = ["raster-images", "text"] }
+rpptx = { workspace = true, features = ["default-template", "render"] }

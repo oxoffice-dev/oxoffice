@@ -1,0 +1,12 @@
+oxoffice is a friendly fork of rdocx and rpptx by Atul Sharma (tensorbee)
+and contributors: https://github.com/tensorbee/rdocx
+
+It starts from rdocx v0.17.0 and rpptx v0.15.0
+(tensorbee/rdocx eb980e94c8ae1f8b42612f918482bc627e0141a0), plus
+tensorbee/rdocx pull requests #448 to #454
+(hadim/rdocx 2543cf635e3de3e5ce53dfd7ae83f65e2b6c9d23).
+
+rdocx and rpptx are released under the MIT License, kept in LICENSE with
+their original copyright notice. Bundled fonts and other third-party assets
+keep their own licences next to them, under crates/*/fonts/,
+crates/*/assets/ and tools/gen-presets/.

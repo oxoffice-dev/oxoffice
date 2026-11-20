@@ -1,0 +1,24 @@
+[package]
+name = "rpptx-oxml"
+description = "PresentationML object model and round-trip serialization"
+readme = "README.md"
+version = "0.15.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["pptx", "powerpoint", "ooxml", "presentation"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[package.metadata.release]
+shared-version = "incubating"
+tag-name = "rpptx-v{{version}}"
+
+[dependencies]
+oxml-core.workspace = true
+oxml-drawing.workspace = true
+oxml-opc.workspace = true
+quick-xml.workspace = true

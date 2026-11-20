@@ -1,0 +1,24 @@
+# Build artifacts
+/target/
+**/target/
+
+# Python
+__pycache__/
+*.pyc
+*.so
+*.abi3.so
+.venv/
+
+# Generated sample outputs
+samples/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Local agent settings
+.claude/settings.local.json

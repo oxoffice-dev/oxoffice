@@ -1,0 +1,2727 @@
+//! Paragraph properties (`CT_PPr`).
+
+use quick_xml::escape::escape;
+use quick_xml::events::{BytesEnd, BytesStart, Event};
+use quick_xml::{Reader, Writer, XmlVersion};
+
+use crate::borders::{CT_PBdr, CT_Tabs};
+use crate::document::CT_SectPr;
+use crate::error::Result;
+use crate::namespace::{W_NS, matches_local_name};
+use crate::numbering::{
+    local_namespace_overrides, merged_owner_bindings, namespace_binding, namespace_bindings,
+    parse_scoped_rpr_with_owner_bindings, typed_leaf_requires_raw, typed_leaf_value,
+};
+use crate::properties::{
+    CT_Shd, get_word_val_attr, is_word_attribute, is_word_element,
+    modeled_attribute_carrier_occurrence, parse_integer_measurement, parse_word_toggle,
+    raw_is_modeled_attribute_carrier, raw_occurrence, record_modeled_toggle_candidate,
+    remove_redundant_modeled_toggle_candidate, replay_modeled_toggle_raw,
+    toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
+};
+use crate::raw_xml::{capture_element, capture_empty_element};
+
+use crate::revision::CT_Revision;
+use crate::run_properties::CT_RPr;
+use crate::shared::{ST_Jc, ST_OnOff};
+use crate::units::Twips;
+
+/// Scalar facts shared by ordinary empty-property parsing and source admission.
+/// These retain the existing signed measurement and unsigned integer decoders.
+#[derive(Clone, Copy)]
+pub(crate) enum ParagraphMeasurement {
+    Before(Option<i32>),
+    After(Option<i32>),
+    Line(Option<i32>),
+    Left(Option<i32>),
+    Right(Option<i32>),
+    Start(Option<i32>),
+    End(Option<i32>),
+    FirstLine(Option<i32>),
+    Hanging(Option<i32>),
+    Division(Option<u32>),
+    Outline(Option<u32>),
+    FrameLines(Option<u32>),
+    FrameWidth(Option<i32>),
+    FrameHeight(Option<i32>),
+    FrameVerticalSpace(Option<i32>),
+    FrameHorizontalSpace(Option<i32>),
+    FrameX(Option<i32>),
+    FrameY(Option<i32>),
+}
+
+impl ParagraphMeasurement {
+    pub(crate) fn for_names(element: &[u8], attribute: &[u8]) -> Option<Self> {
+        Some(match (element, attribute) {
+            (b"spacing", b"before") => Self::Before(None),
+            (b"spacing", b"after") => Self::After(None),
+            (b"spacing", b"line") => Self::Line(None),
+            (b"ind", b"left") => Self::Left(None),
+            (b"ind", b"right") => Self::Right(None),
+            (b"ind", b"start") => Self::Start(None),
+            (b"ind", b"end") => Self::End(None),
+            (b"ind", b"firstLine") => Self::FirstLine(None),
+            (b"ind", b"hanging") => Self::Hanging(None),
+            (b"divId", b"val") => Self::Division(None),
+            (b"outlineLvl", b"val") => Self::Outline(None),
+            (b"framePr", b"lines") => Self::FrameLines(None),
+            (b"framePr", b"w") => Self::FrameWidth(None),
+            (b"framePr", b"h") => Self::FrameHeight(None),
+            (b"framePr", b"vSpace") => Self::FrameVerticalSpace(None),
+            (b"framePr", b"hSpace") => Self::FrameHorizontalSpace(None),
+            (b"framePr", b"x") => Self::FrameX(None),
+            (b"framePr", b"y") => Self::FrameY(None),
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn decode(
+        self,
+        element: &[u8],
+        attribute: &[u8],
+        value: Option<&str>,
+    ) -> Result<Self> {
+        let measurement = || {
+            value
+                .map(|value| parse_integer_measurement(element, attribute, value))
+                .transpose()
+        };
+        let integer = || value.map(str::parse).transpose();
+        Ok(match self {
+            Self::Before(_) => Self::Before(measurement()?),
+            Self::After(_) => Self::After(measurement()?),
+            Self::Line(_) => Self::Line(measurement()?),
+            Self::Left(_) => Self::Left(measurement()?),
+            Self::Right(_) => Self::Right(measurement()?),
+            Self::Start(_) => Self::Start(measurement()?),
+            Self::End(_) => Self::End(measurement()?),
+            Self::FirstLine(_) => Self::FirstLine(measurement()?),
+            Self::Hanging(_) => Self::Hanging(measurement()?),
+            Self::Division(_) => Self::Division(integer()?),
+            Self::Outline(_) => Self::Outline(integer()?),
+            Self::FrameLines(_) => Self::FrameLines(integer()?),
+            Self::FrameWidth(_) => Self::FrameWidth(measurement()?),
+            Self::FrameHeight(_) => Self::FrameHeight(measurement()?),
+            Self::FrameVerticalSpace(_) => Self::FrameVerticalSpace(measurement()?),
+            Self::FrameHorizontalSpace(_) => Self::FrameHorizontalSpace(measurement()?),
+            Self::FrameX(_) => Self::FrameX(measurement()?),
+            Self::FrameY(_) => Self::FrameY(measurement()?),
+        })
+    }
+
+    fn apply_frame(self, frame: &mut CT_FramePr) {
+        match self {
+            Self::FrameLines(Some(value)) => frame.lines = Some(value),
+            Self::FrameWidth(Some(value)) => frame.w = Some(Twips(value)),
+            Self::FrameHeight(Some(value)) => frame.h = Some(Twips(value)),
+            Self::FrameVerticalSpace(Some(value)) => frame.v_space = Some(Twips(value)),
+            Self::FrameHorizontalSpace(Some(value)) => frame.h_space = Some(Twips(value)),
+            Self::FrameX(Some(value)) => frame.x = Some(Twips(value)),
+            Self::FrameY(Some(value)) => frame.y = Some(Twips(value)),
+            _ => {}
+        }
+    }
+
+    fn apply(self, properties: &mut CT_PPr) {
+        match self {
+            Self::Before(Some(value)) => properties.space_before = Some(Twips(value)),
+            Self::After(Some(value)) => properties.space_after = Some(Twips(value)),
+            Self::Line(Some(value)) => properties.line_spacing = Some(Twips(value)),
+            Self::Left(Some(value)) => properties.ind_left = Some(Twips(value)),
+            Self::Right(Some(value)) => properties.ind_right = Some(Twips(value)),
+            Self::Start(Some(value)) => properties.ind_start = Some(Twips(value)),
+            Self::End(Some(value)) => properties.ind_end = Some(Twips(value)),
+            Self::FirstLine(Some(value)) => properties.ind_first_line = Some(Twips(value)),
+            Self::Hanging(Some(value)) => properties.ind_hanging = Some(Twips(value)),
+            Self::Division(Some(value)) => properties.div_id = Some(value),
+            Self::Outline(Some(value)) => properties.outline_lvl = Some(value),
+            _ => {}
+        }
+    }
+}
+
+/// `CT_FramePr` — Text frame placement for a paragraph (`w:framePr`).
+///
+/// Every member is an attribute. A value outside its `ST_*` enumeration stays
+/// a `String` so a producer token survives unchanged.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CT_FramePr {
+    /// Drop cap placement (@w:dropCap): "none", "drop", "margin".
+    pub drop_cap: Option<String>,
+    /// Drop cap height in lines (@w:lines).
+    pub lines: Option<u32>,
+    /// Frame width in twips (@w:w).
+    pub w: Option<Twips>,
+    /// Frame height in twips (@w:h).
+    pub h: Option<Twips>,
+    /// Vertical distance from the surrounding text in twips (@w:vSpace).
+    pub v_space: Option<Twips>,
+    /// Horizontal distance from the surrounding text in twips (@w:hSpace).
+    pub h_space: Option<Twips>,
+    /// Text wrapping around the frame (@w:wrap).
+    pub wrap: Option<String>,
+    /// Horizontal anchor (@w:hAnchor): "margin", "page", "text".
+    pub h_anchor: Option<String>,
+    /// Vertical anchor (@w:vAnchor): "margin", "page", "text".
+    pub v_anchor: Option<String>,
+    /// Absolute horizontal position in twips (@w:x).
+    pub x: Option<Twips>,
+    /// Relative horizontal alignment (@w:xAlign).
+    pub x_align: Option<String>,
+    /// Absolute vertical position in twips (@w:y).
+    pub y: Option<Twips>,
+    /// Relative vertical alignment (@w:yAlign).
+    pub y_align: Option<String>,
+    /// Frame height rule (@w:hRule): "auto", "atLeast", "exact".
+    pub h_rule: Option<String>,
+    /// Whether the frame stays with the paragraph it anchors (@w:anchorLock).
+    pub anchor_lock: Option<bool>,
+    /// Attributes this type does not model, in source order.
+    ///
+    /// Names and values keep their stored spelling, and they are written back
+    /// ahead of the modeled attributes so typing `w:framePr` drops nothing.
+    /// The value is serialized verbatim, so a caller storing one itself is
+    /// storing attribute-value syntax and owns the escaping.
+    pub extra_attributes: Vec<(String, String)>,
+}
+
+impl CT_FramePr {
+    fn from_xml_attrs_with_prefixes(e: &BytesStart, word_prefixes: &[String]) -> Result<Self> {
+        let mut frame = CT_FramePr::default();
+        for attribute in e.attributes() {
+            let attribute = attribute?;
+            let key = attribute.key.as_ref();
+            let value = std::str::from_utf8(&attribute.value)?;
+            let local = attribute.key.local_name();
+            if is_word_attribute(key, local.as_ref(), word_prefixes)
+                && let Some(measurement) =
+                    ParagraphMeasurement::for_names(b"framePr", local.as_ref())
+            {
+                measurement
+                    .decode(e.name().as_ref(), key, Some(value))?
+                    .apply_frame(&mut frame);
+            } else if is_word_attribute(key, b"dropCap", word_prefixes) {
+                frame.drop_cap = Some(value.to_owned());
+            } else if is_word_attribute(key, b"wrap", word_prefixes) {
+                frame.wrap = Some(value.to_owned());
+            } else if is_word_attribute(key, b"hAnchor", word_prefixes) {
+                frame.h_anchor = Some(value.to_owned());
+            } else if is_word_attribute(key, b"vAnchor", word_prefixes) {
+                frame.v_anchor = Some(value.to_owned());
+            } else if is_word_attribute(key, b"xAlign", word_prefixes) {
+                frame.x_align = Some(value.to_owned());
+            } else if is_word_attribute(key, b"yAlign", word_prefixes) {
+                frame.y_align = Some(value.to_owned());
+            } else if is_word_attribute(key, b"hRule", word_prefixes) {
+                frame.h_rule = Some(value.to_owned());
+            } else if is_word_attribute(key, b"anchorLock", word_prefixes) {
+                frame.anchor_lock = Some(ST_OnOff::from_str_or_default(Some(value)).is_on());
+            } else {
+                frame
+                    .extra_attributes
+                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+            }
+        }
+        Ok(frame)
+    }
+
+    fn to_xml<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let mut buf = itoa::Buffer::new();
+        let mut e = crate::text::FieldXmlStart::new("w:framePr", emission)?;
+        if role == crate::text::XmlWriteRole::Source {
+            for (name, value) in &self.extra_attributes {
+                e.push_raw(name, value)?;
+            }
+        }
+        let word_prefix = if role == crate::text::XmlWriteRole::Source {
+            e.qualify(&[], role, source_context)?
+        } else {
+            "w".to_owned()
+        };
+        if role != crate::text::XmlWriteRole::Source {
+            for (name, value) in &self.extra_attributes {
+                e.push_raw(name, value)?;
+            }
+        }
+        if let Some(ref drop_cap) = self.drop_cap {
+            e.push_word(&word_prefix, "dropCap", drop_cap.as_str())?;
+        }
+        if let Some(lines) = self.lines {
+            e.push_word(&word_prefix, "lines", buf.format(lines))?;
+        }
+        if let Some(w) = self.w {
+            e.push_word(&word_prefix, "w", buf.format(w.0))?;
+        }
+        if let Some(h) = self.h {
+            e.push_word(&word_prefix, "h", buf.format(h.0))?;
+        }
+        if let Some(v_space) = self.v_space {
+            e.push_word(&word_prefix, "vSpace", buf.format(v_space.0))?;
+        }
+        if let Some(h_space) = self.h_space {
+            e.push_word(&word_prefix, "hSpace", buf.format(h_space.0))?;
+        }
+        if let Some(ref wrap) = self.wrap {
+            e.push_word(&word_prefix, "wrap", wrap.as_str())?;
+        }
+        if let Some(ref h_anchor) = self.h_anchor {
+            e.push_word(&word_prefix, "hAnchor", h_anchor.as_str())?;
+        }
+        if let Some(ref v_anchor) = self.v_anchor {
+            e.push_word(&word_prefix, "vAnchor", v_anchor.as_str())?;
+        }
+        if let Some(x) = self.x {
+            e.push_word(&word_prefix, "x", buf.format(x.0))?;
+        }
+        if let Some(ref x_align) = self.x_align {
+            e.push_word(&word_prefix, "xAlign", x_align.as_str())?;
+        }
+        if let Some(y) = self.y {
+            e.push_word(&word_prefix, "y", buf.format(y.0))?;
+        }
+        if let Some(ref y_align) = self.y_align {
+            e.push_word(&word_prefix, "yAlign", y_align.as_str())?;
+        }
+        if let Some(ref h_rule) = self.h_rule {
+            e.push_word(&word_prefix, "hRule", h_rule.as_str())?;
+        }
+        if let Some(anchor_lock) = self.anchor_lock {
+            e.push_word(
+                &word_prefix,
+                "anchorLock",
+                if anchor_lock { "1" } else { "0" },
+            )?;
+        }
+        e.write(writer, true)?;
+        Ok(())
+    }
+}
+
+/// `CT_PPr` — Paragraph properties.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CT_PPr {
+    /// Paragraph style ID (pStyle)
+    pub style_id: Option<String>,
+    /// Justification (jc)
+    pub jc: Option<ST_Jc>,
+    /// Space before paragraph in twips (spacing/@w:before)
+    pub space_before: Option<Twips>,
+    /// Space after paragraph in twips (spacing/@w:after)
+    pub space_after: Option<Twips>,
+    /// Line spacing in twips (spacing/@w:line)
+    pub line_spacing: Option<Twips>,
+    /// Line spacing rule (spacing/@w:lineRule): "auto", "exact", "atLeast"
+    pub line_rule: Option<String>,
+    /// Space before auto-spacing (spacing/@w:beforeAutospacing)
+    pub before_autospacing: Option<bool>,
+    /// Space after auto-spacing (spacing/@w:afterAutospacing)
+    pub after_autospacing: Option<bool>,
+    /// Left indentation in twips (ind/@w:left)
+    pub ind_left: Option<Twips>,
+    /// Right indentation in twips (ind/@w:right)
+    pub ind_right: Option<Twips>,
+    /// Logical leading-edge indentation in twips (ind/@w:start).
+    pub ind_start: Option<Twips>,
+    /// Logical trailing-edge indentation in twips (ind/@w:end).
+    pub ind_end: Option<Twips>,
+    /// First line indent in twips (ind/@w:firstLine)
+    pub ind_first_line: Option<Twips>,
+    /// Hanging indent in twips (ind/@w:hanging)
+    pub ind_hanging: Option<Twips>,
+    /// Keep with next paragraph (keepNext)
+    pub keep_next: Option<bool>,
+    /// Keep lines together (keepLines)
+    pub keep_lines: Option<bool>,
+    /// Page break before (pageBreakBefore)
+    pub page_break_before: Option<bool>,
+    /// Widow/orphan control (widowControl)
+    pub widow_control: Option<bool>,
+    /// Suppress auto-hyphens (suppressAutoHyphens)
+    pub suppress_auto_hyphens: Option<bool>,
+    /// East Asian line-breaking rules (kinsoku), schema slot 12.
+    ///
+    /// The six East Asian line-breaking policy toggles are modeled and
+    /// authored here. Their effect on break opportunities and inter-script
+    /// spacing is named as the remaining boundary on DOCX-033.
+    pub kinsoku: Option<bool>,
+    /// Break Latin words only at a break opportunity (wordWrap), slot 13.
+    pub word_wrap: Option<bool>,
+    /// Let trailing punctuation hang past the measure (overflowPunct), slot 14.
+    pub overflow_punct: Option<bool>,
+    /// Compress punctuation at the start of a line (topLinePunct), slot 15.
+    pub top_line_punct: Option<bool>,
+    /// Auto space between East Asian and Latin text (autoSpaceDE), slot 16.
+    pub auto_space_de: Option<bool>,
+    /// Auto space between East Asian text and digits (autoSpaceDN), slot 17.
+    pub auto_space_dn: Option<bool>,
+    /// Snap line advance to the section character grid (snapToGrid), slot 20.
+    pub snap_to_grid: Option<bool>,
+    /// Paragraph base direction (bidi).
+    pub bidi: Option<bool>,
+    /// Text frame placement (framePr).
+    ///
+    /// Boxed because a frame is rare and `CT_FramePr` is large next to the
+    /// rest of this struct, which sits on the stack in recursive callers.
+    pub frame: Option<Box<CT_FramePr>>,
+    /// Suppress line numbering for this paragraph (suppressLineNumbers)
+    pub suppress_line_numbers: Option<bool>,
+    /// Adjust right indentation for a document grid (adjustRightInd)
+    pub adjust_right_ind: Option<bool>,
+    /// Drop the space between paragraphs of the same style (contextualSpacing)
+    pub contextual_spacing: Option<bool>,
+    /// Swap inside and outside indentation on facing pages (mirrorIndents)
+    pub mirror_indents: Option<bool>,
+    /// Suppress overlap with a neighbouring frame (suppressOverlap)
+    pub suppress_overlap: Option<bool>,
+    /// Paragraph text flow (textDirection/@w:val), e.g. "lrTb" or "tbRlV".
+    pub text_direction: Option<String>,
+    /// Vertical character alignment on a line (textAlignment/@w:val).
+    pub text_alignment: Option<String>,
+    /// Text box tight wrap mode (textboxTightWrap/@w:val).
+    pub textbox_tight_wrap: Option<String>,
+    /// Web settings division this paragraph belongs to (divId/@w:val).
+    pub div_id: Option<u32>,
+    /// `w:cnfStyle` — which conditional parts of a table style this paragraph
+    /// selects, as the twelve-bit string the schema uses.
+    ///
+    /// The row and cell selectors on `CT_TrPr` and `CT_TcPr` carry the same
+    /// shape. A paragraph inside a styled table adds its own selection to
+    /// theirs.
+    pub cnf_style: Option<String>,
+    /// Outline level 0-8 (outlineLvl)
+    pub outline_lvl: Option<u32>,
+    /// Paragraph borders (pBdr).
+    ///
+    /// Boxed for the same reason as [`CT_PPr::frame`]. Six typed edges are
+    /// large next to the rest of this struct.
+    pub borders: Option<Box<CT_PBdr>>,
+    /// Tab stops (tabs)
+    pub tabs: Option<CT_Tabs>,
+    /// Paragraph shading (shd)
+    /// Paragraph shading (shd).
+    ///
+    /// Boxed because `CT_Shd` now models its six theme attributes, and the
+    /// paragraph property struct has no stack budget to spare. Same reason as
+    /// `CT_PPr::borders`.
+    pub shading: Option<Box<CT_Shd>>,
+    /// Run properties for the paragraph mark (rPr)
+    pub rpr: Option<CT_RPr>,
+    /// Numbering level (numPr/ilvl)
+    pub num_ilvl: Option<u32>,
+    /// Original value and XML carrier for `w:numPr/w:ilvl`.
+    #[doc(hidden)]
+    pub num_ilvl_raw: Option<(Option<u32>, Vec<u8>, Vec<String>)>,
+    /// Numbering ID (numPr/numId)
+    pub num_id: Option<u32>,
+    /// Original value and XML carrier for `w:numPr/w:numId`.
+    #[doc(hidden)]
+    pub num_id_raw: Option<(Option<u32>, Vec<u8>, Vec<String>)>,
+    /// Unmodelled attributes and namespace declarations from `w:numPr`.
+    #[doc(hidden)]
+    pub num_pr_extra_attributes: Vec<(String, String)>,
+    /// Unmodelled children retained at their schema-child boundary in `w:numPr`.
+    #[doc(hidden)]
+    pub num_pr_extra_xml: Vec<(usize, usize, Vec<u8>)>,
+    /// Section properties embedded in paragraph (section break)
+    pub sect_pr: Option<CT_SectPr>,
+    /// Tracked insertion of the numbering properties.
+    pub numbering_revision: Option<CT_Revision>,
+    /// Malformed or foreign numbering markers retained inside `w:numPr`.
+    pub numbering_revision_xml: Vec<Vec<u8>>,
+    /// Schema boundaries and source ordinals for retained numbering markers.
+    #[doc(hidden)]
+    pub numbering_revision_xml_positions: Vec<(usize, usize)>,
+    /// Schema boundary and source ordinal for the typed numbering marker.
+    #[doc(hidden)]
+    pub numbering_revision_position: Option<(usize, usize)>,
+    /// Prior paragraph properties from the schema-final `w:pPrChange`.
+    pub change: Option<CT_Revision>,
+    /// Malformed tracked-change elements retained without a typed projection.
+    pub revision_xml: Vec<Vec<u8>>,
+    /// Schema slots and occurrences for retained raw children.
+    #[doc(hidden)]
+    pub revision_xml_positions: Vec<(u8, usize)>,
+}
+
+const PPR_STYLE_SLOT: u8 = 0;
+const PPR_KEEP_NEXT_SLOT: u8 = 1;
+const PPR_KEEP_LINES_SLOT: u8 = 2;
+const PPR_PAGE_BREAK_SLOT: u8 = 3;
+const PPR_FRAME_SLOT: u8 = 4;
+const PPR_WIDOW_SLOT: u8 = 5;
+const PPR_NUM_SLOT: u8 = 6;
+const PPR_SUPPRESS_LINE_NUMBERS_SLOT: u8 = 7;
+const PPR_BORDER_SLOT: u8 = 8;
+const PPR_SHADING_SLOT: u8 = 9;
+const PPR_TABS_SLOT: u8 = 10;
+const PPR_SUPPRESS_HYPHENS_SLOT: u8 = 11;
+const PPR_KINSOKU_SLOT: u8 = 12;
+const PPR_WORD_WRAP_SLOT: u8 = 13;
+const PPR_OVERFLOW_PUNCT_SLOT: u8 = 14;
+const PPR_TOP_LINE_PUNCT_SLOT: u8 = 15;
+const PPR_AUTO_SPACE_DE_SLOT: u8 = 16;
+const PPR_AUTO_SPACE_DN_SLOT: u8 = 17;
+const PPR_BIDI_SLOT: u8 = 18;
+const PPR_ADJUST_RIGHT_IND_SLOT: u8 = 19;
+const PPR_SNAP_TO_GRID_SLOT: u8 = 20;
+const PPR_SPACING_SLOT: u8 = 21;
+const PPR_INDENT_SLOT: u8 = 22;
+const PPR_CONTEXTUAL_SPACING_SLOT: u8 = 23;
+const PPR_MIRROR_INDENTS_SLOT: u8 = 24;
+const PPR_SUPPRESS_OVERLAP_SLOT: u8 = 25;
+const PPR_JUSTIFICATION_SLOT: u8 = 26;
+const PPR_TEXT_DIRECTION_SLOT: u8 = 27;
+const PPR_TEXT_ALIGNMENT_SLOT: u8 = 28;
+const PPR_TEXTBOX_TIGHT_WRAP_SLOT: u8 = 29;
+const PPR_OUTLINE_SLOT: u8 = 30;
+const PPR_DIV_ID_SLOT: u8 = 31;
+const PPR_CNF_STYLE_SLOT: u8 = 32;
+const PPR_RUN_PROPERTIES_SLOT: u8 = 33;
+const PPR_SECTION_SLOT: u8 = 34;
+const PPR_CHANGE_SLOT: u8 = 35;
+const PPR_END_SLOT: u8 = 36;
+
+fn record_ppr_modeled(
+    ppr: &mut CT_PPr,
+    pending_raw: &mut Vec<Vec<u8>>,
+    occurrences: &mut [usize],
+    slot: u8,
+) {
+    let occurrence = occurrences[slot as usize];
+    for raw in pending_raw.drain(..) {
+        ppr.revision_xml.push(raw);
+        ppr.revision_xml_positions.push((slot, occurrence));
+    }
+    occurrences[slot as usize] += 1;
+}
+
+fn record_ppr_raw_at(ppr: &mut CT_PPr, raw: Vec<u8>, slot: u8, occurrence: usize) {
+    ppr.revision_xml.push(raw);
+    ppr.revision_xml_positions.push((slot, occurrence));
+}
+
+fn flush_ppr_raw(ppr: &mut CT_PPr, pending_raw: &mut Vec<Vec<u8>>, slot: u8) {
+    for raw in pending_raw.drain(..) {
+        ppr.revision_xml.push(raw);
+        ppr.revision_xml_positions.push((slot, 0));
+    }
+}
+
+fn typed_num_pr_scope(
+    word_prefixes: &[String],
+    owner_bindings: &[(String, String)],
+) -> Vec<String> {
+    let mut scope = word_prefixes.to_vec();
+    for binding in word_prefixes
+        .iter()
+        .filter(|prefix| !prefix.starts_with('\0'))
+        .map(|prefix| namespace_binding(prefix, W_NS))
+        .chain(
+            owner_bindings
+                .iter()
+                .map(|(prefix, namespace)| namespace_binding(prefix, namespace)),
+        )
+    {
+        if !scope.contains(&binding) {
+            scope.push(binding);
+        }
+    }
+    scope
+}
+
+type PreservedNumPrRoot = (
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+);
+
+fn preserved_num_pr_root_attributes(
+    root: &BytesStart<'_>,
+    word_prefixes: &[String],
+    owner_bindings: &[(String, String)],
+) -> Result<PreservedNumPrRoot> {
+    let mut attributes = root
+        .attributes()
+        .map(|attribute| {
+            let attribute = attribute?;
+            Ok((
+                std::str::from_utf8(attribute.key.as_ref())?.to_owned(),
+                std::str::from_utf8(attribute.value.as_ref())?.to_owned(),
+                attribute
+                    .decoded_and_normalized_value(XmlVersion::Implicit1_0, root.decoder())?
+                    .into_owned(),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let local_bindings = attributes
+        .iter()
+        .filter_map(|(name, _, namespace)| {
+            if name == "xmlns" {
+                Some((String::new(), namespace.clone()))
+            } else {
+                name.strip_prefix("xmlns:")
+                    .map(|prefix| (prefix.to_owned(), namespace.clone()))
+            }
+        })
+        .collect::<Vec<_>>();
+    attributes.retain(|(name, _, value)| name != "xmlns:w" || value != W_NS);
+    let typed_root_scope = typed_num_pr_scope(word_prefixes, owner_bindings);
+    let all_bindings = namespace_bindings(&typed_root_scope);
+    let root_attribute_prefixes = attributes
+        .iter()
+        .filter_map(|(name, _, _)| {
+            let (prefix, _) = name.split_once(':')?;
+            (prefix != "xmlns").then_some(prefix.to_owned())
+        })
+        .collect::<Vec<_>>();
+    for prefix in root_attribute_prefixes {
+        let declaration = format!("xmlns:{prefix}");
+        if attributes.iter().any(|(name, _, _)| name == &declaration) {
+            continue;
+        }
+        if let Some((_, namespace)) = all_bindings
+            .iter()
+            .find(|(candidate, _)| candidate == &prefix)
+        {
+            attributes.push((
+                declaration,
+                escape(namespace).into_owned(),
+                namespace.clone(),
+            ));
+        }
+    }
+    Ok((
+        attributes
+            .into_iter()
+            .map(|(name, raw_value, _)| (name, raw_value))
+            .collect(),
+        local_bindings,
+        all_bindings,
+    ))
+}
+
+fn num_pr_leaf_is_plain(raw: &[u8], word_prefixes: &[String]) -> Result<bool> {
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Empty(element) => {
+                return Ok(!typed_leaf_requires_raw(&element, word_prefixes, false)?);
+            }
+            Event::Start(element) => {
+                return Ok(!typed_leaf_requires_raw(&element, word_prefixes, true)?);
+            }
+            Event::Eof => return Ok(false),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn write_num_pr_leaf<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    raw: &[u8],
+    word_prefixes: &[String],
+    original: Option<u32>,
+    current: Option<u32>,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let mut decimal = itoa::Buffer::new();
+    if current == original {
+        if let Some(current) = current
+            && num_pr_leaf_is_plain(raw, word_prefixes)?
+        {
+            crate::numbering::write_typed_leaf_raw_in(
+                writer,
+                raw,
+                word_prefixes,
+                Some(decimal.format(current)),
+                "w",
+                emission,
+            )?;
+        } else {
+            writer.get_mut().write_all(raw)?;
+        }
+    } else if current.is_none() && num_pr_leaf_is_plain(raw, word_prefixes)? {
+        return Ok(());
+    } else {
+        let value = current.map(|value| decimal.format(value) as &str);
+        crate::numbering::write_typed_leaf_raw_in(
+            writer,
+            raw,
+            word_prefixes,
+            value,
+            "w",
+            emission,
+        )?;
+    }
+    Ok(())
+}
+
+fn raw_is_num_pr_leaf(raw: &[u8], word_prefixes: &[String], local: &[u8]) -> Result<bool> {
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Empty(element) | Event::Start(element) => {
+                return Ok(is_word_element(
+                    element.name().as_ref(),
+                    local,
+                    word_prefixes,
+                ));
+            }
+            Event::Eof => return Ok(false),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn write_num_pr_extras<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    extras: &[(usize, usize, Vec<u8>)],
+    boundary: usize,
+    scrub_local: Option<(&[u8], &[String])>,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    for (_, _, raw) in extras.iter().filter(|(at, _, _)| *at == boundary) {
+        if let Some((local, word_prefixes)) = scrub_local
+            && raw_is_num_pr_leaf(raw, word_prefixes, local)?
+        {
+            if !num_pr_leaf_is_plain(raw, word_prefixes)? {
+                crate::numbering::write_typed_leaf_raw_in(
+                    writer,
+                    raw,
+                    word_prefixes,
+                    None,
+                    "w",
+                    emission,
+                )?;
+            }
+        } else {
+            writer.get_mut().write_all(raw)?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(non_snake_case)]
+impl CT_PPr {
+    pub fn from_xml(reader: &mut Reader<&[u8]>) -> Result<Self> {
+        Self::from_xml_with_prefixes(reader, &["w".to_string()])
+    }
+
+    pub(crate) fn from_xml_with_prefixes(
+        reader: &mut Reader<&[u8]>,
+        word_prefixes: &[String],
+    ) -> Result<Self> {
+        Self::from_xml_with_prefixes_and_owner_bindings(reader, word_prefixes, &[])
+    }
+
+    pub(crate) fn from_xml_with_prefixes_and_owner_bindings(
+        reader: &mut Reader<&[u8]>,
+        word_prefixes: &[String],
+        owner_bindings: &[(String, String)],
+    ) -> Result<Self> {
+        Self::from_xml_with_property_observation(reader, word_prefixes, owner_bindings, None)
+    }
+
+    pub(crate) fn from_xml_with_property_observation(
+        reader: &mut Reader<&[u8]>,
+        word_prefixes: &[String],
+        owner_bindings: &[(String, String)],
+        mut ordinary: Option<&mut Option<std::ops::Range<usize>>>,
+    ) -> Result<Self> {
+        if let Some(output) = &mut ordinary {
+            **output = None;
+        }
+        let mut selected_style = None;
+        let word_bindings = word_prefixes
+            .iter()
+            .filter(|prefix| !prefix.contains('\0'))
+            .map(|prefix| (prefix.clone(), W_NS.to_owned()))
+            .collect::<Vec<_>>();
+        let tabs_bindings = merged_owner_bindings(&word_bindings, owner_bindings);
+        let mut ppr = CT_PPr::default();
+        let mut change_raw_index = 0usize;
+        let mut numbering_change_raw_index = 0usize;
+        let mut pending_raw = Vec::new();
+        let mut occurrences = [0usize; PPR_END_SLOT as usize + 1];
+        let mut toggle_carrier_required = [false; PPR_END_SLOT as usize + 1];
+        let mut buf = Vec::new();
+
+        loop {
+            let event_start = ordinary.as_ref().map(|_| reader.buffer_position() as usize);
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => {
+                    let name = e.name();
+                    let prefixes = word_prefixes_at(e, word_prefixes)?;
+                    if let Some(slot) = ppr_modeled_slot(name.as_ref(), &prefixes) {
+                        record_ppr_modeled(&mut ppr, &mut pending_raw, &mut occurrences, slot);
+                    }
+                    if is_word_element(name.as_ref(), b"rPr", &prefixes) {
+                        let raw = capture_element(reader, e)?;
+                        ppr.rpr = Some(parse_scoped_rpr_with_owner_bindings(
+                            &raw,
+                            word_prefixes,
+                            owner_bindings,
+                        )?);
+                    } else if is_word_element(name.as_ref(), b"numPr", &prefixes) {
+                        let local_bindings = local_namespace_overrides(e, word_prefixes)?;
+                        let num_pr_bindings =
+                            merged_owner_bindings(owner_bindings, &local_bindings);
+                        Self::parse_num_pr(
+                            reader,
+                            e,
+                            &mut ppr,
+                            &prefixes,
+                            &num_pr_bindings,
+                            &mut numbering_change_raw_index,
+                        )?;
+                    } else if is_word_element(name.as_ref(), b"pBdr", &prefixes) {
+                        let trim_start = reader.config().trim_text_start;
+                        let trim_end = reader.config().trim_text_end;
+                        reader.config_mut().trim_text(false);
+                        let captured = capture_element(reader, e);
+                        reader.config_mut().trim_text_start = trim_start;
+                        reader.config_mut().trim_text_end = trim_end;
+                        let raw =
+                            crate::text::raw_with_external_bindings(&captured?, &tabs_bindings)?;
+                        ppr.borders = Some(Box::new(CT_PBdr::from_source_xml(&raw)?));
+                        let occurrence = occurrences[PPR_BORDER_SLOT as usize] - 1;
+                        record_ppr_raw_at(
+                            &mut ppr,
+                            raw,
+                            PPR_BORDER_SLOT,
+                            modeled_attribute_carrier_occurrence(occurrence),
+                        );
+                    } else if is_word_element(name.as_ref(), b"tabs", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            &tabs_bindings,
+                        )?;
+                        ppr.tabs = Some(CT_Tabs::from_source_xml(&raw)?);
+                        let occurrence = occurrences[PPR_TABS_SLOT as usize] - 1;
+                        record_ppr_raw_at(
+                            &mut ppr,
+                            raw,
+                            PPR_TABS_SLOT,
+                            modeled_attribute_carrier_occurrence(occurrence),
+                        );
+                    } else if is_word_element(name.as_ref(), b"sectPr", &prefixes) {
+                        let local_bindings = local_namespace_overrides(e, word_prefixes)?;
+                        let sect_pr_bindings =
+                            merged_owner_bindings(owner_bindings, &local_bindings);
+                        ppr.sect_pr =
+                            Some(CT_SectPr::from_xml_with_prefixes_owner_bindings_and_root(
+                                reader,
+                                &prefixes,
+                                &sect_pr_bindings,
+                                Some(e),
+                            )?);
+                    } else if is_word_element(name.as_ref(), b"pPrChange", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            owner_bindings,
+                        )?;
+                        if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
+                            if let Some(previous) = ppr.change.replace(revision) {
+                                ppr.revision_xml
+                                    .insert(change_raw_index, previous.into_raw_xml());
+                                ppr.revision_xml_positions
+                                    .insert(change_raw_index, (PPR_CHANGE_SLOT, 0));
+                            }
+                            change_raw_index = ppr.revision_xml.len();
+                        } else {
+                            record_ppr_raw_at(&mut ppr, raw, PPR_CHANGE_SLOT, 0);
+                        }
+                    } else if matches_local_name(name.as_ref(), b"pPrChange") {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            owner_bindings,
+                        )?;
+                        pending_raw.push(raw);
+                    } else if let Some(slot) = ppr_toggle_slot(name.as_ref(), &prefixes) {
+                        let captured = capture_element(reader, e)?;
+                        let raw =
+                            crate::text::raw_with_external_bindings(&captured, owner_bindings)?;
+                        if toggle_element_is_explicitly_empty(&captured)? {
+                            let value = parse_word_toggle(e, &prefixes)?;
+                            if let Some(field) = ppr_toggle_field_mut(&mut ppr, slot) {
+                                *field = Some(value);
+                            }
+                            toggle_carrier_required[slot as usize] =
+                                toggle_has_unsupported_attributes(e, &prefixes)?;
+                            record_modeled_toggle_candidate(
+                                &mut ppr.revision_xml,
+                                &mut ppr.revision_xml_positions,
+                                raw,
+                                slot,
+                                occurrences[slot as usize] - 1,
+                            );
+                        } else {
+                            let occurrence = occurrences[slot as usize] - 1;
+                            record_ppr_raw_at(&mut ppr, raw, slot, occurrence);
+                        }
+                    } else {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            owner_bindings,
+                        )?;
+                        if let Some(slot) = ppr_schema_slot(name.as_ref(), &prefixes) {
+                            record_ppr_raw_at(&mut ppr, raw, slot, 0);
+                        } else {
+                            pending_raw.push(raw);
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    let name = e.name();
+                    let prefixes = word_prefixes_at(e, word_prefixes)?;
+                    if let Some(slot) = ppr_modeled_slot(name.as_ref(), &prefixes) {
+                        record_ppr_modeled(&mut ppr, &mut pending_raw, &mut occurrences, slot);
+                    }
+                    if is_word_element(name.as_ref(), b"pBdr", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            &tabs_bindings,
+                        )?;
+                        ppr.borders = Some(Box::new(CT_PBdr::from_source_xml(&raw)?));
+                        let occurrence = occurrences[PPR_BORDER_SLOT as usize] - 1;
+                        record_ppr_raw_at(
+                            &mut ppr,
+                            raw,
+                            PPR_BORDER_SLOT,
+                            modeled_attribute_carrier_occurrence(occurrence),
+                        );
+                    } else if is_word_element(name.as_ref(), b"tabs", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            &tabs_bindings,
+                        )?;
+                        ppr.tabs = Some(CT_Tabs::from_source_xml(&raw)?);
+                        let occurrence = occurrences[PPR_TABS_SLOT as usize] - 1;
+                        record_ppr_raw_at(
+                            &mut ppr,
+                            raw,
+                            PPR_TABS_SLOT,
+                            modeled_attribute_carrier_occurrence(occurrence),
+                        );
+                    } else if is_word_element(name.as_ref(), b"pStyle", &prefixes) {
+                        ppr.style_id = get_word_val_attr(e, &prefixes)?;
+                        // Only the last selected style assignment survives.
+                        // Decoder failure exits before any observation escapes.
+                        selected_style =
+                            event_start.map(|start| start..reader.buffer_position() as usize);
+                    } else if is_word_element(name.as_ref(), b"jc", &prefixes) {
+                        if let Some(val) = get_word_val_attr(e, &prefixes)? {
+                            ppr.jc = ST_Jc::from_str(&val).ok();
+                        }
+                    } else if is_word_element(name.as_ref(), b"spacing", &prefixes)
+                        || is_word_element(name.as_ref(), b"ind", &prefixes)
+                    {
+                        for attr in e.attributes() {
+                            let attr = attr?;
+                            let key = attr.key.as_ref();
+                            let val_str = std::str::from_utf8(&attr.value)?;
+                            let local = attr.key.local_name();
+                            if is_word_attribute(key, local.as_ref(), &prefixes)
+                                && let Some(measurement) = ParagraphMeasurement::for_names(
+                                    e.local_name().as_ref(),
+                                    local.as_ref(),
+                                )
+                            {
+                                measurement
+                                    .decode(name.as_ref(), key, Some(val_str))?
+                                    .apply(&mut ppr);
+                            } else if is_word_element(name.as_ref(), b"spacing", &prefixes) {
+                                if is_word_attribute(key, b"lineRule", &prefixes) {
+                                    ppr.line_rule = Some(val_str.to_string());
+                                } else if is_word_attribute(key, b"beforeAutospacing", &prefixes) {
+                                    ppr.before_autospacing =
+                                        Some(val_str == "1" || val_str == "true");
+                                } else if is_word_attribute(key, b"afterAutospacing", &prefixes) {
+                                    ppr.after_autospacing =
+                                        Some(val_str == "1" || val_str == "true");
+                                }
+                            }
+                        }
+                    } else if is_word_element(name.as_ref(), b"keepNext", &prefixes) {
+                        ppr.keep_next = Some(parse_word_toggle(e, &prefixes)?);
+                    } else if is_word_element(name.as_ref(), b"keepLines", &prefixes) {
+                        ppr.keep_lines = Some(parse_word_toggle(e, &prefixes)?);
+                    } else if is_word_element(name.as_ref(), b"pageBreakBefore", &prefixes) {
+                        ppr.page_break_before = Some(parse_word_toggle(e, &prefixes)?);
+                    } else if is_word_element(name.as_ref(), b"widowControl", &prefixes) {
+                        ppr.widow_control = Some(parse_word_toggle(e, &prefixes)?);
+                    } else if is_word_element(name.as_ref(), b"suppressAutoHyphens", &prefixes) {
+                        ppr.suppress_auto_hyphens = Some(parse_word_toggle(e, &prefixes)?);
+                    } else if let Some(slot) = ppr_toggle_slot(name.as_ref(), &prefixes) {
+                        let value = parse_word_toggle(e, &prefixes)?;
+                        if let Some(field) = ppr_toggle_field_mut(&mut ppr, slot) {
+                            *field = Some(value);
+                        }
+                        toggle_carrier_required[slot as usize] =
+                            toggle_has_unsupported_attributes(e, &prefixes)?;
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            owner_bindings,
+                        )?;
+                        record_modeled_toggle_candidate(
+                            &mut ppr.revision_xml,
+                            &mut ppr.revision_xml_positions,
+                            raw,
+                            slot,
+                            occurrences[slot as usize] - 1,
+                        );
+                    } else if is_word_element(name.as_ref(), b"framePr", &prefixes) {
+                        ppr.frame = Some(Box::new(CT_FramePr::from_xml_attrs_with_prefixes(
+                            e, &prefixes,
+                        )?));
+                    } else if is_word_element(name.as_ref(), b"textDirection", &prefixes) {
+                        ppr.text_direction = get_word_val_attr(e, &prefixes)?;
+                    } else if is_word_element(name.as_ref(), b"textAlignment", &prefixes) {
+                        ppr.text_alignment = get_word_val_attr(e, &prefixes)?;
+                    } else if is_word_element(name.as_ref(), b"textboxTightWrap", &prefixes) {
+                        ppr.textbox_tight_wrap = get_word_val_attr(e, &prefixes)?;
+                    } else if is_word_element(name.as_ref(), b"divId", &prefixes) {
+                        let value = get_word_val_attr(e, &prefixes)?;
+                        ParagraphMeasurement::Division(None)
+                            .decode(name.as_ref(), b"w:val", value.as_deref())?
+                            .apply(&mut ppr);
+                    } else if is_word_element(name.as_ref(), b"cnfStyle", &prefixes) {
+                        // `CT_Cnf` carries a per-region attribute form beside
+                        // `w:val`. The source element is retained as an
+                        // attribute carrier when it holds anything but `w:val`,
+                        // so that form survives being modeled, the same way the
+                        // modeled toggles keep theirs.
+                        let value = get_word_val_attr(e, &prefixes)?;
+                        if value.is_none() || toggle_has_unsupported_attributes(e, &prefixes)? {
+                            let raw = crate::text::raw_with_external_bindings(
+                                &capture_empty_element(e)?,
+                                owner_bindings,
+                            )?;
+                            let occurrence = occurrences[PPR_CNF_STYLE_SLOT as usize] - 1;
+                            if value.is_some() {
+                                record_modeled_toggle_candidate(
+                                    &mut ppr.revision_xml,
+                                    &mut ppr.revision_xml_positions,
+                                    raw,
+                                    PPR_CNF_STYLE_SLOT,
+                                    occurrence,
+                                );
+                            } else {
+                                // Without `w:val` there is nothing to model, so
+                                // the element stays raw at its own slot.
+                                record_ppr_raw_at(&mut ppr, raw, PPR_CNF_STYLE_SLOT, occurrence);
+                            }
+                        }
+                        if value.is_some() {
+                            ppr.cnf_style = value;
+                        }
+                    } else if is_word_element(name.as_ref(), b"outlineLvl", &prefixes) {
+                        let value = get_word_val_attr(e, &prefixes)?;
+                        ParagraphMeasurement::Outline(None)
+                            .decode(name.as_ref(), b"w:val", value.as_deref())?
+                            .apply(&mut ppr);
+                    } else if is_word_element(name.as_ref(), b"shd", &prefixes) {
+                        ppr.shading = Some(Box::new(CT_Shd::from_xml_attrs(e)?));
+                    } else if is_word_element(name.as_ref(), b"numPr", &prefixes) {
+                        ppr.num_pr_extra_attributes =
+                            preserved_num_pr_root_attributes(e, &prefixes, owner_bindings)?.0;
+                    } else if is_word_element(name.as_ref(), b"rPr", &prefixes)
+                        && e.attributes().next().is_none()
+                    {
+                        ppr.rpr.get_or_insert_default();
+                    } else if is_word_element(name.as_ref(), b"pPrChange", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            owner_bindings,
+                        )?;
+                        if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
+                            if let Some(previous) = ppr.change.replace(revision) {
+                                ppr.revision_xml
+                                    .insert(change_raw_index, previous.into_raw_xml());
+                                ppr.revision_xml_positions
+                                    .insert(change_raw_index, (PPR_CHANGE_SLOT, 0));
+                            }
+                            change_raw_index = ppr.revision_xml.len();
+                        } else {
+                            record_ppr_raw_at(&mut ppr, raw, PPR_CHANGE_SLOT, 0);
+                        }
+                    } else if matches_local_name(name.as_ref(), b"pPrChange") {
+                        pending_raw.push(crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            owner_bindings,
+                        )?);
+                    } else {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            owner_bindings,
+                        )?;
+                        if let Some(slot) = ppr_schema_slot(name.as_ref(), &prefixes) {
+                            record_ppr_raw_at(&mut ppr, raw, slot, 0);
+                        } else {
+                            pending_raw.push(raw);
+                        }
+                    }
+                }
+                Ok(Event::End(ref e))
+                    if is_word_element(e.name().as_ref(), b"pPr", word_prefixes) =>
+                {
+                    break;
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        flush_ppr_raw(&mut ppr, &mut pending_raw, PPR_END_SLOT);
+        for (_, slot) in PPR_MODELED_TOGGLES {
+            remove_redundant_modeled_toggle_candidate(
+                &mut ppr.revision_xml,
+                &mut ppr.revision_xml_positions,
+                slot,
+                toggle_carrier_required[slot as usize],
+            );
+        }
+
+        if let Some(output) = ordinary {
+            *output = selected_style;
+        }
+        Ok(ppr)
+    }
+
+    fn parse_num_pr(
+        reader: &mut Reader<&[u8]>,
+        root: &BytesStart<'_>,
+        ppr: &mut CT_PPr,
+        word_prefixes: &[String],
+        owner_bindings: &[(String, String)],
+        change_raw_index: &mut usize,
+    ) -> Result<()> {
+        let (attributes, local_bindings, all_bindings) =
+            preserved_num_pr_root_attributes(root, word_prefixes, owner_bindings)?;
+        ppr.num_pr_extra_attributes = attributes;
+        let child_external_bindings = all_bindings
+            .iter()
+            .filter(|binding| {
+                !local_bindings.contains(binding) && !(binding.0 == "w" && binding.1 == W_NS)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut buf = Vec::new();
+        let mut boundary = 0usize;
+        let mut source_ordinal = 0usize;
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Empty(ref e)) => {
+                    let name = e.name();
+                    let prefixes = word_prefixes_at(e, word_prefixes)?;
+                    let typed_scope = typed_num_pr_scope(&prefixes, owner_bindings);
+                    if is_word_element(name.as_ref(), b"ilvl", &prefixes) {
+                        let parsed =
+                            typed_leaf_value(e, &prefixes)?.and_then(|value| value.parse().ok());
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            &child_external_bindings,
+                        )?;
+                        if let Some((_, previous, _)) =
+                            ppr.num_ilvl_raw.replace((parsed, raw, typed_scope))
+                        {
+                            ppr.num_pr_extra_xml.push((0, source_ordinal, previous));
+                        }
+                        ppr.num_ilvl = parsed;
+                        boundary = 1;
+                    } else if is_word_element(name.as_ref(), b"numId", &prefixes) {
+                        let parsed =
+                            typed_leaf_value(e, &prefixes)?.and_then(|value| value.parse().ok());
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            &child_external_bindings,
+                        )?;
+                        if let Some((_, previous, _)) =
+                            ppr.num_id_raw.replace((parsed, raw, typed_scope))
+                        {
+                            ppr.num_pr_extra_xml.push((1, source_ordinal, previous));
+                        }
+                        ppr.num_id = parsed;
+                        boundary = 2;
+                    } else if is_word_element(name.as_ref(), b"numberingChange", &prefixes) {
+                        ppr.num_pr_extra_xml.push((
+                            3,
+                            source_ordinal,
+                            crate::text::raw_with_external_bindings(
+                                &capture_empty_element(e)?,
+                                &child_external_bindings,
+                            )?,
+                        ));
+                        boundary = 3;
+                    } else if is_word_element(name.as_ref(), b"ins", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            &child_external_bindings,
+                        )?;
+                        if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
+                            if let Some(previous) = ppr.numbering_revision.replace(revision) {
+                                ppr.numbering_revision_xml
+                                    .insert(*change_raw_index, previous.into_raw_xml());
+                                ppr.numbering_revision_xml_positions.insert(
+                                    *change_raw_index,
+                                    ppr.numbering_revision_position
+                                        .unwrap_or((3, source_ordinal)),
+                                );
+                            }
+                            *change_raw_index = ppr.numbering_revision_xml.len();
+                            ppr.numbering_revision_position =
+                                Some((if boundary < 4 { 3 } else { 4 }, source_ordinal));
+                        } else {
+                            ppr.numbering_revision_xml.push(raw);
+                            ppr.numbering_revision_xml_positions
+                                .push((if boundary < 4 { 3 } else { 4 }, source_ordinal));
+                        }
+                        boundary = 4;
+                    } else if matches_local_name(name.as_ref(), b"ins") {
+                        ppr.numbering_revision_xml
+                            .push(crate::text::raw_with_external_bindings(
+                                &capture_empty_element(e)?,
+                                &child_external_bindings,
+                            )?);
+                        ppr.numbering_revision_xml_positions
+                            .push((if boundary < 4 { 3 } else { 4 }, source_ordinal));
+                        boundary = 4;
+                    } else {
+                        ppr.num_pr_extra_xml.push((
+                            boundary,
+                            source_ordinal,
+                            crate::text::raw_with_external_bindings(
+                                &capture_empty_element(e)?,
+                                &child_external_bindings,
+                            )?,
+                        ));
+                    }
+                }
+                Ok(Event::Start(ref e)) => {
+                    let prefixes = word_prefixes_at(e, word_prefixes)?;
+                    let typed_scope = typed_num_pr_scope(&prefixes, owner_bindings);
+                    if is_word_element(e.name().as_ref(), b"ilvl", &prefixes) {
+                        let parsed =
+                            typed_leaf_value(e, &prefixes)?.and_then(|value| value.parse().ok());
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            &child_external_bindings,
+                        )?;
+                        if let Some((_, previous, _)) =
+                            ppr.num_ilvl_raw.replace((parsed, raw, typed_scope))
+                        {
+                            ppr.num_pr_extra_xml.push((0, source_ordinal, previous));
+                        }
+                        ppr.num_ilvl = parsed;
+                        boundary = 1;
+                    } else if is_word_element(e.name().as_ref(), b"numId", &prefixes) {
+                        let parsed =
+                            typed_leaf_value(e, &prefixes)?.and_then(|value| value.parse().ok());
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            &child_external_bindings,
+                        )?;
+                        if let Some((_, previous, _)) =
+                            ppr.num_id_raw.replace((parsed, raw, typed_scope))
+                        {
+                            ppr.num_pr_extra_xml.push((1, source_ordinal, previous));
+                        }
+                        ppr.num_id = parsed;
+                        boundary = 2;
+                    } else if is_word_element(e.name().as_ref(), b"numberingChange", &prefixes) {
+                        ppr.num_pr_extra_xml.push((
+                            3,
+                            source_ordinal,
+                            crate::text::raw_with_external_bindings(
+                                &capture_element(reader, e)?,
+                                &child_external_bindings,
+                            )?,
+                        ));
+                        boundary = 3;
+                    } else if is_word_element(e.name().as_ref(), b"ins", &prefixes) {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            &child_external_bindings,
+                        )?;
+                        if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
+                            if let Some(previous) = ppr.numbering_revision.replace(revision) {
+                                ppr.numbering_revision_xml
+                                    .insert(*change_raw_index, previous.into_raw_xml());
+                                ppr.numbering_revision_xml_positions.insert(
+                                    *change_raw_index,
+                                    ppr.numbering_revision_position
+                                        .unwrap_or((3, source_ordinal)),
+                                );
+                            }
+                            *change_raw_index = ppr.numbering_revision_xml.len();
+                            ppr.numbering_revision_position =
+                                Some((if boundary < 4 { 3 } else { 4 }, source_ordinal));
+                        } else {
+                            ppr.numbering_revision_xml.push(raw);
+                            ppr.numbering_revision_xml_positions
+                                .push((if boundary < 4 { 3 } else { 4 }, source_ordinal));
+                        }
+                        boundary = 4;
+                    } else if matches_local_name(e.name().as_ref(), b"ins") {
+                        ppr.numbering_revision_xml
+                            .push(crate::text::raw_with_external_bindings(
+                                &capture_element(reader, e)?,
+                                &child_external_bindings,
+                            )?);
+                        ppr.numbering_revision_xml_positions
+                            .push((if boundary < 4 { 3 } else { 4 }, source_ordinal));
+                        boundary = 4;
+                    } else {
+                        ppr.num_pr_extra_xml.push((
+                            boundary,
+                            source_ordinal,
+                            crate::text::raw_with_external_bindings(
+                                &capture_element(reader, e)?,
+                                &child_external_bindings,
+                            )?,
+                        ));
+                    }
+                }
+                Ok(Event::End(ref e))
+                    if is_word_element(e.name().as_ref(), b"numPr", word_prefixes) =>
+                {
+                    break;
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+            source_ordinal += 1;
+            buf.clear();
+        }
+        Ok(())
+    }
+
+    fn modeled_source_index(&self, slot: u8) -> Option<usize> {
+        self.revision_xml_positions
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, position)| {
+                (position.0 == slot && raw_is_modeled_attribute_carrier(*position)).then_some(index)
+            })
+    }
+
+    /// The selected tabs container, carrying its actual inherited namespaces.
+    pub fn tab_source(&self) -> Option<&[u8]> {
+        self.revision_xml
+            .get(self.modeled_source_index(PPR_TABS_SLOT)?)
+            .map(Vec::as_slice)
+    }
+
+    /// Stage an occurrence-aware tabs source merge before native publication.
+    pub fn refresh_tabs_source(&mut self, forced_occurrence: Option<usize>) -> Result<()> {
+        let Some(index) = self.modeled_source_index(PPR_TABS_SLOT) else {
+            return Ok(());
+        };
+        let raw = crate::numbering::merge_tabs_source(
+            &self.revision_xml[index],
+            self.tabs.as_ref(),
+            forced_occurrence,
+        )?;
+        let tabs = CT_Tabs::from_source_xml(&raw)?;
+        self.revision_xml[index] = raw;
+        self.tabs = (!tabs.tabs.is_empty()).then_some(tabs);
+        Ok(())
+    }
+
+    pub fn to_xml<W: std::io::Write>(&self, writer: &mut Writer<W>) -> Result<()> {
+        self.write_xml_role(writer, crate::text::XmlWriteRole::Publication, None)
+    }
+
+    pub(crate) fn write_xml_role<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+    ) -> Result<()> {
+        self.write_xml_role_in(writer, role, source_context, None)
+    }
+
+    pub(crate) fn write_xml_role_in<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        self.write_xml_role_core(writer, role, source_context, emission, true)
+    }
+
+    fn write_xml_role_core<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+        positioned: bool,
+    ) -> Result<()> {
+        if self.is_empty_in(positioned) {
+            return Ok(());
+        }
+
+        if positioned
+            && !self.revision_xml.is_empty()
+            && self.revision_xml_positions.len() == self.revision_xml.len()
+        {
+            let generated = if let Some(emission) = emission {
+                let (output, _outer) = emission.new_source_record_output();
+                let mut generated = Writer::new(output);
+                self.write_modeled_record(&mut generated, role, source_context, Some(emission))?;
+                generated.into_inner().into_mapped_parts().0
+            } else {
+                let mut generated = Writer::new(Vec::new());
+                self.write_modeled_record(&mut generated, role, source_context, None)?;
+                generated.into_inner()
+            };
+            return write_ppr_with_positioned_raw(writer, &generated, self, emission);
+        }
+
+        let mut buf = itoa::Buffer::new();
+        let mut start = crate::text::FieldXmlStart::new("w:pPr", emission)?;
+        let shadowed_word = role == crate::text::XmlWriteRole::Publication
+            && crate::text::emitted_bindings().has_foreign_word_binding();
+        if shadowed_word {
+            start.restore_word_binding()?;
+        }
+        let _property_scope = shadowed_word
+            .then(|| crate::text::emitted_binding_scope(start.element(), false, false))
+            .transpose()?;
+        let word_prefix = if role == crate::text::XmlWriteRole::Source {
+            start.qualify(&[], role, source_context)?
+        } else {
+            "w".to_owned()
+        };
+        start.write(writer, false)?;
+
+        if let Some(ref style_id) = self.style_id {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "pStyle", emission)?;
+            e.push_word(&word_prefix, "val", style_id.as_str())?;
+            e.write(writer, true)?;
+        }
+
+        if let Some(keep_next) = self.keep_next {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "keepNext",
+                keep_next,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+        if let Some(keep_lines) = self.keep_lines {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "keepLines",
+                keep_lines,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+        if let Some(page_break) = self.page_break_before {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "pageBreakBefore",
+                page_break,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+        if let Some(ref frame) = self.frame {
+            frame.to_xml(writer, role, source_context, emission)?;
+        }
+        if let Some(widow) = self.widow_control {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "widowControl",
+                widow,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        // numPr
+        let ilvl_raw_retained = match &self.num_ilvl_raw {
+            Some((original, raw, prefixes)) => {
+                self.num_ilvl == *original
+                    || self.num_ilvl.is_some()
+                    || !num_pr_leaf_is_plain(raw, prefixes)?
+            }
+            None => false,
+        };
+        let num_id_raw_retained = match &self.num_id_raw {
+            Some((original, raw, prefixes)) => {
+                self.num_id == *original
+                    || self.num_id.is_some()
+                    || !num_pr_leaf_is_plain(raw, prefixes)?
+            }
+            None => false,
+        };
+        if self.num_id.is_some()
+            || self.num_ilvl.is_some()
+            || num_id_raw_retained
+            || ilvl_raw_retained
+            || !self.num_pr_extra_attributes.is_empty()
+            || !self.num_pr_extra_xml.is_empty()
+            || self.numbering_revision.is_some()
+            || !self.numbering_revision_xml.is_empty()
+        {
+            let mut num_pr = crate::text::FieldXmlStart::word(&word_prefix, "numPr", emission)?;
+            for (name, value) in &self.num_pr_extra_attributes {
+                if role != crate::text::XmlWriteRole::Source && name == "xmlns:w" && value != W_NS {
+                    return Err(crate::error::OxmlError::InvalidValue(
+                        "w:numPr shadows the Word namespace".to_owned(),
+                    ));
+                }
+                num_pr.push_raw(name, value)?;
+            }
+            let word_prefix = if role == crate::text::XmlWriteRole::Source {
+                num_pr.qualify(&[], role, source_context)?
+            } else {
+                word_prefix.clone()
+            };
+            // The numPr start can declare producer aliases that its retained
+            // and typed revision children rely on. Register those facts for
+            // the nested writers instead of redeclaring them per child.
+            let _num_pr_scope = if role == crate::text::XmlWriteRole::Publication {
+                Some(crate::text::emitted_binding_scope(
+                    num_pr.element(),
+                    false,
+                    false,
+                )?)
+            } else {
+                None
+            };
+            num_pr.write(writer, false)?;
+            let ilvl_scrub = self
+                .num_ilvl_raw
+                .as_ref()
+                .and_then(|(original, _, prefixes)| {
+                    (original.is_some() && self.num_ilvl.is_none())
+                        .then_some((b"ilvl".as_slice(), prefixes.as_slice()))
+                });
+            write_num_pr_extras(writer, &self.num_pr_extra_xml, 0, ilvl_scrub, emission)?;
+            if let Some((original, raw, prefixes)) = &self.num_ilvl_raw {
+                write_num_pr_leaf(writer, raw, prefixes, *original, self.num_ilvl, emission)?;
+            } else if let Some(ilvl) = self.num_ilvl {
+                let mut e = crate::text::FieldXmlStart::word(&word_prefix, "ilvl", emission)?;
+                e.push_word(&word_prefix, "val", buf.format(ilvl))?;
+                e.write(writer, true)?;
+            }
+            let num_id_scrub = self
+                .num_id_raw
+                .as_ref()
+                .and_then(|(original, _, prefixes)| {
+                    (original.is_some() && self.num_id.is_none())
+                        .then_some((b"numId".as_slice(), prefixes.as_slice()))
+                });
+            write_num_pr_extras(writer, &self.num_pr_extra_xml, 1, num_id_scrub, emission)?;
+            if let Some((original, raw, prefixes)) = &self.num_id_raw {
+                write_num_pr_leaf(writer, raw, prefixes, *original, self.num_id, emission)?;
+            } else if let Some(num_id) = self.num_id {
+                let mut e = crate::text::FieldXmlStart::word(&word_prefix, "numId", emission)?;
+                e.push_word(&word_prefix, "val", buf.format(num_id))?;
+                e.write(writer, true)?;
+            }
+            write_num_pr_extras(writer, &self.num_pr_extra_xml, 2, None, emission)?;
+            enum Tail<'a> {
+                Raw(&'a [u8]),
+                Extra(&'a [u8]),
+                Revision(&'a CT_Revision),
+            }
+            let mut tail = Vec::<((usize, usize, usize), Tail<'_>)>::new();
+            for (index, raw) in self.numbering_revision_xml.iter().enumerate() {
+                let position = self
+                    .numbering_revision_xml_positions
+                    .get(index)
+                    .copied()
+                    .unwrap_or((3, index));
+                tail.push(((position.0, position.1, index), Tail::Raw(raw)));
+            }
+            for (index, (boundary, ordinal, raw)) in self
+                .num_pr_extra_xml
+                .iter()
+                .enumerate()
+                .filter(|(_, (boundary, _, _))| *boundary >= 3)
+            {
+                tail.push(((*boundary, *ordinal, index), Tail::Extra(raw)));
+            }
+            if let Some(revision) = &self.numbering_revision {
+                let position = self.numbering_revision_position.unwrap_or((3, usize::MAX));
+                tail.push((
+                    (position.0, position.1, usize::MAX),
+                    Tail::Revision(revision),
+                ));
+            }
+            tail.sort_by_key(|(position, _)| *position);
+            for (_, child) in tail {
+                match child {
+                    Tail::Raw(raw) | Tail::Extra(raw) => writer.get_mut().write_all(raw)?,
+                    Tail::Revision(revision) => revision.write_xml_with_role_override(
+                        writer,
+                        None,
+                        role,
+                        source_context,
+                        emission,
+                    )?,
+                }
+            }
+            if let Some(emission) = emission {
+                emission.write_word_end(writer, &word_prefix, "numPr")?;
+            } else {
+                writer.write_event(Event::End(BytesEnd::new(format!("{word_prefix}:numPr"))))?;
+            }
+        }
+
+        if let Some(suppress) = self.suppress_line_numbers {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "suppressLineNumbers",
+                suppress,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        // pBdr
+        if let Some(ref borders) = self.borders
+            && (positioned || self.modeled_source_index(PPR_BORDER_SLOT).is_none())
+            && !borders.is_empty()
+        {
+            borders.write_xml_role_in(writer, role, source_context, emission)?;
+        }
+
+        // shd
+        if let Some(ref shd) = self.shading {
+            if role == crate::text::XmlWriteRole::Source {
+                shd.write_xml_in(writer, "shd", role, source_context, emission)?;
+            } else {
+                shd.write_xml_in(writer, "w:shd", role, source_context, emission)?;
+            }
+        }
+
+        // tabs
+        if let Some(ref tabs) = self.tabs
+            && (positioned || self.modeled_source_index(PPR_TABS_SLOT).is_none())
+        {
+            tabs.write_xml_role_in(writer, role, source_context, emission)?;
+        }
+
+        if let Some(suppress) = self.suppress_auto_hyphens {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "suppressAutoHyphens",
+                suppress,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(kinsoku) = self.kinsoku {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "kinsoku",
+                kinsoku,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(word_wrap) = self.word_wrap {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "wordWrap",
+                word_wrap,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(overflow_punct) = self.overflow_punct {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "overflowPunct",
+                overflow_punct,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(top_line_punct) = self.top_line_punct {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "topLinePunct",
+                top_line_punct,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(auto_space_de) = self.auto_space_de {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "autoSpaceDE",
+                auto_space_de,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(auto_space_dn) = self.auto_space_dn {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "autoSpaceDN",
+                auto_space_dn,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(bidi) = self.bidi {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "bidi",
+                bidi,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(adjust) = self.adjust_right_ind {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "adjustRightInd",
+                adjust,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(snap_to_grid) = self.snap_to_grid {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "snapToGrid",
+                snap_to_grid,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        // spacing
+        if self.space_before.is_some()
+            || self.space_after.is_some()
+            || self.line_spacing.is_some()
+            || self.before_autospacing.is_some()
+            || self.after_autospacing.is_some()
+        {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "spacing", emission)?;
+            if let Some(before) = self.space_before {
+                e.push_word(&word_prefix, "before", buf.format(before.0))?;
+            }
+            if let Some(after) = self.space_after {
+                e.push_word(&word_prefix, "after", buf.format(after.0))?;
+            }
+            if let Some(line) = self.line_spacing {
+                e.push_word(&word_prefix, "line", buf.format(line.0))?;
+            }
+            if let Some(ref rule) = self.line_rule {
+                e.push_word(&word_prefix, "lineRule", rule.as_str())?;
+            }
+            if let Some(ba) = self.before_autospacing {
+                e.push_word(
+                    &word_prefix,
+                    "beforeAutospacing",
+                    if ba { "1" } else { "0" },
+                )?;
+            }
+            if let Some(aa) = self.after_autospacing {
+                e.push_word(&word_prefix, "afterAutospacing", if aa { "1" } else { "0" })?;
+            }
+            e.write(writer, true)?;
+        }
+
+        // ind
+        if self.ind_left.is_some()
+            || self.ind_right.is_some()
+            || self.ind_start.is_some()
+            || self.ind_end.is_some()
+            || self.ind_first_line.is_some()
+            || self.ind_hanging.is_some()
+        {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "ind", emission)?;
+            if let Some(left) = self.ind_left {
+                e.push_word(&word_prefix, "left", buf.format(left.0))?;
+            }
+            if let Some(right) = self.ind_right {
+                e.push_word(&word_prefix, "right", buf.format(right.0))?;
+            }
+            if let Some(start) = self.ind_start {
+                e.push_word(&word_prefix, "start", buf.format(start.0))?;
+            }
+            if let Some(end) = self.ind_end {
+                e.push_word(&word_prefix, "end", buf.format(end.0))?;
+            }
+            if let Some(fl) = self.ind_first_line {
+                e.push_word(&word_prefix, "firstLine", buf.format(fl.0))?;
+            }
+            if let Some(hang) = self.ind_hanging {
+                e.push_word(&word_prefix, "hanging", buf.format(hang.0))?;
+            }
+            e.write(writer, true)?;
+        }
+
+        if let Some(contextual) = self.contextual_spacing {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "contextualSpacing",
+                contextual,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+        if let Some(mirror) = self.mirror_indents {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "mirrorIndents",
+                mirror,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+        if let Some(overlap) = self.suppress_overlap {
+            crate::run_properties::write_word_toggle(
+                writer,
+                "suppressOverlap",
+                overlap,
+                role,
+                source_context,
+                emission,
+            )?;
+        }
+
+        if let Some(jc) = self.jc {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "jc", emission)?;
+            e.push_word(&word_prefix, "val", jc.to_str())?;
+            e.write(writer, true)?;
+        }
+
+        if let Some(ref direction) = self.text_direction {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "textDirection", emission)?;
+            e.push_word(&word_prefix, "val", direction.as_str())?;
+            e.write(writer, true)?;
+        }
+        if let Some(ref alignment) = self.text_alignment {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "textAlignment", emission)?;
+            e.push_word(&word_prefix, "val", alignment.as_str())?;
+            e.write(writer, true)?;
+        }
+        if let Some(ref tight_wrap) = self.textbox_tight_wrap {
+            let mut e =
+                crate::text::FieldXmlStart::word(&word_prefix, "textboxTightWrap", emission)?;
+            e.push_word(&word_prefix, "val", tight_wrap.as_str())?;
+            e.write(writer, true)?;
+        }
+
+        if let Some(lvl) = self.outline_lvl {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "outlineLvl", emission)?;
+            e.push_word(&word_prefix, "val", buf.format(lvl))?;
+            e.write(writer, true)?;
+        }
+
+        if let Some(div_id) = self.div_id {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "divId", emission)?;
+            e.push_word(&word_prefix, "val", buf.format(div_id))?;
+            e.write(writer, true)?;
+        }
+
+        if let Some(ref cnf_style) = self.cnf_style {
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, "cnfStyle", emission)?;
+            e.push_word(&word_prefix, "val", cnf_style.as_str())?;
+            e.write(writer, true)?;
+        }
+
+        if let Some(ref rpr) = self.rpr {
+            rpr.write_xml_role(writer, None, role, source_context, emission)?;
+        }
+
+        if let Some(ref sect) = self.sect_pr {
+            sect.write_xml_role_in(writer, role, source_context, emission)?;
+        }
+
+        if positioned {
+            for raw in &self.revision_xml {
+                writer.get_mut().write_all(raw)?;
+            }
+        }
+        if let Some(change) = &self.change {
+            change.write_xml_with_role_override(writer, None, role, source_context, emission)?;
+        }
+
+        if let Some(emission) = emission {
+            emission.write_word_end(writer, &word_prefix, "pPr")?;
+        } else {
+            writer.write_event(Event::End(BytesEnd::new(format!("{word_prefix}:pPr"))))?;
+        }
+        Ok(())
+    }
+
+    fn write_modeled_record<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.is_empty_in(false) {
+            let mut start = crate::text::FieldXmlStart::new("w:pPr", emission)?;
+            if role == crate::text::XmlWriteRole::Publication
+                && crate::text::emitted_bindings().has_foreign_word_binding()
+            {
+                start.restore_word_binding()?;
+            }
+            start.write(writer, false)?;
+            if let Some(emission) = emission {
+                emission.write_end_name(writer, "w:pPr")?;
+            } else {
+                writer.write_event(Event::End(BytesEnd::new("w:pPr")))?;
+            }
+            Ok(())
+        } else {
+            self.write_xml_role_core(writer, role, source_context, emission, false)
+        }
+    }
+
+    fn is_empty_in(&self, positioned: bool) -> bool {
+        self.style_id.is_none()
+            && self.jc.is_none()
+            && self.space_before.is_none()
+            && self.space_after.is_none()
+            && self.line_spacing.is_none()
+            && self.before_autospacing.is_none()
+            && self.after_autospacing.is_none()
+            && self.ind_left.is_none()
+            && self.ind_right.is_none()
+            && self.ind_start.is_none()
+            && self.ind_end.is_none()
+            && self.ind_first_line.is_none()
+            && self.ind_hanging.is_none()
+            && self.keep_next.is_none()
+            && self.keep_lines.is_none()
+            && self.page_break_before.is_none()
+            && self.widow_control.is_none()
+            && self.suppress_auto_hyphens.is_none()
+            && self.kinsoku.is_none()
+            && self.word_wrap.is_none()
+            && self.overflow_punct.is_none()
+            && self.top_line_punct.is_none()
+            && self.auto_space_de.is_none()
+            && self.auto_space_dn.is_none()
+            && self.snap_to_grid.is_none()
+            && self.bidi.is_none()
+            && self.frame.is_none()
+            && self.suppress_line_numbers.is_none()
+            && self.adjust_right_ind.is_none()
+            && self.contextual_spacing.is_none()
+            && self.mirror_indents.is_none()
+            && self.suppress_overlap.is_none()
+            && self.text_direction.is_none()
+            && self.text_alignment.is_none()
+            && self.textbox_tight_wrap.is_none()
+            && self.div_id.is_none()
+            && self.cnf_style.is_none()
+            && self.outline_lvl.is_none()
+            && (self.borders.is_none()
+                || (!positioned && self.modeled_source_index(PPR_BORDER_SLOT).is_some()))
+            && (self.tabs.is_none()
+                || (!positioned && self.modeled_source_index(PPR_TABS_SLOT).is_some()))
+            && self.shading.is_none()
+            && self.rpr.is_none()
+            && self.num_id.is_none()
+            && self.num_ilvl.is_none()
+            && self.num_id_raw.is_none()
+            && self.num_ilvl_raw.is_none()
+            && self.num_pr_extra_attributes.is_empty()
+            && self.num_pr_extra_xml.is_empty()
+            && self.sect_pr.is_none()
+            && self.numbering_revision.is_none()
+            && self.numbering_revision_xml.is_empty()
+            && self.change.is_none()
+            && (!positioned || self.revision_xml.is_empty())
+    }
+
+    /// Merge another CT_PPr into this one (non-None fields override).
+    /// Used for style inheritance.
+    pub fn merge_from(&mut self, other: &CT_PPr) {
+        if other.style_id.is_some() {
+            self.style_id = other.style_id.clone();
+        }
+        if other.jc.is_some() {
+            self.jc = other.jc;
+        }
+        if other.space_before.is_some() {
+            self.space_before = other.space_before;
+        }
+        if other.space_after.is_some() {
+            self.space_after = other.space_after;
+        }
+        if other.line_spacing.is_some() {
+            self.line_spacing = other.line_spacing;
+        }
+        if other.line_rule.is_some() {
+            self.line_rule = other.line_rule.clone();
+        }
+        if other.before_autospacing.is_some() {
+            self.before_autospacing = other.before_autospacing;
+        }
+        if other.after_autospacing.is_some() {
+            self.after_autospacing = other.after_autospacing;
+        }
+        if other.ind_left.is_some() {
+            self.ind_left = other.ind_left;
+        }
+        if other.ind_right.is_some() {
+            self.ind_right = other.ind_right;
+        }
+        if other.ind_start.is_some() {
+            self.ind_start = other.ind_start;
+        }
+        if other.ind_end.is_some() {
+            self.ind_end = other.ind_end;
+        }
+        // `w:firstLine` and `w:hanging` are one property, the first-line
+        // indent, so a level that sets either replaces both.
+        if other.ind_first_line.is_some() || other.ind_hanging.is_some() {
+            self.ind_first_line = other.ind_first_line;
+            self.ind_hanging = other.ind_hanging;
+        }
+        if other.keep_next.is_some() {
+            self.keep_next = other.keep_next;
+        }
+        if other.keep_lines.is_some() {
+            self.keep_lines = other.keep_lines;
+        }
+        if other.page_break_before.is_some() {
+            self.page_break_before = other.page_break_before;
+        }
+        if other.widow_control.is_some() {
+            self.widow_control = other.widow_control;
+        }
+        if other.suppress_auto_hyphens.is_some() {
+            self.suppress_auto_hyphens = other.suppress_auto_hyphens;
+        }
+        if other.kinsoku.is_some() {
+            self.kinsoku = other.kinsoku;
+        }
+        if other.word_wrap.is_some() {
+            self.word_wrap = other.word_wrap;
+        }
+        if other.overflow_punct.is_some() {
+            self.overflow_punct = other.overflow_punct;
+        }
+        if other.top_line_punct.is_some() {
+            self.top_line_punct = other.top_line_punct;
+        }
+        if other.auto_space_de.is_some() {
+            self.auto_space_de = other.auto_space_de;
+        }
+        if other.auto_space_dn.is_some() {
+            self.auto_space_dn = other.auto_space_dn;
+        }
+        if other.snap_to_grid.is_some() {
+            self.snap_to_grid = other.snap_to_grid;
+        }
+        if other.bidi.is_some() {
+            self.bidi = other.bidi;
+        }
+        if other.frame.is_some() {
+            self.frame = other.frame.clone();
+        }
+        if other.suppress_line_numbers.is_some() {
+            self.suppress_line_numbers = other.suppress_line_numbers;
+        }
+        if other.adjust_right_ind.is_some() {
+            self.adjust_right_ind = other.adjust_right_ind;
+        }
+        if other.contextual_spacing.is_some() {
+            self.contextual_spacing = other.contextual_spacing;
+        }
+        if other.mirror_indents.is_some() {
+            self.mirror_indents = other.mirror_indents;
+        }
+        if other.suppress_overlap.is_some() {
+            self.suppress_overlap = other.suppress_overlap;
+        }
+        if other.text_direction.is_some() {
+            self.text_direction = other.text_direction.clone();
+        }
+        if other.text_alignment.is_some() {
+            self.text_alignment = other.text_alignment.clone();
+        }
+        if other.textbox_tight_wrap.is_some() {
+            self.textbox_tight_wrap = other.textbox_tight_wrap.clone();
+        }
+        if other.div_id.is_some() {
+            self.div_id = other.div_id;
+        }
+        if other.cnf_style.is_some() {
+            self.cnf_style.clone_from(&other.cnf_style);
+        }
+        if other.outline_lvl.is_some() {
+            self.outline_lvl = other.outline_lvl;
+        }
+        if other.borders.is_some() {
+            self.borders = other.borders.clone();
+        }
+        if other.tabs.is_some() {
+            self.tabs = other.tabs.clone();
+        }
+        for (slot, overrides) in [
+            (PPR_BORDER_SLOT, other.borders.is_some()),
+            (PPR_TABS_SLOT, other.tabs.is_some()),
+        ] {
+            if !overrides {
+                continue;
+            }
+            // A source occurrence belongs to the overriding container, never the old owner.
+            let retained = self
+                .revision_xml_positions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, position)| {
+                    (!(position.0 == slot && raw_is_modeled_attribute_carrier(*position)))
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            self.revision_xml = retained
+                .iter()
+                .map(|index| self.revision_xml[*index].clone())
+                .collect();
+            self.revision_xml_positions = retained
+                .iter()
+                .map(|index| self.revision_xml_positions[*index])
+                .collect();
+            for (raw, position) in other.revision_xml.iter().zip(&other.revision_xml_positions) {
+                if position.0 == slot && raw_is_modeled_attribute_carrier(*position) {
+                    self.revision_xml.push(raw.clone());
+                    self.revision_xml_positions.push(*position);
+                }
+            }
+        }
+        if other.shading.is_some() {
+            self.shading = other.shading.clone();
+        }
+        if other.num_ilvl.is_some() {
+            self.num_ilvl = other.num_ilvl;
+        }
+        if other.num_id.is_some() {
+            self.num_id = other.num_id;
+        }
+    }
+}
+
+fn write_ppr_with_positioned_raw<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    generated: &[u8],
+    ppr: &CT_PPr,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    let mut raw_order = (0..ppr.revision_xml.len())
+        .filter(|index| {
+            let position = ppr.revision_xml_positions[*index];
+            (matches!(position.0, PPR_TABS_SLOT | PPR_BORDER_SLOT)
+                && raw_is_modeled_attribute_carrier(position))
+                || replay_modeled_toggle_raw(position, ppr_modeled_toggle_present(ppr, position.0))
+        })
+        .collect::<Vec<_>>();
+    raw_order.sort_by_key(|index| {
+        let (slot, occurrence) = effective_ppr_raw_position(ppr, *index);
+        (slot, occurrence, *index)
+    });
+    let mut raw_index = 0usize;
+    let mut occurrences = [0usize; PPR_END_SLOT as usize + 1];
+    let mut reader = Reader::from_reader(generated);
+    reader.config_mut().trim_text(false);
+    let mut inside = false;
+    loop {
+        let event_start = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Start(element) if !inside => {
+                inside = true;
+                if let Some(emission) = emission {
+                    emission.write_copy(
+                        writer,
+                        &generated[event_start..reader.buffer_position() as usize],
+                    )?;
+                } else {
+                    writer.write_event(Event::Start(element))?;
+                }
+            }
+            Event::Start(element) => {
+                let slot = ppr_slot_for_name(element.local_name().as_ref());
+                write_ppr_raw_before(
+                    writer,
+                    ppr,
+                    &raw_order,
+                    &mut raw_index,
+                    (slot, occurrences[slot as usize]),
+                    emission,
+                )?;
+                let end = crate::text::generated_subtree_end(&mut reader, element.name().as_ref())?;
+                if let Some(emission) = emission {
+                    emission.write_copy(writer, &generated[event_start..end])?;
+                } else {
+                    writer.get_mut().write_all(&generated[event_start..end])?;
+                }
+                occurrences[slot as usize] += 1;
+            }
+            Event::Empty(element) => {
+                let slot = ppr_slot_for_name(element.local_name().as_ref());
+                write_ppr_raw_before(
+                    writer,
+                    ppr,
+                    &raw_order,
+                    &mut raw_index,
+                    (slot, occurrences[slot as usize]),
+                    emission,
+                )?;
+                let attributes = crate::properties::modeled_toggle_attributes(
+                    &ppr.revision_xml,
+                    &ppr.revision_xml_positions,
+                    slot,
+                )?;
+                let mut element = crate::text::FieldXmlStart::from_start(element, emission)?;
+                for (name, value) in attributes {
+                    element.push(&name, &value)?;
+                }
+                element.write(writer, true)?;
+                occurrences[slot as usize] += 1;
+            }
+            Event::End(element) if inside => {
+                write_ppr_raw_before(
+                    writer,
+                    ppr,
+                    &raw_order,
+                    &mut raw_index,
+                    (PPR_END_SLOT, 0),
+                    emission,
+                )?;
+                while let Some(index) = raw_order.get(raw_index).copied() {
+                    writer.get_mut().write_all(&ppr.revision_xml[index])?;
+                    raw_index += 1;
+                }
+                if let Some(emission) = emission {
+                    emission.write_copy(
+                        writer,
+                        &generated[event_start..reader.buffer_position() as usize],
+                    )?;
+                } else {
+                    writer.write_event(Event::End(element))?;
+                }
+                return Ok(());
+            }
+            Event::Eof => return Ok(()),
+            event => {
+                if let Some(emission) = emission {
+                    emission.write_copy(
+                        writer,
+                        &generated[event_start..reader.buffer_position() as usize],
+                    )?;
+                } else {
+                    writer.write_event(event)?;
+                }
+            }
+        }
+    }
+}
+
+fn write_ppr_raw_before<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    ppr: &CT_PPr,
+    raw_order: &[usize],
+    raw_index: &mut usize,
+    before: (u8, usize),
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    while let Some(index) = raw_order.get(*raw_index).copied() {
+        let position = effective_ppr_raw_position(ppr, index);
+        if position > before {
+            break;
+        }
+        if ppr.revision_xml_positions[index].0 == PPR_BORDER_SLOT
+            && raw_is_modeled_attribute_carrier(ppr.revision_xml_positions[index])
+        {
+            let selected_index = ppr.modeled_source_index(PPR_BORDER_SLOT).unwrap();
+            let raw = CT_PBdr::merge_source_in(
+                &ppr.revision_xml[index],
+                &ppr.revision_xml[selected_index],
+                ppr.borders.as_deref(),
+                selected_index == index,
+                emission,
+            )?;
+            let _transport = emission
+                .map(|emission| emission.prepaid_xml_transport(&raw))
+                .transpose()?;
+            writer.get_mut().write_all(&raw)?;
+        } else if ppr.revision_xml_positions[index].0 == PPR_TABS_SLOT
+            && raw_is_modeled_attribute_carrier(ppr.revision_xml_positions[index])
+        {
+            if ppr.modeled_source_index(PPR_TABS_SLOT) == Some(index) || ppr.tabs.is_none() {
+                let raw = crate::numbering::merge_tabs_source_in(
+                    &ppr.revision_xml[index],
+                    ppr.tabs.as_ref(),
+                    None,
+                    emission,
+                )?;
+                let _transport = emission
+                    .map(|emission| emission.prepaid_xml_transport(&raw))
+                    .transpose()?;
+                writer.get_mut().write_all(&raw)?;
+            } else {
+                writer.get_mut().write_all(&ppr.revision_xml[index])?;
+            }
+        } else {
+            writer.get_mut().write_all(&ppr.revision_xml[index])?;
+        }
+        *raw_index += 1;
+    }
+    Ok(())
+}
+
+fn effective_ppr_raw_position(ppr: &CT_PPr, index: usize) -> (u8, usize) {
+    let mut position = ppr.revision_xml_positions[index];
+    position.1 = raw_occurrence(position);
+    if PPR_MODELED_TOGGLES
+        .iter()
+        .any(|(_, slot)| *slot == position.0)
+        && let Some((carrier_index, carrier_occurrence)) = ppr
+            .revision_xml_positions
+            .iter()
+            .enumerate()
+            .find(|candidate| {
+                candidate.1.0 == position.0 && raw_is_modeled_attribute_carrier(*candidate.1)
+            })
+            .map(|(carrier_index, candidate)| (carrier_index, raw_occurrence(*candidate)))
+    {
+        position.1 = usize::from(
+            position.1 > carrier_occurrence
+                || (position.1 == carrier_occurrence && index > carrier_index),
+        );
+    }
+    if ppr.change.is_some() && position.0 >= PPR_CHANGE_SLOT {
+        (PPR_CHANGE_SLOT, 0)
+    } else {
+        position
+    }
+}
+
+fn ppr_slot_for_name(local: &[u8]) -> u8 {
+    match local {
+        b"pStyle" => PPR_STYLE_SLOT,
+        b"keepNext" => PPR_KEEP_NEXT_SLOT,
+        b"keepLines" => PPR_KEEP_LINES_SLOT,
+        b"pageBreakBefore" => PPR_PAGE_BREAK_SLOT,
+        b"framePr" => PPR_FRAME_SLOT,
+        b"widowControl" => PPR_WIDOW_SLOT,
+        b"numPr" => PPR_NUM_SLOT,
+        b"suppressLineNumbers" => PPR_SUPPRESS_LINE_NUMBERS_SLOT,
+        b"pBdr" => PPR_BORDER_SLOT,
+        b"shd" => PPR_SHADING_SLOT,
+        b"tabs" => PPR_TABS_SLOT,
+        b"suppressAutoHyphens" => PPR_SUPPRESS_HYPHENS_SLOT,
+        b"kinsoku" => PPR_KINSOKU_SLOT,
+        b"wordWrap" => PPR_WORD_WRAP_SLOT,
+        b"overflowPunct" => PPR_OVERFLOW_PUNCT_SLOT,
+        b"topLinePunct" => PPR_TOP_LINE_PUNCT_SLOT,
+        b"autoSpaceDE" => PPR_AUTO_SPACE_DE_SLOT,
+        b"autoSpaceDN" => PPR_AUTO_SPACE_DN_SLOT,
+        b"bidi" => PPR_BIDI_SLOT,
+        b"adjustRightInd" => PPR_ADJUST_RIGHT_IND_SLOT,
+        b"snapToGrid" => PPR_SNAP_TO_GRID_SLOT,
+        b"spacing" => PPR_SPACING_SLOT,
+        b"ind" => PPR_INDENT_SLOT,
+        b"contextualSpacing" => PPR_CONTEXTUAL_SPACING_SLOT,
+        b"mirrorIndents" => PPR_MIRROR_INDENTS_SLOT,
+        b"suppressOverlap" => PPR_SUPPRESS_OVERLAP_SLOT,
+        b"jc" => PPR_JUSTIFICATION_SLOT,
+        b"textDirection" => PPR_TEXT_DIRECTION_SLOT,
+        b"textAlignment" => PPR_TEXT_ALIGNMENT_SLOT,
+        b"textboxTightWrap" => PPR_TEXTBOX_TIGHT_WRAP_SLOT,
+        b"outlineLvl" => PPR_OUTLINE_SLOT,
+        b"divId" => PPR_DIV_ID_SLOT,
+        b"cnfStyle" => PPR_CNF_STYLE_SLOT,
+        b"rPr" => PPR_RUN_PROPERTIES_SLOT,
+        b"sectPr" => PPR_SECTION_SLOT,
+        b"pPrChange" => PPR_CHANGE_SLOT,
+        _ => PPR_END_SLOT,
+    }
+}
+
+/// Validate known leaf attributes only for checked owner replacement.
+/// Ordinary source parsing retains its permissive preservation contract.
+pub(crate) fn validate_checked_property_child(
+    element: &BytesStart<'_>,
+    prefixes: &[String],
+) -> Result<()> {
+    let local = element.local_name();
+    let name = local.as_ref();
+    let value = get_word_val_attr(element, prefixes)?;
+    if matches!(
+        name,
+        b"keepNext"
+            | b"keepLines"
+            | b"pageBreakBefore"
+            | b"widowControl"
+            | b"suppressLineNumbers"
+            | b"suppressAutoHyphens"
+            | b"kinsoku"
+            | b"wordWrap"
+            | b"overflowPunct"
+            | b"topLinePunct"
+            | b"autoSpaceDE"
+            | b"autoSpaceDN"
+            | b"bidi"
+            | b"adjustRightInd"
+            | b"snapToGrid"
+            | b"contextualSpacing"
+            | b"mirrorIndents"
+            | b"suppressOverlap"
+    ) {
+        if value
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "true" | "false" | "on" | "off" | "1" | "0"))
+        {
+            return Err(crate::error::OxmlError::InvalidValue(
+                "element XML paragraph toggle has an invalid Word boolean".into(),
+            ));
+        }
+    } else if matches!(
+        name,
+        b"pStyle"
+            | b"jc"
+            | b"outlineLvl"
+            | b"divId"
+            | b"cnfStyle"
+            | b"textDirection"
+            | b"textAlignment"
+            | b"textboxTightWrap"
+    ) {
+        let value = value.as_ref().ok_or_else(|| {
+            crate::error::OxmlError::InvalidValue(format!(
+                "element XML {} requires w:val",
+                String::from_utf8_lossy(name)
+            ))
+        })?;
+        let valid = match name {
+            b"jc" => ST_Jc::from_str(value).is_ok(),
+            b"outlineLvl" | b"divId" => value.parse::<u32>().is_ok(),
+            b"cnfStyle" => {
+                value.len() == 12 && value.bytes().all(|byte| matches!(byte, b'0' | b'1'))
+            }
+            b"textDirection" => matches!(
+                value.as_str(),
+                "lrTb" | "tbRl" | "btLr" | "lrTbV" | "tbRlV" | "tbLrV"
+            ),
+            b"textAlignment" => matches!(
+                value.as_str(),
+                "top" | "center" | "baseline" | "bottom" | "auto"
+            ),
+            b"textboxTightWrap" => matches!(
+                value.as_str(),
+                "none" | "allLines" | "firstAndLastLine" | "firstLineOnly" | "lastLineOnly"
+            ),
+            _ => !value.is_empty(),
+        };
+        if !valid {
+            return Err(crate::error::OxmlError::InvalidValue(format!(
+                "element XML {} has an invalid w:val",
+                String::from_utf8_lossy(name)
+            )));
+        }
+    }
+    if name == b"spacing" {
+        for attribute in element.attributes() {
+            let attribute = attribute?;
+            let key = attribute.key.as_ref();
+            let value = attribute.decoded_and_normalized_value(
+                quick_xml::XmlVersion::Implicit1_0,
+                element.decoder(),
+            )?;
+            let valid = if is_word_attribute(key, b"lineRule", prefixes) {
+                matches!(value.as_ref(), "auto" | "exact" | "atLeast")
+            } else if is_word_attribute(key, b"beforeAutospacing", prefixes)
+                || is_word_attribute(key, b"afterAutospacing", prefixes)
+            {
+                // The owning reader models only true/1 as enabled. Do not
+                // promise the valid on token while that reader treats it as false.
+                if value == "on" {
+                    return Err(crate::error::OxmlError::InvalidValue(
+                        "element XML spacing on boolean token is unsupported".into(),
+                    ));
+                }
+                matches!(value.as_ref(), "true" | "false" | "1" | "0" | "off")
+            } else {
+                true
+            };
+            if !valid {
+                return Err(crate::error::OxmlError::InvalidValue(
+                    "element XML spacing has an invalid modeled attribute".into(),
+                ));
+            }
+        }
+    }
+    if matches!(name, b"ilvl" | b"numId") {
+        let value = value.as_ref().ok_or_else(|| {
+            crate::error::OxmlError::InvalidValue(
+                "element XML numbering property requires w:val".into(),
+            )
+        })?;
+        let number = value.parse::<u32>().map_err(|_| {
+            crate::error::OxmlError::InvalidValue(
+                "element XML numbering property has an invalid integer".into(),
+            )
+        })?;
+        if name == b"ilvl" && number > 8 {
+            return Err(crate::error::OxmlError::InvalidValue(
+                "element XML numbering level above eight is unsupported".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn ppr_schema_slot(name: &[u8], word_prefixes: &[String]) -> Option<u8> {
+    let local = name.rsplit(|byte| *byte == b':').next().unwrap_or(name);
+    let slot = ppr_slot_for_name(local);
+    (slot != PPR_END_SLOT && is_word_element(name, local, word_prefixes)).then_some(slot)
+}
+
+fn ppr_modeled_slot(name: &[u8], word_prefixes: &[String]) -> Option<u8> {
+    let local = name.rsplit(|byte| *byte == b':').next().unwrap_or(name);
+    if !is_word_element(name, local, word_prefixes) {
+        return None;
+    }
+    matches!(
+        local,
+        b"pStyle"
+            | b"keepNext"
+            | b"keepLines"
+            | b"pageBreakBefore"
+            | b"framePr"
+            | b"widowControl"
+            | b"numPr"
+            | b"suppressLineNumbers"
+            | b"pBdr"
+            | b"shd"
+            | b"tabs"
+            | b"suppressAutoHyphens"
+            | b"kinsoku"
+            | b"wordWrap"
+            | b"overflowPunct"
+            | b"topLinePunct"
+            | b"autoSpaceDE"
+            | b"autoSpaceDN"
+            | b"snapToGrid"
+            | b"bidi"
+            | b"adjustRightInd"
+            | b"spacing"
+            | b"ind"
+            | b"contextualSpacing"
+            | b"mirrorIndents"
+            | b"suppressOverlap"
+            | b"jc"
+            | b"textDirection"
+            | b"textAlignment"
+            | b"textboxTightWrap"
+            | b"outlineLvl"
+            | b"divId"
+            | b"cnfStyle"
+            | b"rPr"
+            | b"sectPr"
+            | b"pPrChange"
+    )
+    .then(|| ppr_slot_for_name(local))
+}
+
+/// The `w:pPr` toggles that retain their source element as an attribute
+/// carrier, so an unowned attribute survives being modeled.
+const PPR_MODELED_TOGGLES: [(&[u8], u8); 13] = [
+    (b"kinsoku", PPR_KINSOKU_SLOT),
+    (b"wordWrap", PPR_WORD_WRAP_SLOT),
+    (b"overflowPunct", PPR_OVERFLOW_PUNCT_SLOT),
+    (b"topLinePunct", PPR_TOP_LINE_PUNCT_SLOT),
+    (b"autoSpaceDE", PPR_AUTO_SPACE_DE_SLOT),
+    (b"autoSpaceDN", PPR_AUTO_SPACE_DN_SLOT),
+    (b"snapToGrid", PPR_SNAP_TO_GRID_SLOT),
+    (b"bidi", PPR_BIDI_SLOT),
+    (b"suppressLineNumbers", PPR_SUPPRESS_LINE_NUMBERS_SLOT),
+    (b"adjustRightInd", PPR_ADJUST_RIGHT_IND_SLOT),
+    (b"contextualSpacing", PPR_CONTEXTUAL_SPACING_SLOT),
+    (b"mirrorIndents", PPR_MIRROR_INDENTS_SLOT),
+    (b"suppressOverlap", PPR_SUPPRESS_OVERLAP_SLOT),
+];
+
+/// The schema slot of a modeled `w:pPr` toggle, or `None` for any other
+/// element name.
+fn ppr_toggle_slot(name: &[u8], word_prefixes: &[String]) -> Option<u8> {
+    let local = name.rsplit(|byte| *byte == b':').next().unwrap_or(name);
+    if !is_word_element(name, local, word_prefixes) {
+        return None;
+    }
+    PPR_MODELED_TOGGLES
+        .iter()
+        .find(|(candidate, _)| *candidate == local)
+        .map(|(_, slot)| *slot)
+}
+
+fn ppr_toggle_field_mut(ppr: &mut CT_PPr, slot: u8) -> Option<&mut Option<bool>> {
+    match slot {
+        PPR_KINSOKU_SLOT => Some(&mut ppr.kinsoku),
+        PPR_WORD_WRAP_SLOT => Some(&mut ppr.word_wrap),
+        PPR_OVERFLOW_PUNCT_SLOT => Some(&mut ppr.overflow_punct),
+        PPR_TOP_LINE_PUNCT_SLOT => Some(&mut ppr.top_line_punct),
+        PPR_AUTO_SPACE_DE_SLOT => Some(&mut ppr.auto_space_de),
+        PPR_AUTO_SPACE_DN_SLOT => Some(&mut ppr.auto_space_dn),
+        PPR_SNAP_TO_GRID_SLOT => Some(&mut ppr.snap_to_grid),
+        PPR_BIDI_SLOT => Some(&mut ppr.bidi),
+        PPR_SUPPRESS_LINE_NUMBERS_SLOT => Some(&mut ppr.suppress_line_numbers),
+        PPR_ADJUST_RIGHT_IND_SLOT => Some(&mut ppr.adjust_right_ind),
+        PPR_CONTEXTUAL_SPACING_SLOT => Some(&mut ppr.contextual_spacing),
+        PPR_MIRROR_INDENTS_SLOT => Some(&mut ppr.mirror_indents),
+        PPR_SUPPRESS_OVERLAP_SLOT => Some(&mut ppr.suppress_overlap),
+        _ => None,
+    }
+}
+
+/// Whether the modeled toggle at `slot` still has a value, which decides
+/// whether a retained duplicate carrier replays. A slot that is not a modeled
+/// toggle is always present, so every other retained child is unaffected.
+fn ppr_modeled_toggle_present(ppr: &CT_PPr, slot: u8) -> bool {
+    match slot {
+        PPR_KINSOKU_SLOT => ppr.kinsoku.is_some(),
+        PPR_WORD_WRAP_SLOT => ppr.word_wrap.is_some(),
+        PPR_OVERFLOW_PUNCT_SLOT => ppr.overflow_punct.is_some(),
+        PPR_TOP_LINE_PUNCT_SLOT => ppr.top_line_punct.is_some(),
+        PPR_AUTO_SPACE_DE_SLOT => ppr.auto_space_de.is_some(),
+        PPR_AUTO_SPACE_DN_SLOT => ppr.auto_space_dn.is_some(),
+        PPR_SNAP_TO_GRID_SLOT => ppr.snap_to_grid.is_some(),
+        PPR_BIDI_SLOT => ppr.bidi.is_some(),
+        PPR_SUPPRESS_LINE_NUMBERS_SLOT => ppr.suppress_line_numbers.is_some(),
+        PPR_ADJUST_RIGHT_IND_SLOT => ppr.adjust_right_ind.is_some(),
+        PPR_CONTEXTUAL_SPACING_SLOT => ppr.contextual_spacing.is_some(),
+        PPR_MIRROR_INDENTS_SLOT => ppr.mirror_indents.is_some(),
+        PPR_SUPPRESS_OVERLAP_SLOT => ppr.suppress_overlap.is_some(),
+        PPR_CNF_STYLE_SLOT => ppr.cnf_style.is_some(),
+        _ => true,
+    }
+}
+
+/// Attribute ownership of the actual paragraph-property reader, not validator admission.
+pub(crate) fn source_modeled_attributes(
+    parent: &[u8],
+    local: &[u8],
+) -> Option<&'static [&'static [u8]]> {
+    if parent != b"pPr" {
+        return None;
+    }
+    ppr_modeled_slot(local, &[String::new()])?;
+    let shared =
+        crate::numbering::property_attributes(crate::numbering::PropertyKind::Paragraph, local);
+    Some(match local {
+        b"framePr" => &[
+            b"dropCap",
+            b"lines",
+            b"w",
+            b"h",
+            b"vSpace",
+            b"hSpace",
+            b"wrap",
+            b"hAnchor",
+            b"vAnchor",
+            b"x",
+            b"xAlign",
+            b"y",
+            b"yAlign",
+            b"hRule",
+            b"anchorLock",
+        ],
+        b"shd" => crate::properties::source_shading_attributes(),
+        b"numPr" | b"pBdr" | b"tabs" | b"rPr" | b"sectPr" | b"pPrChange" => &[],
+        _ if !shared.is_empty() => shared,
+        // Remaining modeled paragraph leaves are the current scalar/toggle fields.
+        _ => &[b"val"],
+    })
+}
+
+/// Permissive readers can discard unsupported values even for a recognized key.
+pub(crate) fn source_value_is_modeled(
+    parent: &[u8],
+    local: &[u8],
+    key: &[u8],
+    value: &str,
+) -> bool {
+    if parent == b"numPr" && key == b"val" && matches!(local, b"ilvl" | b"numId") {
+        return value.parse::<u32>().is_ok();
+    }
+    if parent != b"pPr" {
+        return true;
+    }
+    if key == b"val" {
+        if local == b"jc" {
+            return ST_Jc::from_str(value).is_ok();
+        }
+        if local == b"outlineLvl" {
+            return value.parse::<u32>().is_ok();
+        }
+        if ppr_toggle_slot(local, &[String::new()]).is_some()
+            || matches!(
+                local,
+                b"keepNext"
+                    | b"keepLines"
+                    | b"pageBreakBefore"
+                    | b"widowControl"
+                    | b"suppressAutoHyphens"
+            )
+        {
+            return crate::numbering::parse_on_off_token(value).is_some();
+        }
+    }
+    if local == b"spacing" && matches!(key, b"beforeAutospacing" | b"afterAutospacing") {
+        return crate::numbering::parse_on_off_token(value)
+            .is_some_and(|parsed| parsed == matches!(value, "1" | "true"));
+    }
+    true
+}

@@ -1,0 +1,149 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/oxml-core",
+    "crates/oxml-py-support",
+    "crates/oxml-drawing",
+    "crates/oxml-layout",
+    "crates/oxml-media",
+    "crates/oxml-opc",
+    "crates/oxml-pdf",
+    "crates/oxml-sml",
+    "crates/oxml-cli-support",
+    "crates/oxml-chart",
+    "crates/rpptx",
+    "crates/rpptx-cli",
+    "crates/rpptx-chart",
+    "crates/rpptx-layout",
+    "crates/rpptx-oxml",
+    "crates/rpptx-render",
+    "crates/rpptx-wasm",
+    "crates/rpptx-py",
+    "crates/rdocx-opc",
+    "crates/rdocx-oxml",
+    "crates/rdocx",
+    "crates/rdocx-layout",
+    "crates/rdocx-pdf",
+    "crates/rdocx-html",
+    "crates/rdocx-py",
+    "crates/rdocx-cli",
+    "crates/rdocx-wasm",
+]
+
+[workspace.package]
+version = "0.17.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.93"
+authors = ["Atul Sharma"]
+repository = "https://github.com/tensorbee/rdocx"
+homepage = "https://github.com/tensorbee/rdocx"
+keywords = ["docx", "word", "pdf", "ooxml", "document"]
+categories = ["parser-implementations", "text-processing"]
+
+[workspace.metadata.release]
+consolidate-commits = true
+dependent-version = "upgrade"
+pre-release-commit-message = "Prepare release {{version}}"
+verify = true
+publish = false
+tag = false
+push = false
+
+[workspace.dependencies]
+# Internal crates
+oxml-core = { path = "crates/oxml-core", version = "0.15.0" }
+oxml-py-support = { path = "crates/oxml-py-support", version = "0.17.0" }
+oxml-drawing = { path = "crates/oxml-drawing", version = "0.15.0" }
+oxml-layout = { path = "crates/oxml-layout", version = "0.15.0", default-features = false }
+oxml-media = { path = "crates/oxml-media", version = "0.15.0" }
+oxml-opc = { path = "crates/oxml-opc", version = "0.15.0" }
+oxml-pdf = { path = "crates/oxml-pdf", version = "0.15.0", default-features = false }
+oxml-sml = { path = "crates/oxml-sml", version = "0.15.0" }
+oxml-cli-support = { path = "crates/oxml-cli-support", version = "0.15.0" }
+oxml-chart = { path = "crates/oxml-chart", version = "0.15.0" }
+rpptx = { path = "crates/rpptx", version = "0.15.0", default-features = false }
+rpptx-cli = { path = "crates/rpptx-cli", version = "0.15.0" }
+rpptx-chart = { path = "crates/rpptx-chart", version = "0.15.0" }
+rpptx-layout = { path = "crates/rpptx-layout", version = "0.15.0" }
+rpptx-oxml = { path = "crates/rpptx-oxml", version = "0.15.0" }
+rpptx-render = { path = "crates/rpptx-render", version = "0.15.0", default-features = false }
+rpptx-py = { path = "crates/rpptx-py", version = "0.15.0" }
+rdocx-opc = { path = "crates/rdocx-opc", version = "0.17.0" }
+rdocx-oxml = { path = "crates/rdocx-oxml", version = "0.17.0" }
+rdocx = { path = "crates/rdocx", version = "0.17.0", default-features = false }
+rdocx-layout = { path = "crates/rdocx-layout", version = "0.17.0", default-features = false }
+rdocx-pdf = { path = "crates/rdocx-pdf", version = "0.17.0" }
+rdocx-html = { path = "crates/rdocx-html", version = "0.17.0" }
+rdocx-py = { path = "crates/rdocx-py", version = "0.17.0" }
+
+# External dependencies
+#
+# Feature sets are deliberately minimal: a DOCX is a ZIP that only ever uses
+# the Stored and Deflate methods, so the zip aes-crypto/bzip2/lzma/ppmd/zstd/xz
+# codecs and the `time` timestamp support are all dead weight, and they drag in
+# getrandom -> wasm-bindgen/js-sys. Agile encryption uses the separate,
+# default-off RustCrypto and CFB dependencies below. Likewise fontdb's `memmap`
+# feature is off because fonts are read into memory anyway, and it avoids
+# memmap2 entirely.
+zip = { version = "9.0.3", default-features = false, features = [
+    "deflate-flate2-zlib-rs",
+] }
+quick-xml = "0.41"
+thiserror = "2"
+aes = "0.9.2"
+base64 = "0.23.1"
+cbc = { version = "0.2.1", features = ["alloc", "block-padding"] }
+cfb = "0.14.0"
+encoding_rs = "0.8.35"
+getrandom = "0.3.4"
+hmac = "0.13.0"
+sha1 = "0.11.0"
+sha2 = "0.11.0"
+ring = { version = "0.17.14", default-features = false, features = ["std"] }
+x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
+fontdb = { version = "0.23", default-features = false, features = [
+    "std",
+    "fs",
+    "fontconfig",
+] }
+harfrust = "0.12"
+hypher = { version = "=0.1.7", default-features = false, features = [
+    "alloc",
+    "english",
+    "french",
+    "german",
+    "spanish",
+] }
+icu_segmenter = { version = "=2.3.0", default-features = false, features = [
+    "auto",
+    "compiled_data",
+] }
+ttf-parser = "0.25"
+unicode-bidi = "=0.3.18"
+unicode-linebreak = "0.1"
+itoa = "1"
+regex = "1.13"
+clap = { version = "4.6", features = ["derive"] }
+serde_json = "1"
+scraper = { version = "0.27", default-features = false, features = ["errors"] }
+lopdf = { version = "0.44.0", default-features = false }
+smallvec = "1.15"
+pdf-writer = "0.15"
+subsetter = "0.2"
+miniz_oxide = "0.9"
+tiny-skia = "0.12"
+gif = "0.14.2"
+zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
+jpeg-encoder = { version = "=0.6.0", default-features = false }
+tiff = { version = "0.11.3", default-features = false }
+wasm-bindgen = "0.2.126"
+wasm-bindgen-test = "=0.3.76"
+js-sys = "0.3.103"
+pyo3 = { version = "=0.29.0", features = ["abi3-py39"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
