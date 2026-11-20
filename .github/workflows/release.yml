@@ -1,0 +1,208 @@
+name: Release
+
+# Manual only. Give the version, the workflow does the rest:
+#   1. sets the version, regenerates CHANGELOG.md, commits and tags vX.Y.Z
+#   2. builds the `oxoffice` binary and the Python wheels for every platform
+#   3. publishes a GitHub release with every artifact and SHA256SUMS
+# With dry_run, it builds from main and publishes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v (e.g. 0.1.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Build everything but do not tag or publish"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  prepare:
+    name: Version, changelog and tag
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.commit.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Check the version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a SemVer version"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+      - run: rustup show active-toolchain
+      - name: Set the version
+        run: |
+          python3 scripts/set_version.py "$VERSION"
+          cargo update --workspace
+      - name: Changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag v${{ inputs.version }}
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+      - name: Commit and tag
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "chore(release): v$VERSION"
+          git tag -a "v$VERSION" -m "oxoffice v$VERSION"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          else
+            git push origin HEAD:main "v$VERSION"
+            echo "ref=v$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+  cli:
+    name: CLI ${{ matrix.target }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zig: true }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zig: true }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - run: rustup target add ${{ matrix.target }}
+      - name: Build (glibc 2.28 through zig)
+        if: matrix.zig
+        run: |
+          python3 -m pip install ziglang cargo-zigbuild
+          cargo zigbuild --release --locked -p oxoffice-cli --target ${{ matrix.target }}.2.28
+      - name: Build
+        if: ${{ !matrix.zig }}
+        run: cargo build --release --locked -p oxoffice-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name="oxoffice-$VERSION-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp README.md LICENSE NOTICE "dist/$name/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/oxoffice.exe" "dist/$name/"
+            (cd dist && 7z a "$name.zip" "$name" >/dev/null)
+          else
+            cp "target/${{ matrix.target }}/release/oxoffice" "dist/$name/"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+
+  wheels:
+    name: Wheels ${{ matrix.os }} ${{ matrix.target }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64, manylinux: "2_28" }
+          - { os: ubuntu-latest, target: aarch64, manylinux: "2_28" }
+          - { os: macos-latest, target: aarch64 }
+          - { os: macos-latest, target: x86_64 }
+          - { os: windows-latest, target: x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --locked -m crates/oxoffice-py/Cargo.toml --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  sdist:
+    name: Source distribution
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: -m crates/oxoffice-py/Cargo.toml --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish:
+    name: GitHub release
+    needs: [prepare, cli, wheels, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: oxoffice v${{ inputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: dist/*
+          prerelease: ${{ startsWith(inputs.version, '0.') }}
