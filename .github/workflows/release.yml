@@ -37,7 +37,7 @@ jobs:
     outputs:
       ref: ${{ steps.commit.outputs.ref }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
@@ -55,8 +55,9 @@ jobs:
           python3 scripts/set_version.py "$VERSION"
           cargo update --workspace
       - name: Changelog
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
         with:
+          version: v2.14.2
           config: cliff.toml
           args: --tag v${{ inputs.version }}
         env:
@@ -92,14 +93,18 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.ref }}
       - run: rustup target add ${{ matrix.target }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: matrix.zig
+        with:
+          python-version: "3.12"
       - name: Build (glibc 2.28 through zig)
         if: matrix.zig
         run: |
-          python3 -m pip install ziglang cargo-zigbuild
+          python3 -m pip install --require-hashes -r .github/requirements/zig.txt
           cargo zigbuild --release --locked -p oxoffice-cli --target ${{ matrix.target }}.2.28
       - name: Build
         if: ${{ !matrix.zig }}
@@ -118,7 +123,7 @@ jobs:
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi
           rm -rf "dist/$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-${{ matrix.target }}
           path: dist/*
@@ -137,18 +142,19 @@ jobs:
           - { os: windows-latest, target: x64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
+          maturin-version: v1.16.0
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --locked -m crates/oxoffice-py/Cargo.toml --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
@@ -158,14 +164,15 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.ref }}
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
+          maturin-version: v1.16.0
           command: sdist
           args: -m crates/oxoffice-py/Cargo.toml --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -175,11 +182,11 @@ jobs:
     needs: [prepare, cli, wheels, sdist]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
@@ -189,8 +196,9 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
       - name: Release notes
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
         with:
+          version: v2.14.2
           config: cliff.toml
           args: --latest --strip header
         env:
@@ -199,7 +207,7 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ inputs.version }}
           name: oxoffice v${{ inputs.version }}

@@ -1,0 +1,21 @@
+# Keeps the SHA-pinned actions and the hash-pinned CI tools current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /.github/requirements
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      ci-tools:
+        patterns: ["*"]

@@ -42,6 +42,13 @@ since squash merges turn titles into the commits of `main`.
 
 `dry_run` builds everything from `main` and publishes nothing.
 
+**Everything is pinned.** Every action is referenced by its full commit SHA
+with the release tag as a comment, Python tools come from requirement files
+compiled with hashes (`.github/requirements/*.txt`, installed with
+`--require-hashes`), maturin and git-cliff run at fixed versions inside their
+actions, and the Rust toolchain is pinned by `rust-toolchain.toml`.
+Dependabot proposes the updates once a month.
+
 ### Release assets
 
 The contract with oxoffice-skills and any installer:

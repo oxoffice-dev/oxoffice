@@ -53,6 +53,16 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 - Rendering checks use the bundled fonts only. System fonts differ between
   machines.
 
+## CI
+
+- Pin every GitHub Action by its full commit SHA, with the tag as a comment:
+  `uses: actions/checkout@<sha> # v7.0.1`. Never a bare tag or branch.
+- Python tools used by CI live in `.github/requirements/*.in` and are
+  compiled with hashes: `uv pip compile --universal --python-version 3.12
+  --generate-hashes X.in -o X.txt`, installed with `pip install
+  --require-hashes -r X.txt`.
+- Dependabot opens the monthly updates. Review them like any change.
+
 ## Documents and Office apps
 
 - Never leave a document open in Word, PowerPoint or any GUI app. Use
