@@ -21,6 +21,16 @@ of dates.
 Fork, rename, a new test suite, CI, release, the skills repository. See
 [the fork spec](specs/2026-11-20-friendly-fork-of-rdocx.md).
 
+## 1b. What the skills need
+
+The skills become documentation and examples only. What their helper scripts
+did moves into the library (atomic save that refuses its input, counted
+replacements, comments on a text, every story with its part and style, text
+spans, recursive shape walk), and known limitations become readable with
+`oxoffice limitations`. See
+[the helpers spec](specs/2026-11-20-skill-helpers-in-the-library.md) and
+[the limitations spec](specs/2026-11-20-known-limitations-in-the-cli.md).
+
 ## 2. Code inspection and refactoring
 
 Read the code with fresh eyes before building on it.
