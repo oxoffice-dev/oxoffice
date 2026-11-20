@@ -1,6 +1,6 @@
 ---
 date: 2026-11-20
-status: draft
+status: accepted
 scope: docx, pptx, cli, python
 ---
 
