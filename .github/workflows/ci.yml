@@ -9,8 +9,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A pull request keeps only its latest run. Every commit of main gets its own
+# run, so no run of main is queued behind or cancelled by another.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
