@@ -53,6 +53,14 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 - Rendering checks use the bundled fonts only. System fonts differ between
   machines.
 
+## Known limitations
+
+A limitation users can hit, with a workaround, goes in
+`crates/oxoffice-cli/limitations.json` with an issue labelled `limitation`,
+then `python3 scripts/limitations_doc.py` regenerates
+[LIMITATIONS.md](LIMITATIONS.md). The pull request that fixes it removes the
+entry and closes the issue.
+
 ## CI
 
 - Pin every GitHub Action by its full commit SHA, with the tag as a comment:

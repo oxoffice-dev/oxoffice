@@ -1130,6 +1130,7 @@ dependencies = [
  "clap",
  "oxoffice-docx-cli",
  "oxoffice-pptx-cli",
+ "serde_json",
 ]
 
 [[package]]

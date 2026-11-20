@@ -49,4 +49,4 @@ dependency bumps and documentation.
 | 2026-11-20 | [CI and release from scratch](2026-11-20-ci-and-release.md) | accepted |
 | 2026-11-20 | [A test suite from scratch](2026-11-20-test-suite-from-scratch.md) | accepted |
 | 2026-11-20 | [Skill helpers move into the library](2026-11-20-skill-helpers-in-the-library.md) | draft |
-| 2026-11-20 | [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md) | draft |
+| 2026-11-20 | [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md) | shipped |

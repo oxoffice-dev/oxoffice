@@ -29,6 +29,9 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
    PowerPoint close every document and quit.
 7. **Keep unmodelled XML verbatim and child order exact.** See the model
    conventions in the architecture doc.
+8. **Known limitations** live in `crates/oxoffice-cli/limitations.json`
+   (shown by `oxoffice limitations`). Add one with its issue, remove it with
+   the fix, regenerate `docs/LIMITATIONS.md`.
 
 ## Commands
 

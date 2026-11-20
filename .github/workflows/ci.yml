@@ -41,6 +41,8 @@ jobs:
         with:
           cache-workspace-crates: true
       - run: cargo fmt --all --check
+      - name: Limitations page is up to date
+        run: python3 scripts/limitations_doc.py --check
       - name: Wheel licence files match the root ones
         run: cmp LICENSE crates/oxoffice-py/LICENSE && cmp NOTICE crates/oxoffice-py/NOTICE
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
