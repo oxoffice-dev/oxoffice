@@ -119,6 +119,7 @@ pub(crate) fn docx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyEr
         oxoffice_docx::Error::Opc(_)
         | oxoffice_docx::Error::Io(_)
         | oxoffice_docx::Error::NoDocumentPart
+        | oxoffice_docx::Error::OverwritesSource { .. }
         | oxoffice_docx::Error::UnavailableImageDimensions { .. } => "PackageError",
         oxoffice_docx::Error::Oxml(_) => "XmlError",
         oxoffice_docx::Error::Layout(_)

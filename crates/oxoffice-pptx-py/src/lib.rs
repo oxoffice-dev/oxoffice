@@ -119,6 +119,7 @@ pub(crate) fn pptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyEr
         oxoffice_pptx::Error::MalformedPart { .. } => "XmlError",
         oxoffice_pptx::Error::Package(_)
         | oxoffice_pptx::Error::MissingMainDocument
+        | oxoffice_pptx::Error::OverwritesSource { .. }
         | oxoffice_pptx::Error::MissingRelationship { .. }
         | oxoffice_pptx::Error::WrongRelationshipType { .. }
         | oxoffice_pptx::Error::ExternalRelationship { .. }

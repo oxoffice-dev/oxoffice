@@ -54,6 +54,12 @@ pub enum Error {
         message: String,
     },
 
+    #[error(
+        "refusing to save over {}, the file this document was opened from; pass overwrite_source to replace it",
+        path.display()
+    )]
+    OverwritesSource { path: std::path::PathBuf },
+
     #[error("story location error: {0}")]
     Story(#[from] crate::document::StoryError),
 

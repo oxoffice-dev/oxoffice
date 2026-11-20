@@ -1,0 +1,6 @@
+# Unoptimised builds (debug, and the `ci` profile's workspace crates) keep
+# several copies of a Presentation or a Document on the stack per edit, and
+# some edits outgrow the 2 MiB of a test thread. Test threads get the 8 MiB
+# that the `oxoffice` command gives its own thread and that a main thread has.
+[env]
+RUST_MIN_STACK = "8388608"

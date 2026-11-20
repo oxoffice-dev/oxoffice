@@ -46,6 +46,11 @@ with open("review.pdf", "wb") as output:
     output.write(pdf)
 ```
 
+Unlike python-pptx, `save` refuses to replace the file the presentation was
+opened from, so an edit never silently overwrites its input. Save under
+another name, or pass `overwrite_source=True` to replace it on purpose. The
+file is written atomically: a failed save leaves the destination as it was.
+
 ## Capabilities
 
 - File and byte-based PPTX input and output.

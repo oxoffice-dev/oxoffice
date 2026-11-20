@@ -52,6 +52,22 @@ One pull request per row group, each with tests on the corpus:
 6. `Shapes::walk()`.
 7. The skills drop both scripts and cite the new calls.
 
+## Outcome
+
+- **1. Atomic save** (#10): `save` on `Document` and `Presentation`
+  remembers the file a document was opened from (`open`, `open_encrypted`,
+  `open_flat_opc`) and refuses it with `Error::OverwritesSource`, compared by
+  device and inode on Unix and by canonical path elsewhere, so a link, a `..`
+  spelling or a hard link is refused too. `save_with_options(path,
+  SaveOptions { overwrite_source: true })` replaces it; Python has
+  `save(path, *, overwrite_source=False)`. Writing was already atomic with the
+  mode kept. Only `save` refuses: `save_encrypted`, `save_as_package_class`
+  and the conversions do not. The path is carried by staged clones and every
+  reopen, checked after a mix of edits in the Rust and Python tests.
+- Unoptimised builds overflow the 2 MiB stack of a test thread on some
+  PowerPoint edits (already on `main`): `.cargo/config.toml` gives test
+  threads 8 MiB, the size the CLI uses.
+
 ## Links
 
 - [ROADMAP.md](../ROADMAP.md), how the library is meant to be used.

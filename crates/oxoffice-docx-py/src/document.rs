@@ -14046,7 +14046,16 @@ impl PyDocument {
         Ok(PyTuple::new(py, reports)?.unbind())
     }
 
-    fn save(&mut self, path: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<()> {
+    /// Save to a path or a binary stream. A document opened from a file
+    /// refuses to replace that file unless `overwrite_source` is true, unlike
+    /// python-docx.
+    #[pyo3(signature = (path, *, overwrite_source = false))]
+    fn save(
+        &mut self,
+        path: &Bound<'_, PyAny>,
+        overwrite_source: bool,
+        py: Python<'_>,
+    ) -> PyResult<()> {
         if let Ok(path) = path.extract::<PathBuf>() {
             if path
                 .extension()
@@ -14057,8 +14066,9 @@ impl PyDocument {
                     "use to_pdf() to export a PDF instead of save()",
                 ));
             }
+            let options = oxoffice_docx::SaveOptions { overwrite_source };
             return py
-                .detach(|| self.inner.save(path))
+                .detach(|| self.inner.save_with_options(path, options))
                 .map_err(|error| docx_to_pyerr(py, error));
         }
         let write = path.getattr("write").map_err(|_| PyTypeError::new_err(

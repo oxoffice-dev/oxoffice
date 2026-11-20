@@ -65,8 +65,11 @@ impl Document {
     }
 
     /// Open a bounded Flat OPC XML package from a path.
+    ///
+    /// As with [`Document::open`], [`Document::save`] then refuses to replace
+    /// that file.
     pub fn open_flat_opc<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
+        let file = std::fs::File::open(path.as_ref())?;
         let encoded_limit = DEFAULT_LIMITS
             .max_total_uncompressed_bytes
             .saturating_mul(2)
@@ -77,7 +80,9 @@ impl Document {
         if bytes.len() as u64 > encoded_limit {
             return Err(invalid("Flat OPC input exceeds the encoded-size limit"));
         }
-        Self::from_flat_opc_bytes_with_limits(&bytes, DEFAULT_LIMITS)
+        let mut document = Self::from_flat_opc_bytes_with_limits(&bytes, DEFAULT_LIMITS)?;
+        document.remember_source(path.as_ref());
+        Ok(document)
     }
 
     /// Serialize a staged copy as deterministic Flat OPC XML.
