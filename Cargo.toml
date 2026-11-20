@@ -75,7 +75,7 @@ oxoffice-pptx-py = { path = "crates/oxoffice-pptx-py", version = "0.1.0" }
 # default-off RustCrypto and CFB dependencies below. Likewise fontdb's `memmap`
 # feature is off because fonts are read into memory anyway, and it avoids
 # memmap2 entirely.
-zip = { version = "9.0.3", default-features = false, features = [
+zip = { version = "9.0.5", default-features = false, features = [
     "deflate-flate2-zlib-rs",
 ] }
 quick-xml = "0.41"
