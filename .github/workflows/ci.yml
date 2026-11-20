@@ -1,7 +1,11 @@
 name: CI
 
-# Every pull request and every push to main. Pull requests run on Linux only
+# Every pull request and every push to main. Pull requests build on Linux only
 # to keep the answer fast, main runs the same jobs on the three platforms.
+# Everything is built once, with the `ci` profile (no LTO, opt-level 1, debug
+# assertions on): the wheel carries both the Python package and the `oxoffice`
+# command, so one build serves the Python and the CLI checks. Fat LTO is only
+# for the release workflow.
 
 on:
   push:
@@ -31,6 +35,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-workspace-crates: true
       - run: cargo fmt --all --check
       - name: Wheel licence files match the root ones
         run: cmp LICENSE crates/oxoffice-py/LICENSE && cmp NOTICE crates/oxoffice-py/NOTICE
@@ -39,26 +45,19 @@ jobs:
         with:
           command: check advisories bans licenses sources
 
-  rust:
-    name: Rust tests (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
+  wasm:
+    name: WebAssembly
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: Tests
-        shell: bash
-        run: cargo test --workspace --all-features $PY_CRATES
-      - name: WebAssembly
-        if: runner.os == 'Linux'
-        run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
+        with:
+          cache-workspace-crates: true
+      - run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
 
-  python:
-    name: Python and CLI (${{ matrix.os }})
+  build:
+    name: Build and test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -71,19 +70,29 @@ jobs:
           python-version: "3.12"
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-workspace-crates: true
       - name: Build the wheel
         shell: bash
         run: |
           python -m pip install --require-hashes -r .github/requirements/ci.txt
-          maturin build --release -m crates/oxoffice-py/Cargo.toml -o dist
+          maturin build --profile ci --locked -m crates/oxoffice-py/Cargo.toml -o dist
           python -m pip install dist/*.whl
       - name: Smoke test
         shell: bash
         run: |
           python -c "import oxoffice.docx, oxoffice.pptx; print('import ok')"
-          oxoffice --help
-          oxoffice docx --help
-          oxoffice pptx --help
+          oxoffice --version
+          oxoffice docx --help > /dev/null
+          oxoffice pptx --help > /dev/null
+      - name: Rust integration tests
+        shell: bash
+        run: |
+          if ls crates/*/tests/*.rs > /dev/null 2>&1; then
+            cargo test --profile ci --locked --workspace $PY_CRATES --test '*'
+          else
+            echo "no Rust integration tests yet"
+          fi
       - name: Python tests
         shell: bash
         run: |

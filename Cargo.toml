@@ -131,8 +131,22 @@ wasm-bindgen-test = "=0.3.76"
 js-sys = "0.3.103"
 pyo3 = { version = "=0.29.0", features = ["abi3-py310"] }
 
+# Release builds (the release workflow only): smallest and fastest binaries,
+# slow to compile because of fat LTO and one codegen unit.
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# CI builds: quick to compile, fast enough to run the tests, with debug
+# assertions and overflow checks on. Never used for a release.
+[profile.ci]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 16
+incremental = false
+debug-assertions = true
+overflow-checks = true
+strip = false

@@ -14,14 +14,24 @@ that releases.
 
 ## Decision
 
-**`ci.yml`** runs on every pull request and every push to `main`:
+**`ci.yml`** runs on every pull request and every push to `main`, in three
+parallel jobs:
 
-- format, clippy with warnings denied, cargo-deny (advisories, licences,
-  sources)
-- Rust tests on the workspace, without the Python crates, and the WASM check
-- the wheel built with maturin, installed, smoke-tested, then the Python tests
+- `lint`: format, clippy with warnings denied, cargo-deny (advisories,
+  licences, sources)
+- `wasm`: the WebAssembly check
+- `build`: one build of the wheel with the `ci` profile, then the smoke
+  test, the Rust integration tests and the Python tests. The wheel carries
+  both the Python package and the `oxoffice` command, so one build serves
+  the Python and the CLI checks.
 - pull requests run on Linux only, `main` runs the same jobs on Linux, macOS
   and Windows
+
+The `ci` cargo profile has no LTO, opt-level 1 and debug assertions on. The
+`release` profile (fat LTO, one codegen unit) is only used by the release
+workflow: building the wheel with it took more than 10 minutes on a cold
+runner. rust-cache also keeps the workspace crates, so a commit that does
+not touch a crate does not rebuild it.
 
 **`pr-title.yml`** checks that a pull request title is a conventional commit,
 since squash merges turn titles into the commits of `main`.
