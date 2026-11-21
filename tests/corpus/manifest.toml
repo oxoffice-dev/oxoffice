@@ -29,7 +29,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "pictu
 [[file]]
 path = "authored/form.docx"
 producer = "python-docx 1.2.0"
-size = 39281
+size = 39360
 features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection", "rsid"]
 
 [[file]]
@@ -143,7 +143,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "pictu
 [[file]]
 path = "libreoffice/form.docx"
 producer = "LibreOffice 26.2.6.3"
-size = 23874
+size = 23950
 features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection"]
 known_failure = 57
 rewritten = ["word/document.xml"]

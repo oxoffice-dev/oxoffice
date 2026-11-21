@@ -1002,7 +1002,13 @@ def form(path: Path) -> None:
     p = doc.add_paragraph("Name: ")
     ox.append(p._p, ox.sdt_text(next(ids), "Signatory", "Oliver Grant") + ox.run("    Date: ")
               + ox.sdt_date(next(ids), "Signature date", "2026-11-21", "21 November 2026"))
+    # Tagged `signature`, the tag PDF form export reads as a signature field.
+    p = doc.add_paragraph("Signature: ")
+    ox.append(p._p, ox.sdt_text(next(ids), "Signature", "(sign here)"))
     doc.add_heading("For procurement use only", level=2)
+    p = doc.add_paragraph("Supplier reference: ")
+    ox.append(p._p, ox.sdt(ox.run("SUP-2026-0147"), next(ids), "Supplier reference", "<w:text/>",
+                           lock="contentLocked"))
     p = doc.add_paragraph("Supplier category: ")
     ox.append(p._p, ox.sdt_list(next(ids), "Category", ["Strategic", "Preferred", "Approved", "Occasional"], 2)
               + ox.run("    Reviewed: ") + ox.sdt_checkbox(next(ids), "Reviewed", False))
