@@ -1873,10 +1873,17 @@ fn a_note_only_the_edited_version_references_is_revised_in_place() {
         }
         doc
     };
+    let notes = |doc: &Document| {
+        doc.footnotes()
+            .into_iter()
+            .map(|(_, text)| text.trim().to_owned())
+            .collect::<Vec<_>>()
+    };
     let mut doc = redline(document("Draft", false), &document("Final", true));
-    assert_eq!(
-        noted_texts(&accepted(&mut doc)),
-        ["One.[Src]", "Two.[Final]"]
-    );
-    assert_eq!(noted_texts(&rejected(&mut doc)), ["One.[Src]", "Two."]);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["One.[Src]", "Two.[Final]"]);
+    assert_eq!(notes(&copy), ["Final", "Src"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["One.[Src]", "Two."]);
+    assert_eq!(notes(&copy), ["Draft", "Src"]);
 }

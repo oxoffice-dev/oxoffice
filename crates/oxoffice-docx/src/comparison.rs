@@ -6527,8 +6527,10 @@ fn moved_pending_references(
 /// the original's: the notes referenced in the main story are paired in
 /// reference order by their text (the longest common sequence, then the
 /// notes left between two pairs, by position, when both sides leave as many).
-/// A note only the edited input holds keeps its id, or takes a new one where
-/// the original uses it. Nothing changes when a note is referenced twice or
+/// An unpaired edited note keeps its id, so the comparison revises in place
+/// a note one version does not reference; it takes a new id only when a
+/// paired note takes its id or both versions reference a note under it.
+/// Nothing changes when a note is referenced twice or
 /// outside the main story, when a reference sits in a tracked change, or
 /// while note custody of an earlier comparison is pending.
 /// Returns each edited id it changed, mapped to the id it gave.
