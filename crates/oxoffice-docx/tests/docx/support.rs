@@ -1,9 +1,11 @@
 //! Helpers shared by the modules of this binary.
 
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use oxoffice_docx::Document;
+use oxoffice_opc::OpcPackage;
 
 /// Every file of the corpus (`tests/corpus/files`) with this extension,
 /// sorted.
@@ -58,4 +60,25 @@ pub fn doc_with(paragraphs: &[&str]) -> Document {
 /// The texts of the body paragraphs, in order.
 pub fn texts(doc: &Document) -> Vec<String> {
     doc.paragraphs().iter().map(|p| p.text()).collect()
+}
+
+/// A new document whose body holds this raw `w:` XML, before the section
+/// properties: markup as Word, Google Docs or LibreOffice write it, which
+/// the facade would not write itself.
+pub fn doc_with_body(body: &str) -> Document {
+    let bytes = Document::new().to_bytes().expect("new document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    let start = xml.find("<w:body>").expect("body start") + "<w:body>".len();
+    let end = xml
+        .find("<w:sectPr")
+        .or_else(|| xml.find("</w:body>"))
+        .expect("body end");
+    let xml = format!("{}{body}{}", &xml[..start], &xml[end..]);
+    package.set_part(&part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document with this body opens")
 }
