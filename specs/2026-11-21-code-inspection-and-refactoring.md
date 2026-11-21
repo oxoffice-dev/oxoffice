@@ -33,9 +33,11 @@ inspection below was read-only, on `main` at 72cda9c.
 - **About 2,000 lines sit under `#[cfg(debug_assertions)]`**: work counters
   exposed to Python, and cross-checks that run the whole-document route next
   to each fast route.
-- **The safety net for moving code is thin.** The Rust integration tests are
-  a few hundred lines, no test renders a Word document, and the chart crate
-  has no tests. The compiler is the real guard of a pure move.
+- **The safety net for moving code is thin today.** The Rust integration
+  tests are a few hundred lines, no test renders a Word document, and the
+  chart crate has no tests, so the compiler is the real guard of a pure move.
+  The [behaviour tests by area](2026-11-21-corpus-at-scale-and-behaviour-tests.md)
+  are on their way (about 10,000 lines of Word tests in #34).
 
 ## Decision
 
@@ -50,7 +52,7 @@ code is one dense job, size alone is not a reason.
 | pptx `lib.rs` | About 20 responsibilities: state, raw XML owners, stored validation, open, save and commit, render and export (5,600 lines, all behind `render`), masters and themes, slide import, media, shape handles, arrange, headers and footers, properties, fonts, charts, comments, transitions | **Split** into about 20 modules, `render/` as one gated module. `Presentation` stays in `lib.rs`, as `html.rs`, `odp.rs` and `pdf.rs` already assume. |
 | docx-oxml `text.rs` | Fields (46%: model, parse, write, rewrite), `CT_P`, `CT_R`, and the namespace and emission infrastructure the whole crate imports (`FieldXmlEmission`, `raw_with_external_bindings`, `WordOperationWork`) | **Split** into `text/`: bindings, owner check, work, emission, run, `field/`, `paragraph/`. |
 | docx `field.rs` | About 10 unrelated features: TOC, mail merge (4,700), fragment import and identity remapping (3,900), index and tables of figures and authorities, legacy form fields, evaluator, formulas, span scanning, REF copies, fields in other stories | **Split** into `field/`, about 15 modules. |
-| docx `comparison.rs` | One recursive engine (12,700 lines, body to paragraph, table or control to cell and back, one shared context), postconditions, source snapshots; plus comment snapshots and footnote custody, which accept and reject also use | **Trim only.** Delete 580 dead lines; move comments and footnotes to `comparison/`. Cutting the engine by element kind would spread one algorithm over files with about 300 visibility changes and import cycles. Revisit with items 3 and 6. |
+| docx `comparison.rs` | One recursive engine (12,700 lines, body to paragraph, table or control to cell and back, one shared context), postconditions, source snapshots; plus comment snapshots and footnote custody, which accept and reject also use | **Trim only.** Delete 580 dead lines; move comments and footnotes to `comparison/`. Cutting the engine by element kind would spread one algorithm over files, with about 300 visibility changes, and make it no easier to follow. Revisit with items 3 and 6. |
 | docx-py `document.rs` | 74 Python classes in families (values, sub-handles, styles, properties, forms, mail merge, content controls, exports), the owner inventory that keeps live handles valid (7,100 lines), and the single `#[pymethods] impl PyDocument` (5,155 lines) | **Split** by class family into `document/`. The `#[pymethods]` block moves whole: PyO3 allows one per class, and `multiple-pymethods` stays off. |
 | docx-layout `engine.rs` | Stages with one-way dependencies: source registry, field formatting, SEQ, revision projection, caches, the layout transaction, paragraph layout, field substitution after pagination, structure, section geometry, headers and footers, fonts and East Asian text, bidi | **Split** into `engine/`, about 17 modules. The boundary with `paginator.rs` is sound. The two giant functions (1,700 and 1,800 lines) are not touched. |
 | docx `bibliography.rs` | 48% data (APA languages 4,100, citation grammars 3,500); sources, update state, citations and rendering in between | **Split** into `bibliography/`, one PR. Low coupling, and item 5 will grow it. |
@@ -70,9 +72,9 @@ code is one dense job, size alone is not a reason.
   - `use super::*;` at the top of each child;
   - `mod`, `use` and explicit re-export lines in the parent, so every path
     (`crate::x::Y`, public `oxoffice_*::x::Y`) still resolves;
-  - visibility widened to `pub(super)` (or `pub(crate)` below a crate root)
-    where the compiler asks;
-  - the few struct literals built outside their new module.
+  - visibility widened to `pub(super)` (or `pub(crate)` below a crate root),
+    fields included, where the compiler asks;
+  - a one-line `//!` doc at the top of each new file.
 - **No rename, no reordering inside an item**, and no new explicit import of
   a helper whose name exists elsewhere with another meaning (`local_name`,
   `attribute_in_namespace`, `namespace_declaration`,
@@ -86,9 +88,13 @@ code is one dense job, size alone is not a reason.
     `default-template` alone, `render` alone, one release build);
   - the existing tests;
   - `git diff --color-moved=dimmed-zebra`;
-  - `scripts/check_pure_move.py`, added with the first split: the lines
-    removed and the lines added are the same multiset once visibility,
-    `use` and `mod` lines and blank lines are set aside;
+  - `scripts/check_pure_move.py`, added with the first split (#51): every
+    changed `.rs` file is read whole at both revisions, and both sides must
+    hold the same code tokens, comments and literals once `use` and `mod`
+    declarations, `//!` docs, restricted visibility (`pub(crate)`,
+    `pub(super)`, `pub(in ...)`) and `impl` headers are set aside. An `impl`
+    header may only be added if it already exists. Whitespace is ignored, so
+    rustfmt may reflow a line;
   - for Word layout code, which no test renders: the corpus rendered to PDF
     and PNG with the CLI before and after, bytes compared.
 
@@ -100,9 +106,16 @@ Three kinds, three fates.
    traces, fault injection (`FAIL_NEXT_*`, `FAIL_AFTER_COMPARISON_STAGING`),
    forced legacy routes, and diagnostics read from environment variables only
    under `cfg(test)` (`OXOFFICE_POLICY_DIAGNOSTICS`,
-   `OXOFFICE_DESTINATION_REPAIR_DIAGNOSTICS`). Every item is only written.
+   `OXOFFICE_DESTINATION_REPAIR_DIAGNOSTICS`). Nothing reads the counters
+   and nothing sets the switches or the fault injections, so none of it
+   changes what a build does.
    - Since clippy compiles them, a crate's definitions and their call sites
      go in the same pull request.
+   - `cfg(all(test, ...))` items (about 60 lines) go too; `cfg(not(test))`
+     twins (about 20 lines) lose their attribute and stay.
+   - `cfg(any(test, debug_assertions))` (about 60 lines) becomes
+     `cfg(debug_assertions)`: it holds the canonical-block proof switch that
+     the kept debug cross-checks use.
    - The two `cfg(debug_assertions)` `eprintln!` in `comparison.rs` that
      read the same variable go with them.
    - The seven field-summary checks in `text.rs` go too. They have not run
@@ -146,8 +159,7 @@ Hidden `pub` items that nothing calls, so the compiler cannot warn:
 - `drop_w14_paragraph_identities` in `text.rs`. First check that the facade
   did not lose a call it needs: its doc says a copy must not share
   `w14:paraId`;
-- `layout_paragraph` in `engine.rs`;
-- the chart crate's dead dev-dependencies.
+- `layout_paragraph` in `engine.rs`.
 
 They go in one pull request, after a search of the whole repository,
 Python, wasm and CLI included.
@@ -172,10 +184,12 @@ Word's `page_alphabetic`.
 - **Binding logic that belongs in the facade**: docx-py's owner inventory
   (7,100 lines) and `StyleFormatting`. Moving it means redesigning how an
   edit reports what it touched, which is item 3's ground, not a move.
-- **Giant functions**: `layout_transaction` (1,700 lines),
-  `layout_paragraph_with_source_and_table` (1,800),
-  `qualify_constructor_failures` (1,100), `import_fragment_content_with_state`
-  (1,100), `project_complex_fields` (900) and about 20 more over 200 lines.
+- **Giant functions**: 205 functions run 200 lines or more (119 in the ten
+  files), about 20 of them over 500, led by
+  `layout_paragraph_with_source_and_table` (1,800 lines),
+  `layout_transaction` (1,700), `qualify_constructor_failures` (1,100),
+  `import_fragment_content_with_state` (1,100) and `project_complex_fields`
+  (900).
   Breaking them up is not mechanical; it comes one function at a time, when
   work leads there.
 - **Findings that may be bugs**, checked and filed as issues rather than
@@ -195,15 +209,15 @@ pull request rebases another session's work.
 **Wave 1, now: files no other session is editing.**
 
 1. This spec.
-2. `chore(docx): drop test-only instrumentation from the word model`:
+2. `chore(docx): drop test-only instrumentation from the word model` (#36):
    docx-oxml `text.rs`, `document.rs`, `revision.rs`, `run_properties.rs`,
    `properties.rs`, `numbering.rs`, `borders.rs`, `math.rs`, `drawing.rs`,
    `ruby.rs`, `table.rs`, `content_control.rs`.
-3. `chore(layout): drop test-only instrumentation from layout and opc`:
+3. `chore(layout): drop test-only instrumentation from layout and opc` (#37):
    docx-layout `engine.rs`, layout `font.rs`, opc `encryption.rs`.
 4. `refactor(docx): split the word model document into document, section
-   and source`: docx-oxml `document.rs`, `document/{section,source}.rs`,
-   `scripts/check_pure_move.py`.
+   and source` (#51): docx-oxml `document.rs`,
+   `document/{section,source}.rs`, `scripts/check_pure_move.py`.
 5. `refactor(docx): word model infrastructure and runs in their own
    modules`: `text/{bindings,owner_check,work,emission,run}.rs`.
 6. `refactor(docx): word model fields in their own modules`: `text/field/`.
@@ -220,8 +234,8 @@ pull request rebases another session's work.
 touch.** None of these edits `document.rs` or `lib.rs`. They start on the
 orchestrator's go.
 
-10. `chore(docx): drop the dead comparison diagnostics`, if its test items
-    do not reach into `document.rs` (otherwise it joins pull request 13).
+10. `chore(docx): drop the dead comparison diagnostics`: its test items are
+    used nowhere else.
 11. `refactor(docx): comparison comments and footnotes in their own modules`.
 12. `refactor(docx): split field.rs`, in three pull requests:
     - insert, legacy forms, formulas, generated tables and the bibliography
@@ -231,12 +245,14 @@ orchestrator's go.
     Then `bibliography.rs`, in one pull request.
 
 **Wave 3: after the facade, bindings and shape-walk work in flight merge,
-on the orchestrator's go.**
+on the orchestrator's go.** The splits of the Word facade and its bindings
+(16 and 17) also wait for the Word behaviour tests (#34), so the biggest
+moves have tests to stand on.
 
 13. `chore(docx): drop test-only instrumentation from the word facade and
     bindings`: docx `document.rs`, `content_control.rs`, `comments.rs`,
     `revision.rs`, `field.rs`, `redaction.rs`; docx-py `document.rs`,
-    `paragraph.rs`, `table.rs`, `run.rs`.
+    `paragraph.rs`, `table.rs`.
 14. `chore(pptx): drop test-only instrumentation`: pptx `lib.rs`, `html.rs`.
 15. `chore: drop the debug work counters and their python probes`:
     - docx `document.rs`, `lib.rs`, `field.rs`;
