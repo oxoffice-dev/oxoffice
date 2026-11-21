@@ -134,7 +134,7 @@ a manifest: producer and version, features it carries, licence, size.
   on Linux, macOS and Windows. Local wall times on a fast Linux machine: quick
   13 s, full 3 min 44 s (428 passed, 81 xfailed). CI runners are slower, and
   macOS and Windows were first measured by the CI runs of this pull request.
-- **Since 2026-11-21** the docx documents carry the identifiers Word writes
-  on every paragraph, run and row, and the docx test compares N and 16N
-  paragraphs, so that a linear cost shows over the floor: 149 docx calls grow.
+- **Since 2026-11-21** the docx bodies carry the identifiers Word writes on
+  every paragraph, run and row, and the docx test compares N and 16N
+  paragraphs, so that a linear cost shows over the floor: 150 docx calls grow.
   See [the edit cost spec](2026-11-21-edit-cost-at-the-root.md).

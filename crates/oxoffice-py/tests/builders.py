@@ -59,7 +59,8 @@ def edit_cost_docx(path, paragraphs, picture_side=0, probes=3):
     many), paragraphs holding a picture, paragraphs "commented k" with comment k, paragraphs with a tracked insertion
     of id 901 + k, block content controls tagged probe_k each followed by a paragraph "spot k", a repeating section
     tagged rows, 2x2 tables with "alpha k" in their first cell, and a last paragraph. Every paragraph, run and table
-    row carries the identifiers Word writes when it saves (saved_by_word)."""
+    row of the body carries the identifiers Word writes when it saves (saved_by_word); the header and the comments do
+    not."""
     d = docx.Document()
     for i in range(paragraphs):
         p = d.add_paragraph()

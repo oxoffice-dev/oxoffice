@@ -6,8 +6,9 @@ two reads whose cost grows with the body are timed the same way (READS_TIMED).
 
 Each paragraph of the two documents holds 6 runs with the run properties Google Docs writes on every run; every 10th
 paragraph also holds a picture and is followed by a 2x2 table, and the documents have two sections, the first with a
-header: the body's XML, its tables and the bytes of the package grow sixteenfold. Every paragraph, run and table row
-carries the identifiers Word writes when it saves, so that each call takes the route a saved document takes. Making a
+header. The targets at the end are the same in both, so from N to 16N the body's blocks and tables grow about 8 times,
+its runs and its XML about 13 times, the bytes of the package about 16 times. Every paragraph, run and table row of the
+body carries the identifiers Word writes when it saves, so that each call takes the route a saved body takes. Making a
 target costs about as much as a timed call, so the documents end with targets made in advance
 (builders.edit_cost_docx), and each timed call opens its documents again, so that no call sees the targets another one
 changed. `test_every_timed_call_runs_once` makes every timed call once on a small document, untimed: on a debug build
@@ -38,8 +39,8 @@ CALLS = 3  # fresh targets a call is timed on in each document, the fastest coun
 # bounds, the result stays: a call of GROWING counts as fixed under FIXED times, any other one as grown over RATIO
 # times, so that the noise of a loaded machine does not turn a call near 2 times into an XPASS or a failure.
 RATIO, FIXED, FLOOR_MS = 2.5, 1.5, 5
-# A call of GROWING may cost a time linear in the body, about 16 times at most from N to 16N; it fails over LINEAR
-# times, which a cost that grows faster, about 256 times for a quadratic one, exceeds.
+# A call of GROWING may cost a time linear in the body, about 8 to 16 times from N to 16N; it fails over LINEAR times,
+# which a cost that grows faster exceeds (a quadratic one about 70 times in blocks, 170 times in runs).
 LINEAR = 24
 # A call outside the band it is expected in is measured again, up to REMEASURE times, the fastest of every measure
 # counting at each size: a load spike on a shared CI runner rarely comes back, a cost that grows with the document does
@@ -843,9 +844,13 @@ def test_every_mutating_call_is_timed():
 
 @pytest.fixture(scope="module")
 def saved_document(tmp_path_factory):
-    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 3, picture_side=8)
+    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 10, picture_side=8)
 
 
 @pytest.mark.parametrize("name", sorted(TIMED))
 def test_every_timed_call_runs_once(saved_document, name):
-    TIMED[name](oxdocx.Document.open(saved_document))(0)()
+    """The call, then a save of the document and an opening of the bytes saved, so that an edit that leaves the
+    document unsavable fails here and not at a user's save."""
+    doc = oxdocx.Document.open(saved_document)
+    TIMED[name](doc)(0)()
+    oxdocx.Document.from_bytes(doc.to_bytes())

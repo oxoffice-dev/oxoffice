@@ -102,9 +102,9 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 
 `crates/oxoffice-py/tests/test_{docx,pptx}_scaling.py` time every public
 mutating call in a document of N paragraphs and in one of 16N (a deck of N
-slides and one of 4N). The Word documents carry the identifiers Word writes
-on every paragraph, run and row, so that each call takes the route a saved
-document takes. They need a build without debug assertions: debug builds
+slides and one of 4N). The bodies of the Word documents carry the
+identifiers Word writes on every paragraph, run and row, so that each call
+takes the route a saved body takes. They need a build without debug assertions: debug builds
 check every edit against a copy of the whole document, so every call grows
 with it.
 
@@ -116,8 +116,9 @@ OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call
 ```
 
 Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
-runs, and every timed docx call is made once, untimed, on a small document:
-on a debug build that puts each of them under the whole-document cross-checks.
+runs, and every timed docx call is made once, untimed, on a small document,
+which is then saved and opened again: on a debug build that puts each of them
+under the whole-document cross-checks.
 A docx call of `GROWING` is a strict xfail tied to its issue: when a fix
 makes it flat, the XPASS fails the run until the call leaves the set. A call
 outside the band it is expected in (under 2.5 times, or 1.5 to 24 times for a
