@@ -1279,11 +1279,8 @@ pub(super) fn validate_element_owner_relationships(
     Ok(())
 }
 
-pub(super) fn validate_fragment_relationships(
-    document: &Document,
-    destination: &StoryId,
-    fragment: &ContentFragment,
-) -> Result<()> {
+/// The relationship ids the fragment's XML names, in order.
+fn fragment_relationship_ids(fragment: &ContentFragment) -> Result<Vec<String>> {
     let inherited = fragment
         .namespace_scope
         .iter()
@@ -1296,7 +1293,34 @@ pub(super) fn validate_fragment_relationships(
             (name, namespace.clone())
         })
         .collect::<Vec<_>>();
-    let relationship_ids = xml_relationship_ids_in_order_with_bindings(&fragment.xml, &inherited)?;
+    xml_relationship_ids_in_order_with_bindings(&fragment.xml, &inherited)
+}
+
+/// The relationships of `story`'s part that the fragment names, as they are
+/// now, for a fragment taken from that story.
+pub(super) fn referenced_relationships(
+    document: &Document,
+    story: &StoryId,
+    fragment: &ContentFragment,
+) -> Result<Vec<oxoffice_opc::relationship::Relationship>> {
+    let ids = fragment_relationship_ids(fragment)?;
+    Ok(document
+        .package
+        .get_part_rels(&story.part_name)
+        .map(|relationships| {
+            ids.iter()
+                .filter_map(|id| relationships.get_by_id(id).cloned())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+pub(super) fn validate_fragment_relationships(
+    document: &Document,
+    destination: &StoryId,
+    fragment: &ContentFragment,
+) -> Result<()> {
+    let relationship_ids = fragment_relationship_ids(fragment)?;
     if relationship_ids.is_empty() {
         return Ok(());
     }
@@ -1315,10 +1339,25 @@ pub(super) fn validate_fragment_relationships(
             ))
         })?;
     for id in relationship_ids {
-        if relationships.get_by_id(&id).is_none() {
+        let Some(relationship) = relationships.get_by_id(&id) else {
             return Err(Error::Other(format!(
                 "content fragment references missing relationship {id} in {}",
                 destination.part_name
+            )));
+        };
+        // A fragment taken from another document names that document's
+        // relationships: the same id may name another link or part here.
+        // An internal target can be renamed by a save, so only its kind is
+        // compared; an external target is compared whole.
+        if let Some(source) = fragment.relationships.iter().find(|source| source.id == id)
+            && (source.rel_type != relationship.rel_type
+                || relationship_is_internal(source) != relationship_is_internal(relationship)
+                || (!relationship_is_internal(source) && source.target != relationship.target))
+        {
+            return Err(Error::Other(format!(
+                "content fragment relationship {id} names {} where it was taken and {} in {}; \
+                 move content between documents with import_fragment",
+                source.target, relationship.target, destination.part_name
             )));
         }
     }
@@ -1331,11 +1370,45 @@ pub(super) fn content_fragment_for_insertion(
     fragment: &ContentFragment,
 ) -> Result<Vec<u8>> {
     validate_fragment_relationships(document, destination, fragment)?;
+    // The same fragment can be inserted twice: its paragraph and row ids
+    // (w14:paraId, w14:textId) go, as clone_content drops them, and Word
+    // gives new ones.
+    let xml = without_w14_identities(&fragment.xml, &fragment.namespace_scope);
     if fragment.source_part_name.is_none() || story_scope_matches_fragment(destination, fragment) {
-        Ok(fragment.xml.clone())
+        Ok(xml)
     } else {
-        close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)
+        close_content_fragment_namespaces(&xml, &fragment.namespace_scope)
     }
+}
+
+/// `xml` without its `w14:paraId` and `w14:textId` attributes, whatever the
+/// prefix bound to the w14 namespace, in the fragment or in `scope`.
+fn without_w14_identities(xml: &[u8], scope: &BTreeMap<String, String>) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(xml) else {
+        return xml.to_vec();
+    };
+    let mut prefixes: Vec<String> = scope
+        .iter()
+        .filter(|(_, namespace)| namespace.as_str() == W14_NAMESPACE)
+        .map(|(prefix, _)| prefix.clone())
+        .collect();
+    let declared = regex::Regex::new(r#"xmlns:([A-Za-z_][\w.-]*)\s*=\s*["']([^"']*)["']"#)
+        .expect("a valid pattern");
+    for capture in declared.captures_iter(text) {
+        if &capture[2] == W14_NAMESPACE && !prefixes.contains(&capture[1].to_owned()) {
+            prefixes.push(capture[1].to_owned());
+        }
+    }
+    let mut result = text.to_owned();
+    for prefix in prefixes.iter().filter(|prefix| !prefix.is_empty()) {
+        let attribute = regex::Regex::new(&format!(
+            r#"\s{}:(?:paraId|textId)\s*=\s*(?:"[^"]*"|'[^']*')"#,
+            regex::escape(prefix)
+        ))
+        .expect("a valid pattern");
+        result = attribute.replace_all(&result, "").into_owned();
+    }
+    result.into_bytes()
 }
 
 pub(super) fn freshen_content_fragment_identities(

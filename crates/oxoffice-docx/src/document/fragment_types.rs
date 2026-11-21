@@ -366,6 +366,7 @@ impl ContentFragment {
             source_story_kind: None,
             source_owner_index: None,
             namespace_scope: BTreeMap::new(),
+            relationships: Vec::new(),
         })
     }
 }

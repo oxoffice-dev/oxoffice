@@ -659,6 +659,7 @@ impl Document {
             source_part_name: Some(location.story.part_name.clone()),
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
+            relationships: Vec::new(),
         };
         self.replace_checked_element_content(location, fragment)
     }
@@ -752,6 +753,7 @@ impl Document {
             source_part_name: Some(location.story.part_name.clone()),
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
+            relationships: Vec::new(),
         };
         self.replace_checked_element_content(location, fragment)
     }

@@ -440,6 +440,7 @@ impl Document {
             source_story_kind: None,
             source_owner_index: None,
             namespace_scope,
+            relationships: Vec::new(),
         };
         let freshened = freshen_content_fragment_identities(self, &fragment)?;
         let closed = close_content_fragment_namespaces(&freshened, &fragment.namespace_scope)?;

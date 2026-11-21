@@ -569,16 +569,18 @@ impl Document {
                 "cannot remove the final required table-cell paragraph".to_owned(),
             ));
         }
-        let fragment = ContentFragment {
+        let mut fragment = ContentFragment {
             kind: item.kind,
             xml: source_xml[item.full.clone()].to_vec(),
             source_part_name: Some(part_name.clone()),
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
             namespace_scope,
+            relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &location.story, &fragment)?;
+        fragment.relationships = referenced_relationships(&candidate, &location.story, &fragment)?;
         let mut updated = source_xml;
         updated.drain(item.full);
         set_story_source_xml(&mut candidate, &part_name, updated)?;
@@ -609,6 +611,7 @@ impl Document {
             source_story_kind: Some(source_location.story.kind),
             source_owner_index: Some(source_location.story.owner_index),
             namespace_scope: story_namespace_scope_at(&source_xml, source_item.full.start)?,
+            relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
 
@@ -664,6 +667,7 @@ impl Document {
             source_story_kind: Some(source_location.story.kind),
             source_owner_index: Some(source_location.story.owner_index),
             namespace_scope: story_namespace_scope_at(&source_xml, source_item.full.start)?,
+            relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &destination.story, &fragment)?;

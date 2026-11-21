@@ -255,11 +255,12 @@ use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context
 use fragment_checks::{
     WordXmlOwner, content_fragment_for_insertion, fragment_content_boundary, fragment_uses_w14,
     freshen_content_fragment_identities, insert_story_fragment, physical_table_cell_owner,
-    reject_section_owning_content_fragment, serialize_content_fragment, standalone_body_item_span,
-    story_owner_content_end, story_owner_content_end_in, validate_element_owner_relationships,
-    validate_element_xml_identity_change, validate_fragment_block_item,
-    validate_fragment_relationships, validate_serialized_block_content_control,
-    validated_content_boundary, validated_direct_content_item, xml_1_0_whitespace,
+    referenced_relationships, reject_section_owning_content_fragment, serialize_content_fragment,
+    standalone_body_item_span, story_owner_content_end, story_owner_content_end_in,
+    validate_element_owner_relationships, validate_element_xml_identity_change,
+    validate_fragment_block_item, validate_fragment_relationships,
+    validate_serialized_block_content_control, validated_content_boundary,
+    validated_direct_content_item, xml_1_0_whitespace,
 };
 pub(crate) use fragment_checks::{
     close_content_fragment_namespaces, package_authoritative_body_fragment,
@@ -405,6 +406,10 @@ pub struct ContentFragment {
     source_story_kind: Option<StoryKind>,
     source_owner_index: Option<usize>,
     namespace_scope: BTreeMap<String, String>,
+    /// The relationships of its source part that the fragment references, as
+    /// they were where it was taken (empty when it was built, not taken), so
+    /// that an insertion where those ids name something else is refused.
+    relationships: Vec<oxoffice_opc::relationship::Relationship>,
 }
 
 /// An owned story range and the package dependencies it can reach.

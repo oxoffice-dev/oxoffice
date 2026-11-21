@@ -1239,30 +1239,49 @@ fn a_paragraph_taken_from_another_document_can_be_inserted_unless_its_link_would
     assert_eq!(saved(&mut doc), before);
 }
 
-// Fails today: the relationship id of the moved link is only checked to
-// exist in the destination, where it names the destination's own link, so
-// the inserted link silently goes there. Issue: #196
 #[test]
-#[should_panic(expected = "the moved link keeps its address or is refused")]
 fn a_paragraph_from_another_document_never_takes_the_destinations_link() {
     let mut source = with_link("source site", "https://source.example/");
     let first = item_at(&source, 0);
     let fragment = source.remove_content_at(&first).unwrap();
     let mut doc = with_link("dest site", "https://dest.example/");
-    if doc
-        .insert_content(&ContentLocation::end(body(&doc)), fragment)
-        .is_ok()
-    {
-        let doc = reopen(&mut doc);
-        assert_eq!(
-            link_targets(&doc),
-            [
-                link("dest site", "https://dest.example/"),
-                link("source site", "https://source.example/"),
-            ],
-            "the moved link keeps its address or is refused"
-        );
+    let before = doc.to_bytes().unwrap();
+    match doc.insert_content(&ContentLocation::end(body(&doc)), fragment) {
+        Ok(()) => {
+            let doc = reopen(&mut doc);
+            assert_eq!(
+                link_targets(&doc),
+                [
+                    link("dest site", "https://dest.example/"),
+                    link("source site", "https://source.example/"),
+                ],
+                "the moved link keeps its address or is refused"
+            );
+        }
+        Err(error) => {
+            // The relationship id names the destination's own link here.
+            assert!(error.to_string().contains("import_fragment"), "{error}");
+            assert_eq!(doc.to_bytes().unwrap(), before, "a refusal changes nothing");
+        }
     }
+}
+
+#[test]
+fn a_paragraph_with_a_link_cut_and_pasted_in_its_document_keeps_its_address() {
+    let mut doc = with_link("our site", "https://example.com/");
+    doc.add_paragraph("after");
+    let first = item_at(&doc, 0);
+    let cut = doc.remove_content_at(&first).unwrap();
+    // A save in between renames nothing a link names.
+    let mut doc = reopen(&mut doc);
+    doc.insert_content(&ContentLocation::end(body(&doc)), cut)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        link_targets(&doc),
+        [link("our site", "https://example.com/")]
+    );
+    assert_eq!(texts(&doc).last().map(String::as_str), Some("our site"));
 }
 
 // ---- Corpus ----
@@ -1414,4 +1433,23 @@ fn a_localized_default_style_takes_the_destination_s_default() {
     );
     assert!(doc.style("Policepardfaut").is_none());
     assert!(doc.style("TableauNormal").is_none());
+}
+
+#[test]
+fn the_same_fragment_inserted_twice_writes_no_paragraph_id_twice() {
+    let mut doc = doc_with_body(concat!(
+        r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1A2B3C4D" w14:textId="77777777">"#,
+        r#"<w:r><w:t>repeated</w:t></w:r></w:p><w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
+    ));
+    let first = item_at(&doc, 0);
+    let fragment = doc.remove_content_at(&first).unwrap();
+    for _ in 0..2 {
+        doc.insert_content(&ContentLocation::end(body(&doc)), fragment.clone())
+            .unwrap();
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["kept", "repeated", "repeated"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(xml.matches("1A2B3C4D").count(), 0, "{xml}");
+    assert_eq!(xml.matches("77777777").count(), 0, "{xml}");
 }
