@@ -42366,17 +42366,17 @@ impl Document {
     /// else the one it inherits from the nearest section before it that has
     /// one, as [`Self::section_story`] resolves it.
     fn get_header_footer_text(&self, is_header: bool, hdr_type: HdrFtrType) -> Option<String> {
-        let reference = self
-            .section_properties_in_order()
-            .filter_map(|section| {
-                let refs = if is_header {
-                    &section.header_refs
-                } else {
-                    &section.footer_refs
-                };
-                self.first_usable_header_footer_reference(refs, hdr_type, is_header)
-            })
-            .last()?;
+        // From the last section back, the first one with a usable reference:
+        // one header part read in the common case.
+        let sections: Vec<&CT_SectPr> = self.section_properties_in_order().collect();
+        let reference = sections.into_iter().rev().find_map(|section| {
+            let refs = if is_header {
+                &section.header_refs
+            } else {
+                &section.footer_refs
+            };
+            self.first_usable_header_footer_reference(refs, hdr_type, is_header)
+        })?;
         Some(
             self.load_header_footer(&reference.rel_id, is_header)?
                 .text(),

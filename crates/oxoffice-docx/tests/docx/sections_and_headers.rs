@@ -852,9 +852,27 @@ fn header_text_follows_a_new_section_that_inherits_and_one_that_has_its_own() {
         "inherited by the new last section"
     );
     assert_eq!(doc.footer_text().as_deref(), Some("f"));
-    let doc = reopen(&mut doc);
+    let mut doc = reopen(&mut doc);
     assert_eq!(doc.header_text().as_deref(), Some("h"), "after a reopen");
     assert_eq!(Document::new().header_text(), None, "no header anywhere");
+
+    // A last section with a header of its own shows that one.
+    let own = doc
+        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    rewrite_first_paragraph(&mut doc, &own, "h2");
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.header_text().as_deref(), Some("h2"), "its own header");
+    assert_eq!(
+        header(&doc, 0).as_deref(),
+        Some("h"),
+        "the first keeps its own"
+    );
+    assert_eq!(
+        doc.footer_text().as_deref(),
+        Some("f"),
+        "the footer is still inherited"
+    );
 }
 
 #[test]
