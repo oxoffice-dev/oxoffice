@@ -1,9 +1,9 @@
 {
   "file": "google/long-report.docx",
-  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
-  "resources": "b60568ed3dc5ed51ac956b8df1f31209fa7c4dfa69fcc5c03f7ad273147881ca",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "6d415ebba2b8a5bc6f48edb82244cdfc388be96a65b8daf1585e7c56a8bae10c",
   "outline_and_tags": "1b67c182746690a37190ca6f74eb089f1b43d4ea23a5950aab050fa7740277ae",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "97793e127f205617fd263e161a6e3b1f2b0bf9ffc889b9578767c240bea55da0", "content": "7fa4751bf4b7682b5e031d972b3505236270d19a8051f363c39193bb1f7ab379", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "7237aade9fbc1e71946a31ff7e000001c13ab531889c26a93316e92b47067af0", "content": "51fd083141d71e73bc64e97e56baaf278e4018ebcaac09220610cd636e6ae791", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

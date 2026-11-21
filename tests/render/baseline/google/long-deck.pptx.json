@@ -1,7 +1,7 @@
 {
   "file": "google/long-deck.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "17cac2108815d7dcb0783fa850a51f0f7089dcc8957586f8f58ba3c1b113d404",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "9628f6df0821fdf2f866090ea82a7f52549c03bedfcd65aeb5a1f2fc2f279913",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [

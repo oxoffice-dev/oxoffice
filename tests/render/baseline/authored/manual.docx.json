@@ -1,9 +1,9 @@
 {
   "file": "authored/manual.docx",
-  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
-  "resources": "f7187c647975e15188bd4cfdf50dfea82abfc7419d815e5c89d03f4fe870d619",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "d6232b94b3b3cf8b97ca0c8be696a49021c8bf9cd1ccf4f7c318cbf9bb6a8261",
   "outline_and_tags": "a50cf18a9654c53e605c38ae3a94d8d9aabffb26fd9fc069a50695ec1491b593",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "cd830f620bb11d5a79af19e355253f1765e231f86ed762dda23c790844408dc6", "content": "1ef5b9d19e1f475a7a82a0eef19cdd441b8de52cd56dac85965061b71bfdf343", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "72c983f6d929f0d0e1098e947f1a5699e4538701bd796b135ad8bae22ae7ba27", "content": "3f7edddd5ece4b9af9f0bb7c405af4ddf255fbab028edb7e45dce5bd1db7a672", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

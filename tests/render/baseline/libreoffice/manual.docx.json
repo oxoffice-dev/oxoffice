@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/manual.docx",
-  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
-  "resources": "1b2f46357be8a64f56288f0520af0896f94a88e5d1c6ce19a23ee33e6da776c3",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "08c5e9ad03f7ad9a8e58388a0dcfd12cb20249fa10adccd462fc44dad08f08e7",
   "outline_and_tags": "22dd74d5e4c8fb8a4c59b6baad2efab5fa2c11411ba558168cc853449f765626",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "3c13e0cad7a570e5872edddd82596b9cbfdb3f99d94435b5735d5b73c3a622f9", "content": "2ff857aff1115a3c448ffc08f7e58a38a6da21fe4ce9ffacee21749586e6d7f4", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "0bde516814ac0298e0c7d66967de3a36faff77b9489a99ce20056802487fa907", "content": "1badf6771ab42a76a5fa5474093b23cd233e303e57e70d81b92b3f4ca973782f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

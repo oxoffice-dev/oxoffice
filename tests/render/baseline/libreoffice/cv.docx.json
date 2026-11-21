@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/cv.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
-  "resources": "3385ca9c82c916b34ddd8356df3e38ff33eeb7c8946c75dc24f718805e388fc2",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "abc26612fe06fbc48665e6a253fb62cd2725f19a96a1fbceeb323d1e05681606",
   "outline_and_tags": "09207b23f757e44dc78aea82c79401a60668445cac62ed7fd30ebb9953bd4521",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "07ec4e22c94521adb1e78e5e8f9776dcad7c6bfdc731244da72dad573eef67b6", "content": "0d0e6d52573172d4e6677b7ae1ad893b911fff6db72e21e19813f9370f6b93d2", "annotations": "55dfa100e56ea747bfe8b2a393f8cf9cea57b3bff63e1402f4f7e5d8ad0205f8", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
   ]

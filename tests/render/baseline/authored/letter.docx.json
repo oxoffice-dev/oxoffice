@@ -1,9 +1,9 @@
 {
   "file": "authored/letter.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
-  "resources": "45b05ae63c26137761be23388166f461e2b1880073abd7e57e65d261e55f8fc1",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "a073ef2fa77276f11f037a35233b95e588be18e5f44c9fbb259c1755c86aee76",
   "outline_and_tags": "65cf5ede1023801a8f15ee4c9492df0c847b479275d1c08e2a2182874aff6a78",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "34ff749c27fc3bb81c209a2a5fa9e6116c35947814e8445b8ed89116dbcbb1fc", "content": "f99013a5491f699dc279f943ea4ee0988ce40fc7afe05b25bc92abf15b85c9e9", "annotations": "df3e4c013bf9a61c43d2a91a4e3c629b3c33fecb7fddfc2782a47bd7f1f2eb54", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "080c871755fb15c6b68f5e2692a25edb06e626f44d8643d58a56341040e67fc5", "content": "0b78d3258db0d2a64b0b9db201e44a66170d412a7462e6eb8d27d4516391b154", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"}

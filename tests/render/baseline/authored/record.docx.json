@@ -1,9 +1,9 @@
 {
   "file": "authored/record.docx",
-  "reason": "the record family, new in the corpus",
-  "resources": "604e0ced2c245852c92ab8614d202f320925b5e05a0632b36f845999fd8141b5",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "5eb1f32f9b57988c96ec972dbf3046d34adac5392139027048eab9ce3ce725e4",
   "outline_and_tags": "5adb15dd4c2134ec95b8f1963f52857b4a7bebe7f515ae7e73051aad8c682953",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "11912776c520ae0f0d62b085eb3c07967cab0ff66a55dde26fd49e895a5dab26", "content": "508652b822238f965dd0ecf1e80cd8cdb9caa6cd061986a718263603f7892ee4", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "b8b40a051556d3d2e25cf616e5b1c8a9379eb01abc995e07b60a87af1395bb13", "content": "add4710d7b16fe0e6131ed7b81b1c634ffab6a397c4f8b8954557faaf89bbd2c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

@@ -1,7 +1,7 @@
 {
   "file": "libreoffice/training.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "07156013b39c3f1ed5aa3dcaab3035a5bedda8df7a85c6db2877099f144a4229",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "558874f8a1c04883bf0d5fd425daacca1d88e5c6293ea932aa92fa0da9482976",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [

@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/report.docx",
-  "reason": "a page break just before a next-page section break adds no blank page (#156): the four reports lose their empty page 3",
-  "resources": "19dc60ca975a531bb90e99643ea7deb5025c7d4680a9899628e42c5aa4f6ea21",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "4031ffbb86af94bf0630ef3a52afe0e60c46577ce9a584776b5b65f79577b9e1",
   "outline_and_tags": "edcdc8fb824385b3261e3fb848e03b977db790b86b962274c55eb94aaca59a72",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43ded4c0d6b00c415921cce1a3156a9dabd538e4917ba8b7f74691d779da4ea4", "content": "143ac6dea91138f060f446f212ac1f059b9844525a38d2dcf4bf88b02caf2d09", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "b2f37e9fdac7810c00293410d49d9846f2d47f8459184f0a6a2ca11e36025c80", "content": "15e936a659fca66033db76f0911b32f2dc44d526115742566099661e1420f25e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},

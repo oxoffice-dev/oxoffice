@@ -1,7 +1,7 @@
 {
   "file": "authored/pitch.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "928adcbbd822d148c103b36f539643961ba3811f9899d95cc2102cccc7acc880",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "7756aa153d934085cf67c69bc2847752d8161ffac420516245c42e7735237a00",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [

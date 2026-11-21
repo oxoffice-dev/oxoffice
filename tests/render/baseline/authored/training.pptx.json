@@ -1,7 +1,7 @@
 {
   "file": "authored/training.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "79180d08997249b32889eb3c7c4c1ec979d6ff5ad14695924a35308e45efc237",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "bde1d384e9720c217d767a5cbf81129e080b19745425e035ed2d570635b88102",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [
