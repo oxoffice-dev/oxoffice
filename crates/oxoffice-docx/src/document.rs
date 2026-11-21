@@ -27559,6 +27559,19 @@ impl Document {
         })
     }
 
+    /// Clear layouts derived from the current document state before typed
+    /// content is appended or inserted in the body: a paragraph or a table
+    /// built from typed values. Whether a typed edit of this body can be saved
+    /// ([`Self::unsavable_body_edit`]) depends on the nested namespace owners
+    /// the body keeps from its source and on its namespace declarations. Typed
+    /// content brings neither, so that answer is kept rather than computed
+    /// again over the whole main part at the next edit.
+    fn invalidate_layout_before_typed_insert(&mut self) {
+        let savability = std::mem::take(&mut self.unsavable_body_edit_cache);
+        self.invalidate_layout();
+        self.unsavable_body_edit_cache = savability;
+    }
+
     /// Clear layouts derived from the current document state.
     pub(crate) fn invalidate_layout(&mut self) {
         // Checked body refusal reads this cache. A later typed edit that
@@ -38616,7 +38629,7 @@ impl Document {
 
     /// Add a paragraph with the given text and return a mutable reference.
     pub fn add_paragraph(&mut self, text: &str) -> Paragraph<'_> {
-        self.invalidate_layout();
+        self.invalidate_layout_before_typed_insert();
         self.document
             .body
             .content
@@ -39247,7 +39260,7 @@ impl Document {
     /// Add a table with the specified number of rows and columns.
     /// Returns a mutable reference for further configuration.
     pub fn add_table(&mut self, rows: usize, cols: usize) -> Table<'_> {
-        self.invalidate_layout();
+        self.invalidate_layout_before_typed_insert();
         self.document
             .body
             .content
@@ -39272,9 +39285,20 @@ impl Document {
     /// shadowed. `None` is not a general proof that the document is savable.
     #[doc(hidden)]
     pub fn unsavable_body_edit(&self) -> Option<&str> {
-        if self.unsavable_body_edit_cache.get().is_none() {
-            let computed = self.compute_unsavable_body_edit();
-            let _ = self.unsavable_body_edit_cache.set(computed);
+        match self.unsavable_body_edit_cache.get() {
+            None => {
+                let computed = self.compute_unsavable_body_edit();
+                let _ = self.unsavable_body_edit_cache.set(computed);
+            }
+            // A kept answer is the one the whole main part gives now.
+            #[cfg(debug_assertions)]
+            Some(kept) => assert_eq!(
+                kept,
+                &without_staging_work(|| self.compute_unsavable_body_edit()),
+                "kept unsavable body answer"
+            ),
+            #[cfg(not(debug_assertions))]
+            Some(_) => {}
         }
         self.unsavable_body_edit_cache
             .get()
@@ -39542,7 +39566,7 @@ impl Document {
     /// Panics if `index > content_count()`. (Unlike [`Self::insert_document`]
     /// and [`Self::insert_toc`], which clamp an out-of-range index to the end.)
     pub fn insert_paragraph(&mut self, index: usize, text: &str) -> Paragraph<'_> {
-        self.invalidate_layout();
+        self.invalidate_layout_before_typed_insert();
         self.document
             .body
             .insert_paragraph(index, Self::detached_text_paragraph(text));
@@ -39562,7 +39586,7 @@ impl Document {
     /// Panics if `index > content_count()`. (Unlike [`Self::insert_document`]
     /// and [`Self::insert_toc`], which clamp an out-of-range index to the end.)
     pub fn insert_table(&mut self, index: usize, rows: usize, cols: usize) -> Table<'_> {
-        self.invalidate_layout();
+        self.invalidate_layout_before_typed_insert();
         self.document
             .body
             .insert_table(index, Self::detached_table(rows, cols));
