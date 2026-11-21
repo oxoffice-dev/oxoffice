@@ -849,7 +849,7 @@ fn a_redline_of_two_google_saved_reports_rejects_to_the_original() {
 
 // Fails today: a textless run whose properties are written `<w:rPr></w:rPr>`,
 // as LibreOffice writes its empty paragraphs, blocks any comparison of the
-// file. Issue: TBD
+// file. Issue: #32
 #[test]
 #[should_panic(expected = "comparison acceptance does not reproduce the edited stories")]
 fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
@@ -861,7 +861,7 @@ fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
 }
 
 // Fails today: a paragraph appended after a table that ends the body is
-// refused. Issue: TBD
+// refused. Issue: #32
 #[test]
 #[should_panic(expected = "comparison needs an adjacent paragraph for a final paragraph change")]
 fn a_paragraph_appended_after_a_final_table_is_compared() {

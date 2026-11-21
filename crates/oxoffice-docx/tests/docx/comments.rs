@@ -1074,7 +1074,7 @@ fn a_body_edit_keeps_the_producer_comment_parts_byte_for_byte() {
 
 // Fails today: a comment added to a Word file whose comment styles have
 // localized ids ("Commentaire", "Marquedecommentaire") brings its own
-// CommentText and CommentReference styles beside them. Issue: TBD
+// CommentText and CommentReference styles beside them. Issue: #27
 #[test]
 #[should_panic(expected = "styles added beside Word's comment styles")]
 fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
@@ -1103,7 +1103,7 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
 
 // Fails today: the comment styles a new document gets are named after their
 // ids, so Word reads them as custom styles, not its built-in "annotation
-// text" and "annotation reference". Issue: TBD
+// text" and "annotation reference". Issue: #27
 #[test]
 #[should_panic(expected = "is Word's built-in")]
 fn the_comment_styles_a_new_document_gets_are_words_built_in_ones() {

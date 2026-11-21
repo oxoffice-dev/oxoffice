@@ -788,7 +788,7 @@ fn every_corpus_report_shows_its_header_and_footer_on_both_sections() {
     }
 }
 
-// Fails today: header_text and footer_text read None when the last section inherits. Issue: TBD
+// Fails today: header_text and footer_text read None when the last section inherits. Issue: #28
 #[test]
 #[should_panic(expected = "header_text and footer_text miss the inherited")]
 fn header_text_reads_the_header_the_last_section_inherits() {
@@ -834,7 +834,7 @@ fn editing_the_header_of_a_word_report_changes_it_on_both_sections() {
     assert_eq!(doc.paragraphs().len(), paragraphs);
 }
 
-// Fails today: set_header changes only the last section, the first keeps its header. Issue: TBD
+// Fails today: set_header changes only the last section, the first keeps its header. Issue: #28
 #[test]
 #[should_panic(expected = "the first section still shows the old header")]
 fn setting_the_header_of_a_word_report_changes_it_on_every_section() {

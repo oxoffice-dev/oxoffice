@@ -696,7 +696,7 @@ fn table_style_alignment_width_layout_and_caption_survive_a_save() {
     );
 }
 
-// Fails today: the percentage is truncated to fiftieths of a percent, so 33.3 is written as 1664 (33.28 %). Issue: TBD
+// Fails today: the percentage is truncated to fiftieths of a percent, so 33.3 is written as 1664 (33.28 %). Issue: #33
 #[test]
 #[should_panic(expected = "Percentage(33.28)")]
 fn a_table_width_of_33_point_3_percent_reads_back_as_written() {

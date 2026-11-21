@@ -353,7 +353,7 @@ fn pagination_flags_keep_an_explicit_false() {
     assert!(!plain.is_page_break_before());
 }
 
-// Fails today: set_first_line_indent leaves an earlier hanging indent in w:ind, and Word applies the hanging one. Issue: TBD
+// Fails today: set_first_line_indent leaves an earlier hanging indent in w:ind, and Word applies the hanging one. Issue: #33
 #[test]
 #[should_panic(expected = "the first-line indent replaces the hanging indent")]
 fn setting_a_first_line_indent_replaces_a_hanging_indent() {
@@ -509,7 +509,7 @@ fn headings_and_the_outline_follow_the_heading_styles() {
     assert!(outline[1].children.is_empty());
 }
 
-// Fails today: headings() only knows the English style IDs, so a French Word file (Titre1, Titre2) has none. Issue: TBD
+// Fails today: headings() only knows the English style IDs, so a French Word file (Titre1, Titre2) has none. Issue: #27
 #[test]
 #[should_panic(expected = "every heading of the Word report is found")]
 fn headings_are_found_in_the_word_and_google_reports_alike() {
@@ -529,7 +529,7 @@ fn headings_are_found_in_the_word_and_google_reports_alike() {
     );
 }
 
-// Fails today: Heading1 of a new document has no w:outlineLvl, where Word writes 0 and Heading2 to 9 carry theirs. Issue: TBD
+// Fails today: Heading1 of a new document has no w:outlineLvl, where Word writes 0 and Heading2 to 9 carry theirs. Issue: #27
 #[test]
 #[should_panic(expected = "Heading 1 has outline level 0")]
 fn heading_1_of_a_new_document_has_an_outline_level_like_the_others() {
@@ -1105,7 +1105,7 @@ fn direct_formatting_google_writes_on_list_items_wins_over_the_defaults() {
     assert_eq!(item.alignment(), Some(Alignment::Left));
 }
 
-// Fails today: has_borders() counts the nil edges Google Docs writes on every list item as borders. Issue: TBD
+// Fails today: has_borders() counts the nil edges Google Docs writes on every list item as borders. Issue: #33
 #[test]
 #[should_panic(expected = "a nil edge draws no border")]
 fn a_google_list_item_whose_edges_are_all_nil_has_no_borders() {

@@ -294,7 +294,7 @@ fn paragraph_text_setter_turns_tabs_and_line_feeds_into_tab_and_break_items() {
     );
 }
 
-// Fails today: text reading drops `w:noBreakHyphen` and `w:ptab`, which Word shows as a hyphen and a tab. Issue: TBD
+// Fails today: text reading drops `w:noBreakHyphen` and `w:ptab`, which Word shows as a hyphen and a tab. Issue: #26
 #[test]
 #[should_panic(expected = "a non-breaking hyphen and a positional tab read as text")]
 fn paragraph_text_shows_non_breaking_hyphens_and_positional_tabs() {
@@ -587,7 +587,7 @@ fn text_xml_cannot_carry_is_refused_with_its_code_point() {
     assert!(error.to_string().contains("U+000B"), "{error}");
 }
 
-// Fails today: a match across a tab inside one run panics with "attempt to subtract with overflow" (and garbles the run without overflow checks). Issue: TBD
+// Fails today: a match across a tab inside one run panics with "attempt to subtract with overflow" (and garbles the run without overflow checks). Issue: #26
 #[test]
 #[should_panic(expected = "a search does not match across a tab inside a run")]
 fn a_search_does_not_match_across_a_tab_inside_a_run() {
@@ -604,7 +604,7 @@ fn a_search_does_not_match_across_a_tab_inside_a_run() {
     assert_eq!(texts(&doc), ["Name\tAda"]);
 }
 
-// Fails today: a search skips tabs and breaks, so one holding a tab finds nothing and one across a break moves the break. Issue: TBD
+// Fails today: a search skips tabs and breaks, so one holding a tab finds nothing and one across a break moves the break. Issue: #26
 #[test]
 #[should_panic(expected = "a search holding a tab finds it")]
 fn a_search_sees_tabs_and_breaks_as_paragraph_text_shows_them() {

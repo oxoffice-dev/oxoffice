@@ -45,6 +45,60 @@
     "issue": 7
   },
   {
+    "id": "docx-replace-across-tabs",
+    "format": "docx",
+    "area": "replace",
+    "title": "Text replacement does not see tabs and line breaks",
+    "symptom": "a search holding a tab or a break finds nothing, one across a break moves it, and one across a tab inside a run panics in debug builds and garbles the run in release builds",
+    "workaround": "replace the text on each side of the tab or break separately",
+    "issue": 26
+  },
+  {
+    "id": "docx-localized-style-ids",
+    "format": "docx",
+    "area": "styles",
+    "title": "Word files saved in another language: headings and tables of contents find no heading",
+    "symptom": "headings() and document_outline() are empty and insert_toc lists nothing when Word wrote localised style ids such as Titre1",
+    "workaround": "call rebuild_toc() after insert_toc(); find headings through the styles named \"heading N\"",
+    "issue": 27
+  },
+  {
+    "id": "docx-inherited-headers",
+    "format": "docx",
+    "area": "headers",
+    "title": "Document header and footer calls ignore the headers a section inherits",
+    "symptom": "header_text() and footer_text() return None when the last section inherits its header, and set_header() changes the last section only",
+    "workaround": "read and edit each section's header through section_story(section, kind, variant)",
+    "issue": 28
+  },
+  {
+    "id": "docx-word-list-restart",
+    "format": "docx",
+    "area": "lists",
+    "title": "A numbered list cannot be restarted in a file saved by Word",
+    "symptom": "try_add_numbered_list_item_with_restart and restart_numbering fail with \"numbering restart cannot project unsupported override source\"",
+    "workaround": "start a new list with add_list_definition(&[ListLevel::decimal()]) and number its paragraphs with it",
+    "issue": 29
+  },
+  {
+    "id": "docx-removed-notes",
+    "format": "docx",
+    "area": "notes",
+    "title": "Removing a paragraph leaves its notes behind, and removing a note leaves its custom mark",
+    "symptom": "remove_content keeps the paragraph's footnotes as unreferenced notes; remove_footnote keeps the mark of a note made with create_footnote_with_mark",
+    "workaround": "remove the paragraph's notes with remove_footnote or remove_endnote first; delete a leftover mark with replace_text",
+    "issue": 30
+  },
+  {
+    "id": "docx-compare-final-table",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses a paragraph added after a final table, and edits of LibreOffice files with empty runs",
+    "symptom": "compare fails with \"needs an adjacent paragraph for a final paragraph change\" or \"acceptance does not reproduce the edited stories\"",
+    "workaround": "put a paragraph after the final table in both versions; for a LibreOffice file, add and remove a paragraph, save and reopen both copies, then compare",
+    "issue": 32
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",

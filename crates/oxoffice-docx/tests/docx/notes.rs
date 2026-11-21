@@ -413,7 +413,7 @@ fn a_low_level_footnote_and_its_reference_pair_up() {
 }
 
 // Fails today: Paragraph::add_footnote_ref writes a reference run without the
-// FootnoteReference style, so Word shows the number full size. Issue: TBD
+// FootnoteReference style, so Word shows the number full size. Issue: #30
 #[test]
 #[should_panic(expected = "the reference is styled as a note mark")]
 fn a_low_level_reference_is_styled_as_a_note_mark() {
@@ -719,7 +719,7 @@ fn removing_the_last_footnote_keeps_the_separators_for_the_next_one() {
 }
 
 // Fails today: the custom mark text stays in the body after its note and
-// reference are removed. Issue: TBD
+// reference are removed. Issue: #30
 #[test]
 #[should_panic(expected = "the custom marks left the body with their notes")]
 fn removing_a_custom_marked_note_removes_its_mark_from_the_body() {
@@ -743,7 +743,7 @@ fn removing_a_custom_marked_note_removes_its_mark_from_the_body() {
 }
 
 // Fails today: removing a paragraph keeps the footnotes it referenced, which
-// `footnotes()` then lists although nothing references them. Issue: TBD
+// `footnotes()` then lists although nothing references them. Issue: #30
 #[test]
 #[should_panic(expected = "the note went with its paragraph")]
 fn removing_a_paragraph_removes_the_notes_it_references() {

@@ -129,7 +129,7 @@ fn a_simple_field_keeps_its_instruction_and_result_after_a_save() {
     assert_eq!(texts(&doc), ["Page 1"]);
 }
 
-// Fails today: a field added with Run::add_field is left out of the paragraph text until a save and reopen. Issue: TBD
+// Fails today: a field added with Run::add_field is left out of the paragraph text until a save and reopen. Issue: #31
 #[test]
 #[should_panic(expected = "the field result is part of the paragraph text")]
 fn a_field_result_is_part_of_the_paragraph_text_before_a_save() {
@@ -380,7 +380,7 @@ fn an_if_field_picks_its_result_from_a_nested_merge_field() {
     assert_eq!(texts(&reopen(&mut doc)), ["Dear Madam"]);
 }
 
-// Fails today: a nested field inside a quoted IF operand breaks the IF ("requires 5 positional operands"), so the stored result stays. Issue: TBD
+// Fails today: a nested field inside a quoted IF operand breaks the IF ("requires 5 positional operands"), so the stored result stays. Issue: #31
 #[test]
 #[should_panic(expected = "the IF field follows its quoted merge field")]
 fn an_if_field_with_a_quoted_nested_merge_field_is_updated() {
@@ -1019,7 +1019,7 @@ fn rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings() {
     );
 }
 
-// Fails today: insert_toc finds headings by the English style ids Heading1 to Heading9, so a Word file saved in French gets an empty table. Issue: TBD
+// Fails today: insert_toc finds headings by the English style ids Heading1 to Heading9, so a Word file saved in French gets an empty table. Issue: #27
 #[test]
 #[should_panic(expected = "insert_toc lists the headings of a Word file saved in French")]
 fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {

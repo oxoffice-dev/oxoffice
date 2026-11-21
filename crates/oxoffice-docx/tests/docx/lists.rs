@@ -854,7 +854,7 @@ fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
 
 // Known failures.
 
-// Fails today: LibreOffice keeps List Bullet's numbering but drops the level's style back-link, and every list edit is refused. Issue: TBD
+// Fails today: LibreOffice keeps List Bullet's numbering but drops the level's style back-link, and every list edit is refused. Issue: #29
 #[test]
 #[should_panic(expected = "are not reciprocally linked")]
 fn items_can_be_added_to_a_libreoffice_report() {
@@ -871,7 +871,7 @@ fn items_can_be_added_to_a_libreoffice_report() {
     assert_eq!(list_lines(&doc), expected);
 }
 
-// Fails today: Word writes w16cid:durableId on every list instance, and a restart refuses an instance with attributes it does not model. Issue: TBD
+// Fails today: Word writes w16cid:durableId on every list instance, and a restart refuses an instance with attributes it does not model. Issue: #29
 #[test]
 #[should_panic(expected = "cannot project unsupported override source")]
 fn a_new_numbered_list_can_be_started_in_a_word_report() {
@@ -889,7 +889,7 @@ fn a_new_numbered_list_can_be_started_in_a_word_report() {
     );
 }
 
-// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: TBD
+// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29
 #[test]
 #[should_panic(expected = "left: \"Subscription revenue reached")]
 fn markdown_shows_word_list_paragraphs_as_list_items() {
@@ -911,7 +911,7 @@ fn markdown_shows_word_list_paragraphs_as_list_items() {
     );
 }
 
-// Fails today: the layout starts a lettered list again at "a." after "z." where Word goes on with "aa.". Issue: TBD
+// Fails today: the layout starts a lettered list again at "a." after "z." where Word goes on with "aa.". Issue: #29
 #[test]
 #[should_panic(expected = r#"left: ["a.", "b."]"#)]
 fn lettered_lists_go_on_with_doubled_letters_after_z() {
@@ -921,7 +921,7 @@ fn lettered_lists_go_on_with_doubled_letters_after_z() {
     assert_eq!(markers(&doc)[26..], ["aa.", "bb."]);
 }
 
-// Fails today: numbering_is_bullet reads the definition only, not the instance's replacement level that layout draws. Issue: TBD
+// Fails today: numbering_is_bullet reads the definition only, not the instance's replacement level that layout draws. Issue: #29
 #[test]
 #[should_panic(expected = "left: Some(false)")]
 fn a_list_whose_instance_swaps_in_a_bullet_level_reads_as_a_bullet_list() {
