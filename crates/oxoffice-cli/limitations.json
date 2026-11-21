@@ -45,6 +45,60 @@
     "issue": 7
   },
   {
+    "id": "docx-replace-across-tabs",
+    "format": "docx",
+    "area": "replace",
+    "title": "Text replacement does not see tabs and line breaks",
+    "symptom": "a search holding a tab or a break finds nothing, one across a break moves it, and one across a tab inside a run panics in debug builds and garbles the run in release builds",
+    "workaround": "replace the text on each side of the tab or break separately",
+    "issue": 26
+  },
+  {
+    "id": "docx-localized-style-ids",
+    "format": "docx",
+    "area": "styles",
+    "title": "Word files saved in another language: headings and tables of contents find no heading",
+    "symptom": "insert_toc lists nothing, and the Rust headings() and document_outline() are empty, when Word wrote localised style ids such as Titre1",
+    "workaround": "call rebuild_toc() after insert_toc(); find headings through the styles named \"heading N\"",
+    "issue": 27
+  },
+  {
+    "id": "docx-inherited-headers",
+    "format": "docx",
+    "area": "headers",
+    "title": "Document header and footer calls ignore the headers a section inherits",
+    "symptom": "the Rust header_text() and footer_text() return None when the last section inherits its header, and set_header() changes the last section only",
+    "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python document.section(i).header",
+    "issue": 28
+  },
+  {
+    "id": "docx-word-list-restart",
+    "format": "docx",
+    "area": "lists",
+    "title": "A numbered list cannot be restarted in a file saved by Word",
+    "symptom": "restarting fails with \"numbering restart cannot project unsupported override source\" (Rust try_add_numbered_list_item_with_restart and restart_numbering, Python add_numbered_list_item(restart=True) and restart_numbering)",
+    "workaround": "start a new list instead: a new numbering definition and instance on the new paragraphs (Rust add_list_definition; Python add_numbering_definition then add_numbering_instance and Paragraph.numbering)",
+    "issue": 29
+  },
+  {
+    "id": "docx-removed-notes",
+    "format": "docx",
+    "area": "notes",
+    "title": "Removing a paragraph leaves its notes behind, and removing a note leaves its custom mark",
+    "symptom": "remove_content keeps the paragraph's footnotes and endnotes as unreferenced notes; removing a note made with a custom mark (Rust create_footnote_with_mark) keeps the mark",
+    "workaround": "remove the paragraph's notes first (remove_footnote, remove_endnote, same names in Python); delete a leftover mark with replace_text",
+    "issue": 30
+  },
+  {
+    "id": "docx-compare-final-table",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses a paragraph added after a final table",
+    "symptom": "compare fails with \"needs an adjacent paragraph for a final paragraph change\" when the edited version adds a paragraph after a table that ends the body",
+    "workaround": "put a paragraph after the final table in both versions before comparing",
+    "issue": 32
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",
