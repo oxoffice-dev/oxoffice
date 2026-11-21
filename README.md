@@ -107,10 +107,11 @@ doc.save("hello.docx")?;
 A tour by family rather than a full list, as `main` stands, a step ahead of the last release: each command's
 `--help`, the Python type stubs and the examples of [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills)
 go into the details. ✅ works, ⚠️ works with known gaps, ❌ not yet, — does not apply. The note says what a ⚠️
-lacks; `oxoffice limitations` (in a build of `main`), or the limitations page attached to each
-[release](https://github.com/oxoffice-dev/oxoffice/releases), gives each listed gap its workaround, with a few that
-touch whole files: edits and form operations that cost more as a Word document grows, and a deck refused at open when
-one of its parts holds a control character.
+lacks; `oxoffice limitations` in a build of `main`, one file per gap in
+[crates/oxoffice-cli/limitations](crates/oxoffice-cli/limitations), and from the release after 0.1.0 a limitations page
+attached to each [release](https://github.com/oxoffice-dev/oxoffice/releases) give each listed gap its workaround,
+with a few that touch whole files: edits and form operations that cost more as a Word document grows, and a deck
+refused at open when one of its parts holds a control character.
 
 ### 📝 Word
 
