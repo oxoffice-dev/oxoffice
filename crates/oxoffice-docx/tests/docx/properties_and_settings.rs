@@ -1781,11 +1781,7 @@ fn a_google_file_gains_properties_and_settings_and_keeps_its_own() {
     );
 }
 
-// Fails today: the property setters (custom, application, core) take a character
-// XML cannot carry, then every save of the document fails with
-// InvalidXmlCharacter; document variables refuse it already. Issue: #181
 #[test]
-#[should_panic(expected = "accepted a character XML cannot carry")]
 fn a_value_xml_cannot_carry_is_refused_and_the_document_still_saves() {
     type Attempt = fn(&mut Document) -> Result<()>;
     let attempts: [(&str, Attempt); 4] = [
