@@ -71,6 +71,18 @@ fn table(prs: &Presentation, slide: usize, shape: usize) -> TableRef<'_> {
         .expect("the shape is a table")
 }
 
+/// The width and height of the table's grid: its column widths and row
+/// heights added up.
+fn grid_size(table: &TableRef<'_>) -> (Emu, Emu) {
+    let width = (0..table.column_count())
+        .map(|c| table.column_width(c).unwrap().0)
+        .sum();
+    let height = (0..table.row_count())
+        .map(|r| table.row_height(r).unwrap().0)
+        .sum();
+    (Emu(width), Emu(height))
+}
+
 fn frame_size(prs: &Presentation, slide: usize, shape: usize) -> (Emu, Emu) {
     prs.slide(slide)
         .unwrap()
@@ -1027,7 +1039,10 @@ fn a_row_and_a_column_added_to_the_key_figures_table_follow_its_formatting() {
     let (slide, shape) = KEY_FIGURES;
     for producer in PRODUCERS {
         let mut prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let (width, height) = frame_size(&prs, slide, shape);
+        // Google writes a frame unrelated to the grid: what it should become
+        // is #44's question, so only a frame that follows its grid is checked.
+        let frame_follows_grid =
+            frame_size(&prs, slide, shape) == grid_size(&table(&prs, slide, shape));
         let last_width = table(&prs, slide, shape).column_width(2).unwrap();
         let header_look = first_run_look(&table(&prs, slide, shape), 0, 2);
         {
@@ -1049,11 +1064,14 @@ fn a_row_and_a_column_added_to_the_key_figures_table_follow_its_formatting() {
         assert_eq!(cell_texts(&table), expected, "{producer}");
         assert_eq!(table.row_height(4), Some(Emu(685_800)), "{producer}");
         assert_eq!(table.column_width(3), Some(last_width), "{producer}");
-        assert_eq!(
-            frame_size(&prs, slide, shape),
-            (Emu(width.0 + last_width.0), Emu(height.0 + 685_800)),
-            "{producer}"
-        );
+        assert_eq!(frame_follows_grid, producer != "google", "{producer}");
+        if frame_follows_grid {
+            assert_eq!(
+                frame_size(&prs, slide, shape),
+                grid_size(&table),
+                "{producer}"
+            );
+        }
         // New cells copy the cell above or to their left.
         for ((row, column), (source_row, source_column)) in [((4, 0), (3, 0)), ((1, 3), (1, 2))] {
             let cell = table.cell(row, column).unwrap();
@@ -1129,17 +1147,37 @@ fn a_slide_imported_from_google_slides_brings_its_table_style() {
 }
 
 #[test]
-fn the_key_figures_table_saved_without_edits_keeps_its_xml() {
-    let (slide, shape) = KEY_FIGURES;
+fn the_key_figures_slide_saved_without_edits_keeps_its_bytes() {
+    // Read the slide parts as stored, on both sides: a table child the
+    // parser does not model would be missing from the saved part.
+    fn slide_parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut parts = Vec::new();
+        for index in 0..zip.len() {
+            let mut entry = zip.by_index(index).unwrap();
+            let name = entry.name().unwrap().into_owned();
+            if name.starts_with("ppt/slides/slide") {
+                let mut data = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut data).unwrap();
+                parts.push((name, data));
+            }
+        }
+        parts.sort();
+        parts
+    }
     for producer in PRODUCERS {
-        let prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let before = prs
-            .table_xml_at(ShapeOwner::Slide(slide), &[shape])
-            .unwrap();
-        let after = reopen(&prs)
-            .table_xml_at(ShapeOwner::Slide(slide), &[shape])
-            .unwrap();
-        assert!(after == before, "{producer}: the table XML changed");
+        let path = format!("{producer}/deck.pptx");
+        let original = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/corpus/files")
+                .join(&path),
+        )
+        .unwrap();
+        let saved = corpus_deck(&path).to_bytes().unwrap();
+        assert!(
+            slide_parts(&saved) == slide_parts(&original),
+            "{producer}: a slide part changed"
+        );
     }
 }
 

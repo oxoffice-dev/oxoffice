@@ -113,16 +113,25 @@
     "area": "slides",
     "title": "Removing a slide leaves its charts, embedded workbooks and legacy comments in the file",
     "symptom": "after remove_slide the saved deck still holds the slide's chart parts, their workbooks with the data, and its legacy comment part with the reviewers' text",
-    "workaround": "remove each chart with remove_shape before removing the slide; no workaround for legacy comments",
+    "workaround": "remove each chart first (Rust remove_shape, Python shapes.remove), then the slide; no workaround for legacy comments",
     "issue": 38
+  },
+  {
+    "id": "pptx-comment-date-without-zone",
+    "format": "pptx",
+    "area": "open",
+    "title": "A deck whose modern comment is dated without a time zone does not open",
+    "symptom": "open fails with \"comment timestamp is not RFC 3339\" on a created date such as 2026-11-16T09:30:00.503, which PowerPoint 365 may write",
+    "workaround": "add a time zone (Z) to the created dates in ppt/comments/modernComment_*.xml, then open the file",
+    "issue": 39
   },
   {
     "id": "pptx-duplicate-commented-slide",
     "format": "pptx",
     "area": "comments",
     "title": "A slide with comments cannot be duplicated",
-    "symptom": "duplicate_slide fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
-    "workaround": "import the slide from a copy of the deck instead (Rust: prs.import_slide(&prs.clone(), i, layout, Some(i + 1)))",
+    "symptom": "duplicating fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
+    "workaround": "import the slide from a copy of the deck instead (Rust import_slide from prs.clone(), Python slides.import_slide from a copy)",
     "issue": 39
   },
   {
@@ -140,7 +149,7 @@
     "area": "slides",
     "title": "Sections do not follow added, duplicated, imported or moved slides",
     "symptom": "a new slide belongs to no section, and a moved slide stays listed in its old section",
-    "workaround": "set the sections again (set_sections) after the slide edits",
+    "workaround": "set the sections again (set_sections, same name in Python) after the slide edits",
     "issue": 41
   },
   {
@@ -149,7 +158,7 @@
     "area": "tables",
     "title": "Tables merged by LibreOffice cannot be split, and Google tables cannot lose columns down to one",
     "symptom": "split fails with \"merge origin does not have a valid continuation rectangle\"; remove_column fails with \"table frame size must remain positive\"",
-    "workaround": "before removing columns, set the first column to its own width (set_column_width) to resync the frame; to split, give the covered cells the origin's spans in the table XML",
+    "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame; to split, give the covered cells the origin's spans in the table XML",
     "issue": 44
   }
 ]

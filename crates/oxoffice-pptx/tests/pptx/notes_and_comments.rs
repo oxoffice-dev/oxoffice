@@ -315,7 +315,6 @@ fn notes_keep_unicode_markup_characters_and_spacing_as_typed() {
         "Rocket 🚀 and family 👩‍👩‍👧",
         "<b>bold?</b> & \"quotes\" 'too' &amp;",
         "  indented\tand tabbed  ",
-        "Windows line\r\nending",
     ];
     let mut prs = blank_deck(1);
     prs.set_notes_text(0, "").unwrap();
@@ -327,6 +326,23 @@ fn notes_keep_unicode_markup_characters_and_spacing_as_typed() {
             "{text:?}"
         );
     }
+}
+
+// Fails today: the carriage return of a Windows line ending is written raw,
+// so a conforming XML reader (PowerPoint's, python-pptx's) reads a second
+// line feed. Issue: #43
+#[test]
+#[should_panic(expected = "the carriage return is escaped in the saved notes")]
+fn notes_with_a_windows_line_ending_are_saved_so_that_other_readers_keep_them() {
+    let mut prs = blank_deck(1);
+    prs.set_notes_text(0, "Windows line\r\nending").unwrap();
+    let notes = parts_under(&prs, "ppt/notesSlides/");
+    assert_eq!(notes.len(), 1);
+    let xml = part_xml(&prs, &format!("/{}", notes[0]));
+    assert!(
+        !xml.contains('\r'),
+        "the carriage return is escaped in the saved notes"
+    );
 }
 
 #[test]

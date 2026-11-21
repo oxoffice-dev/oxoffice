@@ -853,6 +853,8 @@ fn filling_a_picture_placeholder_puts_the_picture_in_its_place() {
     let id = placeholder.non_visual_id().unwrap();
     let name = placeholder.non_visual_name();
     let count = slide.shapes().len();
+    let placeholder_box = prs.effective_geometry(0, &[index]).unwrap();
+    assert!(placeholder_box.is_some(), "the placeholder has a box");
     let image = png(120, 60, [0, 90, 200]);
     prs.fill_picture_placeholder(0, &[index], &image, "photo.png")
         .unwrap();
@@ -866,8 +868,9 @@ fn filling_a_picture_placeholder_puts_the_picture_in_its_place() {
     assert_eq!(picture.placeholder_type(), Some("pic"));
     assert_eq!(picture.non_visual_id(), Some(id));
     assert_eq!(picture.non_visual_name(), name);
-    assert!(
-        picture.size().is_some(),
+    assert_eq!(
+        prs.effective_geometry(0, &[index]).unwrap(),
+        placeholder_box,
         "the picture takes the placeholder's box"
     );
     assert_eq!(prs.picture_image(0, id).unwrap().bytes, image.as_slice());
@@ -1065,6 +1068,7 @@ fn the_picture_placeholder_of_every_corpus_deck_takes_a_picture() {
     ] {
         let deck = corpus_deck(&format!("{producer}/deck.pptx"));
         let (mut prs, slide, index) = with_picture_placeholder_slide(deck, layout);
+        let placeholder_box = prs.effective_geometry(slide, &[index]).unwrap();
         prs.fill_picture_placeholder(slide, &[index], &image, "photo.png")
             .unwrap_or_else(|e| panic!("{producer}: {e}"));
 
@@ -1072,7 +1076,11 @@ fn the_picture_placeholder_of_every_corpus_deck_takes_a_picture() {
         let picture = prs.slide(slide).unwrap().shape(index).unwrap();
         assert_eq!(picture.kind(), ShapeKind::Picture, "{producer}");
         assert_eq!(picture.placeholder_type(), Some("pic"), "{producer}");
-        assert!(picture.size().is_some(), "{producer}");
+        assert_eq!(
+            prs.effective_geometry(slide, &[index]).unwrap(),
+            placeholder_box,
+            "{producer}: the picture takes the placeholder's box"
+        );
         let id = picture.non_visual_id().unwrap();
         assert_eq!(
             prs.picture_image(slide, id).unwrap().bytes,
