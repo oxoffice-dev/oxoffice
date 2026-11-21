@@ -141,7 +141,7 @@ refused at open when one of its parts holds a control character.
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide and remove, sections following each slide; the document properties are not all refreshed after a slide is moved or retitled (title lists, word counts, thumbnail) |
+| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide and remove, sections following each slide; after a slide edit the save refreshes the slide counts and drops the title lists and word counts it does not recount; the thumbnail stays until a removal |
 | Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
 | Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
 | Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
