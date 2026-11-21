@@ -1006,6 +1006,8 @@ impl Document {
     }
 
     /// Remove one checked bookmark pair by its identifier.
+    ///
+    /// A bookmark with a marker between paragraphs is refused for now.
     pub fn remove_story_bookmark(&mut self, id: i32) -> Result<bool> {
         let (ranges, across) = self.story_range_inventory()?;
         if across.iter().any(
@@ -1225,6 +1227,9 @@ impl Document {
         Ok(entry)
     }
 
+    /// Move one checked pair to `range`. A range with a marker between
+    /// paragraphs is listed by [`Self::story_ranges`] but refused here for
+    /// now.
     pub fn move_story_range(
         &mut self,
         selected: &StoryRangeRef,
@@ -1299,7 +1304,8 @@ impl Document {
     }
 
     /// Remove one checked pair. Its attached comment definition, if any,
-    /// remains a separate comment operation.
+    /// remains a separate comment operation. A range with a marker between
+    /// paragraphs is refused for now.
     pub fn remove_story_range(&mut self, selected: &StoryRangeRef) -> Result<bool> {
         if !self.story_ranges()?.contains(selected) {
             return Ok(false);

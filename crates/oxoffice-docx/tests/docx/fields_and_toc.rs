@@ -2149,6 +2149,17 @@ fn story_ranges_read_bookmarks_that_start_or_end_between_paragraphs() {
         .unwrap();
     let refused = doc.remove_story_range(empty).unwrap_err().to_string();
     assert!(refused.contains("between paragraphs"), "{refused}");
+    // One marker between blocks is enough, through every path.
+    let tail = ranges
+        .iter()
+        .find(
+            |range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "Tail"),
+        )
+        .unwrap();
+    let refused = doc.remove_story_range(tail).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    let refused = doc.remove_story_bookmark(7).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
     assert_eq!(doc.to_bytes().unwrap(), before);
     // Google- and Word-saved files with heading and collapsed bookmarks
     // between blocks.
