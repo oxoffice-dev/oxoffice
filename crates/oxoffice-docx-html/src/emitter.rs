@@ -26,9 +26,8 @@ pub(crate) fn emit_body(
 ) -> String {
     let mut out = String::new();
     let mut list_stack: Vec<ListState> = Vec::new();
-    // The list and level of the item just written, while its `</li>` ends
-    // the output.
-    let mut last_item: Option<(u32, u32)> = None;
+    // The list and level of each open item, outermost first.
+    let mut open_items: Vec<(u32, u32)> = Vec::new();
 
     for block in body_blocks(body, false) {
         match block {
@@ -41,20 +40,24 @@ pub(crate) fn emit_body(
                         || crate::has_own_numbering(&p)
                 });
 
-                // A paragraph on a `none` level goes on the item before it
-                // when that item is on its list at its level or above, and
-                // the list stays open around it.
-                let unmarked = list_info.is_none()
+                // A paragraph on a `none` level goes on the open item of its
+                // list at its level or above, and that list stays open.
+                let continued = if list_info.is_none()
                     && detect_heading_level(p.properties.as_ref(), styles).is_none()
-                    && crate::unmarked_list_level(&p, styles, numbering).is_some_and(
-                        |(num_id, level)| {
-                            last_item.is_some_and(|(id, item)| id == num_id && item <= level)
-                        },
-                    )
-                    && out.ends_with("</li>\n");
+                {
+                    crate::unmarked_list_level(&p, styles, numbering).and_then(|(num_id, level)| {
+                        open_items
+                            .iter()
+                            .rposition(|&(id, item)| id == num_id && item <= level)
+                    })
+                } else {
+                    None
+                };
 
                 // Close lists that are no longer active
-                while !unmarked && let Some(top) = list_stack.last() {
+                while continued.is_none()
+                    && let Some(top) = list_stack.last()
+                {
                     if let Some((_, level, _)) = &list_info {
                         if *level <= top.level && top.level > 0 {
                             close_list(&mut out, &mut list_stack);
@@ -66,11 +69,38 @@ pub(crate) fn emit_body(
                     }
                 }
 
-                if unmarked {
-                    out.truncate(out.len() - "</li>\n".len());
-                    out.push_str("<p>");
-                    emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
-                    out.push_str("</p></li>\n");
+                if let Some(index) = continued {
+                    if index + 1 == open_items.len() && out.ends_with("</li>\n") {
+                        // Inside the item just written.
+                        out.truncate(out.len() - "</li>\n".len());
+                        out.push_str("<p>");
+                        emit_paragraph_content(
+                            &mut out,
+                            &p,
+                            styles,
+                            images,
+                            hyperlink_urls,
+                            options,
+                        );
+                        out.push_str("</p></li>\n");
+                    } else {
+                        // After the deeper lists, in the list of that item.
+                        let depth = open_items[index].1 as usize + 1;
+                        while list_stack.len() > depth {
+                            close_list(&mut out, &mut list_stack);
+                        }
+                        open_items.truncate(index + 1);
+                        out.push_str("<p>");
+                        emit_paragraph_content(
+                            &mut out,
+                            &p,
+                            styles,
+                            images,
+                            hyperlink_urls,
+                            options,
+                        );
+                        out.push_str("</p>\n");
+                    }
                 } else if let Some((is_ordered, level, num_id)) = list_info {
                     // Open new list levels if needed
                     let current_depth = list_stack.len() as u32;
@@ -87,12 +117,16 @@ pub(crate) fn emit_body(
                     out.push_str("<li>");
                     emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
                     out.push_str("</li>\n");
-                    last_item = Some((num_id, level));
+                    while open_items.last().is_some_and(|&(_, item)| item >= level) {
+                        open_items.pop();
+                    }
+                    open_items.push((num_id, level));
                 } else {
                     // Close all remaining lists
                     while !list_stack.is_empty() {
                         close_list(&mut out, &mut list_stack);
                     }
+                    open_items.clear();
                     emit_paragraph(&mut out, &p, styles, images, hyperlink_urls, options);
                 }
                 for id in crate::paragraph_chart_ids(&p) {
@@ -100,6 +134,7 @@ pub(crate) fn emit_body(
                         while !list_stack.is_empty() {
                             close_list(&mut out, &mut list_stack);
                         }
+                        open_items.clear();
                         emit_chart_table(&mut out, chart);
                     }
                 }
@@ -108,6 +143,7 @@ pub(crate) fn emit_body(
                 while !list_stack.is_empty() {
                     close_list(&mut out, &mut list_stack);
                 }
+                open_items.clear();
                 emit_table(&mut out, tbl, styles, images, hyperlink_urls, options);
             }
         }

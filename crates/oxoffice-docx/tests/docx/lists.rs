@@ -1064,6 +1064,42 @@ fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
 }
 
 #[test]
+fn exports_keep_counting_a_clause_whose_body_text_follows_its_sub_items() {
+    // A clause, its sub-item (a), then body text of the clause on a `none`
+    // level shallower than the sub-item, then the next clause.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::None),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%3."),
+    ]);
+    add_items(&mut doc, id, &[0, 2, 1, 0]);
+    assert_eq!(markers(&doc), ["1.", "a.", "", "2."]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        !markdown.lines().any(|line| line == "item 3"),
+        "the body text stays in the list:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    // One outer list from the first clause to the second.
+    let outer = html.find("<ol>").unwrap();
+    let second = html.find("item 4").unwrap();
+    assert!(
+        !html[outer..second].contains("</ol>\n<p>item 3</p>\n<ol>"),
+        "the outer list does not close around the body text: {html}"
+    );
+    assert_eq!(
+        html.matches("</ol>").count(),
+        html.matches("<ol>").count(),
+        "{html}"
+    );
+    assert!(
+        html[..second].rfind("<ol>").unwrap() < html.find("item 3").unwrap(),
+        "no list opens again before the second clause: {html}"
+    );
+}
+
+#[test]
 fn exports_close_a_list_before_an_unmarked_paragraph_of_another_list() {
     // A body style linked to a `none` level of another list only borrows its
     // indent: layout draws it outside the bullet list before it.
@@ -1098,6 +1134,24 @@ fn odt_export_reports_a_definition_start_a_swapped_in_level_does_not_change() {
         .unwrap();
     add_items(&mut doc, swapped, &[0]);
     assert_eq!(markers(&doc), ["3."]);
+    let start_diagnostic = |doc: &Document| {
+        doc.to_odt_bytes()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("custom list start value"))
+    };
+    // A start override is counted first: 1 here, which ODT keeps.
+    let (mut overridden, plain) = single_list(&[ListLevel::decimal().start(3)]);
+    let one = overridden
+        .add_numbering_instance(
+            definition_of(&overridden, plain),
+            &[NumberingLevelOverride::new(0).start(1)],
+        )
+        .unwrap();
+    add_items(&mut overridden, one, &[0]);
+    assert_eq!(markers(&overridden), ["1."]);
+    assert!(!start_diagnostic(&overridden), "no false reset diagnostic");
     let odt = doc.to_odt_bytes().unwrap();
     assert!(
         odt.diagnostics

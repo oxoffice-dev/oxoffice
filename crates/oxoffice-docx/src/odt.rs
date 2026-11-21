@@ -1173,14 +1173,31 @@ impl<'a> OdtWriter<'a> {
     }
 
     /// The number a list level starts at, as layout counts it: the
-    /// definition's start, which a swapped-in level does not change.
-    fn definition_list_start(&self, num_id: u32, level: u32) -> u32 {
-        self.document
-            .numbering
-            .as_ref()
-            .and_then(|numbering| numbering.get_abstract_num_for(num_id))
-            .and_then(|definition| definition.levels.iter().find(|item| item.ilvl == level))
-            .and_then(|definition| definition.start)
+    /// instance's start override, else the definition's start, which a
+    /// swapped-in level does not change.
+    fn list_start(&self, num_id: u32, level: u32) -> u32 {
+        let Some(numbering) = self.document.numbering.as_ref() else {
+            return 1;
+        };
+        numbering
+            .nums
+            .iter()
+            .find(|item| item.num_id == num_id)
+            .and_then(|instance| {
+                instance
+                    .level_overrides
+                    .iter()
+                    .find(|item| item.ilvl == level)
+            })
+            .and_then(|item| item.start_override)
+            .or_else(|| {
+                numbering
+                    .get_abstract_num_for(num_id)?
+                    .levels
+                    .iter()
+                    .find(|item| item.ilvl == level)?
+                    .start
+            })
             .unwrap_or(1)
     }
 
@@ -1345,7 +1362,7 @@ impl<'a> OdtWriter<'a> {
             (false, false, false, false, false, false, false),
             |definition| {
                 (
-                    self.definition_list_start(num_id, level) != 1,
+                    self.list_start(num_id, level) != 1,
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),
@@ -1738,7 +1755,7 @@ impl<'a> OdtWriter<'a> {
                             format,
                             Some(ST_NumberFormat::Bullet | ST_NumberFormat::Decimal)
                         ),
-                    self.definition_list_start(num_id, level),
+                    self.list_start(num_id, level),
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),
