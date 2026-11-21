@@ -12708,8 +12708,12 @@ impl Presentation {
             });
         }
         let mut candidate = self.clone();
-        candidate.add_slide(layout_index)?;
+        let id = candidate.add_slide(layout_index)?.id();
+        // The new slide takes the section of where it lands, not of the end
+        // of the deck it was appended to first.
+        candidate.presentation.remove_slide_from_sections(id);
         candidate.move_slide(old_count, position)?;
+        candidate.presentation.place_slide_in_sections(id);
         self.commit_candidate(candidate)?;
         Ok(position)
     }

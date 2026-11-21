@@ -1620,3 +1620,53 @@ fn a_slide_moved_to_another_section_keeps_its_section_entry_data() {
     let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
     assert!(xml.contains(r#"x:keep="1""#), "{xml}");
 }
+
+#[test]
+fn a_slide_added_at_a_section_boundary_joins_the_section_before_it() {
+    let mut prs = deck_in_two_sections();
+    let layout = layout_named(&prs, "Title Only");
+
+    let position = prs.add_slide_at(layout, 2).unwrap();
+
+    let prs = reopen(&prs);
+    let new = prs.slide(position).unwrap().id();
+    let ids = slide_ids(&prs);
+    assert_eq!(
+        sections(&prs),
+        [
+            ("A".to_owned(), vec![ids[0], ids[1], new]),
+            ("B".to_owned(), vec![ids[3], ids[4]]),
+        ]
+    );
+    assert_sections_follow_slides(&prs);
+}
+
+#[test]
+fn section_entry_data_that_leans_on_its_old_section_is_left_behind_on_a_move() {
+    let prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/ppt/presentation.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(r#"name="A""#, r#"name="A" xmlns:x="urn:example:extra""#, 1)
+        .replacen(
+            &format!(r#"<p14:sldId id="{}"/>"#, ids[0]),
+            &format!(r#"<p14:sldId id="{}" x:keep="1"/>"#, ids[0]),
+            1,
+        );
+    assert!(xml.contains("x:keep"), "the section entry was edited");
+    package.set_part("/ppt/presentation.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    prs.move_slide(0, 3).unwrap();
+
+    // The saved part stays namespace-well-formed: it reopens.
+    let prs = reopen(&prs);
+    assert_eq!(sections(&prs)[1].1.last(), Some(&ids[0]));
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
+    assert!(!xml.contains("x:keep"), "{xml}");
+}

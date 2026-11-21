@@ -113,6 +113,47 @@ struct SectionSlideIdSidecar {
     raw_children: Vec<u8>,
 }
 
+impl SectionSlideIdSidecar {
+    /// Whether every prefix its attributes and children use is declared in
+    /// them, `p14` aside, which the section list always declares.
+    fn declares_its_namespaces(&self) -> bool {
+        let mut xml = b"<sldId".to_vec();
+        if !self
+            .raw_attributes
+            .windows(10)
+            .any(|window| window == b"xmlns:p14=")
+        {
+            xml.extend_from_slice(format!(r#" xmlns:p14="{P14_NS}""#).as_bytes());
+        }
+        xml.extend_from_slice(&self.raw_attributes);
+        xml.push(b'>');
+        xml.extend_from_slice(&self.raw_children);
+        xml.extend_from_slice(b"</sldId>");
+        let mut reader = quick_xml::reader::NsReader::from_reader(xml.as_slice());
+        loop {
+            match reader.read_resolved_event() {
+                Ok((namespace, Event::Start(start) | Event::Empty(start))) => {
+                    if matches!(namespace, quick_xml::name::ResolveResult::Unknown(_)) {
+                        return false;
+                    }
+                    for attribute in start.attributes() {
+                        let Ok(attribute) = attribute else {
+                            return false;
+                        };
+                        let (namespace, _) = reader.resolver().resolve_attribute(attribute.key);
+                        if matches!(namespace, quick_xml::name::ResolveResult::Unknown(_)) {
+                            return false;
+                        }
+                    }
+                }
+                Ok((_, Event::Eof)) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+    }
+}
+
 impl Section {
     pub fn new(
         id: impl Into<String>,
@@ -1622,7 +1663,7 @@ impl CT_Presentation {
         let sidecar = current.and_then(|current| {
             let sidecars = &mut self.sections[current].slide_id_sidecars;
             let index = sidecars.iter().position(|sidecar| sidecar.id == slide_id)?;
-            Some(sidecars.remove(index))
+            Some((current, sidecars.remove(index)))
         });
         self.remove_slide_from_sections(slide_id);
         let owner = |neighbour: Option<&CT_SlideId>| {
@@ -1657,7 +1698,13 @@ impl CT_Presentation {
         section
             .slide_ids
             .sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
-        section.slide_id_sidecars.extend(sidecar);
+        // Data that leans on namespaces declared by its old section cannot
+        // follow the slide without them; it is left behind, as a removal does.
+        if let Some((from, sidecar)) = sidecar
+            && (from == target || sidecar.declares_its_namespaces())
+        {
+            section.slide_id_sidecars.push(sidecar);
+        }
         self.sections_dirty = true;
     }
 
