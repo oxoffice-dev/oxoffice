@@ -8,6 +8,8 @@ mod sanitize;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+use oxoffice_docx_layout::style_resolver::{NumberingState, generate_marker};
+use oxoffice_docx_layout::table::effective_table_paragraph_properties;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document};
 use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_NumberFormat};
@@ -137,14 +139,12 @@ pub fn to_markdown_with_charts(input: &HtmlInput, charts: &HashMap<String, Chart
 /// style's `basedOn` chain (the default paragraph style when it names none),
 /// else from the document defaults; a numbering id of 0 means no list. The
 /// level is the one the instance swaps in, else its definition's. Returns
-/// the instance id, the level index, the level and the number the list
-/// starts at: the instance's start override, else the definition's start,
-/// as layout counts.
+/// the instance id, the level index and the level.
 fn list_level<'a>(
     paragraph: &CT_P,
     styles: &CT_Styles,
     numbering: &'a CT_Numbering,
-) -> Option<(u32, u32, &'a CT_Lvl, u32)> {
+) -> Option<(u32, u32, &'a CT_Lvl)> {
     let direct = paragraph.properties.as_ref();
     let mut num_id = direct.and_then(|properties| properties.num_id);
     let mut ilvl = direct.and_then(|properties| properties.num_ilvl);
@@ -190,25 +190,167 @@ fn list_level<'a>(
     let level = level_override
         .and_then(|item| item.level.as_ref())
         .unwrap_or(base);
-    let start = level_override
-        .and_then(|item| item.start_override)
-        .or(base.start)
-        .unwrap_or(1);
-    Some((num_id, ilvl, level, start))
+    Some((num_id, ilvl, level))
 }
 
-/// The instance and level of a paragraph on a list level that draws no
-/// marker (`none`), as contracts write unnumbered sub-paragraphs. Layout
-/// keeps counting the list around it, so an export keeps that list open and
-/// shows the paragraph as part of the item before it, when that item is on
-/// the same list at its level or above.
-fn unmarked_list_level(
-    paragraph: &CT_P,
-    styles: &CT_Styles,
-    numbering: Option<&CT_Numbering>,
-) -> Option<(u32, u32)> {
-    let (num_id, ilvl, level, _) = list_level(paragraph, styles, numbering?)?;
-    (level.num_fmt == Some(ST_NumberFormat::None)).then_some((num_id, ilvl))
+/// How a list item's marker shows in HTML: a bullet, or a number in one of
+/// the formats layout draws. Legal numbering shows decimal numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListKind {
+    Bullet,
+    Decimal,
+    LowerLetter,
+    UpperLetter,
+    LowerRoman,
+    UpperRoman,
+}
+
+impl ListKind {
+    /// The kind of a level that draws a marker: `None` for a `none` level
+    /// and for the formats the exports do not write as list items.
+    fn of(level: &CT_Lvl) -> Option<Self> {
+        let legal = level.legal == Some(true);
+        Some(match level.num_fmt.as_ref() {
+            Some(ST_NumberFormat::Bullet) => Self::Bullet,
+            Some(ST_NumberFormat::Decimal | ST_NumberFormat::Ordinal) | None => Self::Decimal,
+            Some(ST_NumberFormat::None | ST_NumberFormat::Other(_)) => return None,
+            Some(_) if legal => Self::Decimal,
+            Some(ST_NumberFormat::LowerLetter) => Self::LowerLetter,
+            Some(ST_NumberFormat::UpperLetter) => Self::UpperLetter,
+            Some(ST_NumberFormat::LowerRoman) => Self::LowerRoman,
+            Some(ST_NumberFormat::UpperRoman) => Self::UpperRoman,
+            Some(_) => return None,
+        })
+    }
+
+    fn ordered(self) -> bool {
+        self != Self::Bullet
+    }
+}
+
+/// A list item as the exports write it: its level, kind, the
+/// definition that owns its count, and the number layout gives it.
+#[derive(Clone, Copy, Debug)]
+struct ListItem {
+    level: u32,
+    kind: ListKind,
+    definition: u32,
+    count: u32,
+}
+
+/// Counts list items in document order with layout's own counter, so that
+/// the exports show the numbers a reader sees: each definition counts per
+/// level for all its instances, a start override applies once, an item
+/// restarts the deeper levels as their `lvlRestart` says, and a definition
+/// that restarts after a section break starts again after one. Every
+/// paragraph on a list counts, a heading or a paragraph on a `none` level
+/// too, and so do the paragraphs of tables, which the exports write without
+/// markers, as [`Self::table`] says.
+struct ListCounter<'a> {
+    styles: &'a CT_Styles,
+    numbering: Option<&'a CT_Numbering>,
+    state: NumberingState,
+}
+
+/// What [`ListCounter::paragraph`] reads on a paragraph.
+enum Counted {
+    /// Not on a list.
+    None,
+    /// On a list level that draws no marker the exports write (`none`
+    /// gives `unmarked`): its level and definition.
+    Unmarked {
+        level: u32,
+        definition: u32,
+        unmarked: bool,
+    },
+    /// A list item.
+    Item(ListItem),
+}
+
+impl<'a> ListCounter<'a> {
+    fn new(styles: &'a CT_Styles, numbering: Option<&'a CT_Numbering>) -> Self {
+        Self {
+            styles,
+            numbering,
+            state: NumberingState::new(),
+        }
+    }
+
+    /// Count the next paragraph in document order and say what it is.
+    fn paragraph(&mut self, paragraph: &CT_P) -> Counted {
+        let counted = self.count(paragraph);
+        if let Some(numbering) = self.numbering
+            && paragraph
+                .properties
+                .as_ref()
+                .is_some_and(|properties| properties.sect_pr.is_some())
+        {
+            self.state.restart_after_section_break(numbering);
+        }
+        counted
+    }
+
+    /// Count the paragraphs of a table as layout lays them out: those of a
+    /// table or rows that accepting changes removes, and of cells that go on
+    /// a vertical merge, left out, the numbering a table style gives read.
+    fn table(&mut self, table: &CT_Tbl) {
+        let Some(numbering) = self.numbering else {
+            return;
+        };
+        for (_, properties) in effective_table_paragraph_properties(table, self.styles) {
+            if let Some(num_id) = properties.num_id.filter(|id| *id != 0) {
+                generate_marker(
+                    num_id,
+                    properties.num_ilvl.unwrap_or(0),
+                    numbering,
+                    &mut self.state,
+                );
+            }
+        }
+    }
+
+    fn count(&mut self, paragraph: &CT_P) -> Counted {
+        let Some(numbering) = self.numbering else {
+            return Counted::None;
+        };
+        let Some((num_id, ilvl, level)) = list_level(paragraph, self.styles, numbering) else {
+            return Counted::None;
+        };
+        let Some(definition) = numbering
+            .nums
+            .iter()
+            .find(|item| item.num_id == num_id)
+            .map(|item| item.abstract_num_id)
+        else {
+            return Counted::None;
+        };
+        generate_marker(num_id, ilvl, numbering, &mut self.state);
+        let count = self.state.current(num_id, ilvl);
+        match ListKind::of(level) {
+            Some(kind) => Counted::Item(ListItem {
+                level: ilvl,
+                kind,
+                definition,
+                count,
+            }),
+            None => Counted::Unmarked {
+                level: ilvl,
+                definition,
+                unmarked: level.num_fmt == Some(ST_NumberFormat::None),
+            },
+        }
+    }
+}
+
+/// The level of a paragraph whose own numbering is turned off (`numId` 0)
+/// at a level, as an HTML import writes the paragraphs of a list item after
+/// its first.
+fn numbering_turned_off_level(paragraph: &CT_P) -> Option<u32> {
+    let properties = paragraph.properties.as_ref()?;
+    properties
+        .num_id
+        .filter(|id| *id == 0)
+        .and(properties.num_ilvl)
 }
 
 /// Whether the paragraph sets a numbering id itself, not through its style.

@@ -12,7 +12,10 @@ use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharact
 
 use crate::css;
 use crate::sanitize::{escape_html, escape_html_attr, safe_url};
-use crate::{Block, HtmlOptions, ImageData, body_blocks, cell_blocks};
+use crate::{
+    Block, Counted, HtmlOptions, ImageData, ListCounter, ListItem, ListKind, body_blocks,
+    cell_blocks,
+};
 
 /// Emit the full body content as HTML.
 pub(crate) fn emit_body(
@@ -25,147 +28,147 @@ pub(crate) fn emit_body(
     charts: &HashMap<String, crate::ChartTable>,
 ) -> String {
     let mut out = String::new();
-    let mut list_stack: Vec<ListState> = Vec::new();
-    // The list and level of each open item, outermost first.
-    let mut open_items: Vec<(u32, u32)> = Vec::new();
+    let mut counter = ListCounter::new(styles, numbering);
+    // The open lists, outermost first; each holds its open item, in which
+    // the next list is nested.
+    let mut lists: Vec<OpenList> = Vec::new();
 
     for block in body_blocks(body, false) {
         match block {
             Block::Paragraph(p, _) => {
+                let heading = detect_heading_level(p.properties.as_ref(), styles).is_some();
+                let counted = counter.paragraph(&p);
                 // A heading numbered through its style, as Word numbers its
                 // headings, stays a heading; only its own numbering makes it
                 // a list item.
-                let list_info = detect_list(&p, styles, numbering).filter(|_| {
-                    detect_heading_level(p.properties.as_ref(), styles).is_none()
-                        || crate::has_own_numbering(&p)
-                });
-
-                // A paragraph on a `none` level goes on the open item of its
-                // list at its level or above, and that list stays open.
-                let continued = if list_info.is_none()
-                    && detect_heading_level(p.properties.as_ref(), styles).is_none()
-                {
-                    crate::unmarked_list_level(&p, styles, numbering).and_then(|(num_id, level)| {
-                        open_items
-                            .iter()
-                            .rposition(|&(id, item)| id == num_id && item <= level)
-                    })
-                } else {
+                let item = match counted {
+                    Counted::Item(item) if !heading || crate::has_own_numbering(&p) => Some(item),
+                    _ => None,
+                };
+                // A paragraph on a `none` level goes on the open item of a
+                // list of its definition at its level or above, and that list
+                // stays open, as layout keeps counting it. A paragraph whose
+                // numbering is turned off (`numId` 0, as an HTML import writes
+                // the paragraphs after an item's first) goes on the open item
+                // at its level.
+                let continued = if item.is_some() || heading {
                     None
+                } else if let Counted::Unmarked {
+                    level,
+                    definition,
+                    unmarked: true,
+                    ..
+                } = counted
+                {
+                    lists
+                        .iter()
+                        .rposition(|list| list.definition == definition && list.level <= level)
+                } else {
+                    crate::numbering_turned_off_level(&p)
+                        .and_then(|level| lists.iter().position(|list| list.level == level))
                 };
 
-                // Close lists that are no longer active
-                while continued.is_none()
-                    && let Some(top) = list_stack.last()
-                {
-                    if let Some((_, level, _)) = &list_info {
-                        if *level <= top.level && top.level > 0 {
-                            close_list(&mut out, &mut list_stack);
-                        } else {
-                            break;
-                        }
-                    } else {
-                        close_list(&mut out, &mut list_stack);
-                    }
-                }
-
                 if let Some(index) = continued {
-                    if index + 1 == open_items.len() && out.ends_with("</li>\n") {
-                        // Inside the item just written.
-                        out.truncate(out.len() - "</li>\n".len());
-                        out.push_str("<p>");
-                        emit_paragraph_content(
-                            &mut out,
-                            &p,
-                            styles,
-                            images,
-                            hyperlink_urls,
-                            options,
-                        );
-                        out.push_str("</p></li>\n");
-                    } else {
-                        // After the deeper lists, in the list of that item.
-                        let depth = open_items[index].1 as usize + 1;
-                        while list_stack.len() > depth {
-                            close_list(&mut out, &mut list_stack);
-                        }
-                        open_items.truncate(index + 1);
-                        out.push_str("<p>");
-                        emit_paragraph_content(
-                            &mut out,
-                            &p,
-                            styles,
-                            images,
-                            hyperlink_urls,
-                            options,
-                        );
-                        out.push_str("</p>\n");
+                    while lists.len() > index + 1 {
+                        close_list(&mut out, &mut lists);
                     }
-                } else if let Some((is_ordered, level, num_id)) = list_info {
-                    // Open new list levels if needed
-                    let current_depth = list_stack.len() as u32;
-                    if current_depth <= level {
-                        for _ in current_depth..=level {
-                            let tag = if is_ordered { "ol" } else { "ul" };
-                            out.push_str(&format!("<{tag}>\n"));
-                            list_stack.push(ListState {
-                                ordered: is_ordered,
-                                level,
-                            });
-                        }
-                    }
+                    out.push_str("<p>");
+                    emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
+                    out.push_str("</p>");
+                } else if let Some(item) = item {
+                    open_item(&mut out, &mut lists, &item);
                     out.push_str(&format!("<li{}>", direction_attribute(&p, styles)));
                     emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
-                    out.push_str("</li>\n");
-                    while open_items.last().is_some_and(|&(_, item)| item >= level) {
-                        open_items.pop();
-                    }
-                    open_items.push((num_id, level));
                 } else {
-                    // Close all remaining lists
-                    while !list_stack.is_empty() {
-                        close_list(&mut out, &mut list_stack);
-                    }
-                    open_items.clear();
+                    close_lists(&mut out, &mut lists);
                     emit_paragraph(&mut out, &p, styles, images, hyperlink_urls, options);
                 }
                 for id in crate::paragraph_chart_ids(&p) {
                     if let Some(chart) = charts.get(&id) {
-                        while !list_stack.is_empty() {
-                            close_list(&mut out, &mut list_stack);
-                        }
-                        open_items.clear();
+                        close_lists(&mut out, &mut lists);
                         emit_chart_table(&mut out, chart);
                     }
                 }
             }
             Block::Table(tbl) => {
-                while !list_stack.is_empty() {
-                    close_list(&mut out, &mut list_stack);
-                }
-                open_items.clear();
+                counter.table(tbl);
+                close_lists(&mut out, &mut lists);
                 emit_table(&mut out, tbl, styles, images, hyperlink_urls, options);
             }
         }
     }
 
-    // Close remaining lists
-    while !list_stack.is_empty() {
-        close_list(&mut out, &mut list_stack);
-    }
-
+    close_lists(&mut out, &mut lists);
     out
 }
 
-struct ListState {
-    ordered: bool,
+/// An open `<ol>` or `<ul>` and its open item.
+struct OpenList {
+    kind: ListKind,
+    /// The level of its items.
     level: u32,
+    /// The definition that counts its items.
+    definition: u32,
+    /// The number of its last item.
+    last: u32,
 }
 
-fn close_list(out: &mut String, stack: &mut Vec<ListState>) {
-    if let Some(state) = stack.pop() {
-        let tag = if state.ordered { "ol" } else { "ul" };
-        out.push_str(&format!("</{tag}>\n"));
+/// Get the list for `item` ready, its previous item closed: close the
+/// deeper lists, go on with the list at its level when the item continues
+/// it (same kind and, numbered, the next number), else open a new list,
+/// nested in the open item of the list above.
+fn open_item(out: &mut String, lists: &mut Vec<OpenList>, item: &ListItem) {
+    while lists.last().is_some_and(|list| list.level > item.level) {
+        close_list(out, lists);
+    }
+    if let Some(list) = lists.last_mut().filter(|list| list.level == item.level) {
+        if list.kind == item.kind
+            && (!item.kind.ordered() || list.last.checked_add(1) == Some(item.count))
+        {
+            out.push_str("</li>\n");
+            list.last = item.count;
+            list.definition = item.definition;
+            return;
+        }
+        close_list(out, lists);
+    }
+    let tag = if item.kind.ordered() { "ol" } else { "ul" };
+    let kind = match item.kind {
+        ListKind::LowerLetter => " type=\"a\"",
+        ListKind::UpperLetter => " type=\"A\"",
+        ListKind::LowerRoman => " type=\"i\"",
+        ListKind::UpperRoman => " type=\"I\"",
+        ListKind::Bullet | ListKind::Decimal => "",
+    };
+    let start = if item.kind.ordered() && item.count != 1 {
+        format!(" start=\"{}\"", item.count)
+    } else {
+        String::new()
+    };
+    if !lists.is_empty() {
+        // Nested in the parent's open item.
+        out.push('\n');
+    }
+    out.push_str(&format!("<{tag}{kind}{start}>\n"));
+    lists.push(OpenList {
+        kind: item.kind,
+        level: item.level,
+        definition: item.definition,
+        last: item.count,
+    });
+}
+
+/// Close the innermost list and its open item.
+fn close_list(out: &mut String, lists: &mut Vec<OpenList>) {
+    if let Some(list) = lists.pop() {
+        let tag = if list.kind.ordered() { "ol" } else { "ul" };
+        out.push_str(&format!("</li>\n</{tag}>\n"));
+    }
+}
+
+fn close_lists(out: &mut String, lists: &mut Vec<OpenList>) {
+    while !lists.is_empty() {
+        close_list(out, lists);
     }
 }
 
@@ -196,34 +199,6 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
     }
 
     None
-}
-
-/// Detect if a paragraph is a list item, through its style too. Returns
-/// (is_ordered, ilvl, num_id).
-fn detect_list(
-    para: &CT_P,
-    styles: &CT_Styles,
-    numbering: Option<&CT_Numbering>,
-) -> Option<(bool, u32, u32)> {
-    let (num_id, ilvl, level, _) = crate::list_level(para, styles, numbering?)?;
-
-    use oxoffice_docx_oxml::numbering::ST_NumberFormat;
-    let is_ordered = match level.num_fmt.as_ref() {
-        Some(ST_NumberFormat::Bullet) => false,
-        None
-        | Some(
-            ST_NumberFormat::Decimal
-            | ST_NumberFormat::UpperRoman
-            | ST_NumberFormat::LowerRoman
-            | ST_NumberFormat::UpperLetter
-            | ST_NumberFormat::LowerLetter
-            | ST_NumberFormat::Ordinal,
-        ) => true,
-        // A `none` level draws no marker, as in layout: not a list item.
-        Some(_) => return None,
-    };
-
-    Some((is_ordered, ilvl, num_id))
 }
 
 /// Emit a complete paragraph element.

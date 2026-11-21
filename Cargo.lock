@@ -1202,6 +1202,7 @@ dependencies = [
 name = "oxoffice-docx-html"
 version = "0.1.0"
 dependencies = [
+ "oxoffice-docx-layout",
  "oxoffice-docx-oxml",
 ]
 
