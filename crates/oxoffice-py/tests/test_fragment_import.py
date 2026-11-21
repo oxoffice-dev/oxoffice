@@ -1,6 +1,10 @@
 """Inserting another document keeps the names of its bookmarks while they are free in the destination."""
 
+from pathlib import Path
+
 import oxoffice.docx as oxdocx
+
+CORPUS = Path(__file__).resolve().parents[3] / "tests" / "corpus" / "files"
 
 
 def bookmarked(name):
@@ -64,3 +68,12 @@ def test_insert_document_takes_the_destination_s_styles_by_default():
     saved = oxdocx.Document.from_bytes(doc.to_bytes())
     imported = next(p for p in saved.paragraphs if p.text == "imported")
     assert imported.style == "Accent"
+
+
+def test_an_inserted_document_brings_the_styles_its_headers_and_footers_use():
+    doc = oxdocx.Document.from_bytes((CORPUS / "google" / "report.docx").read_bytes())
+    source = oxdocx.Document.from_bytes((CORPUS / "libreoffice" / "report.docx").read_bytes())
+    doc.insert_document(source, at=0)
+    saved = oxdocx.Document.from_bytes(doc.to_bytes())
+    undefined = [finding.message for finding in saved.validate().findings if "is not defined" in finding.message]
+    assert undefined == []

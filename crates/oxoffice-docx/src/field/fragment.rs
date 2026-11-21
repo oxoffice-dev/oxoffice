@@ -838,9 +838,27 @@ pub(super) fn import_fragment_content_with_state(
         ));
     }
 
+    // Header and footer parts are copied whole, and the list numbers they
+    // use are remapped after the copy: one holding a list is never shared
+    // with an equal destination part, whose numbers mean other lists.
+    let mut numbered_header_footers = HashSet::new();
+    for (selected_owner, _, _, relationship, source_part) in &imports {
+        if *selected_owner
+            && (relationship.rel_type == rel_types::HEADER
+                || relationship.rel_type == rel_types::FOOTER)
+        {
+            let xml = fragment.package.get_part(source_part).ok_or_else(|| {
+                Error::Other(format!("document fragment part {source_part} is missing"))
+            })?;
+            if !word_value_attributes(xml, &[b"numId"])?.is_empty() {
+                numbered_header_footers.insert(source_part.clone());
+            }
+        }
+    }
     for source_part in closure {
         let destination_part = if policy.reuse_related_parts()
             && !remapped_store_properties.contains(&source_part)
+            && !numbered_header_footers.contains(&source_part)
         {
             equivalent_fragment_leaf_part(&fragment.package, document, &source_part).map_or_else(
                 || {
@@ -1232,6 +1250,18 @@ pub(super) fn import_fragment_content_with_state(
             .map(|(evaluation, _)| &mut evaluation.operation),
         edits,
     )?;
+    for source_part in &numbered_header_footers {
+        let copied = part_map
+            .get(source_part)
+            .ok_or_else(|| Error::Other(format!("fragment part {source_part} was not reserved")))?;
+        let mut xml = document
+            .package
+            .get_part(copied)
+            .ok_or_else(|| Error::Other(format!("copied fragment part {copied} is missing")))?
+            .to_vec();
+        patch_word_values(&mut xml, &[b"numId"], &numbering_values)?;
+        document.package.set_part(copied, xml);
+    }
     if let Some(comments) = document.comments.as_mut() {
         for comment in &mut comments.comments {
             if !comment_ids.values().any(|id| *id == comment.id.to_string()) {
@@ -1377,6 +1407,23 @@ fn prune_document_fragment_dependencies(
         .filter_map(|value| value.parse::<u32>().ok())
         .collect::<HashSet<_>>();
     let mut used_styles = word_value_attributes(&body_xml, &[b"pStyle", b"rStyle", b"tblStyle"])?;
+    // The header and footer parts the section properties reach are copied
+    // whole: the styles and lists they use come along like the body's.
+    for part in fragment_header_footer_parts(fragment, selected)? {
+        let xml = fragment
+            .package
+            .get_part(&part)
+            .ok_or_else(|| Error::Other(format!("document fragment part {part} is missing")))?;
+        used_numbering.extend(
+            word_value_attributes(xml, &[b"numId"])?
+                .into_iter()
+                .filter_map(|value| value.parse::<u32>().ok()),
+        );
+        used_styles.extend(word_value_attributes(
+            xml,
+            &[b"pStyle", b"rStyle", b"tblStyle"],
+        )?);
+    }
     used_styles.extend(
         fragment
             .styles
@@ -1868,6 +1915,40 @@ fn remap_fragment_style_collisions(
         }
         *comments = CT_Comments::from_xml(&xml)?;
     }
+    // Header and footer parts are copied whole: they take the renames here,
+    // in one pass, since a replacement can also be a key.
+    let header_footer_parts = fragment
+        .package
+        .get_part_rels(&fragment.doc_part_name)
+        .map(|relationships| {
+            relationships
+                .items
+                .iter()
+                .filter(|relationship| {
+                    (relationship.rel_type == rel_types::HEADER
+                        || relationship.rel_type == rel_types::FOOTER)
+                        && crate::document::relationship_is_internal(relationship)
+                })
+                .map(|relationship| {
+                    OpcPackage::resolve_rel_target(&fragment.doc_part_name, &relationship.target)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for part in header_footer_parts {
+        let Some(original) = fragment.package.get_part(&part) else {
+            continue;
+        };
+        let mut xml = original.to_vec();
+        patch_word_values(
+            &mut xml,
+            &[b"pStyle", b"rStyle", b"tblStyle"],
+            &replacements,
+        )?;
+        if xml != original {
+            fragment.package.set_part(&part, xml);
+        }
+    }
     let styles_part = fragment
         .package
         .get_part_rels(&fragment.doc_part_name)
@@ -2038,6 +2119,28 @@ fn remap_fragment_companion(
         )?);
     }
     Ok(())
+}
+
+/// The header and footer parts the section properties in `selected` reach.
+fn fragment_header_footer_parts(fragment: &Document, selected: &[u8]) -> Result<Vec<String>> {
+    let Some(relationships) = fragment.package.get_part_rels(&fragment.doc_part_name) else {
+        return Ok(Vec::new());
+    };
+    let mut parts = Vec::new();
+    for id in relationship_ids_in_xml(selected)? {
+        if let Some(relationship) = relationships.get_by_id(&id)
+            && (relationship.rel_type == rel_types::HEADER
+                || relationship.rel_type == rel_types::FOOTER)
+            && crate::document::relationship_is_internal(relationship)
+        {
+            let part =
+                OpcPackage::resolve_rel_target(&fragment.doc_part_name, &relationship.target);
+            if !parts.contains(&part) {
+                parts.push(part);
+            }
+        }
+    }
+    Ok(parts)
 }
 
 fn fragment_dependency_companions(fragment: &Document, selected: &[u8]) -> Result<Vec<Vec<u8>>> {

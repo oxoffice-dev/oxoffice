@@ -877,6 +877,171 @@ fn an_appended_or_inserted_document_keeps_the_header_of_its_inner_section() {
     );
 }
 
+/// A saved two-section document whose first section has a header in style
+/// `Banner` (`color`) holding an item of a numbered list that nothing in the
+/// body uses, and whose final section holds `body`.
+fn with_styled_list_header(color: &str) -> Document {
+    let mut doc = doc_with(&["cover"]);
+    doc.add_style(StyleBuilder::paragraph("Banner", "Banner").color(color))
+        .expect("style is valid");
+    doc.add_numbered_list_item("listed", 0);
+    let listed = item_at(&doc, 1);
+    doc.remove_content_at(&listed).expect("the list item goes");
+    let num_id = doc
+        .numbering_level(1, 0)
+        .map(|_| 1)
+        .expect("the numbered list is list 1");
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:pStyle w:val="Banner"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num_id}"/></w:numPr></w:pPr><w:r><w:t>Source header</w:t></w:r></w:p></w:hdr>"#
+    );
+    doc.set_raw_header_with_images(header.into_bytes(), &[], HdrFtrType::Default);
+    doc.insert_section(1).expect("a section appends");
+    doc.add_paragraph("body");
+    reopen(&mut doc)
+}
+
+/// The run color style `id` defines, if the style exists.
+fn banner_color(doc: &Document, id: &str) -> Option<String> {
+    doc.style(id)?.run_properties()?.color.clone()
+}
+
+/// The `w:val` of the first `element` in the saved header part showing
+/// "Source header".
+fn source_header_value(doc: &mut Document, element: &str) -> Option<String> {
+    let package = OpcPackage::from_reader(Cursor::new(saved(doc))).expect("package opens");
+    let xml = package
+        .parts
+        .iter()
+        .filter(|(name, _)| name.contains("header"))
+        .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+        .find(|xml| xml.contains("Source header"))
+        .expect("the source header is in the package");
+    let start = xml.find(&format!("<w:{element} w:val=\""))? + element.len() + 11;
+    Some(xml[start..start + xml[start..].find('"')?].to_owned())
+}
+
+#[test]
+fn an_imported_header_keeps_its_style_and_list_however_the_document_comes_in() {
+    for entry in ["append", "insert_document", "import_fragment"] {
+        let source = with_styled_list_header("C00000");
+        let mut doc = doc_with(&["dest"]);
+        let mut doc = reopen(&mut doc);
+        match entry {
+            "append" => doc.append(&source),
+            "insert_document" => doc.insert_document(1, &source),
+            _ => doc
+                .import_fragment(
+                    &ContentLocation::end(body(&doc)),
+                    &whole_body(&source),
+                    FragmentConflictPolicy::default(),
+                )
+                .map(|_| ())
+                .expect("the fragment imports"),
+        }
+        let mut doc = reopen(&mut doc);
+        let style = source_header_value(&mut doc, "pStyle").expect("the header has a style");
+        assert_eq!(style, "Banner", "{entry}: the header keeps its style id");
+        assert_eq!(
+            banner_color(&doc, &style).as_deref(),
+            Some("C00000"),
+            "{entry}: the header style is defined as in the source"
+        );
+        let num_id: u32 = source_header_value(&mut doc, "numId")
+            .expect("the header has a list")
+            .parse()
+            .unwrap();
+        assert_eq!(
+            doc.numbering_is_bullet(num_id),
+            Some(false),
+            "{entry}: the header's numbered list is defined"
+        );
+        let errors: Vec<_> = doc
+            .validate()
+            .unwrap()
+            .findings
+            .into_iter()
+            .filter(|finding| finding.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "{entry}: {errors:?}");
+    }
+}
+
+#[test]
+fn an_imported_header_follows_a_renamed_style_and_a_renumbered_list() {
+    for entry in ["append", "insert_document", "import_fragment"] {
+        let source = with_styled_list_header("C00000");
+        let mut doc = doc_with(&["dest"]);
+        doc.add_style(StyleBuilder::paragraph("Banner", "Banner").color("0000FF"))
+            .expect("style is valid");
+        doc.add_bullet_list_item("dest item", 0);
+        let mut doc = reopen(&mut doc);
+        assert_eq!(doc.numbering_is_bullet(1), Some(true));
+        match entry {
+            "append" => doc.append(&source),
+            "insert_document" => doc.insert_document(2, &source),
+            _ => doc
+                .import_fragment(
+                    &ContentLocation::end(body(&doc)),
+                    &whole_body(&source),
+                    FragmentConflictPolicy::default(),
+                )
+                .map(|_| ())
+                .expect("the fragment imports"),
+        }
+        let mut doc = reopen(&mut doc);
+        // A whole document takes the destination's look, as Word's Insert >
+        // Text from File does; a fragment brings the source's under a new id.
+        let style = source_header_value(&mut doc, "pStyle").expect("the header has a style");
+        let expected = if entry == "import_fragment" {
+            assert_ne!(
+                style, "Banner",
+                "{entry}: the destination keeps its own Banner"
+            );
+            "C00000"
+        } else {
+            assert_eq!(
+                style, "Banner",
+                "{entry}: the header takes the destination's Banner"
+            );
+            "0000FF"
+        };
+        assert_eq!(
+            banner_color(&doc, &style).as_deref(),
+            Some(expected),
+            "{entry}"
+        );
+        assert_eq!(
+            banner_color(&doc, "Banner").as_deref(),
+            Some("0000FF"),
+            "{entry}"
+        );
+        let num_id: u32 = source_header_value(&mut doc, "numId")
+            .expect("the header has a list")
+            .parse()
+            .unwrap();
+        assert_ne!(num_id, 1, "{entry}: list 1 is the destination's bullets");
+        assert_eq!(doc.numbering_is_bullet(num_id), Some(false), "{entry}");
+        assert_eq!(doc.numbering_is_bullet(1), Some(true), "{entry}");
+    }
+}
+
+#[test]
+fn a_word_report_inserted_into_another_keeps_the_styles_of_its_headers_and_footers() {
+    let source = corpus_doc("libreoffice/report.docx");
+    let mut doc = corpus_doc("google/report.docx");
+    let end = doc.story_items(&body(&doc)).unwrap().len();
+    doc.insert_document(end, &source);
+    let doc = reopen(&mut doc);
+    let undefined: Vec<_> = doc
+        .validate()
+        .unwrap()
+        .findings
+        .into_iter()
+        .filter(|finding| finding.message.contains("is not defined"))
+        .collect();
+    assert!(undefined.is_empty(), "{undefined:?}");
+}
+
 // ---- import_fragment ----
 
 #[test]
