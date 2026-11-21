@@ -961,6 +961,31 @@ fn a_carriage_return_in_chart_text_is_saved_so_that_other_readers_keep_it() {
     assert!(!xml.contains('\r'), "{xml}");
 }
 
+#[test]
+fn a_raw_carriage_return_in_saved_chart_text_reads_as_a_line_feed() {
+    let mut prs = blank_deck(1);
+    let id = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    let mut package = saved_package(&prs);
+    let part = package
+        .parts
+        .keys()
+        .find(|name| name.starts_with("/ppt/charts/") && name.ends_with(".xml"))
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let patched = xml.replace("<c:v>North</c:v>", "<c:v>North\r\ncoast</c:v>");
+    assert_ne!(patched, xml, "the cache names the category");
+    package.set_part(&part, patched.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    let (_, data) = chart(&prs, 0, id);
+    assert_eq!(data.categories[0], "North\ncoast");
+    let saved = reopen(&prs);
+    assert_eq!(chart(&saved, 0, id).1.categories[0], "North\ncoast");
+}
+
 // --- Copies, groups ----------------------------------------------------------
 
 #[test]

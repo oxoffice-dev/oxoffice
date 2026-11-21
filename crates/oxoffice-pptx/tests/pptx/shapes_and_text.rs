@@ -1115,6 +1115,35 @@ fn tabs_line_feeds_and_carriage_returns_in_names_and_runs_survive_on_every_edito
 }
 
 #[test]
+fn a_raw_carriage_return_in_a_saved_run_reads_as_a_line_feed_and_stays_one_after_an_edit() {
+    // A part written with Windows line ends holds a raw CR LF inside a:t,
+    // which every XML reader reads as one line feed.
+    let prs = text_box_deck("Dear {name},");
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen("Dear {name},</a:t>", "Dear {name},\r\nWelcome</a:t>", 1);
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(
+        run_texts(shape_at(&prs, 0, 0))[0][0],
+        "Dear {name},\nWelcome"
+    );
+
+    assert_eq!(prs.replace_text("{name}", "Ada"), 1);
+
+    let saved = reopen(&prs);
+    assert_eq!(
+        run_texts(shape_at(&saved, 0, 0))[0][0],
+        "Dear Ada,\nWelcome"
+    );
+    let xml = saved_part(&saved, "/ppt/slides/slide1.xml");
+    assert!(!xml.contains("&#13;") && !xml.contains('\r'), "{xml}");
+}
+
+#[test]
 fn wrap_autofit_anchor_and_insets_survive_a_save_and_can_be_cleared() {
     let mut prs = text_box_deck("Framed");
     {

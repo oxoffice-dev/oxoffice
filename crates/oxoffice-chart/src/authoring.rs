@@ -76,13 +76,22 @@ pub fn chart_plain_title(chart_xml: &[u8]) -> Result<Option<String>> {
                     continue;
                 };
                 match event {
-                    Event::Text(text) => target.push_str(&decode_plain(&text)),
-                    Event::CData(text) => target.push_str(&text.decode().map_err(|error| {
-                        ChartError::InvalidValue {
-                            element: "c:title".into(),
-                            value: error.to_string(),
-                        }
-                    })?),
+                    Event::Text(text) => {
+                        target.push_str(&text.xml10_content().map_err(|error| {
+                            ChartError::InvalidValue {
+                                element: "c:title".into(),
+                                value: error.to_string(),
+                            }
+                        })?)
+                    }
+                    Event::CData(text) => {
+                        target.push_str(&text.xml10_content().map_err(|error| {
+                            ChartError::InvalidValue {
+                                element: "c:title".into(),
+                                value: error.to_string(),
+                            }
+                        })?)
+                    }
                     Event::GeneralRef(reference) => target.push_str(&resolve_entity(&reference)),
                     _ => {}
                 }
