@@ -40617,15 +40617,16 @@ impl Document {
         relationship_id
     }
 
-    /// Whether the given numbering definition renders as bullets (true)
-    /// or numbers (false). None if the id is unknown.
+    /// Whether the first level of the given numbering instance renders as
+    /// bullets (true) or numbers (false), with the replacement level the
+    /// instance sets in place of its definition's and a missing format read
+    /// as decimal, as layout draws it. A `none` level, which draws no marker,
+    /// reads as false. None if the id or its first level is unknown, or the
+    /// format is not a standard one.
     pub fn numbering_is_bullet(&self, num_id: u32) -> Option<bool> {
-        let numbering = self.numbering.as_ref()?;
-        let abstract_num = numbering.get_abstract_num_for(num_id)?;
-        let fmt = abstract_num.levels.first()?.num_fmt.as_ref()?;
-        match fmt {
-            oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet => Some(true),
-            oxoffice_docx_oxml::numbering::ST_NumberFormat::Other(_) => None,
+        match self.effective_numbering_level(num_id, 0)?.num_fmt.as_ref() {
+            Some(ST_NumberFormat::Bullet) => Some(true),
+            Some(ST_NumberFormat::Other(_)) => None,
             _ => Some(false),
         }
     }
@@ -40633,21 +40634,8 @@ impl Document {
     // Concrete instance replacement levels are complete effective levels, just
     // as in layout. Keep the existing public abstract-level projection unchanged.
     fn effective_numbering_format(&self, num_id: u32, level: u32) -> Option<&str> {
-        if num_id == 0 {
-            return None;
-        }
-        let numbering = self.numbering.as_ref()?;
-        let instance = numbering.nums.iter().find(|value| value.num_id == num_id)?;
-        let definition = numbering.get_abstract_num_for(num_id)?;
-        let base = definition.levels.iter().find(|value| value.ilvl == level)?;
-        let effective = instance
-            .level_overrides
-            .iter()
-            .find(|value| value.ilvl == level)
-            .and_then(|value| value.level.as_ref())
-            .unwrap_or(base);
         Some(
-            effective
+            self.effective_numbering_level(num_id, level)?
                 .num_fmt
                 .as_ref()
                 .map(ST_NumberFormat::to_str)
@@ -40655,7 +40643,29 @@ impl Document {
         )
     }
 
+    fn effective_numbering_level(&self, num_id: u32, level: u32) -> Option<&CT_Lvl> {
+        if num_id == 0 {
+            return None;
+        }
+        let numbering = self.numbering.as_ref()?;
+        let instance = numbering.nums.iter().find(|value| value.num_id == num_id)?;
+        let definition = numbering.get_abstract_num_for(num_id)?;
+        let base = definition.levels.iter().find(|value| value.ilvl == level)?;
+        Some(
+            instance
+                .level_overrides
+                .iter()
+                .find(|value| value.ilvl == level)
+                .and_then(|value| value.level.as_ref())
+                .unwrap_or(base),
+        )
+    }
+
     /// Resolve the public reader projection for one numbering level.
+    ///
+    /// It reads the definition's level: a replacement level the instance
+    /// sets is not applied here, while [`Self::numbering_is_bullet`] and
+    /// layout apply it.
     ///
     /// `has_unmodeled_properties` reports extra XML or attributes attached to
     /// this numbering instance, definition, or level, excluding retained XML
