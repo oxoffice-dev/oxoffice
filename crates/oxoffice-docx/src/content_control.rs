@@ -7,7 +7,7 @@ use oxoffice_docx_oxml::content_control::{CT_DataBinding, CT_Sdt, SdtContent, Sd
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{CT_P, CT_R, CT_Text, RunContent};
+use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, CT_Text, RunContent};
 use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -58,6 +58,7 @@ impl ContentControlRef<'_> {
             .and_then(|properties| properties.control_type)
     }
 
+    /// The control's text, one line per paragraph, nested controls included.
     pub fn text(&self) -> String {
         let mut text = String::new();
         collect_sdt_text(self.inner, &mut text);
@@ -259,44 +260,59 @@ impl Document {
 }
 
 fn collect_sdt_text(sdt: &CT_Sdt, output: &mut String) {
+    let mut lines = Vec::new();
+    collect_sdt_lines(sdt, &mut lines);
+    output.push_str(&lines.join("\n"));
+}
+
+/// The text of a control as lines: one per paragraph of the control and of
+/// its nested controls, an inline control's runs on the current line. Table
+/// content reads as one line of its cells' text, each cell's paragraphs on
+/// lines of their own, as a cell's text reads.
+fn collect_sdt_lines(sdt: &CT_Sdt, lines: &mut Vec<String>) {
     for content in &sdt.content {
         match content {
-            SdtContent::Paragraph(paragraph) => collect_paragraph_text(paragraph, output),
-            SdtContent::Table(table) => collect_table_text(table, output),
-            SdtContent::Row(row) => collect_row_text(row, output),
-            SdtContent::Cell(cell) => collect_cell_text(cell, output),
-            SdtContent::Run(run) => output.push_str(&run.text()),
-            SdtContent::ContentControl(_) | SdtContent::RawXml(_) => {}
+            SdtContent::Paragraph(paragraph) => lines.push(paragraph_text(paragraph)),
+            SdtContent::Table(table) => lines.push(table_text(table)),
+            SdtContent::Row(row) => lines.push(row_text(row)),
+            SdtContent::Cell(cell) => lines.push(cell_text(cell)),
+            SdtContent::Run(run) => match lines.last_mut() {
+                Some(line) => line.push_str(&run.text()),
+                None => lines.push(run.text()),
+            },
+            SdtContent::ContentControl(nested) => collect_sdt_lines(nested, lines),
+            SdtContent::RawXml(_) => {}
         }
     }
 }
 
-fn collect_paragraph_text(paragraph: &CT_P, output: &mut String) {
-    for run in &paragraph.runs {
-        output.push_str(&run.text());
-    }
+fn paragraph_text(paragraph: &CT_P) -> String {
+    paragraph.runs.iter().map(CT_R::text).collect()
 }
 
-fn collect_table_text(table: &CT_Tbl, output: &mut String) {
-    for row in &table.rows {
-        collect_row_text(row, output);
-    }
+fn table_text(table: &CT_Tbl) -> String {
+    table.rows.iter().map(row_text).collect()
 }
 
-fn collect_row_text(row: &CT_Row, output: &mut String) {
-    for cell in &row.cells {
-        collect_cell_text(cell, output);
-    }
+fn row_text(row: &CT_Row) -> String {
+    row.cells.iter().map(cell_text).collect()
 }
 
-fn collect_cell_text(cell: &CT_Tc, output: &mut String) {
-    for content in &cell.content {
-        match content {
-            CellContent::Paragraph(paragraph) => collect_paragraph_text(paragraph, output),
-            CellContent::Table(table) => collect_table_text(table, output),
-            CellContent::ContentControl(_) => {}
-        }
-    }
+fn cell_text(cell: &CT_Tc) -> String {
+    let lines: Vec<String> = cell
+        .content
+        .iter()
+        .map(|content| match content {
+            CellContent::Paragraph(paragraph) => paragraph_text(paragraph),
+            CellContent::Table(table) => table_text(table),
+            CellContent::ContentControl(nested) => {
+                let mut lines = Vec::new();
+                collect_sdt_lines(nested, &mut lines);
+                lines.join("\n")
+            }
+        })
+        .collect();
+    lines.join("\n")
 }
 
 fn replace_document_controls(
@@ -462,6 +478,7 @@ fn replace_display_text(control: &mut CT_Sdt, value: &str, font: Option<&str>) -
     };
     replace_sdt_display(control, &mut replacement);
     if replacement.wrote_value {
+        drop_emptied_paragraphs(control);
         return Ok(());
     }
     if add_text_to_first_paragraph(control, value) {
@@ -479,6 +496,54 @@ fn replace_display_text(control: &mut CT_Sdt, value: &str, font: Option<&str>) -
     Err(Error::Other(
         "content control has no typed text display location".to_owned(),
     ))
+}
+
+/// Remove the paragraphs of a block control that the value left empty, so
+/// that Word shows no blank line under it. A paragraph that holds anything
+/// but empty runs stays, and so does the first one if all are empty.
+fn drop_emptied_paragraphs(control: &mut CT_Sdt) {
+    let emptied = |content: &SdtContent| match content {
+        SdtContent::Paragraph(paragraph) => is_empty_paragraph(paragraph),
+        _ => false,
+    };
+    let paragraphs = control
+        .content
+        .iter()
+        .filter(|content| matches!(content, SdtContent::Paragraph(_)))
+        .count();
+    let empty = control
+        .content
+        .iter()
+        .filter(|content| emptied(content))
+        .count();
+    if paragraphs < 2 || empty == 0 {
+        return;
+    }
+    let mut keep_first = empty == paragraphs;
+    control.content.retain(|content| {
+        if !emptied(content) {
+            return true;
+        }
+        std::mem::take(&mut keep_first)
+    });
+}
+
+/// Whether a paragraph holds only runs without content.
+fn is_empty_paragraph(paragraph: &CT_P) -> bool {
+    paragraph.runs.iter().all(|run| {
+        run.extra_xml.is_empty()
+            && run
+                .content
+                .iter()
+                .all(|content| matches!(content, RunContent::Text(text) if text.text.is_empty()))
+    }) && paragraph.hyperlinks.is_empty()
+        && paragraph.comment_ranges.is_empty()
+        && paragraph.bookmark_markers.is_empty()
+        && paragraph.extra_xml.is_empty()
+        && paragraph.content_controls.is_empty()
+        && paragraph.revisions.is_empty()
+        && paragraph.equations.is_empty()
+        && paragraph.rubies.is_empty()
 }
 
 struct DisplayReplacement<'a> {
@@ -542,11 +607,13 @@ fn replace_run_display(run: &mut CT_R, replacement: &mut DisplayReplacement<'_>)
             RunContent::Text(_) | RunContent::DeletedText(_) | RunContent::CommentReference { .. }
         )
     });
-    for content in &mut run.content {
+    let mut written_at = None;
+    for (at, content) in run.content.iter_mut().enumerate() {
         if let RunContent::Text(text) = content {
             if is_first_run && !replacement.wrote_value {
                 *text = CT_Text::new(replacement.value);
                 replacement.wrote_value = true;
+                written_at = Some(at);
             } else {
                 text.text.clear();
                 text.preserve_space = false;
@@ -569,7 +636,44 @@ fn replace_run_display(run: &mut CT_R, replacement: &mut DisplayReplacement<'_>)
         run.content
             .insert(0, RunContent::Text(CT_Text::new(replacement.value)));
         replacement.wrote_value = true;
+        written_at = Some(0);
     }
+    if let Some(at) = written_at {
+        break_value_lines(run, at, replacement.value);
+        // The value replaces a prompt: it does not keep the prompt's style.
+        if let Some(properties) = &mut run.properties
+            && properties.style_id.as_deref() == Some("PlaceholderText")
+        {
+            properties.style_id = None;
+        }
+    }
+}
+
+/// Write the line feeds of a value at content index `at` as line breaks, as
+/// the other text setters do, instead of raw inside one `w:t`.
+fn break_value_lines(run: &mut CT_R, at: usize, value: &str) {
+    if !value.contains('\n') {
+        return;
+    }
+    let mut items = Vec::new();
+    for (index, line) in value.split('\n').enumerate() {
+        if index > 0 {
+            items.push(RunContent::Break(BreakType::Line));
+        }
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if !line.is_empty() {
+            items.push(RunContent::Text(CT_Text::new(line)));
+        }
+    }
+    let added = items.len() - 1;
+    let property_boundary = usize::from(run.properties.is_some());
+    for position in &mut run.extra_xml_positions {
+        let decoded = CT_R::raw_child_position(*position);
+        if decoded > property_boundary + at {
+            CT_R::set_raw_child_position(position, decoded + added);
+        }
+    }
+    run.content.splice(at..=at, items);
 }
 
 fn replace_paragraph_display(paragraph: &mut CT_P, replacement: &mut DisplayReplacement<'_>) {

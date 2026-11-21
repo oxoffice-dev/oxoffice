@@ -778,10 +778,7 @@ fn a_text_value_replaces_the_content_and_ends_the_placeholder_state() {
 /// formatting for the value in the control's own `w:rPr`.
 const PROMPTING: &str = r#"<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:alias w:val="Name"/><w:tag w:val="name"/><w:id w:val="42"/><w:showingPlcHdr/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>Type your name</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
 
-// Fails today: the value goes into the prompt's run and keeps its Placeholder
-// Text style, so Word shows the value greyed out like a prompt. Issue: #147
 #[test]
-#[should_panic(expected = "the value is not styled as placeholder text")]
 fn a_value_set_on_a_prompt_drops_the_placeholder_text_style() {
     let mut doc = doc_with_body(PROMPTING);
     doc.set_content_control_value_by_tag("name", "Ada Lovelace")
@@ -804,10 +801,7 @@ fn a_value_set_on_a_prompt_drops_the_placeholder_text_style() {
     );
 }
 
-// Fails today: a line feed in a value is written inside w:t, which Word shows
-// as a space, where the other text setters write a w:br. Issue: #147
 #[test]
-#[should_panic(expected = "the line break is written as a w:br")]
 fn a_line_break_in_a_value_is_written_as_a_break() {
     let mut doc = doc_with_body(PROMPTING);
     doc.set_content_control_value_by_tag("name", "Ada Lovelace\nLondon")
@@ -1022,10 +1016,7 @@ fn a_list_value_is_one_of_its_items_chosen_by_display_text_or_value() {
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
-// Fails today: a combo box refuses a value outside its items, as a drop-down
-// list does, though Word lets a combo box take any text. Issue: #147
 #[test]
-#[should_panic(expected = "a combo box takes text outside its items")]
 fn a_combo_box_accepts_text_outside_its_items() {
     let mut doc = typed_control(
         "country",
@@ -1504,10 +1495,7 @@ fn the_corpus_forms_list_their_fourteen_controls_with_tags_aliases_and_kinds() {
     }
 }
 
-// Fails today: ContentControlRef::text joins the paragraphs of a block control
-// with nothing between them, where a cell's text puts a line feed. Issue: #147
 #[test]
-#[should_panic(expected = "one line per paragraph")]
 fn the_text_of_a_control_of_several_paragraphs_reads_one_line_per_paragraph() {
     let doc = corpus_doc("authored/form.docx");
     let address = doc.content_controls_by_tag("registered_address");
@@ -1520,10 +1508,7 @@ fn the_text_of_a_control_of_several_paragraphs_reads_one_line_per_paragraph() {
     );
 }
 
-// Fails today: the value goes into the first paragraph and the others stay as
-// empty paragraphs, so Word shows blank lines under it. Issue: #147
 #[test]
-#[should_panic(expected = "the value is the only paragraph of the control")]
 fn a_value_set_on_a_control_of_several_paragraphs_leaves_one_paragraph() {
     let mut doc = corpus_doc("authored/form.docx");
     assert_eq!(

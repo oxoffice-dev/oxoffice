@@ -401,11 +401,19 @@ impl CT_SdtPr {
                         selected = Some(pair);
                     }
                 }
-                let (display, bound) = selected.ok_or_else(|| {
-                    OxmlError::InvalidValue(format!(
-                        "unknown {label} value {value:?}, choices: {choices:?}"
-                    ))
-                })?;
+                // A combo box also takes text outside its items, as Word lets
+                // one; a drop-down list takes only an item.
+                let (display, bound) = match selected {
+                    Some(pair) => pair,
+                    None if self.control_type == Some(SdtType::ComboBox) => {
+                        (value.to_owned(), value.to_owned())
+                    }
+                    None => {
+                        return Err(OxmlError::InvalidValue(format!(
+                            "unknown {label} value {value:?}, choices: {choices:?}"
+                        )));
+                    }
+                };
                 Ok((display, bound, None))
             }
             _ => Ok((value.to_owned(), value.to_owned(), None)),
