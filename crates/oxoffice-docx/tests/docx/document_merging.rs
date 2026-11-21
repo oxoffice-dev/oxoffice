@@ -1904,6 +1904,7 @@ fn replacing_a_paragraph_with_its_own_xml_keeps_its_paragraph_id() {
     assert_eq!(texts(&doc), ["after", "other"]);
     let saved = doc.part_xml("word/document.xml").unwrap();
     assert!(saved.contains("3C4D5E6F"), "{saved}");
+}
 
 #[test]
 fn a_short_bookmark_name_is_renamed_in_its_operand_not_in_the_keyword() {
@@ -1939,4 +1940,65 @@ fn a_short_bookmark_name_is_renamed_in_its_operand_not_in_the_keyword() {
         field_instructions(&doc),
         [format!("ASK {renamed} \"Rate?\""), format!("REF {renamed}")]
     );
+}
+
+#[test]
+fn a_link_to_another_file_and_a_nested_field_keep_their_places_on_rename() {
+    // Source: a bookmark Mark, a link to another file whose anchor is also
+    // "Mark" (a place in that file), and an ASK on Mark with a nested default.
+    let mut source = with_link("other file", "https://example.com/report.docx");
+    let bytes = source.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let main = main.replacen("<w:hyperlink ", "<w:hyperlink w:anchor=\"Mark\" ", 1);
+    let at = main.find("<w:body>").unwrap() + "<w:body>".len();
+    let added = concat!(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> ASK Mark "Name?" \d "</w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> USERNAME </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Ana</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve">" </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    package.set_part(
+        "/word/document.xml",
+        format!("{}{added}{}", &main[..at], &main[at..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let source = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let mut doc = with_identities("dst");
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let mut doc = reopen(&mut doc);
+    let renamed = bookmark_list(&doc)
+        .into_iter()
+        .find(|(_, text)| text == "src marked")
+        .map(|(name, _)| name)
+        .unwrap();
+    assert_ne!(renamed, "Mark");
+    let anchors: Vec<_> = doc
+        .links()
+        .into_iter()
+        .filter(|link| link.text == "other file")
+        .map(|link| link.anchor)
+        .collect();
+    assert_eq!(
+        anchors,
+        [Some("Mark".to_owned())],
+        "a place in the other file"
+    );
+    // The ASK's operand follows; its nested default stays inside the quotes.
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let ask = &xml[xml
+        .find(&format!("ASK {renamed}"))
+        .expect("the ASK is renamed")..];
+    let username = ask.find("USERNAME").unwrap();
+    let closing = ask
+        .find("\" </w:instrText>")
+        .or_else(|| ask.find("&quot; </w:instrText>"))
+        .unwrap();
+    assert!(username < closing, "{ask}");
+    let _ = doc.to_bytes().unwrap();
 }
