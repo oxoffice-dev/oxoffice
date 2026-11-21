@@ -399,9 +399,29 @@ pub fn workflow_known_failure(file: &str, workflow: &str) -> Option<WorkflowKnow
 /// Runs `walk` on each copy: a copy listed in `workflows-known.toml` for
 /// this workflow must fail it with the listed message, and any other must
 /// pass, so a fix shows.
-pub fn run_workflow(workflow: &str, copies: &[String], walk: impl Fn(&str)) {
-    for copy in copies {
-        let outcome = catch_unwind(AssertUnwindSafe(|| walk(copy)));
+pub fn run_workflow(workflow: &str, copies: &[String], walk: impl Fn(&str) + Sync) {
+    // The copies walk on threads of their own: a thesis copy takes minutes in
+    // the `ci` profile, and one after another they would set the time of the
+    // whole binary on `main`. Each outcome keeps its panic for the checks below;
+    // every copy walks to its end, and the first mismatch in copy order fails.
+    let outcomes = std::thread::scope(|scope| {
+        let walk = &walk;
+        let threads = copies
+            .iter()
+            .map(|copy| {
+                std::thread::Builder::new()
+                    .name(format!("{workflow} {copy}"))
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn_scoped(scope, move || catch_unwind(AssertUnwindSafe(|| walk(copy))))
+                    .expect("a walk thread starts")
+            })
+            .collect::<Vec<_>>();
+        threads
+            .into_iter()
+            .map(|thread| thread.join().expect("a walk thread ends"))
+            .collect::<Vec<_>>()
+    });
+    for (copy, outcome) in copies.iter().zip(outcomes) {
         match (workflow_known_failure(copy, workflow), outcome) {
             (None, Err(panic)) => std::panic::resume_unwind(panic),
             (Some(known), Ok(())) => panic!(

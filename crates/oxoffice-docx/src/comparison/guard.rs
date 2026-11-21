@@ -866,9 +866,9 @@ fn project_source_body(
     let mut index = 0;
     crate::document::visit_body_paragraphs_mut(&mut cleaned.body.content, &mut |paragraph| {
         if let Some((raw, _)) = &source_properties[index] {
-            paragraph
-                .extra_xml
-                .retain(|(_, payload)| payload.as_slice() != raw.as_bytes());
+            super::signatures::retain_raw_children(paragraph, |payload| {
+                payload.as_slice() != raw.as_bytes()
+            });
         }
         index += 1;
     });

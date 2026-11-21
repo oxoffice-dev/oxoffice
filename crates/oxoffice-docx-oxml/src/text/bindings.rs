@@ -1709,7 +1709,7 @@ pub(crate) fn raw_with_external_bindings_and_map(
     raw_with_root_bindings_and_map_in(raw, &bindings, false, emission, source_map)
 }
 
-pub(super) fn external_bindings_used_by_raw(
+pub(crate) fn external_bindings_used_by_raw(
     raw: &[u8],
     external_bindings: &[(String, String)],
 ) -> Result<Vec<(String, String)>> {

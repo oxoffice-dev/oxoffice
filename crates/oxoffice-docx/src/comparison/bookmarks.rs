@@ -112,16 +112,16 @@ pub(super) fn reconcile_body_bookmarks(
                 paragraph
                     .bookmark_markers
                     .retain(|marker| !marker.id().is_some_and(|id| generated.contains(&id)));
-                paragraph
-                    .extra_xml
-                    .retain_mut(|(_, raw)| match raw_bookmark(raw) {
+                super::signatures::retain_raw_children(&mut paragraph, |raw| {
+                    match raw_bookmark(raw) {
                         Some((_, Some(id), _)) if generated.contains(&id) => false,
                         Some((start, _, name)) => {
                             *raw = format!("bookmark:{start}:{name:?}").into_bytes();
                             true
                         }
                         None => true,
-                    });
+                    }
+                });
                 body_signature_with_options(&BodyContent::Paragraph(paragraph), options)
             })
             .collect::<Vec<_>>()
