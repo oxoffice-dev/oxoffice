@@ -17173,7 +17173,16 @@ fn append_current_run_text(run: &CT_R, output: &mut String) {
             append_accepted_text(&paragraph, output);
         }
     } else {
-        output.push_str(&run.text());
+        // A field added to a run beside other content stays in that run until
+        // a save writes it out on its own, as a `w:fldSimple`, or as a complex
+        // field when its instruction nests one: its result is read in place,
+        // as the saved file reads it.
+        for content in &run.content {
+            match content {
+                RunContent::Field(field) => output.push_str(&field.effective_display()),
+                other => output.push_str(CT_R::content_text(other)),
+            }
+        }
     }
 }
 

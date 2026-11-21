@@ -129,9 +129,7 @@ fn a_simple_field_keeps_its_instruction_and_result_after_a_save() {
     assert_eq!(texts(&doc), ["Page 1"]);
 }
 
-// Fails today: a field added with Run::add_field is left out of the paragraph text until a save and reopen. Issue: #31
 #[test]
-#[should_panic(expected = "the field result is part of the paragraph text")]
 fn a_field_result_is_part_of_the_paragraph_text_before_a_save() {
     let mut doc = Document::new();
     doc.add_paragraph("Page ")
@@ -143,6 +141,35 @@ fn a_field_result_is_part_of_the_paragraph_text_before_a_save() {
         ["Page 1"],
         "the field result is part of the paragraph text"
     );
+    assert_eq!(doc.text(), "Page 1\n");
+}
+
+#[test]
+fn a_field_added_between_texts_of_a_run_reads_in_place_in_files_from_every_producer() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        let title = doc.paragraph(0).unwrap().text();
+        let mut paragraph = doc.paragraph_mut(0).unwrap();
+        let mut run = paragraph.add_run(" (page ");
+        run.add_field("PAGE", "3").unwrap();
+        run.add_text(")");
+        let expected = format!("{title} (page 3)");
+        assert_eq!(doc.paragraph(0).unwrap().text(), expected, "{name}");
+        assert!(
+            doc.text().starts_with(&format!("{expected}\n")),
+            "{name}: the document text shows the field result"
+        );
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.paragraph(0).unwrap().text(),
+            expected,
+            "{name}: the same text after a reopen"
+        );
+    }
 }
 
 #[test]
