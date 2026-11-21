@@ -842,6 +842,15 @@ fn residual_used_prefixes(
         }
         let prefix = prefix_of(key)?;
         if prefix.is_empty() {
+            // `mc:Choice` names the prefixes it requires in an unprefixed
+            // attribute.
+            if key == b"Requires" {
+                named.extend(
+                    std::str::from_utf8(&attribute.value)?
+                        .split_whitespace()
+                        .map(str::to_owned),
+                );
+            }
             continue;
         }
         let (namespace, local) = resolver.resolve_attribute(attribute.key);
@@ -1046,5 +1055,34 @@ fn residual_emit_children(
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The residual of a paragraph whose root binds `x` to `x_uri` and `y`
+    /// to `y_uri`, with an alternate content requiring `x`.
+    fn residual(x_uri: &str, y_uri: &str) -> Vec<String> {
+        let xml = format!(
+            concat!(
+                r#"<w:p xmlns:w="{w}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="{x}" xmlns:y="{y}">"#,
+                r#"<w:r><mc:AlternateContent><mc:Choice Requires="x"><w:t>a</w:t></mc:Choice>"#,
+                r#"<mc:Fallback><w:t>b</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+            ),
+            w = W_NS,
+            x = x_uri,
+            y = y_uri,
+        );
+        protected_source_residual(xml.as_bytes(), &[]).unwrap()
+    }
+
+    #[test]
+    fn a_residual_keeps_the_bindings_its_names_and_requirements_use() {
+        // A binding nothing names is the part's: another root may drop it.
+        assert_eq!(residual("urn:x", "urn:a"), residual("urn:x", "urn:b"));
+        // A binding `Requires` names is read.
+        assert_ne!(residual("urn:a", "urn:y"), residual("urn:b", "urn:y"));
     }
 }

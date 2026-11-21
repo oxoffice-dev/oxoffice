@@ -983,6 +983,25 @@ fn a_held_paragraph_whose_dropped_value_changed_keeps_the_refusal() {
             .contains("holds an existing tracked revision"),
         "{error}"
     );
+    // A value the reader drops by design: the residual keeps it.
+    let body = |properties: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t>Term.</w:t></w:r></w:p>"#,
+                r#"<w:p><w:pPr>{}</w:pPr><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+                r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+            ),
+            properties
+        ))
+    };
+    let mut original = body(r#"<w:jc w:val="bogus"/>"#);
+    let error = original.compare(&body(""), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
 }
 
 #[test]
