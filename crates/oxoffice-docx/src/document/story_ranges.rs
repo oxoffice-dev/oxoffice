@@ -634,6 +634,13 @@ impl Document {
         move_comment_reference: bool,
     ) -> Result<(String, Vec<u8>, Vec<Range<usize>>)> {
         use crate::comments::StoryRangeKind;
+        // A marker between blocks has no paragraph ordinal (#340).
+        if entry.start_ordinal == usize::MAX || entry.end_ordinal == usize::MAX {
+            return Err(Error::Other(
+                "a range whose marker sits between paragraphs cannot be moved or removed yet"
+                    .into(),
+            ));
+        }
         let (source, owner) = self.story_source_and_owner(entry.range().start.location.story())?;
         let part_name = source.part_name.clone();
         let xml = source.xml.as_ref();
