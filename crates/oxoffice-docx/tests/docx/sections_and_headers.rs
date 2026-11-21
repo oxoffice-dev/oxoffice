@@ -641,7 +641,10 @@ fn inheriting_again_drops_the_copy_from_the_file() {
 #[test]
 fn linking_points_a_section_at_the_header_of_another() {
     let mut doc = two_sections();
-    doc.set_header("last section header");
+    let last = doc
+        .create_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    write_in(&mut doc, &last, "last section header");
     let first = doc
         .create_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default)
         .unwrap();
@@ -896,9 +899,7 @@ fn editing_the_header_of_a_word_report_changes_it_on_both_sections() {
     assert_eq!(doc.paragraphs().len(), paragraphs);
 }
 
-// Fails today: set_header changes only the last section, the first keeps its header. Issue: #28
 #[test]
-#[should_panic(expected = "the first section still shows the old header")]
 fn setting_the_header_of_a_word_report_changes_it_on_every_section() {
     let mut doc = report("word");
     doc.set_header("Northwind Analytics: Annual Review");
@@ -911,6 +912,172 @@ fn setting_the_header_of_a_word_report_changes_it_on_every_section() {
         header(&doc, 0).as_deref(),
         Some("Northwind Analytics: Annual Review"),
         "the first section still shows the old header"
+    );
+}
+
+#[test]
+fn setting_the_header_and_footer_of_every_corpus_report_changes_every_section() {
+    // Word, Google Docs and python-docx share one header between the two
+    // sections; LibreOffice gives the second its own copy, which is the one
+    // the last section shows and the one that changes.
+    for producer in ["word", "google", "authored", "libreoffice"] {
+        let mut doc = report(producer);
+        let parts = doc.part_names().unwrap().len();
+        doc.set_header("New header");
+        doc.set_footer("New footer");
+        let doc = reopen(&mut doc);
+        assert_eq!(header(&doc, 1).as_deref(), Some("New header"), "{producer}");
+        assert_eq!(footer(&doc, 1).as_deref(), Some("New footer"), "{producer}");
+        assert_eq!(
+            (doc.header_text().as_deref(), doc.footer_text().as_deref()),
+            (Some("New header"), Some("New footer")),
+            "{producer}: the document readers read back what was set"
+        );
+        if producer == "libreoffice" {
+            assert_eq!(
+                (header(&doc, 0).as_deref(), footer(&doc, 0).as_deref()),
+                (Some(REPORT_HEADER), Some(REPORT_FOOTER)),
+                "{producer}: the first section keeps its own header and footer"
+            );
+        } else {
+            assert_eq!(
+                (header(&doc, 0).as_deref(), footer(&doc, 0).as_deref()),
+                (Some("New header"), Some("New footer")),
+                "{producer}: the shared header and footer change"
+            );
+            assert!(
+                header_story(&doc, 1).is_inherited(),
+                "{producer}: the last section still inherits its header"
+            );
+            assert!(
+                shown(&doc, 1, HeaderFooterKind::Footer, HdrFtrType::Default)
+                    .expect("the section shows a footer")
+                    .is_inherited(),
+                "{producer}: the last section still inherits its footer"
+            );
+            assert_eq!(
+                doc.part_names().unwrap().len(),
+                parts,
+                "{producer}: no new header or footer part"
+            );
+        }
+    }
+}
+
+#[test]
+fn setting_a_header_picture_on_a_word_report_shows_it_on_every_section() {
+    let mut doc = report("word");
+    doc.set_header_image(PNG, "logo.png", Length::inches(1.0), Length::inches(0.5));
+    let doc = reopen(&mut doc);
+    let shared = header_story(&doc, 0);
+    assert!(
+        header_story(&doc, 1).is_inherited(),
+        "the last section still inherits"
+    );
+    assert_eq!(header_story(&doc, 1).story(), shared.story());
+    let pictures = doc.pictures().unwrap();
+    assert!(
+        pictures
+            .iter()
+            .any(|picture| picture.location.story() == shared.story() && picture.bytes == PNG),
+        "the shared header holds the picture"
+    );
+}
+
+#[test]
+fn setting_a_header_where_no_section_has_one_shows_it_on_every_section() {
+    let mut doc = two_sections();
+    doc.set_header("header");
+    doc.set_footer("footer");
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.header_text().as_deref(), Some("header"));
+    assert_eq!(doc.footer_text().as_deref(), Some("footer"));
+    for section in 0..2 {
+        assert_eq!(
+            header(&doc, section).as_deref(),
+            Some("header"),
+            "{section}"
+        );
+        assert_eq!(
+            footer(&doc, section).as_deref(),
+            Some("footer"),
+            "{section}"
+        );
+    }
+    assert!(header_story(&doc, 1).is_inherited());
+    assert_eq!(header_part_count(&doc), 1);
+}
+
+#[test]
+fn setting_the_header_changes_the_section_the_last_one_inherits_from_only() {
+    // Section 0 shows "A", section 1 its own "B", section 2 inherits "B".
+    let mut doc = doc_with(&["one"]);
+    doc.set_header("A");
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("two");
+    let copy = doc
+        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    rewrite_first_paragraph(&mut doc, &copy, "B");
+    doc.insert_section(2).unwrap();
+    doc.add_paragraph("three");
+    assert_eq!(header(&doc, 2).as_deref(), Some("B"));
+    doc.set_header("C");
+    let doc = reopen(&mut doc);
+    assert_eq!(header(&doc, 0).as_deref(), Some("A"));
+    assert_eq!(header(&doc, 1).as_deref(), Some("C"));
+    assert_eq!(header(&doc, 2).as_deref(), Some("C"));
+    assert!(header_story(&doc, 2).is_inherited());
+}
+
+/// The text of the first-page header a section shows.
+fn first_page_header(doc: &Document, section: usize) -> Option<String> {
+    shown_text(doc, section, HeaderFooterKind::Header, HdrFtrType::First)
+}
+
+#[test]
+fn a_first_page_header_on_a_section_without_a_different_first_page_is_its_own() {
+    // The new section does not show the cover's first-page header, so
+    // setting one gives it its own and the cover keeps "Cover".
+    let mut doc = doc_with(&["cover"]);
+    doc.set_first_page_header("Cover");
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("chapter");
+    doc.set_first_page_header("Chapter");
+    let doc = reopen(&mut doc);
+    assert_eq!(first_page_header(&doc, 0).as_deref(), Some("Cover"));
+    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
+    assert_eq!(doc.section(1).unwrap().different_first_page(), Some(true));
+}
+
+#[test]
+fn a_first_page_header_where_no_section_has_one_leaves_a_blank_cover_blank() {
+    let mut doc = doc_with(&["cover"]);
+    doc.set_different_first_page(true);
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("chapter");
+    doc.set_first_page_header("Chapter");
+    let doc = reopen(&mut doc);
+    assert_eq!(first_page_header(&doc, 0), None, "the cover stays blank");
+    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
+}
+
+#[test]
+fn a_first_page_header_the_last_section_shows_by_inheritance_changes_everywhere() {
+    let mut doc = doc_with(&["cover"]);
+    doc.set_first_page_header("Cover");
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("chapter");
+    doc.set_different_first_page(true);
+    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Cover"));
+    doc.set_first_page_header("Chapter");
+    let doc = reopen(&mut doc);
+    assert_eq!(first_page_header(&doc, 0).as_deref(), Some("Chapter"));
+    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
+    assert!(
+        shown(&doc, 1, HeaderFooterKind::Header, HdrFtrType::First)
+            .unwrap()
+            .is_inherited()
     );
 }
 

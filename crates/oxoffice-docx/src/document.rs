@@ -40108,8 +40108,14 @@ impl Document {
 
     /// Set the default header text.
     ///
-    /// Creates a header part with the given text and references it from
-    /// the section properties.
+    /// Replaces the header the last section shows. When it inherits that
+    /// header from an earlier section, the shared header takes the text, so
+    /// every section showing it changes, as Word does for a header linked to
+    /// the previous one. When the last section has a header of its own, only
+    /// that one changes. When no section has one, the first section gets it
+    /// and every later section inherits it. The other document-level header
+    /// and footer setters, text, image or raw XML, choose the same way, except
+    /// that a new first-page or even header goes on the last section.
     pub fn set_header(&mut self, text: &str) {
         self.try_set_header(text)
             .expect("an in-memory document can install a header");
@@ -40126,7 +40132,7 @@ impl Document {
         Ok(())
     }
 
-    /// Set the default footer text.
+    /// Set the default footer text, as [`Self::set_header`] sets the header.
     pub fn set_footer(&mut self, text: &str) {
         self.try_set_footer(text)
             .expect("an in-memory document can install a footer");
@@ -40143,7 +40149,13 @@ impl Document {
         Ok(())
     }
 
-    /// Set the first-page header text.
+    /// Set the first-page header text, and give the last section a different
+    /// first page.
+    ///
+    /// The header is chosen as [`Self::set_header`] chooses it. A first-page
+    /// header the last section inherits is shared only when the last section
+    /// already showed it, with a different first page; otherwise the last
+    /// section gets one of its own.
     pub fn set_first_page_header(&mut self, text: &str) {
         self.try_set_first_page_header(text)
             .expect("an in-memory document can install a first page header");
@@ -40153,8 +40165,8 @@ impl Document {
     pub fn try_set_first_page_header(&mut self, text: &str) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
-        candidate.set_different_first_page(true);
         candidate.set_header_footer_part(text, true, HdrFtrType::First)?;
+        candidate.set_different_first_page(true);
         candidate.reconcile_comment_removal(self)?;
         candidate.clone_for_staging().prepare_and_reopen_staged()?;
         self.commit_staged_mutation(candidate);
@@ -40171,8 +40183,8 @@ impl Document {
     pub fn try_set_first_page_footer(&mut self, text: &str) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
-        candidate.set_different_first_page(true);
         candidate.set_header_footer_part(text, false, HdrFtrType::First)?;
+        candidate.set_different_first_page(true);
         candidate.reconcile_comment_removal(self)?;
         candidate.clone_for_staging().prepare_and_reopen_staged()?;
         self.commit_staged_mutation(candidate);
@@ -41090,7 +41102,6 @@ impl Document {
     ) {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
-        candidate.set_different_first_page(true);
         candidate
             .set_header_footer_image_part(
                 image_data,
@@ -41101,6 +41112,7 @@ impl Document {
                 HdrFtrType::First,
             )
             .expect("an in-memory document can install a first-page header image");
+        candidate.set_different_first_page(true);
         candidate
             .reconcile_comment_removal(self)
             .expect("whole-story replacement cannot remove partial or malformed comment ownership");
@@ -41186,6 +41198,7 @@ impl Document {
     fn install_hdr_ftr_part(
         &mut self,
         part_name: String,
+        section: usize,
         xml: Vec<u8>,
         is_header: bool,
         hdr_type: HdrFtrType,
@@ -41240,7 +41253,13 @@ impl Document {
                 .add_with_id(&rel_id, rel_type, &rel_target);
         }
 
-        let sect = self.section_properties_mut();
+        let sect = if section + 1 < self.section_count() {
+            self.section_mut(section)
+                .expect("the target section exists")
+                .inner
+        } else {
+            self.section_properties_mut()
+        };
         let refs = if is_header {
             &mut sect.header_refs
         } else {
@@ -41422,10 +41441,102 @@ impl Document {
         hdr_ftr.paragraphs.push(p);
 
         let xml = Self::serialize_hdr_ftr(&hdr_ftr, is_header)?;
-        let part_name = self.reserve_hdr_ftr_part_name(is_header, hdr_type)?;
+        let (part_name, section) = self.reserve_hdr_ftr_target(is_header, hdr_type)?;
         self.clear_authored_story_relationships(&part_name);
-        self.install_hdr_ftr_part(part_name, xml, is_header, hdr_type)?;
+        self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)?;
         Ok(())
+    }
+
+    /// Where a document-level header or footer setter writes: the part, and
+    /// the section whose reference to it is installed, or `None` when the
+    /// last section shows that part by inheritance and keeps inheriting.
+    ///
+    /// The last section's own reference, usable or not, keeps its part. When
+    /// it has none and shows the kind (always for the default one, with a
+    /// different first page for the first-page one, with even and odd
+    /// headers for the even one), the part it inherits from an earlier
+    /// section takes the content, so every section showing it changes, as
+    /// Word and python-docx do for a header linked to the previous one. When
+    /// no section has a default header, a new one goes on the first section
+    /// and every later section inherits it; a new first-page or even header
+    /// goes on the last section.
+    fn reserve_hdr_ftr_target(
+        &mut self,
+        is_header: bool,
+        hdr_type: HdrFtrType,
+    ) -> Result<(String, Option<usize>)> {
+        let refs_of = |section: &CT_SectPr| {
+            if is_header {
+                section.header_refs.clone()
+            } else {
+                section.footer_refs.clone()
+            }
+        };
+        let last = self.section_count().saturating_sub(1);
+        let last_section = self.document.body.sect_pr.as_ref();
+        let has_own = last_section.is_none_or(|section| {
+            refs_of(section)
+                .iter()
+                .any(|reference| reference.hdr_ftr_type == hdr_type)
+        });
+        if has_own || last == 0 {
+            return Ok((
+                self.reserve_hdr_ftr_part_name(is_header, hdr_type)?,
+                Some(last),
+            ));
+        }
+        let shows = match hdr_type {
+            HdrFtrType::Default => true,
+            HdrFtrType::First => last_section.is_some_and(|section| section.title_pg == Some(true)),
+            HdrFtrType::Even => self.even_and_odd_headers(),
+        };
+        let source = self
+            .section_properties_in_order()
+            .take(last)
+            .filter_map(|section| {
+                self.first_usable_header_footer_reference(&refs_of(section), hdr_type, is_header)
+                    .map(|reference| reference.rel_id.clone())
+            })
+            .last();
+        let section = match source {
+            Some(rel_id) if shows => {
+                if let Some(part_name) = self.header_footer_part_name(&rel_id, is_header) {
+                    return Ok((part_name, None));
+                }
+                last
+            }
+            Some(_) => last,
+            // A first-page or even header put on the first section would show
+            // on any earlier section with that kind of page, a blank cover
+            // page among them.
+            None if hdr_type == HdrFtrType::Default => 0,
+            None => last,
+        };
+        Ok((
+            self.reserve_hdr_ftr_part_name(is_header, hdr_type)?,
+            Some(section),
+        ))
+    }
+
+    /// Write a header or footer part where [`Self::reserve_hdr_ftr_target`]
+    /// put it: in place for a shared part, else installed and referenced from
+    /// its section.
+    fn install_hdr_ftr_target(
+        &mut self,
+        part_name: String,
+        section: Option<usize>,
+        xml: Vec<u8>,
+        is_header: bool,
+        hdr_type: HdrFtrType,
+    ) -> Result<String> {
+        let Some(section) = section else {
+            self.package.set_part(&part_name, xml);
+            self.identifiers
+                .authored_story_parts
+                .insert(part_name.clone());
+            return Ok(part_name);
+        };
+        self.install_hdr_ftr_part(part_name, section, xml, is_header, hdr_type)
     }
 
     fn set_raw_hdr_ftr_with_images(
@@ -41435,7 +41546,7 @@ impl Document {
         is_header: bool,
         hdr_type: HdrFtrType,
     ) -> Result<()> {
-        let part_name = self.reserve_hdr_ftr_part_name(is_header, hdr_type)?;
+        let (part_name, section) = self.reserve_hdr_ftr_target(is_header, hdr_type)?;
         let mut requested = HashSet::new();
         for &(rel_id, _, _) in images {
             if !requested.insert(rel_id) {
@@ -41460,7 +41571,8 @@ impl Document {
             }
         }
         let xml = remap_xml_relationship_ids(&xml, &relationship_remap)?;
-        let part_name = self.install_hdr_ftr_part(part_name, xml, is_header, hdr_type)?;
+        let part_name =
+            self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)?;
 
         for &(rel_id, image_data, image_filename) in images {
             let img_rel_target = self.store_image_part(image_data, image_filename);
@@ -41506,7 +41618,7 @@ impl Document {
     ) -> Result<()> {
         use oxoffice_docx_oxml::properties::CT_Shd;
 
-        let part_name = self.reserve_hdr_ftr_part_name(is_header, hdr_type)?;
+        let (part_name, section) = self.reserve_hdr_ftr_target(is_header, hdr_type)?;
         self.clear_authored_story_relationships(&part_name);
 
         let img_rel_id = self
@@ -41545,7 +41657,7 @@ impl Document {
         hdr_ftr.paragraphs.push(p);
 
         let xml = Self::serialize_hdr_ftr(&hdr_ftr, is_header)?;
-        self.install_hdr_ftr_part(part_name, xml, is_header, hdr_type)?;
+        self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)?;
         Ok(())
     }
 
