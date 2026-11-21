@@ -315,6 +315,21 @@ jobs:
           OUTPUT: CHANGELOG.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
+      # cliff.toml's GitHub remote asks the API for the commit the range ends
+      # at: main for --unreleased, the tag's commit for --latest. So no range
+      # may end at the unpushed version commit: before it exists the notes
+      # are --unreleased from the dispatched commit, and on a re-run --latest
+      # ends at the pushed tag. The chore(release) commit is skipped: same notes.
+      - name: Release notes
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          version: v2.14.2
+          config: cliff.toml
+          args: ${{ steps.state.outputs.tagged && '--latest' || format('--unreleased --tag v{0}', inputs.version) }} --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
       - name: Commit and tag
         env:
           TAGGED: ${{ steps.state.outputs.tagged }}
@@ -364,16 +379,6 @@ jobs:
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
         run: cp "$BUNDLE" "dist/oxoffice-$VERSION.provenance.sigstore.json"
-      - name: Release notes
-        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
-        with:
-          version: v2.14.2
-          config: cliff.toml
-          args: --latest --strip header
-        env:
-          OUTPUT: RELEASE_NOTES.md
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPO: ${{ github.repository }}
       - name: Push main and the tag
         if: ${{ !steps.state.outputs.tagged }}
         shell: bash
