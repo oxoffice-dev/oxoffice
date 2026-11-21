@@ -654,9 +654,7 @@ fn text_xml_cannot_carry_is_refused_with_its_code_point() {
     assert!(error.to_string().contains("U+000B"), "{error}");
 }
 
-// Fails today: a match across a tab inside one run panics with "attempt to subtract with overflow" (and garbles the run without overflow checks). Issue: #26
 #[test]
-#[should_panic(expected = "a search does not match across a tab inside a run")]
 fn a_search_does_not_match_across_a_tab_inside_a_run() {
     let mut doc = doc_with(&[""]);
     doc.paragraph_mut(0).unwrap().set_text("Name\tAda").unwrap();
@@ -671,9 +669,7 @@ fn a_search_does_not_match_across_a_tab_inside_a_run() {
     assert_eq!(texts(&doc), ["Name\tAda"]);
 }
 
-// Fails today: a search skips tabs and breaks, so one holding a tab finds nothing and one across a break moves the break. Issue: #26
 #[test]
-#[should_panic(expected = "a search holding a tab finds it")]
 fn a_search_sees_tabs_and_breaks_as_paragraph_text_shows_them() {
     let mut doc = doc_with(&[""]);
     doc.paragraph_mut(0)
@@ -699,6 +695,57 @@ fn a_search_sees_tabs_and_breaks_as_paragraph_text_shows_them() {
         "a search does not match across a break"
     );
     assert_eq!(texts(&doc), ["Name\nAda"]);
+}
+
+#[test]
+fn a_search_holding_a_tab_finds_it_however_the_producer_split_the_runs() {
+    for (producer, body) in [
+        (
+            "Word: the tab in a run of its own",
+            r#"<w:p><w:r><w:t>Total:</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>42</w:t></w:r></w:p>"#,
+        ),
+        (
+            "LibreOffice: the tab between two texts of one run",
+            r#"<w:p><w:r><w:t>Total:</w:t><w:tab/><w:t>42</w:t></w:r></w:p>"#,
+        ),
+    ] {
+        let mut doc = doc_with_body(body);
+        assert_eq!(texts(&doc), ["Total:\t42"], "{producer}");
+        assert_eq!(doc.replace_text(":\t4", ":\t5"), 1, "{producer}");
+        assert_eq!(texts(&doc), ["Total:\t52"], "{producer}");
+        assert_eq!(doc.replace_text("\t52", " 52"), 1, "{producer}");
+        assert_eq!(texts(&reopen(&mut doc)), ["Total: 52"], "{producer}");
+    }
+}
+
+#[test]
+fn a_match_across_runs_removes_every_matched_tab_and_text() {
+    // The first run holds text, a tab and text: a match that starts in it
+    // and ends in the next run takes all three.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>ab</w:t><w:tab/><w:t>cd</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>e</w:t><w:br/><w:t>fg</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(texts(&doc), ["ab\tcde\nfg"]);
+    assert_eq!(doc.replace_text("b\tcde\nf", "X"), 1);
+    assert_eq!(texts(&reopen(&mut doc)), ["aXg"]);
+}
+
+#[test]
+fn a_match_over_a_symbol_in_a_run_keeps_the_symbol() {
+    // A symbol has no text, so a search reads over it; the replacement takes
+    // the matched text and leaves the symbol after it.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t xml:space="preserve">before </w:t><w:sym w:font="Wingdings" w:char="F04A"/><w:t>x</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(texts(&doc), ["before x"]);
+    assert_eq!(doc.replace_text("before x", "after"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["after"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#">after</w:t><w:sym w:font="Wingdings" w:char="F04A"/>"#),
+        "the symbol stays after the replacement: {xml}"
+    );
 }
 
 // ---- Producer files ----

@@ -48,9 +48,9 @@
     "id": "docx-replace-across-tabs",
     "format": "docx",
     "area": "replace",
-    "title": "Text replacement does not see tabs and line breaks",
-    "symptom": "a search holding a tab or a break finds nothing, one across a break moves it, and one across a tab inside a run panics in debug builds and garbles the run in release builds",
-    "workaround": "replace the text on each side of the tab or break separately",
+    "title": "Non-breaking hyphens and positional tabs are missing from paragraph text",
+    "symptom": "Paragraph text and text search skip w:noBreakHyphen and w:ptab, so \"co-op\" written with a non-breaking hyphen reads \"coop\" and a search for \"co-op\" finds nothing; the paragraph text setter turns a Windows line ending into two breaks",
+    "workaround": "search for the text on each side of the hyphen or positional tab; pass \\n line endings to the text setter",
     "issue": 26
   },
   {

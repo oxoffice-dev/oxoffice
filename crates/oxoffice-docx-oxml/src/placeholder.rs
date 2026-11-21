@@ -24,9 +24,9 @@ use crate::properties::is_word_element;
 use crate::revision::{CT_Revision, RevisionKind};
 use crate::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use crate::text::{
-    AcceptedRunPath, AcceptedRunPathSegment, BoundaryOwner, CT_P, CT_R, FieldXmlEmission,
-    RunContent, WordExtraSourceMaps, WordOperationWork, boundary_owners, optional_word_attribute,
-    raw_with_external_bindings, simple_field_source,
+    AcceptedRunPath, AcceptedRunPathSegment, BoundaryOwner, CT_P, CT_R, CT_Text, FieldXmlEmission,
+    RunContent, SpecialCharacter, WordExtraSourceMaps, WordOperationWork, boundary_owners,
+    optional_word_attribute, raw_with_external_bindings, simple_field_source,
 };
 
 /// Replace all occurrences of `placeholder` with `replacement` in a paragraph.
@@ -246,7 +246,7 @@ fn replace_prepared_walk(
         }
     }
     if let Some(work) = work.as_deref_mut() {
-        let (text, map) = build_char_map(paragraph, &walk.wrappers, &walk.runs);
+        let (text, map) = build_char_map(paragraph, &walk.wrappers, &walk.runs, template_text);
         let mut fields = Vec::new();
         let mut callbacks = Vec::new();
         let mut datums = Vec::new();
@@ -293,7 +293,7 @@ fn replace_prepared_walk(
                 work.as_deref_mut(),
             )?;
             let mut walk = text_runs_in(&candidate, candidate_maps.as_ref(), work.as_deref_mut())?;
-            let (text, map) = build_char_map(&candidate, &walk.wrappers, &walk.runs);
+            let (text, map) = build_char_map(&candidate, &walk.wrappers, &walk.runs, template_text);
             let first = map
                 .get(text[..range.start].chars().count())
                 .ok_or_else(invalid)?;
@@ -414,7 +414,7 @@ fn split_prepared_boundary_in(
     mut work: Option<&mut WordOperationWork>,
 ) -> crate::Result<()> {
     let mut walk = text_runs_in(paragraph, extra_maps.as_deref(), work.as_deref_mut())?;
-    let (text, map) = build_char_map(paragraph, &walk.wrappers, &walk.runs);
+    let (text, map) = build_char_map(paragraph, &walk.wrappers, &walk.runs, template_text);
     let index = text
         .get(..byte)
         .ok_or_else(|| crate::OxmlError::InvalidValue("invalid prepared template boundary".into()))?
@@ -1037,7 +1037,7 @@ fn replace_matches_in(
 
     loop {
         // 1. Concatenate all run text and build a char map.
-        let (full_text, char_map) = build_char_map(para, &wrappers, &runs);
+        let (full_text, char_map) = build_char_map(para, &wrappers, &runs, searched_text);
         if search_from > full_text.len() {
             break;
         }
@@ -1172,7 +1172,7 @@ fn try_replace_in_paragraph_with_literal(
     }
     crate::document::admit_word_model(crate::document::WordOwner::Paragraph(paragraph))?;
     let walk = text_runs_in(paragraph, extra_maps.as_deref(), Some(work))?;
-    let (text, map) = build_char_map(paragraph, &walk.wrappers, &walk.runs);
+    let (text, map) = build_char_map(paragraph, &walk.wrappers, &walk.runs, searched_text);
     let mut from = 0;
     let mut selected = Vec::new();
     while let Some(relative) = text[from..].find(placeholder) {
@@ -1562,14 +1562,37 @@ struct CharMapping {
     run_index: usize,
     /// Index of the RunContent item within the run.
     content_index: usize,
-    /// Byte offset within the text string of the RunContent::Text item.
+    /// Byte offset of the character within the text that item reads as.
     byte_offset: usize,
+}
+
+/// The text a search reads in one run item: the text of a `w:t`, and a tab,
+/// a break or a carriage return as `Paragraph::text` shows them.
+fn searched_text(content: &RunContent) -> Option<&str> {
+    match content {
+        RunContent::Text(t) => Some(&t.text),
+        RunContent::Tab => Some("\t"),
+        RunContent::Break(_) | RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => {
+            Some("\n")
+        }
+        _ => None,
+    }
+}
+
+/// The text a prepared template edit reads in one run item: only `w:t`, as
+/// the stretches its offsets come from.
+fn template_text(content: &RunContent) -> Option<&str> {
+    match content {
+        RunContent::Text(t) => Some(&t.text),
+        _ => None,
+    }
 }
 
 fn build_char_map(
     para: &CT_P,
     wrappers: &[Wrapper],
     runs: &[TextRun],
+    item_text: fn(&RunContent) -> Option<&str>,
 ) -> (String, Vec<CharMapping>) {
     let mut full_text = String::new();
     let mut char_map = Vec::new();
@@ -1579,20 +1602,84 @@ fn build_char_map(
             continue;
         };
         for (content_idx, content) in run.content.iter().enumerate() {
-            if let RunContent::Text(t) = content {
-                for (byte_pos, _ch) in t.text.char_indices() {
+            if let Some(text) = item_text(content) {
+                for (byte_pos, _ch) in text.char_indices() {
                     char_map.push(CharMapping {
                         run_index: run_idx,
                         content_index: content_idx,
                         byte_offset: byte_pos,
                     });
                 }
-                full_text.push_str(&t.text);
+                full_text.push_str(text);
             }
         }
     }
 
     (full_text, char_map)
+}
+
+/// The position just past the character `mapping` points at, in its run.
+fn position_after(run: &CT_R, mapping: &CharMapping) -> (usize, usize) {
+    let width = searched_text(&run.content[mapping.content_index])
+        .and_then(|text| text[mapping.byte_offset..].chars().next())
+        .map_or(1, char::len_utf8);
+    (mapping.content_index, mapping.byte_offset + width)
+}
+
+/// Replace the searched text of `run` from `start` to `end`, each a content
+/// item and a byte offset in the text it reads as, with `replacement`.
+/// `None` stands for the start or the end of the run, and no replacement
+/// only removes the text. Matched text, tabs and breaks go; any other item in
+/// the range, such as a drawing or a field, stays, after the replacement.
+fn replace_in_run(
+    run: &mut CT_R,
+    start: Option<(usize, usize)>,
+    end: Option<(usize, usize)>,
+    replacement: Option<&str>,
+) {
+    let mut replacement = replacement;
+    let content = std::mem::take(&mut run.content);
+    for (index, item) in content.into_iter().enumerate() {
+        let in_range = start.is_none_or(|(first, _)| index >= first)
+            && end.is_none_or(|(last, _)| index <= last);
+        if !in_range || searched_text(&item).is_none() {
+            run.content.push(item);
+            continue;
+        }
+        match item {
+            RunContent::Text(mut t) => {
+                let from = start
+                    .filter(|(first, _)| *first == index)
+                    .map_or(0, |(_, byte)| byte);
+                let to = end
+                    .filter(|(last, _)| *last == index)
+                    .map_or(t.text.len(), |(_, byte)| byte);
+                let host = replacement.take();
+                if host.is_none() && from == 0 && to == t.text.len() {
+                    continue;
+                }
+                let mut text =
+                    String::with_capacity(t.text.len() - (to - from) + host.map_or(0, str::len));
+                text.push_str(&t.text[..from]);
+                text.push_str(host.unwrap_or(""));
+                text.push_str(&t.text[to..]);
+                t.text = text;
+                // Keep the flag the producer wrote. Dropping it rewrites an
+                // unchanged run, which a later comparison against the source
+                // then reports.
+                t.preserve_space =
+                    t.preserve_space || t.text.starts_with(' ') || t.text.ends_with(' ');
+                run.content.push(RunContent::Text(t));
+            }
+            // A tab, a break or a carriage return in the range is matched
+            // whole: it goes, and the first one hosts the replacement.
+            _ => {
+                if let Some(host) = replacement.take() {
+                    run.content.push(RunContent::Text(CT_Text::new(host)));
+                }
+            }
+        }
+    }
 }
 
 fn replace_in_single_run(
@@ -1603,31 +1690,13 @@ fn replace_in_single_run(
     replacement: &str,
 ) {
     let first = &char_map[match_start];
-    let content_idx = first.content_index;
-    let byte_start = first.byte_offset;
-
-    // Compute byte end within the same text item.
-    let last = &char_map[match_end - 1];
-    let byte_end = if let RunContent::Text(t) = &run.content[content_idx] {
-        // byte_end is past the last matched character
-        let remaining = &t.text[last.byte_offset..];
-        let ch_len = remaining.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
-        last.byte_offset + ch_len
-    } else {
-        last.byte_offset + 1
-    };
-
-    if let RunContent::Text(t) = &mut run.content[content_idx] {
-        let mut new_text =
-            String::with_capacity(t.text.len() - (byte_end - byte_start) + replacement.len());
-        new_text.push_str(&t.text[..byte_start]);
-        new_text.push_str(replacement);
-        new_text.push_str(&t.text[byte_end..]);
-        t.text = new_text;
-        // Keep the flag the producer wrote. Dropping it rewrites an unchanged
-        // run, which a later comparison against the source then reports.
-        t.preserve_space = t.preserve_space || t.text.starts_with(' ') || t.text.ends_with(' ');
-    }
+    let end = position_after(run, &char_map[match_end - 1]);
+    replace_in_run(
+        run,
+        Some((first.content_index, first.byte_offset)),
+        Some(end),
+        Some(replacement),
+    );
 }
 
 fn replace_across_runs(
@@ -1640,7 +1709,7 @@ fn replace_across_runs(
     mut work: Option<&mut WordOperationWork>,
 ) -> crate::Result<()> {
     let (match_start, match_end) = (range.start, range.end);
-    // Handle the first run: replace from match start to end of text in that content item.
+    // The first run takes the replacement in place of its matched text.
     let first_mapping = &char_map[match_start];
     edit_run(
         para,
@@ -1648,18 +1717,16 @@ fn replace_across_runs(
         &runs[first_mapping.run_index],
         work.as_deref_mut(),
         |run| {
-            if let RunContent::Text(t) = &mut run.content[first_mapping.content_index] {
-                let mut new_text = String::new();
-                new_text.push_str(&t.text[..first_mapping.byte_offset]);
-                new_text.push_str(replacement);
-                t.text = new_text;
-                t.preserve_space =
-                    t.preserve_space || t.text.starts_with(' ') || t.text.ends_with(' ');
-            }
+            replace_in_run(
+                run,
+                Some((first_mapping.content_index, first_mapping.byte_offset)),
+                None,
+                Some(replacement),
+            );
         },
     )?;
 
-    // Handle the last run: replace from start to match end within that content item.
+    // The last run loses its text up to the match end.
     let last_mapping = &char_map[match_end - 1];
     edit_run(
         para,
@@ -1667,30 +1734,15 @@ fn replace_across_runs(
         &runs[last_mapping.run_index],
         work.as_deref_mut(),
         |run| {
-            if let RunContent::Text(t) = &mut run.content[last_mapping.content_index] {
-                let remaining = &t.text[last_mapping.byte_offset..];
-                let ch_len = remaining.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
-                let byte_end = last_mapping.byte_offset + ch_len;
-                t.text = t.text[byte_end..].to_string();
-                t.preserve_space =
-                    t.preserve_space || t.text.starts_with(' ') || t.text.ends_with(' ');
-            }
-
-            // If the last run's text is now empty, remove its text content too.
-            run.content.retain(|c| {
-                if let RunContent::Text(t) = c {
-                    !t.text.is_empty()
-                } else {
-                    true
-                }
-            });
+            let end = position_after(run, last_mapping);
+            replace_in_run(run, None, Some(end), None);
         },
     )?;
 
-    // Clear text content from runs strictly between first and last.
+    // The runs strictly between lose all their searched text.
     for text in &runs[first_mapping.run_index + 1..last_mapping.run_index] {
         edit_run(para, wrappers, text, work.as_deref_mut(), |run| {
-            run.content.retain(|c| !matches!(c, RunContent::Text(_)));
+            replace_in_run(run, None, None, None);
         })?;
     }
     Ok(())
