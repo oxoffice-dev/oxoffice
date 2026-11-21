@@ -1691,10 +1691,13 @@ fn project_comment_text(xml: &[u8], id: i32, incoming: bool) -> Result<CommentTe
                             .iter()
                             .any(|(name, word, _, _)| *word && name == b"txbxContent")
                     {
-                        if stack.iter().any(|(name, word, _, _)| {
-                            *word
-                                && matches!(name.as_slice(), b"del" | b"moveFrom" | b"txbxContent")
-                        }) {
+                        // An edge inside tracked deleted or moved-away text
+                        // reads at the next position of the accepted view,
+                        // as Google Docs writes a comment on a tracked change.
+                        if stack
+                            .iter()
+                            .any(|(name, word, _, _)| *word && name.as_slice() == b"txbxContent")
+                        {
                             return Err(invalid(
                                 "selected source is outside the accepted paragraph view",
                             ));
@@ -1712,7 +1715,9 @@ fn project_comment_text(xml: &[u8], id: i32, incoming: bool) -> Result<CommentTe
                                         | b"sdtContent"
                                         | b"hyperlink"
                                         | b"ins"
+                                        | b"del"
                                         | b"moveTo"
+                                        | b"moveFrom"
                                         | b"smartTag"
                                         | b"customXml"
                                         | b"fldSimple"
@@ -2301,8 +2306,24 @@ impl CT_P {
                 unmarked.drain(span.clone());
             }
             let mut probe = CT_P::from_xml_fragment(&unmarked)?;
-            probe.anchor_accepted_range(selected.start, selected.end, RangeAnchor::Comment(id))
-                .map_err(|error| OxmlError::InvalidValue(format!("comment {id}: existing accepted run axis cannot faithfully represent selected source: {error}")))?;
+            match probe.anchor_accepted_range(
+                selected.start,
+                selected.end,
+                RangeAnchor::Comment(id),
+            ) {
+                Ok(()) => {}
+                // The writer places no marker inside a tracked insertion or
+                // move, but the edges read there are already exact: the
+                // accepted view holds the inserted text.
+                Err(RangeAnchorError::InsideRevision { .. }) => {
+                    return Ok((selected.text, selected.open, selected.start, selected.end));
+                }
+                Err(error) => {
+                    return Err(OxmlError::InvalidValue(format!(
+                        "comment {id}: existing accepted run axis cannot faithfully represent selected source: {error}"
+                    )));
+                }
+            }
             let mut raw = Vec::new();
             probe.to_xml(&mut Writer::new(&mut raw))?;
             let raw = raw_with_external_bindings(&raw, &bindings)?;

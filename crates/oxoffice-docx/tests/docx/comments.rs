@@ -2063,6 +2063,88 @@ fn a_first_story_comment_in_a_header_or_a_footer_comes_with_the_comment_parts() 
             .unwrap();
         assert_eq!(anchor_kind(&doc, id), kind);
         assert_first_comment_reads_back(&mut doc, id, part, "Up here");
+// ---- Range edges inside tracked changes ----
+
+/// A document whose one body paragraph is `paragraph`, with a comment `id`
+/// whose range markers `paragraph` places itself.
+fn commented_paragraph(paragraph: &str) -> (Document, i32) {
+    let mut doc = doc_with(&["Placeholder"]);
+    let id = doc
+        .add_comment_on_text("Placeholder", "Ada", "Note", TextCommentOptions::default())
+        .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    let start = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+    let end = xml[start..].find("</w:p>").unwrap() + start + "</w:p>".len();
+    let paragraph = paragraph.replace("ID", &id.to_string());
+    package.set_part(
+        &main,
+        format!("{}{paragraph}{}", &xml[..start], &xml[end..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    (Document::from_bytes(&out.into_inner()).unwrap(), id)
+}
+
+const DEL: &str = r#"w:id="91" w:author="Bo" w:date="2026-11-21T00:00:00Z""#;
+const INS: &str = r#"w:id="92" w:author="Bo" w:date="2026-11-21T00:00:00Z""#;
+
+#[test]
+fn a_range_edge_inside_tracked_deleted_or_moved_text_reads_at_the_next_accepted_position() {
+    let start = r#"<w:commentRangeStart w:id="ID"/>"#;
+    let end = r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r>"#;
+    let run = |text: &str| format!("<w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>");
+    let deleted = |inner: &str| {
+        format!(r#"<w:del {DEL}><w:r><w:delText>ninety (90)</w:delText></w:r>{inner}</w:del>"#)
+    };
+    let moved = |inner: &str| {
+        format!(r#"<w:moveFrom {DEL}><w:r><w:delText>old</w:delText></w:r>{inner}</w:moveFrom>"#)
+    };
+    let inserted = |inner: &str| format!(r#"<w:ins {INS}>{inner}</w:ins>"#);
+    for (paragraph, expected) in [
+        // The start inside the deletion, as Google Docs writes it.
+        (
+            format!(
+                "<w:p>{}{}{}{end}</w:p>",
+                run("Within "),
+                deleted(start),
+                inserted(&run("120 days")),
+            ),
+            "120 days",
+        ),
+        // The end inside the deletion.
+        (
+            format!(
+                "<w:p>{start}{}{}{}</w:p>",
+                run("Within "),
+                deleted(end),
+                run(" days"),
+            ),
+            "Within ",
+        ),
+        // The start inside moved-away text.
+        (
+            format!("<w:p>{}{}{end}</w:p>", moved(start), run("kept")),
+            "kept",
+        ),
+        // Both edges inside a tracked insertion.
+        (
+            format!(
+                "<w:p>{}{}</w:p>",
+                run("Pay "),
+                inserted(&format!("{}{start}{}{end}", run("within "), run("30 days"))),
+            ),
+            "30 days",
+        ),
+    ] {
+        let (doc, id) = commented_paragraph(&paragraph);
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some(expected),
+            "{paragraph}"
+        );
     }
 }
 
@@ -2127,4 +2209,71 @@ fn a_reply_on_the_first_comment_of_a_document_takes_the_reference_style() {
         assert_first_comment_reads_back(&mut doc, root, "word/document.xml", "Thread");
         assert_first_comment_reads_back(&mut doc, reply, "word/document.xml", "Reply");
     }
+}
+fn a_comment_starting_inside_a_deletion_can_be_moved_and_removed() {
+    let (mut doc, id) = commented_paragraph(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Within </w:t></w:r>"#,
+            r#"<w:del {}><w:r><w:delText>ninety (90)</w:delText></w:r><w:commentRangeStart w:id="ID"/></w:del>"#,
+            r#"<w:ins {}><w:r><w:t>120 days</w:t></w:r></w:ins>"#,
+            r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r></w:p>"#
+        ),
+        DEL, INS
+    ));
+    doc.move_comment_to_text(id, "Within", 0).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        doc.comment_anchor_text(id).unwrap().as_deref(),
+        Some("Within")
+    );
+    assert!(doc.remove_comment(id).unwrap());
+    let doc = reopen(&mut doc);
+    assert!(doc.comments().is_empty());
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains("commentRange"), "{main}");
+    assert!(main.contains("ninety (90)"), "the deletion stays: {main}");
+}
+
+#[test]
+fn the_google_copy_of_the_contract_reads_the_anchors_of_the_word_copy() {
+    let anchors = |file: &str| {
+        let doc = corpus_doc(file);
+        let mut anchors = doc
+            .comments()
+            .iter()
+            .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+            .collect::<Vec<_>>();
+        anchors.sort();
+        anchors
+    };
+    let word = anchors("word/contract.docx");
+    let google = anchors("google/contract.docx");
+    // Google drops the resolved comment; every anchor it keeps reads as Word's.
+    assert_eq!(google.len(), word.len() - 1);
+    for anchor in &google {
+        assert!(word.contains(anchor), "{anchor:?} not in {word:?}");
+    }
+}
+
+#[test]
+fn a_comment_inside_a_tracked_insertion_can_be_removed() {
+    let (mut doc, id) = commented_paragraph(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:ins {}>"#,
+            r#"<w:r><w:t xml:space="preserve">within </w:t></w:r><w:commentRangeStart w:id="ID"/>"#,
+            r#"<w:r><w:t>30 days</w:t></w:r><w:commentRangeEnd w:id="ID"/>"#,
+            r#"<w:r><w:commentReference w:id="ID"/></w:r></w:ins></w:p>"#
+        ),
+        INS
+    ));
+    assert_eq!(
+        doc.comment_anchor_text(id).unwrap().as_deref(),
+        Some("30 days")
+    );
+    assert!(doc.remove_comment(id).unwrap());
+    let doc = reopen(&mut doc);
+    assert!(doc.comments().is_empty());
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains("comment"), "{main}");
+    assert!(main.contains("30 days"), "{main}");
 }

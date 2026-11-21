@@ -722,12 +722,10 @@ impl Document {
             let is_word = word_element(&namespace);
             drop(namespace);
             let after = reader.buffer_position() as usize;
+            // Markers inside tracked deleted or moved-away text count, as the
+            // story marker scan places them at the next accepted boundary.
             let hidden = stack.iter().any(|(word, name, start)| {
-                *word
-                    && matches!(
-                        name.as_slice(),
-                        b"del" | b"moveFrom" | b"smartTag" | b"customXml" | b"fldSimple"
-                    )
+                *word && matches!(name.as_slice(), b"smartTag" | b"customXml" | b"fldSimple")
                     || *word && name == b"txbxContent" && *start > owner.full.start
             });
             if let Event::End(_) = &event {

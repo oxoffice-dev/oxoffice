@@ -236,7 +236,18 @@ fn scan_story_markers(xml: &[u8], location: &ContentLocation) -> Result<Vec<Stor
                 if is_word && local == b"r" && !hidden {
                     run_index += 1;
                 }
-                let marker = if is_word && !hidden {
+                // A range marker inside tracked deleted or moved-away text
+                // sits at the next run boundary of the accepted view, as
+                // Google Docs writes a comment on a tracked change; the runs
+                // there count for nothing.
+                let marker_hidden = stack.iter().any(|(name, word, _)| {
+                    *word
+                        && matches!(
+                            name.as_slice(),
+                            b"txbxContent" | b"smartTag" | b"customXml" | b"fldSimple"
+                        )
+                });
+                let marker = if is_word && !marker_hidden {
                     let id = word_marker_attribute(&reader, element, b"id")?;
                     match local.as_slice() {
                         b"bookmarkStart" | b"bookmarkEnd" => {
