@@ -834,6 +834,96 @@ fn a_redline_of_two_word_saved_reports_rejects_to_the_original() {
 }
 
 #[test]
+fn a_redline_in_one_name_on_a_reviewed_contract_edited_by_oxoffice_is_compared() {
+    // The contract holds two reviewers' tracked changes. The edit saves the
+    // main part again, which writes some characters differently (an
+    // apostrophe as an entity) in paragraphs the edit does not touch.
+    let mut edited = corpus_doc("word/contract.docx");
+    let replaced = edited.replace_all(&HashMap::from([(
+        "thirty-six (36) months",
+        "forty-eight (48) months",
+    )]));
+    assert_eq!(replaced, 1);
+    let mut edited = reopen(&mut edited);
+    let original = corpus_doc("word/contract.docx");
+    let earlier = original
+        .revisions()
+        .iter()
+        .map(|revision| (revision.kind(), revision.author().to_owned()))
+        .collect::<Vec<_>>();
+    assert!(!earlier.is_empty());
+    let mut doc = redline(original, &edited);
+    let mine = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.author() == AUTHOR)
+        .count();
+    assert!(
+        mine > 0,
+        "the replacement is tracked in the reviewer's name"
+    );
+    let others = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.author() != AUTHOR)
+        .map(|revision| (revision.kind(), revision.author().to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(others, earlier, "the other reviewers' revisions stay");
+    assert_eq!(texts(&accepted(&mut doc)), texts(&accepted(&mut edited)));
+    let mut original = corpus_doc("word/contract.docx");
+    assert_eq!(texts(&rejected(&mut doc)), texts(&rejected(&mut original)));
+}
+
+/// The reviewed contract with one more comment, on the first run of its
+/// body, added in its package so that every other byte stays as Word wrote
+/// it.
+fn contract_with_a_comment_on_its_first_run() -> Document {
+    let bytes = std::fs::read(crate::support::corpus_root().join("files/word/contract.docx"))
+        .expect("corpus file");
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let body = main.find("<w:body>").unwrap();
+    let start = body + main[body..].find("<w:r>").unwrap();
+    let end = start + main[start..].find("</w:r>").unwrap() + "</w:r>".len();
+    let main = format!(
+        "{}<w:commentRangeStart w:id=\"90\"/>{}<w:commentRangeEnd w:id=\"90\"/><w:r><w:commentReference w:id=\"90\"/></w:r>{}",
+        &main[..start],
+        &main[start..end],
+        &main[end..]
+    );
+    package.set_part("/word/document.xml", main.into_bytes());
+    let comments =
+        String::from_utf8(package.get_part("/word/comments.xml").unwrap().to_vec()).unwrap();
+    let close = comments.rfind("</w:comments>").unwrap();
+    let comments = format!(
+        "{}<w:comment w:id=\"90\" w:author=\"First reviewer\" w:date=\"2026-11-20T10:00:00Z\"><w:p><w:r><w:t>Check the parties.</w:t></w:r></w:p></w:comment>{}",
+        &comments[..close],
+        &comments[close..]
+    );
+    package.set_part("/word/comments.xml", comments.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_reply_added_on_a_reviewed_contract_is_compared() {
+    // The comparison replays the reply on a copy of the original, which
+    // saves the main part again: the paragraphs holding the reviewers'
+    // revisions are written another way, and stay the same.
+    let mut edited = contract_with_a_comment_on_its_first_run();
+    edited
+        .reply_to(90, "Second reviewer", "Agreed, it's fine.")
+        .unwrap();
+    let edited = reopen(&mut edited);
+    let original = contract_with_a_comment_on_its_first_run();
+    let held = original.revisions().len();
+    let doc = redline(original, &edited);
+    assert_eq!(doc.revisions().len(), held, "the reply changes no revision");
+    assert_eq!(doc.comments().len(), edited.comments().len());
+}
+
+#[test]
 fn a_redline_of_two_google_saved_reports_rejects_to_the_original() {
     let mut doc = corpus_doc("google/report.docx");
     let text = doc.text();
