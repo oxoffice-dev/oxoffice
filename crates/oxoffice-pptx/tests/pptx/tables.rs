@@ -905,7 +905,8 @@ fn a_block_merged_by_libreoffice_can_be_split() {
 #[test]
 fn a_merged_block_whose_covered_cell_names_another_span_is_not_split() {
     // A covered cell may say 1, or repeat the origin's span in the top row
-    // (rowSpan) and in the left column (gridSpan); anything else is refused.
+    // (rowSpan) and in the left column (gridSpan); anything else is refused,
+    // an interior cell repeating either span included.
     for (covered, broken) in [
         (
             r#"<a:tc hMerge="1" rowSpan="1">"#,
@@ -918,6 +919,10 @@ fn a_merged_block_whose_covered_cell_names_another_span_is_not_split() {
         (
             r#"<a:tc vMerge="1" hMerge="1">"#,
             r#"<a:tc vMerge="1" hMerge="1" rowSpan="2">"#,
+        ),
+        (
+            r#"<a:tc vMerge="1" hMerge="1">"#,
+            r#"<a:tc vMerge="1" hMerge="1" gridSpan="2">"#,
         ),
     ] {
         let table = table_merged_by_libreoffice().replacen(covered, broken, 1);
