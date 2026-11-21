@@ -4178,6 +4178,18 @@ pub(super) struct PreparedSlideAssembly {
 }
 
 #[cfg(feature = "render")]
+/// The deck's main language: the language of the presentation's default
+/// text, its default paragraph properties first, then its first level.
+fn deck_language(style: &CT_TextListStyle) -> Option<String> {
+    [&style.default_paragraph_properties, &style.level1]
+        .into_iter()
+        .flatten()
+        .filter_map(|properties| properties.default_run_properties.as_ref()?.language())
+        .map(str::trim)
+        .find(|language| oxoffice_layout::is_language_tag(language))
+        .map(str::to_owned)
+}
+
 pub(super) fn prepare_render_context(
     package: &OpcPackage,
     collect_media_diagnostics: bool,
@@ -4352,7 +4364,12 @@ pub(super) fn prepare_render_context(
         slides: resolved_slides,
         media,
         fonts: font_files.to_vec(),
-        metadata: None,
+        metadata: deck_language(&default_text_style).map(|language| {
+            oxoffice_layout::DocumentMetadata {
+                language: Some(language),
+                ..Default::default()
+            }
+        }),
     };
     let mut layout = layout_presentation_with_displayed_numbers(
         &input,

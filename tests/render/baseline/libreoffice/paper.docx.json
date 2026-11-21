@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/paper.docx",
-  "reason": "display equations take one line as tall as themselves, as in Word (#156): no empty line after them, no default space above, auto spacing scales the text only; the Word and authored theses go from 26 to 25 pages",
-  "resources": "0e7b4b44d5dd755b477ce17c90f6e74642343064e5e28b5cc637346eabb5dbd3",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "d048460b62fd0ed99e1aa1313ac102feef6389a18d67a58977037c10dd1ec0e6",
   "outline_and_tags": "97fa5af39f6a56bd0de87c7e1996038010f010fc02f2651906a631469bae8f8d",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "d76f73088442341c176f23d107549e396d8059f71a52897355b27b51bf4caf35", "content": "c4393be22231d8b4ee292c03ede96bec20770a553e3a78fc45a2181ebc968e63", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "30ca6e1a175decd5dc69d0bcd36fd431afb5877629cb4f9654688095391756a4", "content": "39715c877de397bb0213b232da1fb6c6b61a065d54f8d045d745de81187a90ba", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

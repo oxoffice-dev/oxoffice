@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/minutes.docx",
-  "reason": "right-to-left paragraphs start on the right margin, as in Word (#157): the Arabic heading and paragraphs of the minutes move",
-  "resources": "3b64d1b0d93cc0dff691617ed1ed8f2c9252002bb1ca7cf702450dc3b6da5129",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "4479de7d28c4393f7ac84f41a12c43bc205030c2c78e8fe4543a4d6f20a49d61",
   "outline_and_tags": "ee8ba2e0e1b2900839341a4febbcb4b34d68cd01c4db8561c7440995ec36d398",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "e7066bd3d69a5fcf69f5778e15de06065ac43b6c6008d896101abeb8cdd0ba50", "content": "ddac3ad2cca92c984a6b7b5c4436b540013272bfe5329b5a73b59838d5aa6d29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "c771682a73af208f7f2ece7aa9532aff366cb26627cf7980909fd81aef193b38", "content": "5d0ff920d83ee687a15b01499ef97d36922db074fb6514f11233e36b8d398dae", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

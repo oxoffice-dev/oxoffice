@@ -1,9 +1,9 @@
 {
   "file": "authored/thesis.docx",
-  "reason": "endnotes are numbered i, ii, iii by default, as Word numbers them (#158)",
-  "resources": "14df1081a6e049c96214043e185b785632947cfb643777c11c0057826f7a8655",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159), on top of the endnote numbers of #452",
+  "resources": "0d76bf8f2eba7d6d48453b8d2158e88004d76bbbaba37a2b6a3e69641ad84197",
   "outline_and_tags": "7958bc81f7c825b30673ed7a7538f157c910973ec8b63fa878e291072fb7f006",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43b8c3dd24641ca5145bf9c5a9efea09d36bfa5e08a4905d8ab8743149359028", "content": "1b46657a2183eb3ae749a2919f61493a2528e54011486fdf352e05ab91455d02", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "3411f1e49680676fb53bda061e6be8ded2404db1e8660b357d011c1ed329c368", "content": "46495fd4606ea2eb30b04739ac014aa1797bef25a2384f522d8596660e6dd32f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

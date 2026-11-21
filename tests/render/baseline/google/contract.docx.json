@@ -1,9 +1,9 @@
 {
   "file": "google/contract.docx",
-  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
-  "resources": "45954bdc1477a7c2e391cc6b02f450be99984c583dcdf68d7e23f19b90163cd6",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "1931efd323be29f23f19e5bd64bbc7301bbb5216aa7b21fb705780be29fb1dce",
   "outline_and_tags": "36a8ac6beb92597bd0c1ceaeb62ac85929cc37442e1377ac53af839e781297cd",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "e355e519ac5ac6afe642ed0eaafb7e65044a44e4de071eb72edaa726913e64d2", "content": "03132f66764a525a77708f28bb6ee3214520cdceaea2667b2af17a6b2b79598c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "69344787ca91f3b2ea41aa801a6a44277f454c5b72afaef3c189ba1bf249347b", "content": "2adbca7c430accb293dcbdd53870155a265d184782f539a809a9f6a3f3eabc95", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},

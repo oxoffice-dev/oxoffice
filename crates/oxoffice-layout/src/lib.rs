@@ -26,7 +26,7 @@ pub use output::{
     FieldKind, FieldSource, FontData, FontId, FormField, FormFieldFragment, FormFieldId,
     FormFieldKind, FormMarker, GlyphRun, GroupElement, LayoutResult, MediaId, MultilingualGlyphRun,
     OutlineEntry, PageFrame, PathElement, Point, PositionedElement, Rect, SourceNodeId, SourceSpan,
-    StructureId, StructureNode, StructureRole, TabAlignedField, walk,
+    StructureId, StructureNode, StructureRole, TabAlignedField, is_language_tag, walk,
 };
 pub use paint::{GradientStop, LineCap, LineJoin, Paint, Stroke};
 pub use path::{FillRule, Path, PathCommand};

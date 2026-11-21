@@ -1,9 +1,9 @@
 {
   "file": "authored/minutes.docx",
-  "reason": "right-to-left paragraphs start on the right margin, as in Word (#157): the Arabic heading and paragraphs of the minutes move",
-  "resources": "6cd47cb9e52750dce2412f38e8949b0d366b288401da7e061ae3dbe3e1958dc3",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "ea06cf1a6609bff51fd9cc60bd795c6ef98e2ead1478c51262e50a72cc1d740a",
   "outline_and_tags": "d290e0002c9831591ca7a78778d5c77b617db676953801b7a4259b70721cb9b2",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "1b143366ce00fe855061607e74cbfe95c06bcebb19bdd0a37f5f9481ea59825f", "content": "fdbbe4eb9f2a3d4cdb7345796d5f4a2419078c586dd7b4addb3e55a648223b57", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "b61bb6d25417771150cae3223a0d743186e307be31b644975cb0c969add42c1a", "content": "72cd3cdc7388184f997b4741fd25e2e3151d83efd89068ab6f30c75e46337ff0", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

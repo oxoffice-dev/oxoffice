@@ -2037,6 +2037,174 @@ fn pdfa_output_declares_its_part_and_carries_an_output_intent() {
     assert!(!plain.xmp().unwrap_or_default().contains("pdfaid"));
 }
 
+/// This document with `edit` applied to the XML of one of its parts.
+fn with_part(doc: &mut Document, part: &str, edit: impl Fn(String) -> String) -> Document {
+    let bytes = doc.to_bytes().unwrap();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(package.get_part(part).expect("the part").to_vec()).unwrap();
+    let edited = edit(xml.clone());
+    assert_ne!(edited, xml, "the edit changes {part}");
+    package.set_part(part, edited.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+fn file_id(pdf: &Pdf) -> Vec<u8> {
+    let id = pdf.doc.trailer.get(b"ID").expect("a file identifier");
+    let id = id.as_array().expect("an array of two strings");
+    assert_eq!(id.len(), 2);
+    assert_eq!(id[0], id[1]);
+    id[0].as_str().expect("a string").to_vec()
+}
+
+#[test]
+fn each_document_has_its_own_file_identifier() {
+    let first = doc_with(&["One document"]);
+    let second = doc_with(&["Another document"]);
+    for convert in [
+        |doc: &Document| doc.to_pdf_deterministic().unwrap(),
+        |doc: &Document| doc.to_pdfa_deterministic(PdfConformance::PdfA2b).unwrap(),
+    ] {
+        let id = file_id(&Pdf::read(&convert(&first)));
+        assert_eq!(id.len(), 16);
+        assert!(!id.starts_with(b"rdocx"), "{id:?}");
+        // The same document always gets the same identifier, another one
+        // another identifier.
+        assert_eq!(file_id(&Pdf::read(&convert(&first))), id);
+        assert_ne!(file_id(&Pdf::read(&convert(&second))), id);
+    }
+    // The two archival profiles of one document are two files.
+    let part = |profile| file_id(&Pdf::read(&first.to_pdfa_deterministic(profile).unwrap()));
+    assert_ne!(part(PdfConformance::PdfA2b), part(PdfConformance::PdfA3b));
+    // The PDF/A metadata names the document by the same identifier.
+    let pdf = Pdf::read(&first.to_pdfa_deterministic(PdfConformance::PdfA2b).unwrap());
+    let hex: String = file_id(&pdf)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let uuid = format!(
+        "uuid:{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    );
+    let xmp = pdf.xmp().unwrap();
+    assert!(
+        xmp.contains(&format!("<xmpMM:DocumentID>{uuid}</xmpMM:DocumentID>")),
+        "{xmp}"
+    );
+    assert!(!xmp.contains("72646f63"), "{xmp}");
+}
+
+fn catalog_language(pdf: &Pdf) -> Option<String> {
+    pdf.catalog()
+        .get(b"Lang")
+        .ok()
+        .map(|lang| String::from_utf8(pdf.resolve(lang).as_str().unwrap().to_vec()).unwrap())
+}
+
+#[test]
+fn the_catalog_language_is_the_language_of_the_document() {
+    let defaults = |doc: &mut Document, language: &str| {
+        let lang = format!(r#"<w:lang w:val="{language}"/>"#);
+        with_part(doc, "/word/styles.xml", |xml| {
+            if let Some(at) = xml.find("<w:rPrDefault><w:rPr>") {
+                let at = at + "<w:rPrDefault><w:rPr>".len();
+                format!("{}{lang}{}", &xml[..at], &xml[at..])
+            } else {
+                let at = xml.find("<w:style ").expect("a style");
+                format!(
+                    "{}<w:docDefaults><w:rPrDefault><w:rPr>{lang}</w:rPr></w:rPrDefault></w:docDefaults>{}",
+                    &xml[..at],
+                    &xml[at..]
+                )
+            }
+        })
+    };
+    // A document that names no language: undetermined.
+    let mut doc = doc_with(&["Bonjour"]);
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("und"));
+    // The document defaults name it.
+    let mut french = defaults(&mut doc, "fr-FR");
+    assert_eq!(catalog_language(&pdf_of(&french)).as_deref(), Some("fr-FR"));
+    // The default paragraph style overrides the defaults.
+    let swiss = with_part(&mut french, "/word/styles.xml", |xml| {
+        let at = xml.find(r#"w:styleId="Normal""#).expect("a Normal style");
+        let end = at + xml[at..].find("</w:style>").unwrap();
+        let style = &xml[at..end];
+        let style = match style.find("<w:rPr>") {
+            Some(rpr) => format!(
+                "{}<w:lang w:val=\"fr-CH\"/>{}",
+                &style[..rpr + "<w:rPr>".len()],
+                &style[rpr + "<w:rPr>".len()..]
+            ),
+            None => format!("{style}<w:rPr><w:lang w:val=\"fr-CH\"/></w:rPr>"),
+        };
+        format!("{}{style}{}", &xml[..at], &xml[end..])
+    });
+    assert_eq!(catalog_language(&pdf_of(&swiss)).as_deref(), Some("fr-CH"));
+    // A value that names no language (Word's x-none, a locale number) is
+    // passed over.
+    for value in ["x-none", "0409"] {
+        let mut doc = doc_with(&["Bonjour"]);
+        let doc = defaults(&mut doc, value);
+        assert_eq!(
+            catalog_language(&pdf_of(&doc)).as_deref(),
+            Some("und"),
+            "{value}"
+        );
+    }
+    // Without one in the styles, the document's language property names it.
+    let mut doc = doc_with(&["Guten Tag"]);
+    let mut properties = doc.core_properties().cloned().unwrap_or_default();
+    properties.language = Some("de-DE".to_owned());
+    doc.set_core_properties(properties).unwrap();
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("de-DE"));
+    // Styles that name no language leave the word to that property.
+    let doc = defaults(&mut doc, "x-none");
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("de-DE"));
+    // A PDF/A file says it too.
+    let archived = Pdf::read(
+        &french
+            .to_pdfa_deterministic(PdfConformance::PdfA2b)
+            .unwrap(),
+    );
+    assert_eq!(catalog_language(&archived).as_deref(), Some("fr-FR"));
+}
+
+#[test]
+fn every_embedded_font_subset_carries_a_subset_tag() {
+    let doc = corpus_doc("word/thesis.docx");
+    let pdf = pdf_of(&doc);
+    let mut names = Vec::new();
+    for object in pdf.doc.objects.values() {
+        let Ok(dict) = object.as_dict() else { continue };
+        let name = match dict.get(b"Type").and_then(Object::as_name) {
+            Ok(b"Font") => dict.get(b"BaseFont"),
+            Ok(b"FontDescriptor") => dict.get(b"FontName"),
+            _ => continue,
+        };
+        names.push(name.and_then(Object::as_name).unwrap().to_vec());
+    }
+    assert!(names.len() > 3, "{names:?}");
+    for name in &names {
+        let (tag, rest) = name.split_at(7);
+        assert!(
+            tag[..6].iter().all(u8::is_ascii_uppercase) && tag[6] == b'+' && !rest.is_empty(),
+            "{}",
+            String::from_utf8_lossy(name)
+        );
+    }
+    // One subset, one tag: the composite font, its descendant and its
+    // descriptor share the name, and another font has another tag.
+    let tags: std::collections::BTreeSet<&[u8]> = names.iter().map(|name| &name[..6]).collect();
+    assert!(tags.len() > 1, "{names:?}");
+}
+
 #[test]
 fn pdfa_output_refuses_a_link_it_cannot_archive() {
     let target = "file:///srv/share/budget.xlsx";

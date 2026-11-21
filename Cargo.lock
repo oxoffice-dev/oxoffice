@@ -1315,6 +1315,7 @@ dependencies = [
  "oxoffice-layout",
  "oxoffice-media",
  "pdf-writer",
+ "sha2",
  "subsetter",
  "tiff",
  "tiny-skia",

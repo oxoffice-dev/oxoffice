@@ -9,7 +9,6 @@ use crate::font;
 use crate::structure::valid_structure;
 
 pub(crate) const SRGB2014: &[u8] = include_bytes!("../assets/sRGB2014.icc");
-pub(crate) const FILE_IDENTIFIER: &[u8; 16] = b"rdocx-pdfa-00001";
 
 /// An archival conformance level supported by the PDF backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +196,7 @@ pub(crate) fn archival_xmp(
     layout: &LayoutResult,
     profile: PdfConformance,
     declares_pdfua: bool,
+    file_id: &[u8; 16],
 ) -> Vec<u8> {
     let metadata = layout.metadata.as_ref();
     let title = xml_escape(
@@ -244,9 +244,10 @@ pub(crate) fn archival_xmp(
     if declares_pdfua {
         properties.push_str("<pdfuaid:part>1</pdfuaid:part>\n");
     }
-    properties.push_str(
-        "<xmpMM:DocumentID>uuid:72646f63-782d-7064-6661-2d3030303031</xmpMM:DocumentID>\n<xmpMM:InstanceID>uuid:72646f63-782d-7064-6661-2d3030303031</xmpMM:InstanceID>",
-    );
+    let uuid = uuid_of(file_id);
+    properties.push_str(&format!(
+        "<xmpMM:DocumentID>uuid:{uuid}</xmpMM:DocumentID>\n<xmpMM:InstanceID>uuid:{uuid}</xmpMM:InstanceID>"
+    ));
     let extension = if declares_pdfua {
         r#"
 <rdf:Description rdf:about="" xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/" xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#" xmlns:pdfaProperty="http://www.aiim.org/pdfa/ns/property#">
@@ -278,6 +279,19 @@ pub(crate) fn archival_xmp(
 <?xpacket end="w"?>"#
     )
     .into_bytes()
+}
+
+/// The file identifier written as a UUID (8-4-4-4-12 hexadecimal digits).
+fn uuid_of(id: &[u8; 16]) -> String {
+    let hex: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 fn xml_escape(value: &str) -> String {

@@ -1,7 +1,7 @@
 {
   "file": "libreoffice/pitch.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "9bf68e924170d7125f99a6cc66b9edb0df6c52f15ca72576cee7cc14b6965f60",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "06e310ef1af992602220f2bfbb4bc97bae90e35b24640c083f333ad919d4a348",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [

@@ -1,9 +1,9 @@
 {
   "file": "powerpoint/pitch.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "879d8a80e1793883cc94f31e2d3fbaec16586ef403c0563f7a948a8ec0c4477f",
+  "reason": "a deck's PDF names the language of its default text (#159)",
+  "resources": "70aa73eab942ba5edf399b521627e8192130ba2d5076c01eb5d0bf58ae6846e5",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
+  "catalog": "b27a9b5434eefbc2920ba3c5e96c5d930939a9e48f6b570df1ff3419747be10b",
   "pages": [
     {"page": 1, "pixels": "accf0bc2aa6b8eb4133a83c75096792436e94947a4cf93cac0ab1085324d0d62", "content": "90383ea584adac27bda6e5494000bc80e547c558e80f5750ec797d04a27a0445", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 2, "pixels": "74d29ea9b6ba4ce6b156bb46c9a6ae10f7a314ce4ece47d61d117c1db47dfee7", "content": "6a6163e67e2301308bcc6fcd5c0fce5e7a349b59eeb816ed168c5566440d2503", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},

@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/contract.docx",
-  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
-  "resources": "dfeb20d8425354a20d3de6e658cc66a653c4828e09e37625f5da6191dfaca95d",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "53f6f9736438fa17c482a33244072b4defdda0613b9b9ca4143fbfca3dac9ff5",
   "outline_and_tags": "c4897ee43eec911f85483ae8cd976ed84adc2678d63e738e62102642bc3bb8db",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43f017633c504a3db90e7509a7d043708b0ed3b09b8318285c656f7a3a0f9bbb", "content": "f02f488ac1590cd3ae15a23427e2ad4304bd969bd1b2ad65dd239a4543478e5d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "73fae8e295925030b2b60ba6efa99a0b122d686abaeadfb5fa4cf11f3a6dd816", "content": "44081abf35eb2d5b57c5a118ce09d5fdf55fa2ef07a0e7886a448d3db129df29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
