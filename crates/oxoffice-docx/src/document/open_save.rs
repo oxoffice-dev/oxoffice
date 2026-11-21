@@ -135,6 +135,11 @@ impl Document {
         let report = candidate
             .package
             .sign(private_key_pkcs8_der, certificate_der)?;
+        // The signature's relationship and parts are the document's from now
+        // on: reserve them, as a later insert must not take their ids.
+        candidate
+            .identifiers
+            .observe_package_graph(&candidate.package)?;
         self.commit_staged_mutation(candidate);
         Ok(report)
     }

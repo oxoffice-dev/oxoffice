@@ -725,7 +725,8 @@ impl DocumentIdentifiers {
     /// insert can take one again. Ids the save made on its copy are not in
     /// the live document and need no reservation there: a relationship or
     /// part the live package did not hold, and a drawing id `prepared`, the
-    /// copy's registry, reserved for a handle's picture.
+    /// copy's registry, reserved for a handle's picture. (`sign`, which
+    /// installs its copy, reserves the signature's relationship and parts.)
     pub(super) fn assert_covers(
         &self,
         reopened: &Self,
