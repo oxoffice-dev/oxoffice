@@ -11,6 +11,7 @@ use oxoffice_docx_oxml::header_footer::CT_HdrFtr;
 use oxoffice_docx_oxml::math::MathProperties;
 use oxoffice_docx_oxml::numbering::CT_Numbering;
 use oxoffice_docx_oxml::styles::CT_Styles;
+use oxoffice_docx_oxml::text::BlockBookmarks;
 use oxoffice_docx_oxml::theme::Theme;
 use oxoffice_docx_oxml::units::Twips;
 use oxoffice_drawing::color::ColorMap;
@@ -261,6 +262,9 @@ pub struct LayoutInput {
     /// A present entry replaces the paragraph-only header, footer or note
     /// projection during layout. An absent entry retains the legacy projection.
     pub story_bodies: HashMap<crate::WordStory, CT_Body>,
+    /// Bookmark markers between blocks, read once from this input.
+    #[doc(hidden)]
+    pub block_bookmarks: BlockBookmarkCache,
     /// Header parts keyed by relationship ID.
     pub headers: HashMap<String, CT_HdrFtr>,
     /// Footer parts keyed by relationship ID.
@@ -296,4 +300,43 @@ pub struct LayoutInput {
     /// marks. Full layout regenerates this member.
     #[doc(hidden)]
     pub form_paragraphs: Option<Arc<crate::forms::FormParagraphs>>,
+}
+
+/// The bookmark markers that sit between blocks of a layout input, read on
+/// first use. A clone starts empty, since its paragraphs live elsewhere.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct BlockBookmarkCache(std::sync::OnceLock<(usize, BlockBookmarks)>);
+
+impl Clone for BlockBookmarkCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for BlockBookmarkCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BlockBookmarkCache")
+    }
+}
+
+impl LayoutInput {
+    /// The bookmark markers between blocks of the main story and of the
+    /// rich story bodies, each attributed to the paragraph it wraps.
+    pub(crate) fn block_bookmarks(&self) -> std::borrow::Cow<'_, BlockBookmarks> {
+        let owner = self.document.body.content.as_ptr().addr();
+        let read = || {
+            let mut bookmarks = BlockBookmarks::of_blocks(&self.document.body.content);
+            for body in self.story_bodies.values() {
+                bookmarks.add_blocks(&body.content);
+            }
+            bookmarks
+        };
+        let (cached_owner, cached) = self.block_bookmarks.0.get_or_init(|| (owner, read()));
+        if *cached_owner == owner {
+            std::borrow::Cow::Borrowed(cached)
+        } else {
+            std::borrow::Cow::Owned(read())
+        }
+    }
 }
