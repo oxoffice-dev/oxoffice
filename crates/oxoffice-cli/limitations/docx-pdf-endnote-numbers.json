@@ -1,0 +1,9 @@
+{
+  "id": "docx-pdf-endnote-numbers",
+  "format": "docx",
+  "area": "pdf",
+  "title": "PDF endnotes are numbered 1, 2, 3 instead of i, ii, iii",
+  "symptom": "endnotes without a number format of their own are numbered in decimal in the PDF, where Word numbers them in lower roman",
+  "workaround": "set the endnote policy's number format to lower roman (set_note_policy, same name in Python) before converting; none through the CLI",
+  "issue": 158
+}

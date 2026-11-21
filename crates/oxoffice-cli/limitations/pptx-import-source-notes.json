@@ -1,0 +1,9 @@
+{
+  "id": "pptx-import-source-notes",
+  "format": "pptx",
+  "area": "slides",
+  "title": "Importing slides with their source formatting refuses PowerPoint and Google slides that have notes",
+  "symptom": "import_slides with keep_source_formatting fails with \"unrepresentable source notes-master ... authority\", calling the producer's part malformed",
+  "workaround": "import onto this deck's layouts instead, without keeping the source formatting",
+  "issue": 40
+}

@@ -1,0 +1,9 @@
+{
+  "id": "docx-header-content-controls",
+  "format": "docx",
+  "area": "forms",
+  "title": "The tag setters do not reach content controls in headers",
+  "symptom": "set_content_control_value_by_tag returns 0 for a control in a header and content_controls() lists body controls only; `oxoffice docx fill` fails with \"no content control has tag\" (--tag) or \"requires exactly one target\" (--values)",
+  "workaround": "fill_form with a rule naming the tag (a content control tag target), which reaches every story (same name in Python); none through the CLI",
+  "issue": 148
+}

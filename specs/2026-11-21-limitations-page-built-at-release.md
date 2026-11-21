@@ -44,6 +44,33 @@ new wording approved by the maintainer on 2026-11-21). Checked by running
 the script as lint and the release do, and by the next release dry run from
 `main` after the merge (a dry run takes the script from `main`).
 
+## Amendment 2026-11-21: one file per limitation
+
+With the page gone, `crates/oxoffice-cli/limitations.json` itself stayed the
+first source of conflicts: 14 open pull requests edited it, a fix that
+removes an entry conflicted with one removing the entry next to it, and
+each conflict cost a new CI run (#81 after #173 that morning).
+
+- Each limitation is its own file, `crates/oxoffice-cli/limitations/<id>.json`,
+  one JSON object whose `id` is the file name. Adding or removing one touches
+  that file only, and two entries can no longer share an id.
+- `build.rs` joins the files in file name order into the JSON array that
+  `oxoffice_cli::LIMITATIONS_JSON` embeds, unchanged: the CLI, Python's
+  `oxoffice.limitations()` and their tests read the same string as before.
+  The build fails, naming the file, on a file that is not JSON, not
+  `<id>.json`, whose `id` differs from its name, or whose name is not
+  lower-case ASCII letters, digits and dashes (two names differing in case
+  would be one file on Windows and macOS). Entries now list in id order.
+- `scripts/limitations_doc.py` reads the directory in the same order.
+- `scripts/limitations_move.py`, a one-shot tool, moves an open branch's
+  edits of the old file into the directory during its rebase; it goes once
+  no open branch needs it.
+- Rule 8 of `CLAUDE.md` names the directory (wording approved by the
+  maintainer on 2026-11-21).
+
+A second pull request, merged right after the first, so that open branches
+rebase once onto both.
+
 ## Links
 
 - [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md)

@@ -31,6 +31,9 @@ serde_json.workspace = true
 oxoffice-docx-cli = { workspace = true, default-features = false }
 oxoffice-pptx-cli = { workspace = true, default-features = false }
 
+[build-dependencies]
+serde_json.workspace = true
+
 [dev-dependencies]
 oxoffice-opc.workspace = true
 oxoffice-pptx.workspace = true

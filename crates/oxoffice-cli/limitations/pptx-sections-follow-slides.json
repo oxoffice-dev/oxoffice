@@ -1,0 +1,9 @@
+{
+  "id": "pptx-sections-follow-slides",
+  "format": "pptx",
+  "area": "slides",
+  "title": "Sections do not follow added, duplicated, imported or moved slides",
+  "symptom": "a new slide belongs to no section, and a moved slide stays listed in its old section",
+  "workaround": "set the sections again after the slide edits (set_sections in Rust and Python); none through the CLI",
+  "issue": 41
+}

@@ -13,9 +13,10 @@ use clap::{Args, Parser, Subcommand};
 /// The known limitations of this build, with their workarounds, as a JSON
 /// array. Each entry has `id`, `format` (`docx`, `pptx`, `xlsx` or `all`),
 /// `area`, `title`, `symptom`, `workaround` and `issue`, the number of the
-/// GitHub issue that tracks it. The source is `limitations.json` next to this
-/// crate's manifest.
-pub const LIMITATIONS_JSON: &str = include_str!("../limitations.json");
+/// GitHub issue that tracks it. The source is `limitations/<id>.json` next to
+/// this crate's manifest, one file per entry, joined in file name order by
+/// the build script.
+pub const LIMITATIONS_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/limitations.json"));
 
 #[derive(Parser)]
 #[command(
@@ -80,7 +81,7 @@ fn run(args: Vec<OsString>) {
 /// pipe ends the listing quietly.
 fn limitations(args: &LimitationsArgs) {
     let all: Vec<serde_json::Value> =
-        serde_json::from_str(LIMITATIONS_JSON).expect("limitations.json is a JSON array");
+        serde_json::from_str(LIMITATIONS_JSON).expect("the build script writes a JSON array");
     let selected: Vec<&serde_json::Value> = all
         .iter()
         .filter(|entry| match args.format.as_deref() {

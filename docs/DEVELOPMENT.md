@@ -60,7 +60,7 @@ or wants to merge it runs that review or asks for one.
   follow-up issue, or say why it is not a defect. A minor that would need a
   risky change goes to a follow-up issue, not into the pull request.
 - **A rebase or merge that only resolves a conflict in data**
-  (`limitations.json`, a generated page, the `GROWING` or test-module lists,
+  (a limitations file, a generated page, the `GROWING` or test-module lists,
   a moved context line) needs no review: `git range-diff` and the tests, and
   one line in the thread saying so. A rebase without conflict needs nothing.
 - **A delta review judges the delta only**: defects the new commits bring,
@@ -140,13 +140,22 @@ neither fails a flat call nor reads as a fix.
 
 ## Known limitations
 
-A limitation users can hit, with a workaround, goes in
-`crates/oxoffice-cli/limitations.json` with an issue labelled `limitation`.
-The pull request that fixes it removes the entry and closes the issue.
-`oxoffice limitations` lists them; the release attaches the page built from
-the same file (`scripts/limitations_doc.py`, which lint runs too). Nothing
-to regenerate: `docs/LIMITATIONS.md` is not committed (`-o
-docs/LIMITATIONS.md` writes it for a local look).
+A limitation users can hit, with a workaround, gets its own file,
+`crates/oxoffice-cli/limitations/<id>.json` (one JSON object: `id`, the file
+name; `format`, `area`, `title`, `symptom`, `workaround`, and `issue`, an
+issue labelled `limitation`). The pull request that fixes it deletes the
+file and closes the issue. The build joins the files in name order (it fails
+on a file whose `id` is not its name, or not lower-case letters, digits and
+dashes); `oxoffice limitations` lists them, and
+the release attaches the page built from the same files
+(`scripts/limitations_doc.py`, which lint runs too). Nothing to regenerate:
+`docs/LIMITATIONS.md` is not committed (`-o docs/LIMITATIONS.md` writes it
+for a local look).
+
+A branch that still edits the old `limitations.json` gets a modify/delete
+conflict when it rebases: `python3 scripts/limitations_move.py REBASE_HEAD~1
+REBASE_HEAD` replays that commit's entries as files (its docstring has the
+merge variant).
 
 ## CI
 

@@ -1,8 +1,8 @@
-"""Render the known limitations page from crates/oxoffice-cli/limitations.json.
+"""Render the known limitations page from crates/oxoffice-cli/limitations/, one <id>.json per entry.
 
     python3 scripts/limitations_doc.py                          # print the page (lint runs this)
     python3 scripts/limitations_doc.py -o docs/LIMITATIONS.md   # write it, for a local look (git ignores it)
-    python3 scripts/limitations_doc.py --ref v0.2.0 -o page.md  # the release asset, linking the JSON at its tag
+    python3 scripts/limitations_doc.py --ref v0.2.0 -o page.md  # the release asset, linking the entries at its tag
 
 The page is not committed: the release attaches it, built for its tag. `oxoffice limitations` gives each build its
 own list.
@@ -13,18 +13,19 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / "crates/oxoffice-cli/limitations.json"
+SOURCE = ROOT / "crates/oxoffice-cli/limitations"
 REPOSITORY = "https://github.com/oxoffice-dev/oxoffice"
 ISSUES = f"{REPOSITORY}/issues"
 
 
 def render(ref: str) -> str:
-    entries = json.loads(SOURCE.read_text(encoding="utf-8"))
+    # The order of the build script: file name order.
+    entries = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(SOURCE.glob("*.json"), key=lambda p: p.name)]
     lines = [
         "# Known limitations",
         "",
         f"What oxoffice {ref} cannot do yet, and what to do instead. Generated from",
-        f"[`crates/oxoffice-cli/limitations.json`]({REPOSITORY}/blob/{ref}/crates/oxoffice-cli/limitations.json) by",
+        f"[`crates/oxoffice-cli/limitations/`]({REPOSITORY}/tree/{ref}/crates/oxoffice-cli/limitations) by",
         "`scripts/limitations_doc.py`. The installed build gives its own list:",
         "",
         "```bash",

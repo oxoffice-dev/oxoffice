@@ -1,4 +1,4 @@
-//! `oxoffice limitations` lists every entry of limitations.json, filters by
+//! `oxoffice limitations` lists every entry of `limitations/`, filters by
 //! format, and every entry carries what an agent needs to act on it.
 
 use std::collections::BTreeSet;

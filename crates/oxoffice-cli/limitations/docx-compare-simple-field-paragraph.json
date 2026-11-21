@@ -1,0 +1,9 @@
+{
+  "id": "docx-compare-simple-field-paragraph",
+  "format": "docx",
+  "area": "compare",
+  "title": "Comparison refuses to insert or delete a paragraph holding a simple field",
+  "symptom": "compare refuses with \"cannot track a whole paragraph's simple field outside a field it replaces\", so a heading added under a table of contents made by insert_toc cannot be compared",
+  "workaround": "add or remove the paragraph by hand on the redline",
+  "issue": 66
+}
