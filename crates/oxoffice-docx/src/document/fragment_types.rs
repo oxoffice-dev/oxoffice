@@ -39,6 +39,10 @@ const INSERTED_DOCUMENTS_KEEP_DESTINATION_FORMATTING: bool = true;
 
 impl FragmentConflictPolicy {
     /// Reuse equivalent supported dependencies and rename non-equivalent ones.
+    /// A default style equal to the destination's default under another id
+    /// (Word's localized `Policepardfaut`) takes that default; a different one
+    /// keeps its look under its own id, as a different default under the
+    /// destination's id is renamed.
     pub const fn reuse_equivalent() -> Self {
         Self {
             reuse_equivalent_styles: true,
@@ -49,7 +53,10 @@ impl FragmentConflictPolicy {
         }
     }
 
-    /// Allocate a fresh destination identity for every supported dependency.
+    /// Allocate a fresh destination identity for every supported dependency,
+    /// except a default style: one equal to the destination's default, under
+    /// its id or another (Word's localized `Policepardfaut`), takes that
+    /// default, as a type has one default.
     pub const fn rename_all() -> Self {
         Self {
             reuse_equivalent_styles: false,
