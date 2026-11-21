@@ -3629,22 +3629,51 @@ fn a_redline_of_two_thesis_versions_resolves_to_either_and_prints_in_legal_colou
             .split(|c: char| !c.is_alphanumeric())
             .max_by_key(|word| word.len())
             .unwrap();
-        let green_pieces = [heading, heading + 1]
+        // Where the moved word is drawn on those pages, in reading order
+        // (page, then top to bottom), and whether it is green: green above
+        // the kept paragraph, where the text left, and below it, where it went.
+        let on_pages = |text: &str| {
+            [heading, heading + 1]
+                .into_iter()
+                .filter(|&page| page < legal.images.len())
+                .flat_map(|page| {
+                    legal
+                        .pdf
+                        .drawn(page)
+                        .into_iter()
+                        .filter(|piece| piece.text.contains(text))
+                        .map(move |piece| (page, piece))
+                })
+                .collect::<Vec<_>>()
+        };
+        let drawn = on_pages(word)
             .into_iter()
-            .filter(|&page| page < legal.images.len())
-            .flat_map(|page| {
-                legal
-                    .pdf
-                    .drawn(page)
-                    .into_iter()
-                    .filter(|piece| piece.text.contains(word))
-                    .map(move |piece| (page, piece))
+            .map(|(page, piece)| {
+                let is_green = legal.pixels_in((page, piece.clone()), green) > 5;
+                (page, -piece.y, is_green)
             })
-            .filter(|piece| legal.pixels_in(piece.clone(), green) > 5)
-            .count();
+            .collect::<Vec<_>>();
+        // The kept paragraph's own longest word, drawn in the text colour.
+        let kept_word = paragraphs[discussion + 1]
+            .text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|kept| !moved.contains(kept))
+            .max_by_key(|kept| kept.len())
+            .unwrap_or_else(|| panic!("{path}: the kept paragraph has a word of its own"));
+        let (page, piece) = on_pages(kept_word)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("{path}: {kept_word} is drawn"));
+        let kept_at = (page, -piece.y);
+        let green_before = drawn
+            .iter()
+            .any(|&(page, y, is_green)| is_green && (page, y) < kept_at);
+        let green_after = drawn
+            .iter()
+            .any(|&(page, y, is_green)| is_green && (page, y) > kept_at);
         assert!(
-            green_pieces >= 2,
-            "{path}: {word} is green twice, {green_pieces}"
+            green_before && green_after,
+            "{path}: {word} is green where it left and where it went, {drawn:?} around {kept_at:?}"
         );
         let pages = (0..legal.images.len())
             .filter(|&page| legal.page_pixels(page, green) > 0)

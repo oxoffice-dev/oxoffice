@@ -2,8 +2,8 @@
 # the docx test binary (specs/2026-11-21-consumer-workflows.md).
 # Written by hand. Like every known failure of the suite, an entry is strict:
 # once the copy passes the workflow, the test fails until the entry goes.
-# `message`, when given, is text the failure must hold, so that a failure
-# with another cause still fails the test.
+# `message` is text the failure must hold, so that a failure with another
+# cause still fails the test.
 
 # Google writes heading bookmarks that start between paragraphs.
 [[known]]
