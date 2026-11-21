@@ -25,9 +25,9 @@ use crate::properties::is_word_element;
 use crate::revision::{CT_Revision, RevisionKind};
 use crate::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use crate::text::{
-    AcceptedRunPath, AcceptedRunPathSegment, BoundaryOwner, CT_P, CT_R, CT_Text, FieldXmlEmission,
-    RunContent, SpecialCharacter, WordExtraSourceMaps, WordOperationWork, boundary_owners,
-    optional_word_attribute, raw_with_external_bindings, simple_field_source,
+    AcceptedRunPath, AcceptedRunPathSegment, BoundaryOwner, BreakType, CT_P, CT_R, CT_Text,
+    FieldXmlEmission, RunContent, SpecialCharacter, WordExtraSourceMaps, WordOperationWork,
+    boundary_owners, optional_word_attribute, raw_with_external_bindings, simple_field_source,
 };
 
 /// Replace all occurrences of `placeholder` with `replacement` in a paragraph.
@@ -1646,7 +1646,10 @@ fn position_after(run: &CT_R, mapping: &CharMapping, item_text: ItemText) -> (us
 /// `None` stands for the start or the end of the run, and no replacement
 /// only removes the text. The items read as text in the range go (a tab or a
 /// break whole); any other item, such as a drawing or a field, stays, after
-/// the replacement. Unmodelled children keep their place among the items.
+/// the replacement. The replacement writes its tabs as `w:tab` and its line
+/// feeds, carriage returns and Windows line endings as `w:br`, as
+/// `Paragraph::set_text` does. Unmodelled children keep their place among
+/// the items.
 fn replace_in_run(
     run: &mut CT_R,
     start: Option<(usize, usize)>,
@@ -1656,8 +1659,10 @@ fn replace_in_run(
 ) {
     let mut replacement = replacement;
     let content = std::mem::take(&mut run.content);
-    let mut removed = vec![false; content.len()];
+    // The number of new items before each old item, and after the last.
+    let mut boundaries = Vec::with_capacity(content.len() + 1);
     for (index, item) in content.into_iter().enumerate() {
+        boundaries.push(run.content.len());
         let in_range = start.is_none_or(|(first, _)| index >= first)
             && end.is_none_or(|(last, _)| index <= last);
         if !in_range || item_text(&item).is_none() {
@@ -1665,7 +1670,7 @@ fn replace_in_run(
             continue;
         }
         match item {
-            RunContent::Text(mut t) => {
+            RunContent::Text(t) => {
                 let from = start
                     .filter(|(first, _)| *first == index)
                     .map_or(0, |(_, byte)| byte);
@@ -1674,33 +1679,82 @@ fn replace_in_run(
                     .map_or(t.text.len(), |(_, byte)| byte);
                 let host = replacement.take();
                 if host.is_none() && from == 0 && to == t.text.len() {
-                    removed[index] = true;
                     continue;
                 }
-                let mut text =
-                    String::with_capacity(t.text.len() - (to - from) + host.map_or(0, str::len));
-                text.push_str(&t.text[..from]);
-                text.push_str(host.unwrap_or(""));
-                text.push_str(&t.text[to..]);
-                t.text = text;
-                // Keep the flag the producer wrote. Dropping it rewrites an
-                // unchanged run, which a later comparison against the source
-                // then reports.
-                t.preserve_space =
-                    t.preserve_space || t.text.starts_with(' ') || t.text.ends_with(' ');
-                run.content.push(RunContent::Text(t));
+                let prefix = t.text[..from].to_owned();
+                let suffix = t.text[to..].to_owned();
+                push_replacement(&mut run.content, t, &prefix, host.unwrap_or(""), &suffix);
             }
             // A tab, a break or a carriage return in the range is matched
             // whole: it goes, and the first one hosts the replacement.
-            _ => match replacement.take() {
-                Some(host) => run.content.push(RunContent::Text(CT_Text::new(host))),
-                None => removed[index] = true,
-            },
+            _ => {
+                if let Some(host) = replacement.take() {
+                    push_replacement(&mut run.content, CT_Text::new(""), "", host, "");
+                }
+            }
         }
     }
-    if removed.contains(&true) {
-        run.remap_removed_content(&removed);
+    boundaries.push(run.content.len());
+    let properties = usize::from(run.properties.is_some());
+    for position in &mut run.extra_xml_positions {
+        let old = CT_R::raw_child_position(*position);
+        if let Some(item) = old.checked_sub(properties) {
+            let new = properties + boundaries[item.min(boundaries.len() - 1)];
+            CT_R::set_raw_child_position(position, new);
+        }
     }
+}
+
+/// Push `prefix`, `replacement` and `suffix` as run items: the replacement's
+/// tabs as `w:tab`, its line feeds, carriage returns and Windows line endings
+/// as `w:br`, and the text around them as `w:t`. The first text item is
+/// `host`, so it keeps the flags its producer wrote; an empty one is left
+/// out when the replacement holds a tab or a break.
+fn push_replacement(
+    content: &mut Vec<RunContent>,
+    mut host: CT_Text,
+    prefix: &str,
+    replacement: &str,
+    suffix: &str,
+) {
+    let push_text = |content: &mut Vec<RunContent>, mut text: CT_Text, keep_empty: bool| {
+        if text.text.is_empty() && !keep_empty {
+            return;
+        }
+        // Keep the flag the producer wrote. Dropping it rewrites an
+        // unchanged run, which a later comparison against the source then
+        // reports.
+        text.preserve_space =
+            text.preserve_space || text.text.starts_with(' ') || text.text.ends_with(' ');
+        content.push(RunContent::Text(text));
+    };
+    let plain = !replacement.contains(['\t', '\n', '\r']);
+    host.text = prefix.to_owned();
+    let mut current = host;
+    let mut characters = replacement.chars().peekable();
+    while let Some(character) = characters.next() {
+        let control = match character {
+            '\t' => RunContent::Tab,
+            '\n' | '\r' => {
+                if character == '\r' {
+                    characters.next_if_eq(&'\n');
+                }
+                RunContent::Break(BreakType::Line)
+            }
+            _ => {
+                current.text.push(character);
+                continue;
+            }
+        };
+        push_text(
+            content,
+            std::mem::replace(&mut current, CT_Text::new("")),
+            false,
+        );
+        content.push(control);
+    }
+    current.text.push_str(suffix);
+    push_text(content, current, plain);
 }
 
 fn replace_in_single_run(

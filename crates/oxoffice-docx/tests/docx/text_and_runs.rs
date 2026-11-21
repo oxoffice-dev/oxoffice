@@ -713,6 +713,12 @@ fn a_search_holding_a_tab_finds_it_however_the_producer_split_the_runs() {
         assert_eq!(texts(&doc), ["Total:\t42"], "{producer}");
         assert_eq!(doc.replace_text(":\t4", ":\t5"), 1, "{producer}");
         assert_eq!(texts(&doc), ["Total:\t52"], "{producer}");
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:tab/>").count(), 1, "{producer}: {xml}");
+        assert!(
+            !xml.contains('\t'),
+            "{producer}: no tab character in w:t: {xml}"
+        );
         assert_eq!(doc.replace_text("\t52", " 52"), 1, "{producer}");
         assert_eq!(texts(&reopen(&mut doc)), ["Total: 52"], "{producer}");
     }
@@ -732,14 +738,61 @@ fn a_match_across_runs_removes_every_matched_tab_and_text() {
 
 #[test]
 fn a_match_that_starts_on_a_tab_puts_the_replacement_in_its_place() {
+    // The bold run of the tab takes the replacement, the italic run of the
+    // number loses its text.
     let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:t>Total:</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>42</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Total:</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:tab/></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>42</w:t></w:r></w:p>"#,
     );
     assert_eq!(doc.replace_text("\t42", " 43"), 1);
     let doc = reopen(&mut doc);
     assert_eq!(texts(&doc), ["Total: 43"]);
     let xml = doc.part_xml("word/document.xml").unwrap();
     assert!(!xml.contains("<w:tab/>"), "the matched tab goes: {xml}");
+    assert!(
+        xml.contains(r#"<w:b/></w:rPr><w:t xml:space="preserve"> 43</w:t>"#),
+        "the tab's run holds the replacement: {xml}"
+    );
+    assert!(!xml.contains("<w:i/>"), "the emptied run goes: {xml}");
+}
+
+#[test]
+fn a_replacement_holding_a_break_or_a_tab_writes_them_as_items() {
+    let mut doc =
+        doc_with_body(r#"<w:p><w:r><w:t>Main St</w:t><w:br/><w:t>Paris</w:t></w:r></w:p>"#);
+    assert_eq!(doc.replace_text("Main St\nParis", "Main St\nLyon"), 1);
+    assert_eq!(doc.replace_text("Lyon", "Lyon\t69001"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Main St\nLyon\t69001"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains("<w:t>Main St</w:t><w:br/><w:t>Lyon</w:t><w:tab/><w:t>69001</w:t>"),
+        "a break and a tab as Word draws them: {xml}"
+    );
+}
+
+#[test]
+fn a_match_across_runs_keeps_the_unmodelled_children_of_its_first_and_last_runs() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>a</w:t><w:tab/><w:lastRenderedPageBreak/><w:t>b</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>c</w:t><w:lastRenderedPageBreak/><w:t>d</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(texts(&doc), ["a\tbcd"]);
+    assert_eq!(doc.replace_text("\tbc", "X"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["aXd"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        xml.matches("<w:lastRenderedPageBreak/>").count(),
+        2,
+        "both marks stay: {xml}"
+    );
+    assert!(
+        xml.contains("<w:t>a</w:t><w:t>X</w:t><w:lastRenderedPageBreak/></w:r>"),
+        "the first run keeps its mark after the replacement: {xml}"
+    );
+    assert!(
+        xml.contains("<w:lastRenderedPageBreak/><w:t>d</w:t>"),
+        "the last run keeps its mark before its kept text: {xml}"
+    );
 }
 
 #[test]

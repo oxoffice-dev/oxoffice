@@ -48490,6 +48490,12 @@ impl Document {
     /// tracked-insertion boundary is not replaced. Returns the total number
     /// of replacements made.
     ///
+    /// A tab reads as `\t` and every break, a page or column break included,
+    /// as `\n`, as in [`crate::Paragraph::text`], so a match does not skip
+    /// them and one that holds them removes them. A `\t` in `replacement`
+    /// becomes a tab and a `\n`, `\r` or `\r\n` a line break, as
+    /// [`crate::Paragraph::set_text`] writes them.
+    ///
     /// A `replacement` that contains `placeholder` is substituted once, not
     /// repeatedly.
     ///
@@ -50112,6 +50118,10 @@ impl Document {
     /// footnotes, endnotes and text boxes, the content controls at every level
     /// of them and the text of tracked insertions. Returns the total number of replacements made, or an error if the
     /// regex is invalid.
+    ///
+    /// The text reads tabs and breaks as [`Self::replace_text`] does: `\s`
+    /// matches a tab and any break, a page break included, so a pattern such
+    /// as `\s+` replaces them too.
     pub fn replace_regex(&mut self, pattern: &str, replacement: &str) -> Result<usize> {
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let re =
