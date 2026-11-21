@@ -33050,7 +33050,6 @@ impl ShapesMut<'_> {
                 "singular parent transform",
             ));
         }
-        #[cfg(feature = "render")]
         for index in &sorted {
             let mut path = self.group.clone();
             path.push(*index);
@@ -33961,7 +33960,6 @@ impl Presentation {
             note_fx260_slide(self.slides.len().max(1));
             let previous = self.owner_data(owner)?.shape_tree.children.clone();
             let mut candidate = self.clone();
-            #[cfg(feature = "render")]
             candidate.materialize_owner_geometry(owner, path)?;
             let child = child_at_mut(
                 &mut candidate.owner_data_mut(owner)?.shape_tree.children,
@@ -33980,7 +33978,6 @@ impl Presentation {
             .clone();
         let part_name = self.owner_part_name(owner)?.to_owned();
         let edited = (|| {
-            #[cfg(feature = "render")]
             self.materialize_owner_geometry(owner, path)?;
             let child = child_at_mut(&mut self.owner_data_mut(owner)?.shape_tree.children, path)
                 .ok_or_else(|| {

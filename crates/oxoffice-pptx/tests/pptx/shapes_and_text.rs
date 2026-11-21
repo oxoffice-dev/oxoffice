@@ -6,11 +6,11 @@
 use std::io::Cursor;
 
 use oxoffice_pptx::{
-    Angle, AutofitMode, CT_TextCharacterProperties, CT_TextParagraphProperties, ColorChoice,
-    ConnectorEnd, ConnectorType, Emu, Error, Fill, OpcPackage, Presentation, RgbColor, ShapeKind,
-    ShapeRef, ShapeType, SolidFill, TextAlignment, TextAnchor, TextAutoNumber,
-    TextAutoNumberScheme, TextBullet, TextBulletCharacter, TextBulletChoice, TextFont,
-    TextFrameRef, TextNoBullet, TextUnderline,
+    Angle, ArrangeReference, AutofitMode, CT_TextCharacterProperties, CT_TextParagraphProperties,
+    ColorChoice, ConnectorEnd, ConnectorType, Emu, Error, Fill, OpcPackage, Presentation, RgbColor,
+    ShapeAlignment, ShapeKind, ShapeOwner, ShapeRef, ShapeType, SolidFill, TextAlignment,
+    TextAnchor, TextAutoNumber, TextAutoNumberScheme, TextBullet, TextBulletCharacter,
+    TextBulletChoice, TextFont, TextFrameRef, TextNoBullet, TextUnderline,
 };
 
 use crate::support::{corpus_deck, new_deck, reopen, slide_texts};
@@ -535,35 +535,47 @@ fn new_shapes_get_ids_unused_on_the_slide_and_keep_a_name_set_by_the_user() {
 }
 
 #[test]
-fn a_placeholder_placed_by_its_layout_moves_and_keeps_the_size_it_inherits() {
-    let mut prs = new_deck();
-    let title_only = (0..prs.layout_count())
-        .find(|&index| prs.layout_name(index) == Some("Title Only"))
-        .expect("the default template has a Title Only layout");
-    prs.add_slide(title_only).unwrap();
+fn a_placeholder_that_inherits_its_place_moves_and_aligns_with_the_size_it_inherits() {
+    // The Title Only title of the default template has no transform on the
+    // slide or on its layout: it takes the rectangle of the master's title.
+    const MASTER_TITLE: (Emu, Emu, Emu, Emu) =
+        (Emu(838_200), Emu(365_125), Emu(10_515_600), Emu(1_325_563));
+    let title_only_slide = || {
+        let mut prs = new_deck();
+        let title_only = (0..prs.layout_count())
+            .find(|&index| prs.layout_name(index) == Some("Title Only"))
+            .expect("the default template has a Title Only layout");
+        prs.add_slide(title_only).unwrap();
+        prs
+    };
     let title = 0;
-    assert_eq!(shape_at(&prs, 0, title).position(), None);
-    let (_, _, width, height) = prs
-        .effective_geometry(0, &[title])
-        .unwrap()
-        .expect("the layout places the title");
 
-    prs.materialize_geometry(0, &[title]).unwrap();
+    let mut prs = title_only_slide();
+    assert_eq!(shape_at(&prs, 0, title).position(), None);
+    assert_eq!(
+        prs.effective_geometry(0, &[title]).unwrap(),
+        Some(MASTER_TITLE)
+    );
     prs.slide_mut(0)
         .unwrap()
         .shape_mut(title)
         .unwrap()
         .set_position(Emu(IN), Emu(2 * IN))
         .unwrap();
-
     let prs = reopen(&prs);
     let shape = shape_at(&prs, 0, title);
     assert_eq!(shape.position(), Some((Emu(IN), Emu(2 * IN))));
-    assert_eq!(shape.size(), Some((width, height)));
-    assert_eq!(
-        prs.effective_geometry(0, &[title]).unwrap(),
-        Some((Emu(IN), Emu(2 * IN), width, height))
-    );
+    assert_eq!(shape.size(), Some((MASTER_TITLE.2, MASTER_TITLE.3)));
+
+    let mut prs = title_only_slide();
+    prs.shapes_mut_at(ShapeOwner::Slide(0), &[])
+        .unwrap()
+        .align(&[title], ShapeAlignment::Left, ArrangeReference::Slide)
+        .unwrap();
+    let prs = reopen(&prs);
+    let shape = shape_at(&prs, 0, title);
+    assert_eq!(shape.position(), Some((Emu(0), MASTER_TITLE.1)));
+    assert_eq!(shape.size(), Some((MASTER_TITLE.2, MASTER_TITLE.3)));
 }
 
 #[test]

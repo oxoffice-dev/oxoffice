@@ -33,8 +33,8 @@ pub fn placeholder_keys_match(left: &PlaceholderKey, right: &PlaceholderKey) -> 
 ///
 /// The placeholder matches a layout placeholder, whose own key then matches
 /// a master placeholder. The first of the two that carries a transform
-/// supplies it whole, which is the fallback [`ResolveCtx::effective_xfrm`]
-/// takes when the slide shape has no transform of its own.
+/// supplies it whole, which is the fallback rendering takes when the slide
+/// shape has no transform of its own.
 pub fn inherited_xfrm<'a>(
     placeholder: &CT_Placeholder,
     layout: &'a CT_SlideLayout,
