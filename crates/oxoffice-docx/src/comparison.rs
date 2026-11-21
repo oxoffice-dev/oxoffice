@@ -9034,7 +9034,7 @@ fn compare_body_impl(
     // formatting. Caller ignore policies still govern ordinary comparison.
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
-    let mut trailing = (PropertySide::default(), false);
+    let mut trailing = (PropertySide::default(), false, false);
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();
@@ -11259,8 +11259,8 @@ struct TrailingRun<'a, 'l> {
 }
 
 /// Emit a paragraph of the run that ends the body, with `trailing` the
-/// properties [`final_paragraph`] merges and whether a kept table precedes
-/// the run.
+/// properties [`final_paragraph`] merges, whether a kept table precedes the
+/// run, and whether the run paragraph emitted last is moved.
 ///
 /// The first paragraph marks the paragraph before the run, unless a kept
 /// table precedes it: with its own change when it is the only one, else
@@ -11269,16 +11269,18 @@ struct TrailingRun<'a, 'l> {
 /// last carries its own change. The last keeps its mark as the story
 /// terminator; when it is moved, its move also goes on the mark of the
 /// paragraph before it in the run, which resolving that move alone merges
-/// into it.
+/// into it, unless that paragraph is moved too: a mark holds one move
+/// marker of a kind, and resolving the last move alone then leaves its
+/// paragraph empty.
 fn trailing_paragraph<'a>(
     output: &mut Vec<(EmittedOwner<'a>, String)>,
     run: TrailingRun<'a, '_>,
-    trailing: &mut (PropertySide<'a>, bool),
+    trailing: &mut (PropertySide<'a>, bool, bool),
     refuse_held_mark: &dyn Fn(Option<usize>) -> Result<()>,
     bindings: &[(String, String)],
     metadata: &mut Metadata<'_>,
 ) -> Result<()> {
-    let (merged, after_table) = (&mut trailing.0, &mut trailing.1);
+    let (merged, after_table, previous_moved) = (&mut trailing.0, &mut trailing.1, &mut trailing.2);
     if run.first {
         let (kind, move_id) = if run.single {
             (run.kind, run.move_id)
@@ -11300,10 +11302,12 @@ fn trailing_paragraph<'a>(
             run.move_id,
             metadata,
         )?);
+        *previous_moved = run.move_id.is_some();
         return Ok(());
     }
     if let Some(id) = run.move_id
         && !run.single
+        && !*previous_moved
     {
         mark_previous_paragraph_with_id(output, run.kind, id, bindings, metadata)?;
     }

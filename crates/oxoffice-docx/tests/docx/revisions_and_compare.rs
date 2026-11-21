@@ -1069,6 +1069,12 @@ fn owners(doc: &Document) -> Vec<String> {
 /// and one marked as moved here. Row move markers are not listed among
 /// the revisions.
 fn table_moved(doc: &mut Document) -> bool {
+    let xml = main_part_xml(doc);
+    xml.contains("<w:trPr><w:moveFrom ") && xml.contains("<w:trPr><w:moveTo ")
+}
+
+/// The saved main part of `doc`.
+fn main_part_xml(doc: &mut Document) -> String {
     let bytes = doc.to_bytes().expect("document saves");
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a ZIP package");
     let mut xml = String::new();
@@ -1077,7 +1083,19 @@ fn table_moved(doc: &mut Document) -> bool {
         &mut xml,
     )
     .expect("main part is UTF-8");
-    xml.contains("<w:trPr><w:moveFrom ") && xml.contains("<w:trPr><w:moveTo ")
+    xml
+}
+
+/// Whether a paragraph mark of `doc` holds two revision markers of this
+/// kind, which the schema allows once.
+fn a_mark_holds_two(doc: &mut Document, kind: &str) -> bool {
+    let marker = format!("<w:{kind} ");
+    main_part_xml(doc)
+        .split("<w:pPr")
+        .skip(1)
+        .filter(|properties| properties.starts_with(['>', ' ']))
+        .filter_map(|properties| properties.split("</w:pPr>").next())
+        .any(|properties| properties.matches(&marker).count() > 1)
 }
 
 /// `owners` redlined into `edited` by an earlier comparison, saved and
@@ -1267,6 +1285,7 @@ fn two_paragraphs_moved_to_the_end_are_compared() {
         revision_texts(&doc, RevisionKind::MoveTo),
         ["Alpha paragraph.", "Delta paragraph."]
     );
+    assert!(!a_mark_holds_two(&mut doc, "moveTo"));
     assert_eq!(
         aligned_texts(&accepted(&mut doc)),
         aligned_texts(&doc_with_centred(&edited, 1))
@@ -1274,6 +1293,41 @@ fn two_paragraphs_moved_to_the_end_are_compared() {
     assert_eq!(
         aligned_texts(&rejected(&mut doc)),
         aligned_texts(&doc_with_centred(&original, 3))
+    );
+}
+
+#[test]
+fn two_paragraphs_moved_away_from_the_end_are_compared() {
+    let original = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Epsilon paragraph.",
+        "Alpha paragraph.",
+        "Delta paragraph.",
+    ];
+    let edited = [
+        "Alpha paragraph.",
+        "Delta paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Epsilon paragraph.",
+    ];
+    let mut doc = redline(
+        doc_with_centred(&original, 2),
+        &doc_with_centred(&edited, 4),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveFrom),
+        ["Alpha paragraph.", "Delta paragraph."]
+    );
+    assert!(!a_mark_holds_two(&mut doc, "moveFrom"));
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 4))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 2))
     );
 }
 
