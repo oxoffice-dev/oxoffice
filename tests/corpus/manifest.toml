@@ -37,8 +37,6 @@ path = "authored/letter.docx"
 producer = "python-docx 1.2.0"
 size = 43276
 features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink", "rsid"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "authored/long-deck.pptx"
@@ -123,16 +121,12 @@ path = "libreoffice/contract.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 29009
 features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/cv.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 23145
 features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/deck.pptx"
@@ -145,16 +139,12 @@ path = "libreoffice/form.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 23950
 features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/letter.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 27325
 features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/long-deck.pptx"
@@ -167,8 +157,6 @@ path = "libreoffice/long-report.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 110812
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "long"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/manual.docx"
@@ -181,8 +169,6 @@ path = "libreoffice/minutes.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 25166
 features = ["headings", "title", "bullet-list", "table", "header-footer", "rtl", "cjk"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/multilingual.pptx"
@@ -219,8 +205,6 @@ path = "libreoffice/thesis.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 48197
 features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation"]
-known_failure = 57
-rewritten = ["word/document.xml"]
 
 [[file]]
 path = "libreoffice/training.pptx"
