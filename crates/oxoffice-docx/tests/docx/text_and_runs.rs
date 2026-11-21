@@ -575,8 +575,8 @@ fn replace_all_writes_a_value_holding_private_use_characters_as_given() {
 
 #[test]
 fn replace_all_leaves_no_marker_in_a_corpus_document() {
-    // Headers, footers and the body of documents saved by Word and Google
-    // Docs, swapped and swapped back.
+    // The body and the header of documents saved by Word and Google Docs,
+    // swapped and swapped back.
     for producer in ["word", "google"] {
         let mut doc = corpus_doc(&format!("{producer}/report.docx"));
         let before = doc.text_report().text;
@@ -910,4 +910,24 @@ fn removing_a_hyperlink_keeps_its_text_as_plain_text() {
     assert_eq!(texts(&doc), ["Go home"]);
     // Word's Remove Hyperlink also drops the Hyperlink character style.
     assert_eq!(doc.paragraph(0).unwrap().run(1).unwrap().style_id(), None);
+}
+
+#[test]
+fn replace_all_rewrites_a_placeholder_found_only_in_a_text_box_fallback() {
+    // Word writes a text box twice; replacement rewrites the VML copy in
+    // mc:Fallback without counting it, so nothing is counted here.
+    let body = r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:v="urn:schemas-microsoft-com:vml"><mc:Choice Requires="wps"><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/><wp:docPr id="80" name="Text Box 80"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>plain box</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="tb80"><v:textbox><w:txbxContent><w:p><w:r><w:t>{name} box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let replaced = doc.replace_all(&HashMap::from([("{name}", "Bob"), ("other", "x")]));
+    assert_eq!(replaced, 0, "the fallback copy is not counted");
+    let bytes = doc.to_bytes().unwrap();
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    assert!(main.contains("Bob box"), "the fallback copy is rewritten");
+    assert!(
+        !main
+            .chars()
+            .any(|c| ('\u{100000}'..='\u{10FFFD}').contains(&c)),
+        "no private marker is left"
+    );
 }
