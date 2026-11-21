@@ -906,7 +906,7 @@ impl Document {
         candidate.flush_to_package()?;
         let replies = candidate.anchored_thread_replies(id)?;
         let reference = candidate.remove_comment_source_for_move(&selected)?;
-        candidate.anchor_existing_comment_on_text(id, anchor, occurrence, false)?;
+        candidate.anchor_existing_comment_on_text(id, anchor, occurrence, false, None)?;
         candidate.restore_comment_reference_run(id, reference)?;
         candidate.move_replies_with_root(id, &replies)?;
         candidate.flush_to_package()?;
@@ -1670,8 +1670,12 @@ impl Document {
             let id = identifiers.reserve_comment_id()?;
             self.anchor_story_range(&range, RangeAnchor::Comment(id), "comment", false)?;
             self.ensure_comment_models()?;
+            let styles = self.prepare_comment_authoring()?;
+            // Before the relationship to a comments part not written yet,
+            // which the stories this reads would follow.
+            self.style_written_comment_reference(range.end.location.story(), id, &styles.1)?;
             self.ensure_comment_relationships()?;
-            self.push_comment_definition(id, author, initials, text, date)?;
+            self.push_comment_definition(id, author, initials, text, date, &styles)?;
             self.identifiers = identifiers;
             self.comments_dirty = true;
             self.invalidate_layout();
@@ -1699,6 +1703,9 @@ impl Document {
 
         let mut identifiers = self.identifiers.clone();
         let id = identifiers.reserve_comment_id()?;
+        self.ensure_comment_models()?;
+        self.ensure_comment_relationships()?;
+        let styles = self.prepare_comment_authoring()?;
         if range.start.location == range.end.location {
             anchor_paragraph_range(
                 &mut start,
@@ -1707,6 +1714,7 @@ impl Document {
                 RangeAnchor::Comment(id),
                 "comment",
             )?;
+            style_comment_reference(&mut start, id, &styles.1)?;
             *self.story_paragraph_mut(&range.start.location)? = start;
         } else {
             anchor_paragraph_range(
@@ -1723,13 +1731,12 @@ impl Document {
                 RangeAnchor::Comment(id),
                 "comment",
             )?;
+            style_comment_reference(&mut end, id, &styles.1)?;
             *self.story_paragraph_mut(&range.start.location)? = start;
             *self.story_paragraph_mut(&range.end.location)? = end;
         }
 
-        self.ensure_comment_models()?;
-        self.ensure_comment_relationships()?;
-        self.push_comment_definition(id, author, initials, text, date)?;
+        self.push_comment_definition(id, author, initials, text, date, &styles)?;
         self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
@@ -1750,12 +1757,19 @@ impl Document {
         self.ensure_comment_relationships()?;
         let mut identifiers = self.identifiers.clone();
         let id = identifiers.reserve_comment_id()?;
-        self.push_comment_definition(id, author, initials, text, date)?;
+        let styles = self.prepare_comment_authoring()?;
+        self.push_comment_definition(id, author, initials, text, date, &styles)?;
         anchor_body_range(
             &mut self.document.body.content,
             range,
             RangeAnchor::Comment(id),
             "comment",
+        )?;
+        style_comment_reference(
+            body_paragraph_mut(&mut self.document.body.content, range.end.body_index)
+                .expect("range was validated"),
+            id,
+            &styles.1,
         )?;
         self.identifiers = identifiers;
         self.comments_dirty = true;
@@ -1821,8 +1835,15 @@ impl Document {
         self.ensure_comment_relationships()?;
         let mut identifiers = self.identifiers.clone();
         let id = identifiers.reserve_comment_id()?;
-        self.anchor_existing_comment_on_text(id, anchor, options.occurrence, options.tables_only)?;
-        self.push_comment_definition(id, author, options.initials, text, date)?;
+        let styles = self.prepare_comment_authoring()?;
+        self.anchor_existing_comment_on_text(
+            id,
+            anchor,
+            options.occurrence,
+            options.tables_only,
+            Some(&styles.1),
+        )?;
+        self.push_comment_definition(id, author, options.initials, text, date, &styles)?;
         self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
@@ -1831,13 +1852,15 @@ impl Document {
 
     // Shared existing literal finder and checked splitter. Moving a comment
     // supplies its identity directly and never allocates a temporary thread.
-    // `tables_only` searches only the paragraphs of table cells.
+    // `tables_only` searches only the paragraphs of table cells. A new
+    // comment names its `reference_style`; a moved one keeps its own run.
     fn anchor_existing_comment_on_text(
         &mut self,
         id: i32,
         anchor: &str,
         occurrence: usize,
         tables_only: bool,
+        reference_style: Option<&str>,
     ) -> Result<()> {
         if anchor.is_empty() {
             return Err(Error::Other("comment anchor text must not be empty".into()));
@@ -1878,6 +1901,10 @@ impl Document {
                             RangeAnchor::Comment(id),
                             "comment",
                         )
+                    })
+                    .and_then(|()| match reference_style {
+                        Some(style) => style_comment_reference(paragraph, id, style),
+                        None => Ok(()),
                     }),
             );
         });
@@ -1907,7 +1934,8 @@ impl Document {
     }
 
     /// Append comment `id`, holding one paragraph per line of `text`, and its
-    /// thread entry to the comment models, which must already exist.
+    /// thread entry to the comment models, which must already exist. `styles`
+    /// are those [`Self::prepare_comment_authoring`] returns.
     fn push_comment_definition(
         &mut self,
         id: i32,
@@ -1915,12 +1943,12 @@ impl Document {
         initials: Option<&str>,
         text: &str,
         date: Option<&str>,
+        styles: &(String, String),
     ) -> Result<()> {
-        let styles = self.prepare_comment_authoring()?;
         let mut occupied =
             occupied_para_ids(self.comments.as_ref(), self.comments_extended.as_ref());
         let (paragraphs, paragraph_ids, para_id) =
-            comment_text_paragraphs(text, &mut occupied, &styles)?;
+            comment_text_paragraphs(text, &mut occupied, styles)?;
         self.comments
             .as_mut()
             .expect("comment model was initialized")
@@ -1955,8 +1983,10 @@ impl Document {
     /// built-in "annotation text" and "annotation reference", found by name
     /// whatever their localised id (`Commentaire` in French), else by the ids
     /// `CommentText` and `CommentReference`, else created under those ids with
-    /// the built-in names, based on the file's default paragraph style and
-    /// default paragraph font (else `Normal` and `DefaultParagraphFont`).
+    /// the built-in names and formatting, based on the file's default
+    /// paragraph style and default paragraph font (else `Normal` and
+    /// `DefaultParagraphFont`, when they are a paragraph and a character
+    /// style).
     fn prepare_comment_authoring(&mut self) -> Result<(String, String)> {
         use oxoffice_docx_oxml::styles::StyleType;
         let definitions = [
@@ -1994,7 +2024,8 @@ impl Document {
                 ids.push(id.to_owned());
                 continue;
             }
-            // The file's default style of that kind, else Word's usual ids.
+            // The file's default style of that kind, else Word's usual id
+            // when it names a style of that kind.
             let fallback = if kind == StyleType::Paragraph {
                 "Normal"
             } else {
@@ -2003,13 +2034,29 @@ impl Document {
             let base = self
                 .styles
                 .get_default(kind)
-                .or_else(|| self.styles.get_by_id(fallback))
+                .or_else(|| {
+                    self.styles
+                        .get_by_id(fallback)
+                        .filter(|style| style.style_type == kind)
+                })
                 .map(|style| style.style_id.clone());
+            // Word's built-in definitions: comment text is 10 pt on single
+            // lines, the comment mark 8 pt, both kept out of the style gallery
+            // until used.
             let mut builder = if kind == StyleType::Paragraph {
                 crate::StyleBuilder::paragraph(id, built_in)
+                    .paragraph_properties(oxoffice_docx_oxml::properties::CT_PPr {
+                        line_spacing: Some(crate::Twips(240)),
+                        line_rule: Some("auto".to_owned()),
+                        ..Default::default()
+                    })
+                    .size(10.0)
             } else {
-                crate::StyleBuilder::character(id, built_in)
-            };
+                crate::StyleBuilder::character(id, built_in).size(8.0)
+            }
+            .priority(99)
+            .semi_hidden(true)
+            .unhide_when_used(true);
             if let Some(base) = base {
                 builder = builder.based_on(&base);
             }
@@ -2077,6 +2124,32 @@ impl Document {
         Ok((text, reference))
     }
 
+    /// Give the reference run that anchoring a story range wrote for comment
+    /// `id` in the owner of `written` the comment reference style `style`,
+    /// as Word styles a comment mark. Anchoring rewrote that owner, so its
+    /// current identity is taken first.
+    fn style_written_comment_reference(
+        &mut self,
+        written: &crate::StoryId,
+        id: i32,
+        style: &str,
+    ) -> Result<()> {
+        let story = self
+            .stories()?
+            .into_iter()
+            .find(|story| {
+                story.kind() == written.kind()
+                    && story.part_name() == written.part_name()
+                    && story.owner_index() == written.owner_index()
+            })
+            .ok_or_else(|| Error::Other("comment story disappeared".into()))?;
+        let reference = format!(
+            r#"<w:r><w:rPr><w:rStyle w:val="{}"/></w:rPr><w:commentReference w:id="{id}"/></w:r>"#,
+            oxoffice_core::xml::escape_attribute_value(style)
+        );
+        self.splice_comment_reference_run(&story, id, reference.into_bytes())
+    }
+
     /// Add a reply linked to the selected comment's last paragraph, dated
     /// now. Each line of `text` becomes one paragraph of the reply.
     pub fn reply_to(&mut self, parent_id: i32, author: &str, text: &str) -> Result<i32> {
@@ -2136,8 +2209,9 @@ impl Document {
                     .position(|item| item.id == parent_id)
             })
             .ok_or_else(|| Error::Other(format!("comment id {parent_id} does not exist")))?;
-        let (id, _) = self.anchor_reply_crossing(parent_id, None)?;
+        let (id, story) = self.anchor_reply_crossing(parent_id, None)?;
         let styles = self.prepare_comment_authoring()?;
+        self.style_written_comment_reference(&story, id, &styles.1)?;
         let existing_parent_para_id = last_para_id(
             &self
                 .comments
@@ -2856,6 +2930,19 @@ fn anchor_paragraph_range(
         .map_err(|error| Error::Other(format!("{label} range cannot be anchored: {error}")))
 }
 
+/// Give the reference run that anchoring wrote for comment `id` in
+/// `paragraph` the comment reference style `style`, as Word styles a
+/// comment mark.
+fn style_comment_reference(paragraph: &mut CT_P, id: i32, style: &str) -> Result<()> {
+    if paragraph.style_comment_reference_run(id, style) {
+        Ok(())
+    } else {
+        Err(Error::Other(format!(
+            "comment {id} has no reference run to style"
+        )))
+    }
+}
+
 fn collect_main_story_paragraphs<'a>(content: &'a [BodyContent], output: &mut Vec<&'a CT_P>) {
     for item in content {
         match item {
@@ -3459,6 +3546,20 @@ pub(crate) fn comment_source_markers(xml: &[u8]) -> Result<Vec<CommentSourceMark
                         })
                     {
                         preceding_run = Some((start, end, element.name().as_ref().to_vec()));
+                    }
+                    // Word styles a comment mark: run properties before the
+                    // reference still leave a run holding nothing else.
+                    if local.as_ref() == b"rPr"
+                        && let Some((run_start, run_end, name)) = preceding.as_ref()
+                        && *run_end == start
+                    {
+                        if xml.get(end.saturating_sub(2)..end) != Some(b"/>") {
+                            reader
+                                .read_to_end_into(element.name(), &mut Vec::new())
+                                .map_err(|error| Error::Other(error.to_string()))?;
+                        }
+                        preceding_run =
+                            Some((*run_start, reader.buffer_position() as usize, name.clone()));
                     }
                     let family = match local.as_ref() {
                         b"commentRangeStart" => Some(0),

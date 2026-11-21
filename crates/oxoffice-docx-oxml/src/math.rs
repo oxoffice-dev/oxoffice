@@ -2565,10 +2565,25 @@ fn write_new_property<W: Write>(
     let mut child = crate::text::FieldXmlStart::word("m", property.name, emission)?;
     let mut decimal = itoa::Buffer::new();
     if let Some((name, value)) = property.attribute_value(&mut decimal) {
-        child.push_word("m", name, value)?;
+        push_property_value(&mut child, name, value)?;
     }
     child.write(writer, true)?;
     Ok(())
+}
+
+/// Push the `m:` attribute of a property, a tab, line feed or carriage
+/// return escaped so that attribute-value normalisation keeps it, as in a
+/// math font name of the settings.
+fn push_property_value(
+    start: &mut crate::text::FieldXmlStart<'_, '_>,
+    name: &str,
+    value: &str,
+) -> Result<()> {
+    start.push_raw_word(
+        "m",
+        name,
+        &oxoffice_core::xml::escape_attribute_value(value),
+    )
 }
 
 fn write_property_leaf<W: Write>(
@@ -2592,7 +2607,7 @@ fn write_property_leaf<W: Write>(
     let mut start = math_start(property.name, &preservation, false, emission)?;
     let mut decimal = itoa::Buffer::new();
     if let Some((name, value)) = property.attribute_value(&mut decimal) {
-        start.push_word("m", name, value)?;
+        push_property_value(&mut start, name, value)?;
     }
     if parsed.children.is_empty() {
         start.write(writer, true)?;
