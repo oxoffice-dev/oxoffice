@@ -218,6 +218,12 @@ merge variant).
   their key changes and pull requests build those platforms from scratch,
   about 7 minutes more, until the next night: run
   `gh workflow run ci.yml --ref main` to refresh them at once.
+- **Lint checks the workspace without debug assertions** too (`cargo check
+  --workspace --all-targets --all-features --profile scaling`), on every
+  pull request, drafts and stacked ones included. Clippy and the build job
+  compile with debug assertions, so code that compiles only with them (an
+  item under `#[cfg(debug_assertions)]` used or re-exported without the cfg)
+  fails there first. It fails on errors only, for now.
 - **Python tests run in parallel** in the build job (`pytest -n auto`,
   pytest-xdist, one worker per CPU). A test writes only under `tmp_path`
   (or `tmp_path_factory`). The scaling job stays sequential: its timings
