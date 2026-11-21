@@ -2175,7 +2175,8 @@ fn the_threads_of_a_google_copy_carry_over_to_a_clean_copy() {
                     other => {
                         // The #364 refusal, and no other, is the known failure.
                         assert!(
-                            format!("{other:?}").contains("outside the accepted paragraph view"),
+                            format!("{other:?}")
+                                .contains("selected source is outside the accepted paragraph view"),
                             "unexpected anchor: {other:?}"
                         );
                         panic!("the anchor of a Google thread reads: {other:?}")

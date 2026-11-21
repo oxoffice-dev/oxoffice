@@ -835,7 +835,7 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
         let edited = |name: &str, bytes: &[u8]| {
             let xml = String::from_utf8_lossy(bytes);
             // The comment parts: the tool's note came and went with its
-            // clause; their content is compared below.
+            // clause; their comments, ids and styles are compared below.
             // Google Docs writes no comment styles, so the note brings them.
             name == "word/document.xml"
                 || name.starts_with("word/comments")
@@ -880,6 +880,86 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
                 );
             }
         }
+        let page_text = |doc: &Document| (doc.header_text(), doc.footer_text());
+        let (header, footer) = page_text(&before);
+        assert_eq!(
+            page_text(&after),
+            (header.map(&replace), footer.map(&replace)),
+            "{path}"
+        );
+        // The thread on the tracked change keeps its edges where they were
+        // around the deletion and the insertion it discusses.
+        let marks = |xml: &str| {
+            let at = xml
+                .find("It renews automatically")
+                .expect("the renewal clause");
+            let start = xml[..at]
+                .rfind("<w:p ")
+                .or_else(|| xml[..at].rfind("<w:p>"))
+                .unwrap();
+            let end = at + xml[at..].find("</w:p>").unwrap();
+            xml[start..end]
+                .split('<')
+                .filter_map(|tag| {
+                    let name = tag.split([' ', '/', '>']).next().unwrap();
+                    matches!(
+                        name,
+                        "w:commentRangeStart" | "w:commentRangeEnd" | "w:del" | "w:ins"
+                    )
+                    .then(|| name.to_owned())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            marks(&String::from_utf8_lossy(&new_parts["word/document.xml"])),
+            marks(&String::from_utf8_lossy(&old_parts["word/document.xml"])),
+            "{path}: the renewal clause's comment edges and revisions"
+        );
+        // The comment side parts name the same paragraphs as before, and the
+        // styles gain the comment styles at most.
+        let ids = |parts: &std::collections::BTreeMap<String, Vec<u8>>, name: &str| {
+            let mut ids = parts
+                .get(name)
+                .map(|bytes| {
+                    String::from_utf8_lossy(bytes)
+                        .split("paraId=\"")
+                        .skip(1)
+                        .map(|rest| rest.split('"').next().unwrap().to_owned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            ids.sort();
+            ids
+        };
+        for name in [
+            "word/commentsExtended.xml",
+            "word/commentsIds.xml",
+            "word/commentsExtensible.xml",
+        ] {
+            assert_eq!(
+                ids(&new_parts, name),
+                ids(&old_parts, name),
+                "{path}: {name}"
+            );
+        }
+        let style_ids = |parts: &std::collections::BTreeMap<String, Vec<u8>>| {
+            String::from_utf8_lossy(&parts["word/styles.xml"])
+                .split("w:styleId=\"")
+                .skip(1)
+                .map(|rest| rest.split('"').next().unwrap().to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let (old_styles, new_styles) = (style_ids(&old_parts), style_ids(&new_parts));
+        assert!(old_styles.is_subset(&new_styles), "{path}: no style goes");
+        assert!(
+            new_styles
+                .difference(&old_styles)
+                .all(|id| id.starts_with("Comment")
+                    || id.starts_with("Commentaire")
+                    || id.starts_with("Marque")),
+            "{path}: only comment styles come: {:?}",
+            new_styles.difference(&old_styles).collect::<Vec<_>>()
+        );
         let counts = after.count_text("Signature version").unwrap();
         assert_eq!(counts, [(StoryKind::Header, page_parts)], "{path}");
         let counts = after.count_text("Restricted - Page").unwrap();

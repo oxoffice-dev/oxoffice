@@ -1642,6 +1642,10 @@ fn removing_an_unused_linked_style_removes_its_pair() {
         );
     }
     assert!(
+        !matches!(removed, Ok(false)),
+        "remove_style finds Titre7: {removed:?}"
+    );
+    assert!(
         matches!(removed, Ok(true)),
         "an unused linked pair is removed: {removed:?}"
     );
