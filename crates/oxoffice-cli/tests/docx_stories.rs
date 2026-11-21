@@ -2,9 +2,12 @@
 //! --json` gives the style of the paragraphs of every story, on the Word and
 //! Google Docs files of the corpus.
 
+use std::fs;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+use oxoffice_opc::OpcPackage;
 use serde_json::Value;
 
 fn report(producer: &str) -> PathBuf {
@@ -104,4 +107,42 @@ fn text_json_gives_the_style_of_the_paragraphs_of_every_story() {
             .unwrap();
         assert!(heading["style"].is_string(), "{producer}");
     }
+}
+
+#[test]
+fn text_json_gives_the_result_of_a_simple_field_in_its_run() {
+    // "Page " and a PAGE field as Word writes it, before the last section
+    // properties of the Word report.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(fs::read(report("word")).unwrap())).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let at = main.rfind("<w:sectPr").unwrap();
+    let field = concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    package.set_part(
+        "/word/document.xml",
+        format!("{}{field}{}", &main[..at], &main[at..]).into_bytes(),
+    );
+    let path = std::env::temp_dir().join(format!(
+        "oxoffice-cli-simple-field-{}.docx",
+        std::process::id()
+    ));
+    package.save(&path).unwrap();
+    let record = json(&docx(&["text", "--json"], &path));
+    let _ = fs::remove_file(&path);
+    let paragraph = record["paragraphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|paragraph| paragraph["text"] == "Page 1")
+        .expect("the paragraph reads its field result");
+    let runs = paragraph["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["text"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(runs, ["Page ", "1"], "as Rust and Python read the runs");
 }

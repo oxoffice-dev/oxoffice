@@ -462,9 +462,10 @@ pub struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
-    /// Get the text content of this run.
+    /// Get the text content of this run, field results included, as
+    /// [`crate::Paragraph::text`] reads it.
     pub fn text(&self) -> String {
-        self.inner.text()
+        self.inner.accepted_text()
     }
 
     /// Set the text content, replacing all existing content.
@@ -1239,9 +1240,10 @@ pub struct RunRef<'a> {
 }
 
 impl<'a> RunRef<'a> {
-    /// Get the text content of this run.
+    /// Get the text content of this run, field results included, as
+    /// [`crate::Paragraph::text`] reads it.
     pub fn text(&self) -> String {
-        self.inner.text()
+        self.inner.accepted_text()
     }
 
     /// Iterate over direct run items in source order.

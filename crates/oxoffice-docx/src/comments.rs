@@ -2735,7 +2735,12 @@ fn bookmark_range_text(
         };
         let start = start.min(runs.len());
         let end = end.min(runs.len());
-        paragraphs.push(runs[start..end].iter().map(|run| run.text()).collect());
+        paragraphs.push(
+            runs[start..end]
+                .iter()
+                .map(|run| run.accepted_text())
+                .collect(),
+        );
     }
     paragraphs.join("\n")
 }

@@ -2170,7 +2170,10 @@ impl CT_P {
         Ok(paragraph)
     }
 
-    /// Get the combined text of all runs in this paragraph.
+    /// Get the combined raw text of [`Self::runs`], each read by `CT_R::text`.
+    ///
+    /// It leaves out simple field results and tracked insertions.
+    /// [`Self::accepted_text`] reads the text a reader of the document sees.
     pub fn text(&self) -> String {
         self.runs().iter().map(|run| run.text()).collect()
     }

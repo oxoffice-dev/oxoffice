@@ -594,7 +594,7 @@ fn paragraph_json(body_index: usize, path: &[Value], paragraph: &CT_P) -> Value 
         .map(|(index, run)| {
             json!({
                 "index": index,
-                "text": run.text(),
+                "text": run.accepted_text(),
                 "formatting": run_formatting_json(run),
             })
         })
