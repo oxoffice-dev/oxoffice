@@ -22,11 +22,12 @@ their format-specific pagination.
 
 `oxoffice-docx-layout` and `oxoffice-pptx-render` produce this model. `oxoffice-pdf` consumes it.
 
-Consumers that walk `PageFrame::elements` must recurse through
-`PositionedElement::MarkedContent` and visit its `MarkedContent::children`, or
-use `oxoffice_layout::walk` to perform recursive traversal. Because
-`PositionedElement` is non-exhaustive, a wildcard arm that ignores a new
-container can otherwise omit visible page content.
+Consumers that walk `PageFrame::elements` must recurse through the
+containers, `PositionedElement::MarkedContent` and
+`PositionedElement::FormField` (a form field fragment, whose `children` draw
+the field's value), or use `oxoffice_layout::walk` to perform recursive
+traversal. Because `PositionedElement` is non-exhaustive, a wildcard arm that
+ignores a new container can otherwise omit visible page content.
 
 ## Example
 
