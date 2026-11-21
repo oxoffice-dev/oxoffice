@@ -3,6 +3,7 @@
 
 mod checked_replacement;
 mod comments;
+mod content_controls;
 mod corpus;
 mod fields_and_toc;
 mod lists;
