@@ -22,7 +22,7 @@ use document::{
     PySvgRenderResult, PyTocRebuildReport,
 };
 use formatting::{PyColorFormat, PyFont, PyParagraphFormat};
-use paragraph::{PyParagraph, PyParagraphCollection};
+use paragraph::{PyParagraph, PyParagraphCollection, PyTextSpan};
 use run::{PyRun, PyRunCollection};
 use table::{
     PyCell, PyCellCollection, PyCellParagraphCollection, PyRow, PyRowCollection, PyTable,
@@ -258,6 +258,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyListLevel>()?;
     module.add_class::<PyChart>()?;
     module.add_class::<PyParagraph>()?;
+    module.add_class::<PyTextSpan>()?;
     module.add_class::<PyParagraphCollection>()?;
     module.add_class::<PyRun>()?;
     module.add_class::<PyRunCollection>()?;

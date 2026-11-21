@@ -96,7 +96,7 @@ __all__ = [
     "Bookmark", "BoundingBox", "Cell", "CellCollection", "CellParagraphCollection",
     "Chart", "Comment", "ComparisonDiagnostic", "ContentFragment", "CoreProperties", "DefaultParagraphFormat", "Document", "Font", "ColorFormat",
     "FootnoteEndnote", "HeaderFooter", "SectionHandle", "Settings",
-    "HeaderFooterVariant", "Hyperlink", "FieldEvaluation", "FieldsUpdateReport", "LayoutBackedFieldUpdateReport", "LayoutFragment", "LayoutPage", "ListLevel", "Paragraph", "ParagraphCollection",
+    "HeaderFooterVariant", "Hyperlink", "FieldEvaluation", "FieldsUpdateReport", "LayoutBackedFieldUpdateReport", "LayoutFragment", "LayoutPage", "ListLevel", "Paragraph", "ParagraphCollection", "TextSpan",
     "ParagraphFormat", "Revision", "Row", "RowCollection", "Run", "RunCollection", "RunPosition",
     "RunRange", "Section", "Story", "StoryItem", "StoryParagraph", "StoryRunPosition", "StoryRunRange", "Style",
     "SvgDiagnostic", "SvgRenderResult", "Table", "TableCollection", "TabStop", "TabStops", "TocRebuildReport",
@@ -1167,6 +1167,7 @@ class Document:
     def split_run(
         self, body_index: int | Paragraph, run_index: int, character_offset: int
     ) -> int: ...
+    def isolate_span(self, span: TextSpan) -> tuple[int, int]: ...
     def to_pdf_with_diagnostics(
         self,
         *,
@@ -1649,6 +1650,16 @@ class Document:
     def add_section(self, start_type: _section.WD_SECTION_START | int | None = None) -> _Never: ...
 
 @_final
+class TextSpan:
+    @property
+    def paragraph(self) -> Paragraph: ...
+    @property
+    def start(self) -> int: ...
+    @property
+    def end(self) -> int: ...
+
+
+@_final
 class Paragraph:
     @property
     def _p(self) -> _Never: ...
@@ -1662,6 +1673,7 @@ class Paragraph:
     def replace_xml(self, xml: str) -> None: ...
     def equations(self) -> tuple[Equation, ...]: ...
     def add_equation(self, source: str, *, format: _Literal["latex", "mathml"], display: bool = False) -> EquationInsertResult: ...
+    def find_text(self, text: str, occurrence: int = 0) -> TextSpan | None: ...
 
     def __new__(cls, *, _private: _Never) -> Paragraph: ...
     def replace_text(
