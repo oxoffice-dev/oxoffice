@@ -2129,6 +2129,259 @@ fn a_reply_on_the_first_comment_of_a_document_takes_the_reference_style() {
     }
 }
 
+// ---- Range edges inside tracked changes ----
+
+/// A document whose one body paragraph is `paragraph`, with a comment `id`
+/// whose range markers `paragraph` places itself.
+fn commented_paragraph(paragraph: &str) -> (Document, i32) {
+    let mut doc = doc_with(&["Placeholder"]);
+    let id = doc
+        .add_comment_on_text("Placeholder", "Ada", "Note", TextCommentOptions::default())
+        .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    let start = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+    let end = xml[start..].find("</w:p>").unwrap() + start + "</w:p>".len();
+    let paragraph = paragraph.replace("ID", &id.to_string());
+    package.set_part(
+        &main,
+        format!("{}{paragraph}{}", &xml[..start], &xml[end..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    (Document::from_bytes(&out.into_inner()).unwrap(), id)
+}
+
+const DEL: &str = r#"w:id="91" w:author="Bo" w:date="2026-11-21T00:00:00Z""#;
+const INS: &str = r#"w:id="92" w:author="Bo" w:date="2026-11-21T00:00:00Z""#;
+
+#[test]
+fn a_range_edge_inside_tracked_deleted_or_moved_text_reads_at_the_next_accepted_position() {
+    let start = r#"<w:commentRangeStart w:id="ID"/>"#;
+    let end = r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r>"#;
+    let run = |text: &str| format!("<w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>");
+    let deleted = |inner: &str| {
+        format!(r#"<w:del {DEL}><w:r><w:delText>ninety (90)</w:delText></w:r>{inner}</w:del>"#)
+    };
+    let moved = |inner: &str| {
+        format!(r#"<w:moveFrom {DEL}><w:r><w:delText>old</w:delText></w:r>{inner}</w:moveFrom>"#)
+    };
+    let inserted = |inner: &str| format!(r#"<w:ins {INS}>{inner}</w:ins>"#);
+    for (paragraph, expected) in [
+        // The start inside the deletion, as Google Docs writes it.
+        (
+            format!(
+                "<w:p>{}{}{}{end}</w:p>",
+                run("Within "),
+                deleted(start),
+                inserted(&run("120 days")),
+            ),
+            "120 days",
+        ),
+        // The end inside the deletion.
+        (
+            format!(
+                "<w:p>{start}{}{}{}</w:p>",
+                run("Within "),
+                deleted(end),
+                run(" days"),
+            ),
+            "Within ",
+        ),
+        // The start inside moved-away text.
+        (
+            format!("<w:p>{}{}{end}</w:p>", moved(start), run("kept")),
+            "kept",
+        ),
+        // The end inside moved-away text.
+        (
+            format!("<w:p>{start}{}{}</w:p>", run("kept"), moved(end)),
+            "kept",
+        ),
+        // Both edges inside a tracked insertion.
+        (
+            format!(
+                "<w:p>{}{}</w:p>",
+                run("Pay "),
+                inserted(&format!("{}{start}{}{end}", run("within "), run("30 days"))),
+            ),
+            "30 days",
+        ),
+    ] {
+        let (doc, id) = commented_paragraph(&paragraph);
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some(expected),
+            "{paragraph}"
+        );
+    }
+}
+
+#[test]
+fn a_comment_starting_inside_a_deletion_can_be_moved_and_removed() {
+    let (mut doc, id) = commented_paragraph(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Within </w:t></w:r>"#,
+            r#"<w:del {}><w:r><w:delText>ninety (90)</w:delText></w:r><w:commentRangeStart w:id="ID"/></w:del>"#,
+            r#"<w:ins {}><w:r><w:t>120 days</w:t></w:r></w:ins>"#,
+            r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r></w:p>"#
+        ),
+        DEL, INS
+    ));
+    doc.move_comment_to_text(id, "Within", 0).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        doc.comment_anchor_text(id).unwrap().as_deref(),
+        Some("Within")
+    );
+    assert!(doc.remove_comment(id).unwrap());
+    let doc = reopen(&mut doc);
+    assert!(doc.comments().is_empty());
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains("commentRange"), "{main}");
+    assert!(main.contains("ninety (90)"), "the deletion stays: {main}");
+}
+
+#[test]
+fn the_google_copy_of_the_contract_reads_the_anchors_of_the_word_copy() {
+    let anchors = |file: &str| {
+        let doc = corpus_doc(file);
+        let mut anchors = doc
+            .comments()
+            .iter()
+            .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+            .collect::<Vec<_>>();
+        anchors.sort();
+        anchors
+    };
+    let mut word = anchors("word/contract.docx");
+    let google = anchors("google/contract.docx");
+    // Google drops the resolved comment; every anchor it keeps reads as Word's.
+    let resolved = corpus_doc("word/contract.docx")
+        .comments()
+        .iter()
+        .find(|comment| comment.resolved() == Some(true))
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+        .expect("the Word copy keeps the resolved comment");
+    word.remove(word.iter().position(|anchor| *anchor == resolved).unwrap());
+    assert_eq!(google, word);
+}
+
+#[test]
+fn the_google_thread_starting_inside_a_deletion_moves_with_its_reply() {
+    let mut doc = corpus_doc("google/contract.docx");
+    let (root, reply) = {
+        let comments = doc.comments();
+        let reply = comments
+            .iter()
+            .find(|comment| comment.parent_id().is_some())
+            .expect("a reply");
+        (reply.parent_id().unwrap(), reply.id())
+    };
+    doc.move_comment_to_text(root, "Confidential Information", 0)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    for id in [root, reply] {
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some("Confidential Information"),
+            "comment {id}"
+        );
+    }
+}
+
+#[test]
+fn a_comment_inside_a_tracked_insertion_can_be_removed() {
+    let (mut doc, id) = commented_paragraph(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:ins {}>"#,
+            r#"<w:r><w:t xml:space="preserve">within </w:t></w:r><w:commentRangeStart w:id="ID"/>"#,
+            r#"<w:r><w:t>30 days</w:t></w:r><w:commentRangeEnd w:id="ID"/>"#,
+            r#"<w:r><w:commentReference w:id="ID"/></w:r></w:ins></w:p>"#
+        ),
+        INS
+    ));
+    assert_eq!(
+        doc.comment_anchor_text(id).unwrap().as_deref(),
+        Some("30 days")
+    );
+    assert!(doc.remove_comment(id).unwrap());
+    let doc = reopen(&mut doc);
+    assert!(doc.comments().is_empty());
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains("comment"), "{main}");
+    assert!(main.contains("30 days"), "{main}");
+}
+
+#[test]
+fn accepting_or_rejecting_the_change_a_comment_sits_on_keeps_the_comment() {
+    // Google Docs starts the first thread of its contract copy inside the
+    // deletion of the tracked change it discusses.
+    let mut doc = corpus_doc("google/contract.docx");
+    let before = doc
+        .comments()
+        .iter()
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+        .collect::<Vec<_>>();
+    doc.accept_all().unwrap();
+    let doc = reopen(&mut doc);
+    let after = doc
+        .comments()
+        .iter()
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before);
+
+    // A comment inside a tracked insertion, the insertion rejected.
+    let (mut doc, id) = commented_paragraph(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:ins {}>"#,
+            r#"<w:r><w:t xml:space="preserve">within </w:t></w:r><w:commentRangeStart w:id="ID"/>"#,
+            r#"<w:r><w:t>30 days</w:t></w:r><w:commentRangeEnd w:id="ID"/></w:ins>"#,
+            r#"<w:r><w:t xml:space="preserve"> now</w:t></w:r>"#,
+            r#"<w:r><w:commentReference w:id="ID"/></w:r></w:p>"#
+        ),
+        INS
+    ));
+    doc.reject_all().unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.comments().len(), 1);
+    assert_eq!(doc.comment_anchor_text(id).unwrap().as_deref(), Some(""));
+    assert_eq!(texts(&doc), ["Pay  now"]);
+}
+
+#[test]
+fn accepting_or_rejecting_a_change_that_holds_a_whole_comment_removes_the_comment() {
+    let whole = |wrapper: &str, attributes: &str, text: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:{0} {1}>"#,
+                r#"<w:commentRangeStart w:id="ID"/><w:r><w:{2}>30 days</w:{2}></w:r>"#,
+                r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r></w:{0}></w:p>"#
+            ),
+            wrapper, attributes, text
+        )
+    };
+    for (paragraph, accept) in [
+        (whole("ins", INS, "t"), false),
+        (whole("del", DEL, "delText"), true),
+    ] {
+        let (mut doc, _) = commented_paragraph(&paragraph);
+        if accept {
+            doc.accept_all().unwrap();
+        } else {
+            doc.reject_all().unwrap();
+        }
+        let doc = reopen(&mut doc);
+        assert!(doc.comments().is_empty(), "{paragraph}");
+        let main = doc.part_xml("word/document.xml").unwrap();
+        assert!(!main.contains("commentRange"), "{main}");
+        assert_eq!(texts(&doc), ["Pay "]);
+    }
+}
+
 /// Author, date, text, parent's text, resolved state and anchor of every
 /// comment, as a tool reads a review back.
 fn review_of(doc: &Document) -> Vec<String> {
@@ -2233,67 +2486,98 @@ fn comments_in_one_name_leave_the_other_reviewers_alone() {
 }
 
 /// A redline in one person's name on that contract, then one of their
-/// changes accepted and one rejected by id: the text shows the accepted one
+/// changes accepted and one rejected by id (a replaced phrase is a deletion
+/// and an insertion, each with its id): the text shows the accepted change
 /// only, and the other reviewers' tracked changes and comments stay.
-// Known failure #366: the edited copy, saved by oxoffice, writes an
-// apostrophe of a paragraph that holds another reviewer's change as an
-// entity, and the comparison refuses that paragraph. When it passes, drop
-// `should_panic` and run it on every copy like the test above.
 #[test]
-#[should_panic(expected = "the redline of a reviewed contract is made")]
 fn a_redline_in_one_name_leaves_the_other_reviewers_alone() {
-    let path = "word/contract.docx";
-    let before = corpus_doc(path);
-    let mut edited = corpus_doc(path);
-    let pairs = [
-        ("thirty-six (36) months", "forty-eight (48) months", Some(1)),
-        ("appropriately qualified staff", "trained staff", Some(1)),
-    ];
-    edited.try_replace_all_expected(&pairs).unwrap().unwrap();
-    let mut doc = corpus_doc(path);
-    doc.compare(&edited, REVIEWER, "2026-11-21T10:00:00Z")
-        .unwrap_or_else(|e| {
-            // The #366 refusal, and no other, is the known failure.
+    redline_in_one_name("word/contract.docx");
+}
+
+// Known failure #366, left by its fix: on the Google and LibreOffice copies
+// the comparison still refuses the renewal clause, which holds another
+// reviewer's change. When one passes, drop its `should_panic`.
+#[test]
+#[should_panic(expected = "google/contract.docx: the redline of a reviewed contract is made")]
+fn a_redline_in_one_name_on_the_google_copy_leaves_the_other_reviewers_alone() {
+    redline_in_one_name("google/contract.docx");
+}
+
+#[test]
+#[should_panic(expected = "libreoffice/contract.docx: the redline of a reviewed contract is made")]
+fn a_redline_in_one_name_on_the_libreoffice_copy_leaves_the_other_reviewers_alone() {
+    redline_in_one_name("libreoffice/contract.docx");
+}
+
+fn redline_in_one_name(path: &str) {
+    {
+        let before = corpus_doc(path);
+        let mut edited = corpus_doc(path);
+        let pairs = [
+            ("thirty-six (36) months", "forty-eight (48) months", Some(1)),
+            ("appropriately qualified staff", "trained staff", Some(1)),
+        ];
+        edited.try_replace_all_expected(&pairs).unwrap().unwrap();
+        let mut doc = corpus_doc(path);
+        doc.compare(&edited, REVIEWER, "2026-11-21T10:00:00Z")
+            .unwrap_or_else(|e| {
+                assert!(
+                    e.to_string().contains("holds an existing tracked revision"),
+                    "{path}: unexpected refusal: {e}"
+                );
+                panic!("{path}: the redline of a reviewed contract is made: {e}")
+            });
+        let mut doc = reopen(&mut doc);
+        let mine = doc
+            .story_revisions()
+            .unwrap()
+            .into_iter()
+            .filter(|revision| revision.author() == REVIEWER)
+            .collect::<Vec<_>>();
+        let ids_of = |texts: [&str; 2]| {
+            let ids = mine
+                .iter()
+                .filter(|revision| texts.iter().any(|text| revision.text().contains(text)))
+                .map(|revision| revision.id())
+                .collect::<Vec<_>>();
             assert!(
-                e.to_string().contains("holds an existing tracked revision"),
-                "unexpected refusal: {e}"
+                !ids.is_empty(),
+                "{path}: a revision of {REVIEWER} holds {texts:?}: {mine:?}"
             );
-            panic!("the redline of a reviewed contract is made: {e}")
-        });
-    let mut doc = reopen(&mut doc);
-    let mine = doc
-        .story_revisions()
-        .unwrap()
-        .into_iter()
-        .filter(|revision| revision.author() == REVIEWER)
-        .collect::<Vec<_>>();
-    let id_of = |text: &str| {
-        mine.iter()
-            .find(|revision| revision.text().contains(text))
-            .unwrap_or_else(|| panic!("a revision of {REVIEWER} holds {text}: {mine:?}"))
-            .id()
-    };
-    let (kept, refused) = (id_of("forty-eight"), id_of("trained"));
-    assert!(doc.accept_revision_id(kept).unwrap() > 0);
-    assert!(doc.reject_revision_id(refused).unwrap() > 0);
-    let doc = reopen(&mut doc);
-    assert_eq!(other_reviewers(&doc), other_reviewers(&before));
-    let text = (0..doc.paragraph_count())
-        .map(|index| doc.paragraph(index).unwrap().text())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(text.contains("forty-eight (48) months"));
-    assert!(text.contains("appropriately qualified staff"));
+            ids
+        };
+        let kept = ids_of(["forty-eight", "thirty-six"]);
+        let refused = ids_of(["trained", "appropriately qualified"]);
+        for id in kept {
+            assert!(doc.accept_revision_id(id).unwrap() > 0, "{path}");
+        }
+        for id in refused {
+            assert!(doc.reject_revision_id(id).unwrap() > 0, "{path}");
+        }
+        let doc = reopen(&mut doc);
+        assert_eq!(other_reviewers(&doc), other_reviewers(&before), "{path}");
+        assert!(
+            doc.story_revisions()
+                .unwrap()
+                .iter()
+                .all(|revision| revision.author() != REVIEWER),
+            "{path}: every change of {REVIEWER} is resolved"
+        );
+        let text = (0..doc.paragraph_count())
+            .map(|index| doc.paragraph(index).unwrap().text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("forty-eight (48) months"), "{path}");
+        assert!(!text.contains("thirty-six (36) months"), "{path}");
+        assert!(text.contains("appropriately qualified staff"), "{path}");
+        assert!(!text.contains("trained staff"), "{path}");
+    }
 }
 
 /// A tool rebases a copy someone annotated in Google Docs onto the last clean
 /// write: it reads every thread of the annotated copy and writes it again on
 /// the clean one, anchor, author, date, replies and resolved state included.
-// Known failure #364: Google starts the first thread inside a tracked
-// deletion, and that anchor does not read. When it passes, drop
-// `should_panic`.
 #[test]
-#[should_panic(expected = "the anchor of a Google thread reads")]
 fn the_threads_of_a_google_copy_carry_over_to_a_clean_copy() {
     let annotated = corpus_doc("google/contract.docx");
     let mut clean = corpus_doc("authored/contract.docx");
