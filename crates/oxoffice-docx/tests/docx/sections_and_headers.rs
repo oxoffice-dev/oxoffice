@@ -1040,7 +1040,51 @@ fn replacing_a_header_keeps_its_place_among_the_references() {
                 "2026-01-01T00:00:00Z",
             )
             .expect("a replaced header compares");
+        let mut copy = reopen(&mut redline);
+        copy.accept_all().unwrap();
+        assert_eq!(header(&reopen(&mut copy), 0).as_deref(), Some("New header"));
+        let mut copy = reopen(&mut redline);
+        copy.reject_all().unwrap();
+        assert_eq!(
+            header(&reopen(&mut copy), 0).as_deref(),
+            Some("Default header")
+        );
     }
+}
+
+#[test]
+fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
+    let bytes = headers_listed(&["default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    let first = doc
+        .section_story(0, HeaderFooterKind::Header, HdrFtrType::First)
+        .unwrap()
+        .expect("first-page header")
+        .story()
+        .clone();
+    doc.link_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default, &first)
+        .unwrap();
+    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
+}
+
+#[test]
+fn a_header_inherited_from_a_removed_section_takes_its_place_in_the_order() {
+    let mut doc = two_sections();
+    doc.create_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    doc.create_section_story(1, HeaderFooterKind::Header, HdrFtrType::First)
+        .unwrap();
+    doc.remove_section(0).unwrap();
+    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
+}
+
+#[test]
+fn a_watermark_header_takes_its_place_in_the_order() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Body.");
+    doc.set_first_page_header("First header");
+    doc.set_text_watermark("DRAFT").unwrap();
+    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
 }
 
 #[test]
