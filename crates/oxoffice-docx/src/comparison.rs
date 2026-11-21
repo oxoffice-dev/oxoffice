@@ -5609,8 +5609,9 @@ fn generated_heading_bookmark(name: &str) -> bool {
 /// follow, so it reads the same. A new heading's `_Toc` bookmark takes a
 /// fresh name where the original uses its own, and a bookmark only the
 /// edited input holds a fresh id. When a reference cannot follow, because a
-/// field splits the name across runs or another story names it, the edited
-/// input stays as it is.
+/// field splits the name across runs or another story names it, or when the
+/// comparison would pair a renamed heading otherwise, the names stay as they
+/// are and only the ids follow; links to another file are left alone.
 fn reconcile_body_bookmarks(
     original: &Document,
     edited: &mut Document,
@@ -5805,20 +5806,6 @@ fn reconcile_body_bookmarks(
         }
     }
     names.retain(|from, to| from != to);
-    let final_name = |bookmark: &BodyBookmark| {
-        bookmark
-            .name
-            .as_ref()
-            .map(|name| names.get(name).unwrap_or(name).clone())
-    };
-    let mut final_names = HashSet::new();
-    if right
-        .iter()
-        .filter_map(final_name)
-        .any(|name| !final_names.insert(name))
-    {
-        return Ok(());
-    }
 
     // The original's id for a name both hold, and a fresh id where a
     // bookmark only the edited input holds uses an id of the original.
@@ -5844,71 +5831,116 @@ fn reconcile_body_bookmarks(
             left_id_set.extend(bookmark_ids(part_xml(document, name)?)?);
         }
     }
-    let mut allocator = None;
-    let mut ids = HashMap::new();
-    let mut targets = HashSet::new();
-    for bookmark in &right {
-        let Some(id) = bookmark.id else {
-            continue;
+    // The edited ids under these names, or None when two bookmarks would
+    // share a name or an id.
+    let id_map = |names: &HashMap<String, String>| -> Result<Option<HashMap<i32, i32>>> {
+        let final_name = |bookmark: &BodyBookmark| {
+            bookmark
+                .name
+                .as_ref()
+                .map(|name| names.get(name).unwrap_or(name).clone())
         };
-        let name = final_name(bookmark);
-        // Footnote custody markers are reconciled by their own owner.
-        let custody = name
-            .as_deref()
-            .is_some_and(|name| name.starts_with("_rdocxCmp"));
-        let target = match name.as_deref().and_then(|name| left_ids.get(name)) {
-            _ if custody => id,
-            Some(&target) => target,
-            None if left_id_set.contains(&id) => {
-                let allocator = match &mut allocator {
-                    Some(allocator) => allocator,
-                    slot => {
-                        let mut occupied = HashSet::new();
-                        for (document, name) in &parts {
-                            occupied.extend(word_ids(part_xml(document, name)?)?);
-                        }
-                        slot.insert(IdAllocator::new(occupied))
-                    }
-                };
-                allocator.allocate()?
-            }
-            None => id,
-        };
-        if ids.insert(id, target).is_some() || !targets.insert(target) {
-            return Ok(());
-        }
-    }
-    ids.retain(|from, to| from != to);
-    if names.is_empty() && ids.is_empty() {
-        return Ok(());
-    }
-    for (document, name) in &parts {
-        if std::ptr::eq(*document, &*edited)
-            && *name != edited.doc_part_name
-            && name_tokens(part_xml(document, name)?).any(|token| names.contains_key(token))
+        let mut final_names = HashSet::new();
+        if right
+            .iter()
+            .filter_map(final_name)
+            .any(|name| !final_names.insert(name))
         {
-            return Ok(());
+            return Ok(None);
         }
-    }
-    let Some(xml) = rewrite_body_bookmarks(right_xml, &names, &ids)? else {
-        return Ok(());
+        let mut allocator = None;
+        let mut ids = HashMap::new();
+        let mut targets = HashSet::new();
+        for bookmark in &right {
+            let Some(id) = bookmark.id else {
+                continue;
+            };
+            let name = final_name(bookmark);
+            // Footnote custody markers are reconciled by their own owner.
+            let custody = name
+                .as_deref()
+                .is_some_and(|name| name.starts_with("_rdocxCmp"));
+            let target = match name.as_deref().and_then(|name| left_ids.get(name)) {
+                _ if custody => id,
+                Some(&target) => target,
+                None if left_id_set.contains(&id) => {
+                    let allocator = match &mut allocator {
+                        Some(allocator) => allocator,
+                        slot => {
+                            let mut occupied = HashSet::new();
+                            for (document, name) in &parts {
+                                occupied.extend(word_ids(part_xml(document, name)?)?);
+                            }
+                            slot.insert(IdAllocator::new(occupied))
+                        }
+                    };
+                    allocator.allocate()?
+                }
+                None => id,
+            };
+            if ids.insert(id, target).is_some() || !targets.insert(target) {
+                return Ok(None);
+            }
+        }
+        ids.retain(|from, to| from != to);
+        Ok(Some(ids))
+    };
+    let unnamed = HashMap::new();
+    // The rewritten main story, when references can follow every rename.
+    let rewritten = |names: &HashMap<String, String>| -> Result<Option<Vec<u8>>> {
+        let Some(ids) = id_map(names)? else {
+            return Ok(None);
+        };
+        if names.is_empty() && ids.is_empty() {
+            return Ok(None);
+        }
+        for (document, name) in &parts {
+            if std::ptr::eq(*document, &*edited)
+                && *name != edited.doc_part_name
+                && name_tokens(part_xml(document, name)?).any(|token| names.contains_key(token))
+            {
+                return Ok(None);
+            }
+        }
+        rewrite_body_bookmarks(right_xml, names, &ids)
     };
     let part = edited.doc_part_name.clone();
-    let mut candidate = edited.clone_for_staging();
-    crate::document::set_story_source_xml(&mut candidate, &part, xml)?;
-    // The comparison pairs the rewritten blocks again: a renamed heading it
-    // pairs with another one would hold that heading's bookmark beside the
-    // original's, so the input stays as it is unless every pair holds.
-    if !renamed_pairs.is_empty() {
-        let (left, right) = (plain_signatures(original), plain_signatures(&candidate));
-        let pairs = pair_gaps_by_kind(align(&left, &right), &left, &right)
-            .into_iter()
-            .filter_map(|pair| Some((pair.0?, pair.1?)))
-            .collect::<HashSet<_>>();
-        if renamed_pairs.iter().any(|pair| !pairs.contains(pair)) {
-            return Ok(());
+    let staged = |xml: Vec<u8>| -> Result<Document> {
+        let mut candidate = edited.clone_for_staging();
+        crate::document::set_story_source_xml(&mut candidate, &part, xml)?;
+        Ok(candidate)
+    };
+    let candidate = match rewritten(&names)? {
+        Some(xml) => {
+            let candidate = staged(xml)?;
+            // The comparison pairs the rewritten blocks again: a renamed
+            // heading it pairs with another one would hold that heading's
+            // bookmark beside the original's, so the names stay as they are
+            // unless every pair holds.
+            let (left, right) = (plain_signatures(original), plain_signatures(&candidate));
+            let pairs = pair_gaps_by_kind(align(&left, &right), &left, &right)
+                .into_iter()
+                .filter_map(|pair| Some((pair.0?, pair.1?)))
+                .collect::<HashSet<_>>();
+            if renamed_pairs.iter().all(|pair| pairs.contains(pair)) {
+                candidate
+            } else {
+                // Ids are matched by name and need no rename: they still
+                // follow the original's.
+                let Some(xml) = rewritten(&unnamed)? else {
+                    return Ok(());
+                };
+                staged(xml)?
+            }
         }
-    }
+        None if names.is_empty() => return Ok(()),
+        None => {
+            let Some(xml) = rewritten(&unnamed)? else {
+                return Ok(());
+            };
+            staged(xml)?
+        }
+    };
     *edited = candidate;
     Ok(())
 }

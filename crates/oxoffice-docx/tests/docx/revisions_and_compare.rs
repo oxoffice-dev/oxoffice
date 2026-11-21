@@ -1092,10 +1092,10 @@ fn a_renamed_bookmark_of_the_author_keeps_its_name_on_each_side() {
 }
 
 #[test]
-fn a_toc_reference_split_across_runs_keeps_the_refusal() {
+fn a_toc_reference_split_across_runs_keeps_its_bookmark_name() {
     // The edited link names `_Toc2` in one instruction run, `_To` + `c2` in
     // the other: renaming the bookmark would leave that half pointing at
-    // nothing, so the comparison refuses the pair instead.
+    // nothing, so the edited name stays, and only the id follows.
     let entry = |name: &str, split: bool| {
         let instruction = if split {
             format!(
@@ -1126,18 +1126,18 @@ fn a_toc_reference_split_across_runs_keeps_the_refusal() {
             body(text)
         ))
     };
-    let mut original = document("_Toc1", false, "Old.");
-    let error = original
-        .compare(&document("_Toc2", true, "New."), AUTHOR, DATE)
-        .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("cannot revise paragraph boundary structures"),
-        "{error}"
+    let mut doc = redline(
+        document("_Toc1", false, "Old."),
+        &document("_Toc2", true, "New."),
     );
-    assert!(original.revisions().is_empty());
-    // The same pair with the reference in one run compares.
+    let copy = accepted(&mut doc);
+    assert_eq!(bookmark_names(&copy), ["_Toc2"]);
+    assert_eq!(
+        link_targets(&copy),
+        [("Intro1".to_owned(), Some("Intro".to_owned()))]
+    );
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc1"]);
+    // The same pair with the reference in one run takes the original name.
     let mut doc = redline(
         document("_Toc1", false, "Old."),
         &document("_Toc2", false, "New."),
@@ -1261,6 +1261,7 @@ fn a_link_to_another_file_keeps_the_bookmark_it_names() {
         doc_with_body(&format!(
             concat!(
                 r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK "part1.docx" \l "_Toc7" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Part one</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+                r#"<w:p><w:fldSimple w:instr=" HYPERLINK &quot;part1.docx&quot; \l &quot;_Toc7&quot; "><w:r><w:t>Again</w:t></w:r></w:fldSimple></w:p>"#,
                 r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
                 r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#,
             ),
@@ -1273,8 +1274,70 @@ fn a_link_to_another_file_keeps_the_bookmark_it_names() {
     assert_eq!(bookmark_names(&copy), ["_Toc1"]);
     assert_eq!(
         field_instructions(&copy),
-        [r#"HYPERLINK "part1.docx" \l "_Toc7""#]
+        [
+            r#"HYPERLINK "part1.docx" \l "_Toc7""#,
+            r#"HYPERLINK "part1.docx" \l "_Toc7""#
+        ]
     );
+}
+
+/// A heading holding these bookmarks, as (id, name).
+fn heading_with(text: &str, marks: &[(u32, &str)]) -> String {
+    let starts = marks
+        .iter()
+        .map(|(id, name)| format!(r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/>"#))
+        .collect::<String>();
+    let ends = marks
+        .iter()
+        .map(|(id, _)| format!(r#"<w:bookmarkEnd w:id="{id}"/>"#))
+        .collect::<String>();
+    format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{starts}<w:r><w:t>{text}</w:t></w:r>{ends}</w:p>"#
+    )
+}
+
+/// A became a heading after the original's table of contents was built,
+/// and its next heading was rewritten: the pairing would give the new
+/// heading the old one's name, but the comparison pairs the old heading
+/// with A.
+fn late_heading_pair(a_id: u32, new_id: u32) -> (Document, Document) {
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let original = doc_with_body(&format!(
+        "{}{}{}",
+        heading_with("A", &[]),
+        heading_with("Old", &[(0, "_Toc1")]),
+        body("Body."),
+    ));
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}",
+        body("New first."),
+        heading_with("A", &[(a_id, "_Toc11")]),
+        heading_with("New", &[(new_id, "_Toc12")]),
+        body("Body."),
+    ));
+    (original, edited)
+}
+
+#[test]
+fn a_heading_the_comparison_pairs_otherwise_keeps_its_own_toc_name() {
+    let (original, edited) = late_heading_pair(5, 6);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_names(&copy), ["_Toc11", "_Toc12"]);
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc1"]);
+}
+
+#[test]
+fn ids_still_follow_the_original_when_toc_names_cannot() {
+    // As above, with A under the id the original gives Old: the names stay,
+    // and A takes a fresh id.
+    let (original, edited) = late_heading_pair(0, 1);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_names(&copy), ["_Toc11", "_Toc12"]);
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc1"]);
 }
 
 /// The instruction of every field of the body, in order.
@@ -1317,9 +1380,9 @@ fn simple_fields_and_hyperlink_fields_follow_a_renamed_toc_bookmark() {
 }
 
 #[test]
-fn a_renamed_toc_bookmark_named_in_another_story_keeps_the_refusal() {
+fn a_toc_bookmark_named_in_another_story_keeps_its_name() {
     // A footnote names the edited bookmark: renaming it in the body alone
-    // would leave that name pointing at nothing.
+    // would leave that name pointing at nothing, so it stays.
     let document = |name: &str, text: &str, note: bool| {
         let mut doc = doc_with_body(&format!(
             r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p><w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#
@@ -1331,20 +1394,16 @@ fn a_renamed_toc_bookmark_named_in_another_story_keeps_the_refusal() {
         }
         doc
     };
-    let mut original = document("_Toc1", "Old.", true);
-    let error = original
-        .compare(&document("_Toc7", "New.", true), AUTHOR, DATE)
-        .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("cannot revise paragraph boundary structures"),
-        "{error}"
-    );
-    // Without the note naming it, the same pair compares.
     let mut doc = redline(
-        document("_Toc1", "Old.", false),
-        &document("_Toc7", "New.", false),
+        document("_Toc1", "Body.", true),
+        &document("_Toc7", "Body.", true),
+    );
+    assert_eq!(bookmark_names(&accepted(&mut doc)), ["_Toc7"]);
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc1"]);
+    // Without the note naming it, the edited bookmark takes the original name.
+    let mut doc = redline(
+        document("_Toc1", "Body.", false),
+        &document("_Toc7", "Body.", false),
     );
     assert_eq!(bookmark_names(&accepted(&mut doc)), ["_Toc1"]);
 }
