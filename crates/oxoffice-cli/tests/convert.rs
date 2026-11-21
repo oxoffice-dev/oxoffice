@@ -54,8 +54,8 @@ fn a_word_form_converts_to_a_fillable_pdf() {
     assert_eq!(occurrences(&pdf, b"/AcroForm"), 1);
     assert_eq!(
         occurrences(&pdf, b"/FT /"),
-        14,
-        "one field per content control"
+        19,
+        "one field per content control (14) and per legacy form field (5: the PaymentTerms drop-down draws nothing, #170)"
     );
     assert_eq!(occurrences(&pdf, b"/FT /Sig"), 1, "the signature control");
 }

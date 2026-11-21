@@ -242,6 +242,26 @@ def test_a_control_left_static_says_so(tmp_path):
     assert any('"notes" stays static' in message for message in messages), messages
 
 
+def test_a_legacy_form_field_becomes_a_field(tmp_path):
+    word = PythonDocxDocument()
+    body = word.element.body
+    body.insert(len(body) - 1, parse_xml(
+        f'<w:p {W}><w:r><w:t xml:space="preserve">Company: </w:t></w:r><w:bookmarkStart w:id="0" w:name="Company"/>'
+        '<w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Company"/><w:enabled/><w:calcOnExit w:val="0"/>'
+        '<w:textInput><w:maxLength w:val="40"/></w:textInput></w:ffData></w:fldChar></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/>'
+        '</w:r><w:r><w:t>Acme</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkEnd w:id="0"/></w:p>'
+    ))
+    path = tmp_path / "legacy.docx"
+    word.save(path)
+    pdf = oxdocx.Document(path).to_pdf(fillable_forms=True)
+    found = fields(pdf)
+    assert found["Company"]["/FT"] == "/Tx" and found["Company"]["/V"] == "Acme"
+    acroform = pypdf.PdfReader(io.BytesIO(pdf)).trailer["/Root"]["/AcroForm"]
+    (company,) = (field.get_object() for field in acroform["/Fields"] if field.get_object()["/T"] == "Company")
+    assert company["/MaxLen"] == 40
+
+
 def test_the_tracked_view_refuses_fillable_forms(form):
     with pytest.raises(ValueError, match="fillable_forms"):
         form.to_pdf(fillable_forms=True, revision_view="tracked")

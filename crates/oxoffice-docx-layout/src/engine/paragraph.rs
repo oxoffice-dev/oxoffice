@@ -144,6 +144,33 @@ fn drawn_legacy_checkbox(field: &oxoffice_docx_oxml::text::Field) -> Option<&'st
     Some(if checked { "\u{2612}" } else { "\u{2610}" })
 }
 
+/// The fields of a paragraph's physical runs in source order, nested fields
+/// after the field holding them: the order that names a field by index.
+pub(crate) fn source_fields(para: &CT_P) -> Vec<&oxoffice_docx_oxml::text::Field> {
+    fn collect<'a>(
+        field: &'a oxoffice_docx_oxml::text::Field,
+        fields: &mut Vec<&'a oxoffice_docx_oxml::text::Field>,
+    ) {
+        fields.push(field);
+        for nested in field.all_nested_fields_in_source_order() {
+            collect(nested, fields);
+        }
+    }
+    let mut fields = Vec::new();
+    for field in para
+        .source_runs()
+        .into_iter()
+        .flat_map(|run| &run.content)
+        .filter_map(|content| match content {
+            RunContent::Field(field) => Some(field),
+            _ => None,
+        })
+    {
+        collect(field, &mut fields);
+    }
+    fields
+}
+
 /// Lay out a single paragraph into a ParagraphBlock.
 pub fn layout_paragraph(
     para: &CT_P,
@@ -667,28 +694,7 @@ fn layout_paragraph_with_source_and_table(
     // selection, including deleted and inserted revision owners.
     let field_indices = source_node
         .map(|_| {
-            fn collect<'a>(
-                field: &'a oxoffice_docx_oxml::text::Field,
-                fields: &mut Vec<&'a oxoffice_docx_oxml::text::Field>,
-            ) {
-                fields.push(field);
-                for nested in field.all_nested_fields_in_source_order() {
-                    collect(nested, fields);
-                }
-            }
-            let mut fields = Vec::new();
-            for field in para
-                .source_runs()
-                .into_iter()
-                .flat_map(|run| &run.content)
-                .filter_map(|content| match content {
-                    RunContent::Field(field) => Some(field),
-                    _ => None,
-                })
-            {
-                collect(field, &mut fields);
-            }
-            fields
+            source_fields(para)
                 .into_iter()
                 .map(std::ptr::from_ref)
                 .zip(0u32..)
@@ -773,11 +779,26 @@ fn layout_paragraph_with_source_and_table(
     }
     let mut stored_caches = Vec::with_capacity(projected_runs.len());
     let mut stored_char_lengths = Vec::with_capacity(projected_runs.len());
-    for projected in &projected_runs {
+    // The legacy form field a whole run holds, by projected run: its stored
+    // result draws as ordinary runs, which take the field's mark.
+    let mut legacy_marks = HashMap::new();
+    for (projected_index, projected) in projected_runs.iter().enumerate() {
         let cache = if let [RunContent::Field(field)] = projected.run.content.as_slice() {
             let source = source_node
                 .zip(field_indices.get(&std::ptr::from_ref(field)).copied())
                 .map(|(node, index)| FieldSource { node, index });
+            if let Some(form) = form.filter(|_| input.form_fields)
+                && crate::forms::is_mapped_legacy(field)
+                && let Some(source) = source
+            {
+                legacy_marks.insert(
+                    projected_index,
+                    oxoffice_layout::FormMark {
+                        node: form.node,
+                        field: crate::forms::legacy_mark(source.index),
+                    },
+                );
+            }
             let cache = stored_note_cache_runs(
                 field,
                 projected.run.properties.as_ref(),
@@ -884,7 +905,8 @@ fn layout_paragraph_with_source_and_table(
             .map(|(field, paragraph)| oxoffice_layout::FormMark {
                 node: paragraph.node,
                 field,
-            });
+            })
+            .or_else(|| legacy_marks.get(&projected_index).copied());
         let current_hyperlink_url = projected
             .ordinary_run_index
             .and_then(|run_index| run_hyperlink_url.get(&run_index).cloned())
@@ -1399,6 +1421,19 @@ fn layout_paragraph_with_source_and_table(
                         .get(&std::ptr::from_ref(field))
                         .cloned()
                         .unwrap_or((None, None));
+                    // A legacy form field outside any control field is a
+                    // field of its own.
+                    let field_form_mark = current_form_mark.or_else(|| {
+                        let form = form_paragraph?;
+                        if !crate::forms::is_mapped_legacy(field) {
+                            return None;
+                        }
+                        let index = field_indices.get(&std::ptr::from_ref(field)).copied()?;
+                        Some(oxoffice_layout::FormMark {
+                            node: form.node,
+                            field: crate::forms::legacy_mark(index),
+                        })
+                    });
                     let stored_segments = field.effective_display_field_segments();
                     // A legacy checkbox without formatted result runs takes the
                     // formatting of the run that opens it.
@@ -1588,7 +1623,7 @@ fn layout_paragraph_with_source_and_table(
                                     },
                                 );
                                 inline_items.push(InlineItem::Text(TextSegment {
-                                    form_mark: current_form_mark,
+                                    form_mark: field_form_mark,
                                     text,
                                     direction: word_text_direction(segment_rpr.rtl),
                                     source: None,

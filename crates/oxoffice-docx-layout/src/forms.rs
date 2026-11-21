@@ -1,22 +1,48 @@
-//! Word content controls as fillable form fields.
+//! Word content controls and legacy form fields as fillable form fields.
 //!
 //! The engine marks what it draws for a control with a [`FormMark`]: the
 //! paragraph's source node and the control's position among the paragraph's
-//! inline controls, or [`BLOCK_FIELD`] for the block control around the
-//! paragraph. After pagination, [`FormNumbering`] turns marks into
-//! [`FormFieldId`]s, in document order, and builds the fields from the model.
+//! inline controls, [`BLOCK_FIELD`] for the block control around the
+//! paragraph, or [`legacy_mark`] for a legacy form field. After pagination,
+//! [`number_form_fields`] turns marks into [`FormFieldId`]s, in document
+//! order, and builds the fields from the model.
 
 use std::collections::HashMap;
 
 use oxoffice_docx_oxml::content_control::{SdtContent, SdtFormPayload};
 use oxoffice_docx_oxml::document::BodyContent;
 use oxoffice_docx_oxml::table::{CT_Tbl, CellContent};
-use oxoffice_docx_oxml::text::{CT_P, CT_R, RunContent, SpecialCharacter};
+use oxoffice_docx_oxml::text::{
+    CT_P, CT_R, Field, LegacyFormFieldValue, RunContent, SpecialCharacter,
+};
 use oxoffice_docx_oxml::{CT_Body, CT_Sdt};
 use oxoffice_layout::{ChoiceOption, FieldAlignment, FormField, FormFieldKind};
 
 /// The mark field value of the block control around a paragraph.
 pub(crate) const BLOCK_FIELD: u32 = u32::MAX;
+
+/// Mark field values from this bit up name a legacy form field: the bit plus
+/// the field's index among the paragraph's fields.
+const LEGACY_FIELD: u32 = 1 << 31;
+
+/// The mark field value of the legacy form field at this index among the
+/// paragraph's fields, in source order.
+pub(crate) fn legacy_mark(index: u32) -> u32 {
+    LEGACY_FIELD | index.min(BLOCK_FIELD - LEGACY_FIELD - 1)
+}
+
+/// Whether a field is a legacy form field that can be a field on its own:
+/// `FORMTEXT`, `FORMCHECKBOX` or `FORMDROPDOWN` whose value reads.
+pub(crate) fn is_mapped_legacy(field: &Field) -> bool {
+    field.legacy_form.is_some() && field.legacy_form_value().is_ok()
+}
+
+/// Whether a run holds a legacy form field that maps.
+fn run_holds_legacy(run: &CT_R) -> bool {
+    run.content
+        .iter()
+        .any(|content| matches!(content, RunContent::Field(field) if is_mapped_legacy(field)))
+}
 
 /// Whether a tag marks a signature: `signature`, or `signature:` and a name,
 /// ASCII case ignored.
@@ -79,7 +105,8 @@ fn facts_fault(control: &CT_Sdt) -> Option<String> {
     })
 }
 
-/// A control that holds other mappable controls is a container.
+/// A control that holds other mappable controls, or legacy form fields, is a
+/// container.
 fn holds_mappable(control: &CT_Sdt) -> bool {
     fn revision_holds(revision: &oxoffice_docx_oxml::revision::CT_Revision) -> bool {
         !deletes(revision) && revision.content_paragraph().is_some_and(paragraph_holds)
@@ -93,6 +120,9 @@ fn holds_mappable(control: &CT_Sdt) -> bool {
                 .revisions
                 .iter()
                 .any(|(_, _, revision)| revision_holds(revision))
+            || crate::engine::accepted_runs(paragraph)
+                .into_iter()
+                .any(|(run, _)| run_holds_legacy(run))
     }
     fn table_holds(table: &CT_Tbl) -> bool {
         !table.content_controls.is_empty()
@@ -111,7 +141,8 @@ fn holds_mappable(control: &CT_Sdt) -> bool {
         SdtContent::Paragraph(paragraph) => paragraph_holds(paragraph),
         SdtContent::Table(table) => table_holds(table),
         SdtContent::Row(_) | SdtContent::Cell(_) => true,
-        SdtContent::Run(_) | SdtContent::RawXml(_) => false,
+        SdtContent::Run(run) => run_holds_legacy(run),
+        SdtContent::RawXml(_) => false,
     }) || control
         .revisions()
         .iter()
@@ -427,6 +458,73 @@ pub(crate) fn control_field(control: &CT_Sdt, shown: String, block: bool) -> Opt
     })
 }
 
+/// The field a legacy form field becomes, its name not yet made unique.
+fn legacy_field(field: &Field) -> Option<FormField> {
+    use oxoffice_docx_oxml::text::{LegacyFormInfoText, LegacyTextInputType};
+    let data = field.legacy_form.as_ref()?;
+    let kind = match field.legacy_form_value().ok()?? {
+        LegacyFormFieldValue::Text(text) => {
+            // Word shows an empty text field as five en spaces.
+            let value = if text.chars().all(|character| character == '\u{2002}') {
+                String::new()
+            } else {
+                text
+            };
+            FormFieldKind::Text {
+                multiline: value.contains('\n'),
+                value,
+                max_len: data
+                    .max_length
+                    .filter(|length| *length > 0)
+                    .and_then(|length| u32::try_from(length).ok()),
+            }
+        }
+        LegacyFormFieldValue::Checked(checked) => FormFieldKind::CheckBox { checked },
+        LegacyFormFieldValue::SelectedIndex(index) => FormFieldKind::Choice {
+            options: data
+                .choices
+                .iter()
+                .map(|choice| ChoiceOption {
+                    value: choice.clone(),
+                    display: choice.clone(),
+                })
+                .collect(),
+            value: data.choices.get(index).cloned(),
+            editable: false,
+        },
+    };
+    let kind_name = match &kind {
+        FormFieldKind::CheckBox { .. } => "checkbox",
+        FormFieldKind::Choice { .. } => "list",
+        _ => "text",
+    };
+    let computed = matches!(
+        data.text_input_type,
+        Some(
+            LegacyTextInputType::CurrentDate
+                | LegacyTextInputType::CurrentTime
+                | LegacyTextInputType::Calculated
+        )
+    );
+    Some(FormField {
+        name: data
+            .name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| kind_name.to_owned()),
+        tooltip: match &data.help_text {
+            Some(LegacyFormInfoText::Text(text)) if !text.is_empty() => Some(text.clone()),
+            _ => None,
+        },
+        kind,
+        read_only: !data.enabled || computed,
+        font_size: 0.0,
+        color: oxoffice_layout::Color::BLACK,
+        alignment: FieldAlignment::Left,
+        placeholder: false,
+    })
+}
+
 /// The block content control around a body path, if it is a field.
 pub(crate) fn enclosing_block_field<'a>(body: &'a CT_Body, path: &[usize]) -> Option<&'a CT_Sdt> {
     let BodyContent::ContentControl(outer) = body.content.get(*path.first()?)? else {
@@ -513,19 +611,59 @@ fn vertical_sections(
         .collect()
 }
 
-/// One mapped control of the main body, in document order.
+/// What a field comes from.
+enum Source<'a> {
+    Control(&'a CT_Sdt),
+    Legacy,
+}
+
+/// One mapped control or legacy form field of the main body, in document
+/// order.
 struct Entry<'a> {
-    control: &'a CT_Sdt,
+    source: Source<'a>,
     field: FormField,
 }
 
-/// The mapped controls of the main body in document order, and the
-/// (paragraph node, mark) keys that name each one.
+impl Entry<'_> {
+    /// The symbol a check box draws in its other state.
+    fn other_symbol(&self, checked: bool) -> Option<char> {
+        match self.source {
+            Source::Control(control) => control
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.form_facts().ok())
+                .and_then(|facts| match facts.payload {
+                    SdtFormPayload::CheckBox {
+                        checked_symbol,
+                        unchecked_symbol,
+                        ..
+                    } => Some(if checked {
+                        unchecked_symbol.0
+                    } else {
+                        checked_symbol.0
+                    }),
+                    _ => None,
+                }),
+            // As the layout draws a legacy check box: ☒ checked, ☐ not.
+            Source::Legacy => Some(if checked { '\u{2610}' } else { '\u{2612}' }),
+        }
+    }
+}
+
+/// An inline field of a paragraph, before document order sorts them.
+enum Inline<'a> {
+    Control(u32, &'a CT_Sdt),
+    Legacy(u32, &'a Field),
+}
+
+/// The mapped controls and legacy form fields of the main body in document
+/// order, and the (paragraph node, mark) keys that name each one.
 struct Inventory<'a> {
     entries: Vec<Entry<'a>>,
     keys: HashMap<oxoffice_layout::FormMark, usize>,
     by_control: HashMap<*const CT_Sdt, usize>,
-    /// Controls of a field's kind whose facts do not decode, said once each.
+    /// Controls of a field's kind whose facts do not decode, and legacy form
+    /// fields that stay static, said once each.
     faults: Vec<String>,
     faulted: std::collections::HashSet<*const CT_Sdt>,
     /// Every main-story paragraph visited, by source node.
@@ -714,28 +852,118 @@ impl<'a> Inventory<'a> {
                 self.note_static(control, "a tracked change deletes it");
             }
         }
+        // Document order: by the first physical run each field draws.
+        let runs = paragraph.source_runs();
+        let position: HashMap<*const CT_R, usize> = runs
+            .iter()
+            .enumerate()
+            .map(|(position, run)| (std::ptr::from_ref(*run), position))
+            .collect();
+        let mut inline = Vec::new();
+        let mut last = 0;
         for (ordinal, control) in controls.order.iter().enumerate() {
             let ordinal = u32::try_from(ordinal).unwrap_or(u32::MAX - 1);
-            if controls.mark_of(control) != Some(ordinal) {
-                continue;
+            last = first_run(control, &position).unwrap_or(last);
+            if controls.mark_of(control) == Some(ordinal) {
+                inline.push((last, Inline::Control(ordinal, control)));
             }
+        }
+        let fields = crate::engine::source_fields(paragraph);
+        let field_index: HashMap<*const Field, u32> = fields
+            .iter()
+            .map(|field| std::ptr::from_ref(*field))
+            .zip(0u32..)
+            .collect();
+        // A field in a tracked deletion is not drawn: it says so, as a
+        // deleted control does, and takes no name.
+        let accepted: std::collections::HashSet<*const CT_R> =
+            crate::engine::accepted_runs(paragraph)
+                .into_iter()
+                .map(|(run, _)| std::ptr::from_ref(run))
+                .collect();
+        let mut top_level = std::collections::HashSet::new();
+        for (at, run) in runs.iter().enumerate() {
+            let deleted = !accepted.contains(&std::ptr::from_ref(*run));
+            for content in &run.content {
+                let RunContent::Field(field) = content else {
+                    continue;
+                };
+                top_level.insert(std::ptr::from_ref(field));
+                if field.legacy_form.is_none() {
+                    // Form data that does not read leaves no legacy form.
+                    if !deleted && field.validate_legacy_form_owner().is_err() {
+                        self.faults.push(format!(
+                            "form field {:?} stays static: its form data does not read",
+                            legacy_name(field)
+                        ));
+                    }
+                    continue;
+                }
+                if deleted {
+                    self.faults.push(format!(
+                        "form field {:?} stays static: a tracked change deletes it",
+                        legacy_name(field)
+                    ));
+                    continue;
+                }
+                match field.legacy_form_value() {
+                    Ok(_) => {
+                        if let Some(index) = field_index.get(&std::ptr::from_ref(field)) {
+                            inline.push((at, Inline::Legacy(*index, field)));
+                        }
+                    }
+                    Err(error) => self.faults.push(format!(
+                        "form field {:?} stays static: its form data does not read ({error})",
+                        legacy_name(field)
+                    )),
+                }
+            }
+        }
+        for field in &fields {
+            if field.legacy_form.is_some() && !top_level.contains(&std::ptr::from_ref(*field)) {
+                self.faults.push(format!(
+                    "form field {:?} stays static: it sits inside another field",
+                    legacy_name(field)
+                ));
+            }
+        }
+        inline.sort_by_key(|(at, _)| *at);
+        for (_, item) in inline {
             if let Some(reason) = reason {
-                self.note_static(control, reason);
+                match item {
+                    Inline::Control(_, control) => self.note_static(control, reason),
+                    Inline::Legacy(_, field) => self.faults.push(format!(
+                        "form field {:?} stays static: {reason}",
+                        legacy_name(field)
+                    )),
+                }
                 continue;
             }
-            let index = self.add(control, false, alignment, || {
-                shown_text(paragraph, |run_control| {
-                    run_control.is_some_and(|run_control| controls.within(run_control, control))
-                })
-            });
+            let (index, field) = match item {
+                Inline::Control(ordinal, control) => (
+                    self.add(control, false, alignment, || {
+                        shown_text(paragraph, |run_control| {
+                            run_control
+                                .is_some_and(|run_control| controls.within(run_control, control))
+                        })
+                    }),
+                    ordinal,
+                ),
+                Inline::Legacy(index, field) => (
+                    legacy_field(field).map(|mut built| {
+                        built.alignment = alignment;
+                        self.entries.push(Entry {
+                            source: Source::Legacy,
+                            field: built,
+                        });
+                        self.entries.len() - 1
+                    }),
+                    legacy_mark(index),
+                ),
+            };
             if let (Some(index), Some(node)) = (index, node) {
-                self.keys.insert(
-                    oxoffice_layout::FormMark {
-                        node,
-                        field: ordinal,
-                    },
-                    index,
-                );
+                self.keys
+                    .insert(oxoffice_layout::FormMark { node, field }, index);
             }
         }
     }
@@ -784,11 +1012,37 @@ impl<'a> Inventory<'a> {
         }
         let mut field = control_field(control, shown(), block)?;
         field.alignment = alignment;
-        self.entries.push(Entry { control, field });
+        self.entries.push(Entry {
+            source: Source::Control(control),
+            field,
+        });
         let index = self.entries.len() - 1;
         self.by_control.insert(std::ptr::from_ref(control), index);
         Some(index)
     }
+}
+
+/// Where a control's first physical run sits among the paragraph's runs.
+fn first_run(control: &CT_Sdt, position: &HashMap<*const CT_R, usize>) -> Option<usize> {
+    control
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            SdtContent::Run(run) => position.get(&std::ptr::from_ref(run)).copied(),
+            SdtContent::ContentControl(nested) => first_run(nested, position),
+            _ => None,
+        })
+        .min()
+}
+
+/// A legacy form field's name for a diagnostic.
+fn legacy_name(field: &Field) -> String {
+    field
+        .legacy_form
+        .as_ref()
+        .and_then(|data| data.name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "untitled".to_owned())
 }
 
 /// A main-story paragraph as the form marks see it: the source node marks
@@ -1370,8 +1624,8 @@ pub(crate) fn number_form_fields(
             }
             drawn.insert(index);
             if let FormFieldKind::CheckBox { checked } = field.kind {
-                let control = inventory.entries[index].control;
-                checkbox_fragment(fragment, control, checked, &fonts);
+                let other = inventory.entries[index].other_symbol(checked);
+                checkbox_fragment(fragment, other, &fonts);
             }
         });
     }
@@ -1407,8 +1661,7 @@ pub(crate) fn number_form_fields(
 /// other symbol in the same font.
 fn checkbox_fragment(
     fragment: &mut oxoffice_layout::FormFieldFragment,
-    control: &CT_Sdt,
-    checked: bool,
+    other: Option<char>,
     fonts: &[oxoffice_layout::FontData],
 ) {
     let Some(run) = text_runs(&fragment.children)
@@ -1423,22 +1676,6 @@ fn checkbox_fragment(
         width,
         ..fragment.rect
     };
-    let other = control
-        .properties
-        .as_ref()
-        .and_then(|properties| properties.form_facts().ok())
-        .and_then(|facts| match facts.payload {
-            SdtFormPayload::CheckBox {
-                checked_symbol,
-                unchecked_symbol,
-                ..
-            } => Some(if checked {
-                unchecked_symbol.0
-            } else {
-                checked_symbol.0
-            }),
-            _ => None,
-        });
     let (Some(other), Some(font)) = (other, fonts.iter().find(|font| font.id == run.font_id))
     else {
         return;
