@@ -66,7 +66,9 @@ pub(super) fn validate_page_field_instruction(
     }
     for switch in &instruction.switches {
         let format = matches!(switch.name.as_str(), "*" | "#");
-        if !format && !(page_ref && matches!(switch.name.as_str(), "h" | "p")) {
+        // `\p` writes "on page N", "above" or "below", which the page
+        // formats do not produce.
+        if !format && !(page_ref && switch.name == "h") {
             return Err(format!("unsupported switch \\{}", switch.name));
         }
         if format && !matches!(switch.argument, Some(FieldArgument::Text(_))) {

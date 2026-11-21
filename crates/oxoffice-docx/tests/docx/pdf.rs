@@ -299,16 +299,25 @@ fn a_table_of_contents_entry_saved_by_libreoffice_keeps_its_title() {
     let word = entry("<w:t>7</w:t>");
     // A level whose entry has no tab stop separates its parts with spaces.
     let spaced = entry("<w:t xml:space=\"preserve\">1.2 Research questions 9</w:t>");
+    // The entry inside another field's result, closed in the same paragraph.
+    let nested = format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> QUOTE "x" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        entry("<w:t>1.3</w:t><w:tab/><w:t>Scope</w:t><w:tab/><w:t>8</w:t>")
+            .split_once("</w:pPr>")
+            .expect("an entry has paragraph properties")
+            .1
+            .trim_end_matches("</w:p>")
+    );
     let pdf = pdf_of(&doc_with_body(&format!(
-        "{libreoffice}{word}{spaced}{heading}"
+        "{libreoffice}{word}{spaced}{nested}{heading}"
     )));
     let lines: Vec<String> = lines(&pdf.drawn(0))
         .into_iter()
         .map(|line| squeeze(&line.text))
         .collect();
     assert_eq!(
-        lines[..3],
-        ["1.1Motivation7", "1", "1.2Researchquestions9"],
+        lines[..4],
+        ["1.1Motivation7", "1", "1.2Researchquestions9", "1.3Scope8"],
         "the LibreOffice entries keep their stored text, the Word one gets the page"
     );
 }
