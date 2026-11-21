@@ -19,6 +19,7 @@ mod pdf_forms;
 mod revisions_and_compare;
 mod save;
 mod sections_and_headers;
+mod settings_strings;
 mod story_paragraphs;
 mod support;
 mod tables;
