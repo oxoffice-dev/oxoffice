@@ -9,7 +9,7 @@ use std::path::Path;
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
     CommentDate, CommentRef, ContentLocation, Document, RunItemRef, RunPosition, RunRange,
-    StoryKind, StoryRunPosition, StoryRunRange, StyleType, TextCommentOptions,
+    StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType, TextCommentOptions,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -1393,8 +1393,16 @@ fn a_comment_added_to_any_corpus_report_takes_word_built_in_comment_styles() {
         "authored/report.docx",
     ] {
         let mut doc = corpus_doc(name);
-        doc.add_comment_on_text("January", 0, "Ada", None, "Check the date", None)
-            .unwrap();
+        doc.add_comment_on_text(
+            "January",
+            "Ada",
+            "Check the date",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let doc = reopen(&mut doc);
         let xml = doc.part_xml("word/comments.xml").unwrap();
         let last = &xml[xml.rfind("<w:comment ").unwrap()..];
@@ -1415,6 +1423,52 @@ fn a_comment_added_to_any_corpus_report_takes_word_built_in_comment_styles() {
             );
         }
     }
+}
+
+#[test]
+fn a_comment_reuses_comment_styles_found_by_id_and_refuses_one_of_the_wrong_type() {
+    // A file written before comment styles carried Word's names: they are
+    // found by their ids and kept as they are.
+    let mut doc = doc_with(&["review this"]);
+    doc.add_style(StyleBuilder::paragraph("CommentText", "CommentText"))
+        .unwrap();
+    doc.add_comment_on_text(
+        "review",
+        "Ada",
+        "Please review",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.style("CommentText")
+            .and_then(|style| style.name().map(str::to_owned))
+            .as_deref(),
+        Some("CommentText"),
+        "the existing style is reused, not renamed"
+    );
+    let xml = doc.part_xml("word/comments.xml").unwrap();
+    assert!(xml.contains(r#"<w:pStyle w:val="CommentText"/>"#), "{xml}");
+
+    let mut doc = doc_with(&["review this"]);
+    doc.add_style(StyleBuilder::character("CommentText", "CommentText"))
+        .unwrap();
+    let error = doc
+        .add_comment_on_text(
+            "review",
+            "Ada",
+            "Please review",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("wrong type"), "{error}");
 }
 
 #[test]

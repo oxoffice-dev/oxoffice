@@ -1956,7 +1956,7 @@ impl Document {
     /// whatever their localised id (`Commentaire` in French), else by the ids
     /// `CommentText` and `CommentReference`, else created under those ids with
     /// the built-in names, based on the file's default paragraph style and
-    /// default paragraph font.
+    /// default paragraph font (else `Normal` and `DefaultParagraphFont`).
     fn prepare_comment_authoring(&mut self) -> Result<(String, String)> {
         use oxoffice_docx_oxml::styles::StyleType;
         let definitions = [
@@ -1994,9 +1994,16 @@ impl Document {
                 ids.push(id.to_owned());
                 continue;
             }
+            // The file's default style of that kind, else Word's usual ids.
+            let fallback = if kind == StyleType::Paragraph {
+                "Normal"
+            } else {
+                "DefaultParagraphFont"
+            };
             let base = self
                 .styles
                 .get_default(kind)
+                .or_else(|| self.styles.get_by_id(fallback))
                 .map(|style| style.style_id.clone());
             let mut builder = if kind == StyleType::Paragraph {
                 crate::StyleBuilder::paragraph(id, built_in)
