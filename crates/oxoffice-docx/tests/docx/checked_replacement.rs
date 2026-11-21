@@ -563,8 +563,8 @@ fn past_the_reading_cap_a_text_split_by_breaks_does_not_count() {
     }
 }
 #[test]
-fn a_cut_occurrence_beside_a_text_split_by_a_break_refuses_whatever_breaks_the_value_holds() {
-    let paragraph = r#"<w:p><w:r><w:t xml:space="preserve">Call AC</w:t></w:r><w:r><w:br/><w:t xml:space="preserve">ME, then AC</w:t></w:r><w:ins w:id="912" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>ME</w:t></w:r></w:ins></w:p>"#;
+fn a_cut_occurrence_beside_a_replaced_one_refuses_whatever_breaks_the_value_holds() {
+    let paragraph = r#"<w:p><w:r><w:t xml:space="preserve">Call ACME, then AC</w:t></w:r><w:ins w:id="912" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>ME</w:t></w:r></w:ins></w:p>"#;
     for value in ["ACME\nInc.", "ACME\n", "ACME\t", "\nACME", "X"] {
         for producer in PRODUCERS {
             let mut doc = body_with(producer, paragraph);
@@ -579,10 +579,10 @@ fn a_break_of_the_paragraph_beside_a_cut_occurrence_is_not_taken_for_the_value_s
     // side where the value holds its break.
     let ins = r#"<w:ins w:id="913" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>ME</w:t></w:r></w:ins>"#;
     let after = format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Call AC</w:t></w:r><w:r><w:br/><w:t xml:space="preserve">ME, then AC</w:t></w:r>{ins}<w:r><w:br/><w:t>Inc.</w:t></w:r></w:p>"#
+        r#"<w:p><w:r><w:t xml:space="preserve">Call ACME, then AC</w:t></w:r>{ins}<w:r><w:br/><w:t>Inc.</w:t></w:r></w:p>"#
     );
     let before = format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Call AC</w:t></w:r><w:r><w:br/><w:t xml:space="preserve">ME, then</w:t></w:r><w:r><w:br/><w:t>AC</w:t></w:r>{ins}</w:p>"#
+        r#"<w:p><w:r><w:t xml:space="preserve">Call ACME, then</w:t></w:r><w:r><w:br/><w:t>AC</w:t></w:r>{ins}</w:p>"#
     );
     for (paragraph, value) in [(&after, "ACME\n"), (&before, "\nACME")] {
         for producer in PRODUCERS {
@@ -614,6 +614,30 @@ fn a_placeholder_holding_a_break_is_found_across_one_and_a_cut_one_refuses() {
         assert_eq!(refusal.left, 1, "{producer}");
     }
 }
+#[test]
+fn a_value_holding_a_windows_line_ending_is_checked_as_the_break_it_writes() {
+    let cut = r#"<w:p><w:r><w:t xml:space="preserve">ACME and AC</w:t></w:r><w:ins w:id="915" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>ME</w:t></w:r></w:ins></w:p>"#;
+    let reached = r#"<w:p><w:r><w:t xml:space="preserve">Call ACME today, ACME</w:t></w:r></w:p>"#;
+    for value in ["ACME\r\nInc.", "ACME\rInc."] {
+        for producer in PRODUCERS {
+            let mut doc = body_with(producer, cut);
+            let refusal = unreached(doc.try_replace_all_checked(&[("ACME", value, None)], CHECKED));
+            assert_eq!(refusal.left, 1, "{producer}, {value:?}");
+            let mut doc = body_with(producer, reached);
+            let counts = doc
+                .try_replace_all_checked(&[("ACME", value, None)], CHECKED)
+                .unwrap()
+                .unwrap_or_else(|refusal| panic!("{producer} {value:?}: {refusal}"));
+            assert_eq!(counts, [2], "{producer} {value:?}");
+            assert_eq!(
+                paragraph_starting(&doc, "Call"),
+                "Call ACME\nInc. today, ACME\nInc.",
+                "{producer} {value:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_value_holding_a_break_or_a_tab_publishes_and_reads_back_as_written() {
     let paragraph =

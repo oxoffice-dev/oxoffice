@@ -284,7 +284,9 @@ requested output.
 
 A tab reads as a tab character and a line, page or column break as a line
 feed, as `text` prints them: a placeholder holding one matches it, and a value
-holding one writes a `w:tab` or a `w:br`. In a `--map` file write them `\t` and
+holding one writes a `w:tab` or a line break (a carriage return or a Windows
+line ending writes one line break too, and a page or column break matched and
+written back becomes a line break). In a `--map` file write them `\t` and
 `\n`; on a shell command line, pass the characters themselves (`$'a\tb'` in
 bash).
 

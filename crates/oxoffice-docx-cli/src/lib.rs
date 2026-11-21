@@ -222,8 +222,9 @@ enum Command {
     /// and, without --regex or --allow-unreached, unless no placeholder is
     /// left after its replacement, out of its reach. A tab reads as a tab
     /// character and a break as a line feed, as `text` prints them: a
-    /// placeholder holding one matches it, a value holding one writes it (in
-    /// --map JSON, "\t" and "\n").
+    /// placeholder holding one matches it, a value holding one writes it, a
+    /// carriage return writing a line break too (in --map JSON, "\t" and
+    /// "\n"); a page or column break written back becomes a line break.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,

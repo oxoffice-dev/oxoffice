@@ -215,13 +215,16 @@ impl Document {
                 .iter()
                 .map(|paragraph| (place(paragraph), paragraph))
                 .collect::<HashMap<_, _>>();
+            // Replacement writes a carriage return or a Windows line ending
+            // as one break, which reads back as a line feed.
+            let written = replacement.replace("\r\n", "\n").replace('\r', "\n");
             let mut left = 0;
             let mut paragraphs = Vec::new();
             for held in &before {
                 let Some(now) = after_by_place.get(&place(held)) else {
                     continue;
                 };
-                let unreached = left_behind(&held.text, &now.text, placeholder, replacement);
+                let unreached = left_behind(&held.text, &now.text, placeholder, &written);
                 if unreached > 0 {
                     left += unreached;
                     paragraphs.push((*now).clone());
