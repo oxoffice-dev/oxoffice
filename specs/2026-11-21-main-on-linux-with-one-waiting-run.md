@@ -47,13 +47,14 @@ What this gives up, and why it is enough:
   (two pull requests green apart, broken together) shows in the nightly
   run, at most a day later, and counts as a red `main`.
 - The three platforms of the pull request are checked by the merge step
-  only (loop step 6 of `docs/DEVELOPMENT.md`, and the standing rules of the
-  agents that merge): `main` requires no status check, so a merge with a
-  red or queued macOS or Windows build, a stacked pull request merged with
-  its Linux run only, or a direct push, is first built on those platforms
-  by the nightly run. The push run of `main` used to catch it on the merged
-  commit itself. Required checks need a check that documentation-only pull requests
-  report too; they come with the merge queue's `CI result`, postponed.
+  only (loop step 6 of `docs/DEVELOPMENT.md`): `main` requires no status
+  check, so a merge with a red or queued macOS or Windows build, a stacked
+  pull request merged with its Linux run only, or a direct push, is first
+  built on those platforms by the nightly run. The push run of `main` used
+  to catch it on the merged commit itself. A required check needs a job
+  that every pull request reports, documentation-only ones included (they
+  skip the build); such a summary job is planned with the merge queue,
+  postponed.
 - A re-run of an older run of `main` keeps its `push` event and joins
   `ci-main`, replacing the waiting run of a newer commit: re-run only the
   newest, and dispatch on a branch for an older commit.
