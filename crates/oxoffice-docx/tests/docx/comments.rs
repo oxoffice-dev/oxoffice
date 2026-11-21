@@ -1107,12 +1107,14 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
     for part in ["word/comments.xml", "word/document.xml"] {
         let xml = doc.part_xml(part).unwrap();
         marks += xml.matches("w:val=\"Marquedecommentaire\"").count();
-        for named in xml.split("Style w:val=\"").skip(1) {
-            let id = &named[..named.find('"').unwrap()];
-            assert!(
-                ids.iter().any(|known| known == id),
-                "{part} names the undefined style {id}"
-            );
+        for tag in ["<w:pStyle w:val=\"", "<w:rStyle w:val=\""] {
+            for named in xml.split(tag).skip(1) {
+                let id = &named[..named.find('"').unwrap()];
+                assert!(
+                    ids.iter().any(|known| known == id),
+                    "{part} names the undefined style {id}"
+                );
+            }
         }
     }
     assert!(
