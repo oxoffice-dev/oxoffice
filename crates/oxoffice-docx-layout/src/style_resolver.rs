@@ -1123,6 +1123,7 @@ pub(crate) fn format_number(n: u32, fmt: ST_NumberFormat) -> String {
         ST_NumberFormat::LowerRoman => to_roman(n, false),
         ST_NumberFormat::UpperLetter => to_letter(n, true),
         ST_NumberFormat::LowerLetter => to_letter(n, false),
+        ST_NumberFormat::Chicago => to_chicago(n),
         ST_NumberFormat::Bullet | ST_NumberFormat::None | ST_NumberFormat::Other(_) => {
             String::new()
         }
@@ -1133,10 +1134,11 @@ pub(crate) fn format_number(n: u32, fmt: ST_NumberFormat) -> String {
     }
 }
 
-fn number_format_has_visible_renderer(format: &ST_NumberFormat) -> bool {
+pub(crate) fn number_format_has_visible_renderer(format: &ST_NumberFormat) -> bool {
     matches!(
         format,
         ST_NumberFormat::Decimal
+            | ST_NumberFormat::Chicago
             | ST_NumberFormat::UpperRoman
             | ST_NumberFormat::LowerRoman
             | ST_NumberFormat::UpperLetter
@@ -1190,6 +1192,20 @@ fn to_letter(n: u32, upper: bool) -> String {
     let base = if upper { b'A' } else { b'a' };
     let letter = char::from(base + (position % 26) as u8);
     std::iter::repeat_n(letter, (position / 26 + 1) as usize).collect()
+}
+
+/// The Chicago Manual of Style marker of `n`, as Word writes it: `*`, `†`,
+/// `‡`, `§`, then each symbol doubled, tripled, and so on.
+fn to_chicago(n: u32) -> String {
+    /// The same guard as letters: past 30 repeats the sequence starts again.
+    const MAX_REPEATS: u32 = 30;
+    const SYMBOLS: [char; 4] = ['*', '\u{2020}', '\u{2021}', '\u{00a7}'];
+    if n == 0 {
+        return String::new();
+    }
+    let position = (n - 1) % (4 * MAX_REPEATS);
+    let symbol = SYMBOLS[(position % 4) as usize];
+    std::iter::repeat_n(symbol, (position / 4 + 1) as usize).collect()
 }
 
 /// Collect the style chain from the given style up through basedOn ancestors.
