@@ -1525,9 +1525,13 @@ fn remap_equivalent_owner_relationships(
                         && relationship_payload(original, original_owner, left) == right_payload
                 })
         else {
-            if right.rel_type == rel_types::HYPERLINK {
+            // A linked picture's image relationship is an address, carried
+            // as a hyperlink's is.
+            if right.rel_type == rel_types::HYPERLINK
+                || !crate::document::relationship_is_internal(right)
+            {
                 unmatched_links.push(right.clone());
-            } else if crate::document::relationship_is_internal(right) {
+            } else {
                 let target = OpcPackage::resolve_rel_target(edited_owner, &right.target);
                 let bytes = edited.package.get_part(&target).ok_or_else(|| {
                     Error::Other(format!("comparison image target is missing: {target}"))
@@ -1560,7 +1564,7 @@ fn remap_equivalent_owner_relationships(
         .map(|relationship| relationship.id.clone())
         .chain(remap.values().cloned())
         .collect::<HashSet<_>>();
-    // The redline allocates a carried hyperlink's id the way the original's
+    // The redline allocates a carried address's id the way the original's
     // relationships do, which is the id staging keeps when it reopens it.
     let mut allocator = original_relationships.clone();
     let mut carried = Vec::with_capacity(unmatched_links.len() + unmatched_images.len());
