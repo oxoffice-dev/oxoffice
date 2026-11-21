@@ -79,7 +79,8 @@ found four bugs (#340 to #343).
    `known_failure` in the corpus manifest and `tests/render/known.toml`
    (`tests/corpus/workflows-known.toml`: file, workflow, issue), so a fix
    flips the test until the line goes. Open issues a
-   workflow meets are listed below, so that their fixes come first.
+   workflow meets are listed below, so that their fixes come first within
+   their severity (label `priority: workflow`).
 4. **A migration note**, `docs/MIGRATING-FROM-RDOCX.md`, lists every name,
    flag, key, default and refusal that differs from rdocx 0.17.0 / rpptx
    0.15.0, with what to write instead. A Python test fails when a public name
@@ -192,12 +193,12 @@ unless named; PR numbers refer to the plan below.
   `table_cell` in `text` and `table-cell` in `revision list`; `story` is a
   string in `diff` and an object in `revision list`.
 - **Release**: 0.1.0 already ships wheels for linux-x86_64, linux-aarch64,
-  macOS arm64 and x86_64, Windows, and `SHA256SUMS`; the release that
-  carries this plan needs nothing new.
+  macOS arm64 and x86_64, Windows, and `SHA256SUMS`.
 
 ### Open issues a workflow meets
 
-Their fixes come first: #66, #156, #146, #30, #172, #5, #6, #82, #91,
+Their fixes come first within their severity (label `priority: workflow`):
+#66, #156, #146, #30, #172, #5, #6, #82, #91,
 #169, #144, #120, #68, #234, #235, and the new #340 to
 #343.
 
@@ -227,8 +228,9 @@ independent review on the local commit before the push.
 
 Order: 2 and 3 first (the switch needs them), then 4 to 10 in any order
 (they touch different modules), 11 and 12 with the Mac session, 13 after 12,
-14 last. Pull requests 4 to 10 touch modules OX-D2 also edits: a line to it
-before each.
+14 last. Pull requests 4 to 10 touch modules OX-D2 and OX-L also edit: a
+line to each before each. A bug a walk finds follows CLAUDE.md rule 10: one
+root cause, one issue, with its severity, area and a neutral "Seen with".
 
 **Families** (PR 11 and 12), neutral content in English with a short French
 twin, about 300 KB a copy:
