@@ -1,5 +1,6 @@
 maturin
 pytest
+pytest-xdist
 python-docx
 python-pptx
 pillow

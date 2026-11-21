@@ -194,6 +194,20 @@ entry and closes the issue.
   `main` only, against the Linux wheel of `build`
   ([tests/skills/README.md](../tests/skills/README.md)). A change that breaks
   one updates the skills too.
+- **Rust caches are saved by runs on `main` only** (pushes, the nightly run,
+  a dispatch on `main`); pull requests restore them and save nothing (one
+  push per pull request: its own cache would never be read again, and the
+  Actions cache holds 10 GB). A push to `main` builds on Linux only, so the
+  macOS and Windows caches are refreshed by the nightly run. After a runner
+  image change their key changes and pull requests build those platforms
+  from scratch, about 7 minutes more, until the next night: run
+  `gh workflow run ci.yml --ref main` to refresh them at once.
+- **Python tests run in parallel** in the build job (`pytest -n auto`,
+  pytest-xdist, one worker per CPU). A test writes only under `tmp_path`
+  (or `tmp_path_factory`). The scaling job stays sequential: its timings
+  need a quiet runner.
+- On macOS the build job sets `MACOSX_DEPLOYMENT_TARGET=11.0`, the value
+  maturin builds the wheel with, so that `cargo test` reuses that build.
 - Dependabot opens the monthly updates. Review them like any change: the
   maintainer, or the agent that merges them, answers the review's findings.
 
