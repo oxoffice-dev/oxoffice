@@ -392,6 +392,9 @@ impl Document {
             .0;
 
         let mut anchor = CT_Anchor::background(&rel_id, page_width_emu, page_height_emu);
+        // A full-page background is decoration: screen readers skip it and
+        // Word's accessibility checker asks no alt text of it.
+        anchor.decorative = true;
         anchor.doc_pr_id = candidate
             .identifiers
             .reserve_drawing_id()

@@ -1271,18 +1271,11 @@ impl Document {
     }
 
     fn numbering_level_for_style(&self, num_id: u32, style_id: Option<&str>) -> Option<u32> {
-        let definition = self.numbering.as_ref()?.get_abstract_num_for(num_id)?;
-        let mut style_id = style_id?;
-        for _ in 0..self.styles.styles.len() {
-            if let Some(level) = definition
-                .levels
-                .iter()
-                .find(|level| level.p_style.as_deref() == Some(style_id))
-            {
-                return Some(level.ilvl);
-            }
-            style_id = self.styles.get_by_id(style_id)?.based_on.as_deref()?;
-        }
-        None
+        super::numbering_types::numbering_level_for_style(
+            self.numbering.as_ref(),
+            &self.styles,
+            num_id,
+            style_id,
+        )
     }
 }

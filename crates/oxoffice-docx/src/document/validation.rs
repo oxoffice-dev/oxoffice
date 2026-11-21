@@ -1119,35 +1119,36 @@ fn validate_document_package(package: OpcPackage) -> Result<ValidationReport> {
 /// reference is resolved as `Document::validate_numbering_graph` resolves it:
 /// direct numbering, then the paragraph style's. `doc` was just opened, so its
 /// story parts are the bytes being validated. A part two relationships share
-/// is read once, and the glossary, which has its own numbering, is left out.
+/// is read once, the glossary resolves against its own numbering and styles,
+/// and the `mc:Fallback` copy of a text box is not read twice.
 fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
-    let numbering = doc.numbering.as_ref();
+    let glossary = doc.glossary_numbering()?;
     let mut warnings = Vec::new();
     let mut seen = HashSet::new();
     for part_name in doc.word_story_part_names() {
-        if part_name.starts_with("/word/glossary/") || !seen.insert(part_name_identity(&part_name))
-        {
+        if !seen.insert(part_name_identity(&part_name)) {
             continue;
         }
         let Some(xml) = doc
             .package
             .get_part(&part_name)
             .filter(|bytes| identifier_xml_is_well_formed(bytes))
+            .filter(|_| !glossary.skipped.contains(&part_name))
         else {
             continue;
         };
+        // A glossary resolves against its own numbering and styles.
+        let (numbering, styles) = if glossary.part_names.contains(&part_name) {
+            (glossary.numbering.as_ref(), &glossary.styles)
+        } else {
+            (doc.numbering.as_ref(), &*doc.styles)
+        };
         for direct in xml_paragraph_numbering_properties(xml)? {
-            let style_id = direct.style_id.as_deref().or_else(|| {
-                doc.styles
-                    .get_default(StyleType::Paragraph)
-                    .map(|style| style.style_id.as_str())
-            });
-            let mut effective = style::resolve_paragraph_properties(style_id, &doc.styles);
-            doc.apply_effective_numbering(&mut effective, Some(&direct), style_id);
-            let Some(num_id) = effective.num_id.filter(|num_id| *num_id != 0) else {
+            let Some((num_id, level)) =
+                super::numbering_types::effective_numbering_reference(numbering, styles, &direct)
+            else {
                 continue;
             };
-            let level = effective.num_ilvl.unwrap_or(0);
             let Some((numbering, instance)) = numbering.and_then(|numbering| {
                 numbering
                     .nums
@@ -1161,7 +1162,7 @@ fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
                 ));
                 continue;
             };
-            match definition_levels(numbering, &doc.styles, instance.abstract_num_id) {
+            match definition_levels(numbering, styles, instance.abstract_num_id) {
                 None => warnings.push(format!(
                     "a paragraph in {part_name} is numbered by numbering instance {num_id}, \
                      whose definition {} the document does not define: Word shows it \
