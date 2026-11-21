@@ -1174,10 +1174,7 @@ fn document_variables_keep_unicode_and_markup_characters() {
     assert_eq!(occurrences(&settings(&doc), "w:docVar"), 3);
 }
 
-// Fails today: settings values are written with a raw line feed or tab, which
-// every XML reader turns into a space (same class as #100). Issue: #180
 #[test]
-#[should_panic(expected = "came back changed after a save")]
 fn a_line_feed_or_a_tab_in_a_document_variable_or_a_merge_query_survives_a_save() {
     let mut doc = doc_with(&["Body"]);
     doc.set_document_variable("Address", "1 Main Street\nSpringfield\tUSA")
@@ -1784,8 +1781,9 @@ fn a_google_file_gains_properties_and_settings_and_keeps_its_own() {
     );
 }
 
-// Fails today: these setters take a character XML cannot carry, then every save
-// of the document fails with InvalidXmlCharacter. Issue: #181
+// Fails today: the property setters (custom, application, core) take a character
+// XML cannot carry, then every save of the document fails with
+// InvalidXmlCharacter; document variables refuse it already. Issue: #181
 #[test]
 #[should_panic(expected = "accepted a character XML cannot carry")]
 fn a_value_xml_cannot_carry_is_refused_and_the_document_still_saves() {
