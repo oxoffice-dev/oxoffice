@@ -1470,6 +1470,9 @@ fn slide_edits_on_a_powerpoint_deck_with_sections_keep_every_slide_in_its_sectio
         Section::new(SECTION_B, "Body", ids[1..].to_vec()).unwrap(),
     ])
     .unwrap();
+    // The section list is read back from the saved file, as a deck saved
+    // with sections by PowerPoint would be.
+    let mut prs = reopen(&prs);
     let title_only = layout_named(&prs, "Title Only");
 
     let copy = prs.duplicate_slide(0).unwrap().id();
@@ -1509,4 +1512,111 @@ fn slide_edits_on_decks_without_sections_add_none() {
         let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
         assert!(!xml.contains("sectionLst"), "{name}");
     }
+}
+
+/// Every slide sits in exactly one section, and the sections, read in
+/// order, list the slides in deck order.
+fn assert_sections_follow_slides(prs: &Presentation) {
+    let listed: Vec<u32> = prs
+        .sections()
+        .iter()
+        .flat_map(|section| section.slide_ids.clone())
+        .collect();
+    assert_eq!(listed, slide_ids(prs), "{:?}", sections(prs));
+}
+
+#[test]
+fn slides_added_to_a_deck_whose_sections_are_empty_join_the_first_one() {
+    let mut prs = deck_in_two_sections();
+    for _ in 0..4 {
+        prs.remove_slide(0).unwrap();
+    }
+    assert_eq!(
+        sections(&prs),
+        [("A".to_owned(), vec![]), ("B".to_owned(), vec![])]
+    );
+    let layout = layout_named(&prs, "Title Only");
+
+    prs.add_slide(layout).unwrap();
+    prs.add_slide(layout).unwrap();
+
+    let prs = reopen(&prs);
+    let ids = slide_ids(&prs);
+    assert_eq!(
+        sections(&prs),
+        [("A".to_owned(), ids.clone()), ("B".to_owned(), vec![])]
+    );
+}
+
+#[test]
+fn a_slide_moved_within_its_section_can_lead_it_or_end_it() {
+    let mut prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+
+    prs.move_slide(3, 2).unwrap();
+    prs.move_slide(1, 0).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(titles(&prs), ["A2", "A1", "B2", "B1"]);
+    assert_eq!(
+        sections(&prs),
+        [
+            ("A".to_owned(), vec![ids[1], ids[0]]),
+            ("B".to_owned(), vec![ids[3], ids[2]]),
+        ]
+    );
+}
+
+#[test]
+fn slides_imported_with_their_sections_keep_every_slide_in_one_section() {
+    let source = deck_in_two_sections();
+    let mut prs = reopen(&deck_in_two_sections());
+
+    prs.import_slides(
+        &source,
+        &[1, 2],
+        &ImportSlideOptions {
+            insert_index: Some(1),
+            keep_sections: true,
+            ..ImportSlideOptions::default()
+        },
+        &[],
+    )
+    .unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(titles(&prs), ["A1", "A2", "B1", "A2", "B1", "B2"]);
+    assert_sections_follow_slides(&prs);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn a_slide_moved_to_another_section_keeps_its_section_entry_data() {
+    let prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/ppt/presentation.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            &format!(r#"<p14:sldId id="{}"/>"#, ids[0]),
+            &format!(
+                r#"<p14:sldId id="{}" xmlns:x="urn:example:extra" x:keep="1"/>"#,
+                ids[0]
+            ),
+            1,
+        );
+    assert!(xml.contains("x:keep"), "the section entry was edited");
+    package.set_part("/ppt/presentation.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    prs.move_slide(0, 3).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(sections(&prs)[1].1.last(), Some(&ids[0]));
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
+    assert!(xml.contains(r#"x:keep="1""#), "{xml}");
 }

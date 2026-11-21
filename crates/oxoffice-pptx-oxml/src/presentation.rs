@@ -1601,17 +1601,30 @@ impl CT_Presentation {
     }
 
     /// Puts a slide, already at its place in the slide list, in the section
-    /// it lands in: the one of the slide before it, or of the slide after it
-    /// when it comes first. Within that section the slides keep deck order.
-    /// A deck without sections is left as it is.
+    /// it lands in. A slide that stays next to a slide of its own section
+    /// keeps it, so it can move to the start or end of its section; any
+    /// other slide joins the section of the slide before it, else of the
+    /// slide after it, else the first section when it comes first and the
+    /// last otherwise. Within a section the slides keep deck order, and a
+    /// moved slide takes its own `p14:sldId` data along. A deck without
+    /// sections is left as it is.
     pub fn place_slide_in_sections(&mut self, slide_id: u32) {
         if self.sections.is_empty() {
             return;
         }
-        self.remove_slide_from_sections(slide_id);
         let Some(position) = self.slide_ids.iter().position(|slide| slide.id == slide_id) else {
             return;
         };
+        let current = self
+            .sections
+            .iter()
+            .position(|section| section.slide_ids.contains(&slide_id));
+        let sidecar = current.and_then(|current| {
+            let sidecars = &mut self.sections[current].slide_id_sidecars;
+            let index = sidecars.iter().position(|sidecar| sidecar.id == slide_id)?;
+            Some(sidecars.remove(index))
+        });
+        self.remove_slide_from_sections(slide_id);
         let owner = |neighbour: Option<&CT_SlideId>| {
             neighbour.and_then(|neighbour| {
                 self.sections
@@ -1619,11 +1632,19 @@ impl CT_Presentation {
                     .position(|section| section.slide_ids.contains(&neighbour.id))
             })
         };
-        let before = position
-            .checked_sub(1)
-            .and_then(|before| self.slide_ids.get(before));
-        let Some(target) = owner(before).or_else(|| owner(self.slide_ids.get(position + 1))) else {
-            return;
+        let before = owner(
+            position
+                .checked_sub(1)
+                .and_then(|before| self.slide_ids.get(before)),
+        );
+        let after = owner(self.slide_ids.get(position + 1));
+        let target = match current {
+            Some(current) if before == Some(current) || after == Some(current) => current,
+            _ => before.or(after).unwrap_or(if position == 0 {
+                0
+            } else {
+                self.sections.len() - 1
+            }),
         };
         let order = self
             .slide_ids
@@ -1636,6 +1657,7 @@ impl CT_Presentation {
         section
             .slide_ids
             .sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
+        section.slide_id_sidecars.extend(sidecar);
         self.sections_dirty = true;
     }
 

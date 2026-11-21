@@ -10008,8 +10008,9 @@ impl Presentation {
 
     /// Moves one slide to an existing final zero-based index.
     ///
-    /// In a deck with sections, the slide joins the section it lands in: the
-    /// one of the slide before it, or of the slide after it when it is first.
+    /// In a deck with sections, a slide that lands next to a slide of its own
+    /// section stays in it, so it can lead or end that section; otherwise it
+    /// joins the section of the slide before it, else of the slide after it.
     pub fn move_slide(&mut self, from_index: usize, to_index: usize) -> Result<()> {
         let slide_count = self.slides.len();
         if from_index >= slide_count {
@@ -10310,8 +10311,8 @@ impl Presentation {
     /// `docProps/app.xml` counts the new slide and drops its title lists,
     /// which PowerPoint writes again on its next save.
     ///
-    /// In a deck with sections, the slide joins the section it lands in: the
-    /// one of the slide before it, or of the slide after it when it is first.
+    /// In a deck with sections, the slide joins the section of the slide
+    /// before it, else of the slide after it.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -12718,8 +12719,8 @@ impl Presentation {
     /// `docProps/app.xml` counts the new slide and drops its title lists,
     /// which PowerPoint writes again on its next save.
     ///
-    /// In a deck with sections, the slide joins the section it lands in: the
-    /// one of the slide before it, or of the slide after it when it is first.
+    /// In a deck with sections, the slide joins the section of the slide
+    /// before it, else of the slide after it.
     pub fn add_slide(&mut self, layout_index: usize) -> Result<SlideRef<'_>> {
         let layout = self
             .layouts
