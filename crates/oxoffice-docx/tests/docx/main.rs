@@ -12,6 +12,7 @@ mod fields_and_toc;
 mod lists;
 mod notes;
 mod paragraphs_and_styles;
+mod pdf;
 mod revisions_and_compare;
 mod save;
 mod sections_and_headers;
