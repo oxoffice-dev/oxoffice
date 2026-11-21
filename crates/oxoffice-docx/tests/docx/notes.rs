@@ -824,7 +824,7 @@ fn removing_a_custom_marked_note_in_a_deletion_removes_its_deleted_mark() {
 #[test]
 fn removing_custom_marked_notes_of_one_run_removes_each_mark() {
     // A symbol mark after `customMarkFollows="true"`, then a text mark after
-    // `"on"` and some whitespace, both in one run.
+    // `"on"`, some whitespace and a rendered page break, both in one run.
     let mut doc = doc_with(&["Marked"]);
     let first = doc
         .create_footnote_with_mark(&paragraph_at(&doc, 0), "First note", "*")
@@ -843,7 +843,7 @@ fn removing_custom_marked_notes_of_one_run_removes_each_mark() {
                 r#"<w:footnoteReference w:customMarkFollows="true" w:id="{}"/>"#,
                 r#"<w:sym w:font="Symbol" w:char="F0A7"/>"#,
                 r#"<w:footnoteReference w:customMarkFollows="on" w:id="{}"/> "#,
-                "<w:t>\u{2021}</w:t></w:r>{}"
+                "<w:lastRenderedPageBreak/><w:t>\u{2021}</w:t></w:r>{}"
             ),
             &xml[..from],
             first,

@@ -17187,8 +17187,9 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
             let event = event.into_owned();
             if custom_mark_follows {
                 // The custom mark is the text, deleted text or symbol that
-                // follows the reference in its run, as the run reader takes
-                // it: it goes with the note.
+                // follows the reference in its run, as Word reads it: it
+                // goes with the note. Whitespace, comments and a rendered
+                // page break between them are passed over.
                 if let Event::Start(reference) = &event {
                     let name = reference.name().as_ref().to_vec();
                     reader
@@ -17207,6 +17208,10 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                         })?;
                     match next {
                         Event::Text(text) if text.iter().all(u8::is_ascii_whitespace) => {}
+                        Event::Comment(_) | Event::PI(_) => {}
+                        Event::Empty(hint)
+                            if word_element(&namespace)
+                                && hint.local_name().as_ref() == b"lastRenderedPageBreak" => {}
                         Event::Start(mark)
                             if word_element(&namespace)
                                 && matches!(
