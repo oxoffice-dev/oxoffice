@@ -840,6 +840,18 @@ fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
         doc.try_add_numbered_list_item("New step", 0).unwrap();
 
         let doc = reopen(&mut doc);
+        // Each new item joins the list of the report's items of its kind, at their level.
+        let list_of = |prefix: &str| {
+            let paragraph = doc.paragraph(paragraph_starting(&doc, prefix)).unwrap();
+            let effective = doc.effective_paragraph_properties(&paragraph);
+            (effective.num_id, effective.num_ilvl.unwrap_or(0))
+        };
+        assert_eq!(
+            list_of("New point"),
+            list_of("Subscription revenue"),
+            "{name}"
+        );
+        assert_eq!(list_of("New step"), list_of("Hire two"), "{name}");
         let mut expected = report_list_lines(bullet);
         expected.extend([format!("{bullet} New point"), "4. New step".to_owned()]);
         assert_eq!(list_lines(&doc), expected, "{name}");

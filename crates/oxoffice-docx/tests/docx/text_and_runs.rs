@@ -274,23 +274,29 @@ fn tabs_and_breaks_read_back_in_place_as_items_and_text() {
 #[test]
 fn paragraph_text_setter_turns_tabs_and_line_feeds_into_tab_and_break_items() {
     let mut doc = doc_with(&["old"]);
-    doc.paragraph_mut(0)
-        .unwrap()
-        .set_text("a\tb\nc\r\nd")
-        .unwrap();
+    doc.paragraph_mut(0).unwrap().set_text("a\tb\nc").unwrap();
     let doc = reopen(&mut doc);
     let paragraph = doc.paragraph(0).unwrap();
     assert_eq!(paragraph.run_count(), 1);
-    let items = run_items(&paragraph, 0);
     assert_eq!(
-        items[..5],
+        run_items(&paragraph, 0),
         ["text:a", "tab", "text:b", "break:Line", "text:c"]
     );
-    assert!(
-        !items
-            .iter()
-            .any(|item| item.contains('\t') || item.contains('\n')),
-        "no control character left in a text item: {items:?}"
+}
+
+// Fails today: `\r` and `\n` each become a break, so a Windows line ending
+// gives two. Issue: #26
+#[test]
+#[should_panic(expected = "a Windows line ending is one break")]
+fn paragraph_text_setter_turns_a_windows_line_ending_into_one_break() {
+    let mut doc = doc_with(&["old"]);
+    doc.paragraph_mut(0).unwrap().set_text("c\r\nd").unwrap();
+    let doc = reopen(&mut doc);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        run_items(&paragraph, 0),
+        ["text:c", "break:Line", "text:d"],
+        "a Windows line ending is one break"
     );
 }
 
@@ -487,7 +493,7 @@ fn replacing_text_split_inside_multibyte_characters_across_runs() {
 }
 
 #[test]
-fn replace_all_applies_every_pair_in_one_pass() {
+fn replace_all_replaces_every_placeholder_of_the_batch() {
     let mut doc = doc_with(&["Dear {{name}}, your order {{order}} ships {{date}}."]);
     let pairs = HashMap::from([
         ("{{name}}", "Ada"),
@@ -497,6 +503,22 @@ fn replace_all_applies_every_pair_in_one_pass() {
     assert_eq!(doc.replace_all(&pairs), 3);
     let doc = reopen(&mut doc);
     assert_eq!(texts(&doc), ["Dear Ada, your order A-1 ships Friday."]);
+}
+
+// Fails today: the pairs are applied one after another, in the order of the
+// map, so pairs that overlap give a result that depends on that order.
+// Issue: #53
+#[test]
+#[should_panic(expected = "the pairs of a batch apply at once")]
+fn replace_all_swaps_two_words_whatever_the_order_of_its_pairs() {
+    let mut doc = doc_with(&["left right"]);
+    let pairs = HashMap::from([("left", "right"), ("right", "left")]);
+    let replaced = doc.replace_all(&pairs);
+    assert_eq!(
+        (replaced, texts(&doc)),
+        (2, vec!["right left".to_owned()]),
+        "the pairs of a batch apply at once"
+    );
 }
 
 #[test]
@@ -708,7 +730,7 @@ fn replacing_text_in_every_corpus_report_survives_a_save() {
         let found = doc.text().matches("Lyon").count();
         assert!(found > 0, "{name}: no Lyon in the body");
         let replaced = doc.replace_text("Lyon", "Lille");
-        assert!(replaced >= found, "{name}: {replaced} < {found}");
+        assert_eq!(replaced, found, "{name}");
         let doc = reopen(&mut doc);
         assert!(!doc.text().contains("Lyon"), "{name}");
         assert_eq!(doc.text().matches("Lille").count(), found, "{name}");

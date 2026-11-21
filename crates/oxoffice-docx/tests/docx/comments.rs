@@ -1099,6 +1099,18 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
         added.is_empty(),
         "styles added beside Word's comment styles: {added:?}"
     );
+    // And the new comment does not point at styles the file does not define.
+    let ids: Vec<String> = names(&doc).into_iter().map(|(id, _)| id).collect();
+    for (part, id) in [
+        ("word/comments.xml", "CommentText"),
+        ("word/document.xml", "CommentReference"),
+    ] {
+        let xml = doc.part_xml(part).unwrap();
+        assert!(
+            ids.iter().any(|known| known == id) || !xml.contains(&format!("w:val=\"{id}\"")),
+            "{part} names the undefined style {id}"
+        );
+    }
 }
 
 // Fails today: the comment styles a new document gets are named after their

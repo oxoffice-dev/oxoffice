@@ -607,8 +607,9 @@ fn replacing_text_around_a_reference_keeps_the_reference() {
         .create_footnote_at(&boundary(&doc, 0, 1), "between")
         .unwrap();
     assert_eq!(texts(&doc), ["alphabeta"]);
-    doc.replace_text("alphabeta", "gamma");
+    assert_eq!(doc.replace_text("alphabeta", "gamma"), 1);
     let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["gamma"]);
     assert_eq!(references(&doc, 0), [(Footnote, id)]);
     assert_eq!(doc.footnotes(), [(id, " between".to_owned())]);
 }

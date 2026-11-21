@@ -187,36 +187,54 @@ fn a_paragraph_is_copied_or_cut_and_pasted_with_its_formatting() {
         .alignment(Alignment::Center);
     heading.add_run("Key ").bold(true);
     heading.add_run("figures");
-    doc.add_paragraph("outro");
+    let mut outro = doc.add_paragraph("").alignment(Alignment::Right);
+    outro.add_run("Signed").italic(true);
 
+    // Copy the heading to the end, cut the outro and paste it at the top.
     let source = paragraph_location(&doc, 1);
     doc.clone_content(&source, &ContentLocation::end(body_story(&doc)))
         .unwrap();
+    let cut = doc.remove_content_at(&paragraph_location(&doc, 2)).unwrap();
+    doc.insert_content(&paragraph_location(&doc, 0), cut)
+        .unwrap();
+
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        ["Signed", "intro", "Key figures", "Key figures"]
+    );
+    for index in [2, 3] {
+        let paragraph = doc.paragraph(index).unwrap();
+        assert_eq!(paragraph.style_id(), Some("Heading2"), "paragraph {index}");
+        assert_eq!(
+            paragraph.alignment(),
+            Some(Alignment::Center),
+            "paragraph {index}"
+        );
+        let runs: Vec<(String, bool)> = paragraph
+            .runs()
+            .map(|run| (run.text(), run.is_bold()))
+            .collect();
+        assert_eq!(
+            runs,
+            [("Key ".to_owned(), true), ("figures".to_owned(), false)],
+            "paragraph {index}"
+        );
+    }
+    let pasted = doc.paragraph(0).unwrap();
+    assert_eq!(pasted.alignment(), Some(Alignment::Right));
+    assert_eq!(pasted.run(0).unwrap().italic_value(), Some(true));
+
     // The copy is a paragraph of its own: editing it leaves the original as it was.
     doc.paragraph_mut(3)
         .unwrap()
         .set_text("Copied figures")
         .unwrap();
-
-    // Cut the outro and paste it at the top.
-    let outro = doc.remove_content_at(&paragraph_location(&doc, 2)).unwrap();
-    doc.insert_content(&paragraph_location(&doc, 0), outro)
-        .unwrap();
-
-    let reopened = reopen(&mut doc);
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(2).unwrap().text(), "Key figures");
+    assert!(doc.paragraph(2).unwrap().run(0).unwrap().is_bold());
     assert_eq!(
-        texts(&reopened),
-        ["outro", "intro", "Key figures", "Copied figures"]
-    );
-    let original = reopened.paragraph(2).unwrap();
-    let copy = reopened.paragraph(3).unwrap();
-    for paragraph in [&original, &copy] {
-        assert_eq!(paragraph.style_id(), Some("Heading2"));
-        assert_eq!(paragraph.alignment(), Some(Alignment::Center));
-    }
-    assert!(original.run(0).unwrap().is_bold());
-    assert_eq!(
-        reopened.headings(),
+        doc.headings(),
         [
             (2, "Key figures".to_owned()),
             (2, "Copied figures".to_owned())
