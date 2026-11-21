@@ -2746,9 +2746,26 @@ impl<'a> XmlTree<'a> {
                 // into, so they go, which needs them to keep no content.
                 let mut before_table = false;
                 loop {
-                    let next = element.children.get(next_index).copied().ok_or_else(|| {
-                        Error::Other("cannot remove the final paragraph mark".to_owned())
-                    })?;
+                    // The end of the body after a table that stays: as before
+                    // a table, the paragraphs go, and the body ends with that
+                    // table, as it did before they were inserted or after
+                    // they were deleted.
+                    if element.children[next_index..]
+                        .iter()
+                        .all(|&next| !self.story_owner(next))
+                    {
+                        if element.word
+                            && element.local == "body"
+                            && self.kept_table_before(element, child_index, state)
+                        {
+                            before_table = true;
+                            break;
+                        }
+                        return Err(Error::Other(
+                            "cannot remove the final paragraph mark".to_owned(),
+                        ));
+                    }
+                    let next = element.children[next_index];
                     let next_element = &self.elements[next];
                     if self.semantic_element(next)
                         && next_element.word
@@ -3277,6 +3294,32 @@ impl<'a> XmlTree<'a> {
 
     /// Resolve paragraphs whose marks are removed before a table that stays,
     /// and which go. Nothing of them but proofing marks may remain.
+    /// A paragraph, table or block content control: an owner a story holds,
+    /// rather than its section properties or markup around owners.
+    fn story_owner(&self, index: usize) -> bool {
+        let element = &self.elements[index];
+        self.semantic_element(index)
+            && element.word
+            && matches!(element.local.as_str(), "p" | "tbl" | "sdt")
+    }
+
+    /// Whether the owner before child `position` of `parent` is a table that
+    /// this resolution keeps.
+    fn kept_table_before(
+        &self,
+        parent: &XmlElement,
+        position: usize,
+        state: &RenderState<'_>,
+    ) -> bool {
+        parent.children[..position]
+            .iter()
+            .rev()
+            .find(|&&child| self.story_owner(child))
+            .is_some_and(|&table| {
+                self.elements[table].local == "tbl" && !self.owned_rows_all_remove(table, state)
+            })
+    }
+
     fn validate_removed_paragraphs(
         &self,
         paragraphs: &[usize],

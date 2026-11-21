@@ -90,15 +90,6 @@
     "issue": 30
   },
   {
-    "id": "docx-compare-final-table",
-    "format": "docx",
-    "area": "compare",
-    "title": "Comparison refuses a paragraph added after a final table",
-    "symptom": "compare fails with \"needs an adjacent paragraph for a final paragraph change\" when the edited version adds a paragraph after a table that ends the body",
-    "workaround": "put a paragraph after the final table in both versions before comparing",
-    "issue": 32
-  },
-  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",

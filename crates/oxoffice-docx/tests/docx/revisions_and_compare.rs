@@ -847,11 +847,10 @@ fn a_redline_of_two_google_saved_reports_rejects_to_the_original() {
 
 // ---- Known failures ----
 
-// Fails today: a textless run whose properties are written `<w:rPr></w:rPr>`,
-// as LibreOffice writes its empty paragraphs, blocks any comparison of the
-// file. Issue: #32
+// A textless run whose properties are written `<w:rPr></w:rPr>`, as
+// LibreOffice writes its empty paragraphs, reads as the run the model writes
+// back.
 #[test]
-#[should_panic(expected = "comparison acceptance does not reproduce the edited stories")]
 fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
     let body = r#"<w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:rPr></w:rPr></w:r></w:p>"#;
     let mut edited = doc_with_body(body);
@@ -860,10 +859,7 @@ fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
     assert_eq!(texts(&accepted(&mut doc)), ["first", "", "added"]);
 }
 
-// Fails today: the LibreOffice copy of the corpus report refuses any edited
-// version, even one appended paragraph. Issue: #32
 #[test]
-#[should_panic(expected = "comparison acceptance does not reproduce the edited stories")]
 fn a_libreoffice_report_compares_with_an_edited_copy() {
     let original = texts(&corpus_doc("libreoffice/report.docx"));
     let mut edited = corpus_doc("libreoffice/report.docx");
@@ -875,10 +871,7 @@ fn a_libreoffice_report_compares_with_an_edited_copy() {
     assert_eq!(texts(&rejected(&mut doc)), original);
 }
 
-// Fails today: a paragraph appended after a table that ends the body is
-// refused. Issue: #32
 #[test]
-#[should_panic(expected = "comparison needs an adjacent paragraph for a final paragraph change")]
 fn a_paragraph_appended_after_a_final_table_is_compared() {
     let table_last = || {
         let mut doc = doc_with(&["intro"]);
@@ -890,6 +883,59 @@ fn a_paragraph_appended_after_a_final_table_is_compared() {
     let mut doc = redline(table_last(), &edited);
     assert_eq!(texts(&accepted(&mut doc)), ["intro", "after the table"]);
     assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn a_final_paragraph_deleted_after_a_table_is_compared() {
+    let table_last = |closing: Option<&str>| {
+        let mut doc = doc_with(&["intro"]);
+        doc.add_table(1, 1).cell(0, 0).unwrap().set_text("cell");
+        if let Some(text) = closing {
+            doc.add_paragraph(text);
+        }
+        doc
+    };
+    let mut doc = redline(table_last(Some("closing")), &table_last(None));
+    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["closing"]);
+    assert_eq!(texts(&accepted(&mut doc)), ["intro"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["intro", "closing"]);
+}
+
+#[test]
+fn two_paragraphs_appended_after_a_final_table_are_compared() {
+    let table_last = || {
+        let mut doc = doc_with(&["intro"]);
+        doc.add_table(1, 1).cell(0, 0).unwrap().set_text("cell");
+        doc
+    };
+    let mut edited = table_last();
+    edited.add_paragraph("one");
+    edited.add_paragraph("two");
+    let mut doc = redline(table_last(), &edited);
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Insertion),
+        ["one", "two"]
+    );
+    assert_eq!(texts(&accepted(&mut doc)), ["intro", "one", "two"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
+    // LibreOffice writes `<w:trPr></w:trPr>` and `<w:tcBorders></w:tcBorders>`;
+    // an edit through the model writes them back as nothing.
+    let body = concat!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:tcBorders></w:tcBorders></w:tcPr>"#,
+        r#"<w:p><w:r><w:rPr></w:rPr><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:r><w:t>after</w:t></w:r></w:p>"#,
+    );
+    let mut edited = doc_with_body(body);
+    edited.add_paragraph("added");
+    let mut doc = redline(doc_with_body(body), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["added"]);
+    assert_eq!(texts(&accepted(&mut doc)), ["after", "added"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["after"]);
 }
 
 // Fails today: a heading whose _Toc bookmark was renamed, as Word renames them

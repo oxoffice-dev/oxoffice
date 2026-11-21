@@ -9,7 +9,7 @@ use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
 use oxoffice_docx_oxml::namespace::W_NS;
 use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::shared::ST_PageOrientation;
-use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_TblPr, CT_Tc, CT_TrPr, CellContent};
+use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_TblPr, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::{
     CT_P, CT_R, CT_Text, CommentRangeMarker, RunContent, declare_w14_on_part_root,
 };
@@ -11073,6 +11073,7 @@ fn compare_body_impl(
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
     let mut trailing_merged = PropertySide::default();
+    let mut trailing_after_table = false;
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();
@@ -11206,10 +11207,11 @@ fn compare_body_impl(
                         diagnostics,
                     )?
                 };
-                output.push((
-                    EmittedOwner::of(original_content, edited_content, None, metadata)?,
-                    compared,
-                ));
+                let owner = match (original_content, edited_content) {
+                    (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
+                    _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
+                };
+                output.push((owner, compared));
             }
             (Some(left), None) => {
                 let content = &original.body.content[left];
@@ -11258,11 +11260,18 @@ fn compare_body_impl(
                     && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_delete_start == Some(position) {
-                        refuse_held_mark(previous_mark_position(&output, "del"))?;
-                        trailing_merged =
-                            mark_previous_paragraph(&mut output, "del", source_bindings, metadata)?;
+                        trailing_after_table = after_kept_table(&output, "del");
+                        if !trailing_after_table {
+                            refuse_held_mark(previous_mark_position(&output, "del"))?;
+                            trailing_merged = mark_previous_paragraph(
+                                &mut output,
+                                "del",
+                                source_bindings,
+                                metadata,
+                            )?;
+                        }
                     }
-                    if next_takes_mark {
+                    if next_takes_mark || trailing_after_table {
                         output.push((
                             EmittedOwner::of(content, content, Some("del"), metadata)?,
                             deleted_body_content(content, metadata)?,
@@ -11278,6 +11287,7 @@ fn compare_body_impl(
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
+                    && !after_kept_table(&output, "del")
                 {
                     refuse_held_mark(previous_mark_position(&output, "del"))?;
                     let merged =
@@ -11332,11 +11342,18 @@ fn compare_body_impl(
                     && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_insert_start == Some(position) {
-                        refuse_held_mark(previous_mark_position(&output, "ins"))?;
-                        trailing_merged =
-                            mark_previous_paragraph(&mut output, "ins", source_bindings, metadata)?;
+                        trailing_after_table = after_kept_table(&output, "ins");
+                        if !trailing_after_table {
+                            refuse_held_mark(previous_mark_position(&output, "ins"))?;
+                            trailing_merged = mark_previous_paragraph(
+                                &mut output,
+                                "ins",
+                                source_bindings,
+                                metadata,
+                            )?;
+                        }
                     }
-                    if next_takes_mark {
+                    if next_takes_mark || trailing_after_table {
                         output.push((
                             EmittedOwner::of(content, content, None, metadata)?,
                             inserted_body_content(content, metadata)?,
@@ -11352,6 +11369,7 @@ fn compare_body_impl(
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
+                    && !after_kept_table(&output, "ins")
                 {
                     refuse_held_mark(previous_mark_position(&output, "ins"))?;
                     let merged =
@@ -13109,6 +13127,11 @@ enum EmittedOwner<'a> {
     MarkedTable(&'static str),
     /// Source whitespace between owners, which every change crosses.
     Whitespace,
+    /// A table both versions hold, which both resolutions keep. A final
+    /// paragraph after it carries its own change: the resolution removing
+    /// its mark removes it, and the body ends with the table, as it did on
+    /// that side.
+    KeptTable,
     Other,
 }
 
@@ -13196,8 +13219,17 @@ fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> 
     output.iter().rposition(|(owner, _)| match owner {
         EmittedOwner::MarkedTable(marked) => *marked != kind,
         EmittedOwner::Whitespace => false,
-        EmittedOwner::Paragraph { .. } | EmittedOwner::Other => true,
+        EmittedOwner::Paragraph { .. } | EmittedOwner::KeptTable | EmittedOwner::Other => true,
     })
+}
+
+/// Whether the owner a final `kind` change would mark is a table both
+/// versions hold, so that the final paragraph carries its own change.
+fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str) -> bool {
+    matches!(
+        previous_mark_position(output, kind).map(|position| &output[position].0),
+        Some(EmittedOwner::KeptTable)
+    )
 }
 
 /// Mark the paragraph before a final inserted or deleted paragraph, and
@@ -14941,7 +14973,7 @@ fn align_words_between_shells(
             if let Some(kind) = class(&units[at]) {
                 while end < span.end
                     && class(&units[end]) == Some(kind)
-                    && units[end].run.properties == units[at].run.properties
+                    && run_formatting(&units[end].run) == run_formatting(&units[at].run)
                 {
                     end += 1;
                 }
@@ -15068,7 +15100,16 @@ fn unit_is_empty(unit: &AttributedRunUnit) -> bool {
     unit.run.content.is_empty()
         && semantic_run_raw(&unit.run).is_empty()
         && unit.run.alt_drawings.is_empty()
-        && unit.run.properties.is_none()
+        && run_formatting(&unit.run).is_none()
+}
+
+/// The properties of a run, none when empty: LibreOffice writes
+/// `<w:rPr></w:rPr>`, which the model writes back as nothing, and which
+/// carries no format.
+fn run_formatting(run: &CT_R) -> Option<&oxoffice_docx_oxml::properties::CT_RPr> {
+    run.properties
+        .as_ref()
+        .filter(|properties| **properties != oxoffice_docx_oxml::properties::CT_RPr::default())
 }
 
 fn granular_action(
@@ -15761,7 +15802,7 @@ fn grouped_text_alignment(
         |left: Option<usize>, right: Option<usize>, units: &[AttributedRunUnit]| {
             left.zip(right).is_none_or(|(left, right)| {
                 units[left].owner == units[right].owner
-                    || units[left].run.properties == units[right].run.properties
+                    || run_formatting(&units[left].run) == run_formatting(&units[right].run)
             })
         };
     let mut blocks = Vec::<Block>::new();
@@ -15773,7 +15814,7 @@ fn grouped_text_alignment(
         let (left_text, right_text) = (left_text.flatten(), right_text.flatten());
         let same_formatting = match (left, right) {
             (Some(i), Some(j)) => {
-                original_units[i].run.properties == edited_units[j].run.properties
+                run_formatting(&original_units[i].run) == run_formatting(&edited_units[j].run)
             }
             _ => true,
         };
@@ -16747,7 +16788,8 @@ fn compare_complex_paragraph(
             formatting_diagnostic(diagnostics, location.to_owned());
         }
         for (index, (left, right)) in original.runs.iter().zip(&edited.runs).enumerate() {
-            if !metadata.options.ignore_formatting && left.properties != right.properties {
+            if !metadata.options.ignore_formatting && run_formatting(left) != run_formatting(right)
+            {
                 formatting_diagnostic(diagnostics, format!("{location}/run[{index}]"));
             }
         }
@@ -17990,7 +18032,8 @@ fn compare_row(
                 "comparison cannot revise row boundary structures at {location}"
             )));
         }
-        if !metadata.options.ignore_formatting && row_formatting(original) != row_formatting(edited)
+        if !metadata.options.ignore_formatting
+            && row_formatting(original)? != row_formatting(edited)?
         {
             formatting_diagnostic(diagnostics, location.to_owned());
         }
@@ -18129,7 +18172,9 @@ fn compare_cell_from_xml(
                 "comparison cannot revise cell boundary structures at {location}"
             )));
         }
-        if !metadata.options.ignore_formatting && original.properties != edited.properties {
+        if !metadata.options.ignore_formatting
+            && cell_formatting(original)? != cell_formatting(edited)?
+        {
             formatting_diagnostic(diagnostics, location.to_owned());
         }
         if aligned_children {
@@ -19036,7 +19081,9 @@ fn compare_control_content(
                     diagnostics,
                 )
             } else if run_signature(left) == run_signature(right) {
-                if !metadata.options.ignore_formatting && left.properties != right.properties {
+                if !metadata.options.ignore_formatting
+                    && run_formatting(left) != run_formatting(right)
+                {
                     formatting_diagnostic(diagnostics, location.to_owned());
                 }
                 if left == right
@@ -22505,12 +22552,27 @@ fn paragraph_formatting(paragraph: &CT_P) -> Option<CT_PPr> {
     })
 }
 
-fn row_formatting(row: &CT_Row) -> Option<CT_TrPr> {
-    row.properties.clone().map(|mut properties| {
+/// Row properties as the model writes them, without their revision records.
+/// The writer leaves out an empty container, such as the `<w:trPr></w:trPr>`
+/// LibreOffice writes, so it reads as no properties.
+fn row_formatting(row: &CT_Row) -> Result<Vec<u8>> {
+    let mut writer = Writer::new(Vec::new());
+    if let Some(mut properties) = row.properties.clone() {
         properties.revision_markers.clear();
         properties.revision_xml.clear();
-        properties
-    })
+        properties.to_xml(&mut writer)?;
+    }
+    Ok(writer.into_inner())
+}
+
+/// Cell properties as the model writes them, which leaves out empty
+/// containers such as LibreOffice's `<w:tcBorders></w:tcBorders>`.
+fn cell_formatting(cell: &CT_Tc) -> Result<Vec<u8>> {
+    let mut writer = Writer::new(Vec::new());
+    if let Some(properties) = &cell.properties {
+        properties.to_xml(&mut writer)?;
+    }
+    Ok(writer.into_inner())
 }
 
 fn body_content_xml(content: &BodyContent) -> Result<String> {
