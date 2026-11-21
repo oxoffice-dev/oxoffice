@@ -241,7 +241,19 @@ fn a_table_in_a_comment_is_still_compared() {
             target,
         );
     }
-    let rows = comment_locations(&diff(&before, &after));
+    let diff = diff(&before, &after);
+    let rows = comment_locations(&diff);
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].0, "changed");
+    let row = diff["differences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["change"] == "changed")
+        .unwrap();
+    assert_eq!(row["story"], "table_cell");
+    assert_eq!(
+        (row["text_a"].as_str(), row["text_b"].as_str()),
+        (Some("Net 30"), Some("Net 45"))
+    );
 }
