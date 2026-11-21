@@ -214,15 +214,11 @@ merge variant).
   macOS or Windows build is red or still queued; such a break shows in the
   nightly run, up to a day later, under the merges that came after. Merge
   only once `gh pr checks` shows the three platforms green.
-- **`main` runs its latest commit.** A push to `main` cancels the run of
-  `main` in progress (concurrency group `ci-main`) and starts at once: lint,
-  WebAssembly and the Linux build answer in about 10 minutes, the scaling
-  and skill-examples jobs within about 30. In a burst of merges only the
-  last one gets a verdict, so a failure first seen on `main` may come from
-  an earlier commit: find it like a red nightly run, below. Re-run only the
-  newest run of `main`: a re-run keeps its push event, joins `ci-main` and
-  cancels the run of a newer commit. For an older commit, run
-  `workflow_dispatch` on a branch at that commit.
+- **Every push to `main` runs in full**, beside the runs of the pushes
+  before it: nothing waits and nothing is cancelled. Lint, WebAssembly and
+  the Linux build answer about 10 minutes after each merge, the scaling and
+  skill-examples jobs within about 30, so each commit of `main` has its own
+  verdict. Re-running a run of `main` touches no other run.
 - **A red nightly run is a red `main`.** Look at it with
   `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
   (or fixes it) the same day; a release waits for a green nightly run (see

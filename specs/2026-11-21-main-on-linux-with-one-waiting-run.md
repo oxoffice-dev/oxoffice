@@ -32,7 +32,8 @@ on Linux only, and `main` keeps one run waiting.
   progress always finishes, and a newer push replaces the waiting run
   (GitHub cancels a pending run when a newer one joins its group). A burst
   of merges builds the first commit and the last one; the last one carries
-  every change between them.
+  every change between them. (Changed the same day by the amendment below:
+  every push now runs in full.)
 - The nightly run and `workflow_dispatch` keep a group per event and commit,
   so they never wait behind a push run, never replace it, and are never
   replaced by it.
@@ -56,9 +57,9 @@ What this gives up, and why it is enough:
   skip the build); such a summary job is planned with the merge queue,
   postponed.
 - A re-run of an older run of `main` keeps its `push` event and joins
-  `ci-main`, replacing the waiting run of a newer commit (since the
-  amendment below, cancelling its running one): re-run only the newest, and
-  dispatch on a branch for an older commit.
+  `ci-main`, replacing the waiting run of a newer commit: re-run only the
+  newest, and dispatch on a branch for an older commit. (No longer since the
+  amendment below: each push run has a group of its own.)
 - rust-cache entries of `main` for macOS and Windows, which pull requests
   restore, are refreshed by the nightly run instead of each push.
 
@@ -78,22 +79,25 @@ nightly run, the larger runner limits and reviews before push.
   [CI and release from scratch](2026-11-20-ci-and-release.md), where `main`
   ran every job on the three platforms.
 
-## Amendment 2026-11-21: the latest commit first
+## Amendment 2026-11-21: every push in full
 
 By late morning the larger runner limits applied and the queue was empty,
 but `main` had a verdict 30 to 60 minutes after a merge: a run of `main`
-took about 27 to 30 minutes (Scaling 16 to 29, skill examples about 18 after
-the build), the next push waited behind it, and 26 of the last 30 runs of
-`main` were cancelled while they waited.
+took about 27 to 30 minutes (Scaling 16 to 29, skill examples 10 to 17
+after the build), the next push waited behind it, and 26 of the last 30
+runs of `main` were cancelled while they waited.
 
-The maintainer decided: the latest commit takes priority. Pushes to `main`
-keep the group `ci-main`, now with `cancel-in-progress`: a new merge cancels
-the run in progress and starts at once, so `main` always runs its latest
-commit and its lint, WebAssembly and Linux build answer about 10 minutes
-after it. In a burst of merges only the last commit gets a verdict, and the
-scaling and skill-examples jobs finish only when no merge comes for about
-30 minutes; the nightly run replays everything on three platforms. A re-run
-of an older run of `main` now cancels the run of a newer commit.
+Letting the newest push cancel the run in progress was considered and
+dropped: between 09:00 and 11:00 UTC, 44 merges left no gap longer than
+10 minutes, so no run of `main` would have finished during the day.
+
+The maintainer decided: every push to `main` runs in full. Pushes get a
+concurrency group per event and commit, like the nightly run: no run of
+`main` waits for another or cancels one, and each merge gets its verdict
+from lint, WebAssembly and the Linux build about 10 minutes after it, from
+the scaling and skill-examples jobs within about 30. A burst of merges runs
+two or three scaling jobs at once, on Linux runners, which cost nothing for
+a public repository and had no queue under the new limits.
 
 ## Links
 
