@@ -130,14 +130,19 @@ entry and closes the issue.
   compiled with hashes: `uv pip compile --universal --python-version 3.12
   --generate-hashes X.in -o X.txt`, installed with `pip install
   --require-hashes -r X.txt`.
-- Which pull requests run what: one that is ready and targets `main` builds
-  and tests on Linux, macOS and Windows and times the QUICK scaling sets on
-  Linux; a draft, or one stacked on another branch, runs lint, WebAssembly
-  and the Linux build only, and gets the full run once marked ready or
-  rebased onto `main`. `main` runs everything on the three platforms.
+- Which pull requests run what: one whose base is `main` and that is not a
+  draft builds and tests on Linux, macOS and Windows and times the QUICK
+  scaling sets on Linux, on each push, reopen or `ready_for_review`. A draft,
+  or one whose base is another branch, runs lint, WebAssembly and the Linux
+  build only. `main` and `workflow_dispatch` run everything on the three
+  platforms.
+- **A stacked pull request moved onto `main`** (GitHub does it when its base
+  merges) gets no new run from the move: push its rebase onto `main` first,
+  which a squash merge makes necessary anyway, and merge only once its run
+  shows the three platforms.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
-  the `ci` one, and runs the scaling tests: the QUICK sets on pull requests,
-  every call on `main`.
+  the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
+  pull requests into `main`, every call on the three platforms on `main`.
 - Dependabot opens the monthly updates. Review them like any change: the
   maintainer, or the agent that merges them, answers the review's findings.
 

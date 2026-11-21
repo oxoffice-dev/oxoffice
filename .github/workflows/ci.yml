@@ -3,10 +3,13 @@ name: CI
 # Every push to main, and every pull request that is ready and targets main,
 # builds and tests on Linux, macOS and Windows: a platform-only failure (paths,
 # line endings) shows before the merge. The jobs run in parallel, so Windows,
-# the slowest, bounds the wait. A draft, or a pull request stacked on another
-# branch, runs lint, WebAssembly and Linux only; it gets the full run once it
-# is marked ready or rebased onto main. See
-# specs/2026-11-21-lighter-ci-on-pull-requests.md.
+# the slowest, bounds the wait. A draft, or a pull request whose base is
+# another branch, runs lint, WebAssembly and Linux only. The full run needs
+# both a base of main and a ready pull request, on a push, a reopen or
+# ready_for_review: a stacked pull request that GitHub moves onto main after
+# its base merges gets no run until its rebase onto main is pushed (squash
+# merges make that rebase necessary anyway). workflow_dispatch runs
+# everything. See specs/2026-11-21-lighter-ci-on-pull-requests.md.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
