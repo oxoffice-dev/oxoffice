@@ -318,11 +318,12 @@ fn emit_paragraph(
                     .position(|&(current, _, _)| current == level)
             })
     } else if heading_level.is_none() && list_info.is_none() {
-        // A paragraph on a `none` level goes on the item it follows.
-        crate::unmarked_list_level(para, styles, numbering).and_then(|level| {
+        // A paragraph on a `none` level goes on the open item of its list at
+        // its level or above.
+        crate::unmarked_list_level(para, styles, numbering).and_then(|(num_id, level)| {
             list_levels
                 .iter()
-                .rposition(|&(current, _, _)| current <= level)
+                .rposition(|&(current, _, id)| id == num_id && current <= level)
         })
     } else {
         None

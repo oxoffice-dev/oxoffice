@@ -1172,6 +1172,18 @@ impl<'a> OdtWriter<'a> {
             .is_some_and(|format| matches!(format, ST_NumberFormat::Other(_)))
     }
 
+    /// The number a list level starts at, as layout counts it: the
+    /// definition's start, which a swapped-in level does not change.
+    fn definition_list_start(&self, num_id: u32, level: u32) -> u32 {
+        self.document
+            .numbering
+            .as_ref()
+            .and_then(|numbering| numbering.get_abstract_num_for(num_id))
+            .and_then(|definition| definition.levels.iter().find(|item| item.ilvl == level))
+            .and_then(|definition| definition.start)
+            .unwrap_or(1)
+    }
+
     /// The definition's level, or the level the instance swaps in for it, as
     /// layout draws it.
     fn effective_list_level(&self, num_id: u32, level: u32) -> Option<&CT_Lvl> {
@@ -1333,7 +1345,7 @@ impl<'a> OdtWriter<'a> {
             (false, false, false, false, false, false, false),
             |definition| {
                 (
-                    definition.start.is_some_and(|start| start != 1),
+                    self.definition_list_start(num_id, level) != 1,
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),
@@ -1726,7 +1738,7 @@ impl<'a> OdtWriter<'a> {
                             format,
                             Some(ST_NumberFormat::Bullet | ST_NumberFormat::Decimal)
                         ),
-                    definition.start.unwrap_or(1),
+                    self.definition_list_start(num_id, level),
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),

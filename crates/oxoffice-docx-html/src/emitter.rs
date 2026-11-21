@@ -26,6 +26,9 @@ pub(crate) fn emit_body(
 ) -> String {
     let mut out = String::new();
     let mut list_stack: Vec<ListState> = Vec::new();
+    // The list and level of the item just written, while its `</li>` ends
+    // the output.
+    let mut last_item: Option<(u32, u32)> = None;
 
     for block in body_blocks(body, false) {
         match block {
@@ -38,16 +41,21 @@ pub(crate) fn emit_body(
                         || crate::has_own_numbering(&p)
                 });
 
-                // A paragraph on a `none` level goes on the item it follows,
-                // and the list stays open around it.
+                // A paragraph on a `none` level goes on the item before it
+                // when that item is on its list at its level or above, and
+                // the list stays open around it.
                 let unmarked = list_info.is_none()
                     && detect_heading_level(p.properties.as_ref(), styles).is_none()
-                    && crate::unmarked_list_level(&p, styles, numbering).is_some()
+                    && crate::unmarked_list_level(&p, styles, numbering).is_some_and(
+                        |(num_id, level)| {
+                            last_item.is_some_and(|(id, item)| id == num_id && item <= level)
+                        },
+                    )
                     && out.ends_with("</li>\n");
 
                 // Close lists that are no longer active
                 while !unmarked && let Some(top) = list_stack.last() {
-                    if let Some((_, level)) = &list_info {
+                    if let Some((_, level, _)) = &list_info {
                         if *level <= top.level && top.level > 0 {
                             close_list(&mut out, &mut list_stack);
                         } else {
@@ -63,7 +71,7 @@ pub(crate) fn emit_body(
                     out.push_str("<p>");
                     emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
                     out.push_str("</p></li>\n");
-                } else if let Some((is_ordered, level)) = list_info {
+                } else if let Some((is_ordered, level, num_id)) = list_info {
                     // Open new list levels if needed
                     let current_depth = list_stack.len() as u32;
                     if current_depth <= level {
@@ -79,6 +87,7 @@ pub(crate) fn emit_body(
                     out.push_str("<li>");
                     emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
                     out.push_str("</li>\n");
+                    last_item = Some((num_id, level));
                 } else {
                     // Close all remaining lists
                     while !list_stack.is_empty() {
@@ -153,13 +162,14 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
     None
 }
 
-/// Detect if a paragraph is a list item, through its style too.
+/// Detect if a paragraph is a list item, through its style too. Returns
+/// (is_ordered, ilvl, num_id).
 fn detect_list(
     para: &CT_P,
     styles: &CT_Styles,
     numbering: Option<&CT_Numbering>,
-) -> Option<(bool, u32)> {
-    let (_, ilvl, level, _) = crate::list_level(para, styles, numbering?)?;
+) -> Option<(bool, u32, u32)> {
+    let (num_id, ilvl, level, _) = crate::list_level(para, styles, numbering?)?;
 
     use oxoffice_docx_oxml::numbering::ST_NumberFormat;
     let is_ordered = match level.num_fmt.as_ref() {
@@ -177,7 +187,7 @@ fn detect_list(
         Some(_) => return None,
     };
 
-    Some((is_ordered, ilvl))
+    Some((is_ordered, ilvl, num_id))
 }
 
 /// Emit a complete paragraph element.

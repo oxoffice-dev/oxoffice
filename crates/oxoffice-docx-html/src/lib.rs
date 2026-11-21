@@ -197,17 +197,18 @@ fn list_level<'a>(
     Some((num_id, ilvl, level, start))
 }
 
-/// The level of a paragraph on a list level that draws no marker (`none`),
-/// as contracts write unnumbered sub-paragraphs. Layout keeps counting the
-/// list around it, so an export keeps the list open and shows it as a
-/// paragraph of the item before it.
+/// The instance and level of a paragraph on a list level that draws no
+/// marker (`none`), as contracts write unnumbered sub-paragraphs. Layout
+/// keeps counting the list around it, so an export keeps that list open and
+/// shows the paragraph as part of the item before it, when that item is on
+/// the same list at its level or above.
 fn unmarked_list_level(
     paragraph: &CT_P,
     styles: &CT_Styles,
     numbering: Option<&CT_Numbering>,
-) -> Option<u32> {
-    let (_, ilvl, level, _) = list_level(paragraph, styles, numbering?)?;
-    (level.num_fmt == Some(ST_NumberFormat::None)).then_some(ilvl)
+) -> Option<(u32, u32)> {
+    let (num_id, ilvl, level, _) = list_level(paragraph, styles, numbering?)?;
+    (level.num_fmt == Some(ST_NumberFormat::None)).then_some((num_id, ilvl))
 }
 
 /// Whether the paragraph sets a numbering id itself, not through its style.

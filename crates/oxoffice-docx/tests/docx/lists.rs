@@ -1064,6 +1064,54 @@ fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
 }
 
 #[test]
+fn exports_close_a_list_before_an_unmarked_paragraph_of_another_list() {
+    // A body style linked to a `none` level of another list only borrows its
+    // indent: layout draws it outside the bullet list before it.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let indents = doc
+        .add_numbering_definition(&[ListLevel::new(ListNumberFormat::None)])
+        .unwrap();
+    let indents = doc.add_numbering_instance(indents, &[]).unwrap();
+    add_items(&mut doc, bullets, &[0]);
+    doc.add_paragraph("indented body").numbering(indents, 0);
+    assert_eq!(markers(&doc), ["•", ""]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.lines().any(|line| line == "indented body"),
+        "a plain paragraph after the list:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("</ul>\n<p>indented body</p>"), "{html}");
+}
+
+#[test]
+fn odt_export_reports_a_definition_start_a_swapped_in_level_does_not_change() {
+    // Layout counts from the definition's start, 3, whatever the swapped-in
+    // level says; ODT resets it, and says so.
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal().start(1))],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    assert_eq!(markers(&doc), ["3."]);
+    let odt = doc.to_odt_bytes().unwrap();
+    assert!(
+        odt.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("custom list start value")),
+        "{:?}",
+        odt.diagnostics
+            .iter()
+            .map(|diagnostic| &diagnostic.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn markdown_starts_a_swapped_in_level_where_layout_does() {
     let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
     let swapped = doc
