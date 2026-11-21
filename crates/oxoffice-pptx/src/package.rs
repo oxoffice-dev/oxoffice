@@ -445,6 +445,9 @@ impl Presentation {
                 );
             }
         }
+        // Whether a slide, its notes or the slide list changed, which makes
+        // app.xml's counts and title lists stale.
+        let mut slides_changed = presentation_changed;
         for record in &self.slides {
             // A record parsed from the bytes its parts still hold is unchanged
             // without parsing them again.
@@ -461,6 +464,7 @@ impl Presentation {
                     .as_ref()
                     != Some(&record.slide)
             };
+            slides_changed |= slide_changed;
             if !preserve_unchanged_modelled_parts || slide_changed {
                 package.set_part(
                     &record.part_name,
@@ -481,6 +485,7 @@ impl Presentation {
                         .as_ref()
                         != Some(&notes.notes)
                 };
+                slides_changed |= notes_changed;
                 if !preserve_unchanged_modelled_parts || notes_changed {
                     package.set_part(
                         &notes.part_name,
@@ -506,6 +511,13 @@ impl Presentation {
                     .content_types
                     .add_override(&comments.part_name, content_types::POWERPOINT_COMMENTS);
             }
+        }
+        // PowerPoint rewrites app.xml on every save; a save after a slide edit
+        // refreshes the counts and drops what oxoffice does not recount.
+        if slides_changed
+            && let Some((part, xml, _)) = self.refreshed_application_properties(true, true)?
+        {
+            package.set_part(&part, xml);
         }
         Ok(package)
     }
