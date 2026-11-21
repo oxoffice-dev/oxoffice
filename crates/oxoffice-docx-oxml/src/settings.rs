@@ -1575,6 +1575,12 @@ impl CT_Settings {
     }
 
     pub fn set_document_variable(&mut self, name: String, value: String) -> Result<()> {
+        // Refuse what the group cannot be written with before anything
+        // changes: a new document writes the group only at save.
+        write_document_variables(&[DocumentVariable {
+            name: name.clone(),
+            value: value.clone(),
+        }])?;
         if let Some(index) = self
             .document_variables
             .iter()
@@ -1619,6 +1625,8 @@ impl CT_Settings {
     }
 
     pub fn set_compatibility_setting(&mut self, setting: CompatibilitySetting) -> Result<()> {
+        // As for a document variable: refuse before anything changes.
+        write_compatibility_settings(std::slice::from_ref(&setting))?;
         if let Some(index) = self
             .compatibility_settings
             .iter()
@@ -2038,6 +2046,9 @@ impl CT_Settings {
 
     /// Replace the single schema-positioned OfficeMath defaults subtree.
     pub fn set_math_properties(&mut self, properties: MathProperties) -> Result<()> {
+        if let Some(font) = &properties.math_font {
+            oxoffice_core::xml::reject_non_xml_characters("m:mathFont m:val", font)?;
+        }
         if let Some(source) = &self.source_xml {
             self.source_xml = Some(rewrite_math_properties(source, Some(&properties))?);
         }
@@ -2974,10 +2985,20 @@ fn parse_compatibility_setting(
     })
 }
 
+/// Pushes the string attribute `key="value"` so that every XML reader reads it
+/// back as written, tabs and line breaks included, after refusing a character
+/// XML 1.0 cannot carry, which would make every later save fail.
+fn push_string_attribute(element: &mut BytesStart<'_>, key: &str, value: &str) -> Result<()> {
+    let what = format!("{} {key}", String::from_utf8_lossy(element.name().as_ref()));
+    oxoffice_core::xml::reject_non_xml_characters(&what, value)?;
+    oxoffice_core::xml::push_escaped_attribute(element, key, value);
+    Ok(())
+}
+
 pub(crate) fn write_valued_setting(name: &str, value: &str) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     let mut element = BytesStart::new(name);
-    element.push_attribute(("w:val", value));
+    push_string_attribute(&mut element, "w:val", value)?;
     writer.write_event(Event::Empty(element))?;
     Ok(writer.into_inner())
 }
@@ -3013,13 +3034,13 @@ fn write_theme_font_language(language: &ThemeFontLanguage) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     let mut element = BytesStart::new("w:themeFontLang");
     if let Some(value) = &language.latin {
-        element.push_attribute(("w:val", value.as_str()));
+        push_string_attribute(&mut element, "w:val", value)?;
     }
     if let Some(value) = &language.east_asia {
-        element.push_attribute(("w:eastAsia", value.as_str()));
+        push_string_attribute(&mut element, "w:eastAsia", value)?;
     }
     if let Some(value) = &language.bidi {
-        element.push_attribute(("w:bidi", value.as_str()));
+        push_string_attribute(&mut element, "w:bidi", value)?;
     }
     writer.write_event(Event::Empty(element))?;
     Ok(writer.into_inner())
@@ -3028,9 +3049,12 @@ fn write_theme_font_language(language: &ThemeFontLanguage) -> Result<Vec<u8>> {
 fn write_document_variables(variables: &[DocumentVariable]) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     for variable in variables {
+        let what = format!("document variable {:?}", variable.name);
+        oxoffice_core::xml::reject_non_xml_characters("a document variable name", &variable.name)?;
+        oxoffice_core::xml::reject_non_xml_characters(&what, &variable.value)?;
         let mut element = BytesStart::new("w:docVar");
-        element.push_attribute(("w:name", variable.name.as_str()));
-        element.push_attribute(("w:val", variable.value.as_str()));
+        push_string_attribute(&mut element, "w:name", &variable.name)?;
+        push_string_attribute(&mut element, "w:val", &variable.value)?;
         writer.write_event(Event::Empty(element))?;
     }
     Ok(writer.into_inner())
@@ -3039,10 +3063,14 @@ fn write_document_variables(variables: &[DocumentVariable]) -> Result<Vec<u8>> {
 fn write_compatibility_settings(settings: &[CompatibilitySetting]) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     for setting in settings {
+        let what = format!("compatibility setting {:?} ({})", setting.name, setting.uri);
+        for value in [&setting.name, &setting.uri, &setting.value] {
+            oxoffice_core::xml::reject_non_xml_characters(&what, value)?;
+        }
         let mut element = BytesStart::new("w:compatSetting");
-        element.push_attribute(("w:name", setting.name.as_str()));
-        element.push_attribute(("w:uri", setting.uri.as_str()));
-        element.push_attribute(("w:val", setting.value.as_str()));
+        push_string_attribute(&mut element, "w:name", &setting.name)?;
+        push_string_attribute(&mut element, "w:uri", &setting.uri)?;
+        push_string_attribute(&mut element, "w:val", &setting.value)?;
         writer.write_event(Event::Empty(element))?;
     }
     Ok(writer.into_inner())
@@ -3721,10 +3749,10 @@ fn write_document_protection(protection: &DocumentProtection) -> Result<Vec<u8>>
         element.push_attribute(("w:cryptSpinCount", value.as_str()));
     }
     if let Some(value) = &protection.hash {
-        element.push_attribute(("w:hash", value.as_str()));
+        push_string_attribute(&mut element, "w:hash", value)?;
     }
     if let Some(value) = &protection.salt {
-        element.push_attribute(("w:salt", value.as_str()));
+        push_string_attribute(&mut element, "w:salt", value)?;
     }
     writer.write_event(Event::Empty(element))?;
     Ok(writer.into_inner())
