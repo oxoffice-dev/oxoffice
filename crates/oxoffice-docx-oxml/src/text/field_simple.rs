@@ -1241,11 +1241,22 @@ fn simple_result_run_display(raw: &[u8], word_prefixes: &[String]) -> Result<Opt
                         BreakType::Column => '\u{000b}',
                     };
                     display.get_or_insert_default().push(marker);
-                } else if matches!(
-                    parse_typed_special_run_child(&element, &prefixes)?,
-                    Some(SpecialRunValue::Character(SpecialCharacter::CarriageReturn))
-                ) {
-                    display.get_or_insert_default().push('\n');
+                } else if let Some(SpecialRunValue::Character(character)) =
+                    parse_typed_special_run_child(&element, &prefixes)?
+                {
+                    // As `CT_R::content_text` reads them.
+                    match character {
+                        SpecialCharacter::CarriageReturn => {
+                            display.get_or_insert_default().push('\n')
+                        }
+                        SpecialCharacter::NoBreakHyphen => {
+                            display.get_or_insert_default().push('-')
+                        }
+                        SpecialCharacter::PositionalTab { .. } => {
+                            display.get_or_insert_default().push('\t')
+                        }
+                        SpecialCharacter::SoftHyphen => {}
+                    }
                 }
             }
             Event::End(end) if matches_local_name(end.name().as_ref(), b"r") => {

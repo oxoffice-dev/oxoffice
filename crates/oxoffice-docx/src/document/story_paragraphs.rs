@@ -208,8 +208,9 @@ impl Document {
 /// The style a paragraph names in its own properties (`w:pPr/w:pStyle`)
 /// and the text a reader sees in it, in one pass over the paragraph.
 ///
-/// Text is the content of `w:t`, with `w:tab` as a tab and `w:br` and
-/// `w:cr` as a line break, as `Paragraph::text` reads them, and the base of a
+/// Text is the content of `w:t`, with `w:tab` and `w:ptab` as a tab, `w:br`
+/// and `w:cr` as a line break and `w:noBreakHyphen` as a hyphen, as
+/// `Paragraph::text` reads them, and the base of a
 /// ruby, which `Paragraph::text` also reads when the ruby is a child of the
 /// paragraph, but leaves out with its guide when Word writes it in a run.
 /// Left out: tracked
@@ -281,8 +282,9 @@ fn read_paragraph(
                     field_char(&reader, &element, &mut fields)?;
                 } else if visible && word {
                     match local {
-                        b"tab" => text.push('\t'),
+                        b"tab" | b"ptab" => text.push('\t'),
                         b"br" | b"cr" => text.push('\n'),
+                        b"noBreakHyphen" => text.push('-'),
                         _ => {}
                     }
                 }

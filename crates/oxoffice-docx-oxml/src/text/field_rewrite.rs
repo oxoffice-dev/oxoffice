@@ -1005,8 +1005,7 @@ pub(super) fn update_simple_field_source<'a>(
                 } else if cached_changed
                     && depth == 2
                     && parent_is_word_run
-                    && (is_word_element(element.name().as_ref(), b"tab", &prefixes)
-                        || is_word_element(element.name().as_ref(), b"br", &prefixes))
+                    && is_result_character(element.name().as_ref(), &prefixes)
                 {
                     reader.read_to_end(element.name())?;
                     if !wrote_result {
@@ -1060,8 +1059,7 @@ pub(super) fn update_simple_field_source<'a>(
                 } else if cached_changed
                     && depth == 2
                     && contexts.last().is_some_and(|context| context.word_run)
-                    && (is_word_element(element.name().as_ref(), b"tab", &prefixes)
-                        || is_word_element(element.name().as_ref(), b"br", &prefixes))
+                    && is_result_character(element.name().as_ref(), &prefixes)
                 {
                     if !wrote_result {
                         write_field_result_content_with_binding(
@@ -1880,14 +1878,12 @@ pub(super) fn update_complex_field_source(
                     && cached_changed
                     && ((outer_result
                         && field_depth == 1
-                        && (is_word_element(element.name().as_ref(), b"tab", &prefixes)
-                            || is_word_element(element.name().as_ref(), b"br", &prefixes)))
+                        && is_result_character(element.name().as_ref(), &prefixes))
                         || outer_result
                             && field_depth > 1
                             && (is_word_element(element.name().as_ref(), b"instrText", &prefixes)
                                 || is_word_element(element.name().as_ref(), b"t", &prefixes)
-                                || is_word_element(element.name().as_ref(), b"tab", &prefixes)
-                                || is_word_element(element.name().as_ref(), b"br", &prefixes)))
+                                || is_result_character(element.name().as_ref(), &prefixes)))
                 {
                     reader.read_to_end(element.name())?;
                     if outer_result && field_depth == 1 && !wrote_result {
@@ -2041,14 +2037,12 @@ pub(super) fn update_complex_field_source(
                     && cached_changed
                     && ((outer_result
                         && field_depth == 1
-                        && (is_word_element(element.name().as_ref(), b"tab", &prefixes)
-                            || is_word_element(element.name().as_ref(), b"br", &prefixes)))
+                        && is_result_character(element.name().as_ref(), &prefixes))
                         || outer_result
                             && field_depth > 1
                             && (is_word_element(element.name().as_ref(), b"instrText", &prefixes)
                                 || is_word_element(element.name().as_ref(), b"t", &prefixes)
-                                || is_word_element(element.name().as_ref(), b"tab", &prefixes)
-                                || is_word_element(element.name().as_ref(), b"br", &prefixes)))
+                                || is_result_character(element.name().as_ref(), &prefixes)))
                 {
                     if outer_result && field_depth == 1 && !wrote_result {
                         write_field_result_content_with_binding(
@@ -2605,4 +2599,13 @@ pub(super) fn write_field_lock_update<W: std::io::Write>(
         work,
         mapped.as_ref(),
     )
+}
+
+/// A run child a field's cached result reads as a character besides `w:t`,
+/// as `CT_R::content_text` does: it goes with the old result when the cache
+/// changes.
+fn is_result_character(name: &[u8], prefixes: &[String]) -> bool {
+    [b"tab".as_slice(), b"ptab", b"br", b"cr", b"noBreakHyphen"]
+        .iter()
+        .any(|local| is_word_element(name, local, prefixes))
 }

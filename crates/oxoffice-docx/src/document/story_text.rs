@@ -881,8 +881,9 @@ fn story_run_child(stack: &[XmlElementFrame]) -> bool {
 }
 
 /// The text a visible Word element adds when it is run content other than
-/// `w:t`: a tab for `w:tab`, and a break for `w:br` or `w:cr`, as read
-/// outside and inside a field result. A field item reads inside its field.
+/// `w:t`: a tab for `w:tab` or `w:ptab`, a hyphen for `w:noBreakHyphen`, and
+/// a break for `w:br` or `w:cr`, as read outside and inside a field result.
+/// A field item reads inside its field.
 fn story_run_character(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
@@ -893,7 +894,8 @@ fn story_run_character(
         return Ok(None);
     }
     let (plain, in_result) = match element.local_name().as_ref() {
-        b"tab" => (Some('\t'), Some('\t')),
+        b"tab" | b"ptab" => (Some('\t'), Some('\t')),
+        b"noBreakHyphen" => (Some('-'), Some('-')),
         b"br" | b"cr" => (
             story_break_text(reader, element, false)?,
             story_break_text(reader, element, true)?,
@@ -994,7 +996,8 @@ pub(super) fn replace_story_item_text(
     let mut root_end = None;
     let mut root_is_empty = false;
     let mut texts: Vec<StoryTextElement> = Vec::new();
-    // Visible run tabs and breaks, which the new text replaces as well.
+    // Visible run tabs, non-breaking hyphens and breaks, which the new text
+    // replaces as well.
     let mut removed: Vec<(StoryFieldContext, Range<usize>)> = Vec::new();
     let mut removed_start = None;
     let mut fields = StoryFieldTracker::default();
@@ -1099,7 +1102,10 @@ pub(super) fn replace_story_item_text(
                     && nested_owner_depth == 0
                     && is_word_namespace
                     && story_run_child(&element_stack)
-                    && matches!(local_name.as_ref(), b"tab" | b"br" | b"cr")
+                    && matches!(
+                        local_name.as_ref(),
+                        b"tab" | b"ptab" | b"noBreakHyphen" | b"br" | b"cr"
+                    )
                 {
                     removed_start = Some((element_stack.len(), before, fields.context()));
                 }
@@ -1190,7 +1196,10 @@ pub(super) fn replace_story_item_text(
                     && nested_owner_depth == 0
                     && is_word_namespace
                     && story_run_child(&element_stack)
-                    && matches!(local_name.as_ref(), b"tab" | b"br" | b"cr")
+                    && matches!(
+                        local_name.as_ref(),
+                        b"tab" | b"ptab" | b"noBreakHyphen" | b"br" | b"cr"
+                    )
                 {
                     removed.push((fields.context(), before..after));
                 }

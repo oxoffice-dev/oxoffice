@@ -1582,7 +1582,8 @@ struct CharMapping {
 type ItemText = fn(&RunContent) -> Option<&str>;
 
 /// The text a search reads in one run item: the text of a `w:t`, and a tab,
-/// a break or a carriage return as `Paragraph::text` shows them.
+/// a break, a carriage return, a non-breaking hyphen or a positional tab as
+/// `Paragraph::text` shows them.
 fn searched_text(content: &RunContent) -> Option<&str> {
     match content {
         RunContent::Text(t) => Some(&t.text),
@@ -1590,6 +1591,8 @@ fn searched_text(content: &RunContent) -> Option<&str> {
         RunContent::Break(_) | RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => {
             Some("\n")
         }
+        RunContent::SpecialCharacter(SpecialCharacter::NoBreakHyphen) => Some("-"),
+        RunContent::SpecialCharacter(SpecialCharacter::PositionalTab { .. }) => Some("\t"),
         _ => None,
     }
 }
