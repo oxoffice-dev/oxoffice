@@ -152,10 +152,11 @@ edit.
    preserved ones, the lowest free bookmark id. Reads match the file only
    because staged commits reopen after each edit. After, an insert takes its
    value by its insert rule (see *The rule* below) when it is made, and the
-   save keeps it, as it keeps the source's. One change to save output: ids
+   save keeps it, as it keeps the source's. Two changes to save output: ids
    added by edits follow the order of the edits, not of the document, and
-   keep their value after earlier content is removed. The pull requests that
-   change it say so in their body, and the changelog carries it. In detail
+   keep their value after earlier content is removed; a gained endnotes or
+   glossary part takes `rIdN` (see *Scope*). The pull request that does
+   decision 3 (lot 3a-0a) says so in its body, and the changelog carries it. In detail
    (amended 2026-11-21, before lot 3a-0):
    - **Scope**: every id the save renumbers today: bookmark ids, the
      bookmark ids of a rebuilt table of contents, numbering instance and
@@ -165,8 +166,7 @@ edit.
      comments, extended comments), drawing ids, and the names of media parts
      (`/word/media/imageN`). A gained endnotes or glossary part keeps its
      provisional relationship id (`rdocxDeferredEndnotes`,
-     `rdocxDeferredGlossary`) in the saved file today; it takes `rIdN` too,
-     a second change to save output that the same pull request announces.
+     `rdocxDeferredGlossary`) in the saved file today; it takes `rIdN` too.
    - **Removed content**: the save does not compact. An id keeps its value
      after earlier content is removed. An id a removal frees is taken again
      only if that removal released it from the registry; otherwise it stays
@@ -226,7 +226,8 @@ What moves, and is accepted:
   step. The decision above removes the routes instead.
 - **No other change to save.** Saving stays linear in the document, as it
   must, and keeps its checks; decision 3 is its only output change (the
-  order of added ids, their value after a removal). The guard
+  order of added ids, their value after a removal, `rIdN` for a gained
+  endnotes or glossary part). The guard
   run once per part write (62 passes per staged save) is worth a later look
   at save time, outside this item.
 - **No PowerPoint work here.** pptx calls pass the scaling gate, but many
@@ -235,7 +236,8 @@ What moves, and is accepted:
   measurement; any growth it shows becomes its own item.
 - **No Rust signature change.** The behaviour changes are the ones above:
   saveability errors at save, and the ids of added content in saved files
-  (in edit order, kept after a removal).
+  (in edit order, kept after a removal, `rIdN` for a gained endnotes or
+  glossary part).
 - **No caching layer, no parallelism.** They would hide the slope, not
   remove it.
 
