@@ -121,7 +121,8 @@ use numbering_types::{
 pub use package_class::{WordCreationProfile, WordPackageClass};
 pub use render_options::RenderOptions;
 use render_options::{
-    FILLABLE_FORMS_NEED_ACCEPTED_VIEW, FontPolicy, SYSTEM_FONTS_UNAVAILABLE, font_policy,
+    FILLABLE_FORMS_NEED_ACCEPTED_VIEW, FONT_SWITCHES_EXCLUSIVE, FontPolicy,
+    SYSTEM_FONTS_UNAVAILABLE, font_policy,
 };
 pub(crate) use story_types::GeneratedStoryOwner;
 pub use story_types::{
@@ -916,9 +917,15 @@ pub struct Document {
     pub(crate) glossary_part_name: Option<String>,
     /// Whether a bounded facade replacement changed the glossary model.
     pub(crate) glossary_dirty: bool,
-    /// Normal layout, including system font discovery, computed on first use.
-    layout_cache: Mutex<Option<Arc<oxoffice_docx_layout::WordLayoutResult>>>,
-    /// Reusable normal-font engine retained across document edits.
+    /// Layout that may use system fonts (the default fallback, or system
+    /// fonts first), tagged with that tier, computed on first use.
+    layout_cache: Mutex<
+        Option<(
+            oxoffice_layout::SystemFonts,
+            Arc<oxoffice_docx_layout::WordLayoutResult>,
+        )>,
+    >,
+    /// Reusable engine of `layout_cache`'s tier, retained across edits.
     normal_layout_engine: Mutex<Option<oxoffice_docx_layout::engine::Engine>>,
     /// Bundled-font-only layout used by deterministic rendering.
     deterministic_layout_cache: Mutex<Option<Arc<oxoffice_docx_layout::WordLayoutResult>>>,

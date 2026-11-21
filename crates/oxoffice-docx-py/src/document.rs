@@ -128,7 +128,7 @@ mod snapshots;
 use arguments::{
     binary_stream_bytes, body_index_argument, check_fillable_forms, checked_heading_level,
     comment_date, given_or_current_length, open_document_input, parse_comparison_granularity,
-    parse_comparison_story, parse_raster_format, parse_render_options,
+    parse_comparison_story, parse_raster_format, parse_render_options, with_font_switches,
 };
 use snapshots::{
     header_footer_kind_from_name, header_footer_variant_from_name, section_snapshot,

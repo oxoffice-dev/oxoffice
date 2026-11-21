@@ -11,12 +11,20 @@ pub struct RenderOptions {
     pub revision_view: oxoffice_docx_layout::RevisionView,
     /// How the tracked view marks revisions.
     pub revision_style: oxoffice_docx_layout::RevisionStyle,
-    /// Select system font discovery for the implicit layout publishers.
+    /// Resolve font families in the system fonts first, the bundled fonts
+    /// as fallback.
     ///
-    /// Derived `Default` is `false`, so omission uses the bundled cache.
-    /// `true` is the explicit system opt-in, and a build without the
-    /// `system-fonts` feature refuses it. Deterministic helpers ignore it.
+    /// By default (`false`, with `bundled_fonts_only` also `false`) families
+    /// resolve in the bundled fonts, and a system font only draws the
+    /// characters they cannot, such as most Chinese, Japanese and Korean
+    /// text. A build without the `system-fonts` feature refuses `true`.
+    /// Deterministic helpers ignore it. Exclusive with `bundled_fonts_only`.
     pub use_system_fonts: bool,
+    /// Use the bundled fonts only, never a system font: the render is the
+    /// same on every machine, and characters the bundled fonts lack are drawn
+    /// as empty boxes, which a diagnostic names. The deterministic helpers
+    /// always render so. Exclusive with `use_system_fonts`.
+    pub bundled_fonts_only: bool,
     /// Export the content controls and legacy form fields of the main body
     /// as fillable PDF form fields. A control tagged `signature` or `signature:<name>` becomes an
     /// empty signature field. Image rendering draws the controls as usual,
@@ -43,6 +51,12 @@ impl RenderOptions {
         self
     }
 
+    /// These options with `bundled_fonts_only` set.
+    pub const fn with_bundled_fonts_only(mut self, bundled_fonts_only: bool) -> Self {
+        self.bundled_fonts_only = bundled_fonts_only;
+        self
+    }
+
     /// These options with `fillable_forms` set.
     pub const fn with_fillable_forms(mut self, fillable_forms: bool) -> Self {
         self.fillable_forms = fillable_forms;
@@ -59,17 +73,25 @@ pub(super) const FILLABLE_FORMS_NEED_ACCEPTED_VIEW: &str =
 pub(super) const SYSTEM_FONTS_UNAVAILABLE: &str =
     "system fonts are not available in this build (the system-fonts feature is disabled)";
 
-/// Which font tier an implicit layout publisher uses for omission.
+/// The refusal for both font switches at once.
+pub(super) const FONT_SWITCHES_EXCLUSIVE: &str =
+    "system fonts first and bundled fonts only exclude each other";
+
+/// Which font tier an implicit layout publisher uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FontPolicy {
+    /// Bundled fonts only (`bundled_fonts_only`).
     BundledOnly,
+    /// The default: bundled fonts first, a system font for what they lack.
+    BundledWithSystemFallback,
+    /// System fonts first (`use_system_fonts`).
     SystemWithBundledFallback,
 }
 
 pub(super) fn font_policy(options: RenderOptions) -> FontPolicy {
-    if options.use_system_fonts {
-        FontPolicy::SystemWithBundledFallback
-    } else {
-        FontPolicy::BundledOnly
+    match (options.use_system_fonts, options.bundled_fonts_only) {
+        (true, _) => FontPolicy::SystemWithBundledFallback,
+        (false, true) => FontPolicy::BundledOnly,
+        (false, false) => FontPolicy::BundledWithSystemFallback,
     }
 }

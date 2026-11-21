@@ -139,16 +139,22 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Inspect deterministic top-level body layout geometry
+    /// Inspect top-level body layout geometry
     Layout {
         /// Path to the DOCX file
         file: PathBuf,
         /// Directory of caller fonts used before bundled fallback
         #[arg(long)]
         font_dir: Option<PathBuf>,
-        /// Discover system fonts instead of the bundled omission tier
+        /// Resolve font families in the system fonts first, the bundled
+        /// fonts as fallback
         #[arg(long)]
         system_fonts: bool,
+        /// Use the bundled fonts only, never a system font: the same output
+        /// on every machine (by default a system font draws only what the
+        /// bundled fonts cannot)
+        #[arg(long, conflicts_with = "system_fonts")]
+        bundled_fonts_only: bool,
         /// Output point-space body fragments as schema-1 JSON
         #[arg(long)]
         json: bool,
@@ -175,9 +181,15 @@ enum Command {
         /// Directory containing caller font files (.ttf/.otf/.ttc)
         #[arg(long)]
         font_dir: Option<PathBuf>,
-        /// Discover system fonts instead of the bundled omission tier
+        /// Resolve font families in the system fonts first, the bundled
+        /// fonts as fallback
         #[arg(long)]
         system_fonts: bool,
+        /// Use the bundled fonts only, never a system font: the same output
+        /// on every machine (by default a system font draws only what the
+        /// bundled fonts cannot)
+        #[arg(long, conflicts_with = "system_fonts")]
+        bundled_fonts_only: bool,
         /// Revision view for PDF and image output
         #[arg(long, value_parser = commands::parse_revision_view)]
         revision_view: Option<oxoffice_docx::RevisionView>,
@@ -291,9 +303,15 @@ enum Command {
         /// Directory of caller fonts used before bundled fallback
         #[arg(long)]
         font_dir: Option<PathBuf>,
-        /// Discover system fonts instead of the bundled omission tier
+        /// Resolve font families in the system fonts first, the bundled
+        /// fonts as fallback
         #[arg(long)]
         system_fonts: bool,
+        /// Use the bundled fonts only, never a system font: the same output
+        /// on every machine (by default a system font draws only what the
+        /// bundled fonts cannot)
+        #[arg(long, conflicts_with = "system_fonts")]
+        bundled_fonts_only: bool,
         /// Output directory (defaults to current directory)
         #[arg(long, short = 'o')]
         output_dir: Option<PathBuf>,
@@ -880,7 +898,13 @@ pub fn run(cli: Cli) {
             json,
             font_dir,
             system_fonts,
-        } => commands::layout(&file, json, font_dir.as_deref(), system_fonts),
+            bundled_fonts_only,
+        } => commands::layout(
+            &file,
+            json,
+            font_dir.as_deref(),
+            commands::font_switches(system_fonts, bundled_fonts_only),
+        ),
         Command::Convert {
             file,
             to,
@@ -890,6 +914,7 @@ pub fn run(cli: Cli) {
             dpi,
             font_dir,
             system_fonts,
+            bundled_fonts_only,
             revision_view,
             revision_style,
             pages,
@@ -908,12 +933,13 @@ pub fn run(cli: Cli) {
                 || transparent
                 || font_dir.is_some()
                 || system_fonts
+                || bundled_fonts_only
                 || fillable_forms,
             output.as_deref(),
             force,
             dpi.unwrap_or(150),
             font_dir.as_deref(),
-            system_fonts,
+            commands::font_switches(system_fonts, bundled_fonts_only),
             revision_view.unwrap_or(oxoffice_docx::RevisionView::Accepted),
             revision_style.unwrap_or(oxoffice_docx::RevisionStyle::Plain),
             commands::ImageOptions {
@@ -957,6 +983,7 @@ pub fn run(cli: Cli) {
             file,
             font_dir,
             system_fonts,
+            bundled_fonts_only,
             output_dir,
             force,
             dpi,
@@ -974,7 +1001,7 @@ pub fn run(cli: Cli) {
             dpi,
             commands::RenderOptions {
                 font_dir: font_dir.as_deref(),
-                system_fonts,
+                fonts: commands::font_switches(system_fonts, bundled_fonts_only),
                 page,
                 pages: pages.as_deref(),
                 format: &format,

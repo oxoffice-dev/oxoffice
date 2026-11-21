@@ -124,9 +124,14 @@ fn text_drawn_as_empty_boxes_is_named_with_the_way_out() {
         ("pptx", corpus("powerpoint/multilingual.pptx")),
     ] {
         let path = scratch(&format!("boxes-{family}.pdf"));
-        let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
-            .args([family, "convert"])
-            .arg(&input)
+        let mut command = Command::new(env!("CARGO_BIN_EXE_oxoffice"));
+        command.args([family, "convert"]).arg(&input);
+        // A Word render takes a system font for what the bundled fonts lack
+        // unless told otherwise; a deck uses its own and the bundled fonts.
+        if family == "docx" {
+            command.arg("--bundled-fonts-only");
+        }
+        let output = command
             .args(["--to", "pdf", "--force", "-o"])
             .arg(&path)
             .output()
@@ -139,17 +144,67 @@ fn text_drawn_as_empty_boxes_is_named_with_the_way_out() {
                 line.contains("Chinese, Japanese or Korean ideograph (Han) text has no glyph")
             })
             .unwrap_or_else(|| panic!("{family}: {stderr}"));
-        // A Word render can take system fonts; a deck takes font files only.
-        let way_out = match family {
-            "docx" => "--system-fonts",
-            _ => "--font-dir",
-        };
         assert!(
-            han.contains("drawn as empty boxes") && han.contains(way_out),
+            han.contains("drawn as empty boxes") && han.contains("--font-dir"),
             "{family}: {han}"
         );
-        if family == "pptx" {
+        if family == "docx" {
+            assert!(han.contains("drop --bundled-fonts-only"), "{han}");
+        } else {
             assert!(!han.contains("--system-fonts"), "{han}");
         }
     }
+}
+
+// What the default Word render draws depends on the machine's fonts: the Han
+// text of the minutes is drawn with a system font that the output names, or
+// drawn as boxes with a line saying no system font has it.
+#[test]
+fn a_word_render_names_the_system_font_it_took_or_says_none_was_found() {
+    let path = scratch("fallback-docx.pdf");
+    let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+        .args(["docx", "convert"])
+        .arg(corpus("word/minutes.docx"))
+        .args(["--to", "pdf", "--force", "-o"])
+        .arg(&path)
+        .output()
+        .expect("oxoffice runs");
+    assert!(output.status.success(), "{}", stderr(&output));
+    let stderr = stderr(&output);
+    let han: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("Chinese, Japanese or Korean ideograph (Han) text"))
+        .collect();
+    assert!(!han.is_empty(), "{stderr}");
+    for line in han {
+        assert!(
+            line.contains("is drawn with the system font '")
+                || (line.contains("drawn as empty boxes")
+                    && line.contains("no system font on this machine has them")),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn system_fonts_and_bundled_fonts_only_are_refused_together() {
+    let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+        .args(["docx", "convert"])
+        .arg(corpus("word/minutes.docx"))
+        .args([
+            "--to",
+            "pdf",
+            "--system-fonts",
+            "--bundled-fonts-only",
+            "-o",
+        ])
+        .arg(scratch("both-switches.pdf"))
+        .output()
+        .expect("oxoffice runs");
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("cannot be used with"),
+        "{}",
+        stderr(&output)
+    );
 }

@@ -32,9 +32,46 @@ pub struct ImageOptions<'a> {
     pub transparent: bool,
 }
 
+/// The font switches of a render: system fonts first, bundled fonts only,
+/// or neither (bundled fonts first, a system font for what they lack).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FontSwitches {
+    pub system_fonts: bool,
+    pub bundled_fonts_only: bool,
+}
+
+pub fn font_switches(system_fonts: bool, bundled_fonts_only: bool) -> FontSwitches {
+    FontSwitches {
+        system_fonts,
+        bundled_fonts_only,
+    }
+}
+
+impl FontSwitches {
+    fn apply(self, options: oxoffice_docx::RenderOptions) -> oxoffice_docx::RenderOptions {
+        options
+            .with_system_fonts(self.system_fonts)
+            .with_bundled_fonts_only(self.bundled_fonts_only)
+    }
+
+    fn any(self) -> bool {
+        self.system_fonts || self.bundled_fonts_only
+    }
+}
+
+/// The layout a PDF or image render draws, for its font switches and caller
+/// fonts, which keep priority over every other font.
+fn render_layout(
+    doc: &Document,
+    font_refs: &[(&str, &[u8])],
+    options: oxoffice_docx::RenderOptions,
+) -> Result<std::sync::Arc<oxoffice_docx::WordLayoutResult>> {
+    Ok(doc.layout_for_render(font_refs, options)?)
+}
+
 pub struct RenderOptions<'a> {
     pub font_dir: Option<&'a Path>,
-    pub system_fonts: bool,
+    pub fonts: FontSwitches,
     pub page: Option<usize>,
     pub pages: Option<&'a str>,
     pub format: &'a str,
@@ -430,7 +467,7 @@ pub fn layout(
     file: &Path,
     json_output: bool,
     font_dir: Option<&Path>,
-    system_fonts: bool,
+    font_switches: FontSwitches,
 ) -> Result<()> {
     let doc = Document::open(file)?;
     let fonts = font_dir
@@ -441,25 +478,11 @@ pub fn layout(
         .iter()
         .map(|font| (font.family.as_str(), font.data.as_slice()))
         .collect::<Vec<_>>();
-    let layout = if refs.is_empty() {
-        if system_fonts {
-            doc.layout_with_options(
-                oxoffice_docx::RenderOptions::default().with_system_fonts(true),
-            )?
-        } else {
-            doc.layout_deterministic()?
-        }
-    } else if system_fonts {
-        // An explicit system request must refuse on a feature-off build before
-        // the normal engine runs, including for a nonempty caller font list.
-        doc.layout_with_options(oxoffice_docx::RenderOptions::default().with_system_fonts(true))?;
-        std::sync::Arc::new(doc.layout_with_additional_fonts_and_options(
-            &refs,
-            oxoffice_docx::RenderOptions::default().with_system_fonts(true),
-        )?)
-    } else {
-        std::sync::Arc::new(doc.layout_with_fonts_and_bundled_fallback(&refs)?)
-    };
+    let layout = render_layout(
+        &doc,
+        &refs,
+        font_switches.apply(oxoffice_docx::RenderOptions::default()),
+    )?;
     let body_items = doc
         .body_items()
         .enumerate()
@@ -725,7 +748,7 @@ pub fn convert_input(
     force: bool,
     dpi: u32,
     font_dir: Option<&Path>,
-    system_fonts: bool,
+    font_switches: FontSwitches,
     revision_view: RevisionView,
     revision_style: RevisionStyle,
     image: ImageOptions<'_>,
@@ -747,7 +770,7 @@ pub fn convert_input(
             force,
             dpi,
             font_dir,
-            system_fonts,
+            font_switches,
             revision_view,
             revision_style,
             image,
@@ -759,7 +782,7 @@ pub fn convert_input(
     }
     if rendering_options
         || font_dir.is_some()
-        || system_fonts
+        || font_switches.any()
         || revision_view != RevisionView::Accepted
         || image.pages.is_some()
         || image.transparent
@@ -804,7 +827,7 @@ pub fn convert(
     force: bool,
     dpi: u32,
     font_dir: Option<&Path>,
-    system_fonts: bool,
+    font_switches: FontSwitches,
     revision_view: RevisionView,
     revision_style: RevisionStyle,
     image: ImageOptions<'_>,
@@ -815,11 +838,12 @@ pub fn convert(
         return Err("--fillable-forms applies only to --to pdf".into());
     }
     let doc = Document::open(file)?;
-    let render_options = oxoffice_docx::RenderOptions::default()
-        .with_revision_view(revision_view)
-        .with_revision_style(revision_style)
-        .with_system_fonts(system_fonts)
-        .with_fillable_forms(fillable_forms);
+    let render_options = font_switches.apply(
+        oxoffice_docx::RenderOptions::default()
+            .with_revision_view(revision_view)
+            .with_revision_style(revision_style)
+            .with_fillable_forms(fillable_forms),
+    );
 
     let default_ext = match to {
         "pdf" => "pdf",
@@ -864,26 +888,7 @@ pub fn convert(
     let mut stdout = io::stdout().lock();
     match to {
         "pdf" => {
-            let layout = if font_refs.is_empty() {
-                if system_fonts {
-                    doc.layout_with_options(render_options)?
-                } else {
-                    doc.layout_deterministic_with_options(render_options)?
-                }
-            } else if system_fonts {
-                // An explicit system request must refuse on a feature-off
-                // build before the normal engine runs, including for a
-                // nonempty caller font list.
-                doc.layout_with_options(render_options)?;
-                std::sync::Arc::new(
-                    doc.layout_with_additional_fonts_and_options(&font_refs, render_options)?,
-                )
-            } else {
-                std::sync::Arc::new(doc.layout_with_fonts_and_bundled_fallback_and_options(
-                    &font_refs,
-                    render_options,
-                )?)
-            };
+            let layout = render_layout(&doc, &font_refs, render_options)?;
             let bytes = oxoffice_pdf::render_to_pdf_checked(&layout.layout)?;
             stage_and_publish(&[(output_path.clone(), bytes)], force)?;
             for diagnostic in &layout.layout.diagnostics {
@@ -912,26 +917,7 @@ pub fn convert(
         }
         "png" | "jpg" | "jpeg" | "tif" | "tiff" => {
             let (format, extension) = parse_image_format(to, image.quality, image.transparent)?;
-            let layout = if font_refs.is_empty() {
-                if system_fonts {
-                    doc.layout_with_options(render_options)?
-                } else {
-                    doc.layout_deterministic_with_options(render_options)?
-                }
-            } else if system_fonts {
-                // An explicit system request must refuse on a feature-off
-                // build before the normal engine runs, including for a
-                // nonempty caller font list.
-                doc.layout_with_options(render_options)?;
-                std::sync::Arc::new(
-                    doc.layout_with_additional_fonts_and_options(&font_refs, render_options)?,
-                )
-            } else {
-                std::sync::Arc::new(doc.layout_with_fonts_and_bundled_fallback_and_options(
-                    &font_refs,
-                    render_options,
-                )?)
-            };
+            let layout = render_layout(&doc, &font_refs, render_options)?;
             let selected = selected_zero_based_pages(layout.layout.pages.len(), image.pages)?;
             match format {
                 RasterFormat::Tiff => {
@@ -2513,28 +2499,12 @@ pub fn render(
         .iter()
         .map(|font| (font.family.as_str(), font.data.as_slice()))
         .collect::<Vec<_>>();
-    let render_options = oxoffice_docx::RenderOptions::default()
-        .with_revision_view(options.revision_view)
-        .with_revision_style(options.revision_style)
-        .with_system_fonts(options.system_fonts);
-    let layout = if font_refs.is_empty() {
-        if options.system_fonts {
-            doc.layout_with_options(render_options)?
-        } else {
-            doc.layout_deterministic_with_options(render_options)?
-        }
-    } else if options.system_fonts {
-        // An explicit system request must refuse on a feature-off build before
-        // the normal engine runs, including for a nonempty caller font list.
-        doc.layout_with_options(render_options)?;
-        std::sync::Arc::new(
-            doc.layout_with_additional_fonts_and_options(&font_refs, render_options)?,
-        )
-    } else {
-        std::sync::Arc::new(
-            doc.layout_with_fonts_and_bundled_fallback_and_options(&font_refs, render_options)?,
-        )
-    };
+    let render_options = options.fonts.apply(
+        oxoffice_docx::RenderOptions::default()
+            .with_revision_view(options.revision_view)
+            .with_revision_style(options.revision_style),
+    );
+    let layout = render_layout(&doc, &font_refs, render_options)?;
     let selected = selected_render_pages(layout.layout.pages.len(), options.page, options.pages)?;
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
     let legacy_single_page = options.page.is_some();

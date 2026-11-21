@@ -161,8 +161,12 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 - Run the tests you touched locally. CI runs the whole suite.
 - Never `cargo clean` the shared target directory. Use one target
   directory per worktree.
-- Rendering checks use the bundled fonts only. System fonts differ between
-  machines.
+- Rendering checks use the bundled fonts only (the `*_deterministic`
+  helpers, `RenderOptions::with_bundled_fonts_only`, CLI
+  `--bundled-fonts-only`, Python `bundled_fonts_only=True`). System fonts
+  differ between machines: a test of the default render asserts what holds
+  on any machine, and the system-font fallback is tested with fixed fonts
+  (`crates/oxoffice-layout/tests/system_fallback.rs`).
 
 ## Scaling tests
 

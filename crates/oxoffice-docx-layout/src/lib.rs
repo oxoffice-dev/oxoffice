@@ -723,6 +723,15 @@ pub fn layout_document_with_caller_fonts_and_provenance(
     })
 }
 
+/// Lay out a DOCX with bundled fonts first and a system font only for the
+/// characters they cannot draw, retaining exact Word paragraph provenance.
+pub fn layout_document_with_system_fallback_and_provenance(
+    input: &LayoutInput,
+) -> Result<WordLayoutResult> {
+    let mut engine = engine::Engine::new_with_system_fallback()?;
+    layout_document_with_reusable_engine(&mut engine, input)
+}
+
 /// Lay out a DOCX using bundled fonts without system font discovery.
 pub fn layout_document_deterministic(input: &LayoutInput) -> Result<LayoutResult> {
     engine::Engine::new_deterministic()?.layout(input)

@@ -36,28 +36,55 @@ impl Document {
             .take();
     }
 
-    /// Return the normal-font layout, computing it once after each mutation.
-    fn cached_layout(&self) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
+    /// Return the layout of a tier that may use system fonts, computing it
+    /// once after each mutation and each change of tier.
+    fn cached_layout(
+        &self,
+        policy: FontPolicy,
+    ) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
         let mut cache = self
             .layout_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(layout) = cache.as_ref() {
-            return Ok(Arc::clone(layout));
-        }
-
-        let input = self.build_layout_input()?;
         let mut engine = self
             .normal_layout_engine
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let engine = engine.get_or_insert_with(oxoffice_docx_layout::engine::Engine::new);
+        let engine = Self::engine_for_policy(&mut engine, policy)?;
+        let tier = engine.system_fonts();
+        if let Some((cached_tier, layout)) = cache.as_ref()
+            && *cached_tier == tier
+        {
+            return Ok(Arc::clone(layout));
+        }
+
+        let input = self.build_layout_input()?;
         let mut layout =
             oxoffice_docx_layout::layout_document_with_reusable_engine(engine, &input)?;
         annotate_undrawable_images(&mut layout, &input);
         let layout = Arc::new(layout);
-        *cache = Some(Arc::clone(&layout));
+        *cache = Some((tier, Arc::clone(&layout)));
         Ok(layout)
+    }
+
+    /// The reusable engine of a tier that may use system fonts, replacing
+    /// the retained engine when it serves the other tier.
+    fn engine_for_policy(
+        slot: &mut Option<oxoffice_docx_layout::engine::Engine>,
+        policy: FontPolicy,
+    ) -> Result<&mut oxoffice_docx_layout::engine::Engine> {
+        let system_first = matches!(policy, FontPolicy::SystemWithBundledFallback);
+        let reusable = slot.as_ref().is_some_and(|engine| {
+            (engine.system_fonts() == oxoffice_layout::SystemFonts::First) == system_first
+        });
+        if !reusable {
+            *slot = Some(if system_first {
+                oxoffice_docx_layout::engine::Engine::new()
+            } else {
+                oxoffice_docx_layout::engine::Engine::new_with_system_fallback()?
+            });
+        }
+        Ok(slot.as_mut().expect("the engine slot was just filled"))
     }
 
     /// Return the bundled-font-only layout, computing it once after mutation.
@@ -79,9 +106,9 @@ impl Document {
         Ok(layout)
     }
 
-    /// One private owner for the omission and caller-font tier selection.
+    /// One private owner for the font tier and caller-font selection.
     ///
-    /// Empty caller fonts are omission: the policy cache `Arc` is returned
+    /// Empty caller fonts use the cached layouts: the policy cache `Arc` is returned
     /// unchanged. A tracked view stays uncached. Nonempty caller fonts keep
     /// caller priority and return `Arc::new` of the owned public method.
     fn layout_with_font_policy(
@@ -90,17 +117,23 @@ impl Document {
         font_files: &[(&str, &[u8])],
         options: RenderOptions,
     ) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
+        if options.use_system_fonts && options.bundled_fonts_only {
+            return Err(Error::Other(FONT_SWITCHES_EXCLUSIVE.to_owned()));
+        }
         if matches!(policy, FontPolicy::SystemWithBundledFallback)
             && !cfg!(feature = "system-fonts")
         {
             return Err(Error::Other(SYSTEM_FONTS_UNAVAILABLE.to_owned()));
         }
         if font_files.is_empty() {
-            return self.layout_for_options(options, matches!(policy, FontPolicy::BundledOnly));
+            return self.layout_for_policy(options, policy);
         }
         let owned = match policy {
             FontPolicy::BundledOnly => {
                 self.layout_with_fonts_and_bundled_fallback_and_options(font_files, options)?
+            }
+            FontPolicy::BundledWithSystemFallback => {
+                self.layout_with_fonts_and_system_fallback_and_options(font_files, options)?
             }
             FontPolicy::SystemWithBundledFallback => {
                 self.layout_with_additional_fonts_and_options(font_files, options)?
@@ -109,10 +142,10 @@ impl Document {
         Ok(Arc::new(owned))
     }
 
-    fn layout_for_options(
+    fn layout_for_policy(
         &self,
         options: RenderOptions,
-        deterministic: bool,
+        policy: FontPolicy,
     ) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
         if options.revision_style != oxoffice_docx_layout::RevisionStyle::Plain
             && options.revision_view != oxoffice_docx_layout::RevisionView::Tracked
@@ -130,10 +163,9 @@ impl Document {
         if options.revision_view == oxoffice_docx_layout::RevisionView::Accepted
             && !options.fillable_forms
         {
-            return if deterministic {
-                self.cached_deterministic_layout()
-            } else {
-                self.cached_layout()
+            return match policy {
+                FontPolicy::BundledOnly => self.cached_deterministic_layout(),
+                _ => self.cached_layout(policy),
             };
         }
 
@@ -141,14 +173,14 @@ impl Document {
         input.revision_view = options.revision_view;
         input.revision_style = options.revision_style;
         input.form_fields = options.fillable_forms;
-        let mut layout = if deterministic {
+        let mut layout = if policy == FontPolicy::BundledOnly {
             oxoffice_docx_layout::layout_document_deterministic_with_provenance(&input)?
         } else {
             let mut engine = self
                 .normal_layout_engine
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let engine = engine.get_or_insert_with(oxoffice_docx_layout::engine::Engine::new);
+            let engine = Self::engine_for_policy(&mut engine, policy)?;
             oxoffice_docx_layout::layout_document_with_reusable_engine(engine, &input)?
         };
         annotate_undrawable_images(&mut layout, &input);
@@ -255,22 +287,24 @@ impl Document {
         true
     }
 
-    /// Return the cached bundled-font layout with its Word source map.
+    /// Return the cached default layout with its Word source map.
     ///
-    /// This is the default omission tier. Set [`RenderOptions::use_system_fonts`]
-    /// through [`Self::layout_with_options`] to request the system opt-in.
-    /// Repeated calls share the same accepted-view result until the document
-    /// is mutated.
+    /// Families resolve in the embedded and bundled fonts, and a system font
+    /// only draws the characters they cannot (see [`Self::to_pdf`]). Set
+    /// [`RenderOptions::bundled_fonts_only`] or
+    /// [`RenderOptions::use_system_fonts`] through
+    /// [`Self::layout_with_options`] for the other tiers. Repeated calls share
+    /// the same accepted-view result until the document is mutated.
     pub fn layout(&self) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
         self.layout_with_options(RenderOptions::default())
     }
 
     /// Return a layout with the selected revision view and font tier.
     ///
-    /// Accepted-view calls share the bundled cache unless
-    /// [`RenderOptions::use_system_fonts`] is true, which selects the normal
-    /// cache. Tracked-view calls remain uncached because they do not replace
-    /// the accepted-view cache.
+    /// Accepted-view calls are cached per tier: the bundled-only cache, or one
+    /// shared by the default tier and system fonts first, which holds the last
+    /// of the two asked for. Tracked-view calls remain uncached because they
+    /// do not replace the accepted-view cache.
     pub fn layout_with_options(
         &self,
         options: RenderOptions,
@@ -294,7 +328,7 @@ impl Document {
         &self,
         options: RenderOptions,
     ) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
-        self.layout_for_options(options, true)
+        self.layout_for_policy(options, FontPolicy::BundledOnly)
     }
 
     /// Measure one checked paragraph or table at a positive caller width.
@@ -437,6 +471,37 @@ impl Document {
         Ok(layout)
     }
 
+    /// Return the layout every render with these caller fonts and options
+    /// draws, as [`Self::to_pdf_with_diagnostics`] does.
+    ///
+    /// Caller faces keep highest priority. Then, by default, families resolve
+    /// in the embedded and bundled fonts and a system font only draws the
+    /// characters they cannot; [`RenderOptions::bundled_fonts_only`] never
+    /// takes a system font, and [`RenderOptions::use_system_fonts`] resolves
+    /// families in the system fonts first. Without caller fonts the result is
+    /// cached until the next edit.
+    pub fn layout_for_render(
+        &self,
+        font_files: &[(&str, &[u8])],
+        options: RenderOptions,
+    ) -> Result<Arc<oxoffice_docx_layout::WordLayoutResult>> {
+        self.layout_with_font_policy(font_policy(options), font_files, options)
+    }
+
+    /// An uncached caller-font layout over the bundled fonts, with a system
+    /// font only for characters neither draws.
+    fn layout_with_fonts_and_system_fallback_and_options(
+        &self,
+        font_files: &[(&str, &[u8])],
+        options: RenderOptions,
+    ) -> Result<oxoffice_docx_layout::WordLayoutResult> {
+        let input = self.build_layout_input_with_fonts(font_files, options)?;
+        let mut layout =
+            oxoffice_docx_layout::layout_document_with_system_fallback_and_provenance(&input)?;
+        annotate_undrawable_images(&mut layout, &input);
+        Ok(layout)
+    }
+
     /// Return a reusable bundled-fallback layout with byte-free font aliases.
     ///
     /// Exact embedded families retain priority. A caller alias is tried next,
@@ -516,13 +581,17 @@ impl Document {
     /// 1. Fonts embedded in the DOCX file (word/fonts/)
     /// 2. The bundled fonts: metric-compatible twins of the common Office
     ///    fonts, and faces for Arabic, Hebrew, Devanagari and Thai
+    /// 3. For a character none of these can draw, such as most Chinese,
+    ///    Japanese and Korean text (the bundled CJK faces hold only a few
+    ///    characters), a system font that has it, which a layout diagnostic
+    ///    names. No family name selects a system font, so text the first two
+    ///    cover is the same on every machine. Without such a font the text is
+    ///    drawn as empty boxes, which a diagnostic names too.
     ///
-    /// System fonts are only used when asked for, with
-    /// [`RenderOptions::with_system_fonts`] in [`Self::to_pdf_with_options`],
-    /// so the output is the same on every machine. Chinese, Japanese and
-    /// Korean text needs them, or a font file: the bundled faces hold only a
-    /// few of its characters, and the rest is drawn as empty boxes, which a
-    /// layout diagnostic names.
+    /// [`RenderOptions::with_bundled_fonts_only`] in
+    /// [`Self::to_pdf_with_options`] skips step 3, for the same output on
+    /// every machine; [`RenderOptions::with_system_fonts`] resolves families
+    /// in the system fonts first.
     pub fn to_pdf(&self) -> Result<Vec<u8>> {
         self.to_pdf_with_options(RenderOptions::default())
     }
@@ -544,7 +613,7 @@ impl Document {
 
     /// Render the document to the selected archival PDF profile using bundled fonts.
     pub fn to_pdfa_deterministic(&self, profile: oxoffice_pdf::PdfConformance) -> Result<Vec<u8>> {
-        let layout = self.layout_for_options(RenderOptions::default(), true)?;
+        let layout = self.layout_for_policy(RenderOptions::default(), FontPolicy::BundledOnly)?;
         Ok(oxoffice_pdf::render_to_pdf_with_options(
             &layout.layout,
             oxoffice_pdf::PdfOptions::new(profile),
@@ -558,7 +627,7 @@ impl Document {
         profile: oxoffice_pdf::PdfConformance,
         options: RenderOptions,
     ) -> Result<Vec<u8>> {
-        let layout = self.layout_for_options(options, true)?;
+        let layout = self.layout_for_policy(options, FontPolicy::BundledOnly)?;
         Ok(oxoffice_pdf::render_to_pdf_with_options(
             &layout.layout,
             oxoffice_pdf::PdfOptions::new(profile),
@@ -583,7 +652,7 @@ impl Document {
 
     /// Render the selected revision view to deterministic PDF bytes.
     pub fn to_pdf_deterministic_with_options(&self, options: RenderOptions) -> Result<Vec<u8>> {
-        let layout = self.layout_for_options(options, true)?;
+        let layout = self.layout_for_policy(options, FontPolicy::BundledOnly)?;
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout.layout)?)
     }
 
@@ -634,8 +703,8 @@ impl Document {
     /// Font resolution order:
     /// 1. User-provided fonts (this parameter)
     /// 2. Fonts embedded in the DOCX file (word/fonts/)
-    /// 3. The bundled fonts, as for [`Self::to_pdf`]; system fonts only with
-    ///    [`RenderOptions::with_system_fonts`]
+    /// 3. The bundled fonts, then a system font for characters none of these
+    ///    draws, as for [`Self::to_pdf`]
     pub fn to_pdf_with_fonts(&self, font_files: &[(&str, &[u8])]) -> Result<Vec<u8>> {
         self.to_pdf_with_fonts_and_options(font_files, RenderOptions::default())
     }
@@ -643,14 +712,15 @@ impl Document {
     /// Render the selected revision view to PDF with user-provided fonts.
     ///
     /// The caller fonts are added to the fonts `to_pdf` resolves from, in the
-    /// order [`Self::to_pdf_with_fonts`] lists. [`Self::layout_with_fonts`] is
-    /// the layout limited to the caller and embedded fonts.
+    /// order [`Self::to_pdf_with_fonts`] lists, under the font switches of
+    /// `options`. [`Self::layout_with_fonts`] is the layout limited to the
+    /// caller and embedded fonts.
     pub fn to_pdf_with_fonts_and_options(
         &self,
         font_files: &[(&str, &[u8])],
         options: RenderOptions,
     ) -> Result<Vec<u8>> {
-        let layout = self.layout_with_additional_fonts_and_options(font_files, options)?;
+        let layout = self.layout_for_render(font_files, options)?;
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout.layout)?)
     }
 
@@ -899,7 +969,7 @@ impl Document {
         dpi: f64,
         options: RenderOptions,
     ) -> Result<Option<Vec<u8>>> {
-        let layout = self.layout_for_options(options, true)?;
+        let layout = self.layout_for_policy(options, FontPolicy::BundledOnly)?;
         Ok(oxoffice_pdf::render_page_to_png(
             &layout.layout,
             page_index,
@@ -939,7 +1009,7 @@ impl Document {
         page_index: usize,
         options: RenderOptions,
     ) -> Result<Option<crate::SvgRenderResult>> {
-        let layout = self.layout_for_options(options, true)?;
+        let layout = self.layout_for_policy(options, FontPolicy::BundledOnly)?;
         Ok(crate::svg::render_page(&layout.layout, page_index))
     }
 
@@ -987,7 +1057,7 @@ impl Document {
         raster_options: oxoffice_pdf::RasterOptions,
         options: RenderOptions,
     ) -> Result<oxoffice_pdf::RasterOutput> {
-        let layout = self.layout_for_options(options, true)?;
+        let layout = self.layout_for_policy(options, FontPolicy::BundledOnly)?;
         Ok(oxoffice_pdf::render_pages(
             &layout.layout,
             page_indices,
@@ -1010,7 +1080,7 @@ impl Document {
         Ok(oxoffice_pdf::render_all_pages(&layout.layout, dpi))
     }
 
-    /// Encode one bundle with bundled fonts by default, or explicit system fonts,
+    /// Encode one bundle with the font policy of [`Self::layout_for_render`]
     /// and return its owned diagnostics. Caller fonts keep highest priority.
     pub fn to_pdf_with_diagnostics(
         &self,
@@ -1122,10 +1192,10 @@ impl Document {
         Ok(oxoffice_pdf::render_all_pages(&layout.layout, dpi))
     }
 
-    /// Return a cloned positioned page from the cached bundled-font layout.
+    /// Return a cloned positioned page from the cached default layout.
     ///
-    /// This is the default omission tier. Set [`RenderOptions::use_system_fonts`]
-    /// through [`Self::layout_page_with_options`] to request the system opt-in.
+    /// The fonts are those of [`Self::layout`]; set the font switches of
+    /// [`RenderOptions`] through [`Self::layout_page_with_options`].
     /// `page_index` is zero-based. An index beyond the document returns `None`.
     pub fn layout_page(&self, page_index: usize) -> Result<Option<oxoffice_layout::PageFrame>> {
         self.layout_page_with_options(page_index, RenderOptions::default())

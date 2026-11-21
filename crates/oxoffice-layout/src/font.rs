@@ -674,6 +674,19 @@ const FILE_FONT_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 static NORMAL_FONT_DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
 #[cfg(feature = "system-fonts")]
 static FILE_FONT_CACHE: OnceLock<Mutex<FileFontCache>> = OnceLock::new();
+#[cfg(feature = "system-fonts")]
+static HOST_FONT_DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
+
+/// The host's font faces, scanned once per process: face records only,
+/// whose bytes are read when a face is loaded.
+#[cfg(feature = "system-fonts")]
+fn host_font_database() -> &'static fontdb::Database {
+    HOST_FONT_DATABASE.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        db
+    })
+}
 
 /// Internal record for a loaded font face.
 struct LoadedFont {
@@ -899,6 +912,57 @@ pub struct FontManager {
     // selected tier and a physical fallback face chosen instead. Kept apart
     // from `layout_font_diagnostics`, which PowerPoint already reads.
     word_substitution_diagnostics: Vec<Diagnostic>,
+    /// The system tier the glyph-coverage fallback may open, if any.
+    system_fallback: SystemFallback,
+}
+
+/// How a font manager reaches the host's fonts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemFonts {
+    /// Bundled, embedded and caller fonts only, on request: the render is the
+    /// same on every machine.
+    Off,
+    /// System fonts were asked for, but this build has none (the
+    /// `system-fonts` feature is off, as in WebAssembly).
+    Unavailable,
+    /// Bundled fonts first; a system font only draws the characters they
+    /// cannot, found when the first such character is met.
+    Fallback,
+    /// System fonts first, the bundled fonts as fallback.
+    First,
+}
+
+/// The system tier of [`SystemFonts::Fallback`].
+///
+/// Its faces join the font database under [`SYSTEM_FALLBACK_PREFIX`]
+/// family names, so that no family lookup can match them: only the
+/// glyph-coverage fallback asks for them, after the bundled faces failed.
+#[derive(Clone)]
+enum SystemFallback {
+    /// No separate system tier: bundled only, or system faces already first.
+    None,
+    /// Not opened yet: nothing has needed it.
+    Pending(FallbackFaces),
+    /// Its faces are in the current font database.
+    Open(FallbackFaces),
+}
+
+/// Where the system tier's faces come from.
+#[derive(Clone)]
+enum FallbackFaces {
+    /// The host's fonts, scanned once per process.
+    #[cfg(feature = "system-fonts")]
+    Host,
+    /// A fixed set standing in for the host's fonts.
+    Fixed(Arc<fontdb::Database>),
+}
+
+/// Family-name prefix of system-tier faces: no requested family starts with it.
+const SYSTEM_FALLBACK_PREFIX: &str = "\u{1}system\u{1}";
+
+/// A face family as written in the font, without the system-tier prefix.
+fn face_family(name: &str) -> &str {
+    name.strip_prefix(SYSTEM_FALLBACK_PREFIX).unwrap_or(name)
 }
 
 /// Families with broad non-Latin coverage, tried before scanning everything.
@@ -1017,6 +1081,7 @@ impl FontManager {
             layout_fonts: Vec::new(),
             layout_font_diagnostics: Vec::new(),
             word_substitution_diagnostics: Vec::new(),
+            system_fallback: SystemFallback::None,
         }
     }
 
@@ -1029,7 +1094,9 @@ impl FontManager {
         {
             let db = NORMAL_FONT_DATABASE.get_or_init(|| {
                 let mut db = bundled_font_database();
-                db.load_system_fonts();
+                for face in host_font_database().faces() {
+                    db.push_face_info(face.clone());
+                }
                 db
             });
             Self::from_base_database(db.clone())
@@ -1045,6 +1112,125 @@ impl FontManager {
     /// This mode makes font resolution reproducible across machines.
     pub fn new_deterministic() -> Result<Self> {
         Ok(Self::from_base_database(bundled_font_database()))
+    }
+
+    /// Create a font manager that resolves every family in the bundled fonts
+    /// and takes a system font only for characters they cannot draw.
+    ///
+    /// Text the bundled fonts cover lays out exactly as with
+    /// [`Self::new_deterministic`]. The host's fonts are scanned once per
+    /// process, when the first uncovered character is met, and no family name
+    /// ever selects one of them. Without the `system-fonts` feature this is
+    /// the bundled-only manager, reporting [`SystemFonts::Unavailable`].
+    pub fn new_with_system_fallback() -> Result<Self> {
+        let mut manager = Self::from_base_database(bundled_font_database());
+        #[cfg(feature = "system-fonts")]
+        {
+            manager.system_fallback = SystemFallback::Pending(FallbackFaces::Host);
+        }
+        #[cfg(not(feature = "system-fonts"))]
+        {
+            manager.system_fallback =
+                SystemFallback::Pending(FallbackFaces::Fixed(Arc::new(fontdb::Database::new())));
+        }
+        Ok(manager)
+    }
+
+    /// [`Self::new_with_system_fallback`] with `fonts` standing in for the
+    /// host's fonts, so that the fallback can be tested the same way on every
+    /// machine.
+    #[doc(hidden)]
+    pub fn new_with_fallback_fonts(fonts: &[FontFile]) -> Result<Self> {
+        let mut faces = fontdb::Database::new();
+        for font in fonts {
+            ttf_parser::Face::parse(&font.data, 0).map_err(|error| {
+                LayoutError::FontParse(format!("fallback font {}: {error}", font.family))
+            })?;
+            faces.load_font_data(font.data.clone());
+        }
+        let mut manager = Self::from_base_database(bundled_font_database());
+        manager.system_fallback = SystemFallback::Pending(FallbackFaces::Fixed(Arc::new(faces)));
+        Ok(manager)
+    }
+
+    /// How this manager reaches the host's fonts.
+    pub fn system_fonts(&self) -> SystemFonts {
+        match &self.system_fallback {
+            #[cfg(feature = "system-fonts")]
+            SystemFallback::Pending(FallbackFaces::Host)
+            | SystemFallback::Open(FallbackFaces::Host) => SystemFonts::Fallback,
+            #[cfg(not(feature = "system-fonts"))]
+            SystemFallback::Pending(_) | SystemFallback::Open(_)
+                if self.fallback_faces_are_empty() =>
+            {
+                SystemFonts::Unavailable
+            }
+            SystemFallback::Pending(_) | SystemFallback::Open(_) => SystemFonts::Fallback,
+            SystemFallback::None if self.has_host_faces() => SystemFonts::First,
+            SystemFallback::None => SystemFonts::Off,
+        }
+    }
+
+    #[cfg(not(feature = "system-fonts"))]
+    fn fallback_faces_are_empty(&self) -> bool {
+        match &self.system_fallback {
+            SystemFallback::Pending(FallbackFaces::Fixed(faces))
+            | SystemFallback::Open(FallbackFaces::Fixed(faces)) => faces.is_empty(),
+            SystemFallback::None => false,
+        }
+    }
+
+    /// Whether the font database holds faces discovered on the host.
+    fn has_host_faces(&self) -> bool {
+        self.base_db
+            .faces()
+            .any(|face| !matches!(face.source, fontdb::Source::Binary(_)))
+    }
+
+    /// Whether the system tier of [`SystemFonts::Fallback`] has been scanned.
+    #[doc(hidden)]
+    pub fn system_fallback_opened(&self) -> bool {
+        matches!(self.system_fallback, SystemFallback::Open(_))
+    }
+
+    /// Whether `font_id` is a system font the glyph-coverage fallback chose
+    /// for characters the bundled fonts cannot draw.
+    pub fn is_system_fallback_font(&self, font_id: FontId) -> bool {
+        self.index_of(font_id)
+            .is_some_and(|index| self.is_system_face(self.fonts[index].db_id))
+    }
+
+    fn is_system_face(&self, db_id: fontdb::ID) -> bool {
+        self.db.face(db_id).is_some_and(|face| {
+            face.families
+                .first()
+                .is_some_and(|(name, _)| name.starts_with(SYSTEM_FALLBACK_PREFIX))
+        })
+    }
+
+    /// Add the system tier's faces to the font database, once.
+    ///
+    /// Only face records are added: a face's bytes are read when the coverage
+    /// fallback first loads it.
+    fn open_system_fallback(&mut self) {
+        let SystemFallback::Pending(faces) = &self.system_fallback else {
+            return;
+        };
+        let faces = faces.clone();
+        let source: &fontdb::Database = match &faces {
+            #[cfg(feature = "system-fonts")]
+            FallbackFaces::Host => host_font_database(),
+            FallbackFaces::Fixed(faces) => faces,
+        };
+        for face in source.faces() {
+            let mut info = face.clone();
+            for (name, _) in &mut info.families {
+                name.insert_str(0, SYSTEM_FALLBACK_PREFIX);
+            }
+            info.post_script_name.insert_str(0, SYSTEM_FALLBACK_PREFIX);
+            self.db.push_face_info(info);
+        }
+        self.system_fallback = SystemFallback::Open(faces);
     }
 
     /// Load or replace additional font files (user-provided or extracted from
@@ -1206,6 +1392,11 @@ impl FontManager {
         }
 
         self.db = db;
+        // The rebuilt database lacks the system tier's faces: open it again
+        // when a character needs it.
+        if let SystemFallback::Open(faces) = &self.system_fallback {
+            self.system_fallback = SystemFallback::Pending(faces.clone());
+        }
         self.caller_aliases = caller_aliases;
         self.caller_families = caller_families;
         self.embedded_aliases = embedded_aliases;
@@ -1889,11 +2080,14 @@ impl FontManager {
             let Some((physical, _)) = face.families.first() else {
                 return;
             };
-            let physical = physical.clone();
+            let system_fallback = physical.starts_with(SYSTEM_FALLBACK_PREFIX);
+            let physical = face_family(physical).to_owned();
             if physical.eq_ignore_ascii_case(selected_family) {
                 return;
             }
-            let tier = if self
+            let tier = if system_fallback {
+                "system"
+            } else if self
                 .caller_families
                 .values()
                 .any(|ids| ids.contains(&db_id))
@@ -2219,52 +2413,22 @@ impl FontManager {
         }
 
         let mut best: Option<(usize, usize)> = None; // (covered count, font index)
-        let consider = |this: &Self, idx: usize, best: &mut Option<(usize, usize)>| -> bool {
-            let covered = missing.iter().filter(|&&ch| this.covers(idx, ch)).count();
-            if covered == 0 {
-                return false;
-            }
-            if best.map(|(n, _)| covered > n).unwrap_or(true) {
-                *best = Some((covered, idx));
-            }
-            covered == missing.len()
-        };
 
-        // Fonts that already rescued an earlier run, which for a document in
-        // one script is almost always the answer again.
-        if let Some(known) = self.coverage_fallbacks.get(&(bold, italic)).cloned() {
-            for idx in known {
-                if consider(self, idx, &mut best) {
-                    let id = self.fonts[idx].id;
-                    self.record_layout_font(id);
-                    return Some(id);
-                }
-            }
+        // The bundled, embedded and caller faces first, then the system tier
+        // of the fallback mode, opened only for a character none of them has:
+        // a run they cover between them keeps their best face, as with the
+        // bundled fonts only, and is split by script later. A system face
+        // that rescued an earlier run must not take text the first tier
+        // covers, hence the two passes.
+        let mut covered = HashSet::new();
+        if let Some(id) = self.coverage_pass(missing, bold, italic, false, &mut best, &mut covered)
+        {
+            return Some(id);
         }
-
-        // Families with broad coverage, then everything else the database
-        // knows about. Both go through resolve_font so loading and caching
-        // stay in one place.
-        let candidates: Vec<String> = BROAD_COVERAGE_FAMILIES
-            .iter()
-            .map(|s| s.to_string())
-            .chain(
-                self.db
-                    .faces()
-                    .filter_map(|f| f.families.first().map(|(name, _)| name.clone())),
-            )
-            .collect();
-
-        for name in candidates {
-            let Ok(id) = self.resolve_font(Some(&name), bold, italic) else {
-                continue;
-            };
-            let Some(idx) = self.index_of(id) else {
-                continue;
-            };
-            let complete = consider(self, idx, &mut best);
-            if complete {
-                self.remember_coverage_fallback(bold, italic, idx);
+        let first_tier_lacks_some = missing.iter().any(|ch| !covered.contains(ch));
+        if first_tier_lacks_some && !matches!(self.system_fallback, SystemFallback::None) {
+            self.open_system_fallback();
+            if let Some(id) = self.system_coverage_pass(missing, bold, italic, &mut best) {
                 return Some(id);
             }
         }
@@ -2281,6 +2445,165 @@ impl FontManager {
                 None
             }
         }
+    }
+
+    /// Look for a face covering `missing` among the system tier's faces
+    /// that already rescued a run (`system`) or every other face, updating
+    /// `best` and the characters some face `covered`; a face covering every
+    /// missing character is returned at once.
+    fn coverage_pass(
+        &mut self,
+        missing: &[char],
+        bold: bool,
+        italic: bool,
+        system: bool,
+        best: &mut Option<(usize, usize)>,
+        covered_by_some: &mut HashSet<char>,
+    ) -> Option<FontId> {
+        let mut consider = |this: &Self, idx: usize, best: &mut Option<(usize, usize)>| -> bool {
+            let mut covered = 0;
+            for &ch in missing {
+                if this.covers(idx, ch) {
+                    covered += 1;
+                    covered_by_some.insert(ch);
+                }
+            }
+            if covered == 0 {
+                return false;
+            }
+            if best.map(|(n, _)| covered > n).unwrap_or(true) {
+                *best = Some((covered, idx));
+            }
+            covered == missing.len()
+        };
+
+        // Fonts that already rescued an earlier run, which for a document in
+        // one script is almost always the answer again.
+        if let Some(known) = self.coverage_fallbacks.get(&(bold, italic)).cloned() {
+            for idx in known {
+                if self.is_system_face(self.fonts[idx].db_id) != system {
+                    continue;
+                }
+                if consider(self, idx, best) {
+                    let id = self.fonts[idx].id;
+                    self.record_layout_font(id);
+                    return Some(id);
+                }
+            }
+        }
+
+        if system {
+            return None;
+        }
+
+        // Families with broad coverage, then everything else the database
+        // knows about. Both go through resolve_font so loading and caching
+        // stay in one place.
+        let candidates: Vec<String> = BROAD_COVERAGE_FAMILIES
+            .iter()
+            .map(|family| (*family).to_owned())
+            .chain(self.db.faces().filter_map(|face| {
+                face.families
+                    .first()
+                    .filter(|(name, _)| !name.starts_with(SYSTEM_FALLBACK_PREFIX))
+                    .map(|(name, _)| name.clone())
+            }))
+            .collect();
+
+        for name in candidates {
+            let Ok(id) = self.resolve_font(Some(&name), bold, italic) else {
+                continue;
+            };
+            let Some(idx) = self.index_of(id) else {
+                continue;
+            };
+            if consider(self, idx, best) {
+                self.remember_coverage_fallback(bold, italic, idx);
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    /// The system tier's pass: the system faces that rescued an earlier run,
+    /// then every system family, broad-coverage ones first.
+    ///
+    /// A family's coverage is read from its first face's bytes through the
+    /// bounded file cache; only the family that wins is loaded, so a scan
+    /// never keeps every system font in memory.
+    fn system_coverage_pass(
+        &mut self,
+        missing: &[char],
+        bold: bool,
+        italic: bool,
+        best: &mut Option<(usize, usize)>,
+    ) -> Option<FontId> {
+        if let Some(id) = self.coverage_pass(missing, bold, italic, true, best, &mut HashSet::new())
+        {
+            return Some(id);
+        }
+
+        let mut families: Vec<(String, fontdb::ID)> = Vec::new();
+        for face in self.db.faces() {
+            let Some((name, _)) = face.families.first() else {
+                continue;
+            };
+            if name.starts_with(SYSTEM_FALLBACK_PREFIX)
+                && !families.iter().any(|(known, _)| known == name)
+            {
+                families.push((name.clone(), face.id));
+            }
+        }
+        let broad_rank = |name: &str| {
+            BROAD_COVERAGE_FAMILIES
+                .iter()
+                .position(|family| family.eq_ignore_ascii_case(face_family(name)))
+                .unwrap_or(BROAD_COVERAGE_FAMILIES.len())
+        };
+        // Stable: equal ranks keep the database's order.
+        families.sort_by_key(|(name, _)| broad_rank(name));
+
+        let mut best_family: Option<(usize, String)> = None;
+        for (name, db_id) in families {
+            let mut scratch = HashMap::new();
+            let Some((data, face_index)) = font_data_for_face(&self.db, db_id, &mut scratch) else {
+                continue;
+            };
+            let Ok(face) = ttf_parser::Face::parse(&data, face_index) else {
+                continue;
+            };
+            let covered = missing
+                .iter()
+                .filter(|&&ch| face.glyph_index(ch).is_some())
+                .count();
+            if covered == missing.len() {
+                best_family = Some((covered, name));
+                break;
+            }
+            if covered > 0 && best_family.as_ref().is_none_or(|(n, _)| covered > *n) {
+                best_family = Some((covered, name));
+            }
+        }
+
+        let (covered, name) = best_family?;
+        if best.is_some_and(|(n, _)| n >= covered) {
+            return None;
+        }
+        let id = self.resolve_font(Some(&name), bold, italic).ok()?;
+        let idx = self.index_of(id)?;
+        if !self.is_system_face(self.fonts[idx].db_id) {
+            return None;
+        }
+        let complete = missing.iter().all(|&ch| self.covers(idx, ch));
+        let loaded = missing.iter().filter(|&&ch| self.covers(idx, ch)).count();
+        if complete {
+            self.remember_coverage_fallback(bold, italic, idx);
+            return Some(id);
+        }
+        if best.is_none_or(|(n, _)| loaded > n) {
+            *best = Some((loaded, idx));
+        }
+        None
     }
 
     /// Index into `fonts` for a FontId.
@@ -2539,7 +2862,7 @@ impl FontManager {
             .map(|f| {
                 f.families
                     .first()
-                    .map(|(name, _)| name.clone())
+                    .map(|(name, _)| face_family(name).to_owned())
                     .unwrap_or_else(|| family_name.to_string())
             })
             .unwrap_or_else(|| family_name.to_string());
