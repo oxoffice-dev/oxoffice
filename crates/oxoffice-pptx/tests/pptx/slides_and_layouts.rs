@@ -1169,11 +1169,17 @@ fn saved_part_text(prs: &Presentation, part_name: &str) -> Option<String> {
 #[test]
 fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
     let mut prs = corpus_deck("powerpoint/deck.pptx");
-    prs.slide_mut(3).unwrap().set_hidden(true);
     let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
     assert!(
         before.contains("<vt:lpstr>Highlights</vt:lpstr>"),
         "{before}"
+    );
+    // Hiding Highlights counts it as hidden; removing it must count it out.
+    prs.slide_mut(1).unwrap().set_hidden(true);
+    assert!(
+        saved_part_text(&prs, "/docProps/app.xml")
+            .unwrap()
+            .contains("<HiddenSlides>1</HiddenSlides>")
     );
 
     prs.remove_slide(1).unwrap();
@@ -1181,7 +1187,7 @@ fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
     let prs = reopen(&prs);
     let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
     assert!(!app.contains("Highlights"), "{app}");
-    // Three slides left, the notes went with Highlights, the last is hidden;
+    // Three slides left, the notes and the hidden slide went with Highlights;
     // the title lists go and every other byte stays.
     let cut = |xml: &str, from: &str, to: &str| {
         let start = xml.find(from).expect("the element is there");
@@ -1194,10 +1200,10 @@ fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
         "</TitlesOfParts>",
     )
     .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
-    .replace("<Notes>1</Notes>", "<Notes>0</Notes>")
-    .replace(
-        "<HiddenSlides>0</HiddenSlides>",
-        "<HiddenSlides>1</HiddenSlides>",
+    .replace("<Notes>1</Notes>", "<Notes>0</Notes>");
+    assert!(
+        expected.contains("<HiddenSlides>0</HiddenSlides>"),
+        "{expected}"
     );
     assert_eq!(app, expected);
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
@@ -1291,4 +1297,143 @@ fn the_notes_count_after_a_removal_counts_slides_with_notes_text() {
 
     let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
     assert!(app.contains("<Notes>0</Notes>"), "{app}");
+}
+
+#[test]
+fn added_duplicated_and_imported_slides_are_counted_in_the_package_metadata() {
+    // Google's Highlights slide, hidden, with its notes.
+    let mut source = corpus_deck("google/deck.pptx");
+    source.slide_mut(1).unwrap().set_hidden(true);
+    type Edit = fn(&mut Presentation, &Presentation);
+    let edits: [(&str, Edit); 4] = [
+        ("add", |prs, _| {
+            let layout = layout_named(prs, "Title Only");
+            prs.add_slide(layout).unwrap();
+        }),
+        ("add at", |prs, _| {
+            let layout = layout_named(prs, "Title Only");
+            prs.add_slide_at(layout, 0).unwrap();
+        }),
+        ("duplicate", |prs, _| {
+            prs.duplicate_slide(1).unwrap();
+        }),
+        ("import", |prs, source| {
+            let layout = layout_named(prs, "Title Only");
+            prs.import_slide(source, 1, Some(layout), None).unwrap();
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut prs = corpus_deck("powerpoint/deck.pptx");
+        edit(&mut prs, &source);
+
+        let prs = reopen(&prs);
+        let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+        assert!(app.contains("<Slides>5</Slides>"), "{name}: {app}");
+        // The duplicate of Highlights and the imported one bring their
+        // notes along; the imported one is hidden.
+        let notes = if matches!(name, "duplicate" | "import") {
+            2
+        } else {
+            1
+        };
+        assert!(
+            app.contains(&format!("<Notes>{notes}</Notes>")),
+            "{name}: {app}"
+        );
+        let hidden = usize::from(name == "import");
+        assert!(
+            app.contains(&format!("<HiddenSlides>{hidden}</HiddenSlides>")),
+            "{name}: {app}"
+        );
+        assert!(
+            !app.contains("TitlesOfParts") && !app.contains("HeadingPairs"),
+            "{name}: {app}"
+        );
+        assert!(
+            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
+            "{name}: a new slide leaves the thumbnail"
+        );
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
+}
+
+#[test]
+fn hiding_a_slide_updates_only_the_hidden_slide_count() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+
+    prs.slide_mut(2).unwrap().set_hidden(true);
+
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert_eq!(
+        app,
+        before.replace(
+            "<HiddenSlides>0</HiddenSlides>",
+            "<HiddenSlides>1</HiddenSlides>"
+        )
+    );
+}
+
+#[test]
+fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged() {
+    // The authored deck says it has no slide: an added one makes it five.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    let layout = prs.slide_layout_index(0).unwrap();
+    prs.add_slide(layout).unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Slides>5</Slides>"), "{app}");
+
+    for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
+        let mut prs = corpus_deck(name);
+        let before = saved_part_text(&prs, "/docProps/app.xml");
+        prs.duplicate_slide(1).unwrap();
+        prs.slide_mut(0).unwrap().set_hidden(true);
+        assert_eq!(
+            saved_part_text(&reopen(&prs), "/docProps/app.xml"),
+            before,
+            "{name}"
+        );
+    }
+
+    // Opening and saving without an edit changes nothing, stale counts included.
+    let prs = corpus_deck("authored/deck.pptx");
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Slides>0</Slides>"), "{app}");
+}
+
+#[test]
+fn hiding_a_slide_recounts_hidden_slides_only_and_a_no_op_changes_nothing() {
+    // The authored deck says it has no slide and no notes; it is also told
+    // two slides are hidden, though none is.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    let mut properties = prs.application_properties().unwrap().clone();
+    properties.hidden_slides = Some(2);
+    prs.set_application_properties(properties).unwrap();
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(
+        before.contains("<HiddenSlides>2</HiddenSlides>"),
+        "{before}"
+    );
+    let bytes = prs.to_bytes().unwrap();
+
+    prs.slide_mut(0).unwrap().set_hidden(false);
+    assert_eq!(
+        prs.to_bytes().unwrap(),
+        bytes,
+        "a no-op show changes nothing"
+    );
+
+    prs.slide_mut(0).unwrap().set_hidden(true);
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert_eq!(
+        app,
+        before.replace(
+            "<HiddenSlides>2</HiddenSlides>",
+            "<HiddenSlides>1</HiddenSlides>"
+        )
+    );
+    assert!(
+        app.contains("<Slides>0</Slides>") && app.contains("<Notes>0</Notes>"),
+        "{app}"
+    );
 }
