@@ -58,6 +58,8 @@ pub(crate) struct PlacedField<'a> {
     pub(crate) appearance: Ref,
     /// The `/Off` state of a check box.
     pub(crate) off_appearance: Option<Ref>,
+    /// In tagged output, the widget's `/Form` element and parent tree key.
+    pub(crate) tag: Option<(Ref, i32)>,
 }
 
 impl PlacedField<'_> {
@@ -96,6 +98,7 @@ impl<'a> FormPlan<'a> {
     pub(crate) fn new(
         pages: &[std::sync::Arc<oxoffice_layout::PageFrame>],
         fields: &'a [FormField],
+        tagged: bool,
         alloc: &mut impl FnMut() -> Ref,
     ) -> Option<Self> {
         let mut placements: BTreeMap<FormFieldId, (usize, Rect)> = BTreeMap::new();
@@ -135,6 +138,8 @@ impl<'a> FormPlan<'a> {
                 let appearance = alloc();
                 let off_appearance =
                     matches!(field.kind, FormFieldKind::CheckBox { .. }).then(&mut *alloc);
+                // Parent tree keys after the pages' own.
+                let tag = tagged.then(|| (alloc(), (pages.len() + index) as i32));
                 PlacedField {
                     field,
                     name,
@@ -143,6 +148,7 @@ impl<'a> FormPlan<'a> {
                     widget,
                     appearance,
                     off_appearance,
+                    tag,
                 }
             })
             .collect();
@@ -169,6 +175,25 @@ impl<'a> FormPlan<'a> {
             .iter()
             .filter(move |placed| placed.page_index == page_index)
             .map(|placed| placed.widget)
+    }
+
+    /// The widgets the structure tree tags, in field order.
+    pub(crate) fn tagged_widgets(&self) -> Vec<crate::structure::TaggedWidget> {
+        self.by_id
+            .iter()
+            .filter_map(|(id, index)| {
+                let placed = &self.fields[*index];
+                placed
+                    .tag
+                    .map(|(element, key)| crate::structure::TaggedWidget {
+                        field: *id,
+                        page_index: placed.page_index,
+                        widget: placed.widget,
+                        element,
+                        key,
+                    })
+            })
+            .collect()
     }
 
     /// Write `/AcroForm` into the catalog.
@@ -220,8 +245,16 @@ impl<'a> FormPlan<'a> {
 
             let mut field = pdf.form_field(placed.widget);
             field.partial_name(TextStr(&placed.name));
-            if let Some(tooltip) = &placed.field.tooltip {
-                field.alternate_name(TextStr(tooltip));
+            // Tagged output needs a description on every field, and the
+            // name is the last one left.
+            match (&placed.field.tooltip, placed.tag) {
+                (Some(tooltip), _) => {
+                    field.alternate_name(TextStr(tooltip));
+                }
+                (None, Some(_)) => {
+                    field.alternate_name(TextStr(&placed.name));
+                }
+                (None, None) => {}
             }
             let mut flags = FieldFlags::empty();
             if placed.field.read_only {
@@ -293,6 +326,9 @@ impl<'a> FormPlan<'a> {
             widget.rect(bbox);
             widget.flags(AnnotationFlags::PRINT);
             widget.page(page_ids[placed.page_index]);
+            if let Some((_, key)) = placed.tag {
+                widget.struct_parent(key);
+            }
             if let Some(off_ref) = placed.off_appearance {
                 let checked =
                     matches!(placed.field.kind, FormFieldKind::CheckBox { checked: true });
