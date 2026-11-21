@@ -738,7 +738,11 @@ pub enum LegacyFormFieldValue {
 }
 
 /// Supported metadata from one structurally valid `w:ffData` subtree.
+///
+/// Non-exhaustive: more `w:ffData` facts may join it without breaking
+/// callers, who read it and never build it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LegacyFormFieldData {
     pub name: Option<String>,
     pub enabled: bool,
@@ -749,6 +753,11 @@ pub struct LegacyFormFieldData {
     pub max_length: Option<usize>,
     /// A checkbox's drawn size, `None` for the other kinds.
     pub checkbox_size: Option<LegacyCheckBoxSize>,
+    /// `w:helpText`, what Word shows on F1.
+    pub help_text: Option<LegacyFormInfoText>,
+    /// A text input's kind, `None` for regular text, stated or not, and for
+    /// the other kinds.
+    pub text_input_type: Option<LegacyTextInputType>,
 }
 
 /// Help or status text stored on a legacy form field.
