@@ -93,9 +93,9 @@
     "id": "docx-compare-endnotes",
     "format": "docx",
     "area": "compare",
-    "title": "Comparison refuses an endnote added, removed or moved",
-    "symptom": "compare refuses with \"endnotes story shell count changed\", \"identical related-story shells\" or \"its reference moved to another site\"",
-    "workaround": "make the endnote change on the accepted result after comparing",
+    "title": "Comparison refuses an endnote added, removed or moved, or a change it writes as a deletion and an insertion around an endnote",
+    "symptom": "compare refuses with \"endnotes story shell count changed\", \"identical related-story shells\" or \"its reference moved to another site\" (also when a table or paragraph holding an endnote is replaced whole)",
+    "workaround": "make the endnote change on the accepted result after comparing, or compare that pair in Word",
     "issue": 68
   },
   {

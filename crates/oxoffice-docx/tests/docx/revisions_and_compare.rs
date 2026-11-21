@@ -1697,6 +1697,65 @@ fn a_moved_footnote_reference_with_footnotes_ignored_is_refused() {
     let error = doc
         .compare_with_options(&edited, AUTHOR, DATE, &options)
         .unwrap_err();
-    assert!(error.to_string().contains("moved"), "{error}");
+    assert!(
+        error.to_string().contains("footnote") && error.to_string().contains("moved"),
+        "{error}"
+    );
+    assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn an_edit_in_the_paragraph_of_an_endnote_still_compares() {
+    let mut edited = doc_with_endnotes(&[0]);
+    edited
+        .paragraph_mut(0)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_text("Claim one, revised.");
+    let mut doc = redline(doc_with_endnotes(&[0]), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one, revised.", "Claim two."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one.", "Claim two."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+}
+
+#[test]
+fn a_paragraph_moved_with_its_endnote_is_refused() {
+    // Both ends of the move would name the endnote.
+    let document = |swapped: bool| {
+        let mut doc = Document::new();
+        let (first, second) = if swapped {
+            ("Other.", "Claim.")
+        } else {
+            ("Claim.", "Other.")
+        };
+        doc.add_paragraph(first);
+        doc.add_paragraph(second);
+        let claim = usize::from(swapped);
+        let location = doc.paragraph_story_location(claim).unwrap().unwrap();
+        doc.create_endnote(&location, "Source").unwrap();
+        doc
+    };
+    let mut doc = document(false);
+    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
+    assert!(error.to_string().contains("endnote"), "{error}");
+    assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn an_endnote_added_while_endnotes_are_ignored_is_refused() {
+    // The original's endnotes stay, so the new reference would name none.
+    let mut doc = doc_with_endnotes(&[]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    let error = doc
+        .compare_with_options(&doc_with_endnotes(&[1]), AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert!(error.to_string().contains("ignored endnotes"), "{error}");
     assert!(doc.revisions().is_empty());
 }

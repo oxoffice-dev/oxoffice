@@ -1431,7 +1431,12 @@ impl Document {
             *again = Some((next, ids));
             return Ok(Vec::new());
         }
-        refuse_shared_note_references(&original, &edited, &candidate)?;
+        refuse_shared_note_references(
+            &original,
+            &edited,
+            &candidate,
+            story_ignored(options, ComparisonStoryKind::Endnote),
+        )?;
         if snapshot_comments {
             let revision_id = metadata.ids.allocate()?;
             let mut carried_comments = edited_comments.clone();
@@ -6682,14 +6687,17 @@ fn note_reference_counts(document: &Document) -> Result<HashMap<(String, i32), u
 }
 
 /// No note may reach the result with more references than either input gives
-/// it. A reference that moved leaves a deleted and an inserted reference
+/// it. A reference that moved, or the content holding it written as a
+/// deletion and an insertion, leaves a deleted and an inserted reference
 /// naming one note, which Word for Mac cannot open. Moved footnotes became
 /// new notes before this point. Endnotes, and footnotes whose story is
-/// ignored, have no such path: the pair is refused.
+/// ignored, have no such path: the pair is refused. Nor may the result name
+/// an endnote that ignored endnotes keep out of it.
 fn refuse_shared_note_references(
     original: &Document,
     edited: &Document,
     candidate: &Document,
+    endnotes_ignored: bool,
 ) -> Result<()> {
     let left = note_reference_counts(original)?;
     let right = note_reference_counts(edited)?;
@@ -6699,6 +6707,11 @@ fn refuse_shared_note_references(
     pending.sort();
     for ((element, id), count) in pending {
         let key = (element, id);
+        if endnotes_ignored && key.0 == "endnoteReference" && !left.contains_key(&key) {
+            return Err(Error::Other(format!(
+                "ignored endnotes cannot supply the edited reference to endnote {id}"
+            )));
+        }
         let (Some(&left), Some(&right)) = (left.get(&key), right.get(&key)) else {
             continue;
         };
@@ -6710,7 +6723,7 @@ fn refuse_shared_note_references(
                 "footnote"
             };
             return Err(Error::Other(format!(
-                "comparison would give {note} {id} {count} references where each input has at most {most}: its reference moved to another site"
+                "comparison would give {note} {id} {count} references where each input has at most {most}: its reference moved to another site, or what holds it was deleted and inserted again"
             )));
         }
     }
