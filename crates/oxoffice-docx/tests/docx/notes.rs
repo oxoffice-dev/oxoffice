@@ -1817,6 +1817,34 @@ fn notes_added_to_the_google_report_create_their_parts() {
     assert!(content_types.contains("endnotes+xml"));
 }
 
+// Google Docs writes its notes without separator entries and numbers them
+// from 0: a note added there, either way, keeps that form.
+#[test]
+fn a_footnote_added_to_a_google_paper_keeps_its_notes_without_separators() {
+    for create in [true, false] {
+        let mut doc = corpus_doc("google/paper.docx");
+        assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (0, 0));
+        let before = doc.footnotes().len();
+        let id = if create {
+            create_note(&mut doc, Footnote, 3, "Added note")
+        } else {
+            let id = doc.add_footnote("Added note");
+            doc.paragraph_mut(3).unwrap().add_footnote_ref(id);
+            id
+        };
+        let doc = reopen(&mut doc);
+        assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (0, 0));
+        assert_eq!(doc.footnotes().len(), before + 1);
+        assert!(
+            doc.footnotes()
+                .iter()
+                .any(|(note, text)| *note == id && text == " Added note"),
+            "{:?}",
+            doc.footnotes()
+        );
+    }
+}
+
 #[test]
 fn a_policy_on_the_word_report_is_removed_without_its_separator_selection() {
     let mut doc = corpus_doc("word/report.docx");

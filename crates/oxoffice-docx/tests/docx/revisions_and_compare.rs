@@ -2020,6 +2020,53 @@ fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
 
 // ---- Bookmarks, tables of contents and notes ----
 
+// A notes part as Google Docs writes it: notes and no separator entries.
+fn doc_with_notes_and_no_separators(paragraphs: &[(&str, Option<&str>)]) -> Document {
+    let bytes = doc_with_notes(paragraphs)
+        .to_bytes()
+        .expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let mut xml = String::from_utf8(
+        package
+            .get_part("/word/footnotes.xml")
+            .expect("footnotes part")
+            .to_vec(),
+    )
+    .expect("UTF-8");
+    for kind in ["separator", "continuationSeparator"] {
+        let start = xml
+            .find(&format!(r#"w:type="{kind}""#))
+            .and_then(|at| xml[..at].rfind("<w:footnote "))
+            .expect("a separator entry");
+        let end = start + xml[start..].find("</w:footnote>").expect("entry end") + 13;
+        xml.replace_range(start..end, "");
+    }
+    package.set_part("/word/footnotes.xml", xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document opens")
+}
+
+#[test]
+fn a_footnote_added_where_notes_have_no_separators_is_compared() {
+    let paragraphs = [("One", Some("First note.")), ("Two", None)];
+    let original = doc_with_notes_and_no_separators(&paragraphs);
+    let notes = original.footnotes();
+    let mut edited = doc_with_notes_and_no_separators(&paragraphs);
+    let id = edited.add_footnote("A note.");
+    edited.paragraph_mut(1).unwrap().add_footnote_ref(id);
+    let edited = reopen(&mut edited);
+    let mut doc = redline(original, &edited);
+    assert!(
+        !kinds(&doc).contains(&RevisionKind::Deletion),
+        "{:?}",
+        kinds(&doc)
+    );
+    assert_eq!(accepted(&mut doc).footnotes(), edited.footnotes());
+    assert_eq!(rejected(&mut doc).footnotes(), notes);
+}
+
 #[test]
 fn renamed_toc_heading_bookmarks_do_not_block_the_comparison() {
     let heading = |toc: u32| {
