@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use oxoffice_layout::{
     Color, FontFile, FontId, FontManager, GlyphRun, PageFrame, Point, PositionedElement,
-    SystemFonts, glyph_coverage_diagnostics,
+    SystemFonts, TextDirection, TextSegment, glyph_coverage_diagnostics,
 };
 
 const FALLBACK_TEST: &[u8] = include_bytes!("fixtures/OxofficeFallbackTest.otf");
@@ -137,7 +137,7 @@ fn a_run_the_bundled_fonts_cover_between_them_never_takes_a_system_font() {
 }
 
 #[test]
-fn a_run_the_bundled_fonts_partly_draw_keeps_a_bundled_face() {
+fn a_run_the_multilingual_layout_splits_keeps_the_bundled_face_that_draws_part_of_it() {
     // The named test font has every character of both runs, but a system
     // face never takes characters a bundled face draws: the run keeps a
     // bundled face and only the missing graphemes take a system font.
@@ -148,19 +148,117 @@ fn a_run_the_bundled_fonts_partly_draw_keeps_a_bundled_face() {
     .unwrap();
 
     let latin = fonts
-        .resolve_font_for_text(Some("Calibri"), false, false, "abc猫")
+        .resolve_font_for_split_text(Some("Calibri"), false, false, "abc猫")
         .unwrap();
     assert_eq!(family(&fonts, latin), "Carlito");
     let han = fonts
-        .resolve_font_for_text(Some("Calibri"), false, false, "你好猫")
+        .resolve_font_for_split_text(Some("Calibri"), false, false, "你好猫")
         .unwrap();
     assert_eq!(family(&fonts, han), "Noto Sans SC");
+}
 
-    // The missing grapheme alone takes the system font.
-    let cat = fonts
-        .resolve_font_for_text(Some("Calibri"), false, false, "猫")
+#[test]
+fn the_multilingual_layout_gives_only_the_missing_grapheme_a_system_font() {
+    let mut fonts = FontManager::new_with_fallback_fonts(&fallback_fonts(&[(
+        "Oxoffice Named Test",
+        NAMED_TEST,
+    )]))
+    .unwrap();
+    let text = "你好猫";
+    let run = fonts
+        .resolve_font_for_split_text(Some("Calibri"), false, false, text)
         .unwrap();
-    assert!(fonts.is_system_fallback_font(cat));
+
+    let spans = fonts
+        .shape_multilingual_paragraph(
+            vec![(segment(&fonts, run, text), None)],
+            TextDirection::LeftToRight,
+            false,
+        )
+        .unwrap();
+
+    let drawn: Vec<(String, String, bool)> = spans
+        .iter()
+        .map(|span| {
+            (
+                span.text().to_owned(),
+                family(&fonts, span.font_id()),
+                fonts.is_system_fallback_font(span.font_id()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        drawn,
+        vec![
+            ("你".to_owned(), "Noto Sans SC".to_owned(), false),
+            ("好".to_owned(), "Noto Sans SC".to_owned(), false),
+            ("猫".to_owned(), "Oxoffice Named Test".to_owned(), true),
+        ]
+    );
+}
+
+#[test]
+fn a_run_no_layout_splits_takes_the_system_font_that_draws_all_of_it() {
+    // Chart labels, list markers and watermarks are shaped with one face: a
+    // bundled face would leave 猫 a box.
+    let mut fonts = FontManager::new_with_fallback_fonts(&fallback_fonts(&[(
+        "Oxoffice Named Test",
+        NAMED_TEST,
+    )]))
+    .unwrap();
+
+    let label = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "abc猫")
+        .unwrap();
+
+    assert!(fonts.is_system_fallback_font(label));
+    assert_eq!(family(&fonts, label), "Oxoffice Named Test");
+}
+
+#[test]
+fn a_joiner_a_bundled_face_maps_does_not_keep_a_run_off_the_system_tier() {
+    let mut fonts = manager();
+    // U+200D is mapped by Carlito and other bundled faces; 猫 is not.
+    let run = fonts
+        .resolve_font_for_split_text(Some("Calibri"), false, false, "猫\u{200d}犬")
+        .unwrap();
+    assert!(fonts.is_system_fallback_font(run));
+    // The Noto Sans SC subset lacks the joiner too, which other bundled faces map.
+    let run = fonts
+        .resolve_font_for_split_text(Some("Noto Sans SC"), false, false, "猫\u{200d}犬")
+        .unwrap();
+    assert!(fonts.is_system_fallback_font(run));
+}
+
+fn segment(fonts: &FontManager, font_id: FontId, text: &str) -> TextSegment {
+    let shaped = fonts.shape_text(font_id, text, 12.0).unwrap();
+    TextSegment {
+        text: text.to_owned(),
+        direction: TextDirection::LeftToRight,
+        source: None,
+        font_id,
+        font_size: 12.0,
+        width: shaped.width,
+        glyph_ids: shaped.glyph_ids,
+        advances: shaped.advances,
+        ascent: 10.0,
+        descent: 2.0,
+        line_gap: 0.0,
+        color: Color::BLACK,
+        bold: false,
+        italic: false,
+        underline: None,
+        strike: false,
+        dstrike: false,
+        highlight: None,
+        baseline_offset: 0.0,
+        hyperlink_url: None,
+        field_kind: None,
+        field_source: None,
+        note: None,
+        note_reference_source: None,
+        form_mark: None,
+    }
 }
 
 #[test]
@@ -179,7 +277,7 @@ fn a_run_no_bundled_font_draws_any_of_takes_one_system_font() {
 fn a_skipped_system_search_does_not_mark_characters_as_missing_everywhere() {
     let mut fonts = manager();
     fonts
-        .resolve_font_for_text(Some("Calibri"), false, false, "abc猫")
+        .resolve_font_for_split_text(Some("Calibri"), false, false, "abc猫")
         .unwrap();
     // 猫 was not searched for in the system tier above; alone it is found.
     let cat = fonts
@@ -229,7 +327,7 @@ fn a_manager_with_the_host_fonts_first_says_so_on_any_host() {
     #[cfg(feature = "system-fonts")]
     assert_eq!(FontManager::new().system_fonts(), SystemFonts::First);
     #[cfg(not(feature = "system-fonts"))]
-    assert_eq!(FontManager::new().system_fonts(), SystemFonts::Off);
+    assert_eq!(FontManager::new().system_fonts(), SystemFonts::Unavailable);
 }
 
 #[test]

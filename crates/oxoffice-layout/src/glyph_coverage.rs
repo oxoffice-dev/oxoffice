@@ -164,7 +164,7 @@ pub fn missing_glyph_diagnostics(
 /// Whether a character is drawn with a glyph of its own: not white space,
 /// a control, a zero-width format character, a variation selector or a
 /// combining mark (which a font may draw composed with its base).
-fn draws_a_glyph(character: char) -> bool {
+pub(crate) fn draws_a_glyph(character: char) -> bool {
     !character.is_whitespace()
         && !character.is_control()
         && !matches!(

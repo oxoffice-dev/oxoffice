@@ -698,7 +698,17 @@ fn coverage_ranges(face: &ttf_parser::Face<'_>) -> Arc<[(u32, u32)]> {
     if let Some(cmap) = face.tables().cmap {
         for subtable in cmap.subtables {
             if subtable.is_unicode() {
-                subtable.codepoints(|codepoint| codepoints.push(codepoint));
+                // A codepoint mapped to glyph 0 is missing, and a broken
+                // group cannot reach past Unicode.
+                subtable.codepoints(|codepoint| {
+                    if codepoint <= 0x10FFFF
+                        && subtable
+                            .glyph_index(codepoint)
+                            .is_some_and(|glyph| glyph.0 != 0)
+                    {
+                        codepoints.push(codepoint);
+                    }
+                });
             }
         }
     }
@@ -1166,7 +1176,11 @@ impl FontManager {
         }
 
         #[cfg(not(feature = "system-fonts"))]
-        Self::from_base_database(bundled_font_database())
+        {
+            let mut manager = Self::from_base_database(bundled_font_database());
+            manager.system_first = true;
+            manager
+        }
     }
 
     /// Create a font manager that loads bundled fonts without discovering
@@ -1229,7 +1243,10 @@ impl FontManager {
                 SystemFonts::Unavailable
             }
             SystemFallback::Pending(_) | SystemFallback::Open(_) => SystemFonts::Fallback,
-            SystemFallback::None if self.system_first => SystemFonts::First,
+            SystemFallback::None if self.system_first && cfg!(feature = "system-fonts") => {
+                SystemFonts::First
+            }
+            SystemFallback::None if self.system_first => SystemFonts::Unavailable,
             SystemFallback::None => SystemFonts::Off,
         }
     }
@@ -2083,6 +2100,34 @@ impl FontManager {
         italic: bool,
         text: &str,
     ) -> Result<FontId> {
+        self.resolve_font_for_run(family, bold, italic, text, false)
+    }
+
+    /// [`Self::resolve_font_for_text`] for text the multilingual layout
+    /// splits by grapheme, giving the graphemes this font lacks a font of
+    /// their own (see `font_for_multilingual_span`).
+    ///
+    /// A system font then takes the run only when no bundled face draws any
+    /// of it; otherwise the run keeps a bundled face, so text the bundled
+    /// fonts draw is the same on every machine.
+    pub fn resolve_font_for_split_text(
+        &mut self,
+        family: Option<&str>,
+        bold: bool,
+        italic: bool,
+        text: &str,
+    ) -> Result<FontId> {
+        self.resolve_font_for_run(family, bold, italic, text, true)
+    }
+
+    fn resolve_font_for_run(
+        &mut self,
+        family: Option<&str>,
+        bold: bool,
+        italic: bool,
+        text: &str,
+        split: bool,
+    ) -> Result<FontId> {
         let primary = self.resolve_font(family, bold, italic)?;
 
         let Some(idx) = self.index_of(primary) else {
@@ -2092,16 +2137,12 @@ impl FontManager {
         if missing.is_empty() {
             return Ok(primary);
         }
-        // A system font takes the whole run only when no bundled face draws
-        // any of it. Otherwise the run keeps a bundled face, and the
-        // multilingual layout gives the graphemes it lacks a font of their own
-        // (see `font_for_multilingual_span`), so text the bundled fonts draw is
-        // the same on every machine.
-        let primary_draws_some = text
-            .chars()
-            .any(|ch| !ch.is_whitespace() && !ch.is_control() && !missing.contains(&ch));
+        let primary_draws_some = split
+            && text
+                .chars()
+                .any(|ch| crate::glyph_coverage::draws_a_glyph(ch) && !missing.contains(&ch));
 
-        match self.font_covering_run(&missing, bold, italic, !primary_draws_some) {
+        match self.font_covering_run(&missing, bold, italic, split.then_some(primary_draws_some)) {
             // Nothing installed can draw it. Keep the original font so the
             // text still occupies the right space.
             None => Ok(primary),
@@ -2485,18 +2526,19 @@ impl FontManager {
     /// characters shared with Chinese and not the simplified-only ones, so it
     /// would look like a fix and still leave gaps.
     fn font_covering(&mut self, missing: &[char], bold: bool, italic: bool) -> Option<FontId> {
-        self.font_covering_run(missing, bold, italic, true)
+        self.font_covering_run(missing, bold, italic, None)
     }
 
-    /// [`Self::font_covering`] for a run whose other characters the primary
-    /// face draws unless `primary_draws_none`: the system tier is then left
-    /// out unless no bundled face has any of `missing`.
+    /// [`Self::font_covering`] for a run the multilingual layout splits,
+    /// whose primary face draws some of its other characters when
+    /// `split_primary_draws_some` is `Some(true)`: the system tier is then
+    /// left out unless no bundled face draws any of the run.
     fn font_covering_run(
         &mut self,
         missing: &[char],
         bold: bool,
         italic: bool,
-        primary_draws_none: bool,
+        split_primary_draws_some: Option<bool>,
     ) -> Option<FontId> {
         if missing.iter().all(|ch| self.coverage_misses.contains(ch)) {
             return None;
@@ -2516,10 +2558,18 @@ impl FontManager {
             return Some(id);
         }
         let first_tier_lacks_some = missing.iter().any(|ch| !covered.contains(ch));
-        let first_tier_draws_none = primary_draws_none && covered.is_empty();
+        let system_allowed = match split_primary_draws_some {
+            None => true,
+            Some(primary_draws_some) => {
+                !primary_draws_some
+                    && !covered
+                        .iter()
+                        .any(|ch| crate::glyph_coverage::draws_a_glyph(*ch))
+            }
+        };
         let mut system_skipped = false;
         if first_tier_lacks_some && !matches!(self.system_fallback, SystemFallback::None) {
-            if first_tier_draws_none {
+            if system_allowed {
                 self.open_system_fallback();
                 if let Some(id) = self.system_coverage_pass(missing, bold, italic, &mut best) {
                     return Some(id);

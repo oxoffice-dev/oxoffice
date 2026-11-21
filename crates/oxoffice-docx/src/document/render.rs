@@ -584,9 +584,12 @@ impl Document {
     /// 3. For a character none of these can draw, such as most Chinese,
     ///    Japanese and Korean text (the bundled CJK faces hold only a few
     ///    characters), a system font that has it, which a layout diagnostic
-    ///    names. No family name selects a system font, so text the first two
-    ///    cover is the same on every machine. Without such a font the text is
-    ///    drawn as empty boxes, which a diagnostic names too.
+    ///    names. No family name selects a system font, and in body text only
+    ///    the missing graphemes take it, so text the first two draw there is
+    ///    the same on every machine (a chart label, list marker or watermark
+    ///    holding such a character takes the system font for all its text).
+    ///    Without such a font the text is drawn as empty boxes, which a
+    ///    diagnostic names too.
     ///
     /// [`RenderOptions::with_bundled_fonts_only`] in
     /// [`Self::to_pdf_with_options`] skips step 3, for the same output on
