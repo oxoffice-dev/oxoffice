@@ -361,6 +361,7 @@ impl PyDocument {
         })
         .map_err(|error| docx_to_pyerr(py, error))
     }
+    /// Render `{{ path }}` tags from data; comments are left as written.
     #[pyo3(signature = (data, *, grammar_version=None))]
     fn render_template(
         &mut self,

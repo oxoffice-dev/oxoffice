@@ -15,7 +15,8 @@ impl Document {
     /// `{% for item in path %}` or `{% if path %}` blocks with their matching
     /// end markers. Loop paths require arrays and introduce lexical scopes.
     /// Conditions use JSON truthiness, where false, null, zero, and empty
-    /// strings or collections are false.
+    /// strings or collections are false. Comments are left as written: their
+    /// tags are not rendered.
     ///
     /// This additive API is native-only. Python, WASM, and CLI binding surfaces
     /// remain unchanged and continue to preserve documents rendered here.
