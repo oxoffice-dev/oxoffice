@@ -109,7 +109,9 @@ OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call
 
 Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
 runs. A docx call of `GROWING` is a strict xfail tied to its issue: when a fix
-makes it flat, the XPASS fails the run until the call leaves the set.
+makes it flat, the XPASS fails the run until the call leaves the set. A call
+that measures flat on one platform only is in `UNSTEADY` too: its xfail is not
+strict.
 
 ## Known limitations
 

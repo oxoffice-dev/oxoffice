@@ -773,6 +773,9 @@ GROWING = {
     "Table.delete_column", "Table.insert_column", "Table.remove_row", "Table.replace_xml",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
+# Calls of GROWING that grow on Linux and Windows but measured flat on macOS (main, 2026-11-20): their xfail is not
+# strict, so a flat platform reports an XPASS without failing the run. A fix still shows, as an XPASS everywhere.
+UNSTEADY = {"Document.set_picture_size"}
 
 # Pull requests time these: the edits #6 names, and one call of each area.
 QUICK = {
@@ -783,8 +786,8 @@ QUICK = {
 }
 
 
-@pytest.mark.parametrize("name", [pytest.param(name, marks=pytest.mark.xfail(strict=True, raises=AssertionError,
-                                                                           reason=GROWS))
+@pytest.mark.parametrize("name", [pytest.param(name, marks=pytest.mark.xfail(strict=name not in UNSTEADY,
+                                                                           raises=AssertionError, reason=GROWS))
                                   if name in GROWING else name for name in TIMED | READS_TIMED])
 def test_call_cost_does_not_grow_with_the_document(documents, name):
     small, large = costs_ms(documents, (TIMED | READS_TIMED)[name])
@@ -805,6 +808,7 @@ def test_call_cost_does_not_grow_with_the_document(documents, name):
 
 def test_every_mutating_call_is_timed():
     assert sorted(GROWING - set(TIMED) - set(READS_TIMED)) == []
+    assert sorted(UNSTEADY - GROWING) == []
     assert sorted(QUICK - set(TIMED)) == []
     timed = {name.split(" (")[0] for name in TIMED}
     assert sorted(mutating_surface() - timed - set(WHOLE_DOCUMENT)) == []
