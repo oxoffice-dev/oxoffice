@@ -1358,7 +1358,7 @@ fn note_marks_follow_the_number_format_of_their_policy() {
 }
 
 #[test]
-fn chicago_note_marks_are_drawn_and_a_format_the_layout_lacks_reads_decimal() {
+fn note_marks_follow_a_section_policy_read_from_the_file() {
     // Word's footnote dialog offers *, †, ‡, §; a file may also name a format
     // oxoffice cannot draw, which gives decimal marks rather than none.
     let paragraphs = [
@@ -1368,32 +1368,46 @@ fn chicago_note_marks_are_drawn_and_a_format_the_layout_lacks_reads_decimal() {
         "Fourth claim",
         "Fifth claim",
     ];
-    for (format, expected) in [
-        ("chicago", ["*", "\u{2020}", "\u{2021}", "\u{a7}", "**"]),
-        ("decimalEnclosedCircle", ["1", "2", "3", "4", "5"]),
+    // A section policy naming only where endnotes go keeps i, ii, iii.
+    for (endnotes, properties, expected) in [
+        (
+            false,
+            r#"<w:footnotePr><w:numFmt w:val="chicago"/></w:footnotePr>"#,
+            ["*", "\u{2020}", "\u{2021}", "\u{a7}", "**"],
+        ),
+        (
+            false,
+            r#"<w:footnotePr><w:numFmt w:val="decimalEnclosedCircle"/></w:footnotePr>"#,
+            ["1", "2", "3", "4", "5"],
+        ),
+        (
+            true,
+            r#"<w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr>"#,
+            ["i", "ii", "iii", "iv", "v"],
+        ),
     ] {
         let mut doc = doc_with(&paragraphs);
         for index in 0..paragraphs.len() {
             let cited = doc.paragraph_story_location(index).unwrap().unwrap();
-            doc.create_footnote(&cited, "Source.").unwrap();
+            if endnotes {
+                doc.create_endnote(&cited, "Source.").unwrap();
+            } else {
+                doc.create_footnote(&cited, "Source.").unwrap();
+            }
         }
         let bytes = doc.to_bytes().unwrap();
         let mut package =
             oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
         let part = package.main_document_part().expect("main document part");
         let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
-        let xml = xml.replacen(
-            "<w:sectPr>",
-            &format!(r#"<w:sectPr><w:footnotePr><w:numFmt w:val="{format}"/></w:footnotePr>"#),
-            1,
-        );
-        assert!(xml.contains(format), "the section takes the format");
+        let xml = xml.replacen("<w:sectPr>", &format!("<w:sectPr>{properties}"), 1);
+        assert!(xml.contains(properties), "the section takes the policy");
         package.set_part(&part, xml.into_bytes());
         let mut out = Cursor::new(Vec::new());
         package.write_to(&mut out).unwrap();
         let doc = Document::from_bytes(&out.into_inner()).unwrap();
         let pdf = pdf_of(&doc);
-        assert_eq!(marks_after(&pdf, &paragraphs), expected, "{format}");
+        assert_eq!(marks_after(&pdf, &paragraphs), expected, "{properties}");
     }
 }
 
