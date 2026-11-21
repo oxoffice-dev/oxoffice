@@ -25350,12 +25350,16 @@ impl<'a> TableCellRef<'a> {
         self.cell.horizontal_merge || self.cell.vertical_merge
     }
 
-    /// Returns the origin's vertical span, or one for an unmerged cell.
+    /// Returns the cell's own `rowSpan`: the merge height on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_height(&self) -> u32 {
         self.cell.row_span
     }
 
-    /// Returns the origin's horizontal span, or one for an unmerged cell.
+    /// Returns the cell's own `gridSpan`: the merge width on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_width(&self) -> u32 {
         self.cell.grid_span
     }
@@ -25523,12 +25527,16 @@ impl<'a> TableCellMut<'a> {
         self.cell_ref().is_spanned()
     }
 
-    /// Returns the origin's vertical span, or one for an unmerged cell.
+    /// Returns the cell's own `rowSpan`: the merge height on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_height(&self) -> u32 {
         self.cell_ref().span_height()
     }
 
-    /// Returns the origin's horizontal span, or one for an unmerged cell.
+    /// Returns the cell's own `gridSpan`: the merge width on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_width(&self) -> u32 {
         self.cell_ref().span_width()
     }
