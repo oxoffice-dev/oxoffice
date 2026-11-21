@@ -1600,6 +1600,45 @@ impl CT_Presentation {
         Ok(())
     }
 
+    /// Puts a slide, already at its place in the slide list, in the section
+    /// it lands in: the one of the slide before it, or of the slide after it
+    /// when it comes first. Within that section the slides keep deck order.
+    /// A deck without sections is left as it is.
+    pub fn place_slide_in_sections(&mut self, slide_id: u32) {
+        if self.sections.is_empty() {
+            return;
+        }
+        self.remove_slide_from_sections(slide_id);
+        let Some(position) = self.slide_ids.iter().position(|slide| slide.id == slide_id) else {
+            return;
+        };
+        let owner = |neighbour: Option<&CT_SlideId>| {
+            neighbour.and_then(|neighbour| {
+                self.sections
+                    .iter()
+                    .position(|section| section.slide_ids.contains(&neighbour.id))
+            })
+        };
+        let before = position
+            .checked_sub(1)
+            .and_then(|before| self.slide_ids.get(before));
+        let Some(target) = owner(before).or_else(|| owner(self.slide_ids.get(position + 1))) else {
+            return;
+        };
+        let order = self
+            .slide_ids
+            .iter()
+            .enumerate()
+            .map(|(index, slide)| (slide.id, index))
+            .collect::<std::collections::HashMap<_, _>>();
+        let section = &mut self.sections[target];
+        section.slide_ids.push(slide_id);
+        section
+            .slide_ids
+            .sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
+        self.sections_dirty = true;
+    }
+
     pub fn remove_slide_from_sections(&mut self, slide_id: u32) {
         for section in &mut self.sections {
             let before = section.slide_ids.len();

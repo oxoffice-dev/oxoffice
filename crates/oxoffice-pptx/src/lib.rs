@@ -10007,6 +10007,9 @@ impl Presentation {
     }
 
     /// Moves one slide to an existing final zero-based index.
+    ///
+    /// In a deck with sections, the slide joins the section it lands in: the
+    /// one of the slide before it, or of the slide after it when it is first.
     pub fn move_slide(&mut self, from_index: usize, to_index: usize) -> Result<()> {
         let slide_count = self.slides.len();
         if from_index >= slide_count {
@@ -10027,7 +10030,9 @@ impl Presentation {
         let slide = self.slides.remove(from_index);
         self.slides.insert(to_index, slide);
         let slide_id = self.presentation.slide_ids.remove(from_index);
+        let id = slide_id.id;
         self.presentation.slide_ids.insert(to_index, slide_id);
+        self.presentation.place_slide_in_sections(id);
         Ok(())
     }
 
@@ -10304,6 +10309,9 @@ impl Presentation {
     ///
     /// `docProps/app.xml` counts the new slide and drops its title lists,
     /// which PowerPoint writes again on its next save.
+    ///
+    /// In a deck with sections, the slide joins the section it lands in: the
+    /// one of the slide before it, or of the slide after it when it is first.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10414,6 +10422,9 @@ impl Presentation {
     ///
     /// `docProps/app.xml` counts the new slides and drops its title lists,
     /// which PowerPoint writes again on its next save.
+    ///
+    /// Without `options.keep_sections`, each copy joins the section of this
+    /// presentation it lands in, as an added slide does.
     ///
     /// The slides at `indexes` are copied in that order to consecutive
     /// positions starting at `options.insert_index`, or appended when that is
@@ -11419,6 +11430,7 @@ impl Presentation {
             .add_override(&slide_part, content_types::SLIDE);
 
         self.presentation.slide_ids.insert(inserted, slide_id);
+        self.presentation.place_slide_in_sections(id);
         self.slides.insert(
             inserted,
             Arc::new(SlideRecord {
@@ -12705,6 +12717,9 @@ impl Presentation {
     ///
     /// `docProps/app.xml` counts the new slide and drops its title lists,
     /// which PowerPoint writes again on its next save.
+    ///
+    /// In a deck with sections, the slide joins the section it lands in: the
+    /// one of the slide before it, or of the slide after it when it is first.
     pub fn add_slide(&mut self, layout_index: usize) -> Result<SlideRef<'_>> {
         let layout = self
             .layouts
@@ -12801,6 +12816,7 @@ impl Presentation {
             .content_types
             .add_override(&slide_part, content_types::SLIDE);
         self.presentation.slide_ids.push(slide_id);
+        self.presentation.place_slide_in_sections(id);
         self.slides.push(Arc::new(SlideRecord {
             id,
             part_name: slide_part,
