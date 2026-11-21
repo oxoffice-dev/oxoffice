@@ -427,9 +427,8 @@ pub(super) fn note_labels(
                                 .or_else(|| {
                                     default_policy.and_then(|policy| policy.num_fmt.as_deref())
                                 })
-                                .map(ST_NumberFormat::from_str)
-                                .unwrap_or(ST_NumberFormat::Decimal);
-                            entry.insert(style_resolver::format_number(ordinal, format));
+                                .map(ST_NumberFormat::from_str);
+                            entry.insert(note_mark(ordinal, format, family));
                         }
                     }
                 }
@@ -456,6 +455,20 @@ pub(super) fn note_labels(
         return Err(error);
     }
     Ok(labels)
+}
+
+/// The mark of the `ordinal`th note of `family` (0 footnotes, 1 endnotes)
+/// in `format`. Without a format Word numbers footnotes 1, 2, 3 and
+/// endnotes i, ii, iii; a format the layout cannot draw falls back to
+/// decimal rather than an empty mark.
+fn note_mark(ordinal: u32, format: Option<ST_NumberFormat>, family: usize) -> String {
+    let format = match format {
+        Some(format) if style_resolver::number_format_has_visible_renderer(&format) => format,
+        Some(_) => ST_NumberFormat::Decimal,
+        None if family == 1 => ST_NumberFormat::LowerRoman,
+        None => ST_NumberFormat::Decimal,
+    };
+    style_resolver::format_number(ordinal, format)
 }
 
 fn visit_table_paragraphs<'a>(table: &'a CT_Tbl, accepted: bool, visit: &mut impl FnMut(&'a CT_P)) {

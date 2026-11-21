@@ -259,7 +259,9 @@ fn list_level<'a>(
 }
 
 /// How a list item's marker shows in HTML: a bullet, or a number in one of
-/// the formats layout draws. Legal numbering shows decimal numbers.
+/// the formats CSS lists name. Legal numbering shows decimal numbers. Other
+/// formats layout draws (Chicago's `*`, `†`, `‡`, `§`) are not written as
+/// list items.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ListKind {
     Bullet,
