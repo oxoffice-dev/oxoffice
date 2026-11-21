@@ -371,9 +371,7 @@ fn pagination_flags_keep_an_explicit_false() {
     assert!(!plain.is_page_break_before());
 }
 
-// Fails today: set_first_line_indent leaves an earlier hanging indent in w:ind, and Word applies the hanging one. Issue: #33
 #[test]
-#[should_panic(expected = "the first-line indent replaces the hanging indent")]
 fn setting_a_first_line_indent_replaces_a_hanging_indent() {
     let mut doc = Document::new();
     doc.add_paragraph("indented")
@@ -386,6 +384,53 @@ fn setting_a_first_line_indent_replaces_a_hanging_indent() {
         twips(paragraph.hanging_indent()),
         None,
         "the first-line indent replaces the hanging indent"
+    );
+    let xml = reopened.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"w:firstLine="360""#) && !xml.contains("w:hanging="),
+        "{xml}"
+    );
+}
+
+#[test]
+fn setting_a_hanging_indent_replaces_a_first_line_indent() {
+    let mut doc = Document::new();
+    doc.add_paragraph("by the builder")
+        .first_line_indent(Length::pt(18.0))
+        .hanging_indent(Length::pt(9.0));
+    doc.add_paragraph("by the value setter");
+    {
+        let mut paragraph = doc.paragraph_mut(1).unwrap();
+        paragraph.set_first_line_indent(Length::pt(18.0));
+        paragraph.set_hanging_indent_value(Some(Length::pt(9.0)));
+    }
+    let reopened = reopen(&mut doc);
+    for index in 0..2 {
+        let paragraph = reopened.paragraph(index).unwrap();
+        assert_eq!(
+            twips(paragraph.hanging_indent()),
+            Some(180),
+            "paragraph {index}"
+        );
+        // The signed first-line reading is the hanging indent: no
+        // w:firstLine is left beside it.
+        assert_eq!(
+            twips(paragraph.first_line_indent()),
+            Some(-180),
+            "paragraph {index}"
+        );
+    }
+    // Read on the XML, whatever reader order a file holding both would get.
+    let xml = reopened.part_xml("word/document.xml").unwrap();
+    assert_eq!(xml.matches(r#"w:hanging="180""#).count(), 2, "{xml}");
+    assert!(!xml.contains("w:firstLine="), "{xml}");
+    // Clearing the hanging indent leaves no indent of either kind.
+    let mut doc = reopened;
+    doc.paragraph_mut(0).unwrap().set_hanging_indent_value(None);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        (paragraph.hanging_indent(), paragraph.first_line_indent()),
+        (None, None)
     );
 }
 
