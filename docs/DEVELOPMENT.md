@@ -47,18 +47,21 @@ or wants to merge it runs that review or asks for one.
   else is **minor**. The reviewer classifies, the author may contest, the
   maintainer decides.
 - **The author answers every finding** in the thread: fixed, with the commit
-  (and its proof for a minor), a follow-up issue for a minor, or why it is
-  not a defect. A major finding is fixed unless the maintainer waives it.
+  (and its proof for a minor), in the pull request's follow-up issue, or
+  why it is not a defect. A major finding is fixed unless the maintainer
+  waives it.
 - **At most two reviews per pull request**: one full review, then at most
   one delta review, after a major was fixed or after a change no finding
   asked for that can change behaviour (new code, a conflict resolved by hand
   in code, tests or workflows). A third review needs the maintainer's
   agreement; beyond that budget the maintainer decides from the evidence
   (mutation checks, `git range-diff`), without another round.
-- **Minors never trigger a review.** Fix one with a proof stated in the
-  answer (a test that fails without the fix, or a mutation check), or open a
-  follow-up issue, or say why it is not a defect. A minor that would need a
-  risky change goes to a follow-up issue, not into the pull request.
+- **Minors never trigger a review.** A minor found in review is fixed in
+  the pull request when the fix is cheap, with its proof stated in the
+  answer (a test that fails without it, or a mutation check). A follow-up
+  issue is opened only for a real defect that the pull request cannot carry
+  (a risky change included), and at most one per pull request: it groups
+  those findings. Otherwise say why it is not a defect.
 - **A rebase or merge that only resolves a conflict in data**
   (a limitations file, a generated page, the `GROWING` or test-module lists,
   a moved context line) needs no review: `git range-diff` and the tests, and

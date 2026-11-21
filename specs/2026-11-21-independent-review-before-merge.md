@@ -107,6 +107,18 @@ finding asked for that can change behaviour, still gets its delta review.
 [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#independent-review) and rule 9
 of [CLAUDE.md](../CLAUDE.md) say so.
 
+## Amendment 2026-11-21: minors fixed in the pull request
+
+The reviews of the day opened follow-up issues for minors, several per pull
+request: 135 issues were opened on 2026-11-21, while the goal is to close
+every issue before 0.2.0. The maintainer decided: a minor found in review is
+fixed in the pull request when the fix is cheap, with its proof (a test that
+fails without it, or a mutation check). A follow-up issue is opened only for
+a real defect that the pull request cannot carry, and at most one per pull
+request, grouping its findings. The budget of reviews is unchanged. Rule 9
+of [CLAUDE.md](../CLAUDE.md) and
+[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#independent-review) say so.
+
 ## Links
 
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md), the loop a change follows.
