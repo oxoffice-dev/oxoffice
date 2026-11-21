@@ -331,6 +331,34 @@ fn restart_numbering_refuses_bullets_plain_paragraphs_and_missing_ones() {
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
+#[test]
+fn restart_numbering_refuses_an_instance_with_data_it_would_lose() {
+    // A durable id names its instance and is not copied; any other unknown
+    // attribute would be lost by the copy, so the restart is refused.
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("step", 0);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    let xml = xml.replacen(
+        "<w:num w:numId=\"1\"",
+        "<w:num xmlns:x=\"urn:example\" x:tag=\"kept\" w:numId=\"1\"",
+        1,
+    );
+    assert!(xml.contains("x:tag"), "the instance carries the attribute");
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let error = doc.restart_numbering(0, 1).unwrap_err().to_string();
+    assert!(
+        error.contains("cannot project unsupported override source"),
+        "{error}"
+    );
+}
+
 // List definitions and instances.
 
 #[test]
@@ -1052,9 +1080,7 @@ fn every_list_edit_works_on_a_libreoffice_report() {
     doc.validate_numbering_graph().unwrap();
 }
 
-// Fails today: Word writes w16cid:durableId on every list instance, and a restart refuses an instance with attributes it does not model. Issue: #29
 #[test]
-#[should_panic(expected = "cannot project unsupported override source")]
 fn a_new_numbered_list_can_be_started_in_a_word_report() {
     let mut doc = corpus_doc("word/report.docx");
     doc.try_add_numbered_list_item_with_restart("First of a new list", 0, true)
@@ -1070,6 +1096,46 @@ fn a_new_numbered_list_can_be_started_in_a_word_report() {
     );
 }
 
+#[test]
+fn a_new_numbered_list_can_be_started_in_word_google_and_python_docx_reports() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "authored/report.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        doc.try_add_numbered_list_item("Fourth step", 0).unwrap();
+        doc.try_add_numbered_list_item_with_restart("First of a new list", 0, true)
+            .unwrap();
+        doc.try_add_numbered_list_item("Second of the new list", 0)
+            .unwrap();
+
+        let doc = reopen(&mut doc);
+        let lines = list_lines(&doc);
+        assert_eq!(
+            lines[lines.len() - 3..],
+            [
+                "4. Fourth step",
+                "1. First of a new list",
+                "2. Second of the new list"
+            ],
+            "{name}"
+        );
+        doc.validate_numbering_graph().unwrap();
+        // Word names each list instance with a w16cid:durableId: the new
+        // instance does not copy the one of the instance it restarts.
+        let numbering = doc.part_xml("word/numbering.xml").unwrap();
+        let ids: Vec<&str> = numbering
+            .split("w16cid:durableId=\"")
+            .skip(1)
+            .map(|rest| &rest[..rest.find('"').unwrap()])
+            .collect();
+        let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "{name}: durable ids stay unique");
+    }
+}
+
+// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29
 #[test]
 fn markdown_shows_word_list_paragraphs_as_list_items() {
     let markdown = corpus_doc("word/report.docx").to_markdown();
