@@ -1324,10 +1324,6 @@ fn md_line_end(raw: &[char], from: usize) -> usize {
     }
     end
 }
-#[cfg(test)]
-thread_local! {
-    static MD_ORDERED_PREFIX_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
 
 /// Escapes one assembled Markdown paragraph. `content_start` is false when the
 /// text follows generated syntax on its first line, as heading text after `# `.
@@ -1401,8 +1397,6 @@ fn semantic_md_chars(
         // Once the line has a non-digit, later punctuation cannot end an
         // ordered-list number. Inspect each prefix character at most once.
         if digits_only {
-            #[cfg(test)]
-            MD_ORDERED_PREFIX_VISITS.set(MD_ORDERED_PREFIX_VISITS.get() + 1);
             digits_only = character.is_ascii_digit();
         }
         if escape {
