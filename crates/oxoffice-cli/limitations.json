@@ -63,15 +63,6 @@
     "issue": 27
   },
   {
-    "id": "docx-inherited-headers",
-    "format": "docx",
-    "area": "headers",
-    "title": "Setting the document header or footer changes the last section only",
-    "symptom": "set_header() and set_footer() give the last section its own header or footer, so the earlier sections it inherited from keep the old one",
-    "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python document.section(i).header",
-    "issue": 28
-  },
-  {
     "id": "docx-removed-notes",
     "format": "docx",
     "area": "notes",
