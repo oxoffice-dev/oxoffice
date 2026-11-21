@@ -1014,13 +1014,18 @@ fn an_edited_document_keeps_the_header_order_it_was_read_in() {
     assert!(order[0] < order[1] && order[1] < order[2], "{xml}");
 }
 
-/// The header reference types of the final section, in the order written.
-fn header_order(bytes: &[u8]) -> Vec<String> {
+/// The `kind` (header or footer) reference types of the final section, in
+/// the order written.
+fn reference_order(bytes: &[u8], kind: &str) -> Vec<String> {
     let xml = String::from_utf8(main_part(bytes)).unwrap();
-    xml.split("<w:headerReference w:type=\"")
+    xml.split(&format!("<w:{kind}Reference w:type=\""))
         .skip(1)
         .map(|rest| rest.split('"').next().unwrap().to_owned())
         .collect()
+}
+
+fn header_order(bytes: &[u8]) -> Vec<String> {
+    reference_order(bytes, "header")
 }
 
 #[test]
@@ -1054,7 +1059,7 @@ fn replacing_a_header_keeps_its_place_among_the_references() {
 
 #[test]
 fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
-    let bytes = headers_listed(&["default", "first"]);
+    let bytes = headers_listed(&["first", "default"]);
     let mut doc = Document::from_bytes(&bytes).unwrap();
     let first = doc
         .section_story(0, HeaderFooterKind::Header, HdrFtrType::First)
@@ -1064,18 +1069,22 @@ fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
         .clone();
     doc.link_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default, &first)
         .unwrap();
-    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
+    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["first", "default"]);
 }
 
 #[test]
-fn a_header_inherited_from_a_removed_section_takes_its_place_in_the_order() {
+fn a_story_inherited_from_a_removed_section_takes_its_place_in_the_order() {
     let mut doc = two_sections();
-    doc.create_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    doc.create_section_story(1, HeaderFooterKind::Header, HdrFtrType::First)
-        .unwrap();
+    for kind in [HeaderFooterKind::Header, HeaderFooterKind::Footer] {
+        doc.create_section_story(0, kind, HdrFtrType::Default)
+            .unwrap();
+        doc.create_section_story(1, kind, HdrFtrType::First)
+            .unwrap();
+    }
     doc.remove_section(0).unwrap();
-    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
+    let bytes = doc.to_bytes().unwrap();
+    assert_eq!(reference_order(&bytes, "header"), ["default", "first"]);
+    assert_eq!(reference_order(&bytes, "footer"), ["default", "first"]);
 }
 
 #[test]
