@@ -58,9 +58,9 @@ Today, on main 78f44de:
     is not required.
   - This is a breaking change for Python callers: `feat(pptx)!` with a `BREAKING CHANGE:` footer. The footer names
     the three properties, their new types, the `TypeError` on `str`, and the loss of fractional seconds.
-- **The conversion moves to `oxoffice-py-support`** (a `dates` module), unchanged, together with the property text
-  limit (`CORE_TEXT_LIMIT`, 255 characters). Both bindings call it. One conversion means the two packages cannot drift
-  again.
+- **The conversion moves to `oxoffice-py-support`** (a `dates` module), unchanged apart from that case, together with
+  the property text limit (`CORE_TEXT_LIMIT`, 255 characters). Both bindings call it. One conversion means the two
+  packages cannot drift again.
 - **`normalize_index` and `checked_font_input` move to `oxoffice-py-support` as they are.**
 - **`public_error` and `stale_to_pyerr` move with the package as a parameter.** The shared helper takes the module
   name (`"oxoffice.docx"` or `"oxoffice.pptx"`), so each package keeps raising its own classes.
