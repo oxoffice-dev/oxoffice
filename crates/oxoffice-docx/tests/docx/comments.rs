@@ -1329,11 +1329,7 @@ fn a_body_edit_keeps_the_producer_comment_parts_byte_for_byte() {
     }
 }
 
-// Fails today: a comment added to a Word file whose comment styles have
-// localized ids ("Commentaire", "Marquedecommentaire") brings its own
-// CommentText and CommentReference styles beside them. Issue: #27
 #[test]
-#[should_panic(expected = "styles added beside Word's comment styles")]
 fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
     let mut doc = corpus_doc("word/report.docx");
     let names = |doc: &Document| -> Vec<(String, Option<String>)> {
@@ -1388,11 +1384,40 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
     );
 }
 
-// Fails today: the comment styles a new document gets are named after their
-// ids, so Word reads them as custom styles, not its built-in "annotation
-// text" and "annotation reference". Issue: #27
 #[test]
-#[should_panic(expected = "is Word's built-in")]
+fn a_comment_added_to_any_corpus_report_takes_word_built_in_comment_styles() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+        "authored/report.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        doc.add_comment_on_text("January", 0, "Ada", None, "Check the date", None)
+            .unwrap();
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/comments.xml").unwrap();
+        let last = &xml[xml.rfind("<w:comment ").unwrap()..];
+        for (tag, built_in) in [
+            ("<w:pStyle w:val=\"", "annotation text"),
+            ("<w:rStyle w:val=\"", "annotation reference"),
+        ] {
+            let at = last.find(tag).unwrap_or_else(|| panic!("{name}: no {tag}"));
+            let id = &last[at + tag.len()..];
+            let id = &id[..id.find('"').unwrap()];
+            let style_name = doc
+                .style(id)
+                .and_then(|style| style.name().map(str::to_owned));
+            assert_eq!(
+                style_name.map(|name| name.to_ascii_lowercase()).as_deref(),
+                Some(built_in),
+                "{name}: the new comment's {id} is Word's {built_in:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn the_comment_styles_a_new_document_gets_are_words_built_in_ones() {
     let mut doc = doc_with(&["review this"]);
     doc.add_comment_on_text(
