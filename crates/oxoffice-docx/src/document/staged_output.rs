@@ -203,7 +203,12 @@ impl Document {
                 .as_ref()
                 != Some(comments);
         }
-        self.prepare_staged_package()
+        let normalized = self.prepare_staged_package()?;
+        // Pictures `remove_content_at` freed leave the written copy only: a
+        // copy that released one is not installed, so the live document can
+        // still take the removed fragment back.
+        let released = self.release_freed_image_relationships()?;
+        Ok(normalized && !released)
     }
 
     pub(crate) fn prepare_and_reopen_staged(mut self) -> Result<Self> {

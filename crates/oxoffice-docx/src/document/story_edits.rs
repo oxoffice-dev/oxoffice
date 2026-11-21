@@ -550,6 +550,11 @@ impl Document {
     }
 
     /// Remove one checked direct child and return it as an owned fragment.
+    ///
+    /// A picture the removal leaves unreferenced stays in the package until
+    /// the next write or signature, which drops it if nothing names it then:
+    /// until a signature the fragment can be inserted again (cut and paste);
+    /// a write drops it from the bytes written only.
     pub fn remove_content_at(&mut self, location: &ContentLocation) -> Result<ContentFragment> {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
@@ -589,15 +594,22 @@ impl Document {
         updated.drain(item.full);
         // The fragment's pictures go at the next write if nothing names them
         // then (it may be inserted again before).
-        let referenced = xml_attribute_values(&updated)?;
-        for (relationship, _) in &fragment.relationships {
-            if relationship.rel_type == rel_types::IMAGE
-                && relationship_is_internal(relationship)
-                && !referenced.contains(&relationship.id)
-            {
-                candidate
-                    .freed_image_relationships
-                    .push((part_name.clone(), relationship.id.clone()));
+        let images: Vec<&str> = fragment
+            .relationships
+            .iter()
+            .filter(|(relationship, _)| {
+                relationship.rel_type == rel_types::IMAGE && relationship_is_internal(relationship)
+            })
+            .map(|(relationship, _)| relationship.id.as_str())
+            .collect();
+        if !images.is_empty() {
+            let referenced = xml_attribute_values(&updated)?;
+            for id in images {
+                let entry = (part_name.clone(), id.to_owned());
+                if !referenced.contains(id) && !candidate.freed_image_relationships.contains(&entry)
+                {
+                    candidate.freed_image_relationships.push(entry);
+                }
             }
         }
         set_story_source_xml(&mut candidate, &part_name, updated)?;
