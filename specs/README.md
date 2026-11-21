@@ -56,6 +56,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [Nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md) | shipped |
 | 2026-11-21 | [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md) | shipped |
 | 2026-11-21 | [A faster build job](2026-11-21-faster-build-job.md) | shipped |
+| 2026-11-21 | [A check without debug assertions on every pull request](2026-11-21-check-without-debug-assertions.md) | shipped |
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
 | 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
