@@ -6502,13 +6502,7 @@ impl Field {
                 "prepared field source scope".into(),
             ));
         };
-        let copy_work =
-            crate::document::admit_word_xml(&owner.normalized_xml, word_prefixes, Some(b"p"))?;
-        // unwrap_or_clone can copy an entire owned paragraph on an otherwise
-        // unchanged read. Its admitted source work is separate from refresh.
-        if Arc::strong_count(&owner.paragraph) > 1 {
-            let _ = copy_work;
-        }
+        crate::document::admit_word_xml(&owner.normalized_xml, word_prefixes, Some(b"p"))?;
         let mut paragraph = Arc::unwrap_or_clone(owner.paragraph);
         crate::revision::prepare_semantic_paragraph_projection(&mut paragraph)?;
         Ok(Some(paragraph))
