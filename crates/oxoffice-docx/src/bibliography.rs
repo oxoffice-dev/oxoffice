@@ -21,15 +21,48 @@ mod render_rtl;
 mod source;
 mod update;
 
-use apa_language::*;
-use citation::*;
-use citation_grammar::*;
-use locale::*;
-pub(crate) use paragraph_properties::*;
-use render::*;
-use render_rtl::*;
-pub(crate) use source::*;
-pub(crate) use update::*;
+use apa_language::apa_bibliography_language;
+use citation::{
+    BibliographySortKey, apa_citation_member, apa_plain_patent_punctuation, bibliography_sort_key,
+    has_equivalent_creator, ieee_bibliography_table, native_citation_run_properties,
+    single_citation_creator, source_citation_runs,
+};
+use citation_grammar::{
+    NativeCitationRun, apa_case_run_grammar, apa_creator_run_grammar, apa_patent_run_grammar,
+    chicago_run_grammar, iso_author_date_run_grammar, other_style_citation_run_grammar,
+    sist_run_grammar,
+};
+use locale::{
+    BibliographyFormattingLocale, SOURCE_LOCALE_ENCODINGS, formatting_locale, source_locale_number,
+    validate_locale_number,
+};
+pub(crate) use paragraph_properties::{
+    bibliography_end_paragraph_properties, bibliography_first_paragraph_properties,
+    bibliography_paragraph_property_ranges,
+};
+use render::{
+    apa_bibliography_date, apa_bibliography_edition, apa_bibliography_names,
+    apa_bibliography_volume, apa_semantic_creator_paragraph, append_apa_semantic_labeled_roles,
+    append_apa_semantic_retrieval, append_apa_semantic_run, append_apa_semantic_secondary,
+    append_apa_semantic_source_list, append_apa_semantic_title, bibliography_display_run,
+    bibliography_display_runs, bibliography_paragraph_properties, source_bibliography_paragraph,
+};
+use render_rtl::{
+    apa_rtl_art_bibliography_paragraph, apa_rtl_authored_bibliography_paragraph,
+    apa_rtl_chapter_conference_bibliography_paragraph, apa_rtl_film_bibliography_paragraph,
+    apa_rtl_general_bibliography_paragraph, apa_rtl_interview_bibliography_paragraph,
+    apa_rtl_legal_bibliography_paragraph, apa_rtl_performance_bibliography_paragraph,
+    apa_rtl_periodical_bibliography_paragraph, apa_rtl_site_bibliography_paragraph,
+    apa_rtl_sound_bibliography_paragraph,
+};
+pub(crate) use source::stage_custom_xml_store;
+use source::{
+    append_to_source_node, apply_source_edits, authored_source_xml, bibliography_collection,
+    create_collection, internal_target, publish_source_collection, replace_source_xml,
+    unique_collection_identities, validate_source,
+};
+use update::first_source_property;
+pub(crate) use update::{BibliographyUpdateState, NUMERIC_CITATION_SWITCH_LIMIT};
 
 const BIB_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
 const CUSTOM_XML_REL: &str =
