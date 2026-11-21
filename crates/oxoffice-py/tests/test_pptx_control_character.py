@@ -24,4 +24,4 @@ def test_a_part_holding_a_control_character_is_refused_with_where_it_is(tmp_path
         oxpptx.Presentation(path)
     message = str(raised.value)
     assert "/ppt/slides/slide1.xml holds U+0001 at line 2, column " in message
-    assert "remove that character from it" in message
+    assert "remove the character from the part" in message

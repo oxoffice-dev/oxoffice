@@ -180,7 +180,7 @@ fn a_part_holding_a_control_character_is_refused_at_open_with_where_it_is() {
         assert_eq!(
             error,
             format!(
-                "/{part} holds U+{code:04X} at line {line}, column {column}, a character XML 1.0 cannot carry: no XML reader accepts the part as it is, remove that character from it"
+                "/{part} holds U+{code:04X} at line {line}, column {column}, a character XML 1.0 cannot carry, so no XML reader accepts that part: remove the character from the part, or from the text written into it"
             ),
             "{deck}"
         );
@@ -194,7 +194,7 @@ fn a_part_holding_a_control_character_is_refused_at_open_with_where_it_is() {
                 part: format!("/{part}"),
                 path: "/".to_owned(),
                 message: format!(
-                    "holds U+{code:04X} at line {line}, column {column}, a character XML 1.0 cannot carry: PowerPoint repairs such a deck by dropping what that part holds"
+                    "holds U+{code:04X} at line {line}, column {column}, a character XML 1.0 cannot carry: PowerPoint cannot read that part either"
                 ),
             }],
             "{deck} {part}"

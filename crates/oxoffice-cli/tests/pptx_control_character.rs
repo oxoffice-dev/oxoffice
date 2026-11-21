@@ -61,7 +61,7 @@ fn a_part_holding_a_control_character_is_refused_with_where_it_is() {
     let error = String::from_utf8_lossy(&text.stderr);
     assert!(
         error.contains("/ppt/slides/slide1.xml holds U+0001 at line 2, column ")
-            && error.contains("remove that character from it"),
+            && error.contains("remove the character from the part"),
         "{error}"
     );
 
@@ -70,7 +70,7 @@ fn a_part_holding_a_control_character_is_refused_with_where_it_is() {
     let report = String::from_utf8_lossy(&validate.stderr);
     assert!(
         report.contains("/ppt/slides/slide1.xml /: holds U+0001 at line 2, column ")
-            && report.contains("PowerPoint repairs such a deck by dropping what that part holds"),
+            && report.contains("PowerPoint cannot read that part either"),
         "{report}"
     );
 }
