@@ -733,7 +733,9 @@ enum ResidualItem {
 /// This read-only bridge serves comparison internals. Its strings are an opaque
 /// internal identity representation, not an authoring or persistent interchange
 /// format. Modeled values retain their existing parser normalization. Opaque
-/// attributes, payloads, events, order and effective context remain source facts.
+/// attributes, payloads, events, order and effective context remain source facts,
+/// except that an equation the typed reader takes reads as its model writes it
+/// (`OfficeMath::canonical_xml`), in its effective context.
 #[doc(hidden)]
 pub fn protected_source_residual(
     xml: &[u8],
@@ -1152,9 +1154,12 @@ fn residual_emit_children(
                     } else if let Some(equation) = residual_equation(node, source) {
                         // An equation reads as its model writes it: a save that
                         // writes it again, its declarations elsewhere or a
-                        // default spelled out, changes no fact.
+                        // default spelled out, changes no fact. The bindings its
+                        // names resolve to stay one (those `mc:Choice` requires
+                        // included, which its model's writing does not declare).
                         output.push(format!(
-                            "equation:{child_path:?}:after:{previous}:{equation:?}"
+                            "equation:{child_path:?}:after:{previous}:{equation:?}:{:?}",
+                            node.scope
                         ));
                     } else {
                         // Only the opaque root opening admits namespace declaration
@@ -1212,6 +1217,36 @@ mod tests {
             y = y_uri,
         );
         protected_source_residual(xml.as_bytes(), &[]).unwrap()
+    }
+
+    /// The residual of a paragraph whose equation holds an alternate content
+    /// requiring `x`, bound to `x_uri` on the paragraph root, the equation
+    /// declaring `again` on itself.
+    fn equation_residual(x_uri: &str, again: &str) -> Vec<String> {
+        let xml = format!(
+            concat!(
+                r#"<w:p xmlns:w="{w}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:m="{m}" xmlns:x="{x}">"#,
+                r#"<m:oMath{again}><m:r><m:t>a</m:t></m:r><mc:AlternateContent><mc:Choice Requires="x">"#,
+                r#"<m:r><m:t>b</m:t></m:r></mc:Choice></mc:AlternateContent></m:oMath></w:p>"#,
+            ),
+            w = W_NS,
+            m = crate::namespace::M_NS,
+            x = x_uri,
+            again = again,
+        );
+        protected_source_residual(xml.as_bytes(), &[]).unwrap()
+    }
+
+    #[test]
+    fn an_equation_residual_keeps_what_its_names_and_requirements_resolve_to() {
+        let again = format!(r#" xmlns:m="{}" xmlns:w="{W_NS}""#, crate::namespace::M_NS);
+        let residual = equation_residual("urn:x", "");
+        assert!(residual.iter().any(|fact| fact.starts_with("equation:")));
+        assert_eq!(residual, equation_residual("urn:x", &again));
+        assert_ne!(
+            equation_residual("urn:a", ""),
+            equation_residual("urn:b", "")
+        );
     }
 
     #[test]

@@ -2266,6 +2266,27 @@ fn a_bookmark_before_an_equation_does_not_unpair_it() {
     assert_eq!(math_texts(&mut rejected(&mut doc)), ["x"]);
 }
 
+// Empty paragraph properties that hold only an attribute, then an equation
+// at the same run boundary: the equation still reads as itself once the
+// comparison's check leaves those properties out.
+#[test]
+fn an_equation_after_empty_paragraph_properties_is_no_change() {
+    let body = format!(
+        concat!(
+            r#"<w:p><w:pPr xmlns:x="urn:x" x:a="1"/><m:oMath xmlns:m="{}"><m:f><m:fPr><m:ctrlPr><w:rPr><w:i/></w:rPr></m:ctrlPr></m:fPr>"#,
+            r#"<m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></w:p>"#,
+            r#"<w:p><w:r><w:t>small</w:t></w:r></w:p>"#,
+        ),
+        MATH_NS
+    );
+    let mut edited = doc_with_body(&body);
+    assert_eq!(edited.replace_all(&HashMap::from([("small", "large")])), 1);
+    let edited = reopen(&mut edited);
+    let mut doc = redline(doc_with_body(&body), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["small"]);
+    assert_eq!(math_texts(&mut accepted(&mut doc)), ["1", "2"]);
+}
+
 // A paragraph another reviewer changed holds an equation whose fraction
 // leaves its bar type out, as Word writes it; a save writes the equation
 // again with the type spelled out: the paragraph is unchanged.
