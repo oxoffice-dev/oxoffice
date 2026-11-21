@@ -224,6 +224,21 @@ impl RunChildAction {
     }
 }
 
+/// Whether a captured element holds nothing but blank text.
+fn element_is_empty(raw: &[u8]) -> Result<bool> {
+    let mut reader = Reader::from_reader(raw);
+    let mut depth = 0usize;
+    loop {
+        match reader.read_event()? {
+            Event::Start(_) if depth == 0 => depth = 1,
+            Event::Empty(_) if depth == 0 => return Ok(true),
+            Event::End(_) | Event::Eof => return Ok(true),
+            Event::Text(text) if text.iter().all(u8::is_ascii_whitespace) => {}
+            _ => return Ok(false),
+        }
+    }
+}
+
 /// The actual run text decoder, including its permissive entity fallback.
 pub(crate) fn decode_run_text_span(encoded: &quick_xml::events::BytesText<'_>) -> Result<String> {
     encoded
@@ -1315,18 +1330,23 @@ impl CT_R {
                             } else {
                                 (capture_element(reader, e)?, None)
                             };
-                        let mut observed = None;
-                        properties = Some(crate::numbering::parse_scoped_rpr_with_observation(
-                            &raw,
-                            word_prefixes,
-                            &[],
-                            mapped.as_ref().map(|_| &mut observed),
-                        )?);
-                        // The later successful rPr assignment replaces its
-                        // own observation, including a new unproved property.
-                        selected_property =
-                            observed.and_then(|range| mapped.as_ref()?.property_observation(range));
-                        modeled_children += 1;
+                        // `<w:rPr></w:rPr>`, as LibreOffice writes it, is the
+                        // self-closing `<w:rPr/>` skipped below: no formatting,
+                        // and no child slot the writer would not write.
+                        if !element_is_empty(&raw)? {
+                            let mut observed = None;
+                            properties = Some(crate::numbering::parse_scoped_rpr_with_observation(
+                                &raw,
+                                word_prefixes,
+                                &[],
+                                mapped.as_ref().map(|_| &mut observed),
+                            )?);
+                            // The later successful rPr assignment replaces its
+                            // own observation, including a new unproved property.
+                            selected_property = observed
+                                .and_then(|range| mapped.as_ref()?.property_observation(range));
+                            modeled_children += 1;
+                        }
                     } else if action == RunChildAction::Text {
                         let preserve = e.attributes().any(|a| {
                             a.ok()
