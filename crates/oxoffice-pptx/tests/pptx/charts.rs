@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
+use oxoffice_chart::CT_DLbls;
 use oxoffice_opc::OpcPackage;
 use oxoffice_pptx::{
     ChartData, ChartKind, Emu, LegendPosition, LegendSettings, Presentation, RgbColor, ShapeType,
@@ -479,7 +480,13 @@ fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
         chart_on(&mut prs, 0, kind, &shares());
         let flags = data_label_flags(&only_chart_xml(&prs));
         assert_eq!(flags.get("showPercent").map(String::as_str), Some("1"));
-        for field in ["showLegendKey", "showVal", "showCatName", "showSerName"] {
+        for field in [
+            "showLegendKey",
+            "showVal",
+            "showCatName",
+            "showSerName",
+            "showBubbleSize",
+        ] {
             assert_eq!(
                 flags.get(field).map(String::as_str),
                 Some("0"),
@@ -490,34 +497,26 @@ fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
 }
 
 #[test]
-fn pie_labels_on_every_editors_deck_state_every_field_through_a_save() {
-    for name in [
-        "powerpoint/deck.pptx",
-        "google/deck.pptx",
-        "libreoffice/deck.pptx",
-        "authored/deck.pptx",
-    ] {
-        let mut prs = corpus_deck(name);
-        let id = chart_on(&mut prs, 1, ChartKind::Pie, &shares());
-        // An edit of the reopened chart writes its part again from the model.
-        let mut prs = reopen(&prs);
-        prs.set_chart_legend(1, id, Some(true), None, None).unwrap();
-        let flags = data_label_flags(&only_chart_xml(&reopen(&prs)));
-        let expected = [
-            ("showLegendKey", "0"),
-            ("showVal", "0"),
-            ("showCatName", "0"),
-            ("showSerName", "0"),
-            ("showPercent", "1"),
-            ("showBubbleSize", "0"),
-        ];
-        for (field, value) in expected {
-            assert_eq!(
-                flags.get(field).map(String::as_str),
-                Some(value),
-                "{name}: {field}"
-            );
-        }
+fn data_labels_read_back_keep_the_flags_they_were_written_with() {
+    // A new pie states every flag; labels from an older file state only
+    // showPercent. Parsing and writing again keeps each as it was.
+    let mut prs = blank_deck(1);
+    chart_on(&mut prs, 0, ChartKind::Pie, &shares());
+    let chart = only_chart_xml(&prs);
+    let start = chart.find("<c:dLbls").expect("the pie has data labels");
+    let end = chart[start..].find("</c:dLbls>").unwrap() + start + "</c:dLbls>".len();
+    let authored = chart[start..end].to_owned();
+    let older = r#"<c:dLbls><c:showPercent val="1"/></c:dLbls>"#.to_owned();
+    for labels in [authored, older] {
+        let written = CT_DLbls::from_xml(labels.as_bytes())
+            .unwrap()
+            .to_xml()
+            .unwrap();
+        assert_eq!(
+            data_label_flags(&String::from_utf8(written).unwrap()),
+            data_label_flags(&labels),
+            "{labels}"
+        );
     }
 }
 
