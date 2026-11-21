@@ -822,6 +822,102 @@ fn clearing_a_field_that_holds_unmodelled_xml_is_refused() {
     assert!(!xml.contains("w:pitch"), "{xml}");
 }
 
+#[test]
+fn setting_a_field_the_record_keeps_as_written_is_refused() {
+    // A field element without `w:val`, or with an element inside, reads as
+    // unset and stays as written; writing a second one would leave a font
+    // table the next open cannot read. (record, field set, that field.)
+    for (record, definition, field) in [
+        (
+            r#"<w:font w:name="Gelasio"><w:family w:val="roman"><x:ext xmlns:x="urn:example:fonts"/></w:family></w:font>"#,
+            FontDefinition::new("Gelasio").with_family("swiss"),
+            "family",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:family/></w:font>"#,
+            FontDefinition::new("Gelasio").with_family("swiss"),
+            "family",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:pitch><x:ext xmlns:x="urn:example:fonts"/></w:pitch></w:font>"#,
+            FontDefinition::new("Gelasio").with_pitch("fixed"),
+            "pitch",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:altName xmlns:x="urn:example:fonts" x:val="Georgia"/></w:font>"#,
+            FontDefinition::new("Gelasio").with_alternate_name("Georgia"),
+            "alternate name",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:pitch xmlns:x="urn:example:fonts" x:val="fixed"> </w:pitch></w:font>"#,
+            FontDefinition::new("Gelasio").with_pitch("fixed"),
+            "pitch",
+        ),
+    ] {
+        let mut doc = doc_with_font_record(record);
+        let before = doc.to_bytes().expect("document saves");
+        let error = doc.set_font(definition).expect_err(record).to_string();
+        assert!(
+            error.contains(&format!("cannot set the {field} of font Gelasio")),
+            "{record}: {error}"
+        );
+        assert_eq!(doc.to_bytes().expect("document saves"), before, "{record}");
+    }
+
+    // Another field is set beside the kept element, and the table still reads.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:family w:val="roman"><x:ext xmlns:x="urn:example:fonts"/></w:family></w:font>"#,
+    );
+    doc.set_font(FontDefinition::new("Gelasio").with_pitch("variable"))
+        .expect("the pitch can be set");
+    let mut reopened = reopen(&mut doc);
+    assert_eq!(
+        font(&reopened.fonts(), "Gelasio").pitch.as_deref(),
+        Some("variable")
+    );
+    let xml = reopened.part_xml(FONT_TABLE).expect("font table");
+    assert_eq!(xml.matches("<w:family").count(), 1, "{xml}");
+    reopened
+        .set_font(FontDefinition::new("Gelasio").with_pitch("fixed"))
+        .expect("the reopened table is still modelled");
+
+    // An unknown child where the family would go is not a kept family.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:note xmlns:x="urn:example:fonts"/></w:font>"#,
+    );
+    doc.set_font(FontDefinition::new("Gelasio").with_family("swiss"))
+        .expect("the family can be set beside an unknown child");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        font(&doc.fonts(), "Gelasio").family.as_deref(),
+        Some("swiss")
+    );
+}
+
+#[test]
+fn embedding_a_face_beside_a_face_the_record_keeps_as_written_is_refused() {
+    let record = format!(
+        r#"<w:font w:name="Gelasio"><w:embedRegular r:id="rId9" w:fontKey="{KEY}"><x:note xmlns:x="urn:example:fonts"/></w:embedRegular></w:font>"#
+    );
+    let mut doc = doc_with_font_record(&record);
+    let before = doc.to_bytes().expect("document saves");
+    let error = doc
+        .embed_font("Gelasio", face(Regular, tiny_font("Gelasio regular")))
+        .expect_err("a second regular face")
+        .to_string();
+    assert!(
+        error.contains("cannot embed the embedRegular face of font Gelasio"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().expect("document saves"), before);
+
+    // A face of another kind goes in, and the table still reads.
+    doc.embed_font("Gelasio", face(Bold, tiny_font("Gelasio bold")))
+        .expect("a bold face");
+    let doc = reopen(&mut doc);
+    assert_eq!(font(&doc.fonts(), "Gelasio").embedded_fonts.len(), 1);
+}
+
 // ---- Embedding faces ----
 
 #[test]

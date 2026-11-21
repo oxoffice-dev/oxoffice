@@ -47,18 +47,21 @@ or wants to merge it runs that review or asks for one.
   else is **minor**. The reviewer classifies, the author may contest, the
   maintainer decides.
 - **The author answers every finding** in the thread: fixed, with the commit
-  (and its proof for a minor), a follow-up issue for a minor, or why it is
-  not a defect. A major finding is fixed unless the maintainer waives it.
+  (and its proof for a minor), in the pull request's follow-up issue, or
+  why it is not a defect. A major finding is fixed unless the maintainer
+  waives it.
 - **At most two reviews per pull request**: one full review, then at most
   one delta review, after a major was fixed or after a change no finding
   asked for that can change behaviour (new code, a conflict resolved by hand
   in code, tests or workflows). A third review needs the maintainer's
   agreement; beyond that budget the maintainer decides from the evidence
   (mutation checks, `git range-diff`), without another round.
-- **Minors never trigger a review.** Fix one with a proof stated in the
-  answer (a test that fails without the fix, or a mutation check), or open a
-  follow-up issue, or say why it is not a defect. A minor that would need a
-  risky change goes to a follow-up issue, not into the pull request.
+- **Minors never trigger a review.** A minor found in review is fixed in
+  the pull request when the fix is cheap, with its proof stated in the
+  answer (a test that fails without it, or a mutation check). A follow-up
+  issue is opened only for a real defect that the pull request cannot carry
+  (a risky change included), and at most one per pull request: it groups
+  those findings. Otherwise say why it is not a defect.
 - **A rebase or merge that only resolves a conflict in data**
   (a limitations file, a generated page, the `GROWING` or test-module lists,
   a moved context line) needs no review: `git range-diff` and the tests, and
@@ -91,7 +94,7 @@ cargo check -p <crate> --all-targets
 cargo test -p <crate>                     # one crate
 cargo test -p <crate> --test <file>       # one integration binary
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo check --workspace --all-targets --all-features --profile scaling   # without debug assertions, as lint does
+cargo clippy --workspace --all-targets --all-features --profile scaling -- -D warnings   # without debug assertions, as lint does
 cargo fmt --all
 cargo build -p oxoffice-cli               # the `oxoffice` binary
 maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a venv
@@ -143,7 +146,9 @@ neither fails a flat call nor reads as a fix.
 
 The `render` module of the docx test binary renders every Word file of the
 corpus as `convert` and `render` do, with the bundled fonts, and checks two
-things (see [the spec](../specs/2026-11-21-render-fidelity.md)):
+things (see [the spec](../specs/2026-11-21-render-fidelity.md)). The pieces
+that depend on no facade (the PDF reader, the hashes, the baseline files and
+the checks) live in the dev-only crate `oxoffice-render-test`.
 
 - **Invariants**, read from the PDF and the page images: page sizes in the
   order of the sections, no page with only its header and footer, every
@@ -214,14 +219,11 @@ merge variant).
   macOS or Windows build is red or still queued; such a break shows in the
   nightly run, up to a day later, under the merges that came after. Merge
   only once `gh pr checks` shows the three platforms green.
-- **`main` keeps one run waiting.** A run of `main` in progress always
-  finishes; a newer push replaces the run that waits (concurrency group
-  `ci-main`), so a burst of merges builds the first commit and the last. A
-  failure first seen on `main` may come from a commit whose run was
-  replaced: find it like a red nightly run, below. Re-run only the newest
-  run of `main`: a re-run keeps its push event, joins `ci-main` and
-  replaces the waiting run of a newer commit. For an older commit, run
-  `workflow_dispatch` on a branch at that commit.
+- **Every push to `main` runs in full**, beside the runs of the pushes
+  before it: nothing waits and nothing is cancelled. Lint, WebAssembly and
+  the Linux build answer about 10 minutes after each merge, the scaling and
+  skill-examples jobs within about 30, so each commit of `main` has its own
+  verdict. Re-running a run of `main` touches no other run.
 - **A red nightly run is a red `main`.** Look at it with
   `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
   (or fixes it) the same day; a release waits for a green nightly run (see
@@ -251,15 +253,16 @@ merge variant).
   their key changes and pull requests build those platforms from scratch,
   about 7 minutes more, until the next night: run
   `gh workflow run ci.yml --ref main` to refresh them at once.
-- **Lint checks the workspace without debug assertions** too (`cargo check
-  --workspace --all-targets --all-features --profile scaling`), on every
-  pull request, drafts and stacked ones included: every crate and target on
-  Linux, all features on. Clippy and the WebAssembly check use the dev
-  profile and the build job the `ci` one, all with debug assertions, so code
-  that compiles only with them (an item under `#[cfg(debug_assertions)]`
-  used or re-exported without the cfg) fails there first. It fails on
-  errors only, for now. Code behind a feature turned off, or for Windows
-  only, is still checked without debug assertions only by the nightly run.
+- **Lint runs clippy without debug assertions** too (`cargo clippy
+  --workspace --all-targets --all-features --profile scaling -- -D
+  warnings`), on every pull request, drafts and stacked ones included:
+  every crate and target on Linux, all features on, warnings denied. The
+  first clippy, the WebAssembly check and the build job all compile with
+  debug assertions and pass code that compiles only with them (an item
+  under `#[cfg(debug_assertions)]` used or re-exported without the cfg) or
+  crate-private code that is dead without them; this step fails on it. Code behind a feature turned
+  off, or for Windows only, is still checked without debug assertions only
+  by the nightly run.
 - **Python tests run in parallel** in the build job (`pytest -n auto`,
   pytest-xdist, one worker per CPU). A test writes only under `tmp_path`
   (or `tmp_path_factory`). The scaling job stays sequential: its timings

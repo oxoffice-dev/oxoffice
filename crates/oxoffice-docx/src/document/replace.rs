@@ -48,11 +48,14 @@ impl Document {
     /// tracked-insertion boundary is not replaced. Returns the total number
     /// of replacements made.
     ///
-    /// A tab reads as `\t` and every break, a page or column break included,
-    /// as `\n`, as in [`crate::Paragraph::text`], so a match does not skip
-    /// them and one that holds them removes them. A `\t` in `replacement`
-    /// becomes a tab and a `\n`, `\r` or `\r\n` one line break: a page or
-    /// column break written back by a replacement is a line break.
+    /// A tab or a positional tab reads as `\t`, a non-breaking hyphen as `-`
+    /// and every break, a page or column break included, as `\n`, as in
+    /// [`crate::Paragraph::text`], so a match does not skip them and one that
+    /// holds them removes them. A `\t` in `replacement` becomes a tab, a `-` a
+    /// plain hyphen and a `\n`, `\r` or `\r\n` one line break: a page or
+    /// column break written back by a replacement is a line break, a
+    /// positional tab an ordinary tab and a non-breaking hyphen one a line
+    /// can break at.
     ///
     /// A `replacement` that contains `placeholder` is substituted once, not
     /// repeatedly.
@@ -854,10 +857,11 @@ impl Document {
     /// of them and the text of tracked insertions. Returns the total number of replacements made, or an error if the
     /// regex is invalid.
     ///
-    /// The text reads tabs and breaks as [`Self::replace_text`] does: `\s`
-    /// matches a tab and any break, a page break included, so a pattern such
-    /// as `\s+` replaces them too, and a break a capture group writes back
-    /// becomes a line break.
+    /// The text reads tabs, positional tabs, non-breaking hyphens and breaks
+    /// as [`Self::replace_text`] does: `\s` matches a tab, a positional tab
+    /// and any break, a page break included, so a pattern such as `\s+`
+    /// replaces them too, and a break a capture group writes back becomes a
+    /// line break, a positional tab an ordinary tab.
     pub fn replace_regex(&mut self, pattern: &str, replacement: &str) -> Result<usize> {
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let re =

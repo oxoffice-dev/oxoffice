@@ -59,10 +59,12 @@ dependency bumps and documentation.
 | 2026-11-21 | [A check without debug assertions on every pull request](2026-11-21-check-without-debug-assertions.md) | shipped |
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
+| 2026-11-21 | [Edit cost: publishing the one block an edit touched](2026-11-21-edit-cost-one-block-publication.md) | accepted |
 | 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
 | 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | shipped |
 | 2026-11-21 | [Comparison: bookmark ids and generated TOC names are no change](2026-11-21-comparison-bookmark-identities.md) | shipped |
 | 2026-11-21 | [Comparison: a footnote whose reference moved](2026-11-21-comparison-moved-footnotes.md) | shipped |
+| 2026-11-21 | [A simple field goes with the paragraph that is removed whole](2026-11-21-simple-field-retired-with-its-paragraph.md) | proposed |
 | 2026-11-21 | [Release wheels run on the main thread before publishing](2026-11-21-release-wheel-smoke-test.md) | shipped |
 | 2026-11-21 | [Render fidelity: a baseline on every pull request, Word, PowerPoint and LibreOffice every night](2026-11-21-render-fidelity.md) | accepted |
 | 2026-11-21 | [The limitations page is built at release](2026-11-21-limitations-page-built-at-release.md) | accepted |

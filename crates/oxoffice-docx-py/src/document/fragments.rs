@@ -38,6 +38,14 @@ impl PyFragmentConflictPolicy {
             inner: self.inner.with_related_part_reuse(reuse),
         }
     }
+    /// Select whether imported content takes the destination's look: a style
+    /// the destination defines under the same id and type keeps the destination's
+    /// definition, and the source's document defaults are not carried.
+    fn with_destination_formatting(&self, keep: bool) -> Self {
+        Self {
+            inner: self.inner.with_destination_formatting(keep),
+        }
+    }
 }
 impl PyContentLocation {
     pub(super) fn native(

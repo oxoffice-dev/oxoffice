@@ -194,8 +194,9 @@ impl Document {
 
     /// Insert a copy of one table row before row `insert_at` in the same table.
     ///
-    /// `table_index` counts every table in document order, including nested
-    /// tables. `insert_at` may equal the row count to append. The copy keeps
+    /// `table_index` counts the body tables in document order, as
+    /// [`Self::table`] does; nested tables are not counted. `insert_at` may
+    /// equal the row count to append. The copy keeps
     /// row properties, cell formatting, nested content, relationships, and
     /// preserved producer XML. Document-wide identities are made unique, the
     /// row and its paragraphs drop `w14:paraId` and `w14:textId`, and comment

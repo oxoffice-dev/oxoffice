@@ -14,8 +14,6 @@ pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,
 };
 
-#[cfg(any(test, debug_assertions))]
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -2994,7 +2992,7 @@ struct MediaStore {
 
 impl MediaStore {
     fn scan(package: &OpcPackage) -> Self {
-        Self::scan_hashing(package, |bytes| hash_medium(bytes))
+        Self::scan_hashing(package, |bytes| MediaId::from_bytes(bytes))
     }
 
     /// The store [`MediaStore::scan`] gives for `package`, hashing only the
@@ -3013,7 +3011,7 @@ impl MediaStore {
             known
                 .get(&Arc::as_ptr(bytes))
                 .copied()
-                .unwrap_or_else(|| hash_medium(bytes))
+                .unwrap_or_else(|| MediaId::from_bytes(bytes))
         })
     }
 
@@ -3146,12 +3144,6 @@ impl MediaStore {
             }
         }
     }
-}
-
-/// Hashes a medium a scan finds in a package.
-fn hash_medium(bytes: &[u8]) -> MediaId {
-    note_commit_work(|work| work.hashed += 1);
-    MediaId::from_bytes(bytes)
 }
 
 fn register_content_type(
@@ -4241,7 +4233,6 @@ impl Presentation {
                 slides.push(record);
                 continue;
             }
-            note_commit_work(|work| work.parsed += 1);
             let slide_xml = required_part(&package, &slide_part)?;
             let slide = CT_Slide::from_xml(slide_xml).map_err(|error| Error::MalformedPart {
                 part_name: slide_part.clone(),
@@ -4325,7 +4316,6 @@ impl Presentation {
             "invalid presentation at byte save boundary: {:?}",
             self.validate()
         );
-        note_commit_work(|work| work.zip_writes += 1);
         let mut output = Cursor::new(Vec::new());
         self.saved_package()?.write_to(&mut output)?;
         Ok(output.into_inner())
@@ -4354,10 +4344,8 @@ impl Presentation {
         );
         let package = self.saved_package()?;
         if let Some(parsed) = self.parsed.as_deref() {
-            ensure_reread_zip_note();
             return Ok(package.reread(&parsed.package)?);
         }
-        note_commit_work(|work| work.zip_writes += 1);
         let mut output = Cursor::new(Vec::new());
         package.write_to(&mut output)?;
         output.set_position(0);
@@ -4379,7 +4367,7 @@ impl Presentation {
         #[cfg(debug_assertions)]
         match (
             &same,
-            without_commit_work(|| Ok::<_, Error>(self.to_bytes()? == other.to_bytes()?)),
+            (|| Ok::<_, Error>(self.to_bytes()? == other.to_bytes()?))(),
         ) {
             (Ok(same), Ok(bytes)) => assert_eq!(*same, bytes, "saves_as differs from to_bytes"),
             (Err(same), Err(bytes)) => assert_eq!(same.to_string(), bytes.to_string()),
@@ -5588,8 +5576,6 @@ impl Presentation {
     }
 
     fn staged_package(&self, preserve_unchanged_modelled_parts: bool) -> Result<OpcPackage> {
-        #[cfg(all(feature = "render", test))]
-        STAGED_PACKAGE_COUNT.with(|count| count.set(count.get() + 1));
         if self.core_properties_dirty
             && self
                 .package
@@ -5760,7 +5746,6 @@ impl Presentation {
             }
         }
         for record in &self.slides {
-            note_fx260_slide(1);
             // A record parsed from the bytes its parts still hold is unchanged
             // without parsing them again.
             let parsed = self
@@ -5770,7 +5755,6 @@ impl Presentation {
             let parsed_from =
                 |part: &str| parsed.is_some_and(|parsed| parsed.same_bytes(&self.package, part));
             let slide_changed = !parsed_from(&record.part_name) && {
-                note_commit_work(|work| work.parsed += 1);
                 self.package
                     .get_part(&record.part_name)
                     .and_then(|xml| CT_Slide::from_xml(xml).ok())
@@ -5778,7 +5762,6 @@ impl Presentation {
                     != Some(&record.slide)
             };
             if !preserve_unchanged_modelled_parts || slide_changed {
-                note_commit_work(|work| work.serialized += 1);
                 package.set_part(
                     &record.part_name,
                     record
@@ -5792,7 +5775,6 @@ impl Presentation {
             }
             if let Some(notes) = &record.notes {
                 let notes_changed = !parsed_from(&notes.part_name) && {
-                    note_commit_work(|work| work.parsed += 1);
                     self.package
                         .get_part(&notes.part_name)
                         .and_then(|xml| CT_NotesSlide::from_xml(xml).ok())
@@ -5800,7 +5782,6 @@ impl Presentation {
                         != Some(&notes.notes)
                 };
                 if !preserve_unchanged_modelled_parts || notes_changed {
-                    note_commit_work(|work| work.serialized += 1);
                     package.set_part(
                         &notes.part_name,
                         notes.notes.to_xml().map_err(|error| Error::MalformedPart {
@@ -7610,7 +7591,6 @@ impl Presentation {
         let snapshot = child_at(&self.owner_data(part)?.shape_tree.children, &path)
             .ok_or_else(|| invalid_shape_mutation("replace XML", "shape owner is absent"))?
             .clone();
-        note_fx260_slide(1);
         let part_name = self.owner_part_name(part)?.to_owned();
         let assigned = (|| -> Result<()> {
             match owner {
@@ -7677,7 +7657,6 @@ impl Presentation {
         if ppt_xml_known_owner_equivalent(&before, xml.as_bytes())? {
             return Ok(());
         }
-        note_fx260_slide(self.slides.len().max(1));
         let mut candidate = self.clone();
         match owner {
             PptXmlOwner::Part(ShapeOwner::Slide(index)) => {
@@ -8219,14 +8198,12 @@ impl Presentation {
     /// the ZIP.
     fn reopen(&self, package: OpcPackage) -> Result<Self> {
         let Some(parsed) = self.parsed.as_deref() else {
-            note_commit_work(|work| work.zip_writes += 1);
             let mut output = Cursor::new(Vec::new());
             package.write_to(&mut output)?;
             let mut reopened = Self::from_bytes(output.get_ref())?;
             reopened.source_path = self.source_path.clone();
             return Ok(reopened);
         };
-        ensure_reread_zip_note();
         let package = package.reread(&parsed.package)?;
         let mut reopened = Self::from_package_reusing(package, Some((parsed, &self.media_store)))?;
         reopened.parsed = Some(Arc::new(Parsed::of(&reopened, Some(parsed))));
@@ -8245,7 +8222,7 @@ impl Presentation {
         {
             let mut through_zip = self.clone();
             through_zip.parsed = None;
-            let expected = without_commit_work(|| commit(&through_zip));
+            let expected = commit(&through_zip);
             assert_same_commit(&committed, &expected);
         }
         committed
@@ -13071,7 +13048,6 @@ impl Presentation {
         if self.local_shape_fill(owner, &fill)? {
             return self.assign_local_shape_fill(owner, fill);
         }
-        note_fx260_slide(self.slides.len().max(1));
         let mut candidate = self.clone();
         candidate.assign_fill_at(owner, fill)?;
         if candidate.owner_data(owner.owner())? == self.owner_data(owner.owner())? {
@@ -13119,7 +13095,6 @@ impl Presentation {
                 invalid_shape_mutation("set owned fill", "fill owner is absent or unsupported")
             })?
             .clone();
-        note_fx260_slide(1);
         let assigned = self.assign_fill_at(location, fill);
         if let Err(error) = assigned {
             if let Some(child) =
@@ -15120,8 +15095,6 @@ fn render_prepared_timeline_request(
     request: TimelineRequest,
     slide_count: usize,
 ) -> Result<(DeterministicTimelineFrame, Vec<EvaluatedMediaState>)> {
-    #[cfg(test)]
-    let _retention = ActiveResolvedSample::enter();
     let incoming_source =
         assembly
             .slides
@@ -21913,7 +21886,6 @@ fn resolve_master_records(
             masters.push(record);
             continue;
         }
-        note_commit_work(|work| work.parsed += 1);
         let master = CT_SlideMaster::from_xml(required_part(package, &part_name)?)
             .map_err(|error| error.to_string());
         masters.push(Arc::new(MasterRecord {
@@ -21963,7 +21935,6 @@ fn resolve_layouts(
                 layouts.push(record);
                 continue;
             }
-            note_commit_work(|work| work.parsed += 1);
             let xml = required_part(package, &part_name)?;
             let layout = CT_SlideLayout::from_xml(xml).map_err(|error| Error::MalformedPart {
                 part_name: part_name.clone(),
@@ -23168,7 +23139,6 @@ fn resolve_notes_master(
     if let Some(master) = parsed.and_then(|parsed| parsed.notes_master(package, &part_name)) {
         return Ok((Some(part_name), Some(master)));
     }
-    note_commit_work(|work| work.parsed += 1);
     let master =
         CT_NotesMaster::from_xml(required_part(package, &part_name)?).map_err(|error| {
             Error::MalformedPart {
@@ -23203,7 +23173,6 @@ fn resolve_handout_master(
     if let Some(master) = parsed.and_then(|parsed| parsed.handout_master(package, &part_name)) {
         return Ok((Some(part_name), Some(master)));
     }
-    note_commit_work(|work| work.parsed += 1);
     let master =
         CT_HandoutMaster::from_xml(required_part(package, &part_name)?).map_err(|error| {
             Error::MalformedPart {
@@ -23534,7 +23503,6 @@ impl<'a> SlideMut<'a> {
             let index = self.presentation.append_locally(owner, &[], build)?;
             return Ok(owned_shape_mut(self.presentation, owner, vec![index]));
         }
-        note_fx260_slide(self.presentation.slides.len().max(1));
         let mut candidate = self.presentation.clone();
         let tree = &mut Arc::make_mut(&mut candidate.slides[self.index])
             .slide
@@ -23694,7 +23662,6 @@ impl ShapesMut<'_> {
             path.push(index);
             return Ok(owned_shape_mut(self.presentation, self.owner, path));
         }
-        note_fx260_slide(self.presentation.slides.len().max(1));
         let mut candidate = self.presentation.clone();
         let tree = &mut candidate.owner_data_mut(self.owner)?.shape_tree;
         let index = append_new_member(tree, &self.group, build)?;
@@ -23840,7 +23807,6 @@ impl Presentation {
         group: &[usize],
         build: impl FnOnce(u32) -> Result<ShapeTreeChild>,
     ) -> Result<usize> {
-        note_fx260_slide(1);
         let index = {
             let tree = &mut self.owner_data_mut(owner)?.shape_tree;
             append_new_member(tree, group, build)?
@@ -24582,7 +24548,6 @@ impl<'a> ShapeMut<'a> {
 
     /// Changes the direct alt text on this physical owner.
     pub fn set_alt_text(&mut self, text: Option<&str>) -> Result<()> {
-        note_fx260_slide(1);
         let result = match self.leaf_mut() {
             ShapeTreeChild::Shape(shape) => shape.set_alt_text(text),
             ShapeTreeChild::Picture(picture) => picture.set_alt_text(text),
@@ -28971,11 +28936,6 @@ fn apply_owned_change(
     Ok(())
 }
 
-#[cfg(all(test, feature = "render"))]
-thread_local! {
-    static TABLE_GROWTH_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// Whether `table`, its rows grown to fit their text, stays inside its page.
 #[cfg(feature = "render")]
 fn grown_table_fits_page(
@@ -28983,8 +28943,6 @@ fn grown_table_fits_page(
     fonts: &mut FontManager,
     page_number: usize,
 ) -> std::result::Result<bool, oxoffice_pptx_render::RenderInputError> {
-    #[cfg(test)]
-    TABLE_GROWTH_EVALUATIONS.set(TABLE_GROWTH_EVALUATIONS.get() + 1);
     let shape = &table.shape;
     let ResolvedContent::Table(content) = &shape.content else {
         return Ok(false);
@@ -29895,65 +29853,12 @@ struct PreparedRenderAssembly {
     table_styles: Option<CT_TableStyleList>,
 }
 
-#[cfg(all(feature = "render", test))]
-std::thread_local! {
-    static STAGED_PACKAGE_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_RENDER_ASSEMBLY_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_MEDIA_ASSEMBLY_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_LAYOUT_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_FONT_MANAGER_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(feature = "render", test))]
-std::thread_local! {
-    static ACTIVE_RESOLVED_SAMPLE_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static MAX_RESOLVED_SAMPLE_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(feature = "render", test))]
-struct ActiveResolvedSample;
-
-#[cfg(all(feature = "render", test))]
-impl ActiveResolvedSample {
-    fn enter() -> Self {
-        ACTIVE_RESOLVED_SAMPLE_COUNT.with(|active| {
-            let current = active.get() + 1;
-            active.set(current);
-            MAX_RESOLVED_SAMPLE_COUNT.with(|maximum| maximum.set(maximum.get().max(current)));
-        });
-        Self
-    }
-}
-
-#[cfg(all(feature = "render", test))]
-impl Drop for ActiveResolvedSample {
-    fn drop(&mut self) {
-        ACTIVE_RESOLVED_SAMPLE_COUNT.with(|active| active.set(active.get() - 1));
-    }
-}
-
 #[cfg(feature = "render")]
 fn prepare_render_context(
     package: &OpcPackage,
     collect_media_diagnostics: bool,
     font_files: &[oxoffice_layout::FontFile],
 ) -> Result<PreparedRenderAssembly> {
-    #[cfg(test)]
-    PREPARED_RENDER_ASSEMBLY_COUNT.with(|count| count.set(count.get() + 1));
     let presentation_part = package
         .main_document_part()
         .ok_or(Error::MissingMainDocument)?;
@@ -29975,10 +29880,6 @@ fn prepare_render_context(
         .ok_or_else(|| render_failure("presentation relationships are missing"))?;
 
     let mut media = HashMap::new();
-    #[cfg(test)]
-    PREPARED_MEDIA_ASSEMBLY_COUNT.with(|count| count.set(count.get() + 1));
-    #[cfg(test)]
-    PREPARED_FONT_MANAGER_COUNT.with(|count| count.set(count.get() + 1));
     let mut font_manager =
         configured_font_manager(package, &presentation_part, &presentation, font_files)?;
     let mut resolved_slides = Vec::with_capacity(presentation.slide_ids.len());
@@ -30129,8 +30030,6 @@ fn prepare_render_context(
         fonts: font_files.to_vec(),
         metadata: None,
     };
-    #[cfg(test)]
-    PREPARED_LAYOUT_COUNT.with(|count| count.set(count.get() + 1));
     let mut layout = layout_presentation_with_displayed_numbers(
         &input,
         &mut font_manager,
@@ -32285,7 +32184,7 @@ impl Presentation {
         // well and assert the same identities or the same error.
         #[cfg(debug_assertions)]
         if self.parsed.is_some() {
-            let scanned = without_commit_work(|| field_identities(&package, None));
+            let scanned = field_identities(&package, None);
             match (&inventory, &scanned) {
                 (Ok(kept), Ok(scanned)) => {
                     assert_eq!(kept, scanned, "kept field identities differ")
@@ -32318,7 +32217,6 @@ fn field_identities(package: &OpcPackage, parsed: Option<&Parsed>) -> Result<Has
 
 /// The identities of the DrawingML text fields of one XML part, uppercase.
 fn part_field_identities(name: &str, bytes: &[u8]) -> Result<Vec<String>> {
-    note_commit_work(|work| work.parsed += 1);
     let mut ids = Vec::new();
     let mut reader = quick_xml::Reader::from_reader(bytes);
     // Keep the legacy vendor declaration rules and raw URI matching, while
@@ -33549,78 +33447,6 @@ fn path_of_id(children: &[ShapeTreeChild], shape_id: u32) -> Option<Vec<usize>> 
     None
 }
 
-/// Work that staging, reopening and saving a package did on this thread,
-/// whose amount could follow the deck: parts parsed, slide and notes parts
-/// serialized, media hashed and packages written as a ZIP, by
-/// `to_bytes` included. Debug builds count it.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
-struct CommitWork {
-    parsed: usize,
-    serialized: usize,
-    hashed: usize,
-    zip_writes: usize,
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static COMMIT_WORK: Cell<CommitWork> = const {
-        Cell::new(CommitWork { parsed: 0, serialized: 0, hashed: 0, zip_writes: 0 })
-    };
-    static COMMIT_WORK_PAUSED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Installs the debug note `OpcPackage::reread` runs before its ZIP fallback.
-/// PowerPoint commit counters are the only caller. The note is paused with
-/// the other commit counters, so a debug byte comparison does not count.
-#[cfg(debug_assertions)]
-fn ensure_reread_zip_note() {
-    oxoffice_opc::set_reread_zip_note(Some(count_reread_zip_write));
-}
-
-#[cfg(not(debug_assertions))]
-fn ensure_reread_zip_note() {}
-
-#[cfg(debug_assertions)]
-fn count_reread_zip_write() {
-    note_commit_work(|work| work.zip_writes += 1);
-}
-
-pub(crate) fn note_embedded_zip_write() {
-    note_commit_work(|work| work.zip_writes += 1);
-}
-
-fn note_commit_work(count: impl FnOnce(&mut CommitWork)) {
-    #[cfg(debug_assertions)]
-    if !COMMIT_WORK_PAUSED.get() {
-        let mut work = COMMIT_WORK.get();
-        count(&mut work);
-        COMMIT_WORK.set(work);
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = count;
-}
-
-/// Debug builds only: the work staging and reopening packages did on this
-/// thread since the previous call, as parts parsed, slide and notes parts
-/// serialized, media hashed and packages written as a ZIP, so that the
-/// binding tests can compare decks of N and 4N slides.
-#[doc(hidden)]
-#[cfg(debug_assertions)]
-pub fn take_commit_work() -> [usize; 4] {
-    ensure_reread_zip_note();
-    let work = COMMIT_WORK.replace(CommitWork::default());
-    [work.parsed, work.serialized, work.hashed, work.zip_writes]
-}
-
-#[cfg(debug_assertions)]
-fn without_commit_work<T>(run: impl FnOnce() -> T) -> T {
-    let paused = COMMIT_WORK_PAUSED.replace(true);
-    let result = run();
-    COMMIT_WORK_PAUSED.set(paused);
-    result
-}
-
 /// Asserts that a commit gives what the commit through the ZIP gives: the
 /// same error, or the same package, the same records serialized, the same
 /// media store and the same package a save stages.
@@ -33787,18 +33613,6 @@ fn assert_same_commit(committed: &Result<Presentation>, through_zip: &Result<Pre
             through_zip.as_ref().map(|_| ())
         ),
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static FX260_SLIDE_SCANS: Cell<usize> = const { Cell::new(0) };
-}
-
-fn note_fx260_slide(count: usize) {
-    #[cfg(test)]
-    FX260_SLIDE_SCANS.with(|cell| cell.set(cell.get().saturating_add(count)));
-    #[cfg(not(test))]
-    let _ = count;
 }
 
 fn tree_has_connector(children: &[ShapeTreeChild]) -> bool {
@@ -34235,7 +34049,6 @@ impl Presentation {
         }
         let has_connector = tree_has_connector(&self.owner_data(owner)?.shape_tree.children);
         if has_connector {
-            note_fx260_slide(self.slides.len().max(1));
             let previous = self.owner_data(owner)?.shape_tree.children.clone();
             let mut candidate = self.clone();
             candidate.materialize_owner_geometry(owner, path)?;
@@ -34250,7 +34063,6 @@ impl Presentation {
             *self = candidate;
             return Ok(());
         }
-        note_fx260_slide(1);
         let snapshot = child_at(&self.owner_data(owner)?.shape_tree.children, path)
             .ok_or_else(|| invalid_shape_mutation("shape geometry", "missing physical owner"))?
             .clone();

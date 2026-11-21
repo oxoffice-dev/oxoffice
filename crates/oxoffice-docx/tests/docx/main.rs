@@ -22,6 +22,7 @@ mod pdf;
 mod pdf_forms;
 mod pictures;
 mod properties_and_settings;
+mod property_strings;
 mod render;
 mod revisions_and_compare;
 mod save;

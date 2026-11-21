@@ -3,7 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_drawing::effect::{CT_EffectList, raw_is_effect_dag};
 use oxoffice_drawing::fill::Fill;
 use oxoffice_drawing::geometry::CT_PresetGeometry2D;
@@ -3337,22 +3337,6 @@ fn is_modelled_group_property(
         child_namespaces.reject_writer_conflicts(&["p", "a", "mc"])?;
     }
     Ok(modelled)
-}
-
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &RawAttributes) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child)?;
-    }
-    Ok(())
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T> {

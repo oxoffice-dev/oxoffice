@@ -2426,6 +2426,9 @@ class FragmentConflictPolicy:
     def with_style_reuse(self, reuse: bool) -> FragmentConflictPolicy: ...
     def with_numbering_reuse(self, reuse: bool) -> FragmentConflictPolicy: ...
     def with_related_part_reuse(self, reuse: bool) -> FragmentConflictPolicy: ...
+    def with_destination_formatting(self, keep: bool) -> FragmentConflictPolicy:
+        """Keep the destination's definition of a style the source also defines under the same id and type, and its document defaults, as Word's
+        Insert > Text from File does; otherwise a different style is imported under a new id."""
 
 @_final
 class ContentLocation:

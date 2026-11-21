@@ -36,13 +36,12 @@ on:
   schedule:
     - cron: "23 2 * * *"
 
-# A pull request keeps only its latest run. Pushes to main share one group
-# that never cancels the run in progress: one run of main runs, one waits,
-# and a newer push replaces the waiting one, so a burst of merges builds the
-# first and the last. The nightly run and a dispatch are keyed by their event
-# and commit, so they never queue behind or cancel a push run, or each other.
+# A pull request keeps only its latest run. Every other run is keyed by its
+# event and commit: each push to main runs in full, beside the runs of the
+# pushes before it, so every merge gets its verdict; the nightly run and a
+# dispatch never wait behind or cancel a push run, or each other.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -80,18 +79,18 @@ jobs:
       - name: Wheel licence files match the root ones
         run: cmp LICENSE crates/oxoffice-py/LICENSE && cmp NOTICE crates/oxoffice-py/NOTICE
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # Clippy and the build job compile with debug assertions, and the
+      # Clippy above and the build job compile with debug assertions, and the
       # scaling job builds only the wheel, only for ready pull requests into
-      # main. This checks every crate and target on Linux, all features on,
-      # without them, on every pull request, drafts and stacked ones
-      # included: an item under #[cfg(debug_assertions)] used without that
-      # cfg fails here. Errors only for now
+      # main. This lints every crate and target on Linux, all features on,
+      # without them, warnings denied, on every pull request, drafts and
+      # stacked ones included: an item under #[cfg(debug_assertions)] used
+      # without that cfg, or crate-private code dead without it, fails here
       # (specs/2026-11-21-check-without-debug-assertions.md). It and
       # cargo-deny run even when an earlier step failed, so one push shows
       # every failure.
-      - name: Check without debug assertions
+      - name: Clippy without debug assertions
         if: ${{ !cancelled() }}
-        run: cargo check --locked --workspace --all-targets --all-features --profile scaling
+        run: cargo clippy --locked --workspace --all-targets --all-features --profile scaling -- -D warnings
       - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         if: ${{ !cancelled() }}
         with:

@@ -9,7 +9,7 @@ use oxoffice_docx::{
 };
 use oxoffice_docx_oxml::shared::ST_Jc;
 
-use crate::support::{corpus_doc, doc_with, reopen, texts};
+use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
 
 /// The main body story of `doc`, as the story operations want it.
 fn body_story(doc: &Document) -> StoryId {
@@ -680,6 +680,20 @@ fn zip_names(archive: &[u8]) -> Vec<String> {
         at += 46 + name_len + extra_len + comment_len;
     }
     names
+}
+
+#[test]
+fn epub_navigation_labels_keep_a_non_breaking_hyphen() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>"#,
+        r#"<w:r><w:t>Co</w:t><w:noBreakHyphen/><w:t>op members</w:t></w:r></w:p>"#,
+    ));
+    let epub = doc.to_epub_bytes().unwrap();
+    let nav = String::from_utf8(
+        zip_entry(&epub.bytes, "EPUB/nav.xhtml").expect("the EPUB holds a navigation document"),
+    )
+    .unwrap();
+    assert!(nav.contains("Co-op members"), "{nav}");
 }
 
 #[test]

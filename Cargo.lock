@@ -1169,8 +1169,8 @@ dependencies = [
  "oxoffice-opc",
  "oxoffice-pdf",
  "oxoffice-pptx",
+ "oxoffice-render-test",
  "oxoffice-sml",
- "png",
  "pulldown-cmark",
  "quick-xml",
  "regex",
@@ -1438,6 +1438,16 @@ dependencies = [
  "pyo3",
  "smallvec",
  "thiserror",
+]
+
+[[package]]
+name = "oxoffice-render-test"
+version = "0.1.0"
+dependencies = [
+ "lopdf",
+ "png",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

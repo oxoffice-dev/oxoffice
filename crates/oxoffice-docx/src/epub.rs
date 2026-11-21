@@ -1885,6 +1885,10 @@ fn projected_paragraph_text(paragraph: &CT_P) -> String {
                 // The same projection `CT_R::text` uses, so a heading label
                 // never disagrees with the run text it labels.
                 RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => text.push('\n'),
+                RunContent::SpecialCharacter(SpecialCharacter::NoBreakHyphen) => text.push('-'),
+                RunContent::SpecialCharacter(SpecialCharacter::PositionalTab { .. }) => {
+                    text.push('\t');
+                }
                 RunContent::SpecialCharacter(_)
                 | RunContent::Symbol { .. }
                 | RunContent::Drawing(_)

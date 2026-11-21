@@ -458,10 +458,7 @@ fn an_appended_list_counts_from_one_again() {
     );
 }
 
-// Fails today: append copies the drawing but not its image relationship and
-// part, so the picture points at nothing. Issue: #192
 #[test]
-#[should_panic(expected = "the appended picture shows its own image")]
 fn an_appended_picture_keeps_its_image() {
     let source = with_picture("source");
     let mut doc = doc_with(&["dest"]);
@@ -479,10 +476,7 @@ fn an_appended_picture_keeps_its_image() {
     );
 }
 
-// Fails today: append copies the link's relationship id, not the
-// relationship, so it resolves to the destination's own link. Issue: #192
 #[test]
-#[should_panic(expected = "the appended link goes to its own address")]
 fn an_appended_hyperlink_keeps_its_address() {
     let source = with_link("source site", "https://source.example/");
     let mut doc = with_link("dest site", "https://dest.example/");
@@ -498,11 +492,7 @@ fn an_appended_hyperlink_keeps_its_address() {
     );
 }
 
-// Fails today: append copies the note and comment marks but not the notes
-// and comments, so the appended footnote mark shows the destination's note
-// and the comment marks collide with the destination's. Issue: #192
 #[test]
-#[should_panic(expected = "the appended footnote mark shows the source's note")]
 fn an_appended_footnote_and_comment_keep_their_text() {
     let source = with_notes_and_comments("src");
     let mut doc = with_notes_and_comments("dst");
@@ -526,11 +516,7 @@ fn an_appended_footnote_and_comment_keep_their_text() {
     );
 }
 
-// Fails today: append keeps the source's bookmark and control ids and
-// names, so both documents' bookmarks are named Mark with id 0 and the
-// reader no longer tells them apart. Issue: #192
 #[test]
-#[should_panic(expected = "appended bookmarks keep distinct names")]
 fn appended_bookmarks_and_controls_get_distinct_identities() {
     let source = with_identities("src");
     let mut doc = with_identities("dst");
@@ -658,7 +644,7 @@ fn each_inserted_copy_of_a_list_counts_from_one() {
 }
 
 #[test]
-fn an_inserted_document_keeps_its_own_font() {
+fn an_inserted_document_takes_the_destination_s_font_unless_asked_to_keep_its_own() {
     let mut source = Document::new();
     source.set_default_font_name_value(Some("Georgia")).unwrap();
     source
@@ -676,17 +662,58 @@ fn an_inserted_document_keeps_its_own_font() {
     let own = font(&doc, 0);
     assert_ne!(own.0.as_deref(), Some("Georgia"));
 
+    // As Word's Insert > Text from File: the destination's look.
     doc.insert_document(1, &source);
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["dest", "source"]);
-    assert_eq!(font(&doc, 0), own, "the destination keeps its font");
-    assert_eq!(
-        font(&doc, 1),
-        (
-            Some("Georgia".to_owned()),
-            Some(oxoffice_docx::HalfPoint(28))
-        )
+    let inserted = reopen(&mut doc);
+    assert_eq!(texts(&inserted), ["dest", "source"]);
+    assert_eq!(font(&inserted, 0), own, "the destination keeps its font");
+    assert_eq!(font(&inserted, 1), own, "the inserted text takes it too");
+
+    // A policy that does not keep the destination's formatting keeps the
+    // source's effective font.
+    let mut doc = doc_with(&["dest"]);
+    let start = source.direct_body_item_location(0).unwrap().unwrap();
+    let end = ContentLocation::end(start.story().clone());
+    let fragment =
+        oxoffice_docx::DocumentFragment::from_range(&source, &start, &end, false).unwrap();
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap();
+    doc.import_fragment(
+        &ContentLocation::end(body),
+        &fragment,
+        oxoffice_docx::FragmentConflictPolicy::for_insert_document(Some(
+            oxoffice_docx::FragmentConflictPolicy::reuse_equivalent().with_numbering_reuse(false),
+        )),
+    )
+    .unwrap();
+    let kept = reopen(&mut doc);
+    assert_eq!(font(&kept, 0), own);
+    let georgia = (
+        Some("Georgia".to_owned()),
+        Some(oxoffice_docx::HalfPoint(28)),
     );
+    assert_eq!(font(&kept, 1), georgia);
+
+    // The builder may come after for_insert_document too.
+    let mut doc = doc_with(&["dest"]);
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap();
+    doc.import_fragment(
+        &ContentLocation::end(body),
+        &fragment,
+        oxoffice_docx::FragmentConflictPolicy::for_insert_document(None)
+            .with_destination_formatting(false),
+    )
+    .unwrap();
+    assert_eq!(font(&reopen(&mut doc), 1), georgia);
 }
 
 #[test]
@@ -727,14 +754,7 @@ fn inserting_a_document_gives_taken_bookmarks_controls_and_revisions_new_identit
     assert_ne!(revisions[0].0, revisions[1].0);
 }
 
-// Fails today: insert_document copies the body only, without the image and
-// link relationships its drawings and links name: here the destination has
-// no such ids, so the picture shows nothing and the link has no address
-// (an id the destination uses resolves to its own target). The Python
-// binding's insert_document goes through
-// `FragmentConflictPolicy::for_insert_document` and keeps both. Issue: #192
 #[test]
-#[should_panic(expected = "the inserted picture and link keep their targets")]
 fn an_inserted_picture_and_hyperlink_keep_their_image_and_address() {
     let mut source = with_picture("source");
     source.append_hyperlink("source site", "https://source.example/");
@@ -756,10 +776,7 @@ fn an_inserted_picture_and_hyperlink_keep_their_image_and_address() {
     );
 }
 
-// Fails today: insert_document copies the note and comment marks without
-// the notes and comments. Issue: #192
 #[test]
-#[should_panic(expected = "the inserted footnote mark shows the source's note")]
 fn an_inserted_footnote_and_comment_come_with_the_content() {
     let source = with_notes_and_comments("src");
     let mut doc = with_notes_and_comments("dst");
@@ -783,10 +800,7 @@ fn an_inserted_footnote_and_comment_come_with_the_content() {
     );
 }
 
-// Fails today: the pasted section keeps the source's header relationship id,
-// which names the destination's header, so it shows that header. Issue: #192
 #[test]
-#[should_panic(expected = "the source's first section keeps its own header")]
 fn an_appended_or_inserted_document_keeps_the_header_of_its_inner_section() {
     let source = with_inner_section_header();
     assert_eq!(header_shown(&source, 0).as_deref(), Some("Cover header"));

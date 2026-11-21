@@ -11,7 +11,34 @@ impl Document {
     }
 
     /// Replace the complete core-properties model.
+    ///
+    /// A value holding a character XML 1.0 cannot carry is refused, naming the
+    /// property, and the document is left unchanged.
     pub fn set_core_properties(&mut self, properties: CoreProperties) -> Result<()> {
+        for (name, value) in [
+            ("title", &properties.title),
+            ("creator", &properties.creator),
+            ("subject", &properties.subject),
+            ("description", &properties.description),
+            ("keywords", &properties.keywords),
+            ("last modified by", &properties.last_modified_by),
+            ("created", &properties.created),
+            ("modified", &properties.modified),
+            ("category", &properties.category),
+            ("content status", &properties.content_status),
+            ("identifier", &properties.identifier),
+            ("language", &properties.language),
+            ("last printed", &properties.last_printed),
+            ("revision", &properties.revision),
+            ("version", &properties.version),
+        ] {
+            if let Some(value) = value {
+                oxoffice_core::xml::reject_non_xml_characters(
+                    &format!("core property {name}"),
+                    value,
+                )?;
+            }
+        }
         self.edit_properties(|document| {
             document.reserve_core_properties_bundle()?;
             document.core_properties = Some(Box::new(properties.clone()));
@@ -43,6 +70,21 @@ impl Document {
     /// An `application_version` must have the form `XX.YYYY` (ECMA-376 Part 1,
     /// 22.2.2.3), because Word refuses to open a package with any other shape.
     pub fn set_application_properties(&mut self, properties: AppProperties) -> Result<()> {
+        for (name, value) in [
+            ("template", &properties.template),
+            ("manager", &properties.manager),
+            ("company", &properties.company),
+            ("presentation format", &properties.presentation_format),
+            ("application", &properties.application),
+            ("application version", &properties.application_version),
+        ] {
+            if let Some(value) = value {
+                oxoffice_core::xml::reject_non_xml_characters(
+                    &format!("application property {name}"),
+                    value,
+                )?;
+            }
+        }
         if let Some(version) = properties.application_version.as_deref()
             && !is_app_version(version)
         {
@@ -94,6 +136,26 @@ impl Document {
                 "an authored custom property requires a non-empty name".to_owned(),
             ));
         };
+        oxoffice_core::xml::reject_non_xml_characters("a custom property name", name)?;
+        oxoffice_core::xml::reject_non_xml_characters(
+            &format!("the format id of custom property {name:?}"),
+            &property.fmtid,
+        )?;
+        if let crate::CustomPropertyValue::Raw(raw) = &property.value {
+            oxoffice_core::xml::reject_non_xml_characters(
+                &format!("custom property {name:?}"),
+                &String::from_utf8_lossy(raw),
+            )?;
+        }
+        if let crate::CustomPropertyValue::Lpstr(value)
+        | crate::CustomPropertyValue::Lpwstr(value)
+        | crate::CustomPropertyValue::FileTime(value) = &property.value
+        {
+            oxoffice_core::xml::reject_non_xml_characters(
+                &format!("custom property {name:?}"),
+                value,
+            )?;
+        }
         if property.pid < 2 {
             return Err(Error::Other(
                 "an authored custom property pid must be at least 2".to_owned(),
@@ -204,6 +266,11 @@ impl Document {
     }
 
     /// Set the document title.
+    ///
+    /// A character XML 1.0 cannot carry is taken as given, and every later save
+    /// then fails with the error of the package writer, which names the part
+    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
+    /// refuses such a value instead.
     pub fn set_title(&mut self, title: &str) {
         let mut candidate = self.clone_for_staging();
         candidate
@@ -220,6 +287,11 @@ impl Document {
     }
 
     /// Set the document author/creator.
+    ///
+    /// A character XML 1.0 cannot carry is taken as given, and every later save
+    /// then fails with the error of the package writer, which names the part
+    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
+    /// refuses such a value instead.
     pub fn set_author(&mut self, author: &str) {
         let mut candidate = self.clone_for_staging();
         candidate
@@ -236,6 +308,11 @@ impl Document {
     }
 
     /// Set the document subject.
+    ///
+    /// A character XML 1.0 cannot carry is taken as given, and every later save
+    /// then fails with the error of the package writer, which names the part
+    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
+    /// refuses such a value instead.
     pub fn set_subject(&mut self, subject: &str) {
         let mut candidate = self.clone_for_staging();
         candidate
@@ -252,6 +329,11 @@ impl Document {
     }
 
     /// Set the document keywords.
+    ///
+    /// A character XML 1.0 cannot carry is taken as given, and every later save
+    /// then fails with the error of the package writer, which names the part
+    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
+    /// refuses such a value instead.
     pub fn set_keywords(&mut self, keywords: &str) {
         let mut candidate = self.clone_for_staging();
         candidate

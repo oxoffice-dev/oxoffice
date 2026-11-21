@@ -60,6 +60,17 @@ starts empty) and warm (once `main` has saved it). After the merge, the
 artifacts; if `main`'s first run with the key failed before the check, the
 entry is deleted and a dispatch on `main` saves it again.
 
+## Amendment 2026-11-21: clippy, warnings denied
+
+#286 gated the last item that was dead without debug assertions, so the step
+became `cargo clippy --locked --workspace --all-targets --all-features
+--profile scaling -- -D warnings`, as the Decision planned: it fails on
+errors and on warnings, in the workspace crates only, and it replaces the
+`cargo check` (clippy type-checks too). `CLAUDE.md` and
+`docs/DEVELOPMENT.md` list the same command (the maintainer approved the
+`CLAUDE.md` line). Measured locally after the check's artifacts were
+there: 39 seconds, no warning.
+
 ## Links
 
 - [A faster build job](2026-11-21-faster-build-job.md)
