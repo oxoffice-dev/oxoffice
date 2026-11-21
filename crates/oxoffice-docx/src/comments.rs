@@ -20,48 +20,6 @@ use crate::document::{
 };
 use crate::{ContentLocation, Document, Error, Result};
 
-#[cfg(test)]
-thread_local! {
-    static COMMENT_PARENT_READ_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static COMMENT_PARENT_READ_COUNTS: std::cell::Cell<Option<[usize; 2]>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-struct CommentParentReadPhase(bool);
-
-#[cfg(test)]
-impl CommentParentReadPhase {
-    fn enter() -> Self {
-        Self(COMMENT_PARENT_READ_ACTIVE.with(|active| active.replace(true)))
-    }
-}
-
-#[cfg(test)]
-impl Drop for CommentParentReadPhase {
-    fn drop(&mut self) {
-        COMMENT_PARENT_READ_ACTIVE.with(|active| active.set(self.0));
-    }
-}
-
-#[cfg(test)]
-struct CommentParentReadPass(bool);
-
-#[cfg(test)]
-impl CommentParentReadPass {
-    fn paragraph(&mut self) {
-        if COMMENT_PARENT_READ_ACTIVE.with(std::cell::Cell::get) {
-            COMMENT_PARENT_READ_COUNTS.with(|counts| {
-                if let Some(mut value) = counts.get() {
-                    value[0] += usize::from(!self.0);
-                    value[1] += 1;
-                    counts.set(Some(value));
-                }
-            });
-            self.0 = true;
-        }
-    }
-}
-
 /// Refuses comment fields holding a character XML 1.0 cannot carry, as
 /// python-docx refuses such text.
 fn reject_non_xml_comment(author: &str, initials: Option<&str>, text: &str) -> Result<()> {
@@ -2222,14 +2180,10 @@ impl Document {
     ) -> Result<(i32, crate::StoryId)> {
         let no_range = || Error::Other(format!("comment id {parent_id} has no range to reply to"));
         self.flush_to_package()?;
-        #[cfg(test)]
-        let parent_read_phase = CommentParentReadPhase::enter();
         let read = CommentAnchorRead::from_prepared(self, Some(parent_id))?;
         let parent = read.project(parent_id)?.0.ok_or_else(no_range)?;
         let (story, end) = read.reply_boundary(parent_id, &parent)?;
         drop(read);
-        #[cfg(test)]
-        drop(parent_read_phase);
         let id = match existing {
             Some(id) => id,
             None => self.identifiers.reserve_comment_id()?,
@@ -2243,18 +2197,9 @@ impl Document {
             "comment reply",
             false,
         )?;
-        #[cfg(test)]
-        let reply_refresh_before = crate::document::STORY_SOURCE_BUILDS.get();
         let (mut xml, owner) = self
             .refreshed_story_owner_span(&story)?
             .ok_or_else(no_range)?;
-        #[cfg(test)]
-        crate::document::REPLY_SOURCE_READS.with(|counts| {
-            if let Some(mut value) = counts.get() {
-                value[1] += crate::document::STORY_SOURCE_BUILDS.get() - reply_refresh_before;
-                counts.set(Some(value));
-            }
-        });
         let markers = comment_source_markers(&xml)?;
         let selected = |selected_id| {
             markers.iter().find(|marker| {
@@ -3249,8 +3194,6 @@ impl CommentAnchorRead {
             return Err(Error::Other(format!("unknown comment {id}")));
         }
         let counts = CommentOwnership::marker_counts(&ownership.markers);
-        #[cfg(test)]
-        let mut parent_read_pass = CommentParentReadPass(false);
         let located = source.comment_story_range_paragraphs()?;
         let mut values = source.comment_paragraph_read();
         let paragraphs = located
@@ -3260,8 +3203,6 @@ impl CommentAnchorRead {
                     .into_iter()
                     .map(|marker| marker.id)
                     .collect::<HashSet<_>>();
-                #[cfg(test)]
-                parent_read_pass.paragraph();
                 let paragraph = values.read(&location, &xml)?;
                 Ok((location, paragraph, ids, xml, flow, offset))
             })

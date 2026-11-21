@@ -49,13 +49,6 @@ const NESTED_LIMITS: PackageReadLimits = PackageReadLimits {
     max_total_uncompressed_bytes: 256 * 1024 * 1024,
 };
 
-#[cfg(test)]
-thread_local! {
-    static FAIL_NEXT_PACKAGE_SERIALIZATION: std::cell::Cell<bool> = const {
-        std::cell::Cell::new(false)
-    };
-}
-
 /// Counts of exact literal replacements made by [`Document::redact_text`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RedactionReport {
@@ -1721,12 +1714,6 @@ fn validate_relationship_targets(
 }
 
 fn package_bytes(package: &OpcPackage) -> Result<Vec<u8>> {
-    #[cfg(test)]
-    if FAIL_NEXT_PACKAGE_SERIALIZATION.replace(false) {
-        return Err(Error::Other(
-            "injected redaction package serialization failure".to_owned(),
-        ));
-    }
     let mut output = Cursor::new(Vec::new());
     package.write_to(&mut output)?;
     Ok(output.into_inner())

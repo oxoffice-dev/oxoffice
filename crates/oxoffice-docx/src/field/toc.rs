@@ -1270,8 +1270,6 @@ pub(super) fn toc_source_position_is_owned(
     position: TocOwnedPosition,
 ) -> bool {
     spans.iter().any(|span| {
-        #[cfg(test)]
-        NAVIGATION_OWNER_VISITS.set(NAVIGATION_OWNER_VISITS.get() + 1);
         if span.begin_paragraph == span.end_paragraph && position.paragraph == span.begin_paragraph
         {
             return position.run >= span.result_start_position
