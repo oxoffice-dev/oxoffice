@@ -946,6 +946,10 @@ pub(crate) struct TemplateEvaluation<'data, 'formatter> {
     pub(crate) sources: crate::document::TemplateMainSources,
     versioned: bool,
     occurrence: usize,
+    // The roots of the last canonical staging of the candidate, while nothing
+    // has changed it since. Each staging rescans every story, so the stories
+    // stage once per change instead of up to three times each.
+    staged: Option<Vec<TemplateProgram>>,
     // The callback lifetime stays on this field. A type alias would force 'static.
     #[allow(clippy::type_complexity)]
     formatter: Option<
@@ -1974,6 +1978,9 @@ fn replay_program_blocks<'data>(
                     } else {
                         crate::document::TemplateFragmentSelection::Bytes(fragment.clone())
                     };
+                    // The import allocates identifiers, drawings and notes in
+                    // the candidate, so its staged roots are stale.
+                    evaluation.staged = None;
                     let imported = candidate.template_import_repeated_blocks(
                         current,
                         selection,
@@ -2302,27 +2309,34 @@ fn canonical_root_base(
     evaluation: &mut TemplateEvaluation<'_, '_>,
 ) -> Result<TemplateProgram> {
     // Dependency allocation changes identifier occupancy. Canonicalize before
-    // reading the owner that publication will check again.
-    candidate.prepare_staged_template_package(
-        &mut evaluation.operation,
-        &mut evaluation.lineage,
-        &mut evaluation.sources,
-    )?;
-    // That prepare keeps only drawings already in the package. Repeated copies
-    // still live in the unpublished replacement, so their ids stay reserved.
-    candidate.retain_pending_drawing_ids(pending_drawings);
-    let mut fresh = candidate
-        .template_programs_scoped(
+    // reading the owner that publication will check again. A candidate that
+    // nothing changed since the last staging keeps its canonical roots.
+    if evaluation.staged.is_none() {
+        candidate.prepare_staged_template_package(
+            &mut evaluation.operation,
+            &mut evaluation.lineage,
+            &mut evaluation.sources,
+        )?;
+        // That prepare keeps only drawings already in the package. Repeated
+        // copies still live in the unpublished replacement, so their ids stay
+        // reserved.
+        candidate.retain_pending_drawing_ids(pending_drawings);
+        evaluation.staged = Some(candidate.template_programs_scoped(
             &mut evaluation.operation,
             &evaluation.lineage,
             &mut evaluation.sources,
-        )?
-        .into_iter()
+        )?);
+    }
+    let mut fresh = evaluation
+        .staged
+        .iter()
+        .flatten()
         .find(|program| {
             program.part == current.part
                 && program.story.kind() == current.story.kind()
                 && program.story.owner_index() == current.story.owner_index()
         })
+        .cloned()
         .ok_or_else(|| template_error("template physical owner disappeared during staging"))?;
     retain_original_template_locations(current, &mut fresh)?;
     Ok(fresh)
@@ -2650,6 +2664,7 @@ pub(crate) fn render_grammar(
         sources: main_sources,
         versioned,
         occurrence: 0,
+        staged: None,
         formatter: None,
     };
     let mut executions = Vec::new();
@@ -2786,6 +2801,11 @@ pub(crate) fn render_grammar(
             canonical_root_base(&mut candidate, &source, &pending_drawings, &mut evaluation)?;
         changed |= rendered.raw != source.raw;
         if let Some(produced) = rendered.source {
+            // Publishing the owner's own bytes back leaves the candidate as
+            // staged.
+            if produced.as_bytes() != source.raw.as_slice() {
+                evaluation.staged = None;
+            }
             candidate.template_publish_program_source(
                 &source,
                 produced,
@@ -2794,6 +2814,7 @@ pub(crate) fn render_grammar(
                 &mut evaluation.sources,
             )?;
         } else {
+            evaluation.staged = None;
             evaluation.sources.invalidate_model();
             candidate.template_publish_program(&source, rendered.raw)?;
         }

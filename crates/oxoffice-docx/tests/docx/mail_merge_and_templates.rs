@@ -22,7 +22,7 @@ use oxoffice_docx_oxml::text::CT_P;
 use oxoffice_opc::OpcPackage;
 use serde_json::json;
 
-use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
+use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, texts};
 
 const MAIN_DOCUMENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
@@ -128,6 +128,54 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+/// A one-pixel PNG.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+
+/// Raw paragraphs holding these texts, one each.
+fn raw_paragraphs(texts: &[&str]) -> String {
+    texts
+        .iter()
+        .map(|text| format!(r#"<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#))
+        .collect()
+}
+
+/// The text of each `w:t` of a part, in order.
+fn part_texts(xml: &str) -> Vec<String> {
+    xml.split("<w:t")
+        .skip(1)
+        .filter(|rest| rest.starts_with('>') || rest.starts_with(' '))
+        .map(|rest| {
+            let start = rest.find('>').unwrap() + 1;
+            rest[start..start + rest[start..].find("</w:t>").unwrap()].to_owned()
+        })
+        .collect()
+}
+
+/// The corpus file `name` with raw XML written into its parts: each
+/// `(part, after, before, xml)` puts `xml` in front of the first `before`
+/// that follows `after` in that part.
+fn corpus_doc_with(name: &str, insertions: &[(&str, &str, &str, String)]) -> Document {
+    let bytes = fs::read(corpus_root().join("files").join(name)).expect("corpus file reads");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("corpus package opens");
+    for (part, after, before, xml) in insertions {
+        let mut source = String::from_utf8(package.get_part(part).expect("part").to_vec())
+            .expect("part is UTF-8");
+        let from = source.find(after).expect("anchor in the part");
+        let at = from + source[from..].find(before).expect("end in the part");
+        source.insert_str(at, xml);
+        package.set_part(part, source.into_bytes());
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("edited corpus file opens")
 }
 
 // ---- Scalar tags ----
@@ -533,6 +581,52 @@ fn a_control_marker_must_stand_alone_be_closed_and_loop_over_a_list() {
     }
 }
 
+#[test]
+fn a_loop_copies_its_note_and_picture_beside_header_and_footer_tags() {
+    let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
+    let location = doc.paragraph_story_location(1).unwrap().unwrap();
+    doc.create_footnote(&location, "Note {{ who }}").unwrap();
+    doc.add_picture(PNG, "dot.png", Length::cm(1.0), Length::cm(1.0));
+    doc.add_paragraph("{% endfor %}");
+    doc.add_paragraph("After {{ who }}");
+    doc.set_header("Header {{ who }}");
+    doc.set_footer("Footer {{ who }}");
+
+    doc.render_template(&json!({ "xs": ["a", "b", "c"], "who": "Ada" }))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        ["Item a", "", "Item b", "", "Item c", "", "After Ada"]
+    );
+    assert_eq!(doc.header_text().as_deref(), Some("Header Ada"));
+    assert_eq!(doc.footer_text().as_deref(), Some("Footer Ada"));
+    // Each copy has its own note and its own drawing id.
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let ids_after = |marker: &str| {
+        xml.split(marker)
+            .skip(1)
+            .map(|rest| rest[..rest.find('"').unwrap()].to_owned())
+            .collect::<Vec<_>>()
+    };
+    let references = ids_after(r#"<w:footnoteReference w:id=""#);
+    let drawings = ids_after(r#"<wp:docPr id=""#);
+    let notes = doc.footnotes();
+    assert_eq!(references.len(), 3);
+    for reference in &references {
+        let id: i32 = reference.parse().unwrap();
+        assert!(notes.contains(&(id, " Note Ada".to_owned())), "{reference}");
+    }
+    assert_eq!(doc.pictures().unwrap().len(), 3);
+    assert_eq!(drawings.len(), 3);
+    for (index, id) in drawings.iter().enumerate() {
+        assert!(!drawings[..index].contains(id), "{drawings:?}");
+    }
+    for (index, id) in references.iter().enumerate() {
+        assert!(!references[..index].contains(id), "{references:?}");
+    }
+}
+
 // ---- Grammar version 1 ----
 
 #[test]
@@ -688,11 +782,7 @@ fn a_google_docs_report_with_tables_renders_without_error() {
     assert_eq!(texts(&doc), before);
 }
 
-// Fails today: rendering the LibreOffice letter fails while it normalizes the
-// header and footer parts; without its header and footer references the
-// letter renders. Issue: #201
 #[test]
-#[should_panic(expected = "the LibreOffice letter renders")]
 fn a_libreoffice_letter_renders_without_error() {
     let mut doc = corpus_doc("libreoffice/letter.docx");
     let before = texts(&doc);
@@ -702,6 +792,97 @@ fn a_libreoffice_letter_renders_without_error() {
         "the LibreOffice letter renders: {rendered:?}"
     );
     assert_eq!(texts(&doc), before);
+}
+
+#[test]
+fn a_libreoffice_thesis_with_twenty_two_header_and_footer_parts_renders() {
+    let mut doc = corpus_doc("libreoffice/thesis.docx");
+    let before = texts(&doc);
+    assert_eq!(doc.render_template(&json!({})).unwrap(), 0);
+    assert_eq!(texts(&doc), before);
+}
+
+#[test]
+fn blocks_in_every_header_and_footer_of_the_libreoffice_letter_render() {
+    let parts = [
+        ("/word/header1.xml", "</w:hdr>"),
+        ("/word/header2.xml", "</w:hdr>"),
+        ("/word/header3.xml", "</w:hdr>"),
+        ("/word/footer1.xml", "</w:ftr>"),
+        ("/word/footer2.xml", "</w:ftr>"),
+        ("/word/footer3.xml", "</w:ftr>"),
+    ];
+    let insertions = parts
+        .iter()
+        .enumerate()
+        .map(|(index, (part, close))| {
+            let shown = format!("Shown {index} {{{{ who }}}}");
+            let block = raw_paragraphs(&["{% if flag %}", &shown, "{% endif %}"]);
+            (*part, "<w:", *close, block)
+        })
+        .collect::<Vec<_>>();
+    // The text each part holds besides the block, which must survive.
+    let letter = corpus_doc("libreoffice/letter.docx");
+    let own_texts = parts
+        .iter()
+        .map(|(part, _)| part_texts(&letter.part_xml(part).unwrap()))
+        .collect::<Vec<_>>();
+    for (flag, count) in [(true, 6), (false, 0)] {
+        let mut doc = corpus_doc_with("libreoffice/letter.docx", &insertions);
+        assert_eq!(
+            doc.render_template(&json!({ "flag": flag, "who": "Ada" }))
+                .unwrap(),
+            count
+        );
+        let doc = reopen(&mut doc);
+        for (index, (part, _)) in parts.iter().enumerate() {
+            let mut expected = own_texts[index].clone();
+            if flag {
+                expected.push(format!("Shown {index} Ada"));
+            }
+            assert_eq!(part_texts(&doc.part_xml(part).unwrap()), expected, "{part}");
+        }
+    }
+}
+
+#[test]
+fn two_notes_of_one_part_each_take_their_block() {
+    let before = corpus_doc("libreoffice/contract.docx").footnotes();
+    let insertions = [
+        (
+            "/word/footnotes.xml",
+            r#"<w:footnote w:id="2">"#,
+            "</w:footnote>",
+            raw_paragraphs(&["{% if flag %}", "Shown {{ who }}", "{% endif %}"]),
+        ),
+        (
+            "/word/footnotes.xml",
+            r#"<w:footnote w:id="3">"#,
+            "</w:footnote>",
+            raw_paragraphs(&["{% for x in xs %}", "Item {{ x }}", "{% endfor %}"]),
+        ),
+    ];
+    for (data, count, added) in [
+        (
+            json!({ "flag": true, "who": "Ada", "xs": ["a", "b"] }),
+            3,
+            ["\nShown Ada", "\nItem a\nItem b"],
+        ),
+        (
+            json!({ "flag": false, "who": "Ada", "xs": [] }),
+            0,
+            ["", ""],
+        ),
+    ] {
+        let mut doc = corpus_doc_with("libreoffice/contract.docx", &insertions);
+        assert_eq!(doc.render_template(&data).unwrap(), count);
+        let expected = before
+            .iter()
+            .zip(added)
+            .map(|((id, text), added)| (*id, format!("{text}{added}")))
+            .collect::<Vec<_>>();
+        assert_eq!(reopen(&mut doc).footnotes(), expected, "{data}");
+    }
 }
 
 // ---- Merge fields ----
