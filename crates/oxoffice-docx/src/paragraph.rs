@@ -3328,7 +3328,8 @@ impl<'a> ParagraphRef<'a> {
             .map(|inner| ParagraphBorderRef { inner })
     }
 
-    /// Count direct paragraph border edges.
+    /// Count the direct paragraph border edges that draw a line: an edge set
+    /// to `nil` or `none` is not counted, as [`Self::has_borders`] does.
     pub fn border_count(&self) -> usize {
         let Some(borders) = self
             .inner
@@ -3349,6 +3350,7 @@ impl<'a> ParagraphRef<'a> {
         ]
         .into_iter()
         .flatten()
+        .filter(|edge| !edge.val.is_none())
         .count()
     }
 

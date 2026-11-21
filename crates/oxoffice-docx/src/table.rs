@@ -2985,13 +2985,15 @@ impl<'a> TableRef<'a> {
             .is_some_and(|properties| properties.width.is_some())
     }
 
-    /// Whether explicit table borders are present.
+    /// Whether explicit table borders draw a line: an edge set to `nil` or
+    /// `none` does not count, as for paragraphs; an edge the model keeps as
+    /// raw XML (a diagonal) counts whatever its value.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties
             .as_ref()
             .and_then(|properties| properties.borders.as_ref())
-            .is_some_and(|borders| !borders.is_empty())
+            .is_some_and(|borders| borders.draws_an_edge() || !borders.extra_xml.is_empty())
     }
 
     /// Whether explicit table shading is present.
@@ -3372,13 +3374,15 @@ impl<'a> CellRef<'a> {
             .is_some_and(|properties| properties.width.is_some())
     }
 
-    /// Whether explicit cell borders are present.
+    /// Whether explicit cell borders draw a line: an edge set to `nil` or
+    /// `none` does not count, as for paragraphs; an edge the model keeps as
+    /// raw XML (a diagonal) counts whatever its value.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties
             .as_ref()
             .and_then(|properties| properties.borders.as_ref())
-            .is_some_and(|borders| !borders.is_empty())
+            .is_some_and(|borders| borders.draws_an_edge() || !borders.extra_xml.is_empty())
     }
 
     /// Whether explicit cell shading is present.

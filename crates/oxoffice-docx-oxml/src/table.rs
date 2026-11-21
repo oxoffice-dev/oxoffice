@@ -418,6 +418,22 @@ impl CT_TblBorders {
             && self.inside_v.is_none()
             && self.extra_xml.is_empty()
     }
+
+    /// Whether a modelled edge set here draws a line: one set to `nil` or
+    /// `none` draws none.
+    pub fn draws_an_edge(&self) -> bool {
+        [
+            &self.top,
+            &self.bottom,
+            &self.left,
+            &self.right,
+            &self.inside_h,
+            &self.inside_v,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|edge| !edge.val.is_none())
+    }
 }
 
 /// Table cell margin (a single edge width).

@@ -1,12 +1,12 @@
 //! HTML element generation from OXML types.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx_oxml::document::CT_Body;
 use oxoffice_docx_oxml::numbering::CT_Numbering;
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_Jc;
-use oxoffice_docx_oxml::styles::CT_Styles;
+use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, VMerge};
 use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
@@ -114,7 +114,7 @@ pub(crate) fn emit_body(
                             });
                         }
                     }
-                    out.push_str("<li>");
+                    out.push_str(&format!("<li{}>", direction_attribute(&p, styles)));
                     emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
                     out.push_str("</li>\n");
                     while open_items.last().is_some_and(|&(_, item)| item >= level) {
@@ -248,15 +248,56 @@ fn emit_paragraph(
     };
 
     let style = css::paragraph_style(para.properties.as_ref());
+    let direction = direction_attribute(para, styles);
     if style.is_empty() {
-        out.push_str(&format!("<{tag}>"));
+        out.push_str(&format!("<{tag}{direction}>"));
     } else {
-        out.push_str(&format!("<{tag} style=\"{}\">", escape_html_attr(&style)));
+        out.push_str(&format!(
+            "<{tag}{direction} style=\"{}\">",
+            escape_html_attr(&style)
+        ));
     }
 
     emit_paragraph_content(out, para, styles, images, hyperlink_urls, options);
 
     out.push_str(&format!("</{tag}>\n"));
+}
+
+/// ` dir="rtl"` for a right-to-left paragraph, so that a browser lays it out
+/// right to left; empty otherwise. `w:bidi` is read as layout resolves it:
+/// the paragraph's own, its style's (the default paragraph style when it
+/// names none) through `basedOn`, then the document defaults.
+fn direction_attribute(para: &CT_P, styles: &CT_Styles) -> &'static str {
+    let direct = para.properties.as_ref();
+    let mut bidi = direct.and_then(|properties| properties.bidi);
+    let mut style_id = direct
+        .and_then(|properties| properties.style_id.as_deref())
+        .or_else(|| {
+            styles
+                .get_default(StyleType::Paragraph)
+                .map(|style| style.style_id.as_str())
+        });
+    let mut seen = HashSet::new();
+    while bidi.is_none()
+        && let Some(id) = style_id
+        && seen.insert(id)
+        && let Some(style) = styles.get_by_id(id)
+    {
+        bidi = style.ppr.as_ref().and_then(|properties| properties.bidi);
+        style_id = style.based_on.as_deref();
+    }
+    let bidi = bidi.or_else(|| {
+        styles
+            .doc_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.ppr.as_ref())
+            .and_then(|properties| properties.bidi)
+    });
+    if bidi == Some(true) {
+        " dir=\"rtl\""
+    } else {
+        ""
+    }
 }
 
 /// Emit the inner content of a paragraph (the runs of its accepted view and
@@ -373,16 +414,21 @@ fn emit_run(
             RunContent::Drawing(drawing) => {
                 if options.inline_images {
                     // Try to find image data
-                    let embed_id = drawing
+                    let picture = drawing
                         .inline
                         .as_ref()
-                        .map(|i| i.embed_id.as_str())
-                        .or_else(|| drawing.anchor.as_ref().map(|a| a.embed_id.as_str()));
+                        .map(|i| (i.embed_id.as_str(), i.description.as_deref()))
+                        .or_else(|| {
+                            drawing
+                                .anchor
+                                .as_ref()
+                                .map(|a| (a.embed_id.as_str(), a.description.as_deref()))
+                        });
 
-                    if let Some(eid) = embed_id
+                    if let Some((eid, description)) = picture
                         && let Some(img_data) = images.get(eid)
                     {
-                        emit_image(out, img_data);
+                        emit_image(out, img_data, description);
                     }
                 }
             }
@@ -485,13 +531,17 @@ fn emit_field_display(out: &mut String, text: &str, properties: Option<&CT_RPr>)
     }
 }
 
-/// Emit an inline image as a base64 data URI.
-fn emit_image(out: &mut String, img: &ImageData) {
+/// Emit an inline image as a base64 data URI, with the picture's
+/// description as its alt text when it has one.
+fn emit_image(out: &mut String, img: &ImageData, description: Option<&str>) {
     let base64 = base64_encode(&img.data);
+    let alt = description
+        .map(|description| format!(" alt=\"{}\"", escape_html_attr(description)))
+        .unwrap_or_default();
     // `content_type` is a public field, so it is not necessarily one of the
     // literals oxoffice derives from the part name.
     out.push_str(&format!(
-        "<img src=\"data:{};base64,{}\" style=\"max-width:100%\">",
+        "<img src=\"data:{};base64,{}\"{alt} style=\"max-width:100%\">",
         escape_html_attr(&img.content_type),
         base64
     ));
@@ -522,13 +572,9 @@ fn emit_table(
         }
 
         // Table borders
+        // An edge set to `nil` or `none` draws nothing.
         if let Some(borders) = &props.borders
-            && (borders.top.is_some()
-                || borders.bottom.is_some()
-                || borders.left.is_some()
-                || borders.right.is_some()
-                || borders.inside_h.is_some()
-                || borders.inside_v.is_some())
+            && borders.draws_an_edge()
         {
             table_style.push_str("border:1px solid #000;");
         }
@@ -602,10 +648,10 @@ fn emit_table(
 
                 // Cell borders
                 if let Some(borders) = &props.borders
-                    && (borders.top.is_some()
-                        || borders.bottom.is_some()
-                        || borders.left.is_some()
-                        || borders.right.is_some())
+                    && [&borders.top, &borders.bottom, &borders.left, &borders.right]
+                        .into_iter()
+                        .flatten()
+                        .any(|edge| !edge.val.is_none())
                 {
                     td_style.push_str("border:1px solid #000;");
                 }
