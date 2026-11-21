@@ -423,9 +423,15 @@ fn checked_table_width(name: &str, width: TableWidth) -> Result<CT_TblWidth> {
                     "table {name} percentage must be finite and between 0 and 100"
                 )));
             }
-            CT_TblWidth::pct((percent * 50.0) as i32)
+            CT_TblWidth::pct(percent_fiftieths(percent))
         }
     })
+}
+
+/// A percentage in the fiftieths of a percent OOXML stores, rounded to the
+/// nearest: 33.3 % is 1665, not the 1664 a truncation of 1664.999... gives.
+fn percent_fiftieths(percent: f64) -> i32 {
+    (percent * 50.0).round() as i32
 }
 
 /// Project a stored width onto the public mode, or `None` for a spelling the
@@ -1506,8 +1512,7 @@ impl<'a> Table<'a> {
 
     /// Set the table width as a percentage in place.
     pub fn set_width_pct(&mut self, percent: f64) {
-        // OOXML uses 50ths of a percent
-        self.ensure_tbl_pr().width = Some(CT_TblWidth::pct((percent * 50.0) as i32));
+        self.ensure_tbl_pr().width = Some(CT_TblWidth::pct(percent_fiftieths(percent)));
     }
 
     /// Set table alignment.
