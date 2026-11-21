@@ -1029,11 +1029,27 @@ impl Document {
         timestamp: &str,
         options: &ComparisonOptions,
     ) -> Result<Vec<ComparisonDiagnostic>> {
-        self.compare_pass(edited, author, timestamp, options, &[])
+        // A pass that finds moved footnotes hands back the edited input with
+        // them under new ids, and the next one starts from it. Each pass gives
+        // at least one more note a new id, so the passes end.
+        let mut renumbered = Vec::new();
+        let mut next: Option<Document> = None;
+        loop {
+            let mut again = None;
+            let input = next.as_ref().unwrap_or(edited);
+            let diagnostics =
+                self.compare_pass(input, author, timestamp, options, &renumbered, &mut again)?;
+            let Some((document, ids)) = again else {
+                return Ok(diagnostics);
+            };
+            renumbered.extend(ids);
+            next = Some(document);
+        }
     }
 
     /// One comparison pass. `renumbered` holds the ids an earlier pass gave
-    /// the edited notes whose reference moved: they stay new notes.
+    /// the edited notes whose reference moved: they stay new notes. A pass
+    /// that finds more sets `again` and writes nothing.
     fn compare_pass(
         &mut self,
         edited: &Document,
@@ -1041,6 +1057,7 @@ impl Document {
         timestamp: &str,
         options: &ComparisonOptions,
         renumbered: &[i32],
+        again: &mut Option<(Document, Vec<i32>)>,
     ) -> Result<Vec<ComparisonDiagnostic>> {
         validate_revision_timestamp(timestamp)?;
         validate_comparison_options(options)?;
@@ -1394,6 +1411,7 @@ impl Document {
             // new note: the comparison runs again with it under a new id, so
             // the original note is deleted with its reference and the edited
             // one inserted with its own. Nothing was written to this document.
+            // See `compare_with_options`.
             // The ids found are the reconciled ones: back to the input's.
             let moved = moved
                 .iter()
@@ -1410,8 +1428,8 @@ impl Document {
                     moved[0]
                 )));
             };
-            let renumbered = renumbered.iter().copied().chain(ids).collect::<Vec<_>>();
-            return self.compare_pass(&next, author, timestamp, options, &renumbered);
+            *again = Some((next, ids));
+            return Ok(Vec::new());
         }
         if snapshot_comments {
             let revision_id = metadata.ids.allocate()?;
@@ -6589,8 +6607,16 @@ fn reconcile_footnote_ids(
         .copied()
         .max()
         .unwrap_or(0);
+    // A note the edited version references beside an original one under the
+    // same id, or whose id a paired note takes, moves to a new id. A note
+    // neither version references keeps its id: it is the same unused note.
+    let targets = ids.values().copied().collect::<HashSet<_>>();
+    let referenced = right.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
     for &id in right_normal.keys() {
-        if !ids.contains_key(&id) && left_normal.contains_key(&id) {
+        if !ids.contains_key(&id)
+            && (targets.contains(&id)
+                || (referenced.contains(&id) && left_normal.contains_key(&id)))
+        {
             next = next
                 .checked_add(1)
                 .ok_or_else(|| Error::Other("comparison footnote ids are exhausted".into()))?;

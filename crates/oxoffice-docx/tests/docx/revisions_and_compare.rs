@@ -1836,3 +1836,24 @@ fn a_moved_note_under_a_new_id_is_compared() {
         ["One.[A]", "Two.", "Three.[B]"]
     );
 }
+
+#[test]
+fn a_note_neither_version_references_keeps_its_id() {
+    let document = |source: &str| {
+        let mut doc = Document::new();
+        doc.add_footnote("Orphan");
+        let id = doc.add_footnote(source);
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let mut doc = redline(document("Src"), &document("Src, p. 4"));
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[Src, p. 4]"]);
+    let notes = copy
+        .footnotes()
+        .into_iter()
+        .map(|(_, text)| text.trim().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(notes, ["Orphan", "Src, p. 4"]);
+    assert_eq!(noted_texts(&rejected(&mut doc)), ["Claim.[Src]"]);
+}

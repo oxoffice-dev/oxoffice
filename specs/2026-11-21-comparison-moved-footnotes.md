@@ -50,7 +50,11 @@ Deliberately not done:
 
 - Step 1 changes nothing when a note is referenced twice or outside the
   main story, when a reference sits in a tracked change, or while note
-  custody of an earlier comparison is pending.
+  custody of an earlier comparison is pending. A note neither version
+  references keeps its id.
+- The notes both versions hold must still come in the same order in their
+  footnotes parts ("footnote retained owner order changed" otherwise), as
+  before.
 - A pair whose moved note is referenced outside the main story, or whose
   edited version holds pending note custody, keeps the refusal. Completed
   custody is retired first, as the first pass retires it.
@@ -64,9 +68,11 @@ Deliberately not done:
 One pull request: the check returns the notes instead of refusing,
 `compare_with_options` runs again with them renumbered, the ids reconciled
 before each pass, behaviour tests in `tests/docx/revisions_and_compare.rs`
-(moved to another paragraph, within its paragraph, swapped references,
-moved and edited, a note added before the others, a paragraph moved with its
-note), and the limitation entry removed. The second pass costs one more comparison, only for these pairs.
+(moved to another paragraph, within its paragraph, swapped references, moved
+and edited, a note added before the others, a paragraph moved with its note),
+and the limitation entry removed. Each further pass costs one more comparison,
+only for these pairs; the passes run in a loop that drops each pass's state,
+at most one per note.
 
 ## Links
 
