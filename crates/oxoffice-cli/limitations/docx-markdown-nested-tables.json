@@ -1,0 +1,9 @@
+{
+  "id": "docx-markdown-nested-tables",
+  "format": "docx",
+  "area": "export",
+  "title": "Markdown writes \"(nested table)\" in place of a nested table",
+  "symptom": "to_markdown (Rust, Python) and oxoffice docx convert -t md write the placeholder \"(nested table)\" in a cell that holds a table, so that table's text is lost, with no diagnostic",
+  "workaround": "export to HTML, which keeps nested tables (Rust to_html or to_html_fragment, Python doc.to_html(), CLI convert -t html)",
+  "issue": 263
+}
