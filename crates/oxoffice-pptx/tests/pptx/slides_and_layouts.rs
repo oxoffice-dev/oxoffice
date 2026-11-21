@@ -1014,6 +1014,31 @@ fn a_notes_tree_group_that_differs_beyond_its_id_and_name_still_stops_the_import
 }
 
 #[test]
+fn an_imported_google_notes_page_keeps_its_source_look_and_validates() {
+    let (prs, result) = import_with_source_formatting(&corpus_deck("google/deck.pptx"));
+    result.unwrap();
+    let prs = reopen(&prs);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let (_, notes) = package
+        .parts
+        .iter()
+        .find(|(name, _)| name.starts_with("/ppt/notesSlides/"))
+        .expect("the import has notes");
+    let xml = String::from_utf8_lossy(notes);
+    // Google's notes theme names Arial everywhere: set on the page, no token
+    // left to resolve against this deck's theme, and the colours set too.
+    assert!(xml.contains(r#"typeface="Arial""#), "{xml}");
+    assert!(!xml.contains(r#"typeface="+m"#), "{xml}");
+    assert!(!xml.contains("<a:schemeClr"), "{xml}");
+    assert_eq!(
+        prs.slide(0).unwrap().notes_text().as_deref(),
+        Some(HIGHLIGHTS_NOTES)
+    );
+}
+
+#[test]
 fn the_slide_size_takes_four_by_three_widescreen_or_custom_and_refuses_nonsense() {
     let mut prs = new_deck();
     for (width, height) in [

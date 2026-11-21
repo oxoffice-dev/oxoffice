@@ -1456,6 +1456,8 @@ impl PySlideCollection {
     }
 
     /// Imports one slide and returns every dropped-jump diagnostic.
+    /// With keep_source_formatting, notes text in East Asian or complex scripts
+    /// takes this deck's script fonts where the source theme leaves them automatic.
     #[pyo3(signature = (slide, layout=None, index=None, *, keep_source_formatting=false))]
     fn import_slide_with_diagnostics(
         &self,
