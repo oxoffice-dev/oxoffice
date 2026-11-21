@@ -2125,6 +2125,14 @@ fn cell_conditional_selectors<'a>(row: &'a CT_Row, cell: &'a CT_Tc) -> Vec<&'a s
     selectors
 }
 
+/// The shading a table's own `w:tblPr` gives its whole extent.
+fn direct_table_shading(table: &CT_Tbl) -> Option<oxoffice_docx_oxml::properties::CT_Shd> {
+    table
+        .properties
+        .as_ref()
+        .and_then(|properties| properties.shading.clone())
+}
+
 fn resolve_table_style_cell(
     table: &CT_Tbl,
     styles: &CT_Styles,
@@ -2144,7 +2152,10 @@ fn resolve_table_style_cell(
                 .map(|style| style.style_id.as_str())
         })
     else {
-        return ResolvedTableCellStyle::default();
+        return ResolvedTableCellStyle {
+            shading: direct_table_shading(table),
+            ..ResolvedTableCellStyle::default()
+        };
     };
     // Most derived first, so `rev()` below applies from the base outwards.
     let mut chain = Vec::new();
@@ -2186,6 +2197,12 @@ fn resolve_table_style_cell(
         {
             resolved.shading = Some(shading.clone());
         }
+    }
+
+    // The table's own shading replaces its style's whole-table shading,
+    // under the style's regions and the cell's own.
+    if let Some(shading) = direct_table_shading(table) {
+        resolved.shading = Some(shading);
     }
 
     // `table` already carries the style chain's table properties, resolved by

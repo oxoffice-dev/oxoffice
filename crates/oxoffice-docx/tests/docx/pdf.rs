@@ -1260,11 +1260,49 @@ fn a_solid_or_percentage_shading_paints_its_pattern_colour() {
         r#"<w:p><w:pPr><w:shd w:val="solid" w:color="C00000" w:fill="FFFFFF"/></w:pPr><w:r><w:t>Paragraph</w:t></w:r></w:p>"#,
         r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="000000" w:fill="FFFFFF"/></w:rPr><w:t>Quarter</w:t></w:r></w:p>"#,
         r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="solid" w:color="00B050" w:fill="auto"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct12" w:color="000000" w:fill="FFFFFF"/></w:rPr><w:t>Eighth</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:shd w:val="clear" w:fill="FF00FF"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Table</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p/>"#,
+        r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/><w:shd w:val="clear" w:fill="00FFFF"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Styled</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
         r#"<w:p/>"#,
     ));
     assert!(pixels_in_text_box(&doc, "Paragraph", [0xC0, 0x00, 0x00]) > 20);
     assert!(pixels_in_text_box(&doc, "Quarter", [191, 191, 191]) > 20);
     assert!(pixels_in_text_box(&doc, "Cell", [0x00, 0xB0, 0x50]) > 20);
+    // pct12 stands for 12.5 %: 255 * 0.875 is 223.
+    assert!(pixels_in_text_box(&doc, "Eighth", [223, 223, 223]) > 20);
+    // The table's own shading fills a cell that has none.
+    assert!(pixels_in_text_box(&doc, "Table", [0xFF, 0x00, 0xFF]) > 20);
+    // So does it under a table style, over the style's own.
+    assert!(pixels_in_text_box(&doc, "Styled", [0x00, 0xFF, 0xFF]) > 20);
+}
+
+#[test]
+fn a_list_number_takes_the_shading_of_its_level() {
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("Item", 0);
+    let mut package = oxoffice_opc::OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap()))
+        .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    // At 24 pt the number shows ink pixels of its own colour.
+    let shading = r#"<w:sz w:val="48"/><w:shd w:val="clear" w:color="auto" w:fill="0000FF"/>"#;
+    let level = xml.find(r#"<w:lvl w:ilvl="0""#).expect("level 0");
+    let end = level + xml[level..].find("</w:lvl>").expect("level end");
+    let xml = match xml[level..end].find("<w:rPr>") {
+        Some(at) => {
+            let at = level + at + "<w:rPr>".len();
+            format!("{}{shading}{}", &xml[..at], &xml[at..])
+        }
+        None => format!("{}<w:rPr>{shading}</w:rPr>{}", &xml[..end], &xml[end..]),
+    };
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    assert!(pixels_in_text_box(&doc, "1.", [0, 0, 0xFF]) > 10);
+    // Its automatic ink contrasts with the dark fill.
+    assert!(pixels_in_text_box(&doc, "1.", [0xFF, 0xFF, 0xFF]) > 0);
+    assert_eq!(pixels_in_text_box(&doc, "1.", [0, 0, 0]), 0);
 }
 
 #[test]

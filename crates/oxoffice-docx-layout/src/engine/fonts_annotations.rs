@@ -1193,10 +1193,6 @@ pub(super) fn resolve_run_color(
         .unwrap_or(automatic)
 }
 
-/// The automatic text colour on `fill`: white on a dark fill, black on a
-/// light one or on none. Word draws automatic text in whichever contrasts
-/// with the shading behind it. The coefficients and the luminance floor of
-/// 156 in 255 are the donor's chosen policy, not a pinned LibreOffice source.
 /// The colour a `w:shd` paints: its fill under a clear pattern, its
 /// foreground under a solid one, the two mixed under a percentage pattern,
 /// and nothing for `nil` or an automatic fill. Under a pattern Word paints an
@@ -1212,6 +1208,11 @@ pub(crate) fn shading_color(shading: &CT_Shd) -> Option<Color> {
     let percent = match shading.val.as_str() {
         "nil" => return None,
         "solid" => 100.0,
+        // Four patterns stand for a half percent.
+        "pct12" => 12.5,
+        "pct37" => 37.5,
+        "pct62" => 62.5,
+        "pct87" => 87.5,
         pattern => pattern
             .strip_prefix("pct")
             .and_then(|percent| percent.parse::<f64>().ok())
@@ -1239,6 +1240,10 @@ pub(super) fn run_fill(rpr: &CT_RPr) -> Option<Color> {
         .or_else(|| rpr.shading.as_deref().and_then(shading_color))
 }
 
+/// The automatic text colour on `fill`: white on a dark fill, black on a
+/// light one or on none. Word draws automatic text in whichever contrasts
+/// with the shading behind it. The coefficients and the luminance floor of
+/// 156 in 255 are the donor's chosen policy, not a pinned LibreOffice source.
 pub(super) fn automatic_text_color(fill: Option<Color>) -> Color {
     let Some(fill) = fill else {
         return Color::BLACK;

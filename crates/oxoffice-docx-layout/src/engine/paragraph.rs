@@ -564,12 +564,17 @@ fn layout_paragraph_with_source_and_table(
                 ) {
                     push_unique_diagnostic(diagnostics, message);
                 }
+                // The number takes the fill of its level's run properties,
+                // as a run does, and automatic ink contrasts with it.
+                let marker_fill = run_fill(&marker_rpr);
                 let color = marker_rpr
                     .color
                     .as_ref()
                     .filter(|c| c.as_str() != "auto")
                     .map(|c| Color::from_hex(c))
-                    .unwrap_or(automatic_color);
+                    .unwrap_or_else(|| {
+                        marker_fill.map_or(automatic_color, |fill| automatic_text_color(Some(fill)))
+                    });
 
                 // The level's run properties affect numbering ink, not the
                 // counter or paragraph heading. The suffix keeps its normal
@@ -609,7 +614,7 @@ fn layout_paragraph_with_source_and_table(
                         underline: None,
                         strike: false,
                         dstrike: false,
-                        highlight: None,
+                        highlight: marker_fill,
                         baseline_offset: 0.0,
                         hyperlink_url: None,
                         field_kind: None,
@@ -658,7 +663,7 @@ fn layout_paragraph_with_source_and_table(
                             underline: None,
                             strike: false,
                             dstrike: false,
-                            highlight: None,
+                            highlight: marker_fill,
                             baseline_offset: 0.0,
                             hyperlink_url: None,
                             field_kind: None,
