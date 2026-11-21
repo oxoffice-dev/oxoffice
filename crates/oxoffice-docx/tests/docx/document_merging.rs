@@ -1184,13 +1184,7 @@ fn linked_pair(color: &str) -> String {
     )
 }
 
-// Fails today: the character style is renamed for its other color but keeps
-// its link to the reused paragraph style, whose link still names the
-// destination's character style, so the style graph check refuses the
-// import (and insert_document panics). LibreOffice's contract into its
-// report fails the same way on Heading1Char. Issue: #195
 #[test]
-#[should_panic(expected = "a source whose linked character style differs imports")]
 fn a_renamed_linked_style_keeps_a_reciprocal_link() {
     let paragraph = |text: &str| {
         format!(
@@ -1366,13 +1360,7 @@ fn appending_a_report_saved_by_another_producer_keeps_both_texts() {
     }
 }
 
-// Fails today: append merges styles by id only. With a French Word file,
-// "Default Paragraph Font" (Policepardfaut) and "Normal Table" (TableauNormal)
-// become a second default of their type next to the English ids; into a
-// Google file, Heading1Char comes in linked to a Heading1 that does not link
-// back. The style graph check then panics. Issue: #195
 #[test]
-#[should_panic(expected = "append fails for these destination <- source pairs")]
 fn appending_any_other_pair_of_reports_keeps_both_texts() {
     let producers = ["word", "google", "libreoffice", "authored"];
     let pairs: Vec<_> = producers
@@ -1399,4 +1387,26 @@ fn appending_any_other_pair_of_reports_keeps_both_texts() {
         failed.is_empty(),
         "append fails for these destination <- source pairs: {failed:?}"
     );
+}
+
+#[test]
+fn a_localized_default_style_takes_the_destination_s_default() {
+    // Word's French file names the default character and table styles
+    // Policepardfaut and TableauNormal; a type keeps one default.
+    let source = corpus_doc("word/report.docx");
+    assert!(source.style("Policepardfaut").is_some());
+    let mut doc = corpus_doc("libreoffice/report.docx");
+    let graph_before = doc
+        .validate_style_graph()
+        .map_err(|error| error.to_string());
+    doc.append(&source);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.validate_style_graph()
+            .map_err(|error| error.to_string()),
+        graph_before,
+        "the append adds no style graph defect"
+    );
+    assert!(doc.style("Policepardfaut").is_none());
+    assert!(doc.style("TableauNormal").is_none());
 }
