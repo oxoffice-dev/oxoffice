@@ -25762,6 +25762,10 @@ fn table_extent(table: &CT_Table, operation: &'static str) -> Result<(Emu, Emu)>
 
 /// Moves one frame edge by the change of its grid sum and requires the edge
 /// to stay positive.
+/// Moves a table frame edge by the grid's change. A frame larger than its
+/// grid (rows grown by their text) keeps its margin; one smaller than its
+/// grid (Google writes 3,000,000 EMU whatever the grid) is first brought up
+/// to the grid, which is what every reader draws.
 fn moved_frame_edge(
     frame: Emu,
     old_total: Emu,
@@ -25771,7 +25775,7 @@ fn moved_frame_edge(
     new_total
         .0
         .checked_sub(old_total.0)
-        .and_then(|change| frame.0.checked_add(change))
+        .and_then(|change| frame.0.max(old_total.0).checked_add(change))
         .filter(|size| *size > 0)
         .map(Emu)
         .ok_or_else(|| {

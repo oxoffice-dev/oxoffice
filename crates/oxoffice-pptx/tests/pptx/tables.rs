@@ -1399,11 +1399,7 @@ fn a_duplicated_slide_gets_its_own_copy_of_the_table() {
     assert_eq!(table(&prs, 1, 0).row_count(), 3);
 }
 
-// Known failures.
-
-// Fails today: removing a column moves the frame edge by its width, and Google's 3,000,000 EMU frame around a 7,315,200 EMU grid would go negative. Issue: #44
 #[test]
-#[should_panic(expected = "table frame size must remain positive")]
 fn columns_of_the_google_table_can_be_removed_down_to_one() {
     let mut prs = corpus_deck("google/deck.pptx");
     let (slide, shape) = KEY_FIGURES;
@@ -1414,8 +1410,47 @@ fn columns_of_the_google_table_can_be_removed_down_to_one() {
     }
 
     let prs = reopen(&prs);
+    let table = table(&prs, slide, shape);
     assert_eq!(
-        cell_texts(&table(&prs, slide, shape)),
+        cell_texts(&table),
         [["Q3"], ["5,362"], ["4,240"], ["1,122"]]
     );
+    // Google's 3,000,000 EMU frame was narrower than its grid: its width now
+    // follows the grid; it was taller than its rows, so its height stays.
+    let (grid_width, grid_height) = grid_size(&table);
+    assert_eq!(frame_size(&prs, slide, shape), (grid_width, Emu(3_000_000)));
+    assert!(grid_height < Emu(3_000_000));
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn removing_a_column_from_every_editors_table_takes_its_width_off_the_frame() {
+    let (slide, shape) = KEY_FIGURES;
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let (frame_width, frame_height) = frame_size(&prs, slide, shape);
+        let (grid_width, _) = grid_size(&table(&prs, slide, shape));
+        let removed = table(&prs, slide, shape).column_width(1).unwrap();
+
+        table_mut(&mut prs, slide, shape).remove_column(1).unwrap();
+
+        let prs = reopen(&prs);
+        let expected = Emu(frame_width.0.max(grid_width.0) - removed.0);
+        assert_eq!(
+            frame_size(&prs, slide, shape),
+            (expected, frame_height),
+            "{name}"
+        );
+        assert_eq!(
+            grid_size(&table(&prs, slide, shape)).0,
+            Emu(grid_width.0 - removed.0),
+            "{name}"
+        );
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
 }

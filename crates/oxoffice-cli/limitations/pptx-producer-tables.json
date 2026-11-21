@@ -1,9 +1,0 @@
-{
-  "id": "pptx-producer-tables",
-  "format": "pptx",
-  "area": "tables",
-  "title": "Google tables cannot lose columns down to one",
-  "symptom": "remove_column fails with \"table frame size must remain positive\"",
-  "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame",
-  "issue": 44
-}
