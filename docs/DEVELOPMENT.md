@@ -139,6 +139,38 @@ outside the band it is expected in (under 2.5 times, or 1.5 to 24 times for a
 docx call of `GROWING`) is measured again, so that a load spike on a runner
 neither fails a flat call nor reads as a fix.
 
+## Render tests
+
+The `render` module of the docx test binary renders every Word file of the
+corpus as `convert` and `render` do, with the bundled fonts, and checks two
+things (see [the spec](../specs/2026-11-21-render-fidelity.md)):
+
+- **Invariants**, read from the PDF and the page images: page sizes in the
+  order of the sections, no page with only its header and footer, every
+  word drawn and inside its page, no empty-box glyph, no text over text,
+  every picture and table border drawn, no diagnostic but those known to
+  change nothing drawn. What fails today is listed in
+  `tests/render/known.toml` with its issue, and an entry fails the test once
+  its file passes, or, for a whole-document entry, once its finding
+  changes.
+- **The baseline**: one file per corpus file under `tests/render/baseline/`
+  with a hash per page of the pixels and of the PDF. The render is the same
+  bytes on Linux, macOS and Windows, so any change fails the test. A pull
+  request that changes the render on purpose rewrites the baselines, in a
+  commit of its own that says what changed:
+
+```bash
+OXOFFICE_RENDER=subset cargo test --profile ci -p oxoffice-docx --test docx render   # check
+OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render
+```
+
+`OXOFFICE_RENDER` is `subset` (the corpus without its `long-*` files),
+`full` or `off`. Unset, the tests over the corpus skip, except under CI,
+where they fail: CI says which set it runs. The tests of the checks
+themselves, on a few built documents and corpus files, always run. The
+update always renders the whole corpus and only rewrites the files that
+moved.
+
 ## Known limitations
 
 A limitation users can hit, with a workaround, gets its own file,

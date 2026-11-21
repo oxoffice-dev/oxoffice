@@ -163,8 +163,15 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 1
+      # The render tests (specs/2026-11-21-render-fidelity.md) render the
+      # corpus without its long files on Linux; on macOS and Windows a pull
+      # request skips the corpus (the render is the same bytes on every
+      # platform). The nightly run and a dispatch render the whole corpus on
+      # the three. Under CI an unset OXOFFICE_RENDER fails the render tests.
       - name: Rust integration tests
         shell: bash
+        env:
+          OXOFFICE_RENDER: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'full' || matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
         run: |
           if ls crates/*/tests/*.rs > /dev/null 2>&1; then
             cargo test --profile ci --locked --workspace $PY_CRATES --test '*'

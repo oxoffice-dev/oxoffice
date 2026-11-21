@@ -1,0 +1,181 @@
+# Render checks that fail today, read by the render tests of the docx and
+# pptx test binaries (specs/2026-11-21-render-fidelity.md). Written by hand.
+#
+# Each entry is a file, the check it fails, the pages it fails on (0 for the
+# whole document, with how its finding starts, such as "43 words") and its
+# issue, or `by_design = "<why>"` when the page is right as it is. Like
+# every known failure of the suite, an entry is strict: once the file passes
+# the check on those pages, or its finding changes, the test fails until the
+# entry is updated or goes.
+
+[[known]]
+file = "authored/report.docx"
+check = "empty-page"
+pages = [3]
+issue = 156
+
+[[known]]
+file = "google/report.docx"
+check = "empty-page"
+pages = [3]
+issue = 156
+
+[[known]]
+file = "libreoffice/report.docx"
+check = "empty-page"
+pages = [3]
+issue = 156
+
+[[known]]
+file = "word/report.docx"
+check = "empty-page"
+pages = [3]
+issue = 156
+
+[[known]]
+file = "libreoffice/thesis.docx"
+check = "text"
+pages = [0]
+finding = "43 words"
+issue = 225
+
+[[known]]
+file = "word/long-report.docx"
+check = "text"
+pages = [0]
+finding = "1 words"
+issue = 227
+
+[[known]]
+file = "authored/thesis.docx"
+check = "overlap"
+pages = [25]
+issue = 156
+
+[[known]]
+file = "libreoffice/thesis.docx"
+check = "overlap"
+pages = [24]
+issue = 156
+
+[[known]]
+file = "authored/newsletter.docx"
+check = "overlap"
+pages = [2, 3]
+issue = 226
+
+[[known]]
+file = "libreoffice/newsletter.docx"
+check = "overlap"
+pages = [2, 3]
+issue = 226
+
+[[known]]
+file = "word/newsletter.docx"
+check = "overlap"
+pages = [2, 3]
+issue = 226
+
+[[known]]
+file = "authored/minutes.docx"
+check = "missing-glyph"
+pages = [1, 2, 3]
+issue = 157
+
+[[known]]
+file = "google/minutes.docx"
+check = "missing-glyph"
+pages = [1, 2, 3]
+issue = 157
+
+[[known]]
+file = "libreoffice/minutes.docx"
+check = "missing-glyph"
+pages = [1, 2, 3]
+issue = 157
+
+[[known]]
+file = "word/minutes.docx"
+check = "missing-glyph"
+pages = [1, 2, 3]
+issue = 157
+
+[[known]]
+file = "authored/paper.docx"
+check = "missing-glyph"
+pages = [2]
+issue = 224
+
+[[known]]
+file = "google/paper.docx"
+check = "missing-glyph"
+pages = [2]
+issue = 224
+
+[[known]]
+file = "libreoffice/paper.docx"
+check = "missing-glyph"
+pages = [2]
+issue = 224
+
+[[known]]
+file = "word/paper.docx"
+check = "missing-glyph"
+pages = [2]
+issue = 224
+
+[[known]]
+file = "authored/paper.docx"
+check = "dropped"
+pages = [0]
+finding = "7 diagnostics"
+issue = 224
+
+[[known]]
+file = "google/paper.docx"
+check = "dropped"
+pages = [0]
+finding = "6 diagnostics"
+issue = 224
+
+[[known]]
+file = "libreoffice/paper.docx"
+check = "dropped"
+pages = [0]
+finding = "7 diagnostics"
+issue = 224
+
+[[known]]
+file = "word/paper.docx"
+check = "dropped"
+pages = [0]
+finding = "7 diagnostics"
+issue = 224
+
+[[known]]
+file = "authored/thesis.docx"
+check = "dropped"
+pages = [0]
+finding = "4 diagnostics"
+issue = 224
+
+[[known]]
+file = "google/thesis.docx"
+check = "dropped"
+pages = [0]
+finding = "4 diagnostics"
+issue = 224
+
+[[known]]
+file = "libreoffice/thesis.docx"
+check = "dropped"
+pages = [0]
+finding = "4 diagnostics"
+issue = 224
+
+[[known]]
+file = "word/thesis.docx"
+check = "dropped"
+pages = [0]
+finding = "4 diagnostics"
+issue = 224
