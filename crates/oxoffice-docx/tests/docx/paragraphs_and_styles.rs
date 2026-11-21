@@ -1676,3 +1676,208 @@ fn paragraph_twips_measures_written_with_a_unit_open() {
         Length::twips(2880)
     );
 }
+
+/// The id of the style a file names `name` (Word's names are the same
+/// in every language; Google Docs writes `normal` in lower case).
+fn style_named(doc: &Document, name: &str) -> Option<String> {
+    doc.styles()
+        .iter()
+        .find(|style| {
+            style
+                .name()
+                .is_some_and(|own| own.eq_ignore_ascii_case(name))
+        })
+        .map(|style| style.style_id().to_owned())
+}
+
+/// A house style on a co-edited record, its styles found by their names
+/// whatever ids the file gives them: a body font and size on the normal
+/// style, a font and colour for the two heading levels, a shaded heading row
+/// on every table, and the unused third heading level removed (with its
+/// linked character style where the file has one).
+fn apply_house_style(bytes: &[u8]) -> Vec<u8> {
+    let mut doc = Document::from_bytes(bytes).unwrap();
+    let id_of = |doc: &Document, name: &str| {
+        style_named(doc, name).unwrap_or_else(|| panic!("a style named {name}"))
+    };
+    let normal = id_of(&doc, "Normal");
+    doc.set_style(
+        StyleBuilder::paragraph(&normal, "Normal")
+            .font("Arial")
+            .size(10.0),
+    )
+    .unwrap();
+    for name in ["heading 1", "heading 2"] {
+        let id = id_of(&doc, name);
+        doc.set_style(
+            StyleBuilder::paragraph(&id, name)
+                .font("Arial")
+                .color("1F3864"),
+        )
+        .unwrap();
+    }
+    if let Some(id) = style_named(&doc, "heading 3") {
+        assert!(doc.remove_style(&id).unwrap(), "{id} is unused");
+    }
+    for index in 0..doc.tables().len() {
+        let mut table = doc.table_mut(index).unwrap();
+        let mut row = table.row(0).unwrap();
+        row.set_header();
+        for cell in 0..row.cell_count() {
+            row.cell(cell).unwrap().set_shading("DEEAF6");
+        }
+    }
+    doc.to_bytes().unwrap()
+}
+
+/// A house style applied to a record co-edited in Word and Google Docs, then
+/// applied again to the saved file: the second run changes no byte. The
+/// first changes the styles and the tables only: the text, the comments,
+/// the tracked changes, the header and the footer stay as they were, and the
+/// headings read the new font and colour through their style.
+#[test]
+fn a_house_style_applied_twice_to_a_co_edited_record_changes_nothing_the_second_time() {
+    crate::support::run_workflow("restyle", &crate::support::record_copies(), |path| {
+        let source = crate::support::workflow_source(path);
+        let once = apply_house_style(&source);
+        let twice = apply_house_style(&once);
+        assert!(once == twice, "{path}: the second run changes no byte");
+
+        let (old_parts, new_parts) = (
+            crate::support::package_parts(&source),
+            crate::support::package_parts(&once),
+        );
+        assert_eq!(
+            old_parts.keys().collect::<Vec<_>>(),
+            new_parts.keys().collect::<Vec<_>>(),
+            "{path}"
+        );
+        let changed = new_parts
+            .iter()
+            .filter(|(name, bytes)| old_parts[*name] != **bytes)
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            changed,
+            ["word/document.xml", "word/styles.xml"],
+            "{path}: only the styles and the tables change"
+        );
+
+        let (before, after) = (
+            Document::from_bytes(&source).unwrap(),
+            Document::from_bytes(&once).unwrap(),
+        );
+        // The unused third heading level, and its linked character style
+        // where the file has one.
+        let removed = style_named(&before, "heading 3")
+            .map(|id| {
+                let linked = before.style(&id).unwrap().linked_style().map(str::to_owned);
+                std::iter::once(id).chain(linked).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(
+            !removed.is_empty(),
+            "{path}: a third heading level to remove"
+        );
+        for id in &removed {
+            assert!(after.style(id).is_none(), "{path}: {id} goes");
+            assert!(
+                after
+                    .styles()
+                    .iter()
+                    .all(|style| style.linked_style() != Some(id.as_str())
+                        && style.based_on() != Some(id.as_str())),
+                "{path}: nothing names {id}"
+            );
+        }
+        let text = |doc: &Document| {
+            (0..doc.paragraph_count())
+                .map(|index| {
+                    let paragraph = doc.paragraph(index).unwrap();
+                    (paragraph.style_id().map(str::to_owned), paragraph.text())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(text(&after), text(&before), "{path}");
+        let comments = |doc: &Document| {
+            doc.comments()
+                .iter()
+                .map(|comment| {
+                    format!(
+                        "{} {:?} {:?} {:?} {:?} {:?} {:?}",
+                        comment.id(),
+                        comment.author(),
+                        comment.date(),
+                        comment.text(),
+                        comment.parent_id(),
+                        comment.resolved(),
+                        comment.anchor_text().ok().flatten()
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(comments(&after), comments(&before), "{path}");
+        let revisions = |doc: &Document| {
+            doc.story_revisions()
+                .unwrap()
+                .iter()
+                .map(|revision| {
+                    format!(
+                        "{:?} {} {:?}",
+                        revision.kind(),
+                        revision.author(),
+                        revision.text()
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(revisions(&after), revisions(&before), "{path}");
+
+        // The headings take the new font and colour from their style, and
+        // every table's first row is a shaded heading row.
+        for index in 0..after.paragraph_count() {
+            let paragraph = after.paragraph(index).unwrap();
+            let Some(style) = paragraph.style_id() else {
+                continue;
+            };
+            let name = after
+                .style(style)
+                .and_then(|style| style.name().map(str::to_owned));
+            if matches!(name.as_deref(), Some("heading 1" | "heading 2")) {
+                let properties = after.resolve_run_properties(Some(style), None);
+                assert_eq!(
+                    (
+                        properties.font_ascii.as_deref(),
+                        properties.color.as_deref()
+                    ),
+                    (Some("Arial"), Some("1F3864")),
+                    "{path}: {}",
+                    paragraph.text()
+                );
+            }
+        }
+        assert!(style_named(&after, "heading 3").is_none(), "{path}");
+        // A body paragraph reads the new font and size through the normal
+        // style.
+        let normal = style_named(&after, "Normal").unwrap();
+        let body = after.resolve_run_properties(Some(&normal), None);
+        assert_eq!(
+            (body.font_ascii.as_deref(), body.sz.map(|size| size.0)),
+            (Some("Arial"), Some(20)),
+            "{path}"
+        );
+        for table in after.tables() {
+            let row = table.row(0).unwrap();
+            assert!(
+                row.is_header(),
+                "{path}: the first row repeats as a heading row"
+            );
+            assert!(
+                (0..row.cell_count())
+                    .all(|cell| row.cell(cell).unwrap().shading_fill() == Some("DEEAF6")),
+                "{path}: {:?}",
+                table.cell(0, 0).map(|cell| cell.text())
+            );
+        }
+    });
+}

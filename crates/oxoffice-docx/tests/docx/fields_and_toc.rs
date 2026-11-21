@@ -2462,6 +2462,80 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
     });
 }
 
+/// The same pass on a record co-edited in Word and Google Docs, whose
+/// contents sit in a content control and take outline levels (`\u`) next to
+/// a table with a vertically merged cell: the contents list the headings of
+/// levels 1 and 2 (its own title included) with their numbers and pages, a
+/// paragraph of outline level 3 stays out, and a second pass changes no byte.
+#[test]
+fn a_page_number_pass_on_a_co_edited_record_is_stable() {
+    // The record's headings of levels 1 and 2 as the contents list them,
+    // with their numbers; the contents title is a heading without a number.
+    const ENTRIES: [&str; 10] = [
+        "Contents",
+        "1.\tIdentification",
+        "2.\tScope",
+        "2.1.\tIn scope",
+        "2.2.\tOut of scope",
+        "3.\tImpact assessment",
+        "3.1.\tRisks",
+        "4.\tTasks",
+        "5.\tDecision",
+        "6.\tHistory",
+    ];
+    crate::support::run_workflow("page-numbers", &crate::support::record_copies(), |path| {
+        let source = crate::support::workflow_source(path);
+        let pass = |bytes: &[u8]| {
+            let mut doc = Document::from_bytes(bytes).unwrap();
+            let toc = doc
+                .rebuild_toc()
+                .unwrap_or_else(|e| panic!("{path}: rebuild: {e}"));
+            doc.update_layout_backed_fields().unwrap();
+            (toc, doc.to_bytes().unwrap())
+        };
+        let (toc, once) = pass(&source);
+
+        // The contents of the first pass, read back from the saved package.
+        let doc = Document::from_bytes(&once).unwrap();
+        // Google Docs moves the contents title out of the control and starts
+        // the field in an empty paragraph: the entries start at the title's.
+        let first = (0..doc.paragraph_count())
+            .find(|&index| {
+                doc.paragraph(index)
+                    .unwrap()
+                    .text()
+                    .starts_with("Contents\t")
+            })
+            .unwrap_or_else(|| panic!("{path}: the contents title's entry"));
+        assert_eq!(toc.entry_count, ENTRIES.len(), "{path}");
+        let entries = (first..first + toc.entry_count)
+            .map(|index| doc.paragraph(index).unwrap().text())
+            .collect::<Vec<_>>();
+        // An entry ends with its page, on a tab.
+        let (titles, pages): (Vec<_>, Vec<_>) = entries
+            .iter()
+            .map(|entry| {
+                let (title, page) = entry
+                    .rsplit_once('\t')
+                    .unwrap_or_else(|| panic!("{path}: {entry:?} has a page"));
+                (
+                    title,
+                    page.parse::<u32>()
+                        .unwrap_or_else(|_| panic!("{path}: {entry:?}")),
+                )
+            })
+            .unzip();
+        assert_eq!(titles, ENTRIES, "{path}: {entries:?}");
+        assert!(
+            pages.windows(2).all(|pair| pair[0] <= pair[1]) && pages.last() > pages.first(),
+            "{path}: {entries:?}"
+        );
+
+        let (_, twice) = pass(&once);
+        assert!(once == twice, "{path}: a second pass changes no byte");
+    });
+}
+
 /// A Word TOC field over levels 1 to 3 that also takes outline levels (`\u`),
 /// with one stale entry, followed by `body`.
 fn word_toc_before(body: &str) -> Document {

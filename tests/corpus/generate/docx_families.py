@@ -1639,3 +1639,227 @@ def long_report(path: Path) -> None:
             doc.add_paragraph(f"Figure {n // 12 + 1}. Orders by quarter, indexed.").runs[0].italic = True
     _properties(doc, "Annual Operations Report 2026", "Operations team", "Annual report, long document")
     doc.save(path)
+
+
+# Record
+
+
+_PALE = {"Done": "C6EFCE", "Late": "FFC7CE", "Open": "E7E6E6"}
+
+
+@family("record", "docx")
+def record(path: Path) -> None:
+    """A change record co-edited in Word and Google Docs: numbered headings bound to a list, a TOC
+    that takes outline levels next to a vertically merged table, key-value, history and matrix
+    tables with a grey key column, merged headers and pale run shading, content controls, a comment
+    thread of two people with a two-paragraph comment and a resolved one, tracked changes by one
+    author, margins away from Word's defaults, Page X of Y."""
+    doc = _new("Calibri", 10.5, 2.0)
+    section = doc.sections[0]
+    section.page_width, section.page_height = Cm(21.0), Cm(29.7)
+    section.left_margin, section.right_margin = Cm(2.2), Cm(1.8)
+    section.top_margin, section.bottom_margin = Cm(2.4), Cm(2.1)
+    width = 9638  # text width in twips, for the right-aligned tab stops
+    ox.add_styles(doc, "TOC1", "TOC2", "Hyperlink")
+    headings = ox.add_numbering(doc, [("decimal", "%1.", 432, 432), ("decimal", "%1.%2.", 720, 720)], "6E3A9D01",
+                                styles=("Heading1", "Heading2"))
+    for level in range(2):
+        ox.style_numbering(doc, f"Heading{level + 1}", headings, level)
+    owner, reviewer = "Amélie Roux", "Tomás Herrera"
+    editor = owner  # every tracked change is hers
+    bookmarks, revisions, controls, seeds = count(1), count(500), count(1830100), count(700)
+    outline = []
+
+    section.header.paragraphs[0].text = "Change record CR-2026-014 - Warehouse management system upgrade"
+    footer = section.footer.paragraphs[0]
+    footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    _page_x_of_y(footer, "Internal - ")
+
+    def heading(level: int, title: str, inner: str = "") -> None:
+        name = f"_Toc2172{len(outline) + 1:05d}"
+        _paragraph(doc, ox.para(ox.bookmark(next(bookmarks), name, inner or ox.run(title)), style=f"Heading{level}"))
+        outline.append((level, title, name))
+
+    def text(n: int = 4, lead: str = "") -> Paragraph:
+        return doc.add_paragraph((lead + " " if lead else "") + paragraph_text(next(seeds), n))
+
+    def grid(rows: int, cols: int, widths: list[float]):
+        table = doc.add_table(rows=rows, cols=cols)
+        table.style = "Table Grid"
+        for row in table.rows:
+            for cell, w in zip(row.cells, widths):
+                cell.width = Cm(w)
+        return table
+
+    def cell_xml(cell, content: str) -> None:
+        """Replace a cell's paragraph content with raw runs."""
+        p = cell.paragraphs[0]._p
+        for child in list(p):
+            if child.tag != qn("w:pPr"):
+                p.remove(child)
+        ox.append(p, content)
+
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    r = title.add_run("Change record CR-2026-014")
+    r.bold, r.font.size = True, Pt(20)
+    doc.add_paragraph("Warehouse management system upgrade, regional sites").runs[0].italic = True
+    toc_slot = _paragraph(doc, ox.para())
+
+    # 1. Identification: a key-value table with a grey key column and content controls.
+    heading(1, "Identification")
+    text(4, "This record follows the upgrade of the warehouse management system from the request to the closure "
+            "review.")
+    keys = grid(6, 2, [5.0, 12.0])
+    values = [
+        ("Reference", ox.sdt_text(next(controls), "Reference", "CR-2026-014")),
+        ("Owner", ox.sdt_text(next(controls), "Owner", owner)),
+        ("Opened on", ox.sdt_date(next(controls), "Opened on", "2026-10-05", "5 October 2026")),
+        ("Priority", ox.sdt_list(next(controls), "Priority", ["Low", "Medium", "High"], 2)),
+        ("Status", ox.sdt_list(next(controls), "Status", ["Draft", "In review", "Approved", "Closed"], 1)),
+        ("Customer impact", ox.sdt_checkbox(next(controls), "Customer impact", True) + ox.run(" Yes")),
+    ]
+    for row, (key, value) in zip(keys.rows, values):
+        row.cells[0].text = key
+        row.cells[0].paragraphs[0].runs[0].bold = True
+        ox.cell_shading(row.cells[0], "D9D9D9")
+        cell_xml(row.cells[1], value)
+
+    # 2. Scope, with tracked changes by one editor.
+    heading(1, "Scope")
+    heading(2, "In scope")
+    scope = _paragraph(doc, ox.para(
+        ox.run("The upgrade covers the ")
+        + ox.deleted(next(revisions), editor, LATER, "four")
+        + ox.inserted(next(revisions), editor, LATER, ox.run("six"))
+        + ox.run(" regional warehouses, their handheld scanners and the interface with the transport planning "
+                 "tool.")
+    ))
+    _paragraph(doc, ox.para(
+        ox.inserted(next(revisions), editor, LATER,
+                    ox.run("The label printers of the two new sites are replaced as part of the same change.")),
+        ox.inserted_mark(next(revisions), editor, LATER),
+    ))
+    heading(2, "Out of scope")
+    _paragraph(doc, ox.para(
+        ox.run("The finance interface ")
+        + ox.deleted(next(revisions), editor, LATER, "and the yard management module ")
+        + ox.run("stay on the current version until the next release window.")
+    ))
+    text(3)
+
+    # 3. Impact matrix: wide, merged headers, a vertical merge next to the TOC's outline levels.
+    heading(1, "Impact assessment")
+    text(3, "Each site rated the impact of the change on its processes before the go-live decision.")
+    sites = ["Lyon", "Grenoble", "Dijon", "Nantes", "Lille", "Rennes"]
+    matrix = grid(5, 1 + len(sites), [3.2] + [2.4] * len(sites))
+    header, sub = matrix.rows[0], matrix.rows[1]
+    header.cells[0].text, sub.cells[0].text = "Process", ""
+    first_half = header.cells[1].merge(header.cells[3])
+    second_half = header.cells[4].merge(header.cells[6])
+    first_half.text, second_half.text = "Existing sites", "New sites"
+    for cell, site in zip(sub.cells[1:], sites):
+        cell.text = site
+    proc = matrix.cell(0, 0).merge(matrix.cell(1, 0))
+    proc.text = "Process"
+    for row, (process, ratings) in zip(matrix.rows[2:], (
+        ("Receiving", "LMHLMH"), ("Picking", "MMHHLM"), ("Shipping", "LLMMHH"),
+    )):
+        row.cells[0].text = process
+        for cell, rating in zip(row.cells[1:], ratings):
+            cell.text = {"L": "Low", "M": "Medium", "H": "High"}[rating]
+    for cell in header.cells + sub.cells:
+        ox.cell_shading(cell, "D9D9D9")
+    ox.repeat_header(header)
+    _paragraph(doc, ox.para(ox.run("Ratings agreed with the site managers."), '<w:outlineLvl w:val="2"/>'))
+    heading(2, "Risks")
+    risks = text(4, "The main risk is a scanner firmware that the new version does not support.")
+    text(4)
+
+    # 4. Tasks: a status column with pale run shading.
+    heading(1, "Tasks")
+    tasks = grid(5, 3, [9.0, 4.0, 4.0])
+    for cell, label in zip(tasks.rows[0].cells, ("Task", "Owner", "Status")):
+        cell.text = label
+        cell.paragraphs[0].runs[0].bold = True
+        ox.cell_shading(cell, "D9D9D9")
+    for row, (task, who, status) in zip(tasks.rows[1:], (
+        ("Freeze the configuration", owner, "Done"),
+        ("Test the scanner firmware", reviewer, "Late"),
+        ("Train the site leads", owner, "Open"),
+        ("Plan the cut-over weekend", reviewer, "Done"),
+    )):
+        row.cells[0].text, row.cells[1].text = task, who
+        cell_xml(row.cells[2], ox.run(status, f'<w:shd w:val="clear" w:color="auto" w:fill="{_PALE[status]}"/>'))
+    approval = text(3, "Approval of the cut-over plan is recorded in the next section.")
+
+    # 5. Decision, a rich text control and more tracked changes.
+    heading(1, "Decision")
+    for element in ox.parse(ox.sdt(
+        ox.para(ox.run("The change board approves the upgrade, subject to the firmware test passing on the "
+                       "pilot site."))
+        + ox.para(ox.run("Go-live is planned for the first weekend after the test report.")),
+        next(controls), "Decision text",
+    )):
+        doc.element.body.insert(len(doc.element.body) - 1, element)
+    _paragraph(doc, ox.para(
+        ox.run("Decision date: ") + ox.sdt_date(next(controls), "Decision date", "2026-11-18", "18 November 2026")
+        + ox.run(". Approved by ") + ox.sdt_text(next(controls), "Approver", reviewer)
+        + ox.deleted(next(revisions), editor, LATER, " and the site managers")
+        + ox.run(".")
+    ))
+
+    # 6. History: a dated table.
+    heading(1, "History")
+    history = grid(5, 4, [2.0, 3.2, 3.6, 8.2])
+    for cell, label in zip(history.rows[0].cells, ("Version", "Date", "Author", "Change")):
+        cell.text = label
+        cell.paragraphs[0].runs[0].bold = True
+        ox.cell_shading(cell, "D9D9D9")
+    for row, entry in zip(history.rows[1:], (
+        ("0.1", "5 October 2026", owner, "First draft"),
+        ("0.2", "19 October 2026", reviewer, "Impact assessment added"),
+        ("0.3", "4 November 2026", owner, "Two new sites in scope"),
+        ("1.0", "18 November 2026", reviewer, "Approved by the change board"),
+    )):
+        for cell, value in zip(row.cells, entry):
+            cell.text = value
+    _paragraph(doc, ox.para(
+        ox.inserted(next(revisions), editor, LATER, ox.run("Version 1.1 will record the closure review.")),
+        ox.inserted_mark(next(revisions), editor, LATER),
+    ))
+
+    # Contents, now that the headings are known: in a content control, taking outline levels.
+    def entry(level: int, title: str, anchor: str, opening: str = "") -> str:
+        tabs = f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{width}"/></w:tabs>'
+        inner = ox.run(title) + ox.tab() + ox.field(f"PAGEREF {anchor} \\h", "1")
+        return ox.para(opening + ox.anchor_link(anchor, inner=inner), tabs, style=f"TOC{level}")
+
+    toc = ox.para(ox.run("Contents"), '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr>', style="Heading1")
+    for i, (level, title_text, anchor) in enumerate(outline):
+        opening = ox.field_start('TOC \\o "1-2" \\h \\z \\u') if i == 0 else ""
+        toc += entry(level, title_text, anchor, opening)
+    toc += ox.para(ox.field_end())
+    gallery = '<w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj>'
+    toc_slot._p.addprevious(ox.parse(ox.sdt(toc, next(controls), kind=gallery))[0])
+    toc_slot._p.getparent().remove(toc_slot._p)
+
+    # Comments: a thread of two people with a two-paragraph comment and a reply, a resolved one.
+    def comment(runs, text_: str, author: str, date: str, more: str = ""):
+        initials = "".join(part[0] for part in author.split())
+        made = doc.add_comment(runs, text=text_, author=author, initials=initials)
+        if more:
+            made.add_paragraph(more)
+        made._comment_elm.set(qn("w:date"), date)
+        return made.comment_id
+
+    parents = {}
+    question = comment(risks.runs, "Which scanner models are affected?", reviewer, DATE,
+                       "If it is only the older model, we can replace them at the pilot site first.")
+    parents[comment(risks.runs, "Only the older model, 40 units across three sites.", owner, LATER)] = question
+    done = comment(scope.runs[:1], "Confirm the two new sites with the regional director.", reviewer, DATE)
+    comment(approval.runs, "Add the board's reference number once we have it.", owner, LATER)
+    ox.link_comments(doc, parents, done=frozenset({done}))
+
+    _properties(doc, "Change record CR-2026-014", owner, "Warehouse management system upgrade")
+    doc.save(path)
