@@ -1557,7 +1557,8 @@ impl CT_Presentation {
         }
     }
 
-    /// Replaces only the slide dimensions, preserving size kind and raw data.
+    /// Replaces the slide dimensions, preserving raw data. New dimensions
+    /// drop the size kind, which named the old ones; the same ones keep it.
     pub fn set_slide_size(&mut self, cx: Emu, cy: Emu) -> Result<()> {
         validate_dimension("sldSz", "cx", cx)?;
         validate_dimension("sldSz", "cy", cy)?;
