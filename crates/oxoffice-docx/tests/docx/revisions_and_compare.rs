@@ -866,6 +866,29 @@ fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
     assert_eq!(texts(&accepted(&mut doc)), ["first", "", "added"]);
 }
 
+// Google Docs writes `<w:tcPr/>` in every cell and LibreOffice
+// `<w:trPr></w:trPr>` in every row: empty properties are no formatting.
+#[test]
+fn empty_row_and_cell_properties_compare_as_no_formatting() {
+    let table = |row: &str, cell: &str| {
+        doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{row}<w:tc>{cell}<w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        ))
+    };
+    for (original, edited) in [
+        (table("<w:trPr/>", "<w:tcPr/>"), table("", "")),
+        (
+            table("", ""),
+            table("<w:trPr></w:trPr>", "<w:tcPr></w:tcPr>"),
+        ),
+    ] {
+        let mut doc = original;
+        let diagnostics = doc.compare(&edited, AUTHOR, DATE).unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(doc.revisions().is_empty());
+    }
+}
+
 #[test]
 fn a_libreoffice_report_compares_with_an_edited_copy() {
     let original = texts(&corpus_doc("libreoffice/report.docx"));

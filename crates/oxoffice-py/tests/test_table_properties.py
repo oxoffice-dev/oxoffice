@@ -20,7 +20,7 @@ def report(producer):
 
 def edit_properties(table, row, cell):
     """One edit of each kind of table, row and cell property, through the handles given. On the Google file the cells
-    have no properties: the grid widths give them their first ones."""
+    hold an empty w:tcPr: the grid widths give them their first properties."""
     table.alignment = WD_TABLE_ALIGNMENT.RIGHT
     table.indent = Pt(6)
     table.autofit = False

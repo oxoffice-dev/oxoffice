@@ -760,10 +760,7 @@ fn a_formatter_rewrites_one_tag_and_gives_it_a_run_format() {
 
 // ---- Templates saved by other editors ----
 
-// Fails today: a table cell with an empty `<w:tcPr/>`, as Google Docs writes
-// in every cell, makes rendering fail. Issue: #200
 #[test]
-#[should_panic(expected = "the Google Docs report renders")]
 fn a_google_docs_report_with_tables_renders_without_error() {
     let mut cell = doc_with_body(concat!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
