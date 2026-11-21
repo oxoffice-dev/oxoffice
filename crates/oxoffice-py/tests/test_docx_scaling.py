@@ -783,7 +783,7 @@ GROWING = {
     "Document.embed_system_fonts", "Document.embed_true_type_fonts", "Document.import_fragment",
     "Document.insert_content", "Document.insert_content_control", "Document.insert_document",
     "Document.insert_html", "Document.insert_legacy_form_field", "Document.insert_paragraph",
-    "Document.insert_section", "Document.insert_table", "Document.link_section_story",
+    "Document.insert_section", "Document.insert_table", "Document.isolate_span", "Document.link_section_story",
     "Document.link_style_to_numbering", "Document.move_comment", "Document.move_content",
     "Document.move_content_control", "Document.pop_content", "Document.reject_revision_id",
     "Document.remove_comment", "Document.remove_content", "Document.remove_content_control",
