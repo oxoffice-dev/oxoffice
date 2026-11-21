@@ -1075,20 +1075,26 @@ fn markdown_places_cells_by_grid_column_and_aligns_columns_by_their_header() {
 
 #[test]
 fn a_huge_grid_span_from_the_file_stays_within_the_table_in_both_exports() {
+    // Two cells past the table's width, as a generator that sets gridSpan
+    // without removing the cells it covers writes them: both keep their text.
     let row = format!(
-        "{}{}",
+        "{}{}{}",
         table_cell(r#"<w:gridSpan w:val="4000000000"/>"#, "wide"),
-        table_cell("", "after")
+        table_cell("", "after"),
+        table_cell("", "then")
     );
     let before = format!(
-        r#"<w:trPr><w:gridBefore w:val="4000000000"/></w:trPr>{}"#,
-        table_cell("", "late")
+        r#"<w:trPr><w:gridBefore w:val="4000000000"/></w:trPr>{}{}"#,
+        table_cell("", "late"),
+        table_cell("", "later")
     );
     let doc = reopen(&mut doc_with_body(&three_column_table(&[&row, &before])));
     let markdown = doc.to_markdown();
     assert!(markdown.len() < 1000, "{} bytes", markdown.len());
     assert!(
-        markdown.contains("wide") && markdown.contains("after") && markdown.contains("late"),
+        ["wide", "after", "then", "late", "later"]
+            .iter()
+            .all(|text| markdown.contains(text)),
         "{markdown}"
     );
     let html = doc.to_html_fragment();

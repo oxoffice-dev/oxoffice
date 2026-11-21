@@ -1236,7 +1236,10 @@ fn emit_table(
         let mut cells: Vec<String> = Vec::new();
         let ranges = crate::emitter::grid_ranges(row, limit);
         for (cell, &(start, _)) in row.cells().into_iter().zip(&ranges) {
-            cells.resize(start, String::new());
+            // Starts clamped to the table's width can repeat: only grow.
+            if cells.len() < start {
+                cells.resize(start, String::new());
+            }
             let text = collect_cell_text(cell, styles, hyperlink_urls, images);
             cells.push(text);
         }
