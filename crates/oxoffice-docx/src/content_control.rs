@@ -289,8 +289,8 @@ fn collect_sdt_lines(sdt: &CT_Sdt, lines: &mut Vec<String>) {
             SdtContent::Row(row) => lines.push(row_text(row)),
             SdtContent::Cell(cell) => lines.push(cell_text(cell)),
             SdtContent::Run(run) => match lines.last_mut() {
-                Some(line) => line.push_str(&run.text()),
-                None => lines.push(run.text()),
+                Some(line) => line.push_str(&run.accepted_text()),
+                None => lines.push(run.accepted_text()),
             },
             SdtContent::ContentControl(nested) => collect_sdt_lines(nested, lines),
             SdtContent::RawXml(_) => {}

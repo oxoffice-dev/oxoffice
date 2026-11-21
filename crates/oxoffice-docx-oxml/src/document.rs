@@ -410,7 +410,7 @@ impl CT_Body {
         let mut enclosing = Vec::new();
         for (index, content) in self.content.iter().enumerate() {
             match content {
-                BodyContent::Paragraph(paragraph) if paragraph.text().contains(text) => {
+                BodyContent::Paragraph(paragraph) if paragraph.accepted_text().contains(text) => {
                     direct.push(index);
                 }
                 BodyContent::ContentControl(sdt) => {
@@ -418,7 +418,7 @@ impl CT_Body {
                     sdt.collect_paragraphs(SdtOwner::Body, &mut paragraphs);
                     if paragraphs
                         .iter()
-                        .any(|paragraph| paragraph.text().contains(text))
+                        .any(|paragraph| paragraph.accepted_text().contains(text))
                     {
                         enclosing.push(index);
                     }

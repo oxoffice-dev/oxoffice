@@ -1055,7 +1055,7 @@ fn discover_toc_sources(
             if !paragraph_in_bookmark {
                 continue;
             }
-            let title = accepted_runs
+            let kept = accepted_runs
                 .iter()
                 .filter(|run| {
                     !toc_source_position_is_owned(
@@ -1070,8 +1070,17 @@ fn discover_toc_sources(
                         },
                     )
                 })
-                .map(|run| run.run.text())
-                .collect::<String>();
+                .collect::<Vec<_>>();
+            // A heading the table does not own in part reads as a reader
+            // sees it, simple field results included; the run axis has no
+            // run for a simple field kept as written.
+            let title = if kept.len() == accepted_runs.len() {
+                paragraph.accepted_text()
+            } else {
+                kept.iter()
+                    .map(|run| run.run.accepted_text())
+                    .collect::<String>()
+            };
             if joins_next {
                 joined_title.push_str(&title);
                 continue;

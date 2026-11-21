@@ -1565,7 +1565,12 @@ fn append_accepted_text(paragraph: &CT_P, output: &mut String) {
                     append_accepted_control_runs(&paragraph.content_controls[index].3, &mut runs);
                 }
                 BoundaryOwner::Revision(index) => {
-                    append_accepted_revision_runs(&paragraph.revisions[index].2, &mut runs);
+                    // The whole content of an insertion, simple fields and
+                    // other wrappers included.
+                    if let Some(content) = accepted_revision_content(&paragraph.revisions[index].2)
+                    {
+                        append_accepted_text(&content, output);
+                    }
                 }
                 BoundaryOwner::Wrapper(index) => {
                     wrapper_text(&paragraph.extra_xml[index].1, &["w".to_owned()], output);
@@ -2072,12 +2077,8 @@ fn append_accepted_inline_revision(
     runs: &mut Vec<CT_R>,
     boundaries: &mut Vec<usize>,
 ) {
-    if matches!(
-        revision.kind(),
-        RevisionKind::Insertion | RevisionKind::MoveTo
-    ) && let Some(paragraph) = revision.content_paragraph()
-    {
-        append_accepted_inline_paragraph(paragraph, runs, boundaries);
+    if let Some(paragraph) = accepted_revision_content(revision) {
+        append_accepted_inline_paragraph(&paragraph, runs, boundaries);
     }
 }
 
@@ -2135,6 +2136,12 @@ fn append_accepted_inline_control(
     } else {
         boundaries.push(runs.len());
     }
+}
+
+/// The content of an insertion or a move destination, which the accepted
+/// view keeps, simple fields included; a deletion or a move source has none.
+fn accepted_revision_content(revision: &CT_Revision) -> Option<Cow<'_, CT_P>> {
+    revision.accepted_content()
 }
 
 fn append_accepted_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec<&'a CT_R>) {
@@ -2288,6 +2295,36 @@ impl CT_P {
     pub fn accepted_text(&self) -> String {
         let mut text = String::new();
         append_accepted_text(self, &mut text);
+        text
+    }
+
+    /// Return the text of hyperlink `index` as a reader sees it: its runs
+    /// with their field results, and the runs of the tracked insertions inside
+    /// it, in document order. Tracked deletions are left out.
+    #[doc(hidden)]
+    pub fn accepted_hyperlink_text(&self, index: usize) -> String {
+        let mut text = String::new();
+        let Some(hyperlink) = self.hyperlinks.get(index) else {
+            return text;
+        };
+        let start = hyperlink.run_start.min(self.runs.len());
+        let end = hyperlink.run_end.clamp(start, self.runs.len());
+        // This hyperlink's revisions, taken once rather than at each boundary.
+        let revisions = self
+            .revisions
+            .iter()
+            .filter(|(_, slot, _)| hyperlink_revision_index(*slot) == Some(index))
+            .collect::<Vec<_>>();
+        for boundary in start..=end {
+            for (_, _, revision) in revisions.iter().filter(|(at, _, _)| *at == boundary) {
+                if let Some(content) = accepted_revision_content(revision) {
+                    append_accepted_text(&content, &mut text);
+                }
+            }
+            if boundary < end {
+                append_current_run_text(&self.runs[boundary], &mut text);
+            }
+        }
         text
     }
 
@@ -2531,14 +2568,10 @@ impl CT_P {
                             continue;
                         }
                         // The runs and equations of an insertion's own accepted
-                        // view, wrappers and simple fields read as everywhere.
-                        if matches!(
-                            revision.kind(),
-                            RevisionKind::Insertion | RevisionKind::MoveTo
-                        ) && let Some(paragraph) = revision.content_paragraph()
-                        {
-                            let (view, _) = paragraph.accepted_view_projection(false);
-                            let view = view.into_owned();
+                        // view, wrappers and simple fields read as everywhere,
+                        // simple fields included while their parse is deferred.
+                        if let Some(content) = accepted_revision_content(revision) {
+                            let view = content.accepted_view_projection(false).0.into_owned();
                             links.extend(std::iter::repeat_n(
                                 hyperlink_revision_index(*slot),
                                 view.runs.len(),
