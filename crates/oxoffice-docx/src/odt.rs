@@ -1376,8 +1376,16 @@ impl<'a> OdtWriter<'a> {
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),
-                    definition.ppr.is_some() || definition.ppr_raw.is_some(),
-                    definition.rpr.is_some() || definition.rpr_raw.is_some(),
+                    definition
+                        .ppr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.ppr_raw.is_some(),
+                    definition
+                        .rpr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.rpr_raw.is_some(),
                     !definition.extra_xml.is_empty() || !definition.extra_attributes.is_empty(),
                 )
             },
@@ -1776,8 +1784,16 @@ impl<'a> OdtWriter<'a> {
                     // A level that draws no marker loses no marker text.
                     definition.lvl_text.is_some() && !unnumbered,
                     definition.lvl_jc.is_some(),
-                    definition.ppr.is_some() || definition.ppr_raw.is_some(),
-                    definition.rpr.is_some() || definition.rpr_raw.is_some(),
+                    definition
+                        .ppr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.ppr_raw.is_some(),
+                    definition
+                        .rpr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.rpr_raw.is_some(),
                     !definition.extra_xml.is_empty() || !definition.extra_attributes.is_empty(),
                 )
             },

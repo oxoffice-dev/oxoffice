@@ -1739,4 +1739,75 @@ fn exports_report_no_formatting_for_empty_property_elements() {
         "{:?}",
         epub.diagnostics
     );
+    assert!(
+        odt.diagnostics.iter().any(|d| d.path == "body[1]/pPr"),
+        "{:?}",
+        odt.diagnostics
+    );
+
+    // An element that holds only what the model does not type is not empty.
+    let doc = doc_with_body(concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"/></w:trPr>"#,
+        r#"<w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:pPr><w:rPr><w:oxofficeUnknown/></w:rPr></w:pPr><w:r><w:t>after</w:t></w:r></w:p>"#,
+    ));
+    let odt = doc.to_odt_bytes().unwrap();
+    assert!(
+        odt.diagnostics
+            .iter()
+            .any(|d| d.path == "body[0]/row[0]/trPr"),
+        "{:?}",
+        odt.diagnostics
+    );
+    let rtf = doc.to_rtf_bytes().unwrap();
+    assert!(
+        rtf.diagnostics
+            .iter()
+            .any(|d| d.message.starts_with("paragraph mark run properties")),
+        "{:?}",
+        rtf.diagnostics
+    );
+}
+
+#[test]
+fn exports_report_no_list_level_formatting_for_empty_property_elements() {
+    // A list level that holds empty `w:pPr` and `w:rPr` elements.
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("item", 0);
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    let start = xml.find("<w:lvl w:ilvl=\"0\"").unwrap();
+    let end = start + xml[start..].find("</w:lvl>").unwrap();
+    let level = &xml[start..end];
+    let edited = match (level.find("<w:pPr>"), level.find("</w:pPr>")) {
+        (Some(open), Some(close)) => format!(
+            "{}<w:pPr/><w:rPr/>{}",
+            &level[..open],
+            &level[close + "</w:pPr>".len()..]
+        ),
+        _ => format!("{level}<w:pPr/><w:rPr/>"),
+    };
+    let xml = format!("{}{edited}{}", &xml[..start], &xml[end..]);
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let odt = doc.to_odt_bytes().unwrap();
+    let epub = doc.to_epub_bytes().unwrap();
+    let reported: Vec<&str> = odt
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .chain(epub.diagnostics.iter().map(|d| d.message.as_str()))
+        .filter(|message| {
+            message.starts_with("list level paragraph formatting")
+                || message.starts_with("list marker run formatting")
+                || message.starts_with("list-level paragraph styling")
+                || message.starts_with("list marker run styling")
+        })
+        .collect();
+    assert!(reported.is_empty(), "{reported:?}");
 }
