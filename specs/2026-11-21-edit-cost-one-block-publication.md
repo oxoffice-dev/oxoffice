@@ -49,10 +49,11 @@ plain paragraph XML route publishes in the local mode.
 
 Those rules are safe because they retire the owners whose routes an edit can
 shift: a text-box or table-cell story is addressed by its ordinal in its
-part, and a hyperlink by its story, its paragraph's route and its index in
-that paragraph. Removing a text box, a link, a cell story or a story item
-renumbers the ones after it, and the matcher pairs old and new owners by
-equal route.
+part, and a hyperlink by its story, the smallest story item that holds it
+and its index among that item's links (a paragraph inside a block content
+control is not an item: its links count with the control's). Removing a text
+box, a cell story, a story item or a link renumbers the ones after it, and the
+matcher pairs old and new owners by equal route.
 
 ## Decision
 
@@ -65,19 +66,26 @@ equal route.
      text-box paragraph keeps today's rule (all its states born).
    - A cell insertion retires the cell's content and its descendants; the
      cell keeps its owner state and the table its owner and grid states.
-   - Owners whose route holds an ordinal the edit shifts retire. When the
-     edit changes how many text-box or table-cell stories its part holds,
-     every owner of a later story of that kind in that part retires. When it
-     changes how many story items the body holds (fields, inline content
-     controls, drawings), the hyperlinks of later body paragraphs retire,
-     since their route holds their paragraph's item index. Body paragraphs
-     and tables are matched by their block slot, which an in-place edit does
-     not move, so they stay.
+   - Owners whose route holds an ordinal the edit shifts retire, in every
+     story:
+     - when the edit changes how many story items its story holds (fields,
+       inline content controls, drawings), the hyperlinks of the later items
+       of that story;
+     - when it adds or removes a link inside a story item that holds more
+       than the edited paragraph (a block content control), the later links
+       of that item;
+     - when it changes how many text-box or table-cell stories its part
+       holds, every owner of a later story of that kind in that part.
+     Paragraphs and tables keep their states: the body's are matched by their
+     block slot, the other stories' by their ordinal among the story's
+     paragraphs or tables, which an edit of one paragraph does not move.
    - The snapshot scope retires, as for every publication.
    - Nothing else retires. The publication uses the local revision mode, so
      the document epoch stays and the `Run` handles of other paragraphs keep
      working; so do other paragraphs, tables, cells, sections, headers,
      footers, notes, comments, and the hyperlinks of other paragraphs.
+   On every route, an edit that leaves the edited paragraph (or cell) equal
+   to what it was is a no-op: it publishes nothing and keeps every handle.
    The nine calls get block publications of their own. `ParagraphText`,
    `ParagraphAppend` and `Conservative` keep their rules for the other calls
    that use them (`Paragraph.add_internal_hyperlink`, `Document.add_note`).
@@ -86,8 +94,7 @@ equal route.
 2. **The binding publishes the block it re-reads.** The facade edits a copy
    of the one direct body block (a paragraph, or the table that holds the
    cell) and swaps it in when the edit succeeds, as table property edits do
-   (1b-i). An edit that leaves the block equal to what it was is a no-op: it
-   publishes nothing and keeps every handle. Otherwise the binding re-reads
+   (1b-i). Otherwise the binding re-reads
    the block (`word_block_owners`), places its owners at the block's slot,
    and replaces the block's old owners: the body splice, generalized from
    plain paragraphs to one block replaced, with a range per owner family,
@@ -102,10 +109,17 @@ equal route.
    in 1b-iii-c.
 4. **A debug oracle proves every kept handle, without the matcher.** After
    every publication of the nine calls, on every route, debug builds check
-   that each owner whose state is kept designates the same element as before:
-   an owner outside the block has the same element (its bytes, serialized
-   alone) at its old route moved by the edit's known shift (body story items,
-   body link ordinals, cell stories); an owner of the block keeps its route.
+   each owner whose state is kept. The owners whose element the edit rewrites
+   (the edited paragraph; for a cell edit, the cell and its table) keep their
+   route. Every other kept owner, inside the edited block or table as well as
+   outside it, has the same element (its bytes, serialized alone) at its old
+   route moved by the edit's shift. The shift is known from the edit and
+   defined for every story: the item indexes of the edited story after the
+   edit, by the change in its item count; the link indexes of the item that
+   holds the edit, by the change in its link count; the text-box and
+   table-cell story ordinals of the part after the edited block, by the
+   change in their count; and, for the body, the block slots, which an edit
+   in place does not move.
    They also rebuild the inventory and its indexes from the whole document
    and compare (`assert_word_inventory_rebuilds`, extended to the indexes by
    route, generation and parent), and compare the block's piece with a fresh
@@ -118,10 +132,12 @@ handle as they were; reads after an edit see what a save writes.
 
 What changes for a user: after these nine calls, handles outside the edited
 block keep working, where most of them raised a stale-handle error. Python
-tests pin which handles are kept and which retire, including the three cases
-the ordinal rule protects: a text box removed before another one, a table
-added in a cell before cells that hold links, and the first of two links of a
-paragraph removed.
+tests pin which handles are kept and which retire, including the cases the
+ordinal rule protects: a text box removed before another one, a table added
+in a cell before cells that hold links, the first of two links of a paragraph
+removed, a field removed before paragraphs with links in a footer and in a
+table cell, and a link removed from the first paragraph of a block content
+control whose later paragraphs hold links.
 
 ### What we do not do
 
@@ -130,9 +146,9 @@ paragraph removed.
 - No incremental update of the inventory indexes in this step. The splice
   still walks every owner and reindexes, and renumbers later body items,
   link ordinals and cell stories: integer work linear in the owners, with no
-  document read. `Document.insert_paragraph` takes the same splice and passes
-  the scaling gate; the gate's targets sit at the end of the body, so the
-  renumbering is not timed. An incremental index is a later step of the plan.
+  document read. `Document.insert_paragraph` takes the same splice at the
+  tenth block, so with that renumbering of almost every owner, and passes the
+  scaling gate. An incremental index is a later step of the plan.
 
 ## Plan
 
