@@ -547,7 +547,7 @@ impl<'a> RtfWriter<'a> {
     }
 
     fn scan_paragraph(&mut self, paragraph: &CT_P, location: String) {
-        if let Some((num_id, level)) = paragraph_numbering(paragraph) {
+        if let Some((num_id, level)) = self.paragraph_numbering(paragraph) {
             if level > 8 {
                 self.diagnose(
                     &format!("{location}/ppr/numPr/ilvl"),
@@ -1062,10 +1062,11 @@ impl<'a> RtfWriter<'a> {
         if let Some(value) = properties.ind_right {
             write!(output, "\\ri{}", value.0)?;
         }
-        if let Some(value) = properties.ind_first_line {
-            write!(output, "\\fi{}", value.0)?;
-        } else if let Some(value) = properties.ind_hanging {
+        // Word ignores `w:firstLine` when `w:hanging` is there.
+        if let Some(value) = properties.ind_hanging {
             write!(output, "\\fi{}", value.0.saturating_neg())?;
+        } else if let Some(value) = properties.ind_first_line {
+            write!(output, "\\fi{}", value.0)?;
         }
         if let Some(value) = properties.space_before {
             write!(output, "\\sb{}", value.0)?;
@@ -1080,7 +1081,7 @@ impl<'a> RtfWriter<'a> {
                 _ => write!(output, "\\sl{}\\slmult1", value.0)?,
             }
         }
-        if let Some((num_id, level)) = paragraph_numbering(paragraph)
+        if let Some((num_id, level)) = self.paragraph_numbering(paragraph)
             && level <= 8
             && let Some(list_index) = self.list_indexes.get(&num_id)
         {
@@ -1286,11 +1287,32 @@ impl<'a> RtfWriter<'a> {
             .as_ref()
             .and_then(|numbering| numbering.get_abstract_num_for(num_id))
         {
+            let instance = self.document.numbering.as_ref().and_then(|numbering| {
+                numbering
+                    .nums
+                    .iter()
+                    .find(|instance| instance.num_id == num_id)
+            });
             for level_index in 0..9_u32 {
-                let level = abstract_num
+                // The level an instance swaps in, and its start override, as
+                // layout and the other exports count them.
+                let level_override = instance.and_then(|instance| {
+                    instance
+                        .level_overrides
+                        .iter()
+                        .find(|item| item.ilvl == level_index)
+                });
+                let definition = abstract_num
                     .levels
                     .iter()
                     .find(|level| level.ilvl == level_index);
+                let level = level_override
+                    .and_then(|item| item.level.as_ref())
+                    .or(definition);
+                let start = level_override
+                    .and_then(|item| item.start_override)
+                    .or_else(|| definition.and_then(|level| level.start))
+                    .unwrap_or(1);
                 let format = match level.and_then(|level| level.num_fmt.clone()) {
                     Some(ST_NumberFormat::Other(_)) => {
                         self.diagnose(
@@ -1302,10 +1324,7 @@ impl<'a> RtfWriter<'a> {
                     Some(value) => Some(crate::document::list_number_format_from_st(value)),
                     None => None,
                 };
-                levels.push(WriterListLevel {
-                    format,
-                    start: level.and_then(|level| level.start).unwrap_or(1),
-                });
+                levels.push(WriterListLevel { format, start });
             }
         } else {
             self.diagnose(
@@ -1326,6 +1345,20 @@ impl<'a> RtfWriter<'a> {
         self.list_indexes.insert(num_id, index);
     }
 
+    /// The list a paragraph is on, through its style chain as Word's List
+    /// Bullet and List Number styles set it; `numId` 0 takes it off.
+    fn paragraph_numbering(&self, paragraph: &CT_P) -> Option<(u32, u32)> {
+        let direct = paragraph.properties.as_ref();
+        let mut properties = self.document.resolve_paragraph_properties(
+            direct.and_then(|properties| properties.style_id.as_deref()),
+        );
+        if let Some(direct) = direct {
+            properties.merge_from(direct);
+        }
+        let num_id = properties.num_id?;
+        (num_id != 0).then_some((num_id, properties.num_ilvl.unwrap_or(0)))
+    }
+
     fn diagnose(&mut self, location: &str, message: &str) {
         if self.diagnostics.len() >= MAX_DIAGNOSTICS {
             return;
@@ -1336,11 +1369,6 @@ impl<'a> RtfWriter<'a> {
             message: message.to_owned(),
         });
     }
-}
-
-fn paragraph_numbering(paragraph: &CT_P) -> Option<(u32, u32)> {
-    let properties = paragraph.properties.as_ref()?;
-    Some((properties.num_id?, properties.num_ilvl.unwrap_or(0)))
 }
 
 fn paragraph_marker_raw_positions(paragraph: &CT_P) -> BTreeSet<usize> {

@@ -435,6 +435,54 @@ fn setting_a_hanging_indent_replaces_a_first_line_indent() {
 }
 
 #[test]
+fn a_negative_first_line_indent_is_written_as_a_hanging_indent() {
+    let mut doc = Document::new();
+    doc.add_paragraph("by the builder")
+        .first_line_indent(Length::pt(-9.0));
+    doc.add_paragraph("by the setter");
+    doc.paragraph_mut(1)
+        .unwrap()
+        .set_first_line_indent(Length::pt(-9.0));
+    let reopened = reopen(&mut doc);
+    for index in 0..2 {
+        let paragraph = reopened.paragraph(index).unwrap();
+        assert_eq!(twips(paragraph.first_line_indent()), Some(-180), "{index}");
+        assert_eq!(twips(paragraph.hanging_indent()), Some(180), "{index}");
+    }
+    // The schema allows no negative w:firstLine: Word means a hanging indent.
+    let xml = reopened.part_xml("word/document.xml").unwrap();
+    assert_eq!(xml.matches(r#"w:hanging="180""#).count(), 2, "{xml}");
+    assert!(!xml.contains("w:firstLine="), "{xml}");
+}
+
+#[test]
+fn a_paragraph_holding_both_indents_reads_and_exports_its_hanging_indent() {
+    // Word and layout ignore w:firstLine when w:hanging is there.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:ind w:left="720" w:firstLine="360" w:hanging="180"/></w:pPr>"#,
+        r#"<w:r><w:t>both</w:t></w:r></w:p>"#
+    ));
+    assert_eq!(
+        twips(doc.paragraph(0).unwrap().first_line_indent()),
+        Some(-180)
+    );
+
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(
+        rtf.contains(r"\fi-180") && !rtf.contains(r"\fi360"),
+        "{rtf}"
+    );
+
+    let odt = doc.to_odt_bytes().unwrap();
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    assert_eq!(
+        twips(reread.paragraph(0).unwrap().first_line_indent()),
+        Some(-180),
+        "ODT carries the hanging indent"
+    );
+}
+
+#[test]
 fn borders_and_shading_survive_a_save_and_can_be_removed() {
     let mut doc = Document::new();
     doc.add_paragraph("boxed")

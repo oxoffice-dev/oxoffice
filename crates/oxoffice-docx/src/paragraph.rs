@@ -1641,11 +1641,10 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Set first line indent in place. It replaces a hanging indent: Word
-    /// honours only one of the two.
+    /// honours only one of the two. A negative length is a hanging indent,
+    /// stored as `w:hanging` since `w:firstLine` cannot be negative.
     pub fn set_first_line_indent(&mut self, length: Length) {
-        let ppr = self.ensure_ppr();
-        ppr.ind_first_line = Some(length.as_twips());
-        ppr.ind_hanging = None;
+        self.set_signed_first_line_indent_value(Some(length));
     }
 
     /// Set or clear the signed first-line indentation.
@@ -3264,13 +3263,15 @@ impl<'a> ParagraphRef<'a> {
     }
 
     /// Get signed first-line indentation, negative for hanging indentation.
+    ///
+    /// When a paragraph holds both, the hanging indent wins, as in Word and
+    /// layout.
     pub fn first_line_indent(&self) -> Option<Length> {
         let ppr = self.inner.properties.as_ref()?;
-        if let Some(twips) = ppr.ind_first_line {
-            return Some(Length::twips(twips.0));
+        if let Some(twips) = ppr.ind_hanging {
+            return Some(Length::twips(twips.0.saturating_neg()));
         }
-        ppr.ind_hanging
-            .map(|twips| Length::twips(twips.0.saturating_neg()))
+        ppr.ind_first_line.map(|twips| Length::twips(twips.0))
     }
 
     /// Get an iterator over immutable accepted-view run references, the runs

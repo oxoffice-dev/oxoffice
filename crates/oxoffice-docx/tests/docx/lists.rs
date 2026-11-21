@@ -1281,6 +1281,51 @@ fn exports_follow_a_style_numbered_through_its_based_on_chain_or_the_default_sty
 }
 
 #[test]
+fn rtf_export_numbers_lists_as_layout_does() {
+    let rtf_markers = |doc: &Document| {
+        let rtf = doc.to_rtf_bytes().unwrap();
+        markers(&Document::from_rtf_bytes(&rtf.bytes).unwrap().document)
+    };
+    // Through the style chain, as Word's List Bullet and List Number set it.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.add_style(StyleBuilder::paragraph("Steps", "Steps"))
+        .unwrap();
+    doc.link_style_to_numbering("Steps", id, 0).unwrap();
+    doc.add_style(StyleBuilder::paragraph("SubSteps", "Sub steps").based_on("Steps"))
+        .unwrap();
+    doc.add_paragraph("first step").style("Steps");
+    doc.add_paragraph("second step").style("SubSteps");
+    assert_eq!(markers(&doc), ["1.", "2."]);
+    assert_eq!(rtf_markers(&doc), ["1.", "2."]);
+
+    // The level an instance swaps in, and an instance's start override.
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet().level_text("–"))],
+        )
+        .unwrap();
+    let restarted = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).start(7)],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    add_items(&mut doc, restarted, &[0]);
+    let expected = markers(&doc);
+    assert_eq!(expected, ["–", "7."]);
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(rtf.contains(r"\levelstartat7"), "{rtf}");
+    assert_eq!(rtf_markers(&doc)[1], "7.", "{rtf}");
+    assert!(
+        rtf_markers(&doc)[0] != "1.",
+        "the swapped-in level is a bullet, not the definition's number: {rtf}"
+    );
+}
+
+#[test]
 fn exports_leave_a_level_without_marker_out_of_lists() {
     let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
     add_items(&mut doc, id, &[0]);
@@ -1314,6 +1359,21 @@ fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
     let html = doc.to_html_fragment();
     assert_eq!(html.matches("<ol>").count(), 1, "{html}");
     assert!(html.contains("<li>item 1<p>item 2</p></li>"), "{html}");
+
+    // ODT writes the `none` level as a numbered level with no number, so
+    // LibreOffice draws nothing on the sub-paragraphs and keeps counting.
+    let odt = doc.to_odt_bytes().unwrap();
+    let messages: Vec<&str> = odt
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        !messages.iter().any(|message| message.contains("decimal")),
+        "a none level is not exported as a decimal level: {messages:?}"
+    );
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    assert_eq!(markers(&reread), ["1.", "", "2.", "", "3."]);
 }
 
 #[test]
