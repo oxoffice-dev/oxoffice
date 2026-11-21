@@ -51,7 +51,7 @@ def test_validate_names_a_notes_slide_two_slides_share(tmp_path):
     path = tmp_path / "notes.pptx"
     prs.save(path)
 
-    # Relate the second slide to the first slide's notes, as a faulty writer would.
+    # Relate the third slide, which has no notes of its own, to the first slide's notes.
     shared = tmp_path / "shared.pptx"
     with zipfile.ZipFile(path) as source, zipfile.ZipFile(shared, "w") as target:
         first = source.read("ppt/slides/_rels/slide1.xml.rels").decode()
@@ -59,7 +59,7 @@ def test_validate_names_a_notes_slide_two_slides_share(tmp_path):
         notes_target = notes.group(1) or notes.group(2)
         for item in source.infolist():
             data = source.read(item.filename)
-            if item.filename == "ppt/slides/_rels/slide2.xml.rels":
+            if item.filename == "ppt/slides/_rels/slide3.xml.rels":
                 data = data.decode().replace(
                     "</Relationships>",
                     '<Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
@@ -69,4 +69,4 @@ def test_validate_names_a_notes_slide_two_slides_share(tmp_path):
 
     issues = oxpptx.Presentation(shared).validate()
     assert [issue.kind for issue in issues if issue.kind == "shared_slide_part"] == ["shared_slide_part"]
-    assert "slides 1, 2" in next(issue.message for issue in issues if issue.kind == "shared_slide_part")
+    assert "slides 1, 3" in next(issue.message for issue in issues if issue.kind == "shared_slide_part")

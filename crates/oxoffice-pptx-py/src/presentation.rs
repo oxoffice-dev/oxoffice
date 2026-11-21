@@ -136,24 +136,7 @@ pub struct PyValidationIssue {
 
 impl From<&oxoffice_pptx::ValidationIssue> for PyValidationIssue {
     fn from(issue: &oxoffice_pptx::ValidationIssue) -> Self {
-        use oxoffice_pptx::ValidationIssue as Issue;
-        let kind = match issue {
-            Issue::DuplicateShapeId { .. } => "duplicate_shape_id",
-            Issue::SlideIdOutOfRange { .. } => "slide_id_out_of_range",
-            Issue::DuplicateSlideId { .. } => "duplicate_slide_id",
-            Issue::MissingContentTypeOverride { .. } => "missing_content_type_override",
-            Issue::DanglingRelationship { .. } => "dangling_relationship",
-            Issue::UnreachableRelationshipTarget { .. } => "unreachable_relationship_target",
-            Issue::EmptyTextBody { .. } => "empty_text_body",
-            Issue::DuplicatePlaceholderIdx { .. } => "duplicate_placeholder_idx",
-            Issue::OrphanMedia { .. } => "orphan_media",
-            Issue::CustomShowReference { .. } => "custom_show_reference",
-            Issue::MissingLayoutRel { .. } => "missing_layout_rel",
-            Issue::MissingThemeRel { .. } => "missing_theme_rel",
-            Issue::SharedSlidePart { .. } => "shared_slide_part",
-            Issue::InvalidXmlChild { .. } => "invalid_xml_child",
-            _ => "other",
-        };
+        let kind = issue.kind();
         Self {
             kind,
             message: issue.to_string(),

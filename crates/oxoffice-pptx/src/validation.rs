@@ -66,9 +66,28 @@ pub enum ValidationIssue {
     },
 }
 
-/// One sentence per issue. Slides, masters and shapes are numbered from 1, as
-/// PowerPoint shows them, where the fields hold zero-based indexes.
 impl ValidationIssue {
+    /// The snake_case name of the variant, as Python's `ValidationIssue.kind`
+    /// gives it.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::DuplicateShapeId { .. } => "duplicate_shape_id",
+            Self::SlideIdOutOfRange { .. } => "slide_id_out_of_range",
+            Self::DuplicateSlideId { .. } => "duplicate_slide_id",
+            Self::MissingContentTypeOverride { .. } => "missing_content_type_override",
+            Self::DanglingRelationship { .. } => "dangling_relationship",
+            Self::UnreachableRelationshipTarget { .. } => "unreachable_relationship_target",
+            Self::EmptyTextBody { .. } => "empty_text_body",
+            Self::DuplicatePlaceholderIdx { .. } => "duplicate_placeholder_idx",
+            Self::OrphanMedia { .. } => "orphan_media",
+            Self::CustomShowReference { .. } => "custom_show_reference",
+            Self::MissingLayoutRel { .. } => "missing_layout_rel",
+            Self::MissingThemeRel { .. } => "missing_theme_rel",
+            Self::SharedSlidePart { .. } => "shared_slide_part",
+            Self::InvalidXmlChild { .. } => "invalid_xml_child",
+        }
+    }
+
     /// Whether the issue is reported without blocking a save or an edit: a
     /// checked XML grammar finding, or a slide part shared by older decks
     /// (oxoffice 0.1.0 shared legacy comments after `duplicate_slide`),
@@ -81,6 +100,8 @@ impl ValidationIssue {
     }
 }
 
+/// One sentence per issue. Slides, masters and shapes are numbered from 1, as
+/// PowerPoint shows them, where the fields hold zero-based indexes.
 impl std::fmt::Display for ValidationIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1205,7 +1226,8 @@ impl Presentation {
         }
 
         // Comments and notes are per slide: no two slides relate to one part.
-        let mut owners_by_part: Vec<(String, Vec<usize>)> = Vec::new();
+        // Keyed by the lowercase part name; the first spelling is reported.
+        let mut owners_by_part: HashMap<String, (String, Vec<usize>)> = HashMap::new();
         for (slide_index, slide) in self.slides.iter().enumerate() {
             let Some(relationships) = self.package.get_part_rels(&slide.part_name) else {
                 continue;
@@ -1222,21 +1244,20 @@ impl Presentation {
                     continue;
                 }
                 let part = OpcPackage::resolve_rel_target(&slide.part_name, &relationship.target);
-                match owners_by_part
-                    .iter_mut()
-                    .find(|(known, _)| known.eq_ignore_ascii_case(&part))
-                {
-                    Some((_, slides)) if !slides.contains(&slide_index) => slides.push(slide_index),
-                    Some(_) => {}
-                    None => owners_by_part.push((part.to_string(), vec![slide_index])),
+                let (_, slides) = owners_by_part
+                    .entry(part.to_ascii_lowercase())
+                    .or_insert_with(|| (part.to_string(), Vec::new()));
+                if !slides.contains(&slide_index) {
+                    slides.push(slide_index);
                 }
             }
         }
-        let shared_slide_parts = owners_by_part
-            .into_iter()
+        let mut shared_slide_parts = owners_by_part
+            .into_values()
             .filter(|(_, slides)| slides.len() > 1)
             .map(|(part, slides)| ValidationIssue::SharedSlidePart { part, slides })
             .collect::<Vec<_>>();
+        shared_slide_parts.sort_by_key(ToString::to_string);
 
         for (master_index, master) in self.presentation.slide_master_ids.iter().enumerate() {
             let Some(relationship) = presentation_relationships
