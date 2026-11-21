@@ -4,10 +4,13 @@
 //! graph check, and the list markers a reader sees, on new documents and on
 //! the lists Word, Google Docs, LibreOffice and python-docx saved.
 
+use std::io::Cursor;
+
 use oxoffice_docx::{
     Alignment, Document, ListLevel, ListLevelRestart, ListLevelSuffix, ListNumberFormat,
     NumberedOutlineNode, NumberingLevelOverride, StyleBuilder, Twips,
 };
+use oxoffice_opc::OpcPackage;
 
 use crate::support::{corpus_doc, doc_with, reopen, texts};
 
@@ -979,6 +982,34 @@ fn a_bullet_list_whose_instance_swaps_in_a_numbered_level_reads_as_numbered() {
     assert_eq!(doc.numbering_is_bullet(bullets), Some(true));
 
     let doc = reopen(&mut doc);
+    assert_eq!(markers(&doc), ["1."]);
+    let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
+    assert_eq!(doc.numbering_is_bullet(id), Some(false));
+}
+
+#[test]
+fn a_swapped_in_level_without_a_format_reads_as_numbered() {
+    // A level with no w:numFmt is decimal, as layout draws it.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, bullets),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal())],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    let override_start = xml.find("<w:lvlOverride").expect("the swapped-in level");
+    let format = r#"<w:numFmt w:val="decimal"/>"#;
+    let at = override_start + xml[override_start..].find(format).expect("its format");
+    let xml = format!("{}{}", &xml[..at], &xml[at + format.len()..]);
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
     assert_eq!(markers(&doc), ["1."]);
     let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
     assert_eq!(doc.numbering_is_bullet(id), Some(false));
