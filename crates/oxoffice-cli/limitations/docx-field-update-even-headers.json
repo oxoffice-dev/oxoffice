@@ -1,0 +1,9 @@
+{
+  "id": "docx-field-update-even-headers",
+  "format": "docx",
+  "area": "fields",
+  "title": "Field update and mail merge fail on LibreOffice files that keep unused even-page headers",
+  "symptom": "update_fields (Rust, Python), Rust mail_merge and oxoffice docx fields update fail with \"source inventory identified 0 of 1 paragraphs in header\" when a section references an even-page header or footer while different even and odd pages are off, as LibreOffice writes",
+  "workaround": "drop the unused even references first: Rust inherit_section_story(i, Header, Even) and inherit_section_story(i, Footer, Even) for each section; Python section.even_page_header.is_linked_to_previous = True and the same for even_page_footer, which make that call; none through the CLI",
+  "issue": 202
+}

@@ -1,0 +1,9 @@
+{
+  "id": "docx-template-google-tables",
+  "format": "docx",
+  "area": "templates",
+  "title": "Rendering a template fails on Google Docs files with a table",
+  "symptom": "render_template (Rust, Python) fails with \"source normalization changed template owner correspondence\" on any table cell with an empty w:tcPr, which Google Docs writes in every cell",
+  "workaround": "fill scalar tags by replacement instead (Rust replace_text or replace_all, Python doc.replace_all); none for loops and conditions",
+  "issue": 200
+}
