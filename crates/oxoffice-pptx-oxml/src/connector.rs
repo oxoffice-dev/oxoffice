@@ -2,6 +2,7 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::xml::push_escaped_attribute;
 use oxoffice_drawing::geometry::CT_PresetGeometry2D;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
@@ -1025,11 +1026,7 @@ impl RawElement {
         let mut start = BytesStart::new(name);
         for (key, value) in &self.raw_attributes {
             if matches!(key.as_str(), "descr" | "title") {
-                let escaped = quick_xml::escape::escape(value)
-                    .replace('\r', "&#13;")
-                    .replace('\n', "&#10;")
-                    .replace('\t', "&#9;");
-                start.push_attribute((key.as_bytes(), escaped.as_bytes()));
+                push_escaped_attribute(&mut start, key, value);
             } else {
                 start.push_attribute((key.as_str(), value.as_str()));
             }

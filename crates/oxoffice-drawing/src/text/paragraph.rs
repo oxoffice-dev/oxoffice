@@ -3,7 +3,7 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
-use oxoffice_core::xml::{local_name, matches_local_name};
+use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
 use oxoffice_core::xml_text::{decode_plain, resolve_entity};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
@@ -742,7 +742,9 @@ impl TextValue {
         }
         write_start(writer, start)?;
         writer
-            .write_event(Event::Text(BytesText::new(&self.value)))
+            .write_event(Event::Text(BytesText::from_escaped(escape_text(
+                &self.value,
+            ))))
             .map_err(OxmlError::from)?;
         write_end(writer, tag)
     }

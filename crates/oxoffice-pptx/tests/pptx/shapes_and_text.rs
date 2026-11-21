@@ -969,9 +969,7 @@ fn markup_characters_stay_literal_and_control_characters_are_escaped() {
     );
 }
 
-// Fails today: the name comes back as "Revenue Q3 chart", its tab and line feed turned into spaces. Issue: #43
 #[test]
-#[should_panic(expected = "the name keeps its tab and line feed")]
 fn a_shape_name_with_a_tab_or_a_line_feed_survives_a_save() {
     let mut prs = text_box_deck("Named");
     {
@@ -998,9 +996,7 @@ fn a_shape_name_with_a_tab_or_a_line_feed_survives_a_save() {
     );
 }
 
-// Fails today: the carriage return is written raw inside a:t, where XML readers turn it into a line feed. Issue: #43
 #[test]
-#[should_panic(expected = "the carriage return is escaped in the saved slide")]
 fn a_carriage_return_in_run_text_is_saved_so_that_other_readers_keep_it() {
     let mut prs = text_box_deck("before");
     prs.slide_mut(0)
@@ -1023,6 +1019,58 @@ fn a_carriage_return_in_run_text_is_saved_so_that_other_readers_keep_it() {
         !slide.contains('\r'),
         "the carriage return is escaped in the saved slide"
     );
+}
+
+#[test]
+fn tabs_line_feeds_and_carriage_returns_in_names_and_runs_survive_on_every_editors_deck() {
+    const NAME: &str = "Highlights\tbody\nQ3";
+    const TEXT: &str = "Revenue\tup\rQ3";
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let index = prs
+            .slide(1)
+            .unwrap()
+            .shapes()
+            .position(|shape| {
+                shape.text_frame().is_some_and(|frame| {
+                    frame
+                        .paragraph(0)
+                        .is_some_and(|paragraph| paragraph.run_count() > 0)
+                })
+            })
+            .expect("the Highlights slide has a shape with a run");
+        {
+            let mut slide = prs.slide_mut(1).unwrap();
+            let mut shape = slide.shape_mut(index).unwrap();
+            shape.set_name(NAME).unwrap();
+            shape
+                .text_frame()
+                .unwrap()
+                .paragraph_mut(0)
+                .unwrap()
+                .run_mut(0)
+                .unwrap()
+                .set_text(TEXT);
+        }
+
+        let saved = reopen(&prs);
+        let shape = shape_at(&saved, 1, index);
+        assert_eq!(shape.non_visual_name().as_deref(), Some(NAME), "{name}");
+        assert_eq!(run_texts(shape)[0][0], TEXT, "{name}");
+        // What another reader sees: no raw tab, line feed or carriage return
+        // inside an attribute, no raw carriage return anywhere.
+        let slide = (1..=saved.len())
+            .map(|number| saved_part(&saved, &format!("/ppt/slides/slide{number}.xml")))
+            .find(|xml| xml.contains("Highlights&#9;body&#10;Q3"))
+            .unwrap_or_else(|| panic!("{name}: the name is saved escaped"));
+        assert!(slide.contains("Revenue\tup&#13;Q3"), "{name}");
+        assert!(!slide.contains('\r'), "{name}");
+    }
 }
 
 #[test]

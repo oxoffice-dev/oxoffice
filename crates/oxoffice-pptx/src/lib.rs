@@ -30,6 +30,7 @@ pub use oxoffice_core::app_properties::AppProperties;
 pub use oxoffice_core::core_properties::CoreProperties;
 pub use oxoffice_core::custom_properties::{CustomProperties, CustomProperty, CustomPropertyValue};
 pub use oxoffice_core::units::{Angle, Emu, Percent1000};
+use oxoffice_core::xml::escape_attribute_value;
 use oxoffice_drawing::color::ColorMap;
 pub use oxoffice_drawing::color::{ColorChoice, ColorTransform};
 pub use oxoffice_drawing::effect::{CT_EffectList, CT_OuterShadowEffect, RectAlignment};
@@ -8717,7 +8718,7 @@ impl Presentation {
                 owner.start + reader.buffer_position() as usize - if owner.empty { 2 } else { 1 };
             let mut bytes = source[..insertion].to_vec();
             bytes.extend_from_slice(
-                format!(" name=\"{}\"", quick_xml::escape::escape(name)).as_bytes(),
+                format!(" name=\"{}\"", escape_attribute_value(name)).as_bytes(),
             );
             bytes.extend_from_slice(&source[insertion..]);
             bytes
@@ -16405,7 +16406,7 @@ fn patch_theme_attribute(
     if original == value {
         return Ok(source.to_vec());
     }
-    let escaped = quick_xml::escape::escape(value);
+    let escaped = escape_attribute_value(value);
     let mut result = source[..*begin].to_vec();
     result.extend_from_slice(escaped.as_bytes());
     result.extend_from_slice(&source[*end..]);
