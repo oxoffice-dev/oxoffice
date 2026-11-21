@@ -709,7 +709,11 @@ impl<'a> RtfWriter<'a> {
                 "paragraph shading was dropped during RTF export",
             );
         }
-        if properties.rpr.is_some() {
+        if properties
+            .rpr
+            .as_ref()
+            .is_some_and(|properties| !properties.carries_nothing())
+        {
             self.diagnose(
                 &format!("{location}/ppr/rPr"),
                 "paragraph mark run properties were dropped during RTF export",

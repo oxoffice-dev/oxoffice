@@ -1064,7 +1064,10 @@ impl<'a> EpubWriter<'a> {
                     "paragraph tab stops were dropped during EPUB export",
                 ),
                 (
-                    properties.rpr.is_some(),
+                    properties
+                        .rpr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing()),
                     "mark-properties",
                     "paragraph mark properties were dropped during EPUB export",
                 ),

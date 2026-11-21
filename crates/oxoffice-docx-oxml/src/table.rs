@@ -2115,6 +2115,12 @@ impl CT_TrPr {
         Ok(())
     }
 
+    /// Whether no row property is set: an empty `<w:trPr/>`, as LibreOffice
+    /// writes in every row, carries no formatting.
+    pub fn carries_nothing(&self) -> bool {
+        self.is_empty() && self.height_rule.is_none()
+    }
+
     fn is_empty(&self) -> bool {
         self.height.is_none()
             && self.header.is_none()

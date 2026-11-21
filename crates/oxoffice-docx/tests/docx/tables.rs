@@ -1662,3 +1662,81 @@ fn table_and_cell_edges_set_to_nil_or_none_draw_no_border() {
         doc.to_html_fragment()
     );
 }
+
+#[test]
+fn exports_report_no_formatting_for_empty_property_elements() {
+    // LibreOffice writes an empty `w:trPr` in every row, and empty `w:pPr`,
+    // `w:rPr` and `w:tcPr` elements: they carry no formatting to drop.
+    let doc = doc_with_body(concat!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr/><w:tc><w:tcPr/><w:p><w:pPr><w:rPr/></w:pPr><w:r><w:rPr/><w:t>a</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:trPr></w:trPr><w:tc><w:tcPr></w:tcPr><w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"</w:tbl><w:p><w:pPr><w:rPr/></w:pPr><w:r><w:t>after</w:t></w:r></w:p>"#,
+    ));
+    let doc = reopen(&mut { doc });
+    let odt = doc.to_odt_bytes().unwrap();
+    let rtf = doc.to_rtf_bytes().unwrap();
+    let epub = doc.to_epub_bytes().unwrap();
+    let mhtml = doc.to_mhtml_bytes().unwrap();
+    let reported: Vec<String> = odt
+        .diagnostics
+        .iter()
+        .map(|d| format!("odt {} {}", d.path, d.message))
+        .chain(
+            rtf.diagnostics
+                .iter()
+                .map(|d| format!("rtf {:?} {}", d.destination, d.message)),
+        )
+        .chain(
+            epub.diagnostics
+                .iter()
+                .map(|d| format!("epub {} {}", d.path, d.message)),
+        )
+        .chain(
+            mhtml
+                .diagnostics
+                .iter()
+                .map(|d| format!("mhtml {} {}", d.location, d.message)),
+        )
+        .filter(|line| {
+            ["trPr", "tcPr", "rPr", "pPr", "row properties", "mark"]
+                .iter()
+                .any(|word| line.contains(word))
+        })
+        // The new document's defaults name another complex-script font,
+        // which ODT reports on every run: not what this test is about.
+        .filter(|line| !line.contains("unsupported run properties"))
+        .collect();
+    assert!(reported.is_empty(), "{reported:#?}");
+
+    // A row or a paragraph mark that does carry formatting is still reported.
+    let doc = doc_with_body(concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"</w:tbl><w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:t>after</w:t></w:r></w:p>"#,
+    ));
+    let odt = doc.to_odt_bytes().unwrap();
+    assert!(
+        odt.diagnostics
+            .iter()
+            .any(|d| d.path == "body[0]/row[0]/trPr"),
+        "{:?}",
+        odt.diagnostics
+    );
+    let rtf = doc.to_rtf_bytes().unwrap();
+    assert!(
+        rtf.diagnostics
+            .iter()
+            .any(|d| d.message.starts_with("paragraph mark run properties")),
+        "{:?}",
+        rtf.diagnostics
+    );
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        epub.diagnostics
+            .iter()
+            .any(|d| d.path.ends_with("mark-properties")),
+        "{:?}",
+        epub.diagnostics
+    );
+}
