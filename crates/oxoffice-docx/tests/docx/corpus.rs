@@ -132,3 +132,27 @@ fn the_manifest_lists_every_corpus_file_within_the_budget() {
         "the corpus is {total} bytes, over 20 MiB"
     );
 }
+
+// A known failure of a workflow test names a walk the tests have and a copy
+// that walk reads with `OXOFFICE_WORKFLOWS=full`, so that a renamed walk or a
+// dropped copy cannot leave a stale entry behind.
+#[test]
+fn every_workflow_known_failure_names_a_walk_and_a_copy_it_reads() {
+    let copies = crate::support::every_thesis_copy();
+    for (file, workflow, known) in crate::support::workflow_known_failures() {
+        assert!(
+            crate::support::WORKFLOWS.contains(&workflow.as_str()),
+            "{file}: no test walks {workflow} (#{})",
+            known.issue
+        );
+        assert!(
+            copies.contains(&file),
+            "{file}: no walk reads it (#{})",
+            known.issue
+        );
+        assert!(
+            !known.message.is_empty(),
+            "{file}: {workflow} names its failure"
+        );
+    }
+}

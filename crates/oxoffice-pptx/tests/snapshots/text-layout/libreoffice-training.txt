@@ -1,0 +1,69 @@
+slide 1 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 1 | PlaceHolder 2 | 1 lines 38.4 pt | at 95 %: 1 lines 38.4 pt
+slide 2 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 2 | PlaceHolder 2 | 8 lines 335.3 pt | at 95 %: 8 lines 335.3 pt
+slide 2 | Rounded Rectangle 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 2 | PlaceHolder 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 2 | PlaceHolder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 3 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 3 | Rounded Rectangle 2 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Rounded Rectangle 3 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Rounded Rectangle 4 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Rounded Rectangle 5 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Left Arrow 6 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 3 | TextBox 7 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 3 | PlaceHolder 2 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 3 | PlaceHolder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 4 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 4 | Pentagon 2 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 3 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 4 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 5 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 6 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | TextBox 7 | 2 lines 43.2 pt | at 95 %: 2 lines 43.2 pt
+slide 4 | PlaceHolder 2 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 4 | PlaceHolder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 5 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 5 | Terminator 2 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | Process 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | Decision 4 | 2 lines 33.6 pt | at 95 %: 2 lines 33.6 pt
+slide 5 | Process 5 | 1 lines 16.8 pt | at 95 %: 2 lines 33.6 pt
+slide 5 | Process 6 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | Terminator 7 | 1 lines 15.6 pt | at 95 %: 1 lines 15.6 pt
+slide 5 | TextBox 14 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 5 | TextBox 15 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 5 | PlaceHolder 2 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | PlaceHolder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 6 | Rectangle 3 | 1 lines 19.2 pt | at 95 %: 1 lines 19.2 pt
+slide 6 | Rounded Rectangle 5 | 1 lines 19.2 pt | at 95 %: 1 lines 19.2 pt
+slide 6 | Oval 6 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 7 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Oval 8 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 9 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Oval 10 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 11 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Rounded Rectangle 13 | 1 lines 19.2 pt | at 95 %: 1 lines 19.2 pt
+slide 6 | Oval 14 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 15 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Oval 16 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 17 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | PlaceHolder 2 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | PlaceHolder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 7 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 7 | PlaceHolder 2 | 5 lines 212.0 pt | at 95 %: 5 lines 212.0 pt
+slide 7 | PlaceHolder 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 7 | PlaceHolder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 8 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 8 | PlaceHolder 2 | 4 lines 172.8 pt | at 95 %: 5 lines 211.2 pt
+slide 8 | PlaceHolder 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 8 | PlaceHolder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 9 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 9 | PlaceHolder 2 | 5 lines 205.6 pt | at 95 %: 5 lines 205.6 pt
+slide 9 | Rounded Rectangle 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 9 | PlaceHolder 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 9 | PlaceHolder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 10 | PlaceHolder 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 10 | PlaceHolder 2 | 5 lines 211.2 pt | at 95 %: 5 lines 211.2 pt
+slide 10 | PlaceHolder 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 10 | PlaceHolder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
