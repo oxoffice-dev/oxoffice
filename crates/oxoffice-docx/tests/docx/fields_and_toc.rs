@@ -1807,3 +1807,96 @@ fn a_locked_legacy_checkbox_draws_its_box() {
         "a locked checkbox still draws its box"
     );
 }
+
+/// A heading as Google Docs writes it: its `_Toc` bookmark starts between
+/// paragraphs, a direct child of the body, and ends inside the heading.
+const GOOGLE_HEADING: &str = r#"<w:bookmarkStart w:colFirst="0" w:colLast="0" w:name="_Toc217000001" w:id="4"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="4"/></w:p>"#;
+
+/// A TOC field as Google Docs writes it, with one stale entry.
+const GOOGLE_TOC: &str = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \h \u \z \t "Heading 1,1,Heading 2,2," </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:hyperlink w:anchor="_Toc217000001"><w:r><w:t>Old entry</w:t></w:r><w:r><w:tab/><w:t>9</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+
+#[test]
+fn a_heading_bookmark_that_starts_between_paragraphs_is_reused_by_the_toc_rebuild() {
+    let mut doc = doc_with_body(&format!("{GOOGLE_TOC}{GOOGLE_HEADING}"));
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!((report.entry_count, report.bookmark_count), (1, 0));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc)[1], "Introduction\t1");
+    assert_eq!(
+        link_anchors(&doc),
+        pairs(&[("Introduction", "_Toc217000001")]),
+        "the entry links to the heading's own bookmark"
+    );
+}
+
+#[test]
+fn a_bookmark_that_starts_or_ends_between_paragraphs_is_listed_with_its_text() {
+    // Starts between paragraphs and ends inside the heading; then starts
+    // inside a paragraph and ends between two; then wraps two paragraphs.
+    let doc = doc_with_body(&format!(
+        r#"{GOOGLE_HEADING}<w:p><w:bookmarkStart w:id="5" w:name="Tail"/><w:r><w:t>Body</w:t></w:r></w:p><w:bookmarkEnd w:id="5"/><w:bookmarkStart w:id="6" w:name="Both"/><w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p><w:bookmarkEnd w:id="6"/>"#
+    ));
+    assert_eq!(
+        bookmark_list(&doc),
+        pairs(&[
+            ("_Toc217000001", "Introduction"),
+            ("Tail", "Body"),
+            ("Both", "One\nTwo")
+        ])
+    );
+    assert!(
+        doc.bookmarks()
+            .iter()
+            .all(|bookmark| bookmark.issue().is_none()),
+        "{:?}",
+        doc.bookmarks()
+    );
+}
+
+#[test]
+fn ref_and_pageref_read_a_bookmark_that_starts_between_paragraphs() {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> REF _Toc217000001 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> on page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF _Toc217000001 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p>{GOOGLE_HEADING}"#
+    ));
+    assert_eq!(
+        drawn_text(&doc, RevisionView::Accepted),
+        "See Introduction on page 2Introduction",
+        "the layout reads the heading's text and page"
+    );
+    // REF updates with the fields, PAGEREF with the layout.
+    doc.update_fields(&no_context()).unwrap();
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert_eq!(report.page_reference_fields, 1, "{:?}", report.diagnostics);
+    assert_eq!(texts(&reopen(&mut doc))[0], "See Introduction on page 2");
+}
+
+#[test]
+fn the_google_docs_thesis_rebuilds_its_tocs_on_its_own_heading_bookmarks() {
+    // Google Docs writes every `_Toc` start between paragraphs, and saves
+    // the Word copy's table of figures as a second heading TOC: two TOCs of
+    // the 29 headings. The 23 headings with a `_Toc` bookmark keep it, the
+    // six without one (Abstract, Contents, References...) get one.
+    let mut google = corpus_doc("google/thesis.docx");
+    let report = google.rebuild_toc().unwrap();
+    assert_eq!(
+        (report.entry_count, report.bookmark_count),
+        (58, 6),
+        "{report:?}"
+    );
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+}
+
+/// The text drawn on the pages in this revision view.
+fn drawn_text(doc: &Document, view: RevisionView) -> String {
+    let options = RenderOptions::default().with_revision_view(view);
+    let result = doc.layout_with_options(options).unwrap();
+    let mut text = String::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                text.push_str(&run.text);
+            }
+        });
+    }
+    text
+}

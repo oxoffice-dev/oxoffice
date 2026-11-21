@@ -494,7 +494,7 @@ impl SequenceCollector<'_> {
         }
         let projected_runs = project_paragraph_runs(paragraph, RevisionView::Accepted);
         let projected_count = projected_runs.len();
-        let current_bookmarks = paragraph.current_bookmark_projection();
+        let current_bookmarks = self.input.block_bookmarks().paragraph_projection(paragraph);
         for (order, marker) in current_bookmarks.iter().enumerate() {
             let Some(id) = marker.id() else {
                 continue;
