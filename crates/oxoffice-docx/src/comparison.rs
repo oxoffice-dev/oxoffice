@@ -1047,10 +1047,11 @@ impl Document {
         let edited_input = edited;
         let mut original = comparison_input(self)?;
         let mut edited = comparison_input(edited)?;
+        let mut footnote_ids = HashMap::new();
         if !story_ignored(options, ComparisonStoryKind::Footnote) {
             retire_completed_footnote_inputs(&mut original, &mut edited)?;
             reconcile_footnote_custody_inputs(&original, &mut edited)?;
-            reconcile_footnote_ids(&original, &mut edited, renumbered)?;
+            footnote_ids = reconcile_footnote_ids(&original, &mut edited, renumbered)?;
         }
         if !story_ignored(options, ComparisonStoryKind::Main) {
             reconcile_body_bookmarks(&original, &mut edited, options)?;
@@ -1393,6 +1394,16 @@ impl Document {
             // new note: the comparison runs again with it under a new id, so
             // the original note is deleted with its reference and the edited
             // one inserted with its own. Nothing was written to this document.
+            // The ids found are the reconciled ones: back to the input's.
+            let moved = moved
+                .iter()
+                .map(|&id| {
+                    footnote_ids
+                        .iter()
+                        .find(|(_, to)| **to == id)
+                        .map_or(id, |(&from, _)| from)
+                })
+                .collect::<Vec<_>>();
             let Some((next, ids)) = renumbered_footnotes(&original, edited_input, &moved)? else {
                 return Err(Error::Other(format!(
                     "comparison would give footnote {} more physical references than either input: its reference moved to another site",
@@ -6442,21 +6453,22 @@ fn moved_pending_references(
 /// the original uses it. Nothing changes when a note is referenced twice or
 /// outside the main story, when a reference sits in a tracked change, or
 /// while note custody of an earlier comparison is pending.
+/// Returns each edited id it changed, mapped to the id it gave.
 fn reconcile_footnote_ids(
     original: &Document,
     edited: &mut Document,
     renumbered: &[i32],
-) -> Result<()> {
+) -> Result<HashMap<i32, i32>> {
     let (Some(left_part), Some(right_part)) =
         (FootnotePart::of(original)?, FootnotePart::of(edited)?)
     else {
-        return Ok(());
+        return Ok(HashMap::new());
     };
     if left_part.xml == right_part.xml
         || !note_markers(original)?.is_empty()
         || !note_markers(edited)?.is_empty()
     {
-        return Ok(());
+        return Ok(HashMap::new());
     }
     let references = |document: &Document| -> Result<Option<Vec<i32>>> {
         let sites = footnote_reference_sites(document)?;
@@ -6471,7 +6483,7 @@ fn reconcile_footnote_ids(
         Ok((unique.len() == ids.len()).then_some(ids))
     };
     let (Some(left_ids), Some(right_ids)) = (references(original)?, references(edited)?) else {
-        return Ok(());
+        return Ok(HashMap::new());
     };
     let texts = |part: &FootnotePart| -> Result<HashMap<i32, String>> {
         let tree = crate::revision::XmlTree::parse(part.xml.as_bytes())?;
@@ -6527,7 +6539,7 @@ fn reconcile_footnote_ids(
     }
     ids.retain(|from, to| from != to);
     if ids.is_empty() {
-        return Ok(());
+        return Ok(HashMap::new());
     }
     let notes = rewrite_word_ids(right_part.xml.as_bytes(), "footnote", &ids)?;
     crate::document::set_story_source_xml(edited, &right_part.name, notes)?;
@@ -6540,7 +6552,8 @@ fn reconcile_footnote_ids(
         "footnoteReference",
         &ids,
     )?;
-    crate::document::set_story_source_xml(edited, &main, body)
+    crate::document::set_story_source_xml(edited, &main, body)?;
+    Ok(ids)
 }
 
 /// The `w:t` text under the element `index`.
@@ -6606,6 +6619,15 @@ fn renumbered_footnotes(
     {
         return Ok(None);
     }
+    let normal = part.normal();
+    let moved = moved
+        .iter()
+        .copied()
+        .filter(|id| normal.contains_key(id))
+        .collect::<Vec<_>>();
+    if moved.is_empty() {
+        return Ok(None);
+    }
     let mut next = FootnotePart::of(original)?
         .iter()
         .chain([&part])
@@ -6613,7 +6635,7 @@ fn renumbered_footnotes(
         .max()
         .unwrap_or(0);
     let mut ids = HashMap::new();
-    for &id in moved {
+    for id in moved {
         next = next
             .checked_add(1)
             .ok_or_else(|| Error::Other("comparison footnote ids are exhausted".into()))?;
