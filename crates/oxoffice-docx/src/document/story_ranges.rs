@@ -722,12 +722,22 @@ impl Document {
             let is_word = word_element(&namespace);
             drop(namespace);
             let after = reader.buffer_position() as usize;
-            // Markers inside tracked deleted or moved-away text count, as the
-            // story marker scan places them at the next accepted boundary.
+            // Comment markers inside tracked deleted or moved-away text count,
+            // as the story marker scan places them at the next accepted
+            // boundary; other markers there stay hidden, as it hides them.
+            let tracked_away = stack
+                .iter()
+                .any(|(word, name, _)| *word && matches!(name.as_slice(), b"del" | b"moveFrom"));
+            let comment_marker = is_word
+                && matches!(
+                    &event,
+                    Event::Start(element) | Event::Empty(element)
+                        if matches!(element.local_name().as_ref(), b"commentRangeStart" | b"commentRangeEnd")
+                );
             let hidden = stack.iter().any(|(word, name, start)| {
                 *word && matches!(name.as_slice(), b"smartTag" | b"customXml" | b"fldSimple")
                     || *word && name == b"txbxContent" && *start > owner.full.start
-            });
+            }) || (tracked_away && !comment_marker);
             if let Event::End(_) = &event {
                 stack.pop();
             }

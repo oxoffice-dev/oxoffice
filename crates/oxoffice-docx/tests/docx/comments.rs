@@ -2129,6 +2129,11 @@ fn a_range_edge_inside_tracked_deleted_or_moved_text_reads_at_the_next_accepted_
             format!("<w:p>{}{}{end}</w:p>", moved(start), run("kept")),
             "kept",
         ),
+        // The end inside moved-away text.
+        (
+            format!("<w:p>{start}{}{}</w:p>", run("kept"), moved(end)),
+            "kept",
+        ),
         // Both edges inside a tracked insertion.
         (
             format!(
@@ -2246,12 +2251,39 @@ fn the_google_copy_of_the_contract_reads_the_anchors_of_the_word_copy() {
         anchors.sort();
         anchors
     };
-    let word = anchors("word/contract.docx");
+    let mut word = anchors("word/contract.docx");
     let google = anchors("google/contract.docx");
     // Google drops the resolved comment; every anchor it keeps reads as Word's.
-    assert_eq!(google.len(), word.len() - 1);
-    for anchor in &google {
-        assert!(word.contains(anchor), "{anchor:?} not in {word:?}");
+    let resolved = corpus_doc("word/contract.docx")
+        .comments()
+        .iter()
+        .find(|comment| comment.resolved() == Some(true))
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+        .expect("the Word copy keeps the resolved comment");
+    word.remove(word.iter().position(|anchor| *anchor == resolved).unwrap());
+    assert_eq!(google, word);
+}
+
+#[test]
+fn the_google_thread_starting_inside_a_deletion_moves_with_its_reply() {
+    let mut doc = corpus_doc("google/contract.docx");
+    let (root, reply) = {
+        let comments = doc.comments();
+        let reply = comments
+            .iter()
+            .find(|comment| comment.parent_id().is_some())
+            .expect("a reply");
+        (reply.parent_id().unwrap(), reply.id())
+    };
+    doc.move_comment_to_text(root, "Confidential Information", 0)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    for id in [root, reply] {
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some("Confidential Information"),
+            "comment {id}"
+        );
     }
 }
 
@@ -2276,4 +2308,41 @@ fn a_comment_inside_a_tracked_insertion_can_be_removed() {
     let main = doc.part_xml("word/document.xml").unwrap();
     assert!(!main.contains("comment"), "{main}");
     assert!(main.contains("30 days"), "{main}");
+}
+
+#[test]
+fn accepting_or_rejecting_the_change_a_comment_sits_on_keeps_the_comment() {
+    // Google Docs starts the first thread of its contract copy inside the
+    // deletion of the tracked change it discusses.
+    let mut doc = corpus_doc("google/contract.docx");
+    let before = doc
+        .comments()
+        .iter()
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+        .collect::<Vec<_>>();
+    doc.accept_all().unwrap();
+    let doc = reopen(&mut doc);
+    let after = doc
+        .comments()
+        .iter()
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before);
+
+    // A comment inside a tracked insertion, the insertion rejected.
+    let (mut doc, id) = commented_paragraph(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:ins {}>"#,
+            r#"<w:r><w:t xml:space="preserve">within </w:t></w:r><w:commentRangeStart w:id="ID"/>"#,
+            r#"<w:r><w:t>30 days</w:t></w:r><w:commentRangeEnd w:id="ID"/></w:ins>"#,
+            r#"<w:r><w:t xml:space="preserve"> now</w:t></w:r>"#,
+            r#"<w:r><w:commentReference w:id="ID"/></w:r></w:p>"#
+        ),
+        INS
+    ));
+    doc.reject_all().unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.comments().len(), 1);
+    assert_eq!(doc.comment_anchor_text(id).unwrap().as_deref(), Some(""));
+    assert_eq!(texts(&doc), ["Pay  now"]);
 }

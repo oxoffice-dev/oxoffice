@@ -1691,17 +1691,6 @@ fn project_comment_text(xml: &[u8], id: i32, incoming: bool) -> Result<CommentTe
                             .iter()
                             .any(|(name, word, _, _)| *word && name == b"txbxContent")
                     {
-                        // An edge inside tracked deleted or moved-away text
-                        // reads at the next position of the accepted view,
-                        // as Google Docs writes a comment on a tracked change.
-                        if stack
-                            .iter()
-                            .any(|(name, word, _, _)| *word && name.as_slice() == b"txbxContent")
-                        {
-                            return Err(invalid(
-                                "selected source is outside the accepted paragraph view",
-                            ));
-                        }
                         if stack.iter().any(|(name, word, _, _)| *word && name == b"r") {
                             return Err(invalid(
                                 "existing accepted run axis cannot faithfully represent a mid-run source boundary",
@@ -1715,6 +1704,11 @@ fn project_comment_text(xml: &[u8], id: i32, incoming: bool) -> Result<CommentTe
                                         | b"sdtContent"
                                         | b"hyperlink"
                                         | b"ins"
+                                        // An edge inside tracked deleted or
+                                        // moved-away text reads at the next
+                                        // position of the accepted view, as
+                                        // Google Docs writes a comment on a
+                                        // tracked change.
                                         | b"del"
                                         | b"moveTo"
                                         | b"moveFrom"
@@ -2305,40 +2299,68 @@ impl CT_P {
             for span in selected.markers.iter().rev() {
                 unmarked.drain(span.clone());
             }
-            let mut probe = CT_P::from_xml_fragment(&unmarked)?;
-            match probe.anchor_accepted_range(
-                selected.start,
-                selected.end,
-                RangeAnchor::Comment(id),
-            ) {
-                Ok(()) => {}
+            let unfaithful = |detail: String| {
+                OxmlError::InvalidValue(format!(
+                    "comment {id}: existing accepted run axis cannot faithfully represent selected source{detail}"
+                ))
+            };
+            // Place these edges with the checked writer and read them back.
+            let place = |start: Option<usize>,
+                         end: Option<usize>|
+             -> Result<
+                std::result::Result<CommentTextProjection, RangeAnchorError>,
+            > {
+                let mut probe = CT_P::from_xml_fragment(&unmarked)?;
+                if let Err(error) =
+                    probe.anchor_accepted_range(start, end, RangeAnchor::Comment(id))
+                {
+                    return Ok(Err(error));
+                }
+                let mut raw = Vec::new();
+                probe.to_xml(&mut Writer::new(&mut raw))?;
+                let raw = raw_with_external_bindings(&raw, &bindings)?;
+                let raw = raw_with_external_bindings(
+                    &raw,
+                    &[("w".to_owned(), crate::namespace::W_NS.to_owned())],
+                )?;
+                Ok(Ok(project_comment_text(
+                    &raw,
+                    id,
+                    open_at_start || start.is_none(),
+                )?))
+            };
+            match place(selected.start, selected.end)? {
+                Ok(placed) => {
+                    if selected.text != placed.text
+                        || selected.start_offset != placed.start_offset
+                        || selected.end_offset != placed.end_offset
+                    {
+                        return Err(unfaithful(String::new()));
+                    }
+                }
                 // The writer places no marker inside a tracked insertion or
-                // move, but the edges read there are already exact: the
-                // accepted view holds the inserted text.
+                // move, but an edge read there is already exact: the accepted
+                // view holds the inserted text. The other edge is still
+                // checked on its own.
                 Err(RangeAnchorError::InsideRevision { .. }) => {
-                    return Ok((selected.text, selected.open, selected.start, selected.end));
+                    for (start, end) in [(selected.start, None), (None, selected.end)] {
+                        if start.is_none() && end.is_none() {
+                            continue;
+                        }
+                        match place(start, end)? {
+                            Ok(placed) => {
+                                if (start.is_some() && placed.start_offset != selected.start_offset)
+                                    || (end.is_some() && placed.end_offset != selected.end_offset)
+                                {
+                                    return Err(unfaithful(String::new()));
+                                }
+                            }
+                            Err(RangeAnchorError::InsideRevision { .. }) => {}
+                            Err(error) => return Err(unfaithful(format!(": {error}"))),
+                        }
+                    }
                 }
-                Err(error) => {
-                    return Err(OxmlError::InvalidValue(format!(
-                        "comment {id}: existing accepted run axis cannot faithfully represent selected source: {error}"
-                    )));
-                }
-            }
-            let mut raw = Vec::new();
-            probe.to_xml(&mut Writer::new(&mut raw))?;
-            let raw = raw_with_external_bindings(&raw, &bindings)?;
-            let raw = raw_with_external_bindings(
-                &raw,
-                &[("w".to_owned(), crate::namespace::W_NS.to_owned())],
-            )?;
-            let placed = project_comment_text(&raw, id, open_at_start)?;
-            if selected.text != placed.text
-                || selected.start_offset != placed.start_offset
-                || selected.end_offset != placed.end_offset
-            {
-                return Err(OxmlError::InvalidValue(format!(
-                    "comment {id}: existing accepted run axis cannot faithfully represent selected source"
-                )));
+                Err(error) => return Err(unfaithful(format!(": {error}"))),
             }
         }
         Ok((selected.text, selected.open, selected.start, selected.end))

@@ -2589,10 +2589,16 @@ impl<'a> XmlTree<'a> {
             let mut kept = Vec::new();
             for &child in &self.elements[index].children {
                 let node = &self.elements[child];
-                if state
-                    .custody_pairs
-                    .iter()
-                    .any(|pair| pair.start <= node.start && node.end <= pair.end)
+                // A comment range marker the removed text holds stays at the
+                // place the text collapses to, as Word keeps a comment on a
+                // tracked change it accepts or rejects.
+                let range_marker = node.word
+                    && matches!(node.local.as_str(), "commentRangeStart" | "commentRangeEnd");
+                if range_marker
+                    || state
+                        .custody_pairs
+                        .iter()
+                        .any(|pair| pair.start <= node.start && node.end <= pair.end)
                 {
                     kept.extend(self.render_with_namespaces(child, state, false, destination)?);
                 }
