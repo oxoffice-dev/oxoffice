@@ -69,6 +69,27 @@ One pull request. Checked locally by the whole Python suite with
 the macOS job, its Python tests step, the compile of its Rust tests step,
 the wheel's tag, and that no cache is saved.
 
+## Outcome
+
+Shipped in #216. Its own run (one run, warm cache), against the medians of
+the Context:
+
+| Build and test | before | #216 |
+| --- | --- | --- |
+| macOS job | 15.3 min | 9.7 min |
+| macOS Python tests | 8.6 min | 3.0 min |
+| macOS Rust tests | 3.7 min | 4.3 min, compile 85 s as before |
+| macOS cache upload | 0.33 min | none |
+| Linux job | 13.3 min | 11.1 min |
+| Windows job | 14.8 min | 10.0 min |
+
+The same 333 Python tests passed (2 skipped) and 930 Rust tests; the wheel
+kept its `macosx_11_0_arm64` tag. The deployment target saved nothing on
+that warm run: the Rust tests step still compiled the 20 workspace crates,
+whose features differ, so the expected crate less was not seen; what it
+gives a cold run is not measured. Aligning the features stays the next
+lever for the Rust tests step.
+
 ## Links
 
 - [Nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md)
