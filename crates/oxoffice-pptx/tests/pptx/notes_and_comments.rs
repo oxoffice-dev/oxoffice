@@ -1345,6 +1345,21 @@ fn a_duplicated_legacy_thread_keeps_its_reply_on_the_copied_parent() {
         3,
         "each commented slide has its own part"
     );
+    let comments_of = |slide: &str| {
+        let relationship = package
+            .get_part_rels(slide)?
+            .get_by_type(rel_types::COMMENTS)?;
+        Some(OpcPackage::resolve_rel_target(slide, &relationship.target).to_string())
+    };
+    assert_eq!(
+        comments_of("/ppt/slides/slide3.xml").as_deref(),
+        Some("/ppt/comments/comment1.xml")
+    );
+    assert_eq!(
+        comments_of("/ppt/slides/slide5.xml").as_deref(),
+        Some("/ppt/comments/comment2.xml"),
+        "the source keeps its own part, the copy takes the new one"
+    );
     let copy = comment_parts
         .iter()
         .find(|part| !part.ends_with("/comment1.xml") && !part.ends_with("/comment2.xml"))

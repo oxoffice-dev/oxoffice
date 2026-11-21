@@ -10287,7 +10287,8 @@ impl Presentation {
     /// The copy has its own notes and its own modern comments, whose comment
     /// and reply ids are fresh and whose anchors follow the copy. Its legacy
     /// comments are copied into a part of its own, each taking its author's
-    /// next index.
+    /// next index; a legacy reply whose parent comment is on another slide
+    /// brings a copy of that parent along, as an import does.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
