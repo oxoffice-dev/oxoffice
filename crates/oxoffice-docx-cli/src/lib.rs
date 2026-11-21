@@ -307,8 +307,10 @@ enum Command {
     ///
     /// Bookmark ids, which Word renumbers on every save, and the `_Toc` names
     /// a rebuilt table of contents gives its heading bookmarks are no change:
-    /// a body bookmark both files hold keeps the original's id and name, and
-    /// the links and page references of the edited file follow it.
+    /// a body bookmark both files hold keeps the original's id, a heading
+    /// paired with one of the original's takes its `_Toc` name, a new heading
+    /// takes a fresh one where the original uses its own, and the links and
+    /// page references of the edited file follow them.
     Compare {
         /// Original DOCX file
         original: PathBuf,

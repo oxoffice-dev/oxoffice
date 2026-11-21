@@ -1176,6 +1176,37 @@ fn a_heading_removed_and_another_added_further_down_keep_their_own_bookmarks() {
     assert_every_entry_links_its_heading(&copy, &["Intro", "Scope", "End"]);
 }
 
+#[test]
+fn a_heading_renamed_after_a_changed_table_keeps_its_bookmark() {
+    // The bookmark is the same in both versions: the heading is revised in
+    // place, whatever the table before it gained.
+    let document = |rows: &[&str], heading: &str| {
+        let rows = rows
+            .iter()
+            .map(|text| {
+                format!("<w:tr><w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>")
+            })
+            .collect::<String>();
+        doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>{rows}</w:tbl><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="5" w:name="_Toc5"/><w:r><w:t>{heading}</w:t></w:r><w:bookmarkEnd w:id="5"/></w:p><w:p><w:r><w:t>Body.</w:t></w:r></w:p>"#
+        ))
+    };
+    let mut doc = redline(
+        document(&["r1", "r2"], "Results"),
+        &document(&["r1", "r2", "r3"], "Findings"),
+    );
+    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["Results"]);
+    assert!(
+        revision_texts(&doc, RevisionKind::Insertion).contains(&"Findings".to_owned()),
+        "{:?}",
+        revision_texts(&doc, RevisionKind::Insertion)
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Findings", "Body."]);
+    assert_eq!(bookmark_names(&copy), ["_Toc5"]);
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc5"]);
+}
+
 /// The instruction of every field of the body, in order.
 fn field_instructions(doc: &Document) -> Vec<String> {
     let mut instructions = Vec::new();
