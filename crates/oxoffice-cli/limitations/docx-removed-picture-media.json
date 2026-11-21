@@ -1,0 +1,9 @@
+{
+  "id": "docx-removed-picture-media",
+  "format": "docx",
+  "area": "pictures",
+  "title": "A picture removed through its location stays in the saved file",
+  "symptom": "Rust remove_content_at and Python pop_content take out the paragraph that holds the picture but keep the picture's image relationship and media part, so the saved file still carries the picture",
+  "workaround": "for a body picture in a paragraph of its own, remove that paragraph by index (Rust and Python remove_content), which drops media nothing shows any more; none for a picture in a header, a footer or a table cell",
+  "issue": 197
+}
