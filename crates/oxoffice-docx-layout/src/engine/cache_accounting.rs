@@ -1344,6 +1344,7 @@ fn page_frame_retained_bytes(page: &PageFrame) -> usize {
                 data, content_type, ..
             } => data.capacity().saturating_add(content_type.capacity()),
             PositionedElement::LinkAnnotation { url, .. } => url.capacity(),
+            PositionedElement::Destination { name, .. } => name.capacity(),
             PositionedElement::Group(group) => group
                 .children
                 .capacity()

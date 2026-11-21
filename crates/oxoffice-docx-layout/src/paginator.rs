@@ -4937,6 +4937,10 @@ fn translate_element_shallow(element: &mut PositionedElement, dx: f64, dy: f64) 
             rect.x += dx;
             rect.y += dy;
         }
+        PositionedElement::Destination { point, .. } => {
+            point.x += dx;
+            point.y += dy;
+        }
         // A marker moves with its band, which becomes the widget.
         PositionedElement::FormField(fragment) => {
             fragment.rect.x += dx;
@@ -5787,6 +5791,8 @@ fn render_para_split(
             widow_control: para.widow_control,
             heading_level: None,
             heading_text: None,
+            // The bookmarks land on the first fragment.
+            bookmarks: Vec::new(),
             list: para.list,
             structure_id: para.structure_id(),
             // The continuation keeps the logical input sequence for text
@@ -6284,6 +6290,18 @@ fn render_paragraph_lines(
             width: line.available_width + hanging_left,
             height: line.height,
         });
+        // The paragraph's bookmarks land at the top of its first line.
+        if owner_line == 0 {
+            for name in &para.bookmarks {
+                elements.push(PositionedElement::Destination {
+                    name: name.clone(),
+                    point: Point {
+                        x: geometry.margin_left + line.indent_left,
+                        y: geometry.margin_top + y,
+                    },
+                });
+            }
+        }
         let mark_item = |elements: &mut Vec<PositionedElement>,
                          mark: Option<oxoffice_layout::FormMark>,
                          rect: Rect| {
@@ -6895,9 +6913,9 @@ fn render_paragraph_lines(
                 PositionedElement::Text(_)
                 | PositionedElement::MultilingualText(_)
                 | PositionedElement::LinkAnnotation { .. } => Some(structure_id),
-                PositionedElement::MarkedContent { .. } | PositionedElement::FormField(_) => {
-                    continue;
-                }
+                PositionedElement::MarkedContent { .. }
+                | PositionedElement::FormField(_)
+                | PositionedElement::Destination { .. } => continue,
                 _ => None,
             };
             let detached =

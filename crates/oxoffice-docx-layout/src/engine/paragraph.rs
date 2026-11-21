@@ -649,9 +649,7 @@ fn layout_paragraph_with_source_and_table(
     let mut run_hyperlink_url: std::collections::HashMap<usize, String> =
         std::collections::HashMap::new();
     for hl in &para.hyperlinks {
-        if let Some(ref rel_id) = hl.rel_id
-            && let Some(url) = input.hyperlink_urls.get(rel_id)
-        {
+        if let Some(url) = hyperlink_target(hl, input) {
             for run_idx in hl.run_start..hl.run_end {
                 run_hyperlink_url.insert(run_idx, url.clone());
             }
@@ -887,8 +885,7 @@ fn layout_paragraph_with_source_and_table(
                 projected
                     .hyperlink_index
                     .and_then(|index| para.hyperlinks.get(index))
-                    .and_then(|hyperlink| hyperlink.rel_id.as_deref())
-                    .and_then(|rel_id| input.hyperlink_urls.get(rel_id).cloned())
+                    .and_then(|hyperlink| hyperlink_target(hyperlink, input))
             });
 
         // Word writes each entry of a table of contents as a hyperlink to a
@@ -2179,6 +2176,15 @@ fn layout_paragraph_with_source_and_table(
     result.right_to_left = right_to_left;
     result.heading_level = heading_level;
     result.heading_text = heading_level.map(|_| heading_text);
+    result.bookmarks = para
+        .bookmark_markers
+        .iter()
+        .chain(block_before)
+        .chain(block_after)
+        .filter(|bookmark| bookmark.is_start())
+        .filter_map(|bookmark| bookmark.name())
+        .map(str::to_owned)
+        .collect();
     result.change_bar = change_bar_color(para, input);
     result.list = list_num_id.map(|num_id| (num_id, list_ilvl.min(8) as u8));
     let (anchored, anchors) = collect_anchored_drawings(
@@ -2240,6 +2246,22 @@ fn drop_trailing_display_break(
         if let Some(style) = styles.remove(&key) {
             styles.insert(key - 1, style);
         }
+    }
+}
+
+/// Where a hyperlink goes: its relationship's URL, else `#` and the bookmark
+/// its anchor names, an internal link.
+fn hyperlink_target(
+    hyperlink: &oxoffice_docx_oxml::text::HyperlinkSpan,
+    input: &LayoutInput,
+) -> Option<String> {
+    match hyperlink.rel_id.as_deref() {
+        Some(rel_id) => input.hyperlink_urls.get(rel_id).cloned(),
+        None => hyperlink
+            .anchor
+            .as_deref()
+            .filter(|anchor| !anchor.is_empty())
+            .map(|anchor| format!("#{anchor}")),
     }
 }
 

@@ -433,6 +433,11 @@ impl<'a> SvgState<'a> {
     }
 
     fn emit_link(&mut self, rect: Rect, url: &str, path: &str, output: &mut String) {
+        // An internal link lands on a bookmark that one page's SVG cannot
+        // hold, so it is left out rather than drawn as a dead anchor.
+        if url.starts_with('#') {
+            return;
+        }
         if !is_safe_link(url) {
             self.diagnose(path, "active or unsupported link target was omitted");
             return;

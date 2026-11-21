@@ -1479,6 +1479,121 @@ fn an_external_hyperlink_becomes_a_link_annotation_over_its_text() {
     assert_eq!(linked.concat(), "the full report");
 }
 
+/// A document whose first paragraph links to bookmark `target`, and whose
+/// third page starts with a "Results" heading bookmarked `results`.
+fn doc_linking_to(target: &str) -> Document {
+    let mut doc = Document::new();
+    doc.add_paragraph("See ")
+        .add_internal_hyperlink("the results", target, None);
+    doc.add_paragraph("Method").page_break_before(true);
+    doc.add_paragraph("Results")
+        .style("Heading1")
+        .page_break_before(true);
+    let index = doc.content_count() - 1;
+    let range = oxoffice_docx::RunRange {
+        start: oxoffice_docx::RunPosition {
+            body_index: index,
+            run_index: 0,
+        },
+        end: oxoffice_docx::RunPosition {
+            body_index: index,
+            run_index: 1,
+        },
+    };
+    doc.add_bookmark("results", range).unwrap();
+    doc
+}
+
+#[test]
+fn an_internal_hyperlink_goes_to_the_top_of_its_bookmark() {
+    let doc = reopen(&mut doc_linking_to("results"));
+    // One page's SVG has nowhere to land, so it draws no dead anchor.
+    let svg = doc
+        .render_page_to_svg_deterministic(0)
+        .unwrap()
+        .unwrap()
+        .svg;
+    assert!(!svg.contains("href=\"#"), "{svg}");
+    let pdf = pdf_of(&doc);
+    assert!(pdf.links(0).is_empty(), "no URI link");
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty());
+    let results = page_with(&pdf, "Results");
+    assert_eq!(results, 2);
+    let heading = line_of(&pdf, results, "Results");
+    for (page, top, _) in &links {
+        assert_eq!(*page, results, "{links:?}");
+        assert!(
+            *top > heading.y && *top < heading.y + 30.0,
+            "the destination {top} is the top of the heading's line at {}",
+            heading.y
+        );
+    }
+    let covered: String = pdf
+        .drawn(0)
+        .into_iter()
+        .filter(|piece| {
+            links.iter().any(|(_, _, [left, bottom, right, top])| {
+                piece.x >= left - 0.01
+                    && piece.end <= right + 0.01
+                    && piece.y > *bottom
+                    && piece.y < *top
+            })
+        })
+        .map(|piece| piece.text)
+        .collect();
+    assert_eq!(covered, "the results");
+}
+
+#[test]
+fn an_internal_hyperlink_to_a_missing_bookmark_gets_no_link() {
+    let pdf = pdf_of(&reopen(&mut doc_linking_to("nowhere")));
+    assert_eq!(pdf.page_text(0), "See the results");
+    assert!(pdf.internal_links(0).is_empty());
+    assert!(pdf.links(0).is_empty());
+}
+
+#[test]
+fn the_table_of_contents_of_a_word_thesis_goes_to_its_headings() {
+    let pdf = pdf_of(&corpus_doc("word/thesis.docx"));
+    let mut checked = 0;
+    for page in 0..pdf.page_count() {
+        let drawn = pdf.drawn(page);
+        for (target, top, [left, bottom, right, rect_top]) in pdf.internal_links(page) {
+            let entry: String = drawn
+                .iter()
+                .filter(|piece| {
+                    piece.x >= left - 0.01
+                        && piece.end <= right + 0.01
+                        && piece.y > bottom
+                        && piece.y < rect_top
+                })
+                .map(|piece| piece.text.as_str())
+                .collect();
+            // The letters of the entry's title, without its numbers, leader
+            // dots and page number, which a caption draws in another order.
+            let letters =
+                |text: &str| -> String { text.chars().filter(|ch| ch.is_alphabetic()).collect() };
+            let title: String = letters(&entry).chars().take(12).collect();
+            if title.is_empty() {
+                continue;
+            }
+            let lands = lines(&pdf.drawn(target))
+                .into_iter()
+                .any(|line| (line.y - top).abs() < 40.0 && letters(&line.text).contains(&title));
+            assert!(
+                lands,
+                "the entry {entry:?} goes to page {target} at {top}, which draws no {title:?} there"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 5,
+        "the table of contents is clickable: {checked}"
+    );
+}
+
 #[test]
 fn headings_become_the_outline_with_their_levels_and_pages() {
     let mut doc = Document::new();
@@ -1633,12 +1748,16 @@ fn every_link_of_a_libreoffice_letter_is_tagged_in_its_paragraph() {
                 parent.get(b"S").and_then(Object::as_name).ok(),
                 Some(&b"P"[..])
             );
+            assert!(annotation.get(b"Contents").is_ok(), "a link is described");
+            assert_eq!(
+                pdf.page(page).get(b"Tabs").and_then(Object::as_name).ok(),
+                Some(&b"S"[..]),
+                "a page with links tabs in structure order"
+            );
             tagged += 1;
         }
     }
     assert!(tagged >= 3, "the letter's three links are tagged: {tagged}");
-    // The PDF/UA claim holds: every link is tagged.
-    assert!(pdf.xmp().is_some_and(|xmp| xmp.contains("pdfuaid:part")));
 }
 
 // ---- Fonts and scripts ----

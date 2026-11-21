@@ -2,7 +2,7 @@
 //! technology finds them in reading order.
 
 use lopdf::{Dictionary, Object, ObjectId};
-use oxoffice_layout::{LayoutResult, Point, PositionedElement, Rect};
+use oxoffice_layout::{GroupElement, LayoutResult, Point, PositionedElement, Rect, Transform};
 
 use crate::forms::{
     field, fragment, label, line, paragraph, paragraph_kids, pdf, tagged, text_kind, with_fields,
@@ -12,6 +12,10 @@ use crate::support::{Pdf, layout, run};
 const URL: &str = "https://example.com/report";
 
 fn link(x: f64) -> PositionedElement {
+    link_to(x, URL)
+}
+
+fn link_to(x: f64, url: &str) -> PositionedElement {
     PositionedElement::LinkAnnotation {
         rect: Rect {
             x,
@@ -19,7 +23,14 @@ fn link(x: f64) -> PositionedElement {
             width: 60.0,
             height: 14.0,
         },
-        url: URL.to_owned(),
+        url: url.to_owned(),
+    }
+}
+
+fn destination(name: &str, y: f64) -> PositionedElement {
+    PositionedElement::Destination {
+        name: name.to_owned(),
+        point: Point { x: 72.0, y },
     }
 }
 
@@ -186,4 +197,58 @@ fn an_untagged_link_carries_no_structure_key() {
     assert_eq!(links.len(), 1);
     assert!(links[0].1.get(b"StructParent").is_err());
     assert!(read.catalog().get(b"StructTreeRoot").is_err());
+}
+
+#[test]
+fn an_internal_link_goes_to_the_first_destination_of_its_name() {
+    let layout = tagged(layout(vec![
+        vec![paragraph(vec![
+            run("See the results", Point { x: 72.0, y: 112.0 }, 11.0),
+            link_to(100.0, "#results"),
+            link_to(200.0, "#nowhere"),
+        ])],
+        // The destination sits in a group moved down 50 points; a later one
+        // of the same name loses.
+        vec![
+            PositionedElement::Group(GroupElement {
+                transform: Transform {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 0.0,
+                    d: 1.0,
+                    e: 0.0,
+                    f: 50.0,
+                },
+                clip: None,
+                opacity: 1.0,
+                effects: Vec::new(),
+                children: vec![destination("results", 250.0)],
+            }),
+            destination("results", 600.0),
+        ],
+    ]));
+    let read = pdf(&layout);
+    let links = links(&read, 0);
+    assert_eq!(
+        links.len(),
+        1,
+        "a link to no destination gets no annotation"
+    );
+    let (id, annotation) = links[0];
+    let action = read
+        .resolve(annotation.get(b"A").unwrap())
+        .as_dict()
+        .unwrap();
+    assert_eq!(action.get(b"S").unwrap().as_name().unwrap(), b"GoTo");
+    let destination = read.resolve(action.get(b"D").unwrap()).as_array().unwrap();
+    assert_eq!(destination[0].as_reference().unwrap(), read.page_ids()[1]);
+    assert_eq!(destination[1].as_name().unwrap(), b"XYZ");
+    let top = destination[3].as_float().unwrap();
+    assert!(
+        (f64::from(top) - (crate::support::PAGE_HEIGHT - 300.0)).abs() < 0.01,
+        "{top}"
+    );
+    // An internal link is tagged like any other.
+    let key = annotation.get(b"StructParent").unwrap().as_i64().unwrap();
+    assert_eq!(object_ref(&read, parent_tree_entry(&read, key)).0, id);
 }

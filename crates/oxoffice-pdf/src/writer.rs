@@ -564,13 +564,19 @@ pub(crate) fn write_pdf_impl(
     }
 
     // ── Annotation refs ──────────────────────────────────────────────
+    // An internal link whose destination no page draws gets no annotation.
+    let destinations = link_destinations(layout);
     let mut annotation_refs: HashMap<(usize, usize), Ref> = HashMap::new();
     for (page_idx, page) in layout.pages.iter().enumerate() {
         let mut elem_idx = 0;
         walk(&page.elements, &mut |element, _| {
             let current_idx = elem_idx;
             elem_idx += 1;
-            if let PositionedElement::LinkAnnotation { .. } = element {
+            if let PositionedElement::LinkAnnotation { url, .. } = element
+                && url
+                    .strip_prefix('#')
+                    .is_none_or(|name| destinations.contains_key(name))
+            {
                 annotation_refs.insert((page_idx, current_idx), alloc());
             }
         });
@@ -996,10 +1002,26 @@ pub(crate) fn write_pdf_impl(
                     annot.struct_parent(key);
                     annot.contents(TextStr(url));
                 }
-                annot
-                    .action()
-                    .action_type(ActionType::Uri)
-                    .uri(Str(url.as_bytes()));
+                match url
+                    .strip_prefix('#')
+                    .and_then(|name| destinations.get(name))
+                {
+                    Some(&(target_page, y)) => {
+                        let top = layout.pages[target_page].height - y;
+                        annot
+                            .action()
+                            .action_type(ActionType::GoTo)
+                            .destination()
+                            .page(page_ids[target_page])
+                            .xyz(0.0, top as f32, None);
+                    }
+                    None => {
+                        annot
+                            .action()
+                            .action_type(ActionType::Uri)
+                            .uri(Str(url.as_bytes()));
+                    }
+                }
                 annot.finish();
             }
         });
@@ -1039,6 +1061,22 @@ pub(crate) fn write_pdf_impl(
     }
 
     pdf.finish()
+}
+
+/// Where each named destination lands: the first page that draws it, and
+/// its height from the page's top. The first of the same name wins.
+fn link_destinations(layout: &LayoutResult) -> HashMap<String, (usize, f64)> {
+    let mut destinations = HashMap::new();
+    for (page_idx, page) in layout.pages.iter().enumerate() {
+        walk(&page.elements, &mut |element, transform| {
+            if let PositionedElement::Destination { name, point } = element {
+                destinations
+                    .entry(name.clone())
+                    .or_insert((page_idx, transform.apply(*point).y));
+            }
+        });
+    }
+    destinations
 }
 
 fn layout_uses_notdef(layout: &LayoutResult) -> bool {

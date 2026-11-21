@@ -636,7 +636,7 @@ pub(crate) fn has_content_stream_output(elements: &[PositionedElement]) -> bool 
         PositionedElement::MultilingualText(run) => {
             !(run.logical_text.is_empty() && run.glyph_ids.is_empty())
         }
-        PositionedElement::LinkAnnotation { .. } => false,
+        PositionedElement::LinkAnnotation { .. } | PositionedElement::Destination { .. } => false,
         // Drawn in its field's appearance, or without marks on a later page.
         PositionedElement::FormField(_) => false,
         PositionedElement::Group(group) => has_content_stream_output(&group.children),
