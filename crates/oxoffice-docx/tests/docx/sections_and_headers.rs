@@ -1013,3 +1013,43 @@ fn an_edited_document_keeps_the_header_order_it_was_read_in() {
     });
     assert!(order[0] < order[1] && order[1] < order[2], "{xml}");
 }
+
+/// The header reference types of the final section, in the order written.
+fn header_order(bytes: &[u8]) -> Vec<String> {
+    let xml = String::from_utf8(main_part(bytes)).unwrap();
+    xml.split("<w:headerReference w:type=\"")
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn replacing_a_header_keeps_its_place_among_the_references() {
+    for order in [&["default", "first"][..], &["even", "default", "first"]] {
+        let bytes = headers_listed(order);
+        let original = Document::from_bytes(&bytes).unwrap();
+        let mut edited = Document::from_bytes(&bytes).unwrap();
+        edited.set_header("New header");
+        let saved = edited.to_bytes().unwrap();
+        assert_eq!(header_order(&saved), order);
+        let mut redline = original;
+        redline
+            .compare(
+                &Document::from_bytes(&saved).unwrap(),
+                "Reviewer",
+                "2026-01-01T00:00:00Z",
+            )
+            .expect("a replaced header compares");
+    }
+}
+
+#[test]
+fn a_new_footer_leaves_the_header_order_it_read() {
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    doc.set_footer("New footer");
+    assert_eq!(
+        header_order(&doc.to_bytes().unwrap()),
+        ["even", "default", "first"]
+    );
+}
