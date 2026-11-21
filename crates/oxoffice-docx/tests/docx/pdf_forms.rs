@@ -1673,3 +1673,61 @@ fn a_legacy_field_inside_another_field_stays_static_and_says_so() {
         .count();
     assert_eq!(said, 1);
 }
+
+fn named_values(doc: &Document) -> Vec<(String, String)> {
+    doc.layout_with_options(fillable())
+        .unwrap()
+        .layout
+        .form_fields
+        .iter()
+        .map(|field| match &field.kind {
+            FormFieldKind::Text { value, .. } => (field.name.clone(), value.clone()),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn controls_inside_a_container_follow_document_order_through_its_tracked_changes() {
+    // A tracked insertion inside the container comes before a later
+    // control: the repeated name goes to the later one.
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="person"/><w:richText/></w:sdtPr><w:sdtContent><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:ins><w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Doe</w:t></w:r></w:sdtContent></w:sdt></w:sdtContent></w:sdt></w:p>"#,
+    );
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Jane".to_owned()),
+            ("name_2".to_owned(), "Doe".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_control_in_a_tracked_change_inside_a_hyperlink_follows_document_order() {
+    let doc = doc_with_body(
+        r#"<w:p><w:hyperlink w:anchor="top"><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:ins></w:hyperlink><w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Doe</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Jane".to_owned()),
+            ("name_2".to_owned(), "Doe".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_control_whose_text_is_only_a_tracked_insertion_follows_a_legacy_field_before_it() {
+    let first = legacy(
+        0,
+        "First",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("one"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{first}<w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="late"/><w:text/></w:sdtPr><w:sdtContent><w:ins w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>two</w:t></w:r></w:ins></w:sdtContent></w:sdt></w:p>"#
+    ));
+    assert_eq!(names_of(&doc), ["First", "late"]);
+}
