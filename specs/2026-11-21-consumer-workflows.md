@@ -66,6 +66,10 @@ found four bugs (#340 to #343).
    timings vary by minutes between runs of the same tree, so each pull
    request measures the tests it adds on their own (PR set and `full` set)
    and states both in its body.
+   Where one corpus copy alone costs far more than that in the `ci` profile
+   (a thesis: minutes of layout with debug assertions), the pull request
+   set walks a small document the tests build with the same landmarks, and
+   the corpus copies run in the `full` set (orchestrator, 2026-11-21).
 3. **What breaks** becomes an issue and a strict known failure
    (`#[should_panic(expected = ...)]`, or `xfail(strict=True)` in Python),
    and a limitation entry when users can work around it. A walk over every
@@ -145,7 +149,7 @@ unless named; PR numbers refer to the plan below.
 | W9 | Comments and tracked changes in a named author's name, others' left alone | partly | `comment_on_text::tables_only_counts_the_matches_of_table_cells_only`, `revisions_and_compare::one_revision_is_accepted_or_rejected_by_its_id` | In the edit walk: comments and a redline by one author, accept and reject by id, the other authors' revisions and threads unchanged (PR 4) |
 | W10 | Apply a house style to a record, idempotent | partly | `paragraphs_and_styles`, `lists::restart_numbering_gives_one_item_a_new_start_and_the_items_after_follow`, `tables::cell_shading_borders_margins_and_alignment_survive_a_save`, `test_table_properties.py` | #342 strict on the French Word report (PR 4); a restyle twice on the record (PR 7). Open: #82, #91, #234, #235 |
 | W11 | A short document from scratch | covered | the behaviour modules | Opening in Word without repair stays on the Mac, on demand |
-| W12 | Deck checks (text fit at 100 % and 95 % of a frame, shapes, ids, transitions) and touch-ups | partly; text layout missing | `shapes_walk`, `shapes_and_text::editing_text_keeps_the_formatting_of_the_run_it_replaces`, `replace_text_counts_every_match_across_slides_groups_and_tables`, `pictures::replacing_the_image_keeps_the_picture_geometry_name_and_alt_text`; renders in #328 | The deck walk on the training and pitch copies: `text_layout` of every frame at 100 % and 95 % pinned, a rounded rectangle's inset, transitions, arrowheads (PR 6) |
+| W12 | Deck checks (text fit at 100 % and 95 % of a frame, shapes, ids, transitions) and touch-ups | partly; text layout missing | `shapes_walk`, `shapes_and_text::editing_text_keeps_the_formatting_of_the_run_it_replaces`, `replace_text_counts_every_match_across_slides_groups_and_tables`, `pictures::replacing_the_image_keeps_the_picture_geometry_name_and_alt_text`; renders in #328 | The deck walk on the training and pitch copies: `text_layout` of every frame at 100 % and 95 % pinned, a rounded rectangle's inset, transitions, duplicate shape ids reported, the arrowheads of the training connectors (PR 6) |
 | W13 | Text for agents: JSON with run formatting, Markdown | partly | `docx_stories`, `test_story_paragraphs.py`, `html_and_markdown` | Keys of `text --json` (PR 3) |
 
 ### Past breakages
@@ -155,11 +159,11 @@ unless named; PR numbers refer to the plan below.
 | R1 | Google-saved files refused for decimal measurements and duplicate drawing ids | holds on the corpus; duplicate ids different (kept) | Not added: the Google copies hold it |
 | R2 | A rebuilt TOC one page earlier than Word's | not measurable: no copy holds Word's own TOC pages | Word's own TOC pages: render layer B |
 | R3 | TOC with `\u` refused next to a vertically merged cell | holds (synthetic probe) | Strict test in the thesis walk's module (PR 5); on the record (PR 7) |
-| R4 | TOC refused over a heading deleted with tracked changes | holds (synthetic probe) | Strict test in the same module (PR 5) |
+| R4 | TOC refused over a heading deleted with tracked changes | broke with `\u` once the paragraph mark is deleted, as Word writes a removed heading; fixed by #414 (#387) | `fields_and_toc::a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it` (#414) |
 | R5 | A bare `0` length refused after an upgrade | holds, except `set_default_paragraph_format` | #343 strict (PR 4) |
 | R6 | An unused linked style pair cannot be removed | breaks | Strict known failure on `word/report.docx` (PR 4); #342 |
 | R7 | Removing a paragraph orphaned its comment; anchor text, moving a comment, paragraph-scoped replace | holds; paragraph-scoped replace untested | In the edit walk: no orphan marker in the saved XML (PR 4) |
-| R8 | Comparison refused renumbered `_Toc` bookmarks and moved footnote references | holds with Word-style fields; breaks on oxoffice's own rebuilt TOC (`PAGEREF` as simple fields) | Strict known failure on #66, in the redline walk (PR 5) |
+| R8 | Comparison refused renumbered `_Toc` bookmarks and moved footnote references | holds with Word-style fields; breaks on oxoffice's own rebuilt TOC (`PAGEREF` as simple fields); the thesis copies stop earlier, on an equation (#408), LibreOffice's TOC control (#413) or a footnote added to Google's copy (#419) | Strict known failures on #66, #408, #413 and #419, in the redline walk (PR 5) |
 | R9 | Threads and resolved state keyed on a comment's first paragraph; a newline in a comment | holds; tests would not see a regression (reads accept any paragraph id) | XML pins on the last paragraph id in the edit walk (PR 4); Google's form on the record (PR 7) |
 | R10 | Run shading not drawn | breaks | Pixel probe, strict known failure (PR 5); #341 |
 | R11 | Replacement through Python 2 to 4 times the CLI | open | Not added; #5 |
@@ -213,7 +217,7 @@ independent review on the local commit before the push.
 | 2 | ~~The migration note from rdocx and its name check~~: dropped by the user on 2026-11-21 | — | — | — |
 | 3 | `test(cli)`: keys-only snapshots of what the tools read (`docx text`, `diff`, `revision list`, `layout`, `comment list`, `pptx text`, `fit`, `shapes`); `docx diff` of the authored copy against each producer's, differences pinned, one added comment = one row; `replace --map` with a wrong count writes nothing; `OXOFFICE_WORKFLOWS` in `ci.yml` (CI session) | existing files of `crates/oxoffice-cli/tests/` | PR (report, contract), `main` (every family) | 5 s |
 | 4 | `test(docx)`: the edit and review walk (W3, W8, W9, I1, I3, R7, R9) on the contract copies; #342 and #343 strict | `checked_replacement.rs`, `comments.rs`, `paragraphs_and_styles.rs`, a part-comparison helper in `support.rs`; `crates/oxoffice-py/tests/test_lengths.py` | PR (Word copy), `main` (every copy) | 8 s |
-| 5 | `test(docx)`: the page numbers, PDF and redline walk (W4, W5, W6, R3, R4, R8, R12) on the thesis copies; #340, #66 and #341 strict | `fields_and_toc.rs`, `revisions_and_compare.rs`, `pdf.rs` | PR (Word copy), `main` (every copy) | 8 s |
+| 5 | `test(docx)`: the page numbers, PDF and redline walk (W4, W5, W6, R3, R8, R12) on the thesis copies; #340, #66, #408, #413 and #419 strict (#341, fixed by #357, is pinned by `pdf.rs`) | `fields_and_toc.rs`, `revisions_and_compare.rs` | PR (a small thesis the tests build), `main` (every copy) | 8 s |
 | 6 | `test(pptx)`: the deck walk (W12, R13, R14) on the training and pitch copies, gated on the `render` feature (the WebAssembly job builds `--test pptx` without it) | `shapes_and_text.rs`, `slides_and_layouts.rs`; the changelog rule for layout moves in `docs/DEVELOPMENT.md` | PR | 3 s |
 | 7 | `test(corpus)`: the `record` family (French style ids from Word, an unused linked pair, a TOC with `\u` next to a vertical merge, tables with pale run shading, content controls, comments by two people with a two-paragraph thread, tracked changes by one author), authored and saved by LibreOffice, then by Word and Word then Google on the Mac (a `word-google/` route in `produce.py`); the walks of PR 4 and PR 5 and a restyle twice on its copies | `tests/corpus/`, the modules above | PR | 6 s |
 

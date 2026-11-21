@@ -852,8 +852,10 @@ fn sequence_repeat_display(
 
 /// Replace field placeholder GlyphRuns with actual values.
 ///
-/// Text aligned on a right, centre or decimal tab stop is then moved so it
-/// stays on its stop with the value in place of the placeholder.
+/// The changes in width of fields in aligned text (after a right, centre or
+/// decimal tab stop, or on a right-aligned or centred line) are added to
+/// `changes`, for [`realign_tab_aligned_text`] to move that text once every
+/// field of the page, STYLEREF included, holds its value.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn substitute_fields(
     elements: &mut PaintedElements,
@@ -866,9 +868,9 @@ pub(super) fn substitute_fields(
     sequence: Option<&crate::WordSequenceSnapshot>,
     sequence_boundary: usize,
     fm: &mut FontManager,
+    changes: &mut Vec<FieldWidthChange>,
 ) -> Result<FieldOccurrenceState> {
     let mut state = FieldOccurrenceState::new(elements)?;
-    let mut changes = Vec::new();
     substitute_field_values(
         elements,
         page_number,
@@ -880,12 +882,9 @@ pub(super) fn substitute_fields(
         sequence,
         sequence_boundary,
         fm,
-        &mut changes,
+        changes,
         &mut state,
     )?;
-    if !changes.is_empty() {
-        realign_tab_aligned_text(elements.coordinate_elements_mut(), &changes);
-    }
     Ok(state)
 }
 

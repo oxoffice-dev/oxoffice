@@ -541,6 +541,115 @@ pub(crate) fn parse_integer_measurement<T: TryFrom<i64>>(
     T::try_from(signed(rounded)).map_err(|_| error("is out of range"))
 }
 
+/// Twips per unit of an `ST_UniversalMeasure`, as numerator over
+/// denominator.
+pub(crate) const UNIVERSAL_UNITS: [(&str, i128, i128); 6] = [
+    ("in", 1440, 1),
+    ("cm", 144000, 254),
+    ("mm", 14400, 254),
+    ("pt", 20, 1),
+    ("pc", 240, 1),
+    ("pi", 240, 1),
+];
+
+/// Read an `ST_TwipsMeasure` or `ST_SignedTwipsMeasure`: twips, written as
+/// an integer as [`parse_integer_measurement`] reads it or, in
+/// Transitional, as a universal measure such as `"2in"` or `"1.5cm"`,
+/// rounded to the nearest twip. A value outside `T` is refused with an
+/// error naming the element, the attribute and the value.
+pub(crate) fn parse_twips_measure<T: TryFrom<i64>>(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+) -> Result<T> {
+    parse_universal_measure(element, attribute, value, 1)
+}
+
+/// Read an `ST_HpsMeasure` or `ST_SignedHpsMeasure`: half-points, written as
+/// an integer or, in Transitional, a universal measure such as `"12pt"`,
+/// rounded to the nearest half-point.
+pub(crate) fn parse_half_point_measure<T: TryFrom<i64>>(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+) -> Result<T> {
+    parse_universal_measure(element, attribute, value, 10)
+}
+
+/// An integer as [`parse_integer_measurement`] reads it, or a universal
+/// measure in twips divided by `twips_per_unit`.
+fn parse_universal_measure<T: TryFrom<i64>>(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+    twips_per_unit: i128,
+) -> Result<T> {
+    let Some((number, numerator, denominator)) =
+        UNIVERSAL_UNITS
+            .iter()
+            .find_map(|(unit, numerator, denominator)| {
+                value
+                    .strip_suffix(unit)
+                    .map(|number| (number, *numerator, *denominator))
+            })
+    else {
+        return parse_integer_measurement(element, attribute, value);
+    };
+    let error = |problem: &str| {
+        OxmlError::InvalidValue(format!(
+            "{}/@{} {value:?} {problem}",
+            String::from_utf8_lossy(element),
+            String::from_utf8_lossy(attribute),
+        ))
+    };
+    let scaled = scaled_decimal(number, numerator, denominator * twips_per_unit)
+        .ok_or_else(|| error("is not a measurement or is out of range"))?;
+    T::try_from(i64::from(scaled)).map_err(|_| error("is out of range"))
+}
+
+/// `-?[0-9]+(\.[0-9]+)?` times `numerator / denominator`, rounded half away
+/// from zero in decimal arithmetic from the first eighteen fraction digits,
+/// if it fits an `i32`.
+pub(crate) fn scaled_decimal(number: &str, numerator: i128, denominator: i128) -> Option<i32> {
+    let (negative, unsigned) = match number.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, number),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (unsigned.contains('.') && fraction.is_empty())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    // The smallest scale is 2 half-points a point, so eleven whole digits never
+    // fit an i32; with eighteen fraction digits the products stay well
+    // inside an i128, and checked arithmetic refuses anything else.
+    let whole = whole.trim_start_matches('0');
+    let fraction = &fraction[..fraction.len().min(18)];
+    if whole.len() > 10 {
+        return None;
+    }
+    // "0", "00" or "-0" leave no digit once the zeros are trimmed.
+    let digits = format!("{whole}{fraction}");
+    let digits: i128 = if digits.is_empty() {
+        0
+    } else {
+        digits.parse().ok()?
+    };
+    let scale = 10i128
+        .checked_pow(fraction.len() as u32)?
+        .checked_mul(denominator)?;
+    let product = digits.checked_mul(numerator)?;
+    let rounded = product
+        .checked_mul(2)?
+        .checked_add(scale)?
+        .checked_div(scale.checked_mul(2)?)?;
+    let signed = if negative { -rounded } else { rounded };
+    i32::try_from(signed).ok()
+}
+
 pub(crate) fn parse_word_toggle(e: &BytesStart, word_prefixes: &[String]) -> Result<bool> {
     let val = get_word_val_attr(e, word_prefixes)?;
     Ok(ST_OnOff::from_str_or_default(val.as_deref()).is_on())
@@ -651,6 +760,9 @@ pub fn protected_source_residual(
     let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
     reader.config_mut().trim_text(false);
     let mut nodes = Vec::<ResidualNode>::new();
+    // The prefixes each node's subtree names: the only bindings of its scope
+    // that can change what the node says.
+    let mut used = Vec::<std::collections::BTreeSet<String>>::new();
     let mut stack = Vec::<usize>::new();
     loop {
         let before = reader.buffer_position() as usize;
@@ -751,6 +863,7 @@ pub fn protected_source_residual(
                         scope.insert(prefix, uri);
                     }
                 }
+                used.push(residual_used_prefixes(&element, reader.resolver())?);
                 let index = nodes.len();
                 let end = reader.buffer_position() as usize;
                 nodes.push(ResidualNode {
@@ -768,6 +881,9 @@ pub fn protected_source_residual(
                 }
                 if !empty {
                     stack.push(index);
+                } else if let Some(parent) = parent {
+                    let named = used[index].clone();
+                    used[parent].extend(named);
                 }
             }
             Event::End(_) => {
@@ -775,6 +891,10 @@ pub fn protected_source_residual(
                     .pop()
                     .ok_or_else(|| OxmlError::InvalidValue("unbalanced residual source".into()))?;
                 nodes[index].range.end = reader.buffer_position() as usize;
+                if let Some(parent) = stack.last().copied() {
+                    let named = used[index].clone();
+                    used[parent].extend(named);
+                }
             }
             Event::Eof => break,
             event => {
@@ -795,11 +915,69 @@ pub fn protected_source_residual(
     if !stack.is_empty() {
         return Err(OxmlError::InvalidValue("unclosed residual source".into()));
     }
+    // A binding no name of the subtree uses says nothing about it: a save
+    // that drops or adds an unused root declaration changes no fact.
+    for (node, named) in nodes.iter_mut().zip(&used) {
+        node.scope.retain(|prefix, _| named.contains(prefix));
+    }
     let mut output = Vec::new();
     if !nodes.is_empty() {
         residual_emit_children(0, &nodes, &source, &[], &mut output);
     }
     Ok(output)
+}
+
+/// The prefixes one element names: its own, its attributes' and those the
+/// values of markup-compatibility and `xsi:type` attributes name.
+fn residual_used_prefixes(
+    element: &BytesStart<'_>,
+    resolver: &quick_xml::name::NamespaceResolver,
+) -> Result<std::collections::BTreeSet<String>> {
+    let prefix_of = |name: &[u8]| -> Result<String> {
+        Ok(name
+            .iter()
+            .position(|byte| *byte == b':')
+            .map(|at| std::str::from_utf8(&name[..at]))
+            .transpose()?
+            .unwrap_or_default()
+            .to_owned())
+    };
+    let mut named = std::collections::BTreeSet::from([prefix_of(element.name().as_ref())?]);
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        let key = attribute.key.as_ref();
+        if key == b"xmlns" || key.starts_with(b"xmlns:") {
+            continue;
+        }
+        let prefix = prefix_of(key)?;
+        if prefix.is_empty() {
+            // `mc:Choice` names the prefixes it requires in an unprefixed
+            // attribute.
+            if key == b"Requires" {
+                named.extend(
+                    std::str::from_utf8(&attribute.value)?
+                        .split_whitespace()
+                        .map(str::to_owned),
+                );
+            }
+            continue;
+        }
+        let (namespace, local) = resolver.resolve_attribute(attribute.key);
+        let namespace = residual_namespace(namespace)?;
+        let value =
+            attribute.decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?;
+        named.extend(
+            crate::text::root_attribute_value_prefixes(
+                namespace.as_deref(),
+                local.as_ref(),
+                &value,
+            )
+            .into_iter()
+            .map(str::to_owned),
+        );
+        named.insert(prefix);
+    }
+    Ok(named)
 }
 
 fn residual_namespace(namespace: quick_xml::name::ResolveResult<'_>) -> Result<Option<String>> {
@@ -986,5 +1164,34 @@ fn residual_emit_children(
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The residual of a paragraph whose root binds `x` to `x_uri` and `y`
+    /// to `y_uri`, with an alternate content requiring `x`.
+    fn residual(x_uri: &str, y_uri: &str) -> Vec<String> {
+        let xml = format!(
+            concat!(
+                r#"<w:p xmlns:w="{w}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="{x}" xmlns:y="{y}">"#,
+                r#"<w:r><mc:AlternateContent><mc:Choice Requires="x"><w:t>a</w:t></mc:Choice>"#,
+                r#"<mc:Fallback><w:t>b</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+            ),
+            w = W_NS,
+            x = x_uri,
+            y = y_uri,
+        );
+        protected_source_residual(xml.as_bytes(), &[]).unwrap()
+    }
+
+    #[test]
+    fn a_residual_keeps_the_bindings_its_names_and_requirements_use() {
+        // A binding nothing names is the part's: another root may drop it.
+        assert_eq!(residual("urn:x", "urn:a"), residual("urn:x", "urn:b"));
+        // A binding `Requires` names is read.
+        assert_ne!(residual("urn:a", "urn:y"), residual("urn:b", "urn:y"));
     }
 }

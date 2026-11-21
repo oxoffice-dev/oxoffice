@@ -134,3 +134,51 @@ pub fn new_deck() -> Presentation {
 pub fn slide_texts(prs: &Presentation) -> Vec<String> {
     prs.slides().map(|slide| slide.text()).collect()
 }
+
+/// `lines` equal `tests/snapshots/<name>.txt` of this crate, one line each.
+/// A change shows as a diff of that file in the pull request that makes it;
+/// `OXOFFICE_SNAPSHOTS_UPDATE=1` rewrites it, outside CI only. Line ends are
+/// read either way: a Windows checkout may turn them into CRLF.
+#[allow(dead_code)]
+pub fn assert_snapshot(name: &str, lines: &[String]) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/snapshots")
+        .join(format!("{name}.txt"));
+    let update = std::env::var("OXOFFICE_SNAPSHOTS_UPDATE").is_ok_and(|value| value == "1");
+    assert!(
+        !(update && std::env::var_os("CI").is_some()),
+        "OXOFFICE_SNAPSHOTS_UPDATE is for a local run, never under CI"
+    );
+    if update {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text = lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+        fs::write(&path, text).unwrap();
+        return;
+    }
+    let stored = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}; write it with OXOFFICE_SNAPSHOTS_UPDATE=1",
+            path.display()
+        )
+    });
+    let stored = stored.lines().map(str::to_owned).collect::<Vec<_>>();
+    assert!(
+        stored == lines,
+        "{} differs (rewrite it with OXOFFICE_SNAPSHOTS_UPDATE=1 if the change is meant):\n{}",
+        path.display(),
+        stored
+            .iter()
+            .zip(lines)
+            .filter(|(old, new)| old != new)
+            .map(|(old, new)| format!("- {old}\n+ {new}"))
+            .chain(
+                (stored.len() != lines.len())
+                    .then(|| { format!("{} lines stored, {} now", stored.len(), lines.len()) })
+            )
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

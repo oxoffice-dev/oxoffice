@@ -13,8 +13,8 @@ use crate::numbering::{
     local_namespace_overrides, merged_owner_bindings, namespace_bindings, word_prefixes_at,
 };
 use crate::properties::{
-    CT_Shd, get_word_val_attr, is_word_attribute, is_word_element, parse_integer_measurement,
-    parse_word_toggle,
+    CT_Shd, UNIVERSAL_UNITS, get_word_val_attr, is_word_attribute, is_word_element,
+    parse_integer_measurement, parse_twips_measure, parse_word_toggle, scaled_decimal,
 };
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::revision::{CT_Revision, RevisionKind};
@@ -30,7 +30,8 @@ pub(crate) enum TableScalar {
     Measurement,
     /// A `CT_TblWidth` `w:w`: an integer, a percent or a universal measure.
     Width,
-    /// A cell margin `w:w`: an integer or a universal measure, not a percent.
+    /// A cell margin `w:w`: an integer or a universal measure; a percent
+    /// reads as no margin.
     MarginWidth,
     Unsigned,
     PositiveSpan,
@@ -79,9 +80,7 @@ impl TableScalar {
     }
     pub(crate) fn decode(self, element: &[u8], attribute: &[u8], value: &str) -> Result<()> {
         match self {
-            Self::Measurement => {
-                parse_integer_measurement::<i32>(element, attribute, value).map(|_| ())
-            }
+            Self::Measurement => parse_twips_measure::<i32>(element, attribute, value).map(|_| ()),
             Self::Width => parse_measurement_or_percent(element, attribute, value).map(|_| ()),
             Self::MarginWidth => parse_margin_width(element, attribute, value).map(|_| ()),
             Self::Unsigned | Self::PositiveSpan => self.unsigned(value).map(|_| ()),
@@ -502,7 +501,7 @@ impl CT_TblCellMar {
             if is_word_attribute(attr.key.as_ref(), b"w", word_prefixes) {
                 let value = std::str::from_utf8(&attr.value)?;
                 let val = parse_margin_width(e.name().as_ref(), attr.key.as_ref(), value)?;
-                return Ok(Some(Twips(val)));
+                return Ok(val.map(Twips));
             }
         }
         Ok(None)
@@ -846,24 +845,17 @@ fn parse_measurement_or_percent(
     attribute: &[u8],
     value: &str,
 ) -> Result<(i32, Option<&'static str>)> {
-    // Twips per unit, as numerator over denominator.
-    const UNITS: [(&str, i128, i128); 6] = [
-        ("in", 1440, 1),
-        ("cm", 144000, 254),
-        ("mm", 14400, 254),
-        ("pt", 20, 1),
-        ("pc", 240, 1),
-        ("pi", 240, 1),
-    ];
     let spelled = value
         .strip_suffix('%')
         .map(|number| (number, 50, 1, "pct"))
         .or_else(|| {
-            UNITS.iter().find_map(|(unit, numerator, denominator)| {
-                value
-                    .strip_suffix(unit)
-                    .map(|number| (number, *numerator, *denominator, "dxa"))
-            })
+            UNIVERSAL_UNITS
+                .iter()
+                .find_map(|(unit, numerator, denominator)| {
+                    value
+                        .strip_suffix(unit)
+                        .map(|number| (number, *numerator, *denominator, "dxa"))
+                })
         });
     let Some((number, numerator, denominator, width_type)) = spelled else {
         return Ok((parse_integer_measurement(element, attribute, value)?, None));
@@ -879,59 +871,13 @@ fn parse_measurement_or_percent(
 }
 
 /// Read a cell margin `w:w`: twips, written as an integer or a universal
-/// measure. A margin is kept in twips, so a percent is refused.
-fn parse_margin_width(element: &[u8], attribute: &[u8], value: &str) -> Result<i32> {
+/// measure. Word ignores a margin written as a percent, so it reads as no
+/// margin.
+fn parse_margin_width(element: &[u8], attribute: &[u8], value: &str) -> Result<Option<i32>> {
     match parse_measurement_or_percent(element, attribute, value)? {
-        (_, Some("pct")) => Err(OxmlError::InvalidValue(format!(
-            "{}/@{} {value:?}: a cell margin cannot be a percent",
-            String::from_utf8_lossy(element),
-            String::from_utf8_lossy(attribute),
-        ))),
-        (twips, _) => Ok(twips),
+        (_, Some("pct")) => Ok(None),
+        (twips, _) => Ok(Some(twips)),
     }
-}
-
-/// `-?[0-9]+(\.[0-9]+)?` times `numerator / denominator`, rounded half away
-/// from zero in decimal arithmetic from the first eighteen fraction digits,
-/// if it fits an `i32`.
-fn scaled_decimal(number: &str, numerator: i128, denominator: i128) -> Option<i32> {
-    let (negative, unsigned) = match number.strip_prefix('-') {
-        Some(unsigned) => (true, unsigned),
-        None => (false, number),
-    };
-    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    if whole.is_empty()
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || (unsigned.contains('.') && fraction.is_empty())
-        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    // The smallest scale is 20 twips a point, so eleven whole digits never
-    // fit an i32; with eighteen fraction digits the products stay well
-    // inside an i128, and checked arithmetic refuses anything else.
-    let whole = whole.trim_start_matches('0');
-    let fraction = &fraction[..fraction.len().min(18)];
-    if whole.len() > 10 {
-        return None;
-    }
-    // "0", "00" or "-0" leave no digit once the zeros are trimmed.
-    let digits = format!("{whole}{fraction}");
-    let digits: i128 = if digits.is_empty() {
-        0
-    } else {
-        digits.parse().ok()?
-    };
-    let scale = 10i128
-        .checked_pow(fraction.len() as u32)?
-        .checked_mul(denominator)?;
-    let product = digits.checked_mul(numerator)?;
-    let rounded = product
-        .checked_mul(2)?
-        .checked_add(scale)?
-        .checked_div(scale.checked_mul(2)?)?;
-    let signed = if negative { -rounded } else { rounded };
-    i32::try_from(signed).ok()
 }
 
 #[allow(non_snake_case)]
@@ -942,7 +888,7 @@ impl CT_TblPPr {
             let attr = attr?;
             let key = attr.key.as_ref();
             let value = std::str::from_utf8(&attr.value)?;
-            let measurement = || parse_integer_measurement(e.name().as_ref(), key, value);
+            let measurement = || parse_twips_measure(e.name().as_ref(), key, value);
             if is_word_attribute(key, b"leftFromText", word_prefixes) {
                 position.left_from_text = Some(Twips(measurement()?));
             } else if is_word_attribute(key, b"rightFromText", word_prefixes) {
@@ -1666,7 +1612,7 @@ impl CT_TblGrid {
             let attr = attr?;
             if is_word_attribute(attr.key.as_ref(), b"w", word_prefixes) {
                 let value = std::str::from_utf8(&attr.value)?;
-                width = Twips(parse_integer_measurement(
+                width = Twips(parse_twips_measure(
                     element.name().as_ref(),
                     attr.key.as_ref(),
                     value,
@@ -2268,11 +2214,7 @@ fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) ->
         let key = attr.key.as_ref();
         let val = std::str::from_utf8(&attr.value)?;
         if is_word_attribute(key, b"val", prefixes) {
-            height = Some(Twips(parse_integer_measurement(
-                e.name().as_ref(),
-                key,
-                val,
-            )?));
+            height = Some(Twips(parse_twips_measure(e.name().as_ref(), key, val)?));
         } else if is_word_attribute(key, b"hRule", prefixes) {
             rule = Some(val.to_string());
         } else if key != b"xmlns" && !key.starts_with(b"xmlns:") {

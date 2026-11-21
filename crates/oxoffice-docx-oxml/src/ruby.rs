@@ -32,7 +32,9 @@ use quick_xml::{Reader, Writer};
 
 use crate::error::Result;
 use crate::numbering::word_prefixes_at;
-use crate::properties::{get_word_val_attr, is_word_element, parse_word_toggle};
+use crate::properties::{
+    get_word_val_attr, is_word_element, parse_half_point_measure, parse_word_toggle,
+};
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::text::{CT_R, parse_run_raw};
 use crate::units::HalfPoint;
@@ -359,11 +361,12 @@ impl RubyPropertyChild {
     }
 }
 
-/// Read a `w:val` half-point attribute, leaving the slot empty when the
-/// required attribute is absent or is not a number.
+/// Read a `w:val` half-point attribute, an integer or a universal measure,
+/// leaving the slot empty when the required attribute is absent or is not
+/// a measure.
 fn half_point_value(element: &BytesStart<'_>, prefixes: &[String]) -> Result<Option<HalfPoint>> {
     Ok(get_word_val_attr(element, prefixes)?
-        .and_then(|value| value.parse().ok())
+        .and_then(|value| parse_half_point_measure(element.name().as_ref(), b"w:val", &value).ok())
         .map(HalfPoint))
 }
 

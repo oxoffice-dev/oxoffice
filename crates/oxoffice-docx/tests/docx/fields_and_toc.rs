@@ -5,8 +5,8 @@ use oxoffice_docx::{
     CaptionOptions, ContentLocation, CrossReferenceOptions, Document, Field, FieldDateTime,
     FieldEvaluationContext, FieldKind, FieldOutcome, HdrFtrType, ParagraphItemRef, RenderOptions,
     RevisionView, RunItemRef, RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind,
-    StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, TableOfFiguresOptions,
-    TocRebuildReport,
+    StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, TabAlignment, TabLeader,
+    TableOfFiguresOptions, TocRebuildReport,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -2173,4 +2173,217 @@ fn story_ranges_read_bookmarks_that_start_or_end_between_paragraphs() {
             .story_ranges()
             .unwrap_or_else(|error| panic!("{name}: {error}"));
     }
+}
+
+/// What a tool does after each edit pass on a long document: rebuild the
+/// table of contents, refresh the page fields from the layout, save. The TOC
+/// lists the headings to its depth, in the file's own TOC styles, with the
+/// pages of the layout; the header and footer parts keep the page caches
+/// Word left there; a second pass changes no byte; and the PDF has as many
+/// pages as the layout.
+#[test]
+fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
+    crate::support::run_workflow("page-numbers", &crate::support::thesis_copies(), |path| {
+        let source = crate::support::workflow_source(path);
+        let pass = |bytes: &[u8]| {
+            let mut doc = Document::from_bytes(bytes).unwrap();
+            let toc = doc
+                .rebuild_toc()
+                .unwrap_or_else(|e| panic!("{path}: rebuild: {e}"));
+            let fields = doc.update_layout_backed_fields().unwrap();
+            (toc, fields, doc.to_bytes().unwrap())
+        };
+        let (toc, fields, once) = pass(&source);
+        let (_, _, twice) = pass(&once);
+        assert!(once == twice, "{path}: a second pass changes no byte");
+
+        // Only the body's caches move; header and footer parts stay as saved.
+        // A file without TOC styles (the small thesis, Google's copy) gets them.
+        let before = crate::support::package_parts(&source);
+        let after = crate::support::package_parts(&once);
+        let changed = after
+            .iter()
+            .filter(|(name, bytes)| before.get(*name) != Some(*bytes))
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        let has_toc_styles = String::from_utf8_lossy(&before["word/styles.xml"])
+            .contains(r#"w:styleId="TOC1""#)
+            || String::from_utf8_lossy(&before["word/styles.xml"]).contains(r#"w:styleId="TM1""#);
+        let expected: &[&str] = if !has_toc_styles {
+            &["word/document.xml", "word/styles.xml"]
+        } else {
+            &["word/document.xml"]
+        };
+        assert_eq!(changed, expected, "{path}");
+        assert!(fields.page_reference_fields > 0, "{path}: {fields:?}");
+
+        // Two fields: the contents (`\o "1-3" \u`) list the headings of levels
+        // 1 to 3, the list of figures and tables (`\t "Caption,1"`) the
+        // captions; each entry in the TOC style of its level as the file
+        // names it (Word in French calls them TM1, TM2...). Google rewrites
+        // the list of figures as a second contents of the heading styles, so
+        // its copy lists the headings twice.
+        let doc = Document::from_bytes(&once).unwrap();
+        let mut expected = doc
+            .headings()
+            .into_iter()
+            .filter(|(level, _)| *level <= 3)
+            .collect::<Vec<_>>();
+        let first_list = expected.len();
+        if path.starts_with("google/") {
+            expected.extend(expected.clone());
+        } else {
+            expected.extend(
+                (0..doc.paragraph_count())
+                    .map(|index| doc.paragraph(index).unwrap())
+                    .filter(|paragraph| matches!(paragraph.style_id(), Some("Caption" | "Lgende")))
+                    .map(|paragraph| (1, paragraph.text())),
+            );
+        }
+        let toc_style = |level: u32| {
+            if path.starts_with("word/") {
+                format!("TM{level}")
+            } else {
+                format!("TOC{level}")
+            }
+        };
+        let entries = (0..doc.paragraph_count())
+            .map(|index| doc.paragraph(index).unwrap())
+            .filter(|paragraph| {
+                paragraph
+                    .style_id()
+                    .is_some_and(|style| style.starts_with("TOC") || style.starts_with("TM"))
+            })
+            .map(|paragraph| {
+                let text = paragraph.text();
+                let parts = text.split('\t').collect::<Vec<_>>();
+                let title = parts[parts.len().saturating_sub(2)].to_owned();
+                // The page number sits on a right tab with a dotted leader.
+                let dotted = (0..)
+                    .map_while(|index| paragraph.tab_stop(index))
+                    .any(|tab| {
+                        tab.checked_values().ok()
+                            == Some((TabAlignment::Right, Some(TabLeader::Dot)))
+                    });
+                assert!(dotted, "{path}: {title} has a dotted right tab");
+                (
+                    paragraph.style_id().unwrap().to_owned(),
+                    title,
+                    parts.last().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), toc.entry_count, "{path}");
+        assert_eq!(
+            entries
+                .iter()
+                .map(|(_, title, _)| title.as_str())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>(),
+            "{path}"
+        );
+        for ((style, title, page), (level, _)) in entries.iter().zip(&expected) {
+            assert_eq!(style, &toc_style(*level), "{path}: {title}");
+            assert!(
+                page.chars()
+                    .all(|c| c.is_ascii_digit() || "ivxlc".contains(c))
+                    && !page.is_empty(),
+                "{path}: {title} has a page, {page:?}"
+            );
+        }
+        // The pages follow the layout: on the small thesis each chapter starts
+        // a page; on a corpus copy the arabic pages of the contents, then of
+        // the list of figures, go back only where a section restarts at 1,
+        // and spread over the document.
+        let pages = entries
+            .iter()
+            .map(|(_, _, page)| page.as_str())
+            .collect::<Vec<_>>();
+        if path == crate::support::SMALL_THESIS {
+            assert_eq!(
+                pages,
+                ["1", "2", "2", "2", "3", "3", "3", "4", "4"],
+                "{path}"
+            );
+        } else {
+            let headings = first_list;
+            for list in [&pages[..headings], &pages[headings..]] {
+                let arabic = list
+                    .iter()
+                    .filter_map(|page| page.parse::<u32>().ok())
+                    .collect::<Vec<_>>();
+                // A section that restarts its numbering goes back to 1
+                // (Google numbers the front matter in arabic too).
+                assert!(
+                    arabic
+                        .windows(2)
+                        .all(|pair| pair[0] <= pair[1] || pair[1] == 1),
+                    "{path}: {pages:?}"
+                );
+            }
+            let mut distinct = pages[..headings].to_vec();
+            distinct.dedup();
+            assert!(distinct.len() > 5, "{path}: {pages:?}");
+        }
+
+        // The PDF on the small thesis and one corpus copy: every corpus
+        // file's render checks the same on the file as saved, and a thesis
+        // PDF costs a layout of its own.
+        if path != crate::support::SMALL_THESIS && !path.starts_with("word/") {
+            return;
+        }
+        let pdf = oxoffice_render_test::pdf::Pdf::read(&doc.to_pdf().unwrap());
+        assert_eq!(
+            pdf.page_count(),
+            doc.layout_deterministic().unwrap().layout.pages.len(),
+            "{path}: the PDF has the layout's pages"
+        );
+    });
+}
+
+/// A Word TOC field over levels 1 to 3 that also takes outline levels (`\u`),
+/// with one stale entry, followed by `body`.
+fn word_toc_before(body: &str) -> Document {
+    doc_with_body(&format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>
+        <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:r><w:t>Stale entry</w:t></w:r></w:p>
+        <w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>{body}"#
+    ))
+}
+
+// A TOC that takes outline levels was once refused when the document held a
+// table with a vertically merged cell.
+#[test]
+fn a_toc_taking_outline_levels_is_rebuilt_beside_a_vertically_merged_table() {
+    let cell = |merge: &str, text: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{merge}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let table = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>"#,
+        cell(r#"<w:vMerge w:val="restart"/>"#, "Merged"),
+        cell("", "First row"),
+        cell("<w:vMerge/>", ""),
+        cell("", "Second row"),
+    );
+    let mut doc = word_toc_before(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Scope</w:t></w:r></w:p>{table}
+        <w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Outline item</w:t></w:r></w:p>
+        <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Results</w:t></w:r></w:p>"#
+    ));
+    let report = doc
+        .rebuild_toc()
+        .expect("a merged cell does not block the rebuild");
+    assert_eq!(report.entry_count, 3);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..4],
+        ["Scope\t1", "Outline item\t1", "Results\t1"]
+    );
+    assert!(!texts(&doc).iter().any(|text| text.contains("Stale entry")));
+    assert_eq!(doc.tables().len(), 1, "the table is kept");
 }

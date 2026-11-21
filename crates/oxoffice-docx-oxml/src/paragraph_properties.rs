@@ -14,7 +14,7 @@ use crate::numbering::{
 };
 use crate::properties::{
     CT_Shd, get_word_val_attr, is_word_attribute, is_word_element,
-    modeled_attribute_carrier_occurrence, parse_integer_measurement, parse_word_toggle,
+    modeled_attribute_carrier_occurrence, parse_twips_measure, parse_word_toggle,
     raw_is_modeled_attribute_carrier, raw_occurrence, record_modeled_toggle_candidate,
     remove_redundant_modeled_toggle_candidate, replay_modeled_toggle_raw,
     toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
@@ -83,7 +83,7 @@ impl ParagraphMeasurement {
     ) -> Result<Self> {
         let measurement = || {
             value
-                .map(|value| parse_integer_measurement(element, attribute, value))
+                .map(|value| parse_twips_measure(element, attribute, value))
                 .transpose()
         };
         let integer = || value.map(str::parse).transpose();

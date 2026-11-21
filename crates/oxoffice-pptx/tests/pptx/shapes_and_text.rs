@@ -1873,3 +1873,187 @@ fn run_tooltip(prs: &Presentation) -> Option<String> {
         .tooltip
         .clone()
 }
+
+// ---- Text layout: does the text fit its frame ----
+// A tool checks every text frame of a deck at its width and at 95 % of it,
+// the margin it keeps for the fonts of other machines. The layout is the
+// renderer's, behind the `render` feature.
+
+/// One line per text frame of `prs`: its slide and name, then its line
+/// count, text height and overflow at the full width and at 95 % of it.
+#[cfg(feature = "render")]
+fn text_layout_table(prs: &Presentation) -> Vec<String> {
+    let full = prs.text_layout_deterministic(1.0).unwrap();
+    let narrow = prs.text_layout_deterministic(0.95).unwrap();
+    assert_eq!(full.len(), narrow.len());
+    let cell = |frame: &oxoffice_pptx::TextFrameLayout| {
+        let overflow = if frame.layout.overflow {
+            ", overflows"
+        } else {
+            ""
+        };
+        format!(
+            "{} lines {:.1} pt{overflow}",
+            frame.layout.lines.len(),
+            frame.layout.height
+        )
+    };
+    full.iter()
+        .zip(&narrow)
+        .map(|(full, narrow)| {
+            assert_eq!(
+                (full.slide_index, full.shape_id),
+                (narrow.slide_index, narrow.shape_id)
+            );
+            let name = full.name.clone().unwrap_or_default();
+            format!(
+                "slide {} | {name} | {} | at 95 %: {}",
+                full.slide_index + 1,
+                cell(full),
+                cell(narrow)
+            )
+        })
+        .collect()
+}
+
+// Every frame of the training and pitch decks of each producer, pinned: a
+// change of the text layout shows as a diff of these tables in the pull
+// request that makes it (docs/DEVELOPMENT.md, render tests).
+#[cfg(feature = "render")]
+#[test]
+fn the_text_layout_of_every_frame_of_the_training_and_pitch_decks_is_pinned() {
+    let copies = ["powerpoint", "google", "libreoffice", "authored"]
+        .into_iter()
+        .flat_map(|producer| ["training", "pitch"].map(|family| format!("{producer}/{family}")))
+        .collect::<Vec<_>>();
+    for copy in copies {
+        let table = text_layout_table(&corpus_deck(&format!("{copy}.pptx")));
+        assert!(!table.is_empty(), "{copy}");
+        crate::support::assert_snapshot(&format!("text-layout/{}", copy.replace('/', "-")), &table);
+    }
+}
+
+/// The layout of the one frame of a blank-slide deck holding a shape of
+/// this preset, `width` inches wide and high enough for one line, with
+/// `text`.
+#[cfg(feature = "render")]
+fn one_frame_layout(
+    preset: &str,
+    width: f64,
+    text: &str,
+    factor: f64,
+) -> oxoffice_pptx::TextFrameLayout {
+    let mut prs = blank_slide_deck();
+    prs.slide_mut(0)
+        .unwrap()
+        .add_shape(
+            preset,
+            Emu(IN),
+            Emu(IN),
+            Emu((width * IN as f64) as i64),
+            Emu(IN / 2),
+        )
+        .unwrap()
+        .set_text(text)
+        .unwrap();
+    let frames = reopen(&prs).text_layout_deterministic(factor).unwrap();
+    assert_eq!(frames.len(), 1);
+    frames.into_iter().next().unwrap()
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn a_frame_that_fits_its_width_can_overflow_at_ninety_five_percent() {
+    // The narrowest frame that keeps the text to one line: it fits at the
+    // full width, and the text no longer fits 95 % of it.
+    let text = "Stock levels are reviewed every week by the regional team";
+    let lines = |width: f64, factor: f64| one_frame_layout("rect", width, text, factor).layout;
+    let (mut narrow, mut wide) = (1.0, 8.0);
+    assert!(lines(narrow, 1.0).lines.len() > 1 && lines(wide, 1.0).lines.len() == 1);
+    while wide - narrow > 0.01 {
+        let middle = (narrow + wide) / 2.0;
+        if lines(middle, 1.0).lines.len() == 1 {
+            wide = middle;
+        } else {
+            narrow = middle;
+        }
+    }
+    let (full, reduced) = (lines(wide, 1.0), lines(wide, 0.95));
+    assert_eq!(
+        (full.lines.len(), full.overflow),
+        (1, false),
+        "fits at {wide} in"
+    );
+    assert_eq!(
+        (reduced.lines.len(), reduced.overflow),
+        (2, true),
+        "overflows at 95 %"
+    );
+    assert!(
+        (reduced.usable.width - full.usable.width * 0.95).abs() < 0.01,
+        "95 % of the usable width: {} and {}",
+        reduced.usable.width,
+        full.usable.width
+    );
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn a_rounded_rectangle_leaves_less_room_for_text_than_a_rectangle() {
+    let rect = one_frame_layout("rect", 3.0, "Fits", 1.0).layout;
+    let rounded = one_frame_layout("roundRect", 3.0, "Fits", 1.0).layout;
+    assert_eq!(rect.frame, rounded.frame, "same frame");
+    assert!(
+        rounded.usable.width < rect.usable.width,
+        "the corners take room: {} and {}",
+        rounded.usable.width,
+        rect.usable.width
+    );
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn a_text_layout_needs_a_finite_positive_width_factor() {
+    let prs = text_box_deck("Any text");
+    for factor in [0.0, -0.95, f64::NAN, f64::INFINITY] {
+        let error = prs
+            .text_layout_deterministic(factor)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("text layout width factor must be finite and positive"),
+            "{factor}: {error}"
+        );
+    }
+}
+
+// The connectors of the training deck's process slide end in an arrowhead,
+// in every producer's copy; Google writes the bare start as an explicit
+// `none`, the others leave it out.
+#[test]
+fn the_connectors_of_the_training_deck_read_their_arrowheads_from_every_producer() {
+    for producer in ["authored", "powerpoint", "google", "libreoffice"] {
+        let prs = corpus_deck(&format!("{producer}/training.pptx"));
+        let slide = prs.slide(4).unwrap();
+        let ends = slide
+            .shapes()
+            .filter(|shape| shape.kind() == ShapeKind::Connector)
+            .map(|shape| {
+                let line = shape.line().expect("a connector has its line");
+                let kind =
+                    |end: &Option<oxoffice_pptx::LineEnd>| end.as_ref().and_then(|end| end.kind);
+                (kind(&line.head_end), kind(&line.tail_end))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ends.len(), 6, "{producer}: {ends:?}");
+        for (head, tail) in ends {
+            assert_eq!(
+                tail,
+                Some(oxoffice_pptx::LineEndType::Triangle),
+                "{producer}"
+            );
+            let bare = (producer == "google").then_some(oxoffice_pptx::LineEndType::None);
+            assert_eq!(head, bare, "{producer}");
+        }
+    }
+}

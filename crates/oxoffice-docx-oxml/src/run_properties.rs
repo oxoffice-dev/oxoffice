@@ -9,11 +9,12 @@ use crate::borders::CT_BorderEdge;
 use crate::error::{OxmlError, Result};
 use crate::namespace::matches_local_name;
 use crate::properties::{
-    CT_Shd, get_word_val_attr, is_word_attribute, is_word_element, parse_integer_measurement,
-    parse_uchar_hex, parse_word_toggle, raw_is_modeled_attribute_carrier, raw_occurrence,
-    record_modeled_toggle_candidate, remove_redundant_modeled_toggle_candidate,
-    replay_modeled_toggle_raw, toggle_element_is_explicitly_empty,
-    toggle_has_unsupported_attributes, word_prefixes_at, write_toggle,
+    CT_Shd, get_word_val_attr, is_word_attribute, is_word_element, parse_half_point_measure,
+    parse_integer_measurement, parse_twips_measure, parse_uchar_hex, parse_word_toggle,
+    raw_is_modeled_attribute_carrier, raw_occurrence, record_modeled_toggle_candidate,
+    remove_redundant_modeled_toggle_candidate, replay_modeled_toggle_raw,
+    toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
+    write_toggle,
 };
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::revision::CT_Revision;
@@ -278,9 +279,7 @@ impl RunCompoundMeasurement {
 
     pub(crate) fn decode(self, element: &[u8], attribute: &[u8], value: &str) -> Result<Self> {
         Ok(match self {
-            Self::FitWidth(_) => {
-                Self::FitWidth(parse_integer_measurement(element, attribute, value)?)
-            }
+            Self::FitWidth(_) => Self::FitWidth(parse_twips_measure(element, attribute, value)?),
             Self::FitId(_) => Self::FitId(value.parse()?),
             Self::EastAsianId(_) => Self::EastAsianId(value.parse()?),
         })
@@ -586,23 +585,36 @@ impl RunMeasurement {
     }
 
     pub(crate) fn decode(self, element: &[u8], value: Option<&str>) -> Result<Self> {
-        let signed = || {
+        // Character spacing is in twips; sizes, kerning and position in
+        // half-points. Each takes a universal measure in Transitional.
+        let twips = || {
             value
-                .map(|value| parse_integer_measurement(element, b"w:val", value))
+                .map(|value| parse_twips_measure(element, b"w:val", value))
                 .transpose()
         };
-        let unsigned = || {
+        let half_points = || {
             value
-                .map(|value| parse_integer_measurement(element, b"w:val", value))
+                .map(|value| parse_half_point_measure(element, b"w:val", value))
+                .transpose()
+        };
+        let signed_half_points = || {
+            value
+                .map(|value| parse_half_point_measure(element, b"w:val", value))
                 .transpose()
         };
         Ok(match self {
-            Self::Size(_) => Self::Size(unsigned()?),
-            Self::SizeCs(_) => Self::SizeCs(unsigned()?),
-            Self::Spacing(_) => Self::Spacing(signed()?),
-            Self::Width(_) => Self::Width(value.map(str::parse).transpose()?),
-            Self::Position(_) => Self::Position(signed()?),
-            Self::Kern(_) => Self::Kern(unsigned()?),
+            Self::Size(_) => Self::Size(half_points()?),
+            Self::SizeCs(_) => Self::SizeCs(half_points()?),
+            Self::Spacing(_) => Self::Spacing(twips()?),
+            // ST_TextScale: a percent, written bare or, in Transitional,
+            // with a `%`.
+            Self::Width(_) => Self::Width(
+                value
+                    .map(|value| value.strip_suffix('%').unwrap_or(value).parse())
+                    .transpose()?,
+            ),
+            Self::Position(_) => Self::Position(signed_half_points()?),
+            Self::Kern(_) => Self::Kern(half_points()?),
         })
     }
 
@@ -2586,12 +2598,21 @@ pub(crate) fn validate_checked_property_child(
             ))
         })?;
         let valid = match name {
-            b"sz" | b"szCs" | b"kern" | b"w" => {
-                parse_integer_measurement::<i32>(element.name().as_ref(), b"w:val", &value)
+            b"sz" | b"szCs" | b"kern" => {
+                parse_half_point_measure::<i32>(element.name().as_ref(), b"w:val", &value)
                     .is_ok_and(|value| value >= 0)
             }
-            b"spacing" | b"position" => {
-                parse_integer_measurement::<i32>(element.name().as_ref(), b"w:val", &value).is_ok()
+            b"w" => parse_integer_measurement::<i32>(
+                element.name().as_ref(),
+                b"w:val",
+                value.strip_suffix('%').unwrap_or(&value),
+            )
+            .is_ok_and(|value| value >= 0),
+            b"spacing" => {
+                parse_twips_measure::<i32>(element.name().as_ref(), b"w:val", &value).is_ok()
+            }
+            b"position" => {
+                parse_half_point_measure::<i32>(element.name().as_ref(), b"w:val", &value).is_ok()
             }
             b"highlight" => ST_HighlightColor::from_str(&value).is_ok(),
             b"vertAlign" => matches!(value.as_str(), "baseline" | "superscript" | "subscript"),
