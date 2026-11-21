@@ -1217,10 +1217,10 @@ fn band_size(size: Option<u32>) -> usize {
 }
 
 fn overlay_row_properties(target: &mut CT_TrPr, source: &CT_TrPr) {
-    if source.height.is_some() {
+    // `w:trHeight` is one element: a direct rule without a value (0, auto)
+    // replaces the inherited height too.
+    if source.height.is_some() || source.height_rule.is_some() {
         target.height = source.height;
-    }
-    if source.height_rule.is_some() {
         target.height_rule.clone_from(&source.height_rule);
     }
     if source.header.is_some() {
@@ -2414,5 +2414,34 @@ fn overlay_borders(target: &mut Option<CT_TblBorders>, source: &CT_TblBorders) {
     }
     if source.inside_v.is_some() {
         target.inside_v = source.inside_v.clone();
+    }
+}
+
+#[cfg(test)]
+mod row_height_overlay_tests {
+    use super::*;
+
+    #[test]
+    fn a_direct_row_height_rule_without_a_value_replaces_the_style_height() {
+        let mut resolved = CT_TrPr {
+            height: Some(oxoffice_docx_oxml::Twips(500)),
+            height_rule: Some("atLeast".to_owned()),
+            ..CT_TrPr::default()
+        };
+        let direct = CT_TrPr {
+            height_rule: Some("exact".to_owned()),
+            ..CT_TrPr::default()
+        };
+        overlay_row_properties(&mut resolved, &direct);
+        assert_eq!(resolved.height, None);
+        assert_eq!(resolved.height_rule.as_deref(), Some("exact"));
+
+        // Nothing direct: the style height stays.
+        let mut kept = CT_TrPr {
+            height: Some(oxoffice_docx_oxml::Twips(500)),
+            ..CT_TrPr::default()
+        };
+        overlay_row_properties(&mut kept, &CT_TrPr::default());
+        assert_eq!(kept.height, Some(oxoffice_docx_oxml::Twips(500)));
     }
 }

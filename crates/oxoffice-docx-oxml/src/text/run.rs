@@ -1350,10 +1350,7 @@ impl CT_R {
                             | Some(RunContent::EndnoteRef {
                                 custom_mark: Some(mark),
                                 ..
-                            }) if mark_was_open && mark.is_empty() => {
-                                *mark = text;
-                                mark_open = mark.is_empty();
-                            }
+                            }) if mark_was_open => *mark = text,
                             _ => {
                                 if let Some(facts) = &mut text_facts {
                                     facts.push(ParsedWordText {
@@ -1434,6 +1431,8 @@ impl CT_R {
                             has_drawing,
                         ));
                     } else {
+                        mark_open = mark_was_open
+                            && is_word_element(name.as_ref(), b"lastRenderedPageBreak", &prefixes);
                         // Capture unknown child elements as raw XML
                         let is_word_pict = action == RunChildAction::Pict;
                         let raw = capture_element(reader, e)?;
@@ -1508,7 +1507,11 @@ impl CT_R {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(e.into()),
-                _ => mark_open = mark_was_open,
+                // Whitespace keeps the mark slot open; other text ends it.
+                Ok(Event::Text(ref text)) if text.iter().all(|byte| byte.is_ascii_whitespace()) => {
+                    mark_open = mark_was_open;
+                }
+                _ => {}
             }
             buf.clear();
         }
@@ -1809,7 +1812,14 @@ impl CT_R {
         }
 
         let mut raw_written = 0;
-        for item in &self.content {
+        for (index, item) in self.content.iter().enumerate() {
+            // An empty custom mark before a symbol or deleted text is not
+            // written: that child is the mark Word reads, and an empty
+            // `w:t` written before it would take its place.
+            let mark_follows = matches!(
+                self.content.get(index + 1),
+                Some(RunContent::Symbol { .. } | RunContent::DeletedText(_))
+            );
             match item {
                 RunContent::Text(t) => {
                     let mut e = FieldXmlStart::word(&word_prefix, "t", emission)?;
@@ -1897,7 +1907,9 @@ impl CT_R {
                         e.push_word(&word_prefix, "customMarkFollows", "1")?;
                     }
                     e.write(writer, true)?;
-                    if let Some(mark) = custom_mark {
+                    if let Some(mark) = custom_mark
+                        && !(mark.is_empty() && mark_follows)
+                    {
                         let mut text = FieldXmlStart::word(&word_prefix, "t", emission)?;
                         text.push("xml:space", "preserve")?;
                         text.write(writer, false)?;
@@ -1925,7 +1937,9 @@ impl CT_R {
                         e.push_word(&word_prefix, "customMarkFollows", "1")?;
                     }
                     e.write(writer, true)?;
-                    if let Some(mark) = custom_mark {
+                    if let Some(mark) = custom_mark
+                        && !(mark.is_empty() && mark_follows)
+                    {
                         let mut text = FieldXmlStart::word(&word_prefix, "t", emission)?;
                         text.push("xml:space", "preserve")?;
                         text.write(writer, false)?;
@@ -2485,5 +2499,98 @@ pub(crate) fn parse_run_raw_with_observation(
             _ => {}
         }
         buffer.clear();
+    }
+}
+
+#[cfg(test)]
+mod custom_mark_tests {
+    use super::*;
+
+    const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+    fn read(children: &str) -> CT_R {
+        CT_R::from_xml_fragment_checked(format!("<w:r {W}>{children}</w:r>").as_bytes()).unwrap()
+    }
+
+    fn written(run: &CT_R) -> String {
+        let mut writer = Writer::new(Vec::new());
+        run.to_xml(&mut writer).unwrap();
+        String::from_utf8(writer.into_inner()).unwrap()
+    }
+
+    fn mark(run: &CT_R) -> Option<&str> {
+        run.content.iter().find_map(|item| match item {
+            RunContent::FootnoteRef { custom_mark, .. } => Some(custom_mark.as_deref()?),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn every_on_spelling_of_custom_mark_follows_reads_and_writes_as_set() {
+        for value in ["1", "true", "on"] {
+            let run = read(&format!(
+                r#"<w:footnoteReference w:customMarkFollows="{value}" w:id="2"/><w:t>*</w:t>"#
+            ));
+            assert_eq!(mark(&run), Some("*"), "{value}");
+            let xml = written(&run);
+            assert!(xml.contains(r#"w:customMarkFollows="1""#), "{value}: {xml}");
+            assert!(
+                xml.contains("<w:t xml:space=\"preserve\">*</w:t>"),
+                "{value}: {xml}"
+            );
+        }
+        for value in ["0", "false", "off"] {
+            let run = read(&format!(
+                r#"<w:footnoteReference w:customMarkFollows="{value}" w:id="2"/><w:t>*</w:t>"#
+            ));
+            assert_eq!(mark(&run), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_mark_is_the_first_text_past_a_page_break_comment_or_whitespace_only() {
+        let reference = r#"<w:footnoteReference w:customMarkFollows="1" w:id="2"/>"#;
+        for (between, expected) in [
+            ("<w:lastRenderedPageBreak/>", Some("*")),
+            (
+                "<w:lastRenderedPageBreak></w:lastRenderedPageBreak>",
+                Some("*"),
+            ),
+            ("<!-- c --><?p?> ", Some("*")),
+            ("<w:t></w:t>", Some("")),
+            ("<w:tab/>", Some("")),
+            ("<w:fldChar w:fldCharType=\"begin\"/>", Some("")),
+        ] {
+            let run = read(&format!("{reference}{between}<w:t>*</w:t>"));
+            assert_eq!(mark(&run), expected, "{between}");
+            // Where the slot closed, the text is body text.
+            let body = run
+                .content
+                .iter()
+                .any(|item| matches!(item, RunContent::Text(text) if text.text == "*"));
+            assert_eq!(body, expected != Some("*"), "{between}");
+        }
+    }
+
+    #[test]
+    fn a_symbol_or_deleted_mark_is_written_back_without_an_empty_text_before_it() {
+        let reference = r#"<w:footnoteReference w:id="2" w:customMarkFollows="1"/>"#;
+        for mark in [
+            r#"<w:sym w:font="Symbol" w:char="F0A7"/>"#,
+            "<w:delText>*</w:delText>",
+        ] {
+            let source = format!("{reference}{mark}");
+            let xml = written(&read(&source));
+            assert_eq!(xml, format!("<w:r>{source}</w:r>"), "{mark}");
+        }
+        // A text mark that is empty still writes its `w:t`, so the text after
+        // it stays body text.
+        let run = read(&format!(r#"{reference}<w:t></w:t><w:t>x</w:t>"#));
+        assert_eq!(mark(&run), Some(""));
+        let xml = written(&run);
+        assert!(
+            xml.contains(r#"<w:t xml:space="preserve"></w:t><w:t>x</w:t>"#),
+            "{xml}"
+        );
     }
 }

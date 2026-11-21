@@ -322,6 +322,29 @@ fn paragraph_layout_settings_survive_a_save() {
 }
 
 #[test]
+fn an_empty_paragraph_border_container_read_from_a_file_survives_an_edit() {
+    // The paragraph keeps the container as read, beside a property set by
+    // the API, as the table and cell border containers do.
+    for written in ["<w:pBdr></w:pBdr>", "<w:pBdr/>"] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:pPr>{written}</w:pPr><w:r><w:t>Text</w:t></w:r></w:p>"#
+        ));
+        doc.paragraph_mut(0)
+            .unwrap()
+            .set_alignment(Alignment::Center);
+        doc.replace_text("Text", "Edited");
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        let properties = &xml[xml.find("<w:pPr>").unwrap()..xml.find("</w:pPr>").unwrap()];
+        assert!(properties.contains("<w:pBdr"), "{written}: {xml}");
+        assert!(
+            properties.contains(r#"<w:jc w:val="center"/>"#),
+            "{written}: {xml}"
+        );
+    }
+}
+
+#[test]
 fn exact_and_multiple_line_spacing_replace_each_other() {
     let mut doc = Document::new();
     doc.add_paragraph("lines")

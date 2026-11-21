@@ -268,7 +268,7 @@ fn preserved_table_raw_bindings(scope: &[String]) -> Vec<(String, String)> {
 // ---- Table border types ----
 
 /// `CT_TblBorders` — Table-level borders.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct CT_TblBorders {
     pub top: Option<CT_BorderEdge>,
     pub bottom: Option<CT_BorderEdge>,
@@ -278,9 +278,56 @@ pub struct CT_TblBorders {
     pub inside_v: Option<CT_BorderEdge>,
     /// Other border edges retained verbatim.
     pub extra_xml: Vec<Vec<u8>>,
+    /// Whether this element was read from a part. A read one is written back
+    /// even when it carries no edge; one built through the API is written
+    /// only when it carries one.
+    #[doc(hidden)]
+    pub from_source: bool,
+}
+
+impl PartialEq for CT_TblBorders {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            top,
+            bottom,
+            left,
+            right,
+            inside_h,
+            inside_v,
+            extra_xml,
+            from_source: _,
+        } = self;
+        *top == other.top
+            && *bottom == other.bottom
+            && *left == other.left
+            && *right == other.right
+            && *inside_h == other.inside_h
+            && *inside_v == other.inside_v
+            && *extra_xml == other.extra_xml
+            && self.writes_empty_element() == other.writes_empty_element()
+    }
 }
 
 impl CT_TblBorders {
+    /// An empty `<w:tblBorders/>` or `<w:tcBorders/>` read from a part,
+    /// written back as it was.
+    pub(crate) fn empty_from_source() -> Self {
+        Self {
+            from_source: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether its owner writes this element: when it carries an edge, or
+    /// when it was read from a part.
+    pub fn writes_element(&self) -> bool {
+        !self.is_empty() || self.from_source
+    }
+
+    fn writes_empty_element(&self) -> bool {
+        self.from_source && self.is_empty()
+    }
+
     pub fn from_xml(reader: &mut Reader<&[u8]>) -> Result<Self> {
         Self::from_xml_with_prefixes_and_owner_bindings(reader, &["w".to_owned()], &[])
     }
@@ -290,7 +337,7 @@ impl CT_TblBorders {
         word_prefixes: &[String],
         owner_bindings: &[(String, String)],
     ) -> Result<Self> {
-        let mut borders = CT_TblBorders::default();
+        let mut borders = CT_TblBorders::empty_from_source();
         let mut buf = Vec::new();
 
         loop {
@@ -372,6 +419,9 @@ impl CT_TblBorders {
         } else {
             None
         };
+        if self.is_empty() {
+            return root.write(writer, true);
+        }
         root.write(writer, false)?;
         for (local, qualified, edge) in [
             ("top", "w:top", &self.top),
@@ -1229,6 +1279,10 @@ impl CT_TblPr {
                         pr.shading = Some(CT_Shd::from_xml_attrs_with_prefixes(e, &prefixes)?);
                     } else if is_word_element(name.as_ref(), b"tblLook", &prefixes) {
                         pr.look = Some(CT_TblLook::from_xml_attrs_with_prefixes(e, &prefixes)?);
+                    } else if is_word_element(name.as_ref(), b"tblBorders", &prefixes)
+                        && carries_only_namespace_declarations(e)?
+                    {
+                        pr.borders = Some(CT_TblBorders::empty_from_source());
                     } else if is_word_element(name.as_ref(), b"tblPrChange", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
                             &capture_empty_element(e)?,
@@ -1424,7 +1478,7 @@ impl CT_TblPr {
 
         write_extras_at(writer, &self.extra_xml, 10)?;
         if let Some(ref borders) = self.borders
-            && !borders.is_empty()
+            && borders.writes_element()
         {
             borders.write_xml_core(writer, "w:tblBorders", role, source_context, emission)?;
         }
@@ -1718,6 +1772,11 @@ pub struct CT_TrPr {
     /// Word writes this alongside `w:tblLook` and needs both to reproduce a
     /// styled table. Dropping it loses the header-row and banding emphasis.
     pub cnf_style: Option<String>,
+    /// A `w:cnfStyle` read in its boolean-attribute form: the value it reads
+    /// as and the element as written, written back while `cnf_style` keeps
+    /// that value.
+    #[doc(hidden)]
+    pub cnf_style_xml: Option<(String, Vec<u8>)>,
     /// Contextual row insertion and deletion markers in schema order.
     pub revision_markers: Vec<CT_Revision>,
     /// Malformed row markers retained verbatim.
@@ -1753,6 +1812,7 @@ impl PartialEq for CT_TrPr {
             hidden,
             cant_split,
             cnf_style,
+            cnf_style_xml: _,
             revision_markers,
             revision_xml,
             revision_xml_positions,
@@ -1853,6 +1913,15 @@ impl CT_TrPr {
                         && let Some(val) = get_word_val_attr(e, &prefixes)?
                     {
                         pr.cnf_style = Some(val);
+                    } else if is_word_element(name.as_ref(), b"cnfStyle", &prefixes)
+                        && let Some(val) = cnf_style_from_booleans(e, &prefixes)?
+                    {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            owner_bindings,
+                        )?;
+                        pr.cnf_style_xml = Some((val.clone(), raw));
+                        pr.cnf_style = Some(val);
                     } else if is_word_element(name.as_ref(), b"cantSplit", &prefixes) {
                         pr.cant_split = Some(parse_word_toggle(e, &prefixes)?);
                     } else if is_word_element(name.as_ref(), b"ins", &prefixes)
@@ -1884,10 +1953,6 @@ impl CT_TrPr {
                     let (at, next) = tr_pr_raw_boundary(e.name().as_ref(), boundary, &prefixes);
                     if is_word_element(e.name().as_ref(), b"tblHeader", &prefixes) {
                         pr.header = Some(parse_word_toggle(e, &prefixes)?);
-                        reader.read_to_end_into(e.name(), &mut Vec::new())?;
-                    } else if is_word_element(e.name().as_ref(), b"trHeight", &prefixes)
-                        && read_row_height(e, &prefixes, &mut pr)?
-                    {
                         reader.read_to_end_into(e.name(), &mut Vec::new())?;
                     } else if is_word_element(e.name().as_ref(), b"cantSplit", &prefixes) {
                         pr.cant_split = Some(parse_word_toggle(e, &prefixes)?);
@@ -1973,9 +2038,15 @@ impl CT_TrPr {
         // cnfStyle comes first in the schema sequence for both trPr and tcPr.
         write_extras_at(writer, &self.extra_xml, 0)?;
         if let Some(ref cnf) = self.cnf_style {
-            let mut e = crate::text::FieldXmlStart::word(&prefix, "cnfStyle", emission)?;
-            e.push_word(&prefix, "val", cnf.as_str())?;
-            e.write(writer, true)?;
+            if let Some((read_as, raw)) = &self.cnf_style_xml
+                && read_as == cnf
+            {
+                writer.get_mut().write_all(raw)?;
+            } else {
+                let mut e = crate::text::FieldXmlStart::word(&prefix, "cnfStyle", emission)?;
+                e.push_word(&prefix, "val", cnf.as_str())?;
+                e.write(writer, true)?;
+            }
         }
 
         write_extras_at(writer, &self.extra_xml, 1)?;
@@ -2109,6 +2180,23 @@ impl CT_TrPr {
         Ok(())
     }
 
+    /// Whether a retained child holds XML a row edit cannot copy. A
+    /// `w:trHeight` without attributes means the default height: it holds
+    /// nothing to copy.
+    #[doc(hidden)]
+    pub fn has_opaque_xml(&self) -> bool {
+        self.extra_xml
+            .iter()
+            .any(|(_, raw)| !is_bare_row_height(raw))
+    }
+
+    /// Drop a retained `w:trHeight` without attributes, which a height set
+    /// through the API replaces.
+    #[doc(hidden)]
+    pub fn remove_bare_height(&mut self) {
+        self.extra_xml.retain(|(_, raw)| !is_bare_row_height(raw));
+    }
+
     fn is_empty(&self) -> bool {
         self.height.is_none()
             && self.height_rule.is_none()
@@ -2151,9 +2239,10 @@ impl CT_TrPr {
     }
 }
 
-/// Read a `w:trHeight` into the row model. Its value is optional (a
-/// missing one means 0), so a rule alone is modelled too. One without
-/// either attribute returns false and stays verbatim.
+/// Read a self-closing `w:trHeight` into the row model. Its value is
+/// optional (a missing one means 0), so a rule alone is modelled too. One
+/// without either attribute, or with any other attribute, returns false and
+/// stays verbatim.
 fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) -> Result<bool> {
     let mut height = None;
     let mut rule = None;
@@ -2169,6 +2258,8 @@ fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) ->
             )?));
         } else if is_word_attribute(key, b"hRule", prefixes) {
             rule = Some(val.to_string());
+        } else if key != b"xmlns" && !key.starts_with(b"xmlns:") {
+            return Ok(false);
         }
     }
     if height.is_none() && rule.is_none() {
@@ -2176,6 +2267,83 @@ fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) ->
     }
     pr.height = height;
     pr.height_rule = rule;
+    Ok(true)
+}
+
+/// Whether retained row XML is a Word `w:trHeight` element without
+/// attributes or content. Retained XML keeps the prefixes of its part, so a
+/// `w` prefix it does not bind itself is the part's Word prefix.
+fn is_bare_row_height(raw: &[u8]) -> bool {
+    let mut reader = quick_xml::NsReader::from_reader(raw);
+    let Ok((namespace, Event::Empty(root))) = reader.read_resolved_event() else {
+        return false;
+    };
+    let word = match namespace {
+        quick_xml::name::ResolveResult::Bound(quick_xml::name::Namespace(ns)) => {
+            ns == crate::namespace::W_NS.as_bytes()
+        }
+        quick_xml::name::ResolveResult::Unbound => false,
+        quick_xml::name::ResolveResult::Unknown(prefix) => prefix == b"w",
+    };
+    word && root.local_name().as_ref() == b"trHeight"
+        && carries_only_namespace_declarations(&root).unwrap_or(false)
+        && matches!(reader.read_event(), Ok(Event::Eof))
+}
+
+/// The Transitional boolean attributes of `w:cnfStyle`, at their positions
+/// in its twelve-character `w:val`.
+const CNF_STYLE_BOOLEANS: [&[u8]; 12] = [
+    b"firstRow",
+    b"lastRow",
+    b"firstColumn",
+    b"lastColumn",
+    b"oddVBand",
+    b"evenVBand",
+    b"oddHBand",
+    b"evenHBand",
+    b"firstRowLastColumn",
+    b"firstRowFirstColumn",
+    b"lastRowLastColumn",
+    b"lastRowFirstColumn",
+];
+
+/// The `w:val` a `w:cnfStyle` written with its boolean attributes only reads
+/// as. None when it has a `w:val`, no boolean, or any other attribute or
+/// value, so that such an element stays verbatim.
+fn cnf_style_from_booleans(e: &BytesStart<'_>, prefixes: &[String]) -> Result<Option<String>> {
+    let mut bits = [b'0'; 12];
+    let mut any = false;
+    for attribute in e.attributes() {
+        let attribute = attribute?;
+        let key = attribute.key.as_ref();
+        if key == b"xmlns" || key.starts_with(b"xmlns:") {
+            continue;
+        }
+        let Some(index) = CNF_STYLE_BOOLEANS
+            .iter()
+            .position(|local| is_word_attribute(key, local, prefixes))
+        else {
+            return Ok(None);
+        };
+        let Some(on) = parse_ooxml_bool(std::str::from_utf8(&attribute.value)?) else {
+            return Ok(None);
+        };
+        bits[index] = if on { b'1' } else { b'0' };
+        any = true;
+    }
+    Ok(any.then(|| String::from_utf8_lossy(&bits).into_owned()))
+}
+
+/// Whether a self-closing container carries nothing but namespace
+/// declarations, so it reads as the empty modelled container.
+fn carries_only_namespace_declarations(e: &BytesStart<'_>) -> Result<bool> {
+    for attribute in e.attributes() {
+        let attribute = attribute?;
+        let key = attribute.key.as_ref();
+        if key != b"xmlns" && !key.starts_with(b"xmlns:") {
+            return Ok(false);
+        }
+    }
     Ok(true)
 }
 
@@ -2268,6 +2436,11 @@ pub struct CT_TcPr {
     pub text_direction: Option<String>,
     /// `w:cnfStyle` — which conditional parts of the table style this cell is.
     pub cnf_style: Option<String>,
+    /// A `w:cnfStyle` read in its boolean-attribute form: the value it reads
+    /// as and the element as written, written back while `cnf_style` keeps
+    /// that value.
+    #[doc(hidden)]
+    pub cnf_style_xml: Option<(String, Vec<u8>)>,
     /// Unmodelled property children retained at their schema insertion slots.
     #[doc(hidden)]
     pub extra_xml: Vec<(usize, Vec<u8>)>,
@@ -2293,6 +2466,7 @@ impl PartialEq for CT_TcPr {
             cell_margin,
             text_direction,
             cnf_style,
+            cnf_style_xml: _,
             extra_xml,
             from_source: _,
         } = self;
@@ -2348,6 +2522,16 @@ impl CT_TcPr {
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     let (at, next) = tc_pr_raw_boundary(e.name().as_ref(), boundary, &prefixes);
                     if Self::parse_property_element(e, &mut pr, &prefixes)? {
+                        boundary = next;
+                    } else if is_word_element(e.name().as_ref(), b"cnfStyle", &prefixes)
+                        && let Some(val) = cnf_style_from_booleans(e, &prefixes)?
+                    {
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_empty_element(e)?,
+                            owner_bindings,
+                        )?;
+                        pr.cnf_style_xml = Some((val.clone(), raw));
+                        pr.cnf_style = Some(val);
                         boundary = next;
                     } else {
                         pr.extra_xml.push((
@@ -2440,14 +2624,15 @@ impl CT_TcPr {
         } else if is_word_element(name.as_ref(), b"tcMar", word_prefixes) {
             // This leaf path handles self-closing containers. Keep genuine
             // unknown attributes raw rather than hiding them behind a default.
-            for attribute in e.attributes() {
-                let attribute = attribute?;
-                let key = attribute.key.as_ref();
-                if key != b"xmlns" && !key.starts_with(b"xmlns:") {
-                    return Ok(false);
-                }
+            if !carries_only_namespace_declarations(e)? {
+                return Ok(false);
             }
             pr.cell_margin = Some(CT_TblCellMar::default());
+        } else if is_word_element(name.as_ref(), b"tcBorders", word_prefixes) {
+            if !carries_only_namespace_declarations(e)? {
+                return Ok(false);
+            }
+            pr.borders = Some(CT_TblBorders::empty_from_source());
         } else if is_word_element(name.as_ref(), b"textDirection", word_prefixes)
             && let Some(val) = get_word_val_attr(e, word_prefixes)?
         {
@@ -2497,9 +2682,15 @@ impl CT_TcPr {
 
         write_extras_at(writer, &self.extra_xml, 0)?;
         if let Some(ref cnf) = self.cnf_style {
-            let mut e = crate::text::FieldXmlStart::word(&prefix, "cnfStyle", emission)?;
-            e.push_word(&prefix, "val", cnf.as_str())?;
-            e.write(writer, true)?;
+            if let Some((read_as, raw)) = &self.cnf_style_xml
+                && read_as == cnf
+            {
+                writer.get_mut().write_all(raw)?;
+            } else {
+                let mut e = crate::text::FieldXmlStart::word(&prefix, "cnfStyle", emission)?;
+                e.push_word(&prefix, "val", cnf.as_str())?;
+                e.write(writer, true)?;
+            }
         }
 
         write_extras_at(writer, &self.extra_xml, 1)?;
@@ -2538,7 +2729,7 @@ impl CT_TcPr {
 
         write_extras_at(writer, &self.extra_xml, 5)?;
         if let Some(ref borders) = self.borders
-            && !borders.is_empty()
+            && borders.writes_element()
         {
             borders.write_xml_core(writer, "w:tcBorders", role, source_context, emission)?;
         }
@@ -4338,5 +4529,24 @@ mod empty_property_tests {
         });
         assert_eq!(reread(&built), built);
         assert_eq!(built, edited);
+    }
+
+    #[test]
+    fn border_containers_read_empty_are_written_and_built_empty_are_not() {
+        let read_empty = table("", "<w:tcPr><w:tcBorders></w:tcBorders></w:tcPr>");
+        assert_eq!(reread(&read_empty), read_empty);
+        let self_closed = table("", "<w:tcPr><w:tcBorders/></w:tcPr>");
+        assert_eq!(self_closed, read_empty);
+        assert_ne!(read_empty, table("", "<w:tcPr/>"));
+
+        // Built through the API without an edge: nothing to write.
+        let mut built = table("", "<w:tcPr/>");
+        built.rows[0].cells[0].properties.as_mut().unwrap().borders =
+            Some(CT_TblBorders::default());
+        let mut writer = Writer::new(Vec::new());
+        built.to_xml(&mut writer).unwrap();
+        let xml = String::from_utf8(writer.into_inner()).unwrap();
+        assert!(!xml.contains("tcBorders"), "{xml}");
+        assert_eq!(reread(&built), table("", "<w:tcPr/>"));
     }
 }

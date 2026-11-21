@@ -869,8 +869,11 @@ fn removing_custom_marked_notes_of_one_run_removes_each_mark() {
             &xml[to..]
         )
     });
+    // The reader passes over the same children as the removal.
+    assert_eq!(marked_text(&doc, 0), format!("Marked[f{first}][f{second}]"));
     doc.remove_footnote(first).unwrap();
     let mut doc = reopen(&mut doc);
+    assert_eq!(marked_text(&doc, 0), format!("Marked[f{second}]"));
     let main = doc.part_xml("word/document.xml").unwrap();
     assert!(!main.contains("w:sym"), "{main}");
     assert!(main.contains('\u{2021}'), "{main}");
@@ -911,7 +914,6 @@ fn a_custom_mark_after_on_is_the_mark_of_its_reference() {
             )
         });
         assert_eq!(marked_text(&doc, 0), format!("Marked[f{id}]"), "{value}");
-        // A rewrite of the paragraph keeps the reference marked.
         doc.replace_text("Marked", "Kept");
         let doc = reopen(&mut doc);
         assert_eq!(marked_text(&doc, 0), format!("Kept[f{id}]"), "{value}");
@@ -924,8 +926,45 @@ fn a_custom_mark_after_on_is_the_mark_of_its_reference() {
 #[test]
 fn a_child_between_a_reference_and_its_text_leaves_that_text_in_the_body() {
     // The note removal passes over whitespace, XML comments, processing
-    // instructions and a rendered page break only; any other child ends the
-    // mark, so the text after it is body text for the reader too.
+    // instructions and a rendered page break only, and takes the first text
+    // as the mark; anything else ends the mark, so the text after it is body
+    // text for the reader too.
+    for between in [
+        r#"<x:kept xmlns:x="urn:example:kept"/>"#,
+        "<w:t></w:t>",
+        "stray",
+    ] {
+        let mut doc = doc_with(&["Marked"]);
+        let id = doc
+            .create_footnote_with_mark(&paragraph_at(&doc, 0), "Note", "*")
+            .unwrap();
+        let mut doc = with_main_part(&mut doc, |xml| {
+            let run = reference_run(xml, id);
+            format!(
+                concat!(
+                    "{}<w:r>",
+                    r#"<w:footnoteReference w:customMarkFollows="1" w:id="{}"/>"#,
+                    "{}<w:t>\u{2021}</w:t></w:r>{}"
+                ),
+                &xml[..run.start],
+                id,
+                between,
+                &xml[run.end..]
+            )
+        });
+        assert_eq!(
+            marked_text(&doc, 0),
+            format!("Marked[f{id}]\u{2021}"),
+            "{between}"
+        );
+        doc.remove_footnote(id).unwrap();
+        let doc = reopen(&mut doc);
+        assert_eq!(marked_text(&doc, 0), "Marked\u{2021}", "{between}");
+    }
+}
+
+#[test]
+fn a_long_form_page_break_between_a_reference_and_its_mark_is_passed_over() {
     let mut doc = doc_with(&["Marked"]);
     let id = doc
         .create_footnote_with_mark(&paragraph_at(&doc, 0), "Note", "*")
@@ -936,7 +975,7 @@ fn a_child_between_a_reference_and_its_text_leaves_that_text_in_the_body() {
             concat!(
                 "{}<w:r>",
                 r#"<w:footnoteReference w:customMarkFollows="1" w:id="{}"/>"#,
-                r#"<x:kept xmlns:x="urn:example:kept"/>"#,
+                "<w:lastRenderedPageBreak></w:lastRenderedPageBreak>",
                 "<w:t>\u{2021}</w:t></w:r>{}"
             ),
             &xml[..run.start],
@@ -944,11 +983,10 @@ fn a_child_between_a_reference_and_its_text_leaves_that_text_in_the_body() {
             &xml[run.end..]
         )
     });
-    assert_eq!(marked_text(&doc, 0), format!("Marked[f{id}]\u{2021}"));
+    assert_eq!(marked_text(&doc, 0), format!("Marked[f{id}]"));
     doc.remove_footnote(id).unwrap();
     let doc = reopen(&mut doc);
-    assert_eq!(marked_text(&doc, 0), "Marked\u{2021}");
-    assert_eq!(texts(&doc), ["Marked\u{2021}"]);
+    assert_eq!(marked_text(&doc, 0), "Marked");
 }
 
 // Fails today: removing a paragraph keeps the footnotes it referenced, which
