@@ -2180,6 +2180,15 @@ impl CT_TrPr {
         Ok(())
     }
 
+    /// Whether no row property is set: an empty `<w:trPr/>`, as LibreOffice
+    /// writes in every row, carries no formatting, nor does a `w:trHeight`
+    /// without attributes, which means the default height.
+    pub fn carries_nothing(&self) -> bool {
+        let mut properties = self.clone();
+        properties.remove_bare_height();
+        properties.is_empty()
+    }
+
     /// Whether a retained child holds XML a row edit cannot copy. A
     /// `w:trHeight` without attributes means the default height: it holds
     /// nothing to copy.
@@ -2188,6 +2197,13 @@ impl CT_TrPr {
         self.extra_xml
             .iter()
             .any(|(_, raw)| !is_bare_row_height(raw))
+    }
+
+    /// Whether a retained child is a `w:trHeight` without attributes: the
+    /// default height, which an export loses nothing by leaving out.
+    #[doc(hidden)]
+    pub fn raw_is_bare_height(raw: &[u8]) -> bool {
+        is_bare_row_height(raw)
     }
 
     /// Drop a retained `w:trHeight` without attributes, which a height set

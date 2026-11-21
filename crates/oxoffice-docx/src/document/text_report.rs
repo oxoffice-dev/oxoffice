@@ -69,10 +69,13 @@ impl Document {
     /// first part that is not well-formed XML when there is one. `validate`
     /// reports the same part as an error.
     pub fn other_story_texts(&self) -> std::result::Result<Vec<StoryText>, String> {
-        self.read_other_story_texts().map_err(|error| {
-            self.malformed_story_part()
-                .unwrap_or_else(|| error.to_string())
-        })
+        // A part cut short inside its text still opens, as an empty story:
+        // it is named instead of left out without a word.
+        if let Some(malformed) = self.malformed_story_part() {
+            return Err(malformed);
+        }
+        self.read_other_story_texts()
+            .map_err(|error| error.to_string())
     }
 
     fn read_other_story_texts(&self) -> Result<Vec<StoryText>> {
@@ -212,7 +215,16 @@ impl Document {
             })
             .find_map(|rel| {
                 let part_name = OpcPackage::resolve_rel_target(&doc_part, &rel.target);
-                let detail = document_style_references(package.get_part(&part_name)?).err()?;
+                let bytes = package.get_part(&part_name)?;
+                // Only XML that is not well-formed, as a part cut short is:
+                // markup the reader handles is not refused here.
+                if xml_is_complete(bytes) {
+                    return None;
+                }
+                let detail = document_style_references(bytes).err().map_or_else(
+                    || "it ends or nests wrongly".to_owned(),
+                    |error| error.to_string(),
+                );
                 Some(format!("part {part_name} is not well-formed XML: {detail}"))
             })
     }
@@ -293,5 +305,26 @@ fn document_story_kind_name(kind: StoryKind) -> &'static str {
         StoryKind::Endnote => "endnote",
         StoryKind::Comment => "comment",
         StoryKind::TextBox => "text_box",
+    }
+}
+
+/// Whether `xml` parses and closes every element it opens: a part cut short
+/// is not.
+fn xml_is_complete(xml: &[u8]) -> bool {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut depth = 0usize;
+    let mut elements = 0usize;
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(_)) => {
+                depth += 1;
+                elements += 1;
+            }
+            Ok(quick_xml::events::Event::Empty(_)) => elements += 1,
+            Ok(quick_xml::events::Event::End(_)) => depth = depth.saturating_sub(1),
+            Ok(quick_xml::events::Event::Eof) => return depth == 0 && elements > 0,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
     }
 }

@@ -209,24 +209,44 @@ impl Document {
             });
         }
 
-        // Check: images without alt text
-        let images = self.images();
-        for img in &images {
-            let has_alt = img
-                .description
-                .as_ref()
-                .is_some_and(|d| !d.is_empty() && d != "Background");
-            if !has_alt {
-                let name = img
-                    .name
-                    .as_deref()
-                    .or(Some(&img.embed_id))
-                    .unwrap_or("unknown");
-                issues.push(AccessibilityIssue {
-                    severity: IssueSeverity::Error,
-                    message: format!("Image \"{name}\" has no alt text"),
-                });
+        // Check: pictures of the body without alt text. A picture marked
+        // decorative needs none, as in Word's accessibility checker.
+        let mut missing_alt = Vec::new();
+        visit_all_drawings(&self.document.body.content, &mut |drawing| {
+            let pictures = [
+                drawing.inline.as_ref().map(|inline| {
+                    (
+                        inline.chart_rel_id.is_none()
+                            && (!inline.embed_id.is_empty() || inline.link_id.is_some()),
+                        &inline.name,
+                        &inline.description,
+                        inline.decorative,
+                        &inline.embed_id,
+                    )
+                }),
+                drawing.anchor.as_ref().map(|anchor| {
+                    (
+                        anchor.chart_rel_id.is_none()
+                            && (!anchor.embed_id.is_empty() || anchor.link_id.is_some()),
+                        &anchor.name,
+                        &anchor.description,
+                        anchor.decorative,
+                        &anchor.embed_id,
+                    )
+                }),
+            ];
+            for (picture, name, description, decorative, embed_id) in pictures.into_iter().flatten()
+            {
+                if picture && !decorative && description.as_deref().is_none_or(str::is_empty) {
+                    missing_alt.push(name.clone().unwrap_or_else(|| embed_id.clone()));
+                }
             }
+        });
+        for name in missing_alt {
+            issues.push(AccessibilityIssue {
+                severity: IssueSeverity::Error,
+                message: format!("Image \"{name}\" has no alt text"),
+            });
         }
 
         // Check: heading level gaps
@@ -263,23 +283,26 @@ impl Document {
         })();
         match visibility {
             Ok(visibility) => {
+                // One issue per streak of three or more, given at its end.
+                let streak = |count: u32, issues: &mut Vec<AccessibilityIssue>| {
+                    if count >= 3 {
+                        issues.push(AccessibilityIssue {
+                            severity: IssueSeverity::Info,
+                            message: format!("{count} consecutive empty paragraphs (consider using spacing instead)"),
+                        });
+                    }
+                };
                 let mut flags = visibility.into_iter();
                 let mut consecutive_empty = 0u32;
                 for content in &self.document.body.content {
-                    if let BodyContent::Paragraph(_) = content {
-                        if flags.next() == Some(false) {
-                            consecutive_empty += 1;
-                            if consecutive_empty >= 3 {
-                                issues.push(AccessibilityIssue { severity: IssueSeverity::Info,
-                                    message: format!("{consecutive_empty} consecutive empty paragraphs (consider using spacing instead)") });
-                            }
-                        } else {
-                            consecutive_empty = 0;
-                        }
+                    if matches!(content, BodyContent::Paragraph(_)) && flags.next() == Some(false) {
+                        consecutive_empty += 1;
                     } else {
+                        streak(consecutive_empty, &mut issues);
                         consecutive_empty = 0;
                     }
                 }
+                streak(consecutive_empty, &mut issues);
             }
             Err(error) => issues.push(AccessibilityIssue {
                 severity: IssueSeverity::Warning,

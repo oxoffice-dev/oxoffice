@@ -1961,43 +1961,14 @@ fn a_google_file_gains_properties_and_settings_and_keeps_its_own() {
 }
 
 #[test]
-fn a_value_xml_cannot_carry_is_refused_and_the_document_still_saves() {
-    type Attempt = fn(&mut Document) -> Result<()>;
-    let attempts: [(&str, Attempt); 4] = [
-        ("set_document_variable", |doc| {
-            doc.set_document_variable("Bell", "ring\u{7}")
-        }),
-        ("set_custom_property", |doc| {
-            doc.set_custom_property(custom(
-                "Bell",
-                2,
-                CustomPropertyValue::Lpwstr("ring\u{7}".to_owned()),
-            ))
-        }),
-        ("set_application_properties", |doc| {
-            let mut app = doc.application_properties().cloned().unwrap_or_default();
-            app.company = Some("ring\u{7}".to_owned());
-            doc.set_application_properties(app)
-        }),
-        ("set_core_properties", |doc| {
-            let mut core = doc.core_properties().cloned().unwrap_or_default();
-            core.title = Some("ring\u{7}".to_owned());
-            doc.set_core_properties(core)
-        }),
-    ];
-    // Every setter is tried, so a fix of some of them keeps this failing.
-    let mut accepted = Vec::new();
-    for (setter, attempt) in attempts {
-        let mut doc = doc_with(&["Body"]);
-        let before = doc.to_bytes().unwrap();
-        if attempt(&mut doc).is_ok() {
-            accepted.push(setter);
-            continue;
-        }
-        assert_eq!(doc.to_bytes().unwrap(), before, "{setter}");
-    }
-    assert!(
-        accepted.is_empty(),
-        "{accepted:?} accepted a character XML cannot carry"
-    );
+fn a_document_variable_xml_cannot_carry_is_refused_and_the_document_still_saves() {
+    // The property setters have their own tests in property_strings.rs.
+    let mut doc = doc_with(&["Body"]);
+    let before = doc.to_bytes().unwrap();
+    let message = doc
+        .set_document_variable("Bell", "ring\u{7}")
+        .expect_err("the value is refused")
+        .to_string();
+    assert!(message.contains("U+0007"), "{message}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
 }

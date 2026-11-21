@@ -315,20 +315,10 @@ impl Document {
         column: usize,
     ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
-        // Only the main part holds note references.
-        let in_main = location.story().part_name() == candidate.doc_part_name;
-        let before = if in_main {
-            candidate.main_part_snapshot()?
-        } else {
-            Vec::new()
-        };
         let mut table = candidate.story_table_model(location)?;
         crate::table::remove_grid_column(&mut table, column)?;
+        // The replacement takes the notes only the removed cells referenced.
         candidate.replace_story_content(location, ContentFragment::table(table)?)?;
-        if in_main {
-            let after = candidate.main_part_snapshot()?;
-            candidate.remove_unreferenced_notes(&before, &after)?;
-        }
         candidate.reconcile_cut_table_bookmarks(self, location.story().part_name())?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -378,13 +368,6 @@ impl Document {
         row_index: usize,
     ) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
-        // Only the main part holds note references.
-        let in_main = location.story().part_name() == candidate.doc_part_name;
-        let before = if in_main {
-            candidate.main_part_snapshot()?
-        } else {
-            Vec::new()
-        };
         let mut table = candidate.story_table_model(location)?;
         if row_index >= table.rows.len() {
             return Err(Error::Other(
@@ -417,11 +400,8 @@ impl Document {
         }
         table.rows.remove(row_index);
         validate_table_topology(&table)?;
+        // The replacement takes the notes only the removed cells referenced.
         candidate.replace_story_content(location, ContentFragment::table(table)?)?;
-        if in_main {
-            let after = candidate.main_part_snapshot()?;
-            candidate.remove_unreferenced_notes(&before, &after)?;
-        }
         candidate.reconcile_comment_removal(self)?;
         self.commit_staged_mutation(candidate);
         Ok(true)

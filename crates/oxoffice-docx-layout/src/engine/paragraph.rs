@@ -776,6 +776,10 @@ fn layout_paragraph_with_source_and_table(
                     projected.revision,
                     Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
                 ),
+                matches!(
+                    projected.revision,
+                    Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
+                ),
                 Some(input),
                 false,
             )?;

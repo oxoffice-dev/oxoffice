@@ -942,7 +942,8 @@ impl CT_Anchor {
             .then_some((opacity.unwrap_or(1.0), rotation.unwrap_or(0.0)))
     }
 
-    /// Create an anchor for a full-page background image.
+    /// Create an anchor for a full-page background image. It carries no alt
+    /// text: a caller sets the description, or marks the picture decorative.
     pub fn background(embed_id: &str, page_width_emu: i64, page_height_emu: i64) -> Self {
         CT_Anchor {
             doc_pr_id: 1,
@@ -964,7 +965,7 @@ impl CT_Anchor {
             link_id: None,
             chart_rel_id: None,
             relative_height: 0,
-            description: Some("Background".to_string()),
+            description: None,
             title: None,
             decorative: false,
             name: Some("Background".to_string()),
