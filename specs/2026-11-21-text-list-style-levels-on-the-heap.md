@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: perf
 ---
 
@@ -42,6 +42,24 @@ thread per call.
 1. Box the levels, adapt the few callers, add the size test. Measure the
    stack of a release wheel before and after.
 2. The same for `CT_TableStyle`, measured the same way.
+
+## Outcome
+
+- Shipped as planned in #47 (`perf(drawing)!`, a breaking change for Rust
+  code that builds or reads the levels: `Box::new`, `as_deref()`). One caller
+  in `oxoffice-pptx` changed; Python and the CLI did not.
+- Sizes: `CT_TextListStyle` 27,000 to 200 bytes, `CT_SlideMaster` 82,408 to
+  2,008, `CT_NotesMaster` 28,032 to 1,232, `CT_Presentation` 27,624 to 824,
+  `Presentation` 29,376 to 2,576. `tests/pptx/stack.rs` keeps them small.
+- Stack the smoke work of #20 needs (smallest thread stack, its release dry
+  runs 44843492727 before and 44857139602, 44864662766 after): Windows x64
+  784 (up to 832 with Windows' 64 KiB rounding) to 448 KiB, Linux x86_64 816
+  to 384, Linux aarch64 816 to 416, macOS arm64 800 to 368, macOS x86_64 816
+  to 368. Opening a deck alone went from about 820 to 190 KiB on Linux
+  x86_64.
+- The largest frames left are in rendering a slide with a table:
+  `resolve_table` and `CT_TableStyle::from_xml`, about 112 KB each; plan
+  step 2 is still to do.
 
 ## Links
 
