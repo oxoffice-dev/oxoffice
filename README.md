@@ -141,7 +141,7 @@ refused at open when one of its parts holds a control character.
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a removed slide leaves its charts, embedded workbooks and legacy comments in the file, and sections do not follow added, duplicated, imported or moved slides yet |
+| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide and remove, sections following each slide; the document properties are not all refreshed after a slide is moved or retitled (title lists, word counts, thumbnail) |
 | Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
 | Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
 | Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
@@ -151,7 +151,7 @@ refused at open when one of its parts holds a control character.
 | Speaker notes | ✅ | ✅ | ✅ | notes pages and handouts as PDF |
 | Comments and replies | ✅ | ✅ | ✅ | modern comments, on a slide or a shape |
 | Themes, masters and layouts | ✅ | ✅ | ✅ | theme colours and fonts, a theme taken from another deck |
-| Merging decks | — | ⚠️ | — | slides imported onto a layout of the deck, or with their own formatting, which refuses PowerPoint and Google slides that have notes for now; sections do not follow them yet |
+| Merging decks | — | ⚠️ | — | slides imported onto a layout of the deck, or with their own formatting, which refuses PowerPoint and Google slides that have notes for now |
 | Rendering and conversions | ✅ | — | ✅ | from ODP; to PDF and PDF/A, PNG and JPEG slides, HTML, Markdown and ODP |
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |
