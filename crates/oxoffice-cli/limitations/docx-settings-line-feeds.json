@@ -1,0 +1,9 @@
+{
+  "id": "docx-settings-line-feeds",
+  "format": "docx",
+  "area": "properties",
+  "title": "Line feeds and tabs in document variables and string settings come back as spaces",
+  "symptom": "Rust set_document_variable, set_mail_merge_settings and the other string settings of word/settings.xml, and Python set_mail_merge_package (MailMergeSettings strings), write a line feed or a tab raw in an attribute, and every XML reader turns it into a space",
+  "workaround": "keep multi-line text in a text custom property, which keeps line feeds and tabs (Rust set_custom_property with CustomPropertyValue::Lpwstr, Python doc.custom_properties[name] = text, CLI meta set --custom NAME=str:VALUE); none for mail-merge settings, which Word reads only from w:mailMerge",
+  "issue": 180
+}
