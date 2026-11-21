@@ -29,12 +29,12 @@ Their maintainer wrote down what the tools rely on: 13 workflows, 12
 invariants and 14 past breakages, each with a neutral reproduction. That list
 is private input; this spec restates it in its own words. Items keep the
 list's labels (W1 to W13, I1 to I12, R1 to R14) so that both sides can map
-them. A fourteenth workflow, on spreadsheets, waits for `oxoffice-sml`.
+them. A fourteenth workflow, on spreadsheets, waits for the spreadsheet facade (ROADMAP).
 
 What the suite has, on `main` 83665a7:
 
-- **Behaviour**: 1,006 docx tests in `--test docx` (31 modules, 47 strict
-  known failures), 275 pptx tests in `--test pptx`, 73 Python tests, 27 CLI
+- **Behaviour**: 1,029 docx tests in `--test docx` (31 modules, 35 strict
+  known failures), 277 pptx tests in `--test pptx`, 80 Python tests, 28 CLI
   tests, the skill examples on `main`.
 - **Corpus**: 64 files in 4.4 MiB (16 families saved by Word, PowerPoint,
   Google and LibreOffice), every file round-tripped byte for byte. The Word
@@ -67,10 +67,18 @@ found four bugs (#340 to #343).
    `OXOFFICE_WORKFLOWS=full`, set on the existing Rust and Python test steps
    for pushes to `main` and the nightly run (one line in `ci.yml`, with the CI
    session). Budget: **about 60 s more on the Linux build job of a pull
-   request for the whole plan**, each pull request measuring its share.
+   request for the whole plan**, and at most 3 minutes more on `main`. Job
+   timings vary by minutes between runs of the same tree, so each pull
+   request measures the tests it adds on their own (`cargo test` and pytest
+   `--durations`, PR set and `full` set) and states both in its body.
 3. **What breaks** becomes an issue and a strict known failure
    (`#[should_panic(expected = ...)]`, or `xfail(strict=True)` in Python),
-   and a limitation entry when users can work around it. Open issues a
+   and a limitation entry when users can work around it. A walk over every
+   producer's copy cannot carry one `should_panic` for one bad copy: its
+   known failures per file live in a list checked both ways, like
+   `known_failure` in the corpus manifest and `tests/render/known.toml`
+   (`tests/corpus/workflows-known.toml`: file, workflow, issue), so a fix
+   flips the test until the line goes. Open issues a
    workflow meets are listed below, so that their fixes come first.
 4. **A migration note**, `docs/MIGRATING-FROM-RDOCX.md`, lists every name,
    flag, key, default and refusal that differs from rdocx 0.17.0 / rpptx
@@ -113,24 +121,24 @@ unless named; PR numbers refer to the plan below.
 | --- | --- | --- | --- | --- |
 | I1 | Open and save without an edit keeps every part byte for byte; after an edit, untouched parts byte for byte, unmodelled XML kept | covered without an edit, partly after | `corpus::every_document_saves_every_part_unchanged` (every docx); edits keeping producer parts in `comments`, `properties_and_settings`, `fonts`, `paragraphs_and_styles` | One edit on every corpus file, then every other part byte-equal: `corpus.rs` (PR 5) |
 | I2 | Same input, same calls, same build: same bytes, page count, layout and pixels | partly | corpus round trip; render baselines (hashes committed, so across processes; across platforms at night); `pdf::the_same_document_converts_to_the_same_bytes` | The same edit sequence in two processes gives the same bytes, page count, layout JSON and PDF bytes: Python, `main` (PR 7) |
-| I3 | Every text read shows the accepted view; a replacement inside a tracked insertion stays tracked | partly | `revisions_and_compare::the_text_of_a_document_shows_insertions_and_hides_deletions`, `story_paragraphs::tracked_changes_read_in_the_accepted_view` | A replacement wholly inside `w:ins` stays inside it after a save (PR 5). Open: #184 |
+| I3 | Every text read shows the accepted view; a replacement inside a tracked insertion stays tracked | partly | `revisions_and_compare::the_text_of_a_document_shows_insertions_and_hides_deletions`, `story_paragraphs::tracked_changes_read_in_the_accepted_view` | A replacement wholly inside `w:ins` stays inside it after a save (PR 5) |
 | I4 | Files Google Docs saved open, read and edit (decimal measurements, duplicate drawing ids, packed fields, duplicate and multiple default styles, `w:val="0"`, default namespaces) | partly | the 11 Google copies (decimal `tblW`, `w:col`, `w:spacing`; duplicate `docPr`; packed `PAGE` / `NUMPAGES`; default namespaces) through the round trip and the render | A synthetic matrix, one attribute at a time (PR 4); #340 (Google's TOC bookmarks) |
 | I5 | Localised style ids are found and assigned by the id the file uses | covered | `fields_and_toc::rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings`, `paragraphs_and_styles::headings_are_found_in_the_word_and_google_reports_alike`, `comments::a_comment_added_to_a_localized_word_file_uses_its_comment_styles` | Kept by the workflow walks on the French Word copies. Open: #169, #144 |
 | I6 | Refuse rather than write something wrong; a batch is all or nothing; the input is unchanged on refusal | covered | `text_and_runs::counted_replacement_changes_nothing_when_a_count_is_wrong`, `checked_replacement`, `save::saving_over_the_opened_file_is_refused`, CLI `docx_replace_reach` | CLI `replace --map` with a wrong count writes nothing (PR 3). Different: fields the update cannot compute keep their cache with a diagnostic, a PDF that drops content comes with diagnostics |
-| I7 | CLI JSON keys stay, or change in a release note | missing | `docx_stories` reads some keys of `text --json`; `check_outputs.py` (`main`) a few more | A keys-only snapshot per command (PR 3) |
-| I8 | Page numbers from the layout are close to Word's and stable within a release | partly | page counts pinned implicitly by the render baselines | Word's page counts and TOC pages: render layer B, and the versioned report's Word copy (PR 13). A changelog rule for layout moves (PR 2). Open: #156, #313 |
+| I7 | CLI JSON keys stay, or change in a release note | partly | `docx_stories` (`text --json`, `count --json`), `docx_comment_dates` (`comment list`, `comment add`), `pptx_duplicate_comments` (`pptx comment list`), `pptx_shapes` (`pptx shapes`) read the keys they need; `check_outputs.py` (`main`) a few more; no test pins a whole key set, none reads `diff`, `revision list` or `layout` | A keys-only snapshot per command, in those files (PR 3) |
+| I8 | Page numbers from the layout are close to Word's and stable within a release | partly | page counts pinned implicitly by the render baselines | Word's page counts and TOC pages: render layer B, and the versioned report's Word copy (PR 13). A changelog rule for layout moves (PR 2). Open: #156 |
 | I9 | Bytes in, bytes out, without touching the source | partly | `save::saving_elsewhere_leaves_the_source_as_it_was`, `test_save.py`, the corpus round trip | `save(other)` equals `to_bytes()`, `open` equals `from_bytes` (PR 5) |
 | I10 | A value a call accepted is still accepted, or the change is in the migration note | partly | unchanged since 0.17.0, untested | A parity test of `0`, `Pt(0)`, `Twips(0)`, `Cm(0)` on every length setter (PR 9); #343 |
 | I11 | No network, LibreOffice or Office at run time; bundled fonts | partly | the render tests use the bundled fonts; their set is pinned by the resources hash | Arial drawn with Liberation Sans, asserted (PR 7) |
-| I12 | No slowdown against rdocx 0.17.0 on these sizes | missing | scaling tests compare N with 16N only | A budget table on `main`, reported, not gating (PR 14). Open: #5, #6, #234, #235 |
+| I12 | No slowdown against rdocx 0.17.0 on these sizes | missing | scaling tests compare N with 16N only | A budget table on `main` against a committed one-off measurement of rdocx 0.17.0 on the same runner, reported, not gating (PR 14). Open: #5, #6, #234, #235 |
 
 ### Workflows
 
 | | Workflow | Status | What covers it | Gap, and where it goes |
 | --- | --- | --- | --- | --- |
-| W1 | Read-only check of a document set: text of every story, runs and fonts, tables, comments, revisions, links, pictures, layout and page count, field instructions, validation, CLI `text`, `layout`, `revision list`, `validate` | partly | `story_paragraphs::every_story_of_the_corpus_reports_is_listed_with_its_kind_part_and_style`, `comments::every_producer_reports_the_corpus_comment_as_it_saved_it`, `revisions_and_compare::each_kind_of_tracked_change_is_read_with_its_author_and_date`, `inspection` (links, pictures, validation) | One read walk on each family copy, counts compared with the authored copy, producer differences pinned (PR 13); CLI `layout` and `revision list` keys (PR 3). Open: #26, #146, #184, #188 |
+| W1 | Read-only check of a document set: text of every story, runs and fonts, tables, comments, revisions, links, pictures, layout and page count, field instructions, validation, CLI `text`, `layout`, `revision list`, `validate` | partly | `story_paragraphs::every_story_of_the_corpus_reports_is_listed_with_its_kind_part_and_style`, `comments::every_producer_reports_the_corpus_comment_as_it_saved_it`, `revisions_and_compare::each_kind_of_tracked_change_is_read_with_its_author_and_date`, `inspection` (links, pictures, validation) | One read walk on each family copy, counts compared with the authored copy, producer differences pinned (PR 13); CLI `layout` and `revision list` keys (PR 3). Open: #146 |
 | W2 | Diff a file against its last version, content and form | partly, different for form | no test of `docx diff`; comments and resolved state through the API | `docx diff --json` of the authored and Google copies: no text difference beyond a pinned list; one added comment shows as one row (PR 3). Different: `diff` compares text; form is compared from `text --json` runs |
-| W3 | Counted edit in place, checked part by part before the write | partly | `text_and_runs` (replacements across runs, headers, footers, cells), `checked_replacement`, `paragraphs_and_styles::content_is_removed_by_index_or_by_half_open_range`, `tables::clone_table_row_copies_a_row_with_its_formatting_to_the_requested_place` | One guarded walk on a corpus file: ten counted pairs across body, a cell, first-page and default footers and a tracked insertion, a cloned paragraph, a removed range, then the guard (part set, untouched parts byte for byte, style, list level and runs of unchanged paragraphs); paragraph-scoped replacement (PR 5). Open: #26, #30, #172 |
+| W3 | Counted edit in place, checked part by part before the write | partly | `text_and_runs` (replacements across runs, headers, footers, cells), `checked_replacement`, `paragraphs_and_styles::content_is_removed_by_index_or_by_half_open_range`, `tables::clone_table_row_copies_a_row_with_its_formatting_to_the_requested_place` | One guarded walk on a corpus file: ten counted pairs across body, a cell, first-page and default footers and a tracked insertion, a cloned paragraph, a removed range, then the guard (part set, untouched parts byte for byte, style, list level and runs of unchanged paragraphs); paragraph-scoped replacement (PR 5). Open: #30, #172 |
 | W4 | Page numbers from the layout: TOC to the field's depth, page fields, idempotent | partly, different for headers and footers | `fields_and_toc::rebuilding_a_word_toc_reuses_its_bookmarks_and_follows_its_switches`, `rebuilding_a_toc_follows_renamed_added_and_removed_headings`, `page_fields_take_their_numbers_from_the_layout_except_in_a_footer` | On the thesis copies: rebuild and update twice, the second run changes no byte, entries equal the headings to the depth in `TOC n` styles on a dotted right tab, header and footer caches kept in every variant (PR 6); #340 as a strict known failure. Open: #66, #156 |
 | W5 | Render a version to PDF | partly | `render::every_page_of_a_corpus_render_has_a_page_size_of_its_document` (PDF pages equal layout pages), `pdf::the_same_document_converts_to_the_same_bytes` | PDF page count equals `page_count()` and bytes equal from two processes (PR 7). Different: content the renderer drops gives a PDF and a diagnostic, not a refusal |
 | W6 | Redline two versions, accept and reject round trip, PDF in legal colours | partly | `revisions_and_compare::word_and_character_granularity_mark_only_what_changed`, `a_redline_of_two_word_saved_reports_accepts_to_the_edited_copy`, `renamed_toc_heading_bookmarks_do_not_block_the_comparison`, `swapped_footnote_references_are_compared` | `ignore_fields`, a document with content controls, legal colours in body and footer, versions whose TOC oxoffice rebuilt (PR 7); the family's two versions (PR 13). Open: #66, #68, #120 |
@@ -140,7 +148,7 @@ unless named; PR numbers refer to the plan below.
 | W10 | Apply a house style to a record, idempotent | partly | `paragraphs_and_styles`, `lists::restart_numbering_gives_one_item_a_new_start_and_the_items_after_follow`, `tables::cell_shading_borders_margins_and_alignment_survive_a_save`, `test_table_properties.py` | A minimal restyle twice on the French Word report: the second run changes no byte, comments unchanged (PR 9); #342. Open: #82, #91, #234, #235 |
 | W11 | A short document from scratch | covered | the behaviour modules | Opening in Word without repair stays on the Mac, on demand |
 | W12 | Deck checks (text fit at 100 % and 95 % of a frame, shapes, ids, transitions) and touch-ups | partly; text layout missing | `shapes_walk`, `shapes_and_text::editing_text_keeps_the_formatting_of_the_run_it_replaces`, `replace_text_counts_every_match_across_slides_groups_and_tables`, `pictures::replacing_the_image_keeps_the_picture_geometry_name_and_alt_text`; renders in #328 | `text_layout`, a rounded rectangle's inset, the 95 % factor, overflow, line breaks, transitions, duplicate shape ids, arrowheads (PR 10); a pinned layout table on the deck copies (PR 13) |
-| W13 | Text for agents: JSON with run formatting, Markdown | partly | `docx_stories`, `test_story_paragraphs.py`, `html_and_markdown` | Keys of `text --json` (PR 3); Markdown of a record copy keeps headings, lists and tables (PR 13). Open: #258, #259, #261, #263 |
+| W13 | Text for agents: JSON with run formatting, Markdown | partly | `docx_stories`, `test_story_paragraphs.py`, `html_and_markdown` | Keys of `text --json` (PR 3); Markdown of a record copy keeps headings, lists and tables (PR 13) |
 
 ### Past breakages
 
@@ -189,33 +197,33 @@ unless named; PR numbers refer to the plan below.
 
 ### Open issues a workflow meets
 
-Their fixes come first: #66, #156, #26, #184, #146, #188, #30, #172, #5,
-#6, #82, #91, #169, #144, #120, #68, #234, #235, #313, and the new #340 to
+Their fixes come first: #66, #156, #146, #30, #172, #5, #6, #82, #91,
+#169, #144, #120, #68, #234, #235, and the new #340 to
 #343.
 
 ## Plan
 
 Each pull request: the spec section it implements, its tests read back from
-the saved package, its strict known failures with their issues, its share of
-the budget measured on the Linux build job (before and after), one
+the saved package, its strict known failures with their issues, the time of
+the tests it adds (PR set and `full` set), one
 independent review on the local commit before the push.
 
 | PR | Content | Modules | Runs | Budget |
 | --- | --- | --- | --- | --- |
 | 1 | This spec | `specs/` | — | — |
-| 2 | `docs: the migration note from rdocx`: `docs/MIGRATING-FROM-RDOCX.md`; the public names of rdocx 0.17.0 and rpptx 0.15.0 as a committed list (classes, members, keyword arguments, CLI commands and flags, read from the import's stubs and `--help`); a check that each is in oxoffice or in the note, and that each row of the note names something real; the changelog rule for layout moves in `docs/DEVELOPMENT.md` | `crates/oxoffice-py/tests/test_migration.py`, `tests/migration/` | PR | 2 s |
+| 2 | `docs: the migration note from rdocx`: `docs/MIGRATING-FROM-RDOCX.md`; the public names of rdocx 0.17.0 and rpptx 0.15.0 as a committed list (classes, members, keyword arguments, CLI commands and flags, read from the import's stubs and `--help`); the differences as rows of `tests/migration/differences.toml` (old name, new name or behaviour, commit), from which the note's table is written and checked, since a pull request that edits only `docs/` or Markdown runs no test; a check that each listed name is in oxoffice or in a row, and that each row names something real; the changelog rule for layout moves in `docs/DEVELOPMENT.md` | `crates/oxoffice-py/tests/test_migration.py`, `tests/migration/` | PR | 2 s |
 | 3 | `test(cli)`: keys-only snapshots of `docx text`, `diff`, `revision list`, `layout`, `comment list`, `count`, `compare --json`, `pptx text`, `fit`, `shapes`, `comment list`; `docx diff` of the authored and Google report (no text difference beyond a pinned list, one added comment = one row); `replace --map` with a wrong count writes nothing; `OXOFFICE_WORKFLOWS` in `ci.yml` (CI session) | existing files of `crates/oxoffice-cli/tests/` | PR, `main` | 5 s |
-| 4 | `test(docx)`: what Google Docs writes, one attribute at a time (R1, I4): decimal measurements read to the nearest integer and saved, duplicate drawing ids kept and no new one repeated, duplicated style ids, two default styles of one type, `w:val="0"` toggles | `tables.rs`, `paragraphs_and_styles.rs` | PR | 2 s |
+| 4 | `test(docx)`: what Google Docs writes, one attribute at a time (R1, I4): decimal measurements read to the nearest integer and saved, duplicate drawing ids kept and no new one repeated, duplicated style ids, two default styles of one type, `w:val="0"` toggles | `tables.rs`, `paragraphs_and_styles.rs`, `sections_and_headers.rs` (`pgMar`, `pgSz`), `pictures.rs` (drawing ids) | PR | 2 s |
 | 5 | `test(docx)`: the counted, guarded edit (W3, I1, I3, I9, R7): the guarded walk; one edit on every corpus file with every other part unchanged; a replacement inside a tracked insertion; `save(other)` equals `to_bytes()`; paragraph-scoped replacement | `checked_replacement.rs`, `corpus.rs`, `text_and_runs.rs`, `save.rs`; a part-comparison helper in `support.rs` | PR (one file, no `long-*`), `main` | 8 s |
 | 6 | `test(docx)`: page numbers from the layout (W4, R3, R4, R12): the thesis walk twice, header and footer caches in every variant, a French "sur" footer, `\u` with a merged cell, a deleted heading, fields it cannot update; #340 strict | `fields_and_toc.rs` | PR (Word thesis), `main` (every copy) | 8 s |
 | 7 | `test(docx)`: render and redline (W5, W6, R8, R10, I2, I11): PDF pages equal `page_count()`, two processes same bytes; `ignore_fields`; the form copies compared; legal colours probed in body and footer; R8 through `rebuild_toc` strict on #66; run shading strict on #341; Arial drawn with Liberation Sans | `revisions_and_compare.rs`, `pdf.rs`, `crates/oxoffice-py/tests/test_save.py` | PR, `main` | 8 s |
 | 8 | `test(docx)`: review annotations (W8, W9, R7, R9): last-paragraph ids in the XML, resolve on a two-paragraph comment, threads carried between documents, another author's revisions and threads untouched, no orphan comment marker | `comments.rs`, `revisions_and_compare.rs` | PR | 3 s |
 | 9 | `test(docx)`: house style, lengths and pictures (W7, W10, R5, R6, I10): restyle twice on the French report; the linked pair strict on #342; length parity strict on #343; media-only part changes, SVG twin, picture shared with a header | `paragraphs_and_styles.rs`, `pictures.rs`, `crates/oxoffice-py/tests/test_lengths.py` | PR | 4 s |
-| 10 | `test(pptx)`: deck text layout and checks (W12, R13, R14): `text_layout` fields, rectangle against rounded rectangle, the 95 % factor and the overflow flip, bad factors refused, transitions on the corpus copies, `DuplicateShapeId`, arrowheads | `shapes_and_text.rs`, `slides_and_layouts.rs`, `corpus.rs`; a Python smoke test | PR | 3 s |
+| 10 | `test(pptx)`: deck text layout and checks (W12, R13, R14): `text_layout` fields, rectangle against rounded rectangle, the 95 % factor and the overflow flip, bad factors refused, transitions on the corpus copies, `DuplicateShapeId`, arrowheads; the layout tests gated on the `render` feature like the chart renders (the WebAssembly job builds `--test pptx` without it) | `shapes_and_text.rs`, `slides_and_layouts.rs`, `corpus.rs`; a Python smoke test | PR | 3 s |
 | 11 | `test(corpus)`: the three families, authored and saved by LibreOffice; `produce.py` routes for Word then Google (`word-google/`) and for Word updating the TOC fields of the families that ask for it; manifest features for the new traits | `tests/corpus/generate/` | PR (round trip, render) | 10 s |
 | 12 | `test(corpus)`: their Word, PowerPoint, Google and Word-then-Google copies, from a run on the Mac | `tests/corpus/files/` | PR | 5 s |
 | 13 | `test`: the workflow walks on the families (W1 read walk, W2, W6 two versions, W13 Markdown, R2 TOC pages against Word's, the deck layout table) | the modules above | PR (one file each), `main` | 3 s |
-| 14 | `test(python)`: the budget table on `main` (I12, R11): open and page count of a 45-page record, counted replacements through Python and the CLI, a read-only walk of a set, the deck checks; reported in the job summary, not gating | `crates/oxoffice-py/tests/test_docx_scaling.py` | `main` | 0 s on PRs |
+| 14 | `test(python)`: the budget table on `main` (I12, R11): open and page count of a 45-page, 30-table document built by `builders.py`, about 100 counted replacements on the Word long report through Python and the CLI, a read-only walk of the docx corpus, the deck checks; against a one-off measurement of rdocx 0.17.0 and rpptx 0.15.0 from PyPI on the same runner, committed with the table; reported in the job summary, not gating | `crates/oxoffice-py/tests/test_docx_scaling.py`, `test_pptx_scaling.py` | `main` | 0 s on PRs |
 
 Order: 2 and 3 first (the switch needs them), then 4 to 10 in any order
 (they touch different modules), 11 and 12 with the Mac session, 13 after 12,
