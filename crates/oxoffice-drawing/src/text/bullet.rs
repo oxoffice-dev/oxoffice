@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::xml::{local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -167,7 +167,7 @@ impl TextBulletColor {
 
     fn write_xml<W: Write>(&self, writer: &mut Writer<W>) -> Result<()> {
         let mut start = BytesStart::new("a:buClr");
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         write_start(writer, start)?;
         emit_raw(writer, self.raw_children.at(0))?;
         self.color.to_xml(writer)?;
@@ -273,7 +273,7 @@ impl TextBulletSize {
         };
         let mut start = BytesStart::new(tag);
         start.push_attribute(("val", value.as_str()));
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         write_empty(writer, start)
     }
 }
@@ -359,7 +359,7 @@ impl TextBulletCharacter {
         }
         let mut start = BytesStart::new("a:buChar");
         start.push_attribute(("char", self.character.as_str()));
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         write_empty(writer, start)
     }
 }
@@ -431,7 +431,7 @@ impl TextAutoNumber {
         if let Some(value) = start_at.as_deref() {
             start.push_attribute(("startAt", value));
         }
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         write_empty(writer, start)
     }
 }
@@ -606,7 +606,7 @@ impl TextNoBullet {
 
     fn write_xml<W: Write>(&self, writer: &mut Writer<W>) -> Result<()> {
         let mut start = BytesStart::new("a:buNone");
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         write_empty(writer, start)
     }
 }
@@ -815,22 +815,6 @@ fn capture_raw_attributes(
         raw.push((name, value));
     }
     Ok(raw)
-}
-
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn write_start<W: Write>(writer: &mut Writer<W>, start: BytesStart<'_>) -> Result<()> {

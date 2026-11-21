@@ -2,6 +2,7 @@
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
+use std::io::Write;
 use std::ops::Range;
 
 use crate::error::Result;
@@ -289,4 +290,22 @@ pub fn capture_empty_element(e: &BytesStart) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     writer.write_event(Event::Empty(e.to_owned()))?;
     Ok(writer.into_inner())
+}
+
+/// Write already serialized XML fragments to `writer` verbatim, in order.
+pub fn emit_raw<'a, W: Write>(
+    writer: &mut Writer<W>,
+    children: impl Iterator<Item = &'a [u8]>,
+) -> Result<()> {
+    for child in children {
+        writer.get_mut().write_all(child)?;
+    }
+    Ok(())
+}
+
+/// Push attribute name and value pairs onto a start tag, in order.
+pub fn push_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
+    for (name, value) in attributes {
+        start.push_attribute((name.as_str(), value.as_str()));
+    }
 }

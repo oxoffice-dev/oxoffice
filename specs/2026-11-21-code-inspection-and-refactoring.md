@@ -289,7 +289,8 @@ moves have tests to stand on.
 **Wave 4: shared code.** These are not moves: each changes code paths and
 comes with tests.
 
-20. XML micro-helpers to `oxoffice-core`.
+20. XML micro-helpers to `oxoffice-core`. Identical copies only, so no path
+    changes and no new test can tell the old code from the new.
 21. The font embedding model to `oxoffice-layout`.
 22. Embedded content and signatures to `oxoffice-opc`, PowerPoint gaining
     Word's checks.
