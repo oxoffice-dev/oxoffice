@@ -673,6 +673,7 @@ fn layout_paragraph_with_source_and_table(
     // Process ordinary and revision-wrapped runs in their preserved order.
     let mut projection_char_offset = 0usize;
     let mut equation_cursor = 0usize;
+    let mut display_break = None;
     let original_runs = project_paragraph_runs(para, input.revision_view);
     let projected_run_count = original_runs.len();
     let mut prepared_runs = Vec::with_capacity(original_runs.len());
@@ -936,6 +937,7 @@ fn layout_paragraph_with_source_and_table(
             resolve_run_color(&effective_rpr, input.theme.as_ref(), automatic_color),
             available_width,
             input.math_properties.as_ref(),
+            &mut display_break,
             diagnostics,
         )?;
 
@@ -1076,6 +1078,7 @@ fn layout_paragraph_with_source_and_table(
                         width,
                         height: 0.0,
                         baseline: None,
+                        math: false,
                         group: GroupElement {
                             transform: Transform::IDENTITY,
                             clip: None,
@@ -1347,6 +1350,7 @@ fn layout_paragraph_with_source_and_table(
                                 width,
                                 height,
                                 baseline: None,
+                                math: false,
                                 group: render_word_chart(
                                     relationship_id,
                                     width,
@@ -1890,6 +1894,7 @@ fn layout_paragraph_with_source_and_table(
         resolve_run_color(&equation_rpr, input.theme.as_ref(), automatic_color),
         available_width,
         input.math_properties.as_ref(),
+        &mut display_break,
         diagnostics,
     )?;
 
@@ -1902,6 +1907,7 @@ fn layout_paragraph_with_source_and_table(
         fm,
         source_node,
     )?;
+    drop_trailing_display_break(&mut inline_items, &mut multilingual_styles, display_break);
 
     let attributed_empty_paragraph = inline_items.is_empty()
         || inline_items.iter().enumerate().all(|(index, _)| {
@@ -2198,6 +2204,44 @@ fn layout_paragraph_with_source_and_table(
         paragraph_mark,
     }));
     Ok((result, paint))
+}
+
+/// Remove the line break that closes a display equation when nothing that
+/// draws follows it in the paragraph.
+///
+/// A display equation stands on a line of its own, so it ends the line it is
+/// on. At the end of the paragraph Word opens no further line: the paragraph
+/// ends on the equation's line. Kept, the break would give the paragraph an
+/// empty last line, measured like the equation line before it.
+fn drop_trailing_display_break(
+    items: &mut Vec<InlineItem>,
+    styles: &mut HashMap<usize, WordMultilingualStyle>,
+    display_break: Option<usize>,
+) {
+    let Some(index) = display_break else {
+        return;
+    };
+    if !matches!(items.get(index), Some(InlineItem::LineBreak)) {
+        return;
+    }
+    if !items[index + 1..].iter().all(draws_nothing) {
+        return;
+    }
+    items.remove(index);
+    styles.remove(&index);
+    // Styles are keyed by item index: the markers after the break move down
+    // one place, in ascending order so that each lands on a freed key.
+    let mut keys = styles
+        .keys()
+        .copied()
+        .filter(|key| *key > index)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    for key in keys {
+        if let Some(style) = styles.remove(&key) {
+            styles.insert(key - 1, style);
+        }
+    }
 }
 
 fn push_targeted_bookmark_markers(

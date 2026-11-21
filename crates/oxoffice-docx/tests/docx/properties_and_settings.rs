@@ -1972,3 +1972,20 @@ fn a_document_variable_xml_cannot_carry_is_refused_and_the_document_still_saves(
     assert!(message.contains("U+0007"), "{message}");
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
+
+#[test]
+fn an_empty_core_property_writes_no_element() {
+    let mut doc = doc_with(&["Body"]);
+    let mut core = doc.core_properties().cloned().unwrap_or_default();
+    core.created = Some(String::new());
+    core.title = Some(String::new());
+    doc.set_core_properties(core).unwrap();
+    let doc = reopen(&mut doc);
+    // An empty W3CDTF date is not a date: it reads back as no value.
+    let xml = doc.part_xml("docProps/core.xml").unwrap();
+    assert!(
+        !xml.contains("dcterms:created") && !xml.contains("dc:title"),
+        "{xml}"
+    );
+    assert_eq!(doc.core_properties().unwrap().created, None);
+}

@@ -4679,6 +4679,9 @@ fn parse_style_change(
             vec![StyleChange::Font(family.to_string())]
         }
         "font-size" => vec![StyleChange::Size(parse_points(value)?)],
+        // `inherit` keeps what the parent gives, as no declaration does; the
+        // HTML export writes it on header cells.
+        "font-weight" | "text-align" if lower == "inherit" => Vec::new(),
         "font-weight" => vec![StyleChange::Bold(match lower.as_str() {
             "normal" | "400" | "500" => false,
             "bold" | "bolder" | "600" | "700" | "800" | "900" => true,
