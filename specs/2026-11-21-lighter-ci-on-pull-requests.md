@@ -36,7 +36,9 @@ on the work. The repository is public, so this costs time, not money.
   push a new commit, or close and reopen, first (loop step 6 of
   `docs/DEVELOPMENT.md`). A documentation-only pull request runs no build
   and has nothing to check.
-- `workflow_dispatch` runs everything, like `main`.
+- `workflow_dispatch` runs everything, like `main` (`main` no longer does
+  since [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md);
+  `workflow_dispatch` still runs everything).
 - `main` is unchanged: every job on the three platforms, every scaling call.
   (Superseded in part by [nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md):
   a push to `main` now times the scaling calls on Linux only; and by

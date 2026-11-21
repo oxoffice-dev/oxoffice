@@ -25,7 +25,9 @@ parallel jobs:
   both the Python package and the `oxoffice` command, so one build serves
   the Python and the CLI checks.
 - pull requests run on Linux only, `main` runs the same jobs on Linux, macOS
-  and Windows
+  and Windows (both changed on 2026-11-21: ready pull requests into `main`
+  build on the three platforms, `main` on Linux, see
+  [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md))
 
 The `ci` cargo profile has no LTO, debug assertions on, the workspace crates
 unoptimised and the dependencies at opt-level 1. The `release` profile (fat

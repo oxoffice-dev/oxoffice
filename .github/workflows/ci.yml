@@ -86,10 +86,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Three platforms for a ready pull request into main, the nightly
-        # run and workflow_dispatch. A push to main, a draft or a pull
-        # request stacked on another branch builds on Linux only.
-        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && !github.event.pull_request.draft)) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+        # Three platforms unless this is a push to main (its pull request
+        # built them), a draft, or a pull request stacked on another branch.
+        # Any other event, the nightly run and workflow_dispatch included,
+        # builds the three.
+        os: ${{ fromJSON((github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft))) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

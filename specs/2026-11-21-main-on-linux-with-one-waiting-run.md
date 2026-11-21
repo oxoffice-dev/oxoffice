@@ -46,6 +46,17 @@ What this gives up, and why it is enough:
 - A failure that only a macOS or Windows build of the merged tree shows
   (two pull requests green apart, broken together) shows in the nightly
   run, at most a day later, and counts as a red `main`.
+- The three platforms of the pull request are checked by the merge step
+  only (loop step 6 of `docs/DEVELOPMENT.md`, and the standing rules of the
+  agents that merge): `main` requires no status check, so a merge with a
+  red or queued macOS or Windows build, a stacked pull request merged with
+  its Linux run only, or a direct push, is first built on those platforms
+  by the nightly run. The push run of `main` used to catch it on the merged
+  commit itself. Required checks need a check that documentation-only pull requests
+  report too; they come with the merge queue's `CI result`, postponed.
+- A re-run of an older run of `main` keeps its `push` event and joins
+  `ci-main`, replacing the waiting run of a newer commit: re-run only the
+  newest, and dispatch on a branch for an older commit.
 - rust-cache entries of `main` for macOS and Windows, which pull requests
   restore, are refreshed by the nightly run instead of each push.
 
@@ -55,12 +66,15 @@ nightly run, the larger runner limits and reviews before push.
 ## Outcome
 
 - One `ci.yml` change: the concurrency key of a push to `main` is `ci-main`,
-  and the build matrix of a push is Linux only.
+  and the build matrix of a push is Linux only (any other event not listed
+  as Linux-only builds the three platforms, as before).
 - `docs/DEVELOPMENT.md` (CI) and `docs/RELEASE.md` (step 1: the
   three-platform run on the released commit is the nightly run or a
   dispatch) say so. Supersedes in part
   [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md),
-  where `main` ran every job on the three platforms.
+  [A test suite from scratch](2026-11-20-test-suite-from-scratch.md) and
+  [CI and release from scratch](2026-11-20-ci-and-release.md), where `main`
+  ran every job on the three platforms.
 
 ## Links
 

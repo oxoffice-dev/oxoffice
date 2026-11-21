@@ -78,7 +78,9 @@ a manifest: producer and version, features it carries, licence, size.
 - Pull request: fmt, clippy, Rust tests, Python tests on one Linux build,
   CLI tests, corpus subset, scaling subset. Target about 10 minutes.
 - Push to `main`: the same on Linux, macOS and Windows, full corpus, full
-  scaling, rendering checks, LibreOffice validity.
+  scaling, rendering checks, LibreOffice validity. (Since 2026-11-21 on
+  Linux only, the three platforms once a night: see
+  [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md).)
 - Release: everything, plus budgets reported in the release notes.
 
 ## Plan
