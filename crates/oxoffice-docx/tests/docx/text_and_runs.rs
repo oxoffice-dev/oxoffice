@@ -505,21 +505,94 @@ fn replace_all_replaces_every_placeholder_of_the_batch() {
     assert_eq!(texts(&doc), ["Dear Ada, your order A-1 ships Friday."]);
 }
 
-// Fails today: the pairs are applied one after another, in the order of the
-// map, so pairs that overlap give a result that depends on that order.
-// Issue: #53
 #[test]
-#[should_panic(expected = "the pairs of a batch apply at once")]
 fn replace_all_swaps_two_words_whatever_the_order_of_its_pairs() {
-    let mut doc = doc_with(&["left right"]);
-    let pairs = HashMap::from([("left", "right"), ("right", "left")]);
-    let replaced = doc.replace_all(&pairs);
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        (replaced, texts(&doc)),
-        (2, vec!["right left".to_owned()]),
-        "the pairs of a batch apply at once"
-    );
+    // Each map has its own random order: sixteen of them make an order that
+    // changes the result all but certain to show.
+    for _ in 0..16 {
+        let mut doc = doc_with(&["left right"]);
+        let pairs = HashMap::from([("left", "right"), ("right", "left")]);
+        let replaced = doc.replace_all(&pairs);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            (replaced, texts(&doc)),
+            (2, vec!["right left".to_owned()]),
+            "the pairs of a batch apply at once"
+        );
+    }
+}
+
+#[test]
+fn replace_all_never_searches_a_value_with_another_pair() {
+    for _ in 0..8 {
+        let mut doc = doc_with(&["alpha gamma"]);
+        let pairs = HashMap::from([("alpha", "beta gamma"), ("gamma", "delta")]);
+        assert_eq!(doc.replace_all(&pairs), 2);
+        assert_eq!(texts(&reopen(&mut doc)), ["beta gamma delta"]);
+    }
+}
+
+#[test]
+fn replace_all_takes_the_longer_overlapping_placeholder_then_the_one_that_sorts_first() {
+    for _ in 0..8 {
+        let mut doc = doc_with(&["xyzw", "xyz", "abc€"]);
+        assert_eq!(
+            doc.replace_all(&HashMap::from([("xy", "1"), ("xyz", "2")])),
+            2
+        );
+        assert_eq!(
+            doc.replace_all(&HashMap::from([("yz", "4"), ("xy", "3")])),
+            0
+        );
+        // Longer in characters, not in bytes: "abc" is longer than "c€".
+        assert_eq!(
+            doc.replace_all(&HashMap::from([("c€", "5"), ("abc", "6")])),
+            1
+        );
+        assert_eq!(texts(&reopen(&mut doc)), ["2w", "2", "6€"]);
+    }
+    for _ in 0..8 {
+        let mut doc = doc_with(&["xyz"]);
+        assert_eq!(
+            doc.replace_all(&HashMap::from([("yz", "2"), ("xy", "1")])),
+            1
+        );
+        assert_eq!(texts(&reopen(&mut doc)), ["1z"]);
+    }
+}
+
+#[test]
+fn replace_all_writes_a_value_holding_private_use_characters_as_given() {
+    // The marker the second pair would get without a delimiter of its own.
+    let private = "\u{10FFFD}\u{100001}\u{10FFFD}";
+    for _ in 0..8 {
+        let mut doc = doc_with(&["alpha beta"]);
+        let pairs = HashMap::from([("alpha", private), ("beta", "gamma")]);
+        assert_eq!(doc.replace_all(&pairs), 2);
+        assert_eq!(texts(&reopen(&mut doc)), [format!("{private} gamma")]);
+    }
+}
+
+#[test]
+fn replace_all_leaves_no_marker_in_a_corpus_document() {
+    // Headers, footers and the body of documents saved by Word and Google
+    // Docs, swapped and swapped back.
+    for producer in ["word", "google"] {
+        let mut doc = corpus_doc(&format!("{producer}/report.docx"));
+        let before = doc.text_report().text;
+        let swap = HashMap::from([("Northwind", "Operations"), ("Operations", "Northwind")]);
+        let replaced = doc.replace_all(&swap);
+        assert!(replaced >= 3, "{producer}: {replaced}");
+        assert_eq!(doc.replace_all(&swap), replaced, "{producer}");
+        let after = reopen(&mut doc).text_report().text;
+        assert_eq!(after, before, "{producer}: swapped back");
+        assert!(
+            !after
+                .chars()
+                .any(|c| ('\u{100000}'..='\u{10FFFD}').contains(&c)),
+            "{producer}: no private marker is left"
+        );
+    }
 }
 
 #[test]
