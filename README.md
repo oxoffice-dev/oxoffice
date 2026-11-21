@@ -101,6 +101,57 @@ doc.add_paragraph("Hello from Rust");
 doc.save("hello.docx")?;
 ```
 
+## 🧰 What it does
+
+A tour by family rather than a full list: each command's `--help`, the Python type stubs and the examples of
+[oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) go into the details. ✅ works, ⚠️ works with
+known gaps (`oxoffice limitations docx` or `pptx` lists each one with its workaround, or the note says why),
+❌ not yet, — does not apply.
+
+### 📝 Word
+
+| Family | Read | Edit | Create | Notes |
+| --- | :---: | :---: | :---: | --- |
+| Text, runs, find and replace | ✅ | ✅ | ✅ | counted replacements that keep formatting and refuse text they cannot reach |
+| Styles | ✅ | ✅ | ✅ | |
+| Lists and numbering | ✅ | ⚠️ | ✅ | a list numbered through its style cannot be restarted |
+| Tables | ✅ | ✅ | ✅ | merges, borders, shading, nested tables |
+| Sections, headers and footers | ✅ | ⚠️ | ✅ | the document-wide header or footer setter reaches the last section only |
+| Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind |
+| Comments and replies | ✅ | ✅ | ✅ | anchored on a piece of text, moved, resolved, dated |
+| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; a redline from two versions, while writing your own edits as tracked changes is on the [roadmap](ROADMAP.md) |
+| Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
+| Content controls and forms | ✅ | ⚠️ | ✅ | fill, validate, reset and protect; export to fillable PDF fields is coming |
+| Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
+| Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
+| Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
+| Mail merge | ✅ | ✅ | ✅ | from Rust and Python |
+| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust only for now; more on the [roadmap](ROADMAP.md) |
+| Conversions | ✅ | — | ✅ | from Markdown and HTML; to PDF and PDF/A, HTML, Markdown, ODT, RTF, EPUB and page images |
+| Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
+| Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |
+| Encryption | ⚠️ | — | ⚠️ | open and save with a password, from Rust only for now |
+
+### 📊 PowerPoint
+
+| Family | Read | Edit | Create | Notes |
+| --- | :---: | :---: | :---: | --- |
+| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a slide with comments cannot be duplicated yet |
+| Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
+| Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
+| Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
+| Tables | ✅ | ⚠️ | ✅ | some tables merged by LibreOffice or Google cannot be split or narrowed |
+| Charts | ✅ | ✅ | ✅ | new data keeps the series formatting |
+| Pictures | ✅ | ✅ | ✅ | a replaced picture keeps its frame and crop |
+| Speaker notes | ✅ | ✅ | ✅ | notes pages and handouts as PDF |
+| Comments and replies | ✅ | ✅ | ✅ | modern comments, on a slide or a shape |
+| Themes, masters and layouts | ✅ | ✅ | ✅ | theme colours and fonts, a theme taken from another deck |
+| Merging decks | — | ⚠️ | — | slides imported onto a layout of the deck or with their own formatting, which refuses slides with notes for now |
+| Rendering and export | — | — | ✅ | PDF and PDF/A, PNG and JPEG slides, HTML, Markdown |
+| Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
+| Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |
+| Encryption | ⚠️ | — | ⚠️ | open and save with a password, from Rust only for now |
+
 ## 🗺️ Status
 
 oxoffice is young: 0.x, and the API can still move. It starts from rdocx 0.17.0 and rpptx 0.15.0, which
