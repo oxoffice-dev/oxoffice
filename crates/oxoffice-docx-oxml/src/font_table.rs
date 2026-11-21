@@ -344,23 +344,17 @@ impl FontTable {
                 "cannot remove a font record whose retained XML names a relationship".to_owned(),
             ));
         }
-        let namespace_only = |attributes: &[(String, String)]| {
-            attributes
-                .iter()
-                .all(|(key, _)| key == "xmlns" || key.starts_with("xmlns:"))
-        };
-        if !namespace_only(&font.raw_attributes)
-            || !namespace_only(&font.alternate_name_raw_attributes)
-            || !namespace_only(&font.family_raw_attributes)
-            || !namespace_only(&font.pitch_raw_attributes)
+        if !only_namespace_declarations(&font.raw_attributes)
+            || !only_namespace_declarations(&font.alternate_name_raw_attributes)
+            || !only_namespace_declarations(&font.family_raw_attributes)
+            || !only_namespace_declarations(&font.pitch_raw_attributes)
             || [
                 &font.alternate_name_raw_inner,
                 &font.family_raw_inner,
                 &font.pitch_raw_inner,
             ]
             .into_iter()
-            .flatten()
-            .any(|raw| !raw.iter().all(u8::is_ascii_whitespace))
+            .any(holds_content)
         {
             return Err(OxmlError::InvalidValue(
                 "cannot remove opaque font record payload".to_owned(),
@@ -370,6 +364,55 @@ impl FontTable {
             self.can_remove_embedded_font(name, face.kind)?;
         }
         Ok(true)
+    }
+
+    /// Check whether `set_font` can clear these fields of the record named
+    /// `name`. A cleared field takes its element's attributes and content
+    /// with it, so one that carries more than namespace declarations is
+    /// refused. The record's other children, the XML it keeps and its
+    /// embedded faces stay, so they are not checked.
+    pub fn can_clear_font_fields(
+        &self,
+        name: &str,
+        alternate_name: bool,
+        family: bool,
+        pitch: bool,
+    ) -> Result<()> {
+        let mut matches = self.fonts.iter().filter(|font| font.name == name);
+        let Some(font) = matches.next() else {
+            return Ok(());
+        };
+        if matches.next().is_some() {
+            return Err(OxmlError::InvalidValue("ambiguous font record".to_owned()));
+        }
+        let fields = [
+            (
+                alternate_name,
+                "alternate name",
+                &font.alternate_name_raw_attributes,
+                &font.alternate_name_raw_inner,
+            ),
+            (
+                family,
+                "family",
+                &font.family_raw_attributes,
+                &font.family_raw_inner,
+            ),
+            (
+                pitch,
+                "pitch",
+                &font.pitch_raw_attributes,
+                &font.pitch_raw_inner,
+            ),
+        ];
+        for (cleared, field, attributes, inner) in fields {
+            if cleared && (!only_namespace_declarations(attributes) || holds_content(inner)) {
+                return Err(OxmlError::InvalidValue(format!(
+                    "cannot clear the {field} of font {name}: it holds unmodelled XML"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Check that one uniquely identified face has no unowned deletion payload.
@@ -1064,4 +1107,18 @@ fn parse_bool(value: &str) -> Result<bool> {
 
 fn element_name(start: &BytesStart<'_>) -> String {
     String::from_utf8_lossy(start.name().as_ref()).into_owned()
+}
+
+/// Whether these attributes only declare namespaces.
+fn only_namespace_declarations(attributes: &[(String, String)]) -> bool {
+    attributes
+        .iter()
+        .all(|(key, _)| key == "xmlns" || key.starts_with("xmlns:"))
+}
+
+/// Whether kept element content holds more than whitespace.
+fn holds_content(inner: &Option<Vec<u8>>) -> bool {
+    inner
+        .as_ref()
+        .is_some_and(|raw| !raw.iter().all(u8::is_ascii_whitespace))
 }

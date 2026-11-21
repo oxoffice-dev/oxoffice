@@ -375,12 +375,12 @@ impl Document {
                 {
                     return Ok(());
                 }
-                if (record.alternate_name.is_some() && font.alternate_name.is_none())
-                    || (record.family.is_some() && font.family.is_none())
-                    || (record.pitch.is_some() && font.pitch.is_none())
-                {
-                    table.can_remove_font(&font.name)?;
-                }
+                table.can_clear_font_fields(
+                    &font.name,
+                    record.alternate_name.is_some() && font.alternate_name.is_none(),
+                    record.family.is_some() && font.family.is_none(),
+                    record.pitch.is_some() && font.pitch.is_none(),
+                )?;
             }
         }
         let mut candidate = self.font_table_mutation_candidate()?;

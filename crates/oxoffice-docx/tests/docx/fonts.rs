@@ -725,6 +725,103 @@ fn an_unknown_child_that_names_no_relationship_goes_with_its_record() {
     assert!(!xml.contains("urn:example:fonts"), "{xml}");
 }
 
+#[test]
+fn a_field_of_a_record_the_removal_guard_refuses_can_be_cleared() {
+    // Clearing a field keeps the record, so what the record keeps besides
+    // its fields stays: (record, text that must survive).
+    for (record, kept) in [
+        // Kept XML naming a relationship.
+        (
+            r#"<w:font w:name="Gelasio"><x:face xmlns:x="urn:example:fonts" r:id="rId9"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>"#.to_owned(),
+            r#"r:id="rId9""#,
+        ),
+        // An embedded face the model does not read, kept as written.
+        (
+            format!(
+                r#"<w:font w:name="Gelasio"><w:family w:val="roman"/><w:pitch w:val="variable"/><w:embedRegular r:id="rId9" w:fontKey="{KEY}"><x:note xmlns:x="urn:example:fonts"/></w:embedRegular></w:font>"#
+            ),
+            "x:note",
+        ),
+        // An attribute of the record itself.
+        (
+            r#"<w:font w:name="Gelasio" xmlns:x="urn:example:fonts" x:by="a producer"><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>"#.to_owned(),
+            r#"x:by="a producer""#,
+        ),
+        // A modelled embedded face with an attribute it does not model.
+        (
+            format!(
+                r#"<w:font w:name="Gelasio"><w:family w:val="roman"/><w:pitch w:val="variable"/><w:embedRegular r:id="rId9" w:fontKey="{KEY}" xmlns:x="urn:example:fonts" x:by="a producer"/></w:font>"#
+            ),
+            r#"x:by="a producer""#,
+        ),
+    ] {
+        let mut doc = doc_with_font_record(&record);
+        doc.set_font(FontDefinition::new("Gelasio").with_pitch("variable"))
+            .unwrap_or_else(|error| panic!("{record}: {error}"));
+
+        let mut doc = reopen(&mut doc);
+        let fonts = doc.fonts();
+        let gelasio = font(&fonts, "Gelasio");
+        assert_eq!(
+            (gelasio.family.as_deref(), gelasio.pitch.as_deref()),
+            (None, Some("variable")),
+            "{record}"
+        );
+        let xml = doc.part_xml(FONT_TABLE).expect("font table");
+        assert!(xml.contains(kept), "{record}: {xml}");
+        assert_eq!(
+            font_parts(&saved_package(&mut doc)),
+            ["/word/fonts/font9.odttf"],
+            "{record}"
+        );
+    }
+}
+
+#[test]
+fn clearing_a_field_that_holds_unmodelled_xml_is_refused() {
+    // (record, the field the bare definition clears and that blocks)
+    for (record, blocking) in [
+        (
+            r#"<w:font w:name="Gelasio"><w:family w:val="roman" xmlns:x="urn:example:fonts" x:hint="serif"/><w:pitch w:val="variable"/></w:font>"#,
+            "family",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:family w:val="roman"><!-- a producer's note --></w:family></w:font>"#,
+            "family",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:pitch w:val="variable" xmlns:x="urn:example:fonts" x:hint="fixed"/></w:font>"#,
+            "pitch",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:altName w:val="Georgia" xmlns:x="urn:example:fonts" x:hint="serif"/></w:font>"#,
+            "alternate name",
+        ),
+    ] {
+        let mut doc = doc_with_font_record(record);
+        let before = doc.to_bytes().expect("document saves");
+        let error = doc
+            .set_font(FontDefinition::new("Gelasio"))
+            .expect_err(record)
+            .to_string();
+        assert!(
+            error.contains(&format!("cannot clear the {blocking} of font Gelasio")),
+            "{record}: {error}"
+        );
+        assert_eq!(doc.to_bytes().expect("document saves"), before, "{record}");
+    }
+
+    // Clearing another field keeps the family and its attribute.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:family w:val="roman" xmlns:x="urn:example:fonts" x:hint="serif"/><w:pitch w:val="variable"/></w:font>"#,
+    );
+    doc.set_font(FontDefinition::new("Gelasio").with_family("roman"))
+        .expect("the pitch can be cleared");
+    let xml = reopen(&mut doc).part_xml(FONT_TABLE).expect("font table");
+    assert!(xml.contains(r#"x:hint="serif""#), "{xml}");
+    assert!(!xml.contains("w:pitch"), "{xml}");
+}
+
 // ---- Embedding faces ----
 
 #[test]
