@@ -282,6 +282,15 @@ pub fn every_thesis_copy() -> Vec<String> {
         .collect()
 }
 
+/// Whether a workflow walk renders this copy (a PDF, page images): the
+/// small thesis and the Word copy. A render of a thesis copy costs a layout
+/// of a few dozen pages in the `ci` profile, and every corpus file's render is
+/// checked as saved by the render tests; the other copies walk the edits,
+/// comparisons and page fields only.
+pub fn walk_renders(copy: &str) -> bool {
+    copy == SMALL_THESIS || copy.starts_with("word/")
+}
+
 /// The bytes of a workflow copy: the small thesis, or a corpus file.
 pub fn workflow_source(copy: &str) -> Vec<u8> {
     if copy == SMALL_THESIS {
