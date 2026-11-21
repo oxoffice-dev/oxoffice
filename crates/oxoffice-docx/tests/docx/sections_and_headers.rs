@@ -814,14 +814,13 @@ fn every_corpus_report_shows_its_header_and_footer_on_both_sections() {
     }
 }
 
-// Fails today: header_text and footer_text read None when the last section inherits. Issue: #28
 #[test]
-#[should_panic(expected = "header_text and footer_text miss the inherited")]
 fn header_text_reads_the_header_the_last_section_inherits() {
     // Word, Google Docs and python-docx put the header on the first section
-    // and let the landscape section inherit it.
+    // and let the landscape section inherit it; LibreOffice gives the second
+    // section its own copy.
     let mut missed = Vec::new();
-    for producer in ["word", "google", "authored"] {
+    for producer in ["word", "google", "authored", "libreoffice"] {
         let doc = report(producer);
         if doc.header_text().as_deref() != Some(REPORT_HEADER)
             || doc.footer_text().as_deref() != Some(REPORT_FOOTER)
@@ -836,6 +835,43 @@ fn header_text_reads_the_header_the_last_section_inherits() {
     assert!(
         missed.is_empty(),
         "header_text and footer_text miss the inherited header and footer: {missed:?}"
+    );
+}
+
+#[test]
+fn header_text_follows_a_new_section_that_inherits_and_one_that_has_its_own() {
+    let mut doc = Document::new();
+    doc.add_paragraph("body");
+    doc.set_header("h");
+    doc.set_footer("f");
+    doc.insert_section(1).unwrap();
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(
+        doc.header_text().as_deref(),
+        Some("h"),
+        "inherited by the new last section"
+    );
+    assert_eq!(doc.footer_text().as_deref(), Some("f"));
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.header_text().as_deref(), Some("h"), "after a reopen");
+    assert_eq!(Document::new().header_text(), None, "no header anywhere");
+
+    // A last section with a header of its own shows that one.
+    let own = doc
+        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    rewrite_first_paragraph(&mut doc, &own, "h2");
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.header_text().as_deref(), Some("h2"), "its own header");
+    assert_eq!(
+        header(&doc, 0).as_deref(),
+        Some("h"),
+        "the first keeps its own"
+    );
+    assert_eq!(
+        doc.footer_text().as_deref(),
+        Some("f"),
+        "the footer is still inherited"
     );
 }
 

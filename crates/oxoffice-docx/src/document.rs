@@ -41012,12 +41012,14 @@ impl Document {
         Ok(())
     }
 
-    /// Get the default header text, if set.
+    /// Get the default header text the last section shows, its own or the
+    /// one it inherits from an earlier section, if any.
     pub fn header_text(&self) -> Option<String> {
         self.get_header_footer_text(true, HdrFtrType::Default)
     }
 
-    /// Get the default footer text, if set.
+    /// Get the default footer text the last section shows, its own or the
+    /// one it inherits from an earlier section, if any.
     pub fn footer_text(&self) -> Option<String> {
         self.get_header_footer_text(false, HdrFtrType::Default)
     }
@@ -42380,14 +42382,21 @@ impl Document {
         Ok(())
     }
 
+    /// The text of the header or footer the last section shows: its own,
+    /// else the one it inherits from the nearest section before it that has
+    /// one, as [`Self::section_story`] resolves it.
     fn get_header_footer_text(&self, is_header: bool, hdr_type: HdrFtrType) -> Option<String> {
-        let sect = self.document.body.sect_pr.as_ref()?;
-        let refs = if is_header {
-            &sect.header_refs
-        } else {
-            &sect.footer_refs
-        };
-        let reference = self.first_usable_header_footer_reference(refs, hdr_type, is_header)?;
+        // From the last section back, the first one with a usable reference:
+        // one header part read in the common case.
+        let sections: Vec<&CT_SectPr> = self.section_properties_in_order().collect();
+        let reference = sections.into_iter().rev().find_map(|section| {
+            let refs = if is_header {
+                &section.header_refs
+            } else {
+                &section.footer_refs
+            };
+            self.first_usable_header_footer_reference(refs, hdr_type, is_header)
+        })?;
         Some(
             self.load_header_footer(&reference.rel_id, is_header)?
                 .text(),
