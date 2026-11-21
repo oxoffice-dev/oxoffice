@@ -39333,14 +39333,14 @@ impl Document {
                 let computed = self.compute_unsavable_body_edit();
                 let _ = self.unsavable_body_edit_cache.set(computed);
             }
-            // A kept answer is the one the whole main part gives now, read
-            // by the full scan, which leaves the block memos as they are.
+            // A kept answer is the one the whole main part gives now, computed
+            // on a cold copy so that no cache of this document is warmed.
             #[cfg(debug_assertions)]
             Some(kept) => {
-                let _full_scan = CanonicalBlockProofOff::enter();
+                let reference = self.clone_for_debug_reference();
                 assert_eq!(
                     kept,
-                    &without_staging_work(|| self.compute_unsavable_body_edit()),
+                    &without_staging_work(|| reference.compute_unsavable_body_edit()),
                     "kept unsavable body answer"
                 );
             }
@@ -55842,6 +55842,93 @@ fn validate_document_package(package: OpcPackage) -> Result<ValidationReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+
+    /// A document read from bytes whose body is `body`, as a file is read.
+    fn read_with_body(body: &str) -> Document {
+        let bytes = Document::new().to_bytes().expect("a new document saves");
+        let mut package =
+            OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("the package opens");
+        let part = package.main_document_part().expect("a main document part");
+        let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+            .expect("the main part is UTF-8");
+        let start = xml.find("<w:body>").expect("a body") + "<w:body>".len();
+        let end = xml.find("<w:sectPr").expect("section properties");
+        package.set_part(
+            &part,
+            format!("{}{body}{}", &xml[..start], &xml[end..]).into_bytes(),
+        );
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("the package writes");
+        Document::from_bytes(&out.into_inner()).expect("the document opens")
+    }
+
+    /// The local names of the nested namespace owners the body keeps.
+    fn owner_names(doc: &Document) -> Vec<String> {
+        doc.kept_main_part()
+            .and_then(|kept| {
+                kept.nested_namespace_owners().map(|owners| {
+                    owners
+                        .iter()
+                        .map(|owner| owner.local_name.clone())
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// A content control that declares `w15` and uses it: a nested namespace
+    /// owner named `sdt`.
+    fn control_owner() -> String {
+        format!(
+            r#"<w:sdt xmlns:w15="{W15}"><w:sdtPr><w15:repeatingSection/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>row</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+        )
+    }
+
+    /// A paragraph that declares `w15` and uses it: a nested namespace owner
+    /// named `p`.
+    fn paragraph_owner() -> String {
+        format!(r#"<w:p xmlns:w15="{W15}"><w:r><w15:mark/><w:t>owner</w:t></w:r></w:p>"#)
+    }
+
+    /// The body of `body` after a typed paragraph appended to it, and whether
+    /// `keep_body_savable_after_typed_insert` then kept the savable answer.
+    fn kept_after_typed_paragraph(body: &str, savable_before: bool) -> (Document, bool) {
+        let mut doc = read_with_body(body);
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        let slot = doc.content_count();
+        doc.add_paragraph("typed");
+        assert!(
+            doc.unsavable_body_edit_cache.get().is_none(),
+            "the insert drops the answer"
+        );
+        doc.keep_body_savable_after_typed_insert(slot, savable_before);
+        let kept = doc.unsavable_body_edit_cache.get() == Some(&None);
+        (doc, kept)
+    }
+
+    #[test]
+    fn a_typed_paragraph_beside_a_content_control_owner_keeps_the_savable_answer() {
+        assert_eq!(owner_names(&read_with_body(&control_owner())), ["sdt"]);
+        let (doc, kept) = kept_after_typed_paragraph(&control_owner(), true);
+        assert!(kept);
+        assert_eq!(doc.unsavable_body_edit(), None);
+    }
+
+    #[test]
+    fn a_typed_paragraph_beside_a_paragraph_owner_is_left_to_the_full_computation() {
+        assert_eq!(owner_names(&read_with_body(&paragraph_owner())), ["p"]);
+        let (doc, kept) = kept_after_typed_paragraph(&paragraph_owner(), true);
+        assert!(!kept);
+        assert_eq!(doc.unsavable_body_edit(), None);
+    }
+
+    #[test]
+    fn a_body_not_savable_before_the_insert_is_not_marked_savable() {
+        let (_, kept) = kept_after_typed_paragraph(&control_owner(), false);
+        assert!(!kept);
+    }
 
     #[test]
     fn an_element_is_found_by_its_local_name_whatever_its_prefix() {
