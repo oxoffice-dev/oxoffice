@@ -1292,3 +1292,89 @@ fn the_notes_count_after_a_removal_counts_slides_with_notes_text() {
     let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
     assert!(app.contains("<Notes>0</Notes>"), "{app}");
 }
+
+#[test]
+fn added_duplicated_and_imported_slides_are_counted_in_the_package_metadata() {
+    let source = corpus_deck("google/deck.pptx");
+    type Edit = fn(&mut Presentation, &Presentation);
+    let edits: [(&str, Edit); 3] = [
+        ("add", |prs, _| {
+            let layout = layout_named(prs, "Title Only");
+            prs.add_slide(layout).unwrap();
+        }),
+        ("duplicate", |prs, _| {
+            prs.duplicate_slide(1).unwrap();
+        }),
+        ("import", |prs, source| {
+            let layout = layout_named(prs, "Title Only");
+            prs.import_slide(source, 0, Some(layout), None).unwrap();
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut prs = corpus_deck("powerpoint/deck.pptx");
+        edit(&mut prs, &source);
+
+        let prs = reopen(&prs);
+        let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+        assert!(app.contains("<Slides>5</Slides>"), "{name}: {app}");
+        // The duplicate of Highlights brings its notes along.
+        let notes = if name == "duplicate" { 2 } else { 1 };
+        assert!(
+            app.contains(&format!("<Notes>{notes}</Notes>")),
+            "{name}: {app}"
+        );
+        assert!(
+            !app.contains("TitlesOfParts") && !app.contains("HeadingPairs"),
+            "{name}: {app}"
+        );
+        assert!(
+            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
+            "{name}: a new slide leaves the thumbnail"
+        );
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
+}
+
+#[test]
+fn hiding_a_slide_updates_only_the_hidden_slide_count() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+
+    prs.slide_mut(2).unwrap().set_hidden(true);
+
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert_eq!(
+        app,
+        before.replace(
+            "<HiddenSlides>0</HiddenSlides>",
+            "<HiddenSlides>1</HiddenSlides>"
+        )
+    );
+}
+
+#[test]
+fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged() {
+    // The authored deck says it has no slide: an added one makes it five.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    let layout = prs.slide_layout_index(0).unwrap();
+    prs.add_slide(layout).unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Slides>5</Slides>"), "{app}");
+
+    for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
+        let mut prs = corpus_deck(name);
+        let before = saved_part_text(&prs, "/docProps/app.xml");
+        prs.duplicate_slide(1).unwrap();
+        prs.slide_mut(0).unwrap().set_hidden(true);
+        assert_eq!(
+            saved_part_text(&reopen(&prs), "/docProps/app.xml"),
+            before,
+            "{name}"
+        );
+    }
+
+    // Opening and saving without an edit changes nothing, stale counts included.
+    let prs = corpus_deck("authored/deck.pptx");
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Slides>0</Slides>"), "{app}");
+}

@@ -10290,6 +10290,9 @@ impl Presentation {
     /// comments are copied into a part of its own, each taking its author's
     /// next index; a legacy reply whose parent comment is on another slide
     /// brings a copy of that parent along, as an import does.
+    ///
+    /// `docProps/app.xml` counts the new slide and drops its title lists,
+    /// which PowerPoint writes again on its next save.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10299,6 +10302,7 @@ impl Presentation {
         }
         let mut staged = self.clone();
         let inserted = staged.duplicate_slide_in_place(index)?;
+        staged.refresh_document_metadata(true, false)?;
         *self = staged;
         self.slides
             .get(inserted)
@@ -10351,6 +10355,7 @@ impl Presentation {
             Some(&destination_layout),
             None,
         )?;
+        staged.refresh_document_metadata(true, false)?;
         self.commit_candidate(staged)?;
         self.slides
             .get(inserted)
@@ -10395,6 +10400,9 @@ impl Presentation {
     }
 
     /// Imports slides of another presentation.
+    ///
+    /// `docProps/app.xml` counts the new slides and drops its title lists,
+    /// which PowerPoint writes again on its next save.
     ///
     /// The slides at `indexes` are copied in that order to consecutive
     /// positions starting at `options.insert_index`, or appended when that is
@@ -10727,6 +10735,7 @@ impl Presentation {
             &original_main_ids,
         )?;
         let inserted_indexes = (inserted..inserted + copies.len()).collect();
+        staged.refresh_document_metadata(true, false)?;
         self.commit_candidate(staged)?;
         Ok((inserted_indexes, diagnostics))
     }
@@ -10906,24 +10915,26 @@ impl Presentation {
         self.slides.remove(index);
         prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
-        self.forget_removed_slide_in_metadata()
+        self.refresh_document_metadata(true, true)
     }
 
-    /// Keeps the package metadata from carrying a removed slide.
+    /// Keeps the package metadata in step with a slide edit.
     ///
     /// `docProps/app.xml` gets the slide, notes and hidden-slide counts of
-    /// the deck, where it has them, and loses its title lists
-    /// (`HeadingPairs`, `TitlesOfParts`), which may name the removed slide:
-    /// their group names are localised, so the removed title cannot be told
-    /// apart, and PowerPoint writes them again on its next save. An app.xml
-    /// the source-preserving patch cannot edit (one outside its namespace,
-    /// or with a count in a foreign namespace) is left as it was rather than
-    /// refusing the removal.
+    /// the deck, where it has them. With `titles`, an edit that adds or
+    /// removes slides, it also loses its title lists (`HeadingPairs`,
+    /// `TitlesOfParts`), which may name a removed slide or miss a new one:
+    /// their group names are localised, so a title cannot be picked out, and
+    /// PowerPoint writes them again on its next save. A move changes neither
+    /// the counts nor what the lists hold, so it leaves app.xml alone. An
+    /// app.xml the source-preserving patch cannot edit (one outside its
+    /// namespace, or with a count in a foreign namespace) is left as it was
+    /// rather than refusing the edit.
     ///
-    /// The package thumbnail pictures the slide that was first when the deck
-    /// was last saved, which moves and inserts may have taken anywhere, so
-    /// any removal takes it.
-    fn forget_removed_slide_in_metadata(&mut self) -> Result<()> {
+    /// With `thumbnail`, a removal, the package thumbnail goes too: it
+    /// pictures the slide that was first when the deck was last saved, which
+    /// moves and inserts may have taken anywhere.
+    fn refresh_document_metadata(&mut self, titles: bool, thumbnail: bool) -> Result<()> {
         let thumbnails = self
             .package
             .package_rels
@@ -10933,6 +10944,7 @@ impl Presentation {
                 relationship.rel_type == rel_types::THUMBNAIL
                     && !relationship_is_external(relationship)
             })
+            .filter(|_| thumbnail)
             .map(|relationship| OpcPackage::resolve_rel_target("/", &relationship.target))
             .collect::<Vec<_>>();
         for part in &thumbnails {
@@ -10940,7 +10952,9 @@ impl Presentation {
             self.package.content_types.remove_override(part);
         }
         self.package.package_rels.items.retain(|relationship| {
-            relationship.rel_type != rel_types::THUMBNAIL || relationship_is_external(relationship)
+            !thumbnail
+                || relationship.rel_type != rel_types::THUMBNAIL
+                || relationship_is_external(relationship)
         });
         let (Some(old), Some(part)) = (
             self.application_properties.clone(),
@@ -10982,7 +10996,8 @@ impl Presentation {
         let mut xml = Vec::with_capacity(patched.len());
         let mut cursor = 0;
         for (_, _, start, end) in children.iter().filter(|(uri, local, _, _)| {
-            uri.as_deref() == Some(EXTENDED_PROPERTIES_NS)
+            titles
+                && uri.as_deref() == Some(EXTENDED_PROPERTIES_NS)
                 && matches!(local.as_str(), "HeadingPairs" | "TitlesOfParts")
         }) {
             xml.extend_from_slice(&patched[cursor..*start]);
@@ -12672,6 +12687,9 @@ impl Presentation {
     }
 
     /// Synthesizes a new slide from one layout selected by zero-based index.
+    ///
+    /// `docProps/app.xml` counts the new slide and drops its title lists,
+    /// which PowerPoint writes again on its next save.
     pub fn add_slide(&mut self, layout_index: usize) -> Result<SlideRef<'_>> {
         let layout = self
             .layouts
@@ -12775,6 +12793,7 @@ impl Presentation {
             notes: None,
             comments: None,
         }));
+        self.refresh_document_metadata(true, false)?;
         self.slides
             .last()
             .map(|record| slide_ref(record))
@@ -23196,6 +23215,9 @@ impl<'a> SlideMut<'a> {
         Arc::make_mut(&mut self.presentation.slides[self.index])
             .slide
             .set_hidden(hidden);
+        // Only the hidden-slide count changes. Metadata that cannot be
+        // refreshed is left as it was: it is no reason to refuse a hide.
+        let _ = self.presentation.refresh_document_metadata(false, false);
     }
 
     /// Sets a direct DrawingML fill without replacing a theme reference.
