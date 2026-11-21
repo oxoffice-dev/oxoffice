@@ -117,15 +117,6 @@
     "issue": 38
   },
   {
-    "id": "pptx-comment-date-without-zone",
-    "format": "pptx",
-    "area": "open",
-    "title": "A deck whose modern comment is dated without a time zone does not open",
-    "symptom": "open fails with \"comment timestamp is not RFC 3339\" on a created date such as 2026-11-16T09:30:00.503, which PowerPoint 365 may write",
-    "workaround": "add a time zone (Z) to the created dates in ppt/comments/modernComment_*.xml, then open the file",
-    "issue": 39
-  },
-  {
     "id": "pptx-duplicate-commented-slide",
     "format": "pptx",
     "area": "comments",

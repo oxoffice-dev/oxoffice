@@ -932,19 +932,94 @@ fn a_comment_saved_by_powerpoint_reads_back_and_keeps_its_position() {
     assert!(xml.contains("sldMkLst"), "{xml}");
 }
 
-// Fails today: a comment date without a time zone (an xsd:dateTime, as in
-// Microsoft's own modern-comment sample) makes the whole deck refuse to open.
-// Issue: #39
+// A comment date is an xsd:dateTime (MS-PPTX), whose time zone is optional.
 #[test]
-#[should_panic(expected = "comment timestamp is not RFC 3339")]
 fn a_comment_dated_in_local_time_opens() {
-    let prs = Presentation::from_bytes(&powerpoint_comment_deck("2026-11-16T09:30:00.503"))
+    let mut prs = Presentation::from_bytes(&powerpoint_comment_deck("2026-11-16T09:30:00.503"))
         .expect("a deck with a comment dated in local time opens");
 
-    assert_eq!(
-        prs.comments(0).unwrap()[0].created,
-        "2026-11-16T09:30:00.503"
-    );
+    let thread = &prs.comments(0).unwrap()[0];
+    assert_eq!(thread.created, "2026-11-16T09:30:00.503");
+    assert_eq!(thread.replies()[0].created, "2026-11-16T09:30:00.503");
+    let thread_id = thread.id.clone();
+    prs.add_comment_author(author(ADA, "Ada Lovelace", None))
+        .unwrap();
+    prs.reply_to_comment(0, &thread_id, reply(&guid(1), ADA, TUESDAY, "Seen"))
+        .unwrap();
+
+    let reopened = reopen(&prs);
+    let thread = &reopened.comments(0).unwrap()[0];
+    assert_eq!(thread.created, "2026-11-16T09:30:00.503");
+    let dates: Vec<_> = thread
+        .replies()
+        .iter()
+        .map(|reply| reply.created.as_str())
+        .collect();
+    assert_eq!(dates, ["2026-11-16T09:30:00.503", TUESDAY]);
+}
+
+#[test]
+fn a_comment_dated_in_local_time_is_added_to_every_editors_deck_as_written() {
+    const LOCAL: &str = "2026-11-21T10:00:00";
+    for name in CORPUS_DECKS {
+        let mut prs = corpus_deck(name);
+        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
+            .unwrap();
+
+        prs.add_comment(1, comment(&guid(1), ADA, LOCAL, "Dated in local time"))
+            .unwrap();
+        prs.reply_to_comment(
+            1,
+            &guid(1),
+            reply(&guid(2), ADA, "2026-11-21T10:05:30.25", "Same"),
+        )
+        .unwrap();
+
+        let reopened = reopen(&prs);
+        let thread = &reopened.comments(1).unwrap()[0];
+        assert_eq!(thread.created, LOCAL, "{name}");
+        assert_eq!(
+            thread.replies()[0].created,
+            "2026-11-21T10:05:30.25",
+            "{name}"
+        );
+        assert!(
+            reopened.validate().is_empty(),
+            "{name}: {:?}",
+            reopened.validate()
+        );
+    }
+}
+
+#[test]
+fn a_comment_date_may_omit_its_time_zone_but_not_its_shape() {
+    for date in [
+        "2026-11-16T09:30:00",
+        "2026-11-16T09:30:00.5",
+        "2026-11-16T09:30:00Z",
+        "2026-11-16T09:30:00-05:00",
+    ] {
+        assert!(Comment::new(guid(1), ADA, date, "text").is_ok(), "{date}");
+        assert!(
+            CommentReply::new(guid(1), ADA, date, "text").is_ok(),
+            "{date}"
+        );
+    }
+    for date in [
+        "2026-11-16T09:30",
+        "2026-11-16 09:30:00",
+        "2026-11-16T09:30:00.",
+        "2026-11-16T09:30:00+0100",
+        "2026-11-16T09:30:00 ",
+        "2026-02-30T09:30:00",
+        "2026-11-16T24:30:00",
+    ] {
+        assert!(Comment::new(guid(1), ADA, date, "text").is_err(), "{date}");
+        assert!(
+            CommentReply::new(guid(1), ADA, date, "text").is_err(),
+            "{date}"
+        );
+    }
 }
 
 #[test]

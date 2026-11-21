@@ -193,7 +193,7 @@ impl CommentReply {
         let created = created.into();
         validate_guid("comment reply", &id)?;
         validate_guid("comment reply author", &author_id)?;
-        validate_rfc3339(&created)?;
+        validate_date_time(&created)?;
         let mut text_body = CT_TextBody::new();
         text_body.set_text(text);
         Ok(Self {
@@ -256,7 +256,7 @@ impl Comment {
         let created = created.into();
         validate_guid("comment", &id)?;
         validate_guid("comment author", &author_id)?;
-        validate_rfc3339(&created)?;
+        validate_date_time(&created)?;
         let mut text_body = CT_TextBody::new();
         text_body.set_text(text);
         Ok(Self {
@@ -806,7 +806,7 @@ fn parse_comment_attributes(
     let created = required(created, &format!("{kind} @created"))?;
     validate_guid(kind, &id)?;
     validate_guid(&format!("{kind} author"), &author_id)?;
-    validate_rfc3339(&created)?;
+    validate_date_time(&created)?;
     validate_status(status.as_deref())?;
     let mut raw = model_attributes(start, &["id", "authorId", "status", "created"])?;
     raw.extend_from_slice(&dependent_fixed_shadow_attributes(start, xml)?);
@@ -1141,7 +1141,7 @@ fn write_comment<W: Write>(
 ) -> Result<()> {
     validate_guid("comment", &comment.id)?;
     validate_guid("comment author", &comment.author_id)?;
-    validate_rfc3339(&comment.created)?;
+    validate_date_time(&comment.created)?;
     validate_status(comment.status.as_deref())?;
     let prefix = comment_model_prefix(&comment.raw_attributes, inherited_prefix)?;
     let a_shadow = inherited_a_shadow || has_namespace_shadow(&comment.raw_attributes, "a");
@@ -1241,7 +1241,7 @@ fn write_reply<W: Write>(
 ) -> Result<()> {
     validate_guid("comment reply", &reply.id)?;
     validate_guid("comment reply author", &reply.author_id)?;
-    validate_rfc3339(&reply.created)?;
+    validate_date_time(&reply.created)?;
     validate_status(reply.status.as_deref())?;
     let prefix = comment_model_prefix(&reply.raw_attributes, inherited_prefix)?;
     let tag = format!("{prefix}:reply");
@@ -1745,9 +1745,13 @@ fn validate_guid(kind: &str, value: &str) -> Result<()> {
     }
 }
 
-fn validate_rfc3339(value: &str) -> Result<()> {
+/// Checks a comment or reply `created` value, an `xsd:dateTime` in MS-PPTX.
+///
+/// The time zone is optional there, so a local time without one is valid. The
+/// lowercase `t` and `z` of RFC 3339 stay accepted.
+fn validate_date_time(value: &str) -> Result<()> {
     let bytes = value.as_bytes();
-    let basic = bytes.len() >= 20
+    let basic = bytes.len() >= 19
         && bytes.is_ascii()
         && bytes.get(4) == Some(&b'-')
         && bytes.get(7) == Some(&b'-')
@@ -1760,23 +1764,21 @@ fn validate_rfc3339(value: &str) -> Result<()> {
             .iter()
             .enumerate()
             .all(|(index, byte)| [4, 7, 10, 13, 16].contains(&index) || byte.is_ascii_digit());
-    let time_end = bytes
-        .get(19..)
-        .and_then(|tail| {
-            tail.iter()
-                .position(|byte| matches!(byte, b'Z' | b'z' | b'+' | b'-'))
-        })
-        .map(|index| 19 + index);
-    let timezone_ok = time_end.is_some_and(|index| {
+    let zone_start = bytes.get(19..).map(|tail| {
+        tail.iter()
+            .position(|byte| matches!(byte, b'Z' | b'z' | b'+' | b'-'))
+            .map_or(bytes.len(), |index| 19 + index)
+    });
+    let timezone_ok = zone_start.is_some_and(|index| {
         let zone = &bytes[index..];
-        matches!(zone, b"Z" | b"z")
+        matches!(zone, b"" | b"Z" | b"z")
             || (zone.len() == 6
                 && matches!(zone[0], b'+' | b'-')
                 && zone[3] == b':'
                 && parse_digits(&zone[1..3]).is_some_and(|hour| hour <= 23)
                 && parse_digits(&zone[4..6]).is_some_and(|minute| minute <= 59))
     });
-    let fraction_ok = time_end.is_some_and(|index| {
+    let fraction_ok = zone_start.is_some_and(|index| {
         index == 19
             || (bytes.get(19) == Some(&b'.')
                 && index > 20
@@ -1796,7 +1798,7 @@ fn validate_rfc3339(value: &str) -> Result<()> {
         Ok(())
     } else {
         Err(invalid(format!(
-            "comment timestamp is not RFC 3339: {value}"
+            "comment timestamp is not an xsd:dateTime: {value}"
         )))
     }
 }
