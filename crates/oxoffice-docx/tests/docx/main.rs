@@ -4,6 +4,7 @@
 mod checked_replacement;
 mod comment_dates;
 mod comments;
+mod content_controls;
 mod corpus;
 mod fields_and_toc;
 mod lists;
