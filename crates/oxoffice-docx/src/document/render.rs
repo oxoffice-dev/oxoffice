@@ -668,17 +668,28 @@ impl Document {
         self.to_html_with_diagnostics().0
     }
 
-    /// Convert to HTML and return chart projection diagnostics separately.
+    /// Convert to HTML and return the chart projection and equation
+    /// conversion diagnostics separately.
     pub fn to_html_with_diagnostics(&self) -> (String, Vec<String>) {
+        let (html, mut diagnostics, equations) = self.html_document_with_equation_diagnostics();
+        diagnostics.extend(equations);
+        (html, diagnostics)
+    }
+
+    /// The complete HTML document, the chart diagnostics, and the equation
+    /// diagnostics apart, which MHTML reports.
+    pub(crate) fn html_document_with_equation_diagnostics(
+        &self,
+    ) -> (String, Vec<String>, Vec<String>) {
         let (input, charts, diagnostics) = self.build_html_input();
-        (
-            oxoffice_docx_html::to_html_document_with_charts(
-                &input,
-                &oxoffice_docx_html::HtmlOptions::default(),
-                &charts,
-            ),
-            diagnostics,
-        )
+        let equations = crate::math::ExportEquations::default();
+        let html = oxoffice_docx_html::to_html_document_with_equations(
+            &input,
+            &oxoffice_docx_html::HtmlOptions::default(),
+            &charts,
+            &equations,
+        );
+        (html, diagnostics, equations.into_diagnostics())
     }
 
     /// Convert to an HTML fragment without the document wrapper.
@@ -686,17 +697,19 @@ impl Document {
         self.to_html_fragment_with_diagnostics().0
     }
 
-    /// Convert to an HTML fragment and return chart diagnostics separately.
+    /// Convert to an HTML fragment and return the chart and equation
+    /// diagnostics separately.
     pub fn to_html_fragment_with_diagnostics(&self) -> (String, Vec<String>) {
-        let (input, charts, diagnostics) = self.build_html_input();
-        (
-            oxoffice_docx_html::to_html_fragment_with_charts(
-                &input,
-                &oxoffice_docx_html::HtmlOptions::default(),
-                &charts,
-            ),
-            diagnostics,
-        )
+        let (input, charts, mut diagnostics) = self.build_html_input();
+        let equations = crate::math::ExportEquations::default();
+        let html = oxoffice_docx_html::to_html_fragment_with_equations(
+            &input,
+            &oxoffice_docx_html::HtmlOptions::default(),
+            &charts,
+            &equations,
+        );
+        diagnostics.extend(equations.into_diagnostics());
+        (html, diagnostics)
     }
 
     /// Convert to Markdown.
@@ -704,13 +717,14 @@ impl Document {
         self.to_markdown_with_diagnostics().0
     }
 
-    /// Convert to Markdown and return chart diagnostics separately.
+    /// Convert to Markdown and return the chart and equation diagnostics
+    /// separately.
     pub fn to_markdown_with_diagnostics(&self) -> (String, Vec<String>) {
-        let (input, charts, diagnostics) = self.build_html_input();
-        (
-            oxoffice_docx_html::to_markdown_with_charts(&input, &charts),
-            diagnostics,
-        )
+        let (input, charts, mut diagnostics) = self.build_html_input();
+        let equations = crate::math::ExportEquations::default();
+        let markdown = oxoffice_docx_html::to_markdown_with_equations(&input, &charts, &equations);
+        diagnostics.extend(equations.into_diagnostics());
+        (markdown, diagnostics)
     }
 
     /// Build an HtmlInput from the document's current state.

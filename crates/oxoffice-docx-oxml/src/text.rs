@@ -1173,6 +1173,18 @@ pub(crate) enum BoundaryOwner {
 /// The content controls, revision wrappers, smart tags and inline custom
 /// XML elements at run `boundary` of `paragraph`, in document order.
 pub(crate) fn boundary_owners(paragraph: &CT_P, boundary: usize) -> Vec<BoundaryOwner> {
+    ordered_boundary_owners(paragraph, boundary)
+        .into_iter()
+        .map(|(_, owner)| owner)
+        .collect()
+}
+
+/// [`boundary_owners`] with the place each takes among the raw children of
+/// the boundary.
+fn ordered_boundary_owners(
+    paragraph: &CT_P,
+    boundary: usize,
+) -> Vec<(AcceptedOwnerOrder, BoundaryOwner)> {
     let mut owners = paragraph
         .content_controls
         .iter()
@@ -1229,7 +1241,7 @@ pub(crate) fn boundary_owners(paragraph: &CT_P, boundary: usize) -> Vec<Boundary
     // A control goes before the raw child of the same slot.
     owners
         .sort_by_key(|(order, owner)| (*order, !matches!(owner, BoundaryOwner::ContentControl(_))));
-    owners.into_iter().map(|(_, owner)| owner).collect()
+    owners
 }
 
 /// Whether `raw` is a smart tag or an inline custom XML element with
@@ -2137,6 +2149,51 @@ fn append_accepted_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec
     }
 }
 
+/// The equations of a nested accepted view, at `offset` in the outer one.
+fn shifted_equations(
+    view: &CT_P,
+    offset: usize,
+) -> impl Iterator<Item = (usize, usize, OfficeMath)> + '_ {
+    view.equations
+        .iter()
+        .map(move |(at, slot, equation)| (offset + at, *slot, equation.clone()))
+}
+
+/// The scope a smart tag or inline custom XML element is read in when its
+/// own ancestors are not at hand: `w`, and `m` for the equations it holds,
+/// which Word declares on the document root.
+fn wrapper_scope() -> [String; 2] {
+    [
+        "w".to_owned(),
+        crate::numbering::namespace_binding("m", crate::namespace::M_NS),
+    ]
+}
+
+/// The equations a tracked insertion or move in holds, placed among the
+/// `count` runs it added at `offset` of the accepted view (with field
+/// owners preserved, as Markdown reads it).
+fn push_inserted_equations(
+    revision: &CT_Revision,
+    offset: usize,
+    count: usize,
+    equations: &mut Vec<(usize, usize, OfficeMath)>,
+) {
+    if !matches!(
+        revision.kind(),
+        RevisionKind::Insertion | RevisionKind::MoveTo
+    ) {
+        return;
+    }
+    if let Some(paragraph) = revision.content_paragraph() {
+        let (view, _) = paragraph.accepted_view_projection(false);
+        equations.extend(
+            view.equations
+                .iter()
+                .map(|(at, slot, equation)| (offset + (*at).min(count), *slot, equation.clone())),
+        );
+    }
+}
+
 #[allow(non_snake_case)]
 impl CT_P {
     pub fn new() -> Self {
@@ -2372,7 +2429,8 @@ impl CT_P {
     /// document order. Those of content controls, tracked insertions and
     /// moves in, smart tags, inline custom XML elements and simple fields
     /// are included, deleted and moved-away runs are left out, and the
-    /// hyperlink spans cover the same runs as in the source. Content
+    /// hyperlink spans cover the same runs as in the source, and the
+    /// paragraph's own equations stay at their run boundary. Content
     /// controls, revisions, wrappers and markers are not kept. Borrowed when
     /// the paragraph holds none of them, since its runs are then the view.
     #[doc(hidden)]
@@ -2402,8 +2460,39 @@ impl CT_P {
         let mut inline_boundaries = Vec::new();
         // The index into `self.hyperlinks` of the hyperlink each run is in.
         let mut links = Vec::new();
+        // Equations stay at their place among the projected runs.
+        let mut equations = Vec::new();
         for boundary in 0..=self.runs.len() {
-            for owner in boundary_owners(self, boundary) {
+            // An equation is the raw child of its slot, after the owners
+            // that go before that child.
+            let mut steps = ordered_boundary_owners(self, boundary)
+                .into_iter()
+                .map(|(order, owner)| {
+                    let rank = usize::from(!matches!(owner, BoundaryOwner::ContentControl(_)));
+                    ((order, rank), Some(owner), None)
+                })
+                .chain(
+                    self.equations
+                        .iter()
+                        .filter(|(at, _, _)| *at == boundary)
+                        .map(|(_, slot, equation)| {
+                            (
+                                (AcceptedOwnerOrder::Raw(*slot), 2),
+                                None,
+                                Some((*slot, equation)),
+                            )
+                        }),
+                )
+                .collect::<Vec<_>>();
+            steps.sort_by_key(|(order, _, _)| *order);
+            for (_, owner, equation) in steps {
+                if let Some((slot, equation)) = equation {
+                    equations.push((runs.len(), slot, equation.clone()));
+                    continue;
+                }
+                let Some(owner) = owner else {
+                    continue;
+                };
                 let mut owned = Vec::new();
                 let link = match owner {
                     BoundaryOwner::ContentControl(index) => {
@@ -2422,8 +2511,8 @@ impl CT_P {
                     }
                     BoundaryOwner::Revision(index) => {
                         let (_, slot, revision) = &self.revisions[index];
+                        let offset = runs.len();
                         if preserve_field_owners {
-                            let offset = runs.len();
                             append_accepted_inline_revision(
                                 revision,
                                 &mut runs,
@@ -2433,14 +2522,35 @@ impl CT_P {
                                 hyperlink_revision_index(*slot),
                                 runs.len() - offset,
                             ));
+                            push_inserted_equations(
+                                revision,
+                                offset,
+                                runs.len() - offset,
+                                &mut equations,
+                            );
                             continue;
                         }
-                        append_accepted_revision_runs(revision, &mut owned);
-                        hyperlink_revision_index(*slot)
+                        // The runs and equations of an insertion's own accepted
+                        // view, wrappers and simple fields read as everywhere.
+                        if matches!(
+                            revision.kind(),
+                            RevisionKind::Insertion | RevisionKind::MoveTo
+                        ) && let Some(paragraph) = revision.content_paragraph()
+                        {
+                            let (view, _) = paragraph.accepted_view_projection(false);
+                            let view = view.into_owned();
+                            links.extend(std::iter::repeat_n(
+                                hyperlink_revision_index(*slot),
+                                view.runs.len(),
+                            ));
+                            equations.extend(shifted_equations(&view, offset));
+                            runs.extend(view.runs);
+                        }
+                        continue;
                     }
                     BoundaryOwner::Wrapper(index) => {
                         if let Some(content) =
-                            run_wrapper_paragraph(&self.extra_xml[index].1, &["w".to_owned()])
+                            run_wrapper_paragraph(&self.extra_xml[index].1, &wrapper_scope())
                         {
                             let (view, boundaries) =
                                 content.accepted_view_projection(preserve_field_owners);
@@ -2453,6 +2563,7 @@ impl CT_P {
                                 inline_boundaries.push(offset + view.runs.len());
                             }
                             links.extend(std::iter::repeat_n(None, view.runs.len()));
+                            equations.extend(shifted_equations(&view, offset));
                             runs.extend(view.runs);
                         }
                         continue;
@@ -2485,6 +2596,7 @@ impl CT_P {
                             inline_boundaries.push(offset + view.runs.len());
                         }
                         links.extend(std::iter::repeat_n(link, view.runs.len()));
+                        equations.extend(shifted_equations(&view, offset));
                         runs.extend(view.runs);
                     }
                     None => {
@@ -2515,6 +2627,7 @@ impl CT_P {
                 properties: self.properties.clone(),
                 runs,
                 hyperlinks,
+                equations,
                 ..CT_P::new()
             }),
             inline_boundaries,
@@ -2529,7 +2642,7 @@ impl CT_P {
         if !is_run_wrapper(raw) {
             return None;
         }
-        run_wrapper_paragraph(raw, &["w".to_owned()])
+        run_wrapper_paragraph(raw, &wrapper_scope())
     }
 
     /// Current accepted/tracked indexes for the retained physical marker occurrences.

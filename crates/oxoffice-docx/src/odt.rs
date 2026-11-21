@@ -715,6 +715,8 @@ impl<'a> OdtWriter<'a> {
                 &format!("{path}/raw[{index}]"),
                 if CT_P::raw_run_wrapper_content(raw).is_some() {
                     "smart tag or custom XML wrapper was flattened during ODT export"
+                } else if crate::math::raw_is_equation(paragraph, raw_index) {
+                    "Word equation was dropped during ODT export"
                 } else {
                     "unmodelled paragraph XML was dropped during ODT export"
                 },

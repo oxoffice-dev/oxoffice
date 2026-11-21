@@ -29,7 +29,7 @@ crates/
   # WordprocessingML
   oxoffice-docx-oxml     the w: types and OfficeMath
   oxoffice-docx-layout   flow engine, paginator, tables, style resolver
-  oxoffice-docx-html     HTML and Markdown output
+  oxoffice-docx-html     HTML and Markdown output (list numbers from docx-layout)
   oxoffice-docx          the facade: Document, Paragraph, Run, Table...,
                          shaped after python-docx, plus HTML import,
                          comparison, fields, templates, conversions

@@ -585,6 +585,13 @@ impl<'a> RtfWriter<'a> {
                 );
                 continue;
             }
+            if crate::math::raw_is_equation(paragraph, raw_index) {
+                self.diagnose(
+                    &format!("{location}/raw[{index}]"),
+                    "Word equation was dropped during RTF export",
+                );
+                continue;
+            }
             self.diagnose(
                 &format!("{location}/raw[{index}]"),
                 "unmodelled paragraph XML was dropped during RTF export",
