@@ -143,8 +143,8 @@ a manifest: producer and version, features it carries, licence, size.
 ### Corpus at scale (plan step 3, #59)
 
 - 16 families authored and saved by LibreOffice: 36 files in 2 MB with the
-  pilot's Word, PowerPoint and Google copies; those of the new families wait
-  for a Mac and an rclone remote (#62).
+  pilot's Word, PowerPoint and Google copies. The Word, PowerPoint and Google
+  copies of the new families followed (#62): 64 files in 4.6 MB.
 - The round trip checks every part byte for byte. Details and learnings in
   [2026-11-21-corpus-at-scale-and-behaviour-tests.md](2026-11-21-corpus-at-scale-and-behaviour-tests.md).
 
