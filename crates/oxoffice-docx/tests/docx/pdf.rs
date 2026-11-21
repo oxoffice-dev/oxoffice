@@ -1690,10 +1690,7 @@ fn tracked_changes_are_drawn_in_the_tracked_view_only() {
     let redline = reopen(&mut original);
 
     assert_eq!(pdf_of(&redline).page_text(0), "Keep NEWWORD here.");
-    let options = RenderOptions {
-        revision_view: RevisionView::Tracked,
-        ..RenderOptions::default()
-    };
+    let options = RenderOptions::default().with_revision_view(RevisionView::Tracked);
     let tracked = Pdf::read(&redline.to_pdf_deterministic_with_options(options).unwrap());
     let text = tracked.page_text(0);
     assert!(

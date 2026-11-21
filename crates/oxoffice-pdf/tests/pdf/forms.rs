@@ -45,6 +45,7 @@ fn fragment(field: u32, rect: Rect, value: &str) -> PositionedElement {
             11.0,
         )],
         alternate: Vec::new(),
+        mark: None,
     })
 }
 
@@ -172,6 +173,7 @@ fn a_check_box_has_both_states_and_subsets_the_other_symbol() {
         rect: line(72.0, 100.0, 12.0),
         children: vec![run("X", Point { x: 72.0, y: 112.0 }, 11.0)],
         alternate: vec![run("O", Point { x: 72.0, y: 112.0 }, 11.0)],
+        mark: None,
     });
     let layout = with_fields(
         layout(vec![vec![label(), check]]),
@@ -209,6 +211,7 @@ fn an_unchecked_box_shows_off_and_draws_its_current_symbol_there() {
         rect: line(72.0, 100.0, 12.0),
         children: vec![run("O", Point { x: 72.0, y: 112.0 }, 11.0)],
         alternate: vec![run("X", Point { x: 72.0, y: 112.0 }, 11.0)],
+        mark: None,
     });
     let unchecked = with_fields(
         layout(vec![vec![check]]),
@@ -599,6 +602,7 @@ fn a_check_box_draws_only_the_text_of_its_other_state() {
             },
             run("O", Point { x: 72.0, y: 112.0 }, 11.0),
         ],
+        mark: None,
     });
     let layout = with_fields(
         layout(vec![vec![check]]),
@@ -1181,6 +1185,7 @@ fn the_fragments_of_a_field_draw_apart_in_every_appearance() {
             rect: line(x, 130.0, 12.0),
             children: vec![run("X", Point { x, y: 142.0 }, 11.0)],
             alternate: vec![run("O", Point { x, y: 142.0 }, 11.0)],
+            mark: None,
         })
     };
     let layout = with_fields(

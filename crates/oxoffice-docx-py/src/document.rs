@@ -14289,10 +14289,7 @@ impl PyDocument {
                 .map(|font| (font.family.as_str(), font.data.as_slice()))
                 .collect::<Vec<_>>()
         });
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         py.detach(|| match refs.as_deref() {
             None if system_fonts => self
                 .inner
@@ -15542,10 +15539,7 @@ impl PyDocument {
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
     ) -> PyResult<Option<PySvgRenderResult>> {
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -17798,10 +17792,7 @@ impl PyDocument {
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -17860,10 +17851,7 @@ impl PyDocument {
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
     ) -> PyResult<Option<PyLayoutPage>> {
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -19257,11 +19245,9 @@ fn parse_render_options(
             "revision_style applies only with revision_view=\"tracked\"",
         ));
     }
-    Ok(oxoffice_docx::RenderOptions {
-        revision_view,
-        revision_style,
-        use_system_fonts: false,
-    })
+    Ok(oxoffice_docx::RenderOptions::default()
+        .with_revision_view(revision_view)
+        .with_revision_style(revision_style))
 }
 
 fn parse_raster_format(

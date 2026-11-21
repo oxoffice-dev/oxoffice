@@ -51,6 +51,7 @@ pub(super) fn stored_note_cache_runs(
         runs.iter()
             .enumerate()
             .map(|(boundary, run)| ProjectedRun {
+                control: None,
                 run,
                 boundary,
                 raw_order: RawOrder::BeforeRaw,

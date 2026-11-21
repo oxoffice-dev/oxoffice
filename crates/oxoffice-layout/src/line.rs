@@ -5,7 +5,8 @@
 use crate::error::{LayoutError, Result};
 use crate::font::{FontManager, MultilingualTextSegment, TextDirection, explicit_direction_levels};
 use crate::output::{
-    Color, FieldKind, FieldSource, FontId, GroupElement, MediaId, SourceSpan, StructureId,
+    Color, FieldKind, FieldSource, FontId, GroupElement, MediaId, SourceNodeId, SourceSpan,
+    StructureId,
 };
 
 /// A tab stop positioned in typographic points.
@@ -97,6 +98,8 @@ pub enum InlineItem {
         width: f64,
         height: f64,
         media_id: MediaId,
+        /// The form field the image draws part of, if any.
+        form_mark: Option<FormMark>,
     },
     /// A backend-neutral group with child-local coordinates.
     Group {
@@ -178,6 +181,18 @@ pub struct TextSegment {
     pub note: Option<NoteRef>,
     /// Structural source of a note reference, independent of generated glyph text.
     pub note_reference_source: Option<SourceSpan>,
+    /// The form field this segment draws part of, when the producer was
+    /// asked for form fields.
+    pub form_mark: Option<FormMark>,
+}
+
+/// Which form field a line item belongs to, local to its paragraph: the
+/// paragraph's source node and the field's position among the paragraph's
+/// fields. A producer resolves it to a [`crate::FormFieldId`] after layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FormMark {
+    pub node: SourceNodeId,
+    pub field: u32,
 }
 
 /// A single item positioned on a line.
@@ -203,6 +218,8 @@ pub enum LineItem {
         width: f64,
         height: f64,
         media_id: MediaId,
+        /// The form field the image draws part of, if any.
+        form_mark: Option<FormMark>,
     },
     Group {
         width: f64,
@@ -782,6 +799,7 @@ fn split_hanging_spaces(items: &mut Vec<LineItem>, fm: &FontManager) -> Result<(
         width,
         source,
         hyperlink_url: ink.hyperlink_url.clone(),
+        form_mark: ink.form_mark,
         ..*ink
     };
     items.push(LineItem::Text(hanging));
@@ -1743,6 +1761,7 @@ fn split_text_subsegment(
         highlight: seg.highlight,
         baseline_offset: seg.baseline_offset,
         hyperlink_url: seg.hyperlink_url.clone(),
+        form_mark: seg.form_mark,
         field_kind: seg.field_kind,
         field_source: seg.field_source,
         note: seg.note,
@@ -1915,6 +1934,7 @@ fn generated_hyphen(segment: &TextSegment, spacing: f64, fm: &FontManager) -> Re
         highlight: segment.highlight,
         baseline_offset: segment.baseline_offset,
         hyperlink_url: segment.hyperlink_url.clone(),
+        form_mark: segment.form_mark,
         field_kind: segment.field_kind,
         field_source: segment.field_source,
         note: segment.note,
@@ -2141,10 +2161,12 @@ fn inline_to_line_item(item: &InlineItem) -> LineItem {
             width,
             height,
             media_id,
+            form_mark,
         } => LineItem::Image {
             width: *width,
             height: *height,
             media_id: *media_id,
+            form_mark: *form_mark,
         },
         InlineItem::Group {
             width,
@@ -2249,6 +2271,7 @@ fn shape_leader(
         field_source: None,
         note: None,
         note_reference_source: None,
+        form_mark: None,
     })
 }
 

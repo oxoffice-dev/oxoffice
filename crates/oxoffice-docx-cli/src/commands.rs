@@ -497,26 +497,19 @@ pub fn layout(
         .collect::<Vec<_>>();
     let layout = if refs.is_empty() {
         if system_fonts {
-            doc.layout_with_options(oxoffice_docx::RenderOptions {
-                use_system_fonts: true,
-                ..oxoffice_docx::RenderOptions::default()
-            })?
+            doc.layout_with_options(
+                oxoffice_docx::RenderOptions::default().with_system_fonts(true),
+            )?
         } else {
             doc.layout_deterministic()?
         }
     } else if system_fonts {
         // An explicit system request must refuse on a feature-off build before
         // the normal engine runs, including for a nonempty caller font list.
-        doc.layout_with_options(oxoffice_docx::RenderOptions {
-            use_system_fonts: true,
-            ..oxoffice_docx::RenderOptions::default()
-        })?;
+        doc.layout_with_options(oxoffice_docx::RenderOptions::default().with_system_fonts(true))?;
         std::sync::Arc::new(doc.layout_with_additional_fonts_and_options(
             &refs,
-            oxoffice_docx::RenderOptions {
-                use_system_fonts: true,
-                ..oxoffice_docx::RenderOptions::default()
-            },
+            oxoffice_docx::RenderOptions::default().with_system_fonts(true),
         )?)
     } else {
         std::sync::Arc::new(doc.layout_with_fonts_and_bundled_fallback(&refs)?)
@@ -870,11 +863,10 @@ pub fn convert(
 ) -> Result<()> {
     check_revision_style(revision_view, revision_style)?;
     let doc = Document::open(file)?;
-    let render_options = oxoffice_docx::RenderOptions {
-        revision_view,
-        revision_style,
-        use_system_fonts: system_fonts,
-    };
+    let render_options = oxoffice_docx::RenderOptions::default()
+        .with_revision_view(revision_view)
+        .with_revision_style(revision_style)
+        .with_system_fonts(system_fonts);
 
     let default_ext = match to {
         "pdf" => "pdf",
@@ -2410,11 +2402,10 @@ pub fn render(
         .iter()
         .map(|font| (font.family.as_str(), font.data.as_slice()))
         .collect::<Vec<_>>();
-    let render_options = oxoffice_docx::RenderOptions {
-        revision_view: options.revision_view,
-        revision_style: options.revision_style,
-        use_system_fonts: options.system_fonts,
-    };
+    let render_options = oxoffice_docx::RenderOptions::default()
+        .with_revision_view(options.revision_view)
+        .with_revision_style(options.revision_style)
+        .with_system_fonts(options.system_fonts);
     let layout = if font_refs.is_empty() {
         if options.system_fonts {
             doc.layout_with_options(render_options)?
