@@ -106,5 +106,50 @@
     "symptom": "open fails with \"PackageError ... holds U+0001\" and `oxoffice pptx validate` exits 1, while PowerPoint opens the file",
     "workaround": "remove the character from that part's bytes, then open the file",
     "issue": 8
+  },
+  {
+    "id": "pptx-removed-slide-parts",
+    "format": "pptx",
+    "area": "slides",
+    "title": "Removing a slide leaves its charts, embedded workbooks and legacy comments in the file",
+    "symptom": "after remove_slide the saved deck still holds the slide's chart parts, their workbooks with the data, and its legacy comment part with the reviewers' text",
+    "workaround": "remove each chart with remove_shape before removing the slide; no workaround for legacy comments",
+    "issue": 38
+  },
+  {
+    "id": "pptx-duplicate-commented-slide",
+    "format": "pptx",
+    "area": "comments",
+    "title": "A slide with comments cannot be duplicated",
+    "symptom": "duplicate_slide fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
+    "workaround": "import the slide from a copy of the deck instead (Rust: prs.import_slide(&prs.clone(), i, layout, Some(i + 1)))",
+    "issue": 39
+  },
+  {
+    "id": "pptx-import-source-notes",
+    "format": "pptx",
+    "area": "slides",
+    "title": "Importing slides with their source formatting refuses PowerPoint and Google slides that have notes",
+    "symptom": "import_slides with keep_source_formatting fails with \"unrepresentable source notes-master ... authority\", calling the producer's part malformed",
+    "workaround": "import onto this deck's layouts instead, without keeping the source formatting",
+    "issue": 40
+  },
+  {
+    "id": "pptx-sections-follow-slides",
+    "format": "pptx",
+    "area": "slides",
+    "title": "Sections do not follow added, duplicated, imported or moved slides",
+    "symptom": "a new slide belongs to no section, and a moved slide stays listed in its old section",
+    "workaround": "set the sections again (set_sections) after the slide edits",
+    "issue": 41
+  },
+  {
+    "id": "pptx-producer-tables",
+    "format": "pptx",
+    "area": "tables",
+    "title": "Tables merged by LibreOffice cannot be split, and Google tables cannot lose columns down to one",
+    "symptom": "split fails with \"merge origin does not have a valid continuation rectangle\"; remove_column fails with \"table frame size must remain positive\"",
+    "workaround": "before removing columns, set the first column to its own width (set_column_width) to resync the frame; to split, give the covered cells the origin's spans in the table XML",
+    "issue": 44
   }
 ]
