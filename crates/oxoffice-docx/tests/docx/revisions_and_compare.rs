@@ -1340,6 +1340,35 @@ fn ids_still_follow_the_original_when_toc_names_cannot() {
     assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc1"]);
 }
 
+#[test]
+fn a_kept_name_the_original_gives_another_heading_keeps_the_edited_id() {
+    // The pairing falls back to ids only, and the edited New keeps `_Toc2`,
+    // which the original gives Gone: New keeps its own id, so the deleted
+    // Gone and the inserted New do not share one.
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}{}{}",
+            heading_with("A", &[]),
+            heading_with("Old", &[(0, "_Toc1")]),
+            body("Body."),
+            heading_with("Gone", &[(1, "_Toc2")]),
+            body("End."),
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}{}",
+        body("New first."),
+        heading_with("A", &[(5, "_Toc11")]),
+        heading_with("New", &[(6, "_Toc2")]),
+        body("Body."),
+        body("End."),
+    ));
+    let mut doc = redline(original(), &edited);
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
+}
+
 /// The instruction of every field of the body, in order.
 fn field_instructions(doc: &Document) -> Vec<String> {
     let mut instructions = Vec::new();
@@ -1382,7 +1411,9 @@ fn simple_fields_and_hyperlink_fields_follow_a_renamed_toc_bookmark() {
 #[test]
 fn a_toc_bookmark_named_in_another_story_keeps_its_name() {
     // A footnote names the edited bookmark: renaming it in the body alone
-    // would leave that name pointing at nothing, so it stays.
+    // would leave that name pointing at nothing, so it stays. The paragraph
+    // holding the note is the same in both: edited, it would be replaced
+    // whole with its note reference, which #4 handles.
     let document = |name: &str, text: &str, note: bool| {
         let mut doc = doc_with_body(&format!(
             r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p><w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#
