@@ -70,13 +70,39 @@ impl Document {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
         // A final section a producer left implicit gets its properties
-        // written, so the break has section properties to carry.
+        // written, so the break has section properties to carry: those of a
+        // last paragraph that ends a section move to the body, otherwise the
+        // last section's are copied (or Letter defaults).
+        if candidate.document.body.sect_pr.is_none() {
+            let content = &mut candidate.document.body.content;
+            let last_mark = match content.last_mut() {
+                Some(BodyContent::Paragraph(last)) => last
+                    .properties
+                    .as_mut()
+                    .and_then(|properties| properties.sect_pr.take()),
+                _ => None,
+            };
+            let final_section = last_mark.or_else(|| {
+                content.iter().rev().find_map(|item| match item {
+                    BodyContent::Paragraph(paragraph) => {
+                        let mut properties = paragraph.properties.as_ref()?.sect_pr.clone()?;
+                        properties.header_refs.clear();
+                        properties.footer_refs.clear();
+                        properties.change = None;
+                        Some(properties)
+                    }
+                    _ => None,
+                })
+            });
+            candidate.document.body.sect_pr =
+                Some(final_section.unwrap_or_else(CT_SectPr::default_letter));
+        }
         let destination_final = candidate
             .document
             .body
             .sect_pr
-            .get_or_insert_with(CT_SectPr::default_letter)
-            .clone();
+            .clone()
+            .expect("the final section properties were just written");
         // The destination's section properties stay on its own pages: they
         // move to the break paragraph. The appended content starts a new
         // final section with the same formatting, as Word's section break
@@ -94,10 +120,14 @@ impl Document {
             BodyContent::Paragraph(last),
             BodyContent::Paragraph(mark),
         ] = content.as_mut_slice()
-            && last
-                .properties
-                .as_ref()
-                .is_none_or(|properties| properties.sect_pr.is_none())
+            // A tracked paragraph mark is not one: accepting or rejecting it
+            // merges the paragraph into the next and would take the mark away.
+            && last.properties.as_ref().is_none_or(|properties| {
+                properties.sect_pr.is_none()
+                    && properties.rpr.as_ref().is_none_or(|mark| {
+                        mark.revision_markers.is_empty() && mark.revision_xml.is_empty()
+                    })
+            })
             && mark.runs.is_empty()
         {
             let sect_pr = mark
