@@ -3,7 +3,9 @@ use std::io::Write;
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
 use oxoffice_core::units::Emu;
-use oxoffice_core::xml::reject_non_xml_characters;
+use oxoffice_core::xml::{
+    escape_attribute_value, push_escaped_attribute, reject_non_xml_characters,
+};
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::text::CT_TextListStyle;
@@ -225,10 +227,7 @@ impl CT_EmbeddedFontListEntry {
         if typeface.trim().is_empty() {
             return Err(invalid_value("embedded font typeface is empty".into()));
         }
-        let escaped = quick_xml::escape::escape(&typeface)
-            .replace('\r', "&#13;")
-            .replace('\n', "&#10;")
-            .replace('\t', "&#9;");
+        let escaped = escape_attribute_value(&typeface);
         let raw = format!(
             r#"<p:embeddedFont xmlns:p="{P_NS}"><p:font typeface="{escaped}"/></p:embeddedFont>"#
         )
@@ -2529,7 +2528,7 @@ fn write_section<W: Write>(writer: &mut Writer<W>, section: &Section) -> Result<
     let mut start = BytesStart::new(&tag);
     push_section_namespace(&mut start, prefix);
     if let Some(name) = &section.name {
-        start.push_attribute(("name", name.as_str()));
+        push_escaped_attribute(&mut start, "name", name);
     }
     if let Some(id) = &section.id {
         start.push_attribute(("id", id.as_str()));

@@ -144,15 +144,6 @@
     "issue": 41
   },
   {
-    "id": "pptx-raw-carriage-return",
-    "format": "pptx",
-    "area": "text",
-    "title": "A carriage return in run text or notes is written raw, so other readers see a line feed",
-    "symptom": "a lone CR in run text reads as a line feed in PowerPoint or python-pptx, and a Windows line ending in notes (also `oxoffice pptx notes set --from-file`) as a blank line",
-    "workaround": "convert CRLF to LF, and a lone CR to LF, before setting the text or the notes",
-    "issue": 43
-  },
-  {
     "id": "pptx-producer-tables",
     "format": "pptx",
     "area": "tables",

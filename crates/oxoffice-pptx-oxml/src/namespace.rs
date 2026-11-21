@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use oxoffice_core::OxmlError;
+use oxoffice_core::xml::{escape_attribute_value, push_escaped_attribute};
 use oxoffice_drawing::namespace::A_NS;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -93,6 +94,9 @@ impl NamespaceBindings {
     }
 }
 
+/// Returns every attribute of `start`, its value normalised as XML requires:
+/// a raw tab, line feed or carriage return reads as a space, while one written
+/// as a character reference (`&#9;`) is kept.
 pub(crate) fn all_attributes(start: &BytesStart<'_>) -> Result<Vec<(String, String)>, OxmlError> {
     let mut attributes = Vec::new();
     for attribute in start.attributes() {
@@ -100,7 +104,7 @@ pub(crate) fn all_attributes(start: &BytesStart<'_>) -> Result<Vec<(String, Stri
         let name = std::str::from_utf8(attribute.key.as_ref())?.to_owned();
         let value = attribute
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, start.decoder())?
-            .replace(['\r', '\n', '\t'], " ");
+            .into_owned();
         attributes.push((name, value));
     }
     Ok(attributes)
@@ -148,14 +152,14 @@ pub(crate) fn set_non_visual_drawing_name(xml: &mut Vec<u8>, name: &str) -> Resu
                 for attribute in start.attributes().with_checks(false) {
                     let attribute = attribute?;
                     if attribute.key.as_ref() == b"name" {
-                        replacement.push_attribute(("name", name));
+                        push_escaped_attribute(&mut replacement, "name", name);
                         replaced = true;
                     } else {
                         replacement.push_attribute(attribute);
                     }
                 }
                 if !replaced {
-                    replacement.push_attribute(("name", name));
+                    push_escaped_attribute(&mut replacement, "name", name);
                 }
                 let mut writer = Writer::new(Vec::new());
                 if is_empty {
@@ -303,13 +307,7 @@ pub(crate) fn set_non_visual_drawing_text(
         }
     }
     let replacement = value
-        .map(|value| {
-            let escaped = quick_xml::escape::escape(value)
-                .replace('\r', "&#13;")
-                .replace('\n', "&#10;")
-                .replace('\t', "&#9;");
-            format!(" {key}=\"{escaped}\"").into_bytes()
-        })
+        .map(|value| format!(" {key}=\"{}\"", escape_attribute_value(value)).into_bytes())
         .unwrap_or_default();
     let range = owned.unwrap_or_else(|| {
         let insertion = if xml.get(end.wrapping_sub(2)) == Some(&b'/') {

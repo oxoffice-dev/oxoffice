@@ -3,7 +3,7 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
-use oxoffice_core::xml::reject_non_xml_characters;
+use oxoffice_core::xml::{push_escaped_attribute, reject_non_xml_characters};
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::text::CT_TextBody;
@@ -1118,12 +1118,12 @@ fn write_author<W: Write>(
         push_model_namespace(&mut start, prefix);
     }
     start.push_attribute(("id", author.id.as_str()));
-    start.push_attribute(("name", author.name.as_str()));
+    push_escaped_attribute(&mut start, "name", &author.name);
     if let Some(initials) = &author.initials {
-        start.push_attribute(("initials", initials.as_str()));
+        push_escaped_attribute(&mut start, "initials", initials);
     }
-    start.push_attribute(("userId", author.user_id.as_str()));
-    start.push_attribute(("providerId", author.provider_id.as_str()));
+    push_escaped_attribute(&mut start, "userId", &author.user_id);
+    push_escaped_attribute(&mut start, "providerId", &author.provider_id);
     write_shell(
         writer,
         start,

@@ -6,8 +6,8 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
-use oxoffice_core::xml::{local_name, matches_local_name};
-use oxoffice_core::xml_text::{decode_plain, resolve_entity};
+use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
+use oxoffice_core::xml_text::resolve_entity;
 use oxoffice_drawing::color::{
     ColorChoice, ColorMap, ColorMapSlot, ResolvedColor, ThemeColorSlot, apply_color_transforms,
     resolve_color,
@@ -1355,15 +1355,22 @@ fn parse_text_element(
                         .map_err(OxmlError::from)?
                     {
                         Event::Text(text) => {
-                            value.push_str(&decode_plain(&text));
+                            let decoded =
+                                text.xml10_content()
+                                    .map_err(|error| ChartError::InvalidValue {
+                                        element: format!("c:{}", String::from_utf8_lossy(local)),
+                                        value: error.to_string(),
+                                    })?;
+                            value.push_str(&decoded);
                             seen_text = true;
                         }
                         Event::CData(text) => {
                             let decoded =
-                                text.decode().map_err(|error| ChartError::InvalidValue {
-                                    element: format!("c:{}", String::from_utf8_lossy(local)),
-                                    value: error.to_string(),
-                                })?;
+                                text.xml10_content()
+                                    .map_err(|error| ChartError::InvalidValue {
+                                        element: format!("c:{}", String::from_utf8_lossy(local)),
+                                        value: error.to_string(),
+                                    })?;
                             value.push_str(&decoded);
                             seen_text = true;
                         }
@@ -1710,7 +1717,7 @@ fn write_text(
         .map_err(OxmlError::from)?;
     emit_raw(writer, markup.raw_children.at(0))?;
     writer
-        .write_event(Event::Text(BytesText::new(value)))
+        .write_event(Event::Text(BytesText::from_escaped(escape_text(value))))
         .map_err(OxmlError::from)?;
     emit_raw(writer, markup.raw_children.at(1))?;
     writer

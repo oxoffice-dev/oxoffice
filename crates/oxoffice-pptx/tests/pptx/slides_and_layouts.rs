@@ -1070,3 +1070,37 @@ fn a_slide_moved_into_another_section_joins_it() {
         "the moved slide stays in its old section"
     );
 }
+
+#[test]
+fn layout_section_and_theme_names_keep_their_tabs_and_line_feeds() {
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let ids: Vec<u32> = prs.slides().map(|slide| slide.id()).collect();
+
+        prs.set_layout_name(0, Some("Title\tand\nbody")).unwrap();
+        prs.set_theme_name(0, "Brand\ttheme\n2026").unwrap();
+        prs.set_sections(vec![
+            Section::new(SECTION_A, "Part\tone\r\nA", ids[..2].to_vec()).unwrap(),
+            Section::new(SECTION_B, "B", ids[2..].to_vec()).unwrap(),
+        ])
+        .unwrap();
+
+        let prs = reopen(&prs);
+        assert_eq!(prs.layout_name(0), Some("Title\tand\nbody"), "{name}");
+        assert_eq!(
+            prs.theme(0).unwrap().unwrap().name.as_deref(),
+            Some("Brand\ttheme\n2026"),
+            "{name}"
+        );
+        assert_eq!(
+            prs.sections()[0].name.as_deref(),
+            Some("Part\tone\r\nA"),
+            "{name}"
+        );
+    }
+}

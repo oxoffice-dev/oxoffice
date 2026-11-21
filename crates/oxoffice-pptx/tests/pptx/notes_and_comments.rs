@@ -328,11 +328,9 @@ fn notes_keep_unicode_markup_characters_and_spacing_as_typed() {
     }
 }
 
-// Fails today: the carriage return of a Windows line ending is written raw,
-// so a conforming XML reader (PowerPoint's, python-pptx's) reads a second
-// line feed. Issue: #43
+// A raw carriage return would reach a conforming XML reader (PowerPoint's,
+// python-pptx's) as a second line feed.
 #[test]
-#[should_panic(expected = "the carriage return is escaped in the saved notes")]
 fn notes_with_a_windows_line_ending_are_saved_so_that_other_readers_keep_them() {
     let mut prs = blank_deck(1);
     prs.set_notes_text(0, "Windows line\r\nending").unwrap();
@@ -1078,4 +1076,20 @@ fn a_modern_comment_can_be_added_to_a_deck_with_legacy_comments() {
     let reopened = reopen(&prs);
     assert_eq!(comment_texts(&reopened, 1), ["A modern comment"]);
     assert!(part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"));
+}
+
+#[test]
+fn a_comment_author_keeps_the_tabs_and_line_feeds_of_its_name() {
+    let mut prs = blank_deck(1);
+    prs.add_comment_author(author(ADA, "Ada\tLovelace\nR&D", Some("A\tL")))
+        .unwrap();
+    prs.add_comment(0, comment(&guid(1), ADA, MONDAY, "Signed"))
+        .unwrap();
+
+    let reopened = reopen(&prs);
+    let ada = &reopened.comment_authors()[0];
+    assert_eq!(
+        (ada.name.as_str(), ada.initials.as_deref()),
+        ("Ada\tLovelace\nR&D", Some("A\tL"))
+    );
 }

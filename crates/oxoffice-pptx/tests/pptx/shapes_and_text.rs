@@ -969,9 +969,7 @@ fn markup_characters_stay_literal_and_control_characters_are_escaped() {
     );
 }
 
-// Fails today: the name comes back as "Revenue Q3 chart", its tab and line feed turned into spaces. Issue: #43
 #[test]
-#[should_panic(expected = "the name keeps its tab and line feed")]
 fn a_shape_name_with_a_tab_or_a_line_feed_survives_a_save() {
     let mut prs = text_box_deck("Named");
     {
@@ -998,9 +996,7 @@ fn a_shape_name_with_a_tab_or_a_line_feed_survives_a_save() {
     );
 }
 
-// Fails today: the carriage return is written raw inside a:t, where XML readers turn it into a line feed. Issue: #43
 #[test]
-#[should_panic(expected = "the carriage return is escaped in the saved slide")]
 fn a_carriage_return_in_run_text_is_saved_so_that_other_readers_keep_it() {
     let mut prs = text_box_deck("before");
     prs.slide_mut(0)
@@ -1022,6 +1018,150 @@ fn a_carriage_return_in_run_text_is_saved_so_that_other_readers_keep_it() {
     assert!(
         !slide.contains('\r'),
         "the carriage return is escaped in the saved slide"
+    );
+}
+
+#[test]
+fn every_kind_of_shape_keeps_a_name_with_a_tab_or_a_line_feed() {
+    const NAME: &str = "Flow\tA\nB";
+    let mut prs = blank_slide_deck();
+    {
+        let mut slide = prs.slide_mut(0).unwrap();
+        slide.add_textbox(Emu(0), Emu(0), Emu(IN), Emu(IN)).unwrap();
+        slide
+            .add_shape("ellipse", Emu(0), Emu(0), Emu(IN), Emu(IN))
+            .unwrap();
+        slide
+            .add_connector(ConnectorType::Straight, Emu(0), Emu(0), Emu(IN), Emu(IN))
+            .unwrap();
+        slide.add_group_shape().unwrap();
+        slide
+            .add_table(2, 2, Emu(0), Emu(0), Emu(2 * IN), Emu(IN))
+            .unwrap();
+    }
+    let count = prs.slide(0).unwrap().shapes().count();
+    assert_eq!(count, 5);
+    for index in 0..count {
+        prs.slide_mut(0)
+            .unwrap()
+            .shape_mut(index)
+            .unwrap()
+            .set_name(NAME)
+            .unwrap();
+    }
+
+    let saved = reopen(&prs);
+    for index in 0..count {
+        assert_eq!(
+            shape_at(&saved, 0, index).non_visual_name().as_deref(),
+            Some(NAME),
+            "shape {index}"
+        );
+    }
+    let slide = saved_part(&saved, "/ppt/slides/slide1.xml");
+    assert_eq!(slide.matches("Flow&#9;A&#10;B").count(), count, "{slide}");
+}
+
+#[test]
+fn tabs_line_feeds_and_carriage_returns_in_names_and_runs_survive_on_every_editors_deck() {
+    const NAME: &str = "Highlights\tbody\nQ3";
+    const TEXT: &str = "Revenue\tup\rQ3";
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let index = prs
+            .slide(1)
+            .unwrap()
+            .shapes()
+            .position(|shape| {
+                shape.text_frame().is_some_and(|frame| {
+                    frame
+                        .paragraph(0)
+                        .is_some_and(|paragraph| paragraph.run_count() > 0)
+                })
+            })
+            .expect("the Highlights slide has a shape with a run");
+        {
+            let mut slide = prs.slide_mut(1).unwrap();
+            let mut shape = slide.shape_mut(index).unwrap();
+            shape.set_name(NAME).unwrap();
+            shape
+                .text_frame()
+                .unwrap()
+                .paragraph_mut(0)
+                .unwrap()
+                .run_mut(0)
+                .unwrap()
+                .set_text(TEXT);
+        }
+
+        let saved = reopen(&prs);
+        let shape = shape_at(&saved, 1, index);
+        assert_eq!(shape.non_visual_name().as_deref(), Some(NAME), "{name}");
+        assert_eq!(run_texts(shape)[0][0], TEXT, "{name}");
+        // What another reader sees: no raw tab, line feed or carriage return
+        // inside an attribute, no raw carriage return anywhere.
+        let slide = (1..=saved.len())
+            .map(|number| saved_part(&saved, &format!("/ppt/slides/slide{number}.xml")))
+            .find(|xml| xml.contains("Highlights&#9;body&#10;Q3"))
+            .unwrap_or_else(|| panic!("{name}: the name is saved escaped"));
+        assert!(slide.contains("Revenue\tup&#13;Q3"), "{name}");
+        assert!(!slide.contains('\r'), "{name}");
+    }
+}
+
+#[test]
+fn a_raw_carriage_return_in_a_saved_run_reads_as_a_line_feed_and_stays_one_after_an_edit() {
+    // A part written with Windows line ends holds a raw CR LF inside a:t,
+    // which every XML reader reads as one line feed.
+    let prs = text_box_deck("Dear {name},");
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen("Dear {name},</a:t>", "Dear {name},\r\nWelcome</a:t>", 1);
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(
+        run_texts(shape_at(&prs, 0, 0))[0][0],
+        "Dear {name},\nWelcome"
+    );
+
+    assert_eq!(prs.replace_text("{name}", "Ada"), 1);
+
+    let saved = reopen(&prs);
+    assert_eq!(
+        run_texts(shape_at(&saved, 0, 0))[0][0],
+        "Dear Ada,\nWelcome"
+    );
+    let xml = saved_part(&saved, "/ppt/slides/slide1.xml");
+    assert!(!xml.contains("&#13;") && !xml.contains('\r'), "{xml}");
+}
+
+#[test]
+fn raw_line_ends_in_cdata_run_text_read_as_line_feeds() {
+    let prs = text_box_deck("Dear reader,");
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            "Dear reader,</a:t>",
+            "<![CDATA[Dear reader,\r\nWelcome\rin]]></a:t>",
+            1,
+        );
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    assert_eq!(
+        run_texts(shape_at(&prs, 0, 0))[0][0],
+        "Dear reader,\nWelcome\nin"
     );
 }
 
