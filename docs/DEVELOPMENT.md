@@ -100,9 +100,10 @@ Finish what you start.
   `area: python`, `area: ci`) and a "Seen with" line (which producer, which
   kind of file). Search for an existing issue first. The bug report form
   (`.github/ISSUE_TEMPLATE/bug.yml`) asks for what happens, what it was seen
-  with, what was expected and an issue of the same cause; labels are set at
-  triage. An issue opened with `gh issue create --body-file` skips the
-  form: give it the same parts.
+  with, what was expected and, if known, an issue with the same cause;
+  labels are set at triage. An issue opened with `gh issue create
+  --body-file` skips the form: give it the same `###` headings (What
+  happens, Seen with, Expected, Same cause as).
 - **Order of work**: S1 at once, S2 next, S3 and S4 in batches by module,
   one pull request per batch, never one pull request per trivial issue.
 - **Test rounds are scheduled, not continuous.** A round that finds bugs

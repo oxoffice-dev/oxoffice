@@ -16,7 +16,7 @@ body:
     id: seen-with
     attributes:
       label: Seen with
-      description: Which program made the file (Word, PowerPoint, LibreOffice, Google Docs, oxoffice, another library) and what kind of file it is (a report with tracked changes, a deck from a template, a form...). Add `oxoffice --version`.
+      description: Which program made the file (Word, PowerPoint, LibreOffice, Google Docs or Slides, oxoffice, another library) and what kind of file it is (a report with tracked changes, a deck from a template, a form...). Add `oxoffice --version` and your system (Windows, macOS, Linux).
     validations:
       required: true
   - type: textarea
@@ -30,6 +30,7 @@ body:
     id: same-cause
     attributes:
       label: Same cause as
-      description: The number of an issue with the same root cause, if you know one (for example #123).
+      description: "The number of an issue with the same root cause, if you know one (for example #123)."
+      placeholder: "#123"
     validations:
       required: false
