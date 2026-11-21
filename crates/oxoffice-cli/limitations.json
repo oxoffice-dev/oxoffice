@@ -18,6 +18,15 @@
     "issue": 4
   },
   {
+    "id": "docx-compare-final-table",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses a paragraph moved after a final table, or added or deleted after a moved or redlined final table",
+    "symptom": "compare refuses with \"needs an adjacent paragraph for a final paragraph move\" or \"... for a final paragraph change\" (after a table moved to the end), or \"holds an existing tracked revision\" (after a table that holds tracked changes)",
+    "workaround": "put a paragraph after the table in both versions, or resolve the earlier tracked changes on both copies first",
+    "issue": 120
+  },
+  {
     "id": "docx-python-replace-slower",
     "format": "docx",
     "area": "replace",
@@ -79,15 +88,6 @@
     "symptom": "remove_content keeps the paragraph's footnotes and endnotes as unreferenced notes; removing a note made with a custom mark (Rust create_footnote_with_mark) keeps the mark",
     "workaround": "remove the paragraph's notes first (remove_footnote, remove_endnote, same names in Python); delete a leftover mark with replace_text",
     "issue": 30
-  },
-  {
-    "id": "docx-compare-final-table",
-    "format": "docx",
-    "area": "compare",
-    "title": "Comparison refuses a paragraph added after a final table",
-    "symptom": "compare fails with \"needs an adjacent paragraph for a final paragraph change\" when the edited version adds a paragraph after a table that ends the body",
-    "workaround": "put a paragraph after the final table in both versions before comparing",
-    "issue": 32
   },
   {
     "id": "docx-restart-style-numbered-item",
