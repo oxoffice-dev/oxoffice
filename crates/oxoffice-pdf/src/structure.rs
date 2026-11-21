@@ -319,7 +319,8 @@ fn marked_ids_exist(elements: &[PositionedElement], structure: &DocumentStructur
             children,
         } => structure.node(*id).is_some() && marked_ids_exist(children, structure),
         PositionedElement::MarkedContent { children, .. }
-        | PositionedElement::Group(oxoffice_layout::GroupElement { children, .. }) => {
+        | PositionedElement::Group(oxoffice_layout::GroupElement { children, .. })
+        | PositionedElement::FormField(oxoffice_layout::FormFieldFragment { children, .. }) => {
             marked_ids_exist(children, structure)
         }
         _ => true,
@@ -361,6 +362,8 @@ pub(crate) fn has_content_stream_output(elements: &[PositionedElement]) -> bool 
             !(run.logical_text.is_empty() && run.glyph_ids.is_empty())
         }
         PositionedElement::LinkAnnotation { .. } => false,
+        // Drawn in its field's appearance, or without marks on a later page.
+        PositionedElement::FormField(_) => false,
         PositionedElement::Group(group) => has_content_stream_output(&group.children),
         PositionedElement::MarkedContent { children, .. } => has_content_stream_output(children),
         _ => true,

@@ -1305,6 +1305,7 @@ name = "oxoffice-pdf"
 version = "0.1.0"
 dependencies = [
  "jpeg-encoder",
+ "lopdf",
  "miniz_oxide 0.9.1",
  "oxoffice-layout",
  "oxoffice-media",

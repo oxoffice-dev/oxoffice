@@ -329,8 +329,8 @@ pub(crate) fn collect_glyph_usage(layout: &LayoutResult) -> HashMap<FontId, Font
     let mut usage: HashMap<FontId, FontUsage> = HashMap::new();
     let mut fonts: HashMap<FontId, FontGlyphs<'_>> = HashMap::new();
 
-    for page in &layout.pages {
-        walk(&page.elements, &mut |element, _| {
+    let mut visit = |element: &PositionedElement| {
+        {
             if let PositionedElement::Text(run) = element
                 && !(run.text.is_empty() && run.glyph_ids.is_empty())
             {
@@ -380,6 +380,13 @@ pub(crate) fn collect_glyph_usage(layout: &LayoutResult) -> HashMap<FontId, Font
                     }
                 }
             }
+        }
+    };
+    for page in &layout.pages {
+        walk(&page.elements, &mut |element, _| visit(element));
+        // A check box's other state is drawn in its appearance only.
+        crate::forms::visit_fragments(&page.elements, &mut |fragment, _| {
+            walk(&fragment.alternate, &mut |element, _| visit(element));
         });
     }
 

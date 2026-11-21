@@ -379,6 +379,12 @@ pub enum PositionedElement {
     Path(PathElement),
     /// A nested group with one child-local transform.
     Group(GroupElement),
+    /// The drawing of one form field's value on one line, and where the
+    /// field's widget goes.
+    ///
+    /// A PDF writer moves the children into the field's appearance. Every
+    /// other consumer draws them in place, like [`PositionedElement::MarkedContent`].
+    FormField(FormFieldFragment),
     /// Non-drawing semantic ownership for a sequence of positioned elements.
     ///
     /// `structure` is `None` for an artifact that must not enter the logical
@@ -387,6 +393,82 @@ pub enum PositionedElement {
         structure: Option<StructureId>,
         children: Vec<PositionedElement>,
     },
+}
+
+/// Index of a form field in [`LayoutResult::form_fields`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FormFieldId(pub u32);
+
+/// One fillable form field. Its fragments in the pages say where it is drawn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormField {
+    /// The field name a PDF writer makes unique.
+    pub name: String,
+    /// A short description viewers show on hover.
+    pub tooltip: Option<String>,
+    pub kind: FormFieldKind,
+    pub read_only: bool,
+    /// Size in points of the text a user types.
+    pub font_size: f64,
+    /// Colour of the text a user types.
+    pub color: Color,
+    pub alignment: FieldAlignment,
+    /// The fragments draw a placeholder, not a value: the field shows
+    /// nothing until it is filled.
+    pub placeholder: bool,
+}
+
+/// What a form field holds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormFieldKind {
+    /// Free text, `value` empty when the field is empty.
+    Text {
+        value: String,
+        multiline: bool,
+        max_len: Option<u32>,
+    },
+    /// A box ticked or not. The fragment's `alternate` draws the other state.
+    CheckBox { checked: bool },
+    /// One option of a list, or typed text when `editable`.
+    Choice {
+        options: Vec<ChoiceOption>,
+        /// The selected option's `value`, or typed text.
+        value: Option<String>,
+        editable: bool,
+    },
+    /// An empty signature field, signed later in a PDF viewer.
+    Signature,
+}
+
+/// One option of a choice field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChoiceOption {
+    /// What the field's value becomes when the option is chosen.
+    pub value: String,
+    /// What the list shows.
+    pub display: String,
+}
+
+/// Horizontal alignment of the text a user types.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FieldAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// The part of a form field drawn on one line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormFieldFragment {
+    pub field: FormFieldId,
+    /// Where the widget goes, in the coordinates of the children. The
+    /// fragments of one field on a page make one widget over their union.
+    pub rect: Rect,
+    /// The static drawing of the field's current value or placeholder.
+    pub children: Vec<PositionedElement>,
+    /// For a check box, the drawing of the other state. Text only.
+    pub alternate: Vec<PositionedElement>,
 }
 
 /// One path with optional fill and stroke paints.
@@ -480,6 +562,9 @@ pub struct GroupElement {
 }
 
 /// Visit every non-group element in depth-first document order.
+///
+/// A form field fragment is visited through its children, not its
+/// `alternate`.
 pub fn walk(elements: &[PositionedElement], f: &mut impl FnMut(&PositionedElement, &Transform)) {
     fn visit(
         elements: &[PositionedElement],
@@ -492,7 +577,8 @@ pub fn walk(elements: &[PositionedElement], f: &mut impl FnMut(&PositionedElemen
                     let child_to_page = group.transform.then(accumulated);
                     visit(&group.children, child_to_page, f);
                 }
-                PositionedElement::MarkedContent { children, .. } => {
+                PositionedElement::MarkedContent { children, .. }
+                | PositionedElement::FormField(FormFieldFragment { children, .. }) => {
                     visit(children, accumulated, f);
                 }
                 leaf => f(leaf, &accumulated),
@@ -615,6 +701,9 @@ pub struct LayoutResult {
     /// Logical structure for tagged PDF output, when the producer has source
     /// semantics to preserve.
     pub structure: Option<DocumentStructure>,
+    /// Fillable form fields, indexed by [`FormFieldId`]. Empty unless the
+    /// producer was asked for fields.
+    pub form_fields: Vec<FormField>,
 }
 
 impl LayoutResult {
@@ -639,6 +728,7 @@ impl LayoutResult {
             outlines,
             diagnostics: Vec::new(),
             structure: None,
+            form_fields: Vec::new(),
         }
     }
 }

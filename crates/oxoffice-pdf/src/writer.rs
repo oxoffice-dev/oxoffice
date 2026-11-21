@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use oxoffice_layout::{
-    Color, FillRule, FontId, GradientStop, LayoutResult, LineCap, LineJoin, Paint, Path,
-    PathCommand, PathElement, PositionedElement, Stroke, Transform, walk,
+    Color, FillRule, FontId, FormFieldFragment, FormFieldId, GradientStop, LayoutResult, LineCap,
+    LineJoin, Paint, Path, PathCommand, PathElement, PositionedElement, Stroke, Transform, walk,
 };
 use pdf_writer::types::{
     ActionType, AnnotationFlags, AnnotationType, CidFontType, ColorSpaceOperand, FontFlags,
@@ -15,6 +15,7 @@ use pdf_writer::types::{
 use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 
 use crate::font::{self, PreparedFont};
+use crate::forms;
 use crate::image;
 use crate::structure::{PreparedStructure, has_content_stream_output};
 use crate::{PdfConformance, conformance};
@@ -117,6 +118,10 @@ fn collect_alpha_keys(elements: &[PositionedElement], keys: &mut BTreeSet<u32>) 
             }
             PositionedElement::MarkedContent { children, .. } => {
                 collect_alpha_keys(children, keys);
+            }
+            PositionedElement::FormField(fragment) => {
+                collect_alpha_keys(&fragment.children, keys);
+                collect_alpha_keys(&fragment.alternate, keys);
             }
             _ => {}
         }
@@ -582,6 +587,7 @@ pub(crate) fn write_pdf_impl(
     let declares_pdfua = tagged.is_some() && !layout_uses_notdef(layout);
     let metadata_id = (declares_pdfua || profile.is_some()).then(&mut alloc);
     let icc_profile_id = profile.map(|_| alloc());
+    let forms = forms::FormPlan::new(&layout.pages, &layout.form_fields, &mut alloc);
 
     // ── Write catalog ────────────────────────────────────────────────
     {
@@ -600,6 +606,9 @@ pub(crate) fn write_pdf_impl(
             }
         } else if let Some(metadata_id) = metadata_id {
             cat.metadata(metadata_id);
+        }
+        if let Some(forms) = forms.as_ref() {
+            forms.write_catalog_entry(&mut cat);
         }
         if let Some(icc_profile_id) = icc_profile_id {
             let mut intents = cat.output_intents();
@@ -843,6 +852,19 @@ pub(crate) fn write_pdf_impl(
     write_gradient_objects(&mut pdf, &gradients, &alpha_states);
 
     // ── Write pages ──────────────────────────────────────────────────
+    let image_xobjects: Vec<Ref> = image_entries
+        .iter()
+        .map(|entry| entry.xobject_ref)
+        .collect();
+    let resource_refs = PageResourceRefs {
+        prepared_fonts: &prepared_fonts,
+        font_refs: &font_refs,
+        image_map: &image_map,
+        image_xobjects: &image_xobjects,
+        alpha_states: &alpha_states,
+        gradients: &gradients,
+    };
+    let mut field_drawings = BTreeMap::new();
     for (page_idx, page) in layout.pages.iter().enumerate() {
         let page_id = page_ids[page_idx];
         let content_id = content_ids[page_idx];
@@ -858,7 +880,9 @@ pub(crate) fn write_pdf_impl(
                 alpha_states: &alpha_states,
                 gradients: &gradients,
                 structure: tagged.as_ref(),
+                forms: forms.as_ref(),
             },
+            &mut field_drawings,
         );
 
         // Compress and write content stream
@@ -878,63 +902,7 @@ pub(crate) fn write_pdf_impl(
 
         // Resources: fonts + images
         let mut resources = page_dict.resources();
-
-        // Font resources
-        if !prepared_fonts.is_empty() {
-            let mut font_dict = resources.fonts();
-            for (font_id, (type0_ref, _, _, _, _)) in &font_refs {
-                let font_name = format!("F{}", font_id.0);
-                font_dict.pair(Name(font_name.as_bytes()), *type0_ref);
-            }
-            font_dict.finish();
-        }
-
-        // Image XObject resources
-        // Sorted by element index. `image_map` is hashed, and its iteration
-        // order reached the /XObject dictionary, so the same page named its
-        // images in a different order on every run.
-        let mut page_images: Vec<(usize, usize)> = image_map
-            .iter()
-            .filter(|((pi, _), _)| *pi == page_idx)
-            .map(|((_, ei), img_idx)| (*ei, *img_idx))
-            .collect();
-        page_images.sort_unstable();
-        let page_image_names: Vec<(String, Ref)> = page_images
-            .into_iter()
-            .map(|(ei, img_idx)| {
-                (
-                    format!("Im{}_{}", page_idx, ei),
-                    image_entries[img_idx].xobject_ref,
-                )
-            })
-            .collect();
-
-        if !page_image_names.is_empty() {
-            let mut xobjects = resources.x_objects();
-            for (name, xobj_ref) in &page_image_names {
-                xobjects.pair(Name(name.as_bytes()), *xobj_ref);
-            }
-            xobjects.finish();
-        }
-
-        let page_alpha_states = alpha_states.page_entries(page);
-        if !page_alpha_states.is_empty() {
-            let mut states = resources.ext_g_states();
-            for entry in page_alpha_states {
-                states.pair(Name(entry.name.as_bytes()), entry.reference);
-            }
-            states.finish();
-        }
-
-        let page_gradients: Vec<_> = gradients.page_entries(page_idx).collect();
-        if !page_gradients.is_empty() {
-            let mut patterns = resources.patterns();
-            for entry in page_gradients {
-                patterns.pair(Name(entry.name.as_bytes()), entry.pattern_ref);
-            }
-            patterns.finish();
-        }
-
+        write_page_resources(&mut resources, page_idx, page, &resource_refs);
         resources.finish();
 
         // Annotations (hyperlinks)
@@ -950,6 +918,9 @@ pub(crate) fn write_pdf_impl(
             }
         });
 
+        if let Some(forms) = forms.as_ref() {
+            page_annotations.extend(forms.widgets_on(page_idx));
+        }
         if !page_annotations.is_empty() {
             page_dict.annotations(page_annotations.iter().copied());
         }
@@ -998,6 +969,19 @@ pub(crate) fn write_pdf_impl(
             &outline_item_ids,
             &page_ids,
             layout,
+        );
+    }
+
+    if let Some(forms) = forms.as_ref() {
+        let page_heights: Vec<f64> = layout.pages.iter().map(|page| page.height).collect();
+        forms.write(
+            &mut pdf,
+            &page_ids,
+            &page_heights,
+            &field_drawings,
+            &mut |page_idx, resources| {
+                write_page_resources(resources, page_idx, &layout.pages[page_idx], &resource_refs)
+            },
         );
     }
 
@@ -1157,6 +1141,81 @@ fn write_gradient_objects(pdf: &mut Pdf, gradients: &GradientRegistry, alpha_sta
     }
 }
 
+struct PageResourceRefs<'a> {
+    prepared_fonts: &'a BTreeMap<FontId, PreparedFont>,
+    font_refs: &'a BTreeMap<FontId, (Ref, Ref, Ref, Ref, Ref)>,
+    image_map: &'a HashMap<(usize, usize), usize>,
+    image_xobjects: &'a [Ref],
+    alpha_states: &'a AlphaStates,
+    gradients: &'a GradientRegistry,
+}
+
+/// Write one page's resources. A form field's appearance drawn on the page
+/// gets the same dictionary, so the names it draws with resolve alike.
+fn write_page_resources(
+    resources: &mut pdf_writer::writers::Resources<'_>,
+    page_idx: usize,
+    page: &oxoffice_layout::PageFrame,
+    refs: &PageResourceRefs<'_>,
+) {
+    // Font resources
+    if !refs.prepared_fonts.is_empty() {
+        let mut font_dict = resources.fonts();
+        for (font_id, (type0_ref, _, _, _, _)) in refs.font_refs {
+            let font_name = format!("F{}", font_id.0);
+            font_dict.pair(Name(font_name.as_bytes()), *type0_ref);
+        }
+        font_dict.finish();
+    }
+
+    // Image XObject resources
+    // Sorted by element index. `image_map` is hashed, and its iteration
+    // order reached the /XObject dictionary, so the same page named its
+    // images in a different order on every run.
+    let mut page_images: Vec<(usize, usize)> = refs
+        .image_map
+        .iter()
+        .filter(|((pi, _), _)| *pi == page_idx)
+        .map(|((_, ei), img_idx)| (*ei, *img_idx))
+        .collect();
+    page_images.sort_unstable();
+    let page_image_names: Vec<(String, Ref)> = page_images
+        .into_iter()
+        .map(|(ei, img_idx)| {
+            (
+                format!("Im{}_{}", page_idx, ei),
+                refs.image_xobjects[img_idx],
+            )
+        })
+        .collect();
+
+    if !page_image_names.is_empty() {
+        let mut xobjects = resources.x_objects();
+        for (name, xobj_ref) in &page_image_names {
+            xobjects.pair(Name(name.as_bytes()), *xobj_ref);
+        }
+        xobjects.finish();
+    }
+
+    let page_alpha_states = refs.alpha_states.page_entries(page);
+    if !page_alpha_states.is_empty() {
+        let mut states = resources.ext_g_states();
+        for entry in page_alpha_states {
+            states.pair(Name(entry.name.as_bytes()), entry.reference);
+        }
+        states.finish();
+    }
+
+    let page_gradients: Vec<_> = refs.gradients.page_entries(page_idx).collect();
+    if !page_gradients.is_empty() {
+        let mut patterns = resources.patterns();
+        for entry in page_gradients {
+            patterns.pair(Name(entry.name.as_bytes()), entry.pattern_ref);
+        }
+        patterns.finish();
+    }
+}
+
 /// Build the content stream for a single page.
 #[derive(Clone, Copy)]
 struct PageContentResources<'a> {
@@ -1166,12 +1225,14 @@ struct PageContentResources<'a> {
     alpha_states: &'a AlphaStates,
     gradients: &'a GradientRegistry,
     structure: Option<&'a PreparedStructure<'a>>,
+    forms: Option<&'a forms::FormPlan<'a>>,
 }
 
 fn build_page_content(
     page_idx: usize,
     page: &oxoffice_layout::PageFrame,
     resources: PageContentResources<'_>,
+    field_drawings: &mut BTreeMap<FormFieldId, forms::FieldDrawing>,
 ) -> Vec<u8> {
     let mut content = Content::new();
     let page_height = page.height as f32;
@@ -1190,6 +1251,8 @@ fn build_page_content(
         leaf_index: 0,
         structure: resources.structure,
         next_mcid: 0,
+        forms: resources.forms,
+        field_drawings,
     };
     emit_elements(
         &mut content,
@@ -1248,6 +1311,9 @@ struct EmitState<'a> {
     leaf_index: usize,
     structure: Option<&'a PreparedStructure<'a>>,
     next_mcid: i32,
+    forms: Option<&'a forms::FormPlan<'a>>,
+    /// What the page draws for each placed form field, kept out of the page.
+    field_drawings: &'a mut BTreeMap<FormFieldId, forms::FieldDrawing>,
 }
 
 fn emit_elements(
@@ -1271,6 +1337,10 @@ fn emit_elements(
             }?;
             run.is_valid().then_some(run.logical_text.as_str())
         });
+        if let PositionedElement::FormField(fragment) = element {
+            emit_form_field(content, fragment, state, accumulated_transform, actual_text);
+            continue;
+        }
         if let PositionedElement::MarkedContent {
             structure,
             children,
@@ -1525,6 +1595,93 @@ fn emit_elements(
             }
         }
     }
+}
+
+/// Draw a form field fragment's children into its field's appearance, or as
+/// page content when the field has no widget on this page. Either way the
+/// children carry no structure marks: the structure does not count them.
+fn emit_form_field(
+    content: &mut Content,
+    fragment: &FormFieldFragment,
+    state: &mut EmitState<'_>,
+    accumulated_transform: Transform,
+    actual_text: Option<&str>,
+) {
+    let structure = state.structure.take();
+    let placed = state
+        .forms
+        .and_then(|forms| forms.placed_on(fragment.field, state.page_idx));
+    match placed {
+        None => emit_elements(
+            content,
+            &fragment.children,
+            state,
+            accumulated_transform,
+            actual_text,
+        ),
+        Some(placed) => {
+            let current = field_drawing(
+                &fragment.children,
+                state,
+                accumulated_transform,
+                actual_text,
+            );
+            let other = if placed.is_check_box() {
+                // The other state is drawn apart: it holds text only, and it
+                // must not move the leaf count that names the page's images.
+                let no_images = HashMap::new();
+                let mut no_fields = BTreeMap::new();
+                let mut other_state = EmitState {
+                    page_idx: state.page_idx,
+                    page_height: state.page_height,
+                    prepared_fonts: state.prepared_fonts,
+                    font_refs: state.font_refs,
+                    image_map: &no_images,
+                    alpha_states: state.alpha_states,
+                    gradients: state.gradients,
+                    leaf_index: 0,
+                    structure: None,
+                    next_mcid: 0,
+                    forms: None,
+                    field_drawings: &mut no_fields,
+                };
+                field_drawing(
+                    &fragment.alternate,
+                    &mut other_state,
+                    accumulated_transform,
+                    actual_text,
+                )
+            } else {
+                Vec::new()
+            };
+            let drawing = state.field_drawings.entry(fragment.field).or_default();
+            drawing.current.extend_from_slice(&current);
+            drawing.other.extend_from_slice(&other);
+        }
+    }
+    state.structure = structure;
+}
+
+/// Children drawn in page coordinates, as an appearance stream draws them.
+fn field_drawing(
+    children: &[PositionedElement],
+    state: &mut EmitState<'_>,
+    accumulated_transform: Transform,
+    actual_text: Option<&str>,
+) -> Vec<u8> {
+    let mut drawing = Content::new();
+    drawing.save_state();
+    drawing.transform([1.0, 0.0, 0.0, -1.0, 0.0, state.page_height as f32]);
+    drawing.transform(transform_array(accumulated_transform));
+    emit_elements(
+        &mut drawing,
+        children,
+        state,
+        accumulated_transform,
+        actual_text,
+    );
+    drawing.restore_state();
+    drawing.finish().to_vec()
 }
 
 fn apply_alpha(content: &mut Content, alpha: f64, states: &AlphaStates) {
