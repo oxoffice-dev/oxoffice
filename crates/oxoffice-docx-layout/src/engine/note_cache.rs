@@ -11,6 +11,7 @@ pub(super) fn stored_note_cache_runs(
     view: RevisionView,
     source: Option<FieldSource>,
     inherited_locked: bool,
+    deleted: bool,
     input: Option<&LayoutInput>,
     cached_child: bool,
 ) -> Result<Vec<StoredFieldRun>> {
@@ -88,11 +89,12 @@ pub(super) fn stored_note_cache_runs(
     // a field inside a deletion draws from the runs it was read from.
     let cached_runs = field.cached_result_runs().or_else(|| {
         field.cached_result_physical_runs().filter(|runs| {
-            runs.iter().any(|run| {
-                run.content
-                    .iter()
-                    .any(|content| matches!(content, RunContent::DeletedText(_)))
-            })
+            deleted
+                && runs.iter().any(|run| {
+                    run.content
+                        .iter()
+                        .any(|content| matches!(content, RunContent::DeletedText(_)))
+                })
         })
     });
     let runs = if let Some(paragraph) = &prepared {
@@ -232,6 +234,11 @@ pub(super) fn stored_note_cache_runs(
                     view,
                     child_source,
                     locked,
+                    deleted
+                        || matches!(
+                            projected.revision,
+                            Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
+                        ),
                     input,
                     true,
                 )? {
@@ -277,7 +284,7 @@ fn append_cached_note_contents(
     view: RevisionView,
     contents: &mut Vec<RunContent>,
 ) -> Result<()> {
-    for stored in stored_note_cache_runs(field, None, view, None, false, None, false)? {
+    for stored in stored_note_cache_runs(field, None, view, None, false, false, None, false)? {
         contents.extend(stored.run.content.into_iter().filter(|content| {
             matches!(
                 content,

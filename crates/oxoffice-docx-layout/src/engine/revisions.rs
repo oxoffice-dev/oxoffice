@@ -429,7 +429,9 @@ pub(super) fn projected_paragraph_text(para: &CT_P, view: RevisionView) -> Resul
     for projected in project_paragraph_runs(para, view) {
         for content in &projected.run.content {
             if let RunContent::Field(field) = content {
-                for stored in stored_note_cache_runs(field, None, view, None, false, None, false)? {
+                for stored in
+                    stored_note_cache_runs(field, None, view, None, false, false, None, false)?
+                {
                     text.push_str(&stored.run.text());
                 }
             } else {

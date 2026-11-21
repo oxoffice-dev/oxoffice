@@ -1887,3 +1887,45 @@ fn a_field_deleted_in_word_is_the_same_story_item_as_its_code_in_instruction_tex
         items(&WORD_DELETED_PAGE.replace("w:delInstrText", "w:instrText"))
     );
 }
+
+#[test]
+fn a_caption_retyped_with_tracked_changes_keeps_its_tables_rebuildable() {
+    // Word saves a retyped caption as the old one deleted, its SEQ code in
+    // w:delInstrText, and the new one inserted.
+    let field = |code: &str, text: &str, result: &str| {
+        format!(
+            r#"<w:r><w:{text}>Figure </w:{text}></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:{code} xml:space="preserve"> SEQ Figure \* ARABIC </w:{code}></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:{text}>{result}</w:{text}></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr><w:del w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z">{}</w:del><w:ins w:id="2" w:author="Ana" w:date="2026-01-01T00:00:00Z">{}</w:ins><w:r><w:t xml:space="preserve">: Sales</w:t></w:r></w:p>"#,
+        field("delInstrText", "delText", "1"),
+        field("instrText", "t", "1"),
+    ));
+    doc.rebuild_generated_tables().unwrap();
+}
+
+#[test]
+fn a_standing_field_whose_result_holds_deleted_text_draws_only_its_display() {
+    // A field outside any deletion with a stray w:delText in its result, as
+    // tools that reject changes naively leave it.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>new</w:t></w:r><w:r><w:delText>old</w:delText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    assert_eq!(drawn_text(&doc, RevisionView::Accepted), "new");
+}
+
+#[test]
+fn a_standing_field_whose_code_was_deleted_is_no_story_item() {
+    // Its markers stand, its whole code was deleted with tracking on.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:del w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delInstrText xml:space="preserve"> PAGE </w:delInstrText></w:r></w:del><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let kinds: Vec<_> = doc
+        .story_items(&story(&doc, StoryKind::Body))
+        .unwrap()
+        .into_iter()
+        .map(|item| item.kind())
+        .collect();
+    assert!(!kinds.contains(&StoryItemKind::Field), "{kinds:?}");
+}
