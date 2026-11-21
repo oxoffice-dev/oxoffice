@@ -1219,7 +1219,11 @@ fn a_field_closed_by_a_run_with_empty_properties_does_not_block_the_comparison()
         r#"<w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:rPr></w:rPr></w:r>"#,
         r#"<w:r><w:rPr></w:rPr><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
     );
-    for spelling in ["<w:rPr></w:rPr>", "<w:rPr>\n</w:rPr>"] {
+    for spelling in [
+        "<w:rPr></w:rPr>",
+        "<w:rPr>\n</w:rPr>",
+        "<w:rPr><w:rFonts/></w:rPr>",
+    ] {
         let body = body.replace("<w:rPr></w:rPr>", spelling);
         let original = texts(&doc_with_body(&body));
         let mut edited = doc_with_body(&body);
