@@ -712,9 +712,7 @@ fn table_style_alignment_width_layout_and_caption_survive_a_save() {
     );
 }
 
-// Fails today: the percentage is truncated to fiftieths of a percent, so 33.3 is written as 1664 (33.28 %). Issue: #33
 #[test]
-#[should_panic(expected = "Percentage(33.28)")]
 fn a_table_width_of_33_point_3_percent_reads_back_as_written() {
     let mut doc = Document::new();
     doc.add_table(1, 1)
@@ -725,6 +723,33 @@ fn a_table_width_of_33_point_3_percent_reads_back_as_written() {
         doc.table(0).unwrap().width_mode(),
         Some(TableWidth::Percentage(33.3))
     );
+}
+
+#[test]
+fn table_percentages_round_to_the_nearest_fiftieth_through_both_setters() {
+    for (percent, stored) in [
+        (33.3, 33.3),
+        (66.7, 66.7),
+        (12.5, 12.5),
+        (99.99, 100.0),
+        // Half a fiftieth rounds up, below it rounds down.
+        (0.01, 0.02),
+        (0.004, 0.0),
+    ] {
+        let mut doc = Document::new();
+        doc.add_table(1, 1)
+            .set_width_mode(TableWidth::Percentage(percent))
+            .unwrap();
+        doc.add_table(1, 1).set_width_pct(percent);
+        let doc = reopen(&mut doc);
+        for index in 0..2 {
+            assert_eq!(
+                doc.table(index).unwrap().width_mode(),
+                Some(TableWidth::Percentage(stored)),
+                "{percent} through setter {index}"
+            );
+        }
+    }
 }
 
 #[test]
