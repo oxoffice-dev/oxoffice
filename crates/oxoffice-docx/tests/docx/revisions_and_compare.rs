@@ -4507,6 +4507,57 @@ fn field_wrapper<'x>(xml: &'x str, kind: &str) -> &'x str {
 }
 
 #[test]
+fn a_paragraph_with_a_simple_field_added_to_a_word_2019_file_is_compared() {
+    // Word 2019 declares a default namespace on the document root that no
+    // name uses, and an oxoffice save of the edited copy leaves it out: the
+    // inserted field's facts are read under the bindings they use only.
+    let without = format!("{}{}", plain("Before."), plain("After."));
+    let with = format!("{}{PAGE_LINE}{}", plain("Before."), plain("After."));
+    let mut original = doc_with_body(&without);
+    let original = with_part(&mut original, "document.xml", |xml| {
+        xml.replacen(
+            "<w:document ",
+            r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+            1,
+        )
+    });
+    let mut doc = redline(original, &doc_with_body(&with));
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Before.", "Page 1", "After."]);
+    assert_eq!(field_instructions(&copy), ["PAGE"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Before.", "After."]);
+}
+
+#[test]
+fn a_heading_added_to_a_word_2019_file_with_rebuilt_contents_is_compared() {
+    // The rebuild writes the new entry's page reference as a simple field,
+    // which the comparison tracks as one complex field (see above).
+    let sections = [("Scope", "What we cover."), ("Method", "How we work.")];
+    let mut original = report_with_toc(1, &sections);
+    original.rebuild_toc().unwrap();
+    let mut original = reopen(&mut original);
+    let mut edited = reopen(&mut original);
+    let original_texts = texts(&original);
+    let original = with_part(&mut original, "document.xml", |xml| {
+        xml.replacen(
+            "<w:document ",
+            r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+            1,
+        )
+    });
+    let at = edited.find_content_index("How we work.").unwrap();
+    edited.insert_paragraph(at + 1, "Results").style("Heading1");
+    edited.rebuild_toc().unwrap();
+    let edited = reopen(&mut edited);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(field_instructions(&copy), field_instructions(&edited));
+    assert_eq!(texts(&rejected(&mut doc)), original_texts);
+}
+
+#[test]
 fn a_paragraph_holding_a_simple_field_is_inserted_or_deleted_whole() {
     let without = format!("{}{}", plain("Before."), plain("After."));
     let with = format!("{}{PAGE_LINE}{}", plain("Before."), plain("After."));

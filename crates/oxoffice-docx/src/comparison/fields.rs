@@ -378,11 +378,27 @@ pub(super) fn actual_field_is_complex(xml: &str, bindings: &NamespaceBindings) -
     }
 }
 
-pub(super) fn conversion_namespace_facts(bindings: NamespaceBindings) -> BTreeMap<String, String> {
-    bindings
+/// The namespace bindings of `xml`'s root that its names use, but the Word
+/// binding: Word 2019 declares a default namespace on the document root that
+/// no name uses, and a save leaves it out, which is no change.
+pub(super) fn conversion_namespace_facts(
+    bindings: NamespaceBindings,
+    xml: &str,
+) -> Result<BTreeMap<String, String>> {
+    // XML that does not read keeps every binding, as before.
+    let used = used_name_prefixes(xml).ok();
+    Ok(bindings
         .into_iter()
         .filter(|(name, uri)| !(name == "xmlns:w" && uri == W_NS))
-        .collect()
+        .filter(|(name, _)| {
+            let prefix = if name == "xmlns" {
+                ""
+            } else {
+                name.strip_prefix("xmlns:").unwrap_or(name)
+            };
+            used.as_ref().is_none_or(|used| used.contains(prefix))
+        })
+        .collect())
 }
 
 pub(super) fn field_source_sequence_budget(
@@ -397,7 +413,7 @@ pub(super) fn field_source_sequence_budget(
         let (lexical, bindings) = raw_occurrence_representation(&wrapped[span.clone()], scope)?;
         output.push(format!(
             "root:{:?}:{lexical:?}",
-            conversion_namespace_facts(bindings)
+            conversion_namespace_facts(bindings, &wrapped[span.clone()])?
         ));
         cursor = span.end;
     }
@@ -435,10 +451,57 @@ pub(super) fn field_carrier_source_budget(
             .checked_sub(growth)
             .ok_or_else(|| Error::Other("field carrier result precedes opening".into()))?;
         Ok(vec![
-            format!("scope:{:?}", conversion_namespace_facts(bindings)),
+            format!("scope:{:?}", conversion_namespace_facts(bindings, source)?),
             format!("before:{:?}", &lexical[..start]),
             format!("after:{:?}", &lexical[end..]),
         ])
+    }
+}
+
+/// The namespace prefixes the names of an element and its descendants use,
+/// `""` for an unprefixed element, with the prefixes a markup-compatibility
+/// attribute lists.
+fn used_name_prefixes(xml: &str) -> Result<HashSet<String>> {
+    let mut reader = Reader::from_str(xml);
+    let mut prefixes = HashSet::new();
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let element = match &event {
+            Event::Start(element) | Event::Empty(element) => element,
+            Event::Eof => return Ok(prefixes),
+            _ => continue,
+        };
+        let name = element.name();
+        prefixes.insert(
+            name.prefix()
+                .map_or(String::new(), |prefix| text(prefix.as_ref())),
+        );
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+            let key = attribute.key;
+            if key.as_ref() == b"xmlns" || key.as_ref().starts_with(b"xmlns:") {
+                continue;
+            }
+            if let Some(prefix) = key.prefix() {
+                prefixes.insert(text(prefix.as_ref()));
+            }
+            if matches!(
+                key.local_name().as_ref(),
+                b"Ignorable"
+                    | b"Requires"
+                    | b"ProcessContent"
+                    | b"MustUnderstand"
+                    | b"PreserveElements"
+                    | b"PreserveAttributes"
+            ) {
+                for token in text(attribute.value.as_ref()).split_whitespace() {
+                    prefixes.insert(token.split(':').next().unwrap_or(token).to_owned());
+                }
+            }
+        }
     }
 }
 
@@ -595,10 +658,7 @@ pub(super) fn conversion_source_inventory(
         for span in spans {
             output.push_str(&wrapped[cursor..span.start]);
             let (lexical, bindings) = raw_occurrence_representation(&wrapped[span.clone()], scope)?;
-            let bindings = bindings
-                .into_iter()
-                .filter(|(name, uri)| !(name == "xmlns:w" && uri == W_NS))
-                .collect::<BTreeMap<_, _>>();
+            let bindings = conversion_namespace_facts(bindings, &wrapped[span.clone()])?;
             output.push_str(&format!("{bindings:?}"));
             output.push_str(&lexical);
             cursor = span.end;
