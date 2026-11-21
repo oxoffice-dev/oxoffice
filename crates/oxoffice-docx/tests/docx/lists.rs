@@ -864,6 +864,31 @@ fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
     }
 }
 
+#[test]
+fn roman_markers_go_up_to_3999_then_show_the_number() {
+    for (format, start, expected) in [
+        (
+            ListNumberFormat::UpperRoman,
+            3998,
+            ["MMMCMXCVIII.", "MMMCMXCIX.", "4000."],
+        ),
+        (
+            ListNumberFormat::LowerRoman,
+            3998,
+            ["mmmcmxcviii.", "mmmcmxcix.", "4000."],
+        ),
+    ] {
+        let (mut doc, id) = single_list(&[ListLevel::new(format.clone()).start(start)]);
+        add_items(&mut doc, id, &[0; 3]);
+        assert_eq!(markers(&doc), expected, "{format:?}");
+    }
+    // A hostile start value draws a short marker.
+    let (mut doc, id) =
+        single_list(&[ListLevel::new(ListNumberFormat::LowerRoman).start(u32::MAX)]);
+    add_items(&mut doc, id, &[0]);
+    assert_eq!(markers(&doc), [format!("{}.", u32::MAX)]);
+}
+
 // Known failures.
 
 // Fails today: LibreOffice keeps List Bullet's numbering but drops the level's style back-link, and every list edit is refused. Issue: #29

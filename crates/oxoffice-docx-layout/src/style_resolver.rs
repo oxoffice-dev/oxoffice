@@ -1144,7 +1144,14 @@ fn number_format_has_visible_renderer(format: &ST_NumberFormat) -> bool {
     )
 }
 
+/// The Roman marker of `n`. Past 3999, which classic Roman numerals cannot
+/// write and the Roman page fields refuse, the marker is the decimal number:
+/// a guard against a hostile start value, which would otherwise make a
+/// marker of millions of letters.
 fn to_roman(mut n: u32, upper: bool) -> String {
+    if n > 3999 {
+        return n.to_string();
+    }
     let vals = [
         (1000, "M"),
         (900, "CM"),
