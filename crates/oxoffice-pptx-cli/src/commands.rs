@@ -797,6 +797,79 @@ pub fn thumbnail(
     Ok(())
 }
 
+/// Lists every shape of one slide or of all, depth first in z-order, a group
+/// before the shapes inside it.
+pub fn shapes(file: &Path, slide: Option<usize>, as_json: bool) -> Result<()> {
+    let presentation = Presentation::open(file)?;
+    let only = slide
+        .map(|slide| slide_index(&presentation, slide))
+        .transpose()?;
+    let mut slides = Vec::new();
+    let mut stdout = io::stdout().lock();
+    for (index, slide) in presentation.slides().enumerate() {
+        if only.is_some_and(|only| only != index) {
+            continue;
+        }
+        if !as_json {
+            writeln!(stdout, "Slide {}", index + 1)?;
+        }
+        let mut shapes = Vec::new();
+        for (path, shape) in slide.shapes().walk() {
+            if as_json {
+                shapes.push(json!({
+                    "path": path,
+                    "depth": path.len() - 1,
+                    "id": shape.non_visual_id(),
+                    "name": shape.non_visual_name(),
+                    "kind": shape_kind_label(shape.kind()),
+                    "position": shape.position().map(|(left, top)| json!({
+                        "left_emu": left.0,
+                        "top_emu": top.0,
+                    })),
+                    "size": shape.size().map(|(width, height)| json!({
+                        "width_emu": width.0,
+                        "height_emu": height.0,
+                    })),
+                    "text": shape.text(),
+                }));
+                continue;
+            }
+            write!(
+                stdout,
+                "{}{} {} {:?}",
+                "  ".repeat(path.len()),
+                shape
+                    .non_visual_id()
+                    .map_or_else(|| "-".to_owned(), |id| id.to_string()),
+                shape_kind_label(shape.kind()),
+                shape.non_visual_name().unwrap_or_default(),
+            )?;
+            if let (Some((left, top)), Some((width, height))) = (shape.position(), shape.size()) {
+                write!(
+                    stdout,
+                    " at {},{} size {}x{}",
+                    left.0, top.0, width.0, height.0
+                )?;
+            }
+            match shape.text().filter(|text| !text.is_empty()) {
+                Some(text) if text.chars().count() > 50 => {
+                    let start: String = text.chars().take(50).collect();
+                    writeln!(stdout, " {:?}", format!("{start}..."))?;
+                }
+                Some(text) => writeln!(stdout, " {text:?}")?,
+                None => writeln!(stdout)?,
+            }
+        }
+        if as_json {
+            slides.push(json!({ "slide": index + 1, "id": slide.id(), "shapes": shapes }));
+        }
+    }
+    if as_json {
+        print_json(json!({ "slides": slides }))?;
+    }
+    Ok(())
+}
+
 pub fn outline(file: &Path, as_json: bool, notes: bool) -> Result<()> {
     let presentation = Presentation::open(file)?;
     let mut slides = Vec::new();

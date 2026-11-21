@@ -3,4 +3,5 @@
 
 mod corpus;
 mod save;
+mod shapes_walk;
 mod support;

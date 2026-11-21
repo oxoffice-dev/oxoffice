@@ -7193,6 +7193,11 @@ impl Presentation {
         }
     }
 
+    /// Iterates the top-level shapes of a slide, layout or master in z-order.
+    pub fn part_shapes(&self, owner: ShapeOwner) -> Result<Shapes<'_>> {
+        Ok(shapes(&self.owner_data(owner)?.shape_tree.children))
+    }
+
     /// Reads one physical child path in a slide, layout or master.
     pub fn part_shape_at(&self, owner: ShapeOwner, path: &[usize]) -> Result<ShapeRef<'_>> {
         let missing = || invalid_shape_mutation("shape owner", "missing physical path");
@@ -23972,15 +23977,10 @@ impl<'a> SlideRef<'a> {
         })
     }
 
-    /// Iterates the immediate shape tree in z-order.
-    pub fn shapes(&self) -> impl ExactSizeIterator<Item = ShapeRef<'a>> + 'a {
-        self.record
-            .slide
-            .common_slide_data
-            .shape_tree
-            .children
-            .iter()
-            .map(shape_ref)
+    /// Iterates the immediate shape tree in z-order. [`Shapes::walk`] also
+    /// visits the shapes inside groups.
+    pub fn shapes(&self) -> Shapes<'a> {
+        shapes(&self.record.slide.common_slide_data.shape_tree.children)
     }
 
     /// Returns visible shape and table text recursively in z-order.
@@ -24101,6 +24101,104 @@ impl Eq for ShapeRef<'_> {}
 
 fn shape_ref(child: &ShapeTreeChild) -> ShapeRef<'_> {
     ShapeRef { child }
+}
+
+/// The shapes of one shape tree or group in z-order, as [`ShapeRef`]s.
+///
+/// [`walk`](Shapes::walk) also visits the shapes inside groups.
+#[derive(Clone)]
+pub struct Shapes<'a> {
+    children: &'a [ShapeTreeChild],
+    indices: std::ops::Range<usize>,
+}
+
+fn shapes(children: &[ShapeTreeChild]) -> Shapes<'_> {
+    Shapes {
+        children,
+        indices: 0..children.len(),
+    }
+}
+
+impl<'a> Iterator for Shapes<'a> {
+    type Item = ShapeRef<'a>;
+
+    fn next(&mut self) -> Option<ShapeRef<'a>> {
+        let index = self.indices.next()?;
+        Some(shape_ref(&self.children[index]))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.indices.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for Shapes<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let index = self.indices.next_back()?;
+        Some(shape_ref(&self.children[index]))
+    }
+}
+
+impl ExactSizeIterator for Shapes<'_> {}
+
+impl<'a> Shapes<'a> {
+    /// Visits the shapes left in this iterator and, below each group, the
+    /// shapes inside it, depth first in z-order: a group comes before its
+    /// children.
+    ///
+    /// Each shape comes with its path: its index in this collection, then in
+    /// each group below it, so its depth is `path.len() - 1`. For a walk of a
+    /// slide's, layout's or master's own shapes ([`SlideRef::shapes`],
+    /// [`Presentation::part_shapes`]), [`Presentation::part_shape_at`] and
+    /// [`Presentation::shape_mut_at`] find each path again; a walk of
+    /// [`ShapeRef::children`] gives paths relative to that group.
+    ///
+    /// An alternate-content block is visited but not entered: the members of
+    /// its fallback cannot be edited, and [`ShapeRef::children`] reads them.
+    /// The block itself is read-only too, as when iterating: an edit returns
+    /// an error. The walk keeps its own stack, so deeply nested groups cannot
+    /// overflow the thread's stack.
+    pub fn walk(self) -> ShapeWalk<'a> {
+        ShapeWalk {
+            levels: vec![(self.children, self.indices)],
+            path: Vec::new(),
+        }
+    }
+}
+
+/// The depth-first walk of [`Shapes::walk`].
+#[derive(Clone)]
+pub struct ShapeWalk<'a> {
+    // The open shape trees, outermost first, each with the indices left.
+    levels: Vec<(&'a [ShapeTreeChild], std::ops::Range<usize>)>,
+    // The index of each open group in the level above it.
+    path: Vec<usize>,
+}
+
+impl<'a> Iterator for ShapeWalk<'a> {
+    type Item = (Vec<usize>, ShapeRef<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (children, indices) = self.levels.last_mut()?;
+            let children = *children;
+            let Some(index) = indices.next() else {
+                self.levels.pop();
+                self.path.pop();
+                continue;
+            };
+            let child = &children[index];
+            let mut path = self.path.clone();
+            path.push(index);
+            if let ShapeTreeChild::GroupShape(group) = child
+                && !group.children.is_empty()
+            {
+                self.levels.push((&group.children, 0..group.children.len()));
+                self.path.push(index);
+            }
+            return Some((path, shape_ref(child)));
+        }
+    }
 }
 
 /// A mutably borrowed shape-tree child.
@@ -26511,8 +26609,8 @@ impl<'a> ShapeRef<'a> {
     }
 
     /// Iterates immediate group or selected fallback children.
-    pub fn children(&self) -> impl ExactSizeIterator<Item = ShapeRef<'a>> + 'a {
-        self.child_slice().iter().map(shape_ref)
+    pub fn children(&self) -> Shapes<'a> {
+        shapes(self.child_slice())
     }
 
     fn child_slice(&self) -> &'a [ShapeTreeChild] {
