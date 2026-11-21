@@ -16,25 +16,44 @@ note twice. Word for Mac cannot open such a file, and the note's own changes
 would be recorded against both sites. The check that refuses it runs after
 the body is compared and before any note is written.
 
+The same refusal hits a far more common pair: Word numbers footnotes by
+position when it saves, so one note added near the top gives every later
+note a new id, and the comparison, which pairs notes by id, sees every
+later reference move.
+
 ## Decision
 
-As Word shows it: the note is deleted with its old reference and inserted
-again with its new one. When that check finds such notes, the comparison
-starts again from the inputs, the edited version's notes under new ids
-(footnotes part and references). The comparison already records a note only
-the original holds as deleted and a note only the edited version holds as
-inserted, so the second pass needs nothing new. Nothing is written to the
-document before the second pass.
+1. **Ids first.** Before comparing, the edited notes take the original's
+   ids, as bookmark ids do (#3): the notes referenced in the main story are
+   paired in reference order by their text (longest common sequence, then
+   the notes left between two pairs, by position, only when both sides leave
+   as many). A note only the edited version holds keeps its id, or takes a
+   new one where the original uses it. A note added at the top is then the
+   only note change.
+2. **A reference that really moved.** As Word shows it: the note is deleted
+   with its old reference and inserted again with its new one. When the
+   check finds such notes, the comparison starts again from the inputs, the
+   edited version's moved notes under new ids (footnotes part and
+   references), and those notes are left out of step 1 in the next pass.
+   The comparison already records a note only the original holds as deleted
+   and a note only the edited version holds as inserted, so that pass needs
+   nothing new. Nothing is written to the document before it. A paragraph
+   moved with its reference is therefore deleted and inserted again with its
+   note rather than recorded as a move, since both ends of a move would name
+   the note.
 
-Accepting gives the edited version, the moved notes under their new ids;
-rejecting gives the original exactly. Word numbers notes by position, so the
-ids are not seen.
+Accepting gives the edited version, its notes under the original's ids or
+new ones; rejecting gives the original exactly. Word numbers notes by
+position, so the ids are not seen.
 
 Deliberately not done:
 
+- Step 1 changes nothing when a note is referenced twice or outside the
+  main story, when a reference sits in a tracked change, or while note
+  custody of an earlier comparison is pending.
 - A pair whose moved note is referenced outside the main story, or whose
-  edited version holds the note custody of an earlier comparison, keeps the
-  refusal.
+  edited version holds pending note custody, keeps the refusal. Completed
+  custody is retired first, as the first pass retires it.
 - Endnotes: the check and the note custody are footnote only. A moved
   endnote reference is not refused today, and its redline references the
   endnote twice, one deleted and one inserted reference. Left for its own
@@ -43,10 +62,11 @@ Deliberately not done:
 ## Plan
 
 One pull request: the check returns the notes instead of refusing,
-`compare_with_options` runs again with them renumbered, behaviour tests in
-`tests/docx/revisions_and_compare.rs` (moved to another paragraph, within its
-paragraph, swapped references, moved and edited), and the limitation entry
-removed. The second pass costs one more comparison, only for these pairs.
+`compare_with_options` runs again with them renumbered, the ids reconciled
+before each pass, behaviour tests in `tests/docx/revisions_and_compare.rs`
+(moved to another paragraph, within its paragraph, swapped references,
+moved and edited, a note added before the others, a paragraph moved with its
+note), and the limitation entry removed. The second pass costs one more comparison, only for these pairs.
 
 ## Links
 
