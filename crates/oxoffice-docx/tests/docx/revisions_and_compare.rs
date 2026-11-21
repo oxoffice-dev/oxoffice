@@ -1617,3 +1617,86 @@ fn a_note_neither_version_references_keeps_its_id() {
     assert_eq!(notes, ["Orphan", "Src, p. 4"]);
     assert_eq!(noted_texts(&rejected(&mut doc)), ["Claim.[Src]"]);
 }
+
+/// Two body paragraphs, an endnote at the end of each listed one.
+fn doc_with_endnotes(at: &[usize]) -> Document {
+    let mut doc = Document::new();
+    doc.add_paragraph("Claim one.");
+    doc.add_paragraph("Claim two.");
+    for &index in at {
+        let location = doc
+            .paragraph_story_location(index)
+            .expect("paragraph location resolves")
+            .expect("paragraph exists");
+        doc.create_endnote(&location, "Source")
+            .expect("endnote is created");
+    }
+    doc
+}
+
+#[test]
+fn a_moved_endnote_reference_is_refused_and_changes_nothing() {
+    // The comparison cannot delete and insert an endnote yet, and the
+    // redline would name it from both places, which Word for Mac cannot
+    // open.
+    let mut doc = doc_with_endnotes(&[0]);
+    let error = doc
+        .compare(&doc_with_endnotes(&[1]), AUTHOR, DATE)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("endnote") && error.to_string().contains("moved"),
+        "{error}"
+    );
+    assert!(doc.revisions().is_empty());
+    assert_eq!(endnote_paragraphs(&reopen(&mut doc)), [0]);
+}
+
+/// The indexes of the body paragraphs that hold an endnote reference.
+fn endnote_paragraphs(doc: &Document) -> Vec<usize> {
+    doc.paragraphs()
+        .iter()
+        .enumerate()
+        .filter(|(_, paragraph)| {
+            paragraph.runs().any(|run| {
+                run.items()
+                    .any(|item| matches!(item, RunItemRef::EndnoteReference(_)))
+            })
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+#[test]
+fn an_edit_beside_an_endnote_still_compares() {
+    let mut edited = doc_with_endnotes(&[0]);
+    edited
+        .paragraph_mut(1)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_text("Claim two, revised.");
+    let mut doc = redline(doc_with_endnotes(&[0]), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one.", "Claim two, revised."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one.", "Claim two."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+}
+
+#[test]
+fn a_moved_footnote_reference_with_footnotes_ignored_is_refused() {
+    // Ignored notes keep the original's, so the moved reference cannot get
+    // its own note: the redline would name one note from both places.
+    let mut doc = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Footnote],
+        ..Default::default()
+    };
+    let error = doc
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert!(error.to_string().contains("moved"), "{error}");
+    assert!(doc.revisions().is_empty());
+}

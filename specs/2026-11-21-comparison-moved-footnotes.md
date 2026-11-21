@@ -59,9 +59,9 @@ Deliberately not done:
   edited version holds pending note custody, keeps the refusal. Completed
   custody is retired first, as the first pass retires it.
 - Endnotes: the check and the note custody are footnote only. A moved
-  endnote reference is not refused today, and its redline references the
-  endnote twice, one deleted and one inserted reference. Left for its own
-  issue.
+  endnote reference wrote a redline naming the endnote twice (#65): it is
+  refused now, like any result naming a note more often than either input.
+  Comparing endnote additions, removals and moves is #68.
 
 ## Plan
 
