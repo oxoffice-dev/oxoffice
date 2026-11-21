@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: release
 ---
 
@@ -75,8 +75,30 @@ Not done here:
    use (large values kept by value), or run the bindings' work on a thread
    with a larger stack, then a patch release.
 
+## Outcome
+
+- The `smoke` job and `scripts/wheel_smoke.py` as decided, gating the GitHub
+  release, PyPI and prefix.dev. Three reviews shaped it: the first Windows
+  measure read 80 KiB because `threading.stack_size` only sets the commit
+  size there (now `CreateThread` with a reserve, in 64 KiB steps); glibc on
+  aarch64 refuses thread stacks under 128 KiB, the floor of the bisection; a
+  probe that ends with a Python error stops the measure with its traceback
+  instead of reading as an overflow; prereleases are refused before the tag.
+- **0.1.0 fits the budget on every platform** (dry run 44843492727, the
+  smoke work on a thread): Windows x64 784 KiB (16 KiB steps then, so up to
+  832 with Windows' rounding), Linux x86_64 816, Linux aarch64 816, macOS
+  arm64 800, macOS x86_64 816. No patch release was needed for the stack.
+- Plan step 2 was done anyway, as #47 (`CT_TextListStyle` levels boxed).
+  With it on `main` (dry runs 44857139602 and 44864662766): Windows x64
+  448 KiB, Linux x86_64 384, Linux aarch64 416, macOS arm64 368, macOS
+  x86_64 368.
+- Still open: the tag is pushed before the checks (`docs/RELEASE.md` says to
+  dry run first and how to recover), and a dry run does not check the
+  version the wheels carry.
+
 ## Links
 
 - #15, where the release wheels were left unchecked
 - #14, the Python tests on an 8 MiB thread
 - [2026-11-20-ci-and-release.md](2026-11-20-ci-and-release.md)
+- #47, [2026-11-21-text-list-style-levels-on-the-heap.md](2026-11-21-text-list-style-levels-on-the-heap.md)
