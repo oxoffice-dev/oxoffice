@@ -162,7 +162,8 @@ entry and closes the issue.
   platforms and times every scaling call on Linux. The nightly run (02:23 UTC)
   and `workflow_dispatch` run every job, every scaling call included, on the
   three platforms.
-- **A red nightly run is a red `main`.** Whoever sees it first opens an issue
+- **A red nightly run is a red `main`.** Look at it with
+  `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
   (or fixes it) the same day; a release waits for a green nightly run (see
   [RELEASE.md](RELEASE.md)). To find the commit, run `workflow_dispatch` on a
   branch at each candidate commit.

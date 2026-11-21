@@ -35,11 +35,13 @@ with their own spec.
   run runs every job on the three platforms, a daily health check of `main`.
 - A red nightly run counts as a red `main`, and a release waits for a green
   one (`docs/DEVELOPMENT.md`, `docs/RELEASE.md`).
-- Supersedes in part [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md):
+- Supersedes in part [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md)
+  and [A test suite from scratch](2026-11-20-test-suite-from-scratch.md):
   `main` no longer times every scaling call on the three platforms on each
-  push.
+  push, and the nightly job that spec postponed exists now.
 
 ## Links
 
 - [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md)
+- [A test suite from scratch](2026-11-20-test-suite-from-scratch.md)
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#ci)

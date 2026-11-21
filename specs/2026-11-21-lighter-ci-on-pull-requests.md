@@ -21,7 +21,8 @@ on the work. The repository is public, so this costs time, not money.
   and Windows (decided on 2026-11-20, so a platform-only failure shows before
   the merge), and times the QUICK scaling sets **on Linux only**. macOS
   runners are the noisiest for timings, and `main` still times every call on
-  the three platforms after the merge.
+  the three platforms after the merge (now once a night, see
+  [nightly scaling](2026-11-21-nightly-scaling-on-macos-and-windows.md)).
 - **A draft, or a pull request whose base is another branch**, runs lint,
   WebAssembly and the Linux build and tests only. The full run needs both a
   base of `main` and a ready pull request, on `opened`, `synchronize`,
