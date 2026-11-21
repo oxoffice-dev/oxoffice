@@ -2304,3 +2304,26 @@ fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
         "no entry names a first paragraph: {entries:?}"
     );
 }
+
+/// Word, Google Docs and LibreOffice keep the contract's reply threads: a
+/// reply reads its parent, and the parent of each reply is a top-level
+/// comment.
+#[test]
+fn every_producer_copy_of_the_contract_keeps_its_reply_threads() {
+    for producer in ["authored", "word", "google", "libreoffice"] {
+        let doc = corpus_doc(&format!("{producer}/contract.docx"));
+        let comments = doc.comments();
+        let replies = comments
+            .iter()
+            .filter_map(|comment| comment.parent_id().map(|parent| (comment.text(), parent)))
+            .collect::<Vec<_>>();
+        assert_eq!(replies.len(), 3, "{producer}: {replies:?}");
+        for (text, parent) in replies {
+            let parent = comments
+                .iter()
+                .find(|comment| comment.id() == parent)
+                .unwrap_or_else(|| panic!("{producer}: the parent of {text:?} is there"));
+            assert_eq!(parent.parent_id(), None, "{producer}: {text:?}");
+        }
+    }
+}
