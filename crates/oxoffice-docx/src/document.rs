@@ -49235,9 +49235,10 @@ impl Document {
     /// Render scalar and structural template tags from structured JSON data.
     ///
     /// Tags use `{{ path.to.value }}` syntax and may cross ordinary Word run
-    /// boundaries. String, number and boolean leaves render as text, a tab in
-    /// a value as a tab and a line ending as a line break, while `null`
-    /// renders as an empty string. Missing paths, malformed tags, and
+    /// boundaries. String, number and boolean leaves render as text, while
+    /// `null` renders as an empty string. In paragraphs and text boxes, a tab
+    /// in a value renders as a tab and a line ending as a line break; chart
+    /// labels take the value as plain text. Missing paths, malformed tags, and
     /// object or array leaves return an error without changing the document.
     /// Dedicated main-body paragraphs and table rows may contain nested
     /// `{% for item in path %}` or `{% if path %}` blocks with their matching
