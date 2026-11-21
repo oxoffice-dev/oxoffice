@@ -8,6 +8,7 @@ mod comment_on_text;
 mod comments;
 mod content_controls;
 mod corpus;
+mod document_merging;
 mod fields_and_toc;
 mod fonts;
 mod fragment_import;
