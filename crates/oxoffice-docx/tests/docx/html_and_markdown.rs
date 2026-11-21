@@ -524,13 +524,17 @@ fn a_paragraph_starting_with_a_tab_stays_a_paragraph_in_markdown() {
     let paragraphs: Vec<String> = read
         .iter()
         .filter_map(|block| match block {
-            Read::Paragraph(text) => Some(text.trim_start().to_owned()),
+            Read::Paragraph(text) => Some(text.clone()),
             _ => None,
         })
         .collect();
     assert_eq!(
         paragraphs,
-        ["Indented by a tab", "Indented by four spaces", "Plain"],
+        [
+            "\tIndented by a tab",
+            "    Indented by four spaces",
+            "Plain"
+        ],
         "a paragraph that starts with a tab is read as a code block: {read:?}"
     );
 }
@@ -618,6 +622,26 @@ fn values_from_the_file_cannot_inject_markup_into_html_attributes() {
         }
     }
     assert_eq!(html_texts(&html, "p"), ["hostilesafe"]);
+
+    // A single-quoted attribute hands a literal quote to the reader (and no
+    // other character the font check refuses). Exported before any save,
+    // which would write it as &quot; again.
+    let quoted = doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:rFonts w:ascii='Arial" onmouseover="steal'/></w:rPr>"#,
+        r#"<w:t>quoted</w:t></w:r></w:p>"#,
+    ));
+    let paragraph = quoted.paragraph(0).unwrap();
+    assert_eq!(
+        run_with_text(&paragraph, "quoted").font_name(),
+        Some("Arial\" onmouseover=\"steal")
+    );
+    let html = quoted.to_html_fragment();
+    for (text, attributes) in html_elements(&html, "*") {
+        for name in attributes.keys() {
+            assert_eq!(name, "style", "{text:?} carries {name}: {html}");
+        }
+    }
+    assert_eq!(html_texts(&html, "p"), ["quoted"]);
 }
 
 #[test]
@@ -1039,7 +1063,10 @@ fn charts_export_as_data_tables_and_an_unreadable_chart_is_diagnosed() {
         html_texts(&html, "table.chart-data th"),
         ["", "Standard model (h)", "Extended battery (h)"]
     );
-    assert_eq!(data[1].0, "-20 °C5.19");
+    assert_eq!(
+        html_texts(&html, "table.chart-data td")[..3],
+        ["-20 °C", "5.1", "9"]
+    );
     let read = read_markdown(&manual.to_markdown());
     let title = read
         .iter()
@@ -1111,18 +1138,29 @@ fn the_exports_hold_the_body_only() {
     assert_eq!(doc.footer_text().as_deref(), Some("Footer text"));
     assert!(doc.footnote_story(note).unwrap().is_some());
 
-    // The comment marks and the note reference add nothing to the body.
-    assert_eq!(
-        doc.to_html_fragment(),
-        "<p>Commented text here</p>\n<p>Noted here</p>\n"
-    );
-    assert_eq!(doc.to_markdown(), "Commented text here\n\nNoted here\n\n");
+    // The body text is there, the other stories' text is not. How a note
+    // reference or a comment mark shows is not pinned: the facade docs do
+    // not state it.
+    for (format, output) in [
+        ("HTML", doc.to_html_fragment()),
+        ("Markdown", doc.to_markdown()),
+    ] {
+        for body in ["Commented text here", "Noted here"] {
+            assert!(output.contains(body), "{format} lacks {body:?}: {output}");
+        }
+        for story in ["A comment", "Header text", "Footer text", "Note text"] {
+            assert!(
+                !output.contains(story),
+                "{format} holds {story:?}: {output}"
+            );
+        }
+    }
 }
 
 // ---- Equations ----
 
 // Fails today: an OfficeMath equation is left out of both exports, with no
-// diagnostic. Issue: #262
+// diagnostic. A fix writes it in its place or reports it. Issue: #262
 #[test]
 #[should_panic(expected = "the equation x=1 is missing from")]
 fn equations_reach_both_exports() {
@@ -1133,15 +1171,21 @@ fn equations_reach_both_exports() {
     )));
     assert_eq!(doc.paragraph(0).unwrap().equations().count(), 1);
     let compact = |text: &str| text.split_whitespace().collect::<String>();
-    let html = doc.to_html_fragment();
+    let reported = |diagnostics: &[String]| {
+        diagnostics.iter().any(|message| {
+            let message = message.to_lowercase();
+            message.contains("math") || message.contains("equation")
+        })
+    };
+    let (html, diagnostics) = doc.to_html_fragment_with_diagnostics();
     assert!(
-        compact(&html_texts(&html, "p").concat()).contains("x=1"),
-        "the equation x=1 is missing from the HTML: {html}"
+        compact(&html_texts(&html, "p").concat()).contains("x=1") || reported(&diagnostics),
+        "the equation x=1 is missing from the HTML: {html} {diagnostics:?}"
     );
-    let markdown = doc.to_markdown();
+    let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
     assert!(
-        compact(&markdown).contains("x=1"),
-        "the equation x=1 is missing from the Markdown: {markdown}"
+        compact(&markdown).contains("x=1") || reported(&diagnostics),
+        "the equation x=1 is missing from the Markdown: {markdown} {diagnostics:?}"
     );
 }
 
@@ -1370,12 +1414,13 @@ fn markdown_export_reads_back_as_the_same_document_and_the_same_markdown() {
 fn html_export_reads_back_as_the_same_document() {
     let doc = rich_document();
     let imported = Document::from_html(&doc.to_html()).unwrap();
-    // The page's own style sheet is the only thing the reader leaves out.
+    // The reader reports only rules of the page's own style sheet it cannot
+    // apply; it applies the others (the link rule gives the link run its
+    // colour and underline), so the content and its formatting read back.
     assert!(
-        imported
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.message.contains("CSS")),
+        imported.diagnostics.iter().all(|diagnostic| {
+            diagnostic.location.contains("style") && diagnostic.message.contains("CSS")
+        }),
         "{:?}",
         imported.diagnostics
     );

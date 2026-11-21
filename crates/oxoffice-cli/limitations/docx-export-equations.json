@@ -3,7 +3,7 @@
   "format": "docx",
   "area": "export",
   "title": "HTML and Markdown exports leave equations out",
-  "symptom": "to_html, to_html_fragment and to_markdown (Rust, Python) and oxoffice docx convert -t html or -t md drop every OfficeMath equation with no diagnostic: the text around it stays, the equation is gone",
-  "workaround": "convert the equations yourself and place them: Rust paragraph.equations() and, for each inline equation (or each equation of a display group), equation_to_mathml or equation_to_latex on MathArgument::new(equation.expressions.clone()); Python paragraph.equations() then equation.to_mathml() or equation.to_latex(); none through the CLI",
+  "symptom": "to_html, to_html_fragment and to_markdown (Rust; Python to_html and to_markdown) and oxoffice docx convert -t html or -t md drop every OfficeMath equation with no diagnostic: the text around it stays, the equation is gone",
+  "workaround": "convert the equations yourself and place them: Rust paragraph.equations() and, for each inline equation (or each equation of a display group), equation_to_mathml or equation_to_latex on MathArgument::new(equation.expressions.clone()); Python paragraph.equations() then equation.to_mathml() or equation.to_latex(), the text in .equations[i].value; none through the CLI",
   "issue": 262
 }
