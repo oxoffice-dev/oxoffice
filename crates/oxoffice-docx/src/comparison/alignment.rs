@@ -380,7 +380,7 @@ fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
 /// Where a paragraph holds the simple fields a whole-paragraph change must
 /// track: as its own children, or inside a hyperlink.
 pub(super) struct SimpleFieldPaths {
-    pub(super) direct: bool,
+    direct: bool,
     pub(super) linked: bool,
 }
 
