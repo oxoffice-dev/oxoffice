@@ -5,59 +5,12 @@
 # `message` is text the failure must hold, so that a failure with another
 # cause still fails the test.
 
-# With the contents oxoffice rebuilt on both versions, the comparison now
-# tracks the new heading's entry (#66); the copies then stop where the plain
-# redline stops (equations, #408), and Google's copy on a paragraph whose
-# boundary structures differ (#448).
-[[known]]
-file = "word/thesis.docx"
-workflow = "redline-rebuilt-toc"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[51]"
 
-[[known]]
-file = "libreoffice/thesis.docx"
-workflow = "redline-rebuilt-toc"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[47]"
-
-[[known]]
-file = "authored/thesis.docx"
-workflow = "redline-rebuilt-toc"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[51]"
-
+# With the contents oxoffice rebuilt on both versions, the comparison tracks
+# the new heading's entry (#66); Google's copy then stops on a paragraph whose
+# boundary structures differ.
 [[known]]
 file = "google/thesis.docx"
 workflow = "redline-rebuilt-toc"
 issue = 448
 message = "comparison cannot revise paragraph boundary structures at body/paragraph[157]"
-
-# The thesis copies hold an equation, which the comparison reads as changed
-# once the edited copy went through an oxoffice edit.
-[[known]]
-file = "word/thesis.docx"
-workflow = "redline"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
-
-# LibreOffice's copy holds the same equations.
-[[known]]
-file = "libreoffice/thesis.docx"
-workflow = "redline"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[47]"
-
-[[known]]
-file = "authored/thesis.docx"
-workflow = "redline"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
-
-# Google's copy compares the footnote the new version adds (#419), then stops
-# on its equation too.
-[[known]]
-file = "google/thesis.docx"
-workflow = "redline"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[55]"

@@ -964,13 +964,7 @@ pub(super) fn paragraph_boundaries_differ(
             || control_slots(original) != control_slots(edited);
     }
     original.hyperlinks != edited.hyperlinks
-        || original
-            .extra_xml
-            .iter()
-            .filter(|(position, raw)| !CT_P::raw_is_root_attributes(*position, raw))
-            .ne(edited
-                .extra_xml
-                .iter()
-                .filter(|(position, raw)| !CT_P::raw_is_root_attributes(*position, raw)))
+        || super::signatures::paragraph_raw_children(original)
+            != super::signatures::paragraph_raw_children(edited)
         || paragraph_control_boundaries(original) != paragraph_control_boundaries(edited)
 }
