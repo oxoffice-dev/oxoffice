@@ -205,8 +205,16 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
             }
             None => HashMap::new(),
         };
-        let stories = stories
-            .unwrap_or_default()
+        // One entry per story, its items in story order, although the stories
+        // come in reading order, where a table or a text box splits a story.
+        let mut grouped: Vec<StoryText> = Vec::new();
+        for story in stories.unwrap_or_default() {
+            match grouped.iter_mut().find(|known| known.story == story.story) {
+                Some(known) => known.items.extend(story.items),
+                None => grouped.push(story),
+            }
+        }
+        let stories = grouped
             .iter()
             .map(|story| {
                 let items = story

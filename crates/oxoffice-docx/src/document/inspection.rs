@@ -180,8 +180,8 @@ impl Document {
     /// paragraph (including paragraphs inside table cells and content
     /// controls) with its accepted-view text, tracked insertions counted and
     /// tracked deletions not, leaving out the table rows that accepting every
-    /// tracked change removes, and joining a paragraph whose mark is deleted
-    /// to the next one, as accepting it does.
+    /// tracked change removes, and joining a body paragraph whose mark is
+    /// deleted to the next one, as accepting it does.
     pub fn word_count(&self) -> usize {
         self.text().split_whitespace().count()
     }

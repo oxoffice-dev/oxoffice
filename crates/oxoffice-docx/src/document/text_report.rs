@@ -2,12 +2,15 @@
 
 use super::*;
 
-/// The accepted-view text of one story that the body view leaves out.
+/// The accepted-view text of a story that the body view leaves out, or of a
+/// stretch of it: [`Document::other_story_texts`] splits a story where a
+/// table's cells or a text box come in reading order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoryText {
     /// The story the items belong to.
     pub story: StoryId,
-    /// Each direct paragraph and block content control of the story.
+    /// Each direct paragraph and block content control of the story in that
+    /// stretch, in reading order.
     pub items: Vec<StoryTextItem>,
 }
 
@@ -52,7 +55,8 @@ impl Document {
     /// where it sits in the part's XML. A table's cells come where the table
     /// sits among its story's paragraphs, and a text box after the paragraph
     /// that anchors it, so a story interrupted by a table or a text box gives
-    /// several entries. The first entry of a part is its first story, empty
+    /// several entries. A block content control is one item, so the cells of
+    /// a table inside it come after the control's line. The first entry of a part is its first story, empty
     /// when that story starts with a table. The cells of a table in a body
     /// text box are read too: the body view leaves text boxes out.
     ///
@@ -78,6 +82,14 @@ impl Document {
                 .get(&(story.kind, story.part_name.clone(), story.owner_index))
                 .ok_or_else(|| Error::Other("story owner was not inventoried".to_owned()))
         };
+        // The text boxes of each part: the cells of a table in a body text box
+        // are read, those of a body table are not.
+        let text_boxes: Vec<(&str, &Range<usize>)> = offsets
+            .iter()
+            .filter(|((kind, _, _), _)| *kind == StoryKind::TextBox)
+            .map(|((_, part, _), (span, _))| (part.as_str(), span))
+            .collect();
+        let mut body_cells: HashMap<StoryId, bool> = HashMap::new();
         let mut main_part = None;
         // Each part in order, with its first story and its items by offset.
         type PartItems = Vec<(usize, StoryId, StoryTextItem)>;
@@ -92,13 +104,18 @@ impl Document {
                 && main_part.as_deref() == Some(story.part_name())
             {
                 // A body table's cell, unless the table sits in a text box.
-                let start = offsets_of(story)?.0.start;
-                let in_text_box = offsets.iter().any(|((kind, part, _), (span, _))| {
-                    *kind == StoryKind::TextBox
-                        && part.as_str() == story.part_name()
-                        && span.contains(&start)
-                });
-                if !in_text_box {
+                let body_cell = match body_cells.get(story) {
+                    Some(body_cell) => *body_cell,
+                    None => {
+                        let start = offsets_of(story)?.0.start;
+                        let body_cell = !text_boxes.iter().any(|(part, span)| {
+                            *part == story.part_name() && span.contains(&start)
+                        });
+                        body_cells.insert(story.clone(), body_cell);
+                        body_cell
+                    }
+                };
+                if body_cell {
                     continue;
                 }
             }

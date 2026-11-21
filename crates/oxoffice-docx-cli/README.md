@@ -198,8 +198,8 @@ direct bold, italic, strike, underline, font, point size, colour, highlight,
 language, and character style values. The record has `all-supported-stories`
 scope, and its `stories` array lists the other stories as plain `text` does,
 one entry per story with its Python `Story.kind` name as `kind`, its
-`part_name`, its `owner_index`, and `items`. Each item is a direct paragraph or
-block content control with its story `index_path`, its `kind`, its direct
+`part_name`, its `owner_index`, and `items` in story order. Each item is a
+direct paragraph or block content control with its story `index_path`, its `kind`, its direct
 `style` (always `null` for a content control), and its `text`. When the styles
 cannot be read, `style` is `null` throughout and one warning goes to stderr.
 
