@@ -27,9 +27,10 @@ later reference move.
    ids, as bookmark ids do (#3): the notes referenced in the main story are
    paired in reference order by their text (longest common sequence, then
    the notes left between two pairs, by position, only when both sides leave
-   as many). A note only the edited version holds keeps its id, or takes a
-   new one where the original uses it. A note added at the top is then the
-   only note change.
+   as many). An unpaired note keeps its id, or takes a new one when a
+   paired note takes it or when the original references a note under it
+   too; a note one version does not reference keeps its id and is revised
+   in place. A note added at the top is then the only note change.
 2. **A reference that really moved.** As Word shows it: the note is deleted
    with its old reference and inserted again with its new one. When the
    check finds such notes, the comparison starts again from the inputs, the
@@ -50,8 +51,7 @@ Deliberately not done:
 
 - Step 1 changes nothing when a note is referenced twice or outside the
   main story, when a reference sits in a tracked change, or while note
-  custody of an earlier comparison is pending. A note neither version
-  references keeps its id.
+  custody of an earlier comparison is pending.
 - The notes both versions hold must still come in the same order in their
   footnotes parts ("footnote retained owner order changed" otherwise), as
   before.
@@ -68,11 +68,13 @@ Deliberately not done:
 One pull request: the check returns the notes instead of refusing,
 `compare_with_options` runs again with them renumbered, the ids reconciled
 before each pass, behaviour tests in `tests/docx/revisions_and_compare.rs`
-(moved to another paragraph, within its paragraph, swapped references, moved
-and edited, a note added before the others, a paragraph moved with its note),
-and the limitation entry removed. Each further pass costs one more comparison,
-only for these pairs; the passes run in a loop that drops each pass's state,
-at most one per note.
+(moved to another paragraph, within its paragraph, swapped references also
+numbered by position, moved and edited, a note added before the others, a
+note added above with a moved reference, a moved note under a new id, a
+paragraph moved with its note, a note neither version references, a note
+only one version references), and the limitation entry removed. Each further
+pass costs one more comparison, only for these pairs; the passes run in a
+loop that drops each pass's state, at most one per note.
 
 ## Links
 

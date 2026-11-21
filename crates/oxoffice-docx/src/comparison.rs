@@ -6607,15 +6607,17 @@ fn reconcile_footnote_ids(
         .copied()
         .max()
         .unwrap_or(0);
-    // A note the edited version references beside an original one under the
-    // same id, or whose id a paired note takes, moves to a new id. A note
-    // neither version references keeps its id: it is the same unused note.
+    // A note both versions reference under the same id without pairing, or
+    // whose id a paired note takes, moves to a new id. A note one version
+    // does not reference keeps its id: the comparison revises it in place.
     let targets = ids.values().copied().collect::<HashSet<_>>();
-    let referenced = right.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+    let referenced =
+        |notes: &[(i32, String)]| notes.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+    let (left_referenced, right_referenced) = (referenced(&left), referenced(&right));
     for &id in right_normal.keys() {
         if !ids.contains_key(&id)
             && (targets.contains(&id)
-                || (referenced.contains(&id) && left_normal.contains_key(&id)))
+                || (right_referenced.contains(&id) && left_referenced.contains(&id)))
         {
             next = next
                 .checked_add(1)

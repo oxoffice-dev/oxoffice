@@ -1857,3 +1857,26 @@ fn a_note_neither_version_references_keeps_its_id() {
     assert_eq!(notes, ["Orphan", "Src, p. 4"]);
     assert_eq!(noted_texts(&rejected(&mut doc)), ["Claim.[Src]"]);
 }
+
+#[test]
+fn a_note_only_the_edited_version_references_is_revised_in_place() {
+    // The original holds a draft note it does not reference yet; the edited
+    // version rewrites it and references it.
+    let document = |draft: &str, referenced: bool| {
+        let mut doc = Document::new();
+        let note = doc.add_footnote(draft);
+        let source = doc.add_footnote("Src");
+        doc.add_paragraph("One.").add_footnote_ref(source);
+        let mut second = doc.add_paragraph("Two.");
+        if referenced {
+            second.add_footnote_ref(note);
+        }
+        doc
+    };
+    let mut doc = redline(document("Draft", false), &document("Final", true));
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["One.[Src]", "Two.[Final]"]
+    );
+    assert_eq!(noted_texts(&rejected(&mut doc)), ["One.[Src]", "Two."]);
+}
