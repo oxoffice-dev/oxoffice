@@ -57,11 +57,11 @@ thread per call.
   stack, the smoke work of #20 from 816 to 384 KiB.
 - The release dry runs of #20 give the smoke work on every platform
   (smallest thread stack, on the 8-file corpus of the time), before on 0.1.0
-  (44843492727) and after on `main`
-  with #47 and the merges of the night (44857139602; 44864662766 for Linux
-  aarch64): Windows x64 784 (up to 832 with Windows' 64 KiB rounding) to
-  448 KiB, Linux x86_64 816 to 384, Linux aarch64 816 to 416, macOS arm64 800
-  to 368, macOS x86_64 816 to 368.
+  (44843492727) and after on `main` with #47 and the merges of the night
+  (44864662766): Windows x64 784 (up to 832 with Windows' 64 KiB rounding)
+  to 448 KiB, Linux x86_64 816 to 416, Linux aarch64 816 to 416, macOS arm64
+  800 to 400, macOS x86_64 816 to 400. The local comparison above is the one
+  that isolates #47.
 - The largest frames left are in rendering a slide with a table:
   `resolve_table` and `CT_TableStyle::from_xml`, about 112 KB each. Plan
   step 2 is #160.
