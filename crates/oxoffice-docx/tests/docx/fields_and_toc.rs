@@ -2577,3 +2577,360 @@ fn a_toc_taking_outline_levels_is_rebuilt_beside_a_vertically_merged_table() {
     assert!(!texts(&doc).iter().any(|text| text.contains("Stale entry")));
     assert_eq!(doc.tables().len(), 1, "the table is kept");
 }
+
+// A bookmark start written between blocks, as Google Docs writes a heading's
+// `_Toc` bookmark, belongs to the block after it: inserting before that block
+// goes before the start, and moving or removing the block takes the start.
+
+/// A paragraph, a heading led by its Google bookmark start, a paragraph:
+/// body items `Before`, the start, the heading, `After`.
+const LED_HEADING: &str = r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:colFirst="0" w:colLast="0" w:name="_Toc217000001" w:id="4"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="4"/></w:p><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+
+/// The body index of the heading of [`LED_HEADING`].
+const LED_HEADING_INDEX: usize = 2;
+
+fn heading_keeps_its_bookmark(doc: &mut Document) {
+    let reopened = reopen(doc);
+    for doc in [&*doc, &reopened] {
+        assert_eq!(
+            bookmark_list(doc),
+            pairs(&[("_Toc217000001", "Introduction")]),
+            "the heading's bookmark wraps the heading alone"
+        );
+        assert!(
+            doc.bookmarks()
+                .iter()
+                .all(|bookmark| bookmark.issue().is_none())
+        );
+    }
+}
+
+fn heading_bookmark_is_gone(doc: &mut Document) {
+    let reopened = reopen(doc);
+    for doc in [&*doc, &reopened] {
+        assert!(
+            doc.bookmarks().is_empty(),
+            "no start is left behind: {:?}",
+            doc.bookmarks()
+        );
+    }
+}
+
+fn body_story(doc: &Document) -> StoryId {
+    doc.stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap()
+}
+
+/// The location of the direct body paragraph that reads `text`.
+fn paragraph_location(doc: &Document, text: &str) -> ContentLocation {
+    doc.story_items(&body_story(doc))
+        .unwrap()
+        .into_iter()
+        .find(|item| {
+            item.kind() == StoryItemKind::Paragraph && item.text().unwrap().as_deref() == Some(text)
+        })
+        .unwrap()
+        .location()
+        .clone()
+}
+
+/// A one-paragraph fragment that reads `text`, cut from a new document.
+fn paragraph_fragment(text: &str) -> oxoffice_docx::ContentFragment {
+    let mut source = doc_with(&[text]);
+    let location = paragraph_location(&source, text);
+    source.remove_content_at(&location).unwrap()
+}
+
+#[test]
+fn a_paragraph_inserted_before_a_google_heading_goes_before_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.insert_paragraph(LED_HEADING_INDEX, "New");
+    assert_eq!(texts(&doc), ["Before", "New", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.try_insert_paragraph(LED_HEADING_INDEX, "New").unwrap();
+    heading_keeps_its_bookmark(&mut doc);
+    // An insertion at the start itself keeps its exact place.
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.insert_paragraph(LED_HEADING_INDEX - 1, "New");
+    heading_keeps_its_bookmark(&mut doc);
+}
+
+#[test]
+fn a_table_inserted_before_a_google_heading_goes_before_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.insert_table(LED_HEADING_INDEX, 1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .set_text("Cell");
+    heading_keeps_its_bookmark(&mut doc);
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.try_insert_table(LED_HEADING_INDEX, 1, 1).unwrap();
+    heading_keeps_its_bookmark(&mut doc);
+}
+
+#[test]
+fn a_document_inserted_before_a_google_heading_goes_before_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.insert_document(LED_HEADING_INDEX, &doc_with(&["Inserted"]));
+    assert_eq!(texts(&doc), ["Before", "Inserted", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+}
+
+#[test]
+fn a_toc_inserted_before_a_google_heading_goes_before_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    doc.insert_toc(LED_HEADING_INDEX, 3).unwrap();
+    let doc = reopen(&mut doc);
+    let heading = doc
+        .bookmarks()
+        .into_iter()
+        .find(|bookmark| bookmark.name() == Some("_Toc217000001"))
+        .unwrap();
+    assert_eq!(heading.text(), "Introduction");
+}
+
+#[test]
+fn content_inserted_at_a_google_heading_goes_before_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    doc.insert_content(&heading, paragraph_fragment("New"))
+        .unwrap();
+    assert_eq!(texts(&doc), ["Before", "New", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    let result = doc
+        .insert_html_fragment(&heading, "<p>New</p>", &[])
+        .unwrap();
+    assert_eq!(result.direct_range, 1..2, "the range reports where it went");
+    assert_eq!(texts(&doc), ["Before", "New", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    let before = paragraph_location(&doc, "Before");
+    doc.clone_content(&before, &heading).unwrap();
+    assert_eq!(texts(&doc), ["Before", "Before", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    let fragment = oxoffice_docx::DocumentFragment::from_range(
+        &doc_with(&["Imported"]),
+        &paragraph_location(&doc_with(&["Imported"]), "Imported"),
+        &ContentLocation::end(body_story(&doc_with(&["Imported"]))),
+        false,
+    )
+    .unwrap();
+    doc.import_fragment(
+        &heading,
+        &fragment,
+        oxoffice_docx::FragmentConflictPolicy::default(),
+    )
+    .unwrap();
+    assert_eq!(texts(&doc), ["Before", "Imported", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+}
+
+#[test]
+fn a_paragraph_moved_before_a_google_heading_goes_before_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    let after = paragraph_location(&doc, "After");
+    doc.move_content(&after, &heading).unwrap();
+    assert_eq!(texts(&doc), ["Before", "After", "Introduction"]);
+    heading_keeps_its_bookmark(&mut doc);
+}
+
+#[test]
+fn a_google_heading_moves_with_its_bookmark() {
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    doc.move_content(&heading, &ContentLocation::end(body_story(&doc)))
+        .unwrap();
+    assert_eq!(texts(&doc), ["Before", "After", "Introduction"]);
+    heading_keeps_its_bookmark(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    let before = paragraph_location(&doc, "Before");
+    doc.move_content(&heading, &before).unwrap();
+    assert_eq!(texts(&doc), ["Introduction", "Before", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+
+    // At its own place, or just after it, nothing moves.
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    let after = paragraph_location(&doc, "After");
+    doc.move_content(&heading, &after).unwrap();
+    assert_eq!(texts(&doc), ["Before", "Introduction", "After"]);
+    heading_keeps_its_bookmark(&mut doc);
+}
+
+#[test]
+fn a_removed_google_heading_takes_its_bookmark_start() {
+    let mut doc = doc_with_body(LED_HEADING);
+    assert!(doc.try_remove_content(LED_HEADING_INDEX).unwrap());
+    assert_eq!(texts(&doc), ["Before", "After"]);
+    assert_eq!(doc.content_count(), 2, "`After` moves back by two");
+    heading_bookmark_is_gone(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    assert_eq!(
+        doc.remove_content_range(LED_HEADING_INDEX, LED_HEADING_INDEX + 1)
+            .unwrap(),
+        2,
+        "the count holds the start that went"
+    );
+    heading_bookmark_is_gone(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    let heading = paragraph_location(&doc, "Introduction");
+    doc.remove_content_at(&heading).unwrap();
+    assert_eq!(texts(&doc), ["Before", "After"]);
+    heading_bookmark_is_gone(&mut doc);
+}
+
+#[test]
+fn a_leading_bookmark_that_ends_further_on_stays_when_its_block_moves_or_goes() {
+    // `Span` starts before the heading and ends after `After`: it is not the
+    // heading's alone, so it keeps its start and loses the heading.
+    let body = r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:id="5" w:name="Span"/><w:p><w:r><w:t>Introduction</w:t></w:r></w:p><w:p><w:r><w:t>After</w:t></w:r></w:p><w:bookmarkEnd w:id="5"/><w:p><w:r><w:t>Last</w:t></w:r></w:p>"#;
+    let mut doc = doc_with_body(body);
+    assert!(doc.try_remove_content(2).unwrap());
+    assert_eq!(
+        bookmark_list(&reopen(&mut doc)),
+        pairs(&[("Span", "After")])
+    );
+
+    let mut doc = doc_with_body(body);
+    let heading = paragraph_location(&doc, "Introduction");
+    doc.remove_content_at(&heading).unwrap();
+    assert_eq!(
+        bookmark_list(&reopen(&mut doc)),
+        pairs(&[("Span", "After")])
+    );
+
+    let mut doc = doc_with_body(body);
+    let heading = paragraph_location(&doc, "Introduction");
+    doc.move_content(&heading, &ContentLocation::end(body_story(&doc)))
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Before", "After", "Last", "Introduction"]);
+    assert_eq!(
+        bookmark_list(&reopen(&mut doc)),
+        pairs(&[("Span", "After")])
+    );
+}
+
+#[test]
+fn a_range_that_ends_at_a_google_heading_leaves_its_bookmark_start_out() {
+    let doc = doc_with_body(LED_HEADING);
+    let fragment = oxoffice_docx::DocumentFragment::from_range(
+        &doc,
+        &paragraph_location(&doc, "Before"),
+        &paragraph_location(&doc, "Introduction"),
+        false,
+    )
+    .unwrap();
+    let mut target = doc_with(&["Target"]);
+    target
+        .import_fragment(
+            &ContentLocation::end(body_story(&target)),
+            &fragment,
+            oxoffice_docx::FragmentConflictPolicy::default(),
+        )
+        .unwrap();
+    let target = reopen(&mut target);
+    assert_eq!(texts(&target), ["Target", "Before"]);
+    assert!(target.bookmarks().is_empty(), "{:?}", target.bookmarks());
+}
+
+#[test]
+fn a_toc_rebuilt_after_an_insertion_before_a_google_heading_keeps_its_links() {
+    let mut doc = doc_with_body(&format!("{GOOGLE_TOC}{GOOGLE_HEADING}"));
+    doc.insert_paragraph(doc.content_count() - 1, "Preface");
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!(
+        (report.entry_count, report.bookmark_count),
+        (1, 0),
+        "the heading keeps its bookmark, the rebuild adds none"
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        link_anchors(&doc),
+        pairs(&[("Introduction", "_Toc217000001")])
+    );
+}
+
+#[test]
+fn a_removed_range_takes_only_the_leading_bookmarks_that_end_inside_it() {
+    // `_Toc1` ends in the heading and goes with the range; `Span` ends in
+    // `Last`, after the range, and stays.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:bookmarkStart w:id="5" w:name="Span"/><w:p><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p><w:p><w:r><w:t>After</w:t></w:r></w:p><w:p><w:r><w:t>Last</w:t></w:r><w:bookmarkEnd w:id="5"/></w:p>"#,
+    );
+    assert_eq!(doc.remove_content_range(3, 5).unwrap(), 3);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Before", "Last"]);
+    assert_eq!(bookmark_list(&doc), pairs(&[("Span", "Last")]));
+}
+
+#[test]
+fn a_range_that_starts_at_a_google_heading_takes_its_bookmark_start() {
+    let doc = doc_with_body(LED_HEADING);
+    let fragment = oxoffice_docx::DocumentFragment::from_range(
+        &doc,
+        &paragraph_location(&doc, "Introduction"),
+        &paragraph_location(&doc, "After"),
+        false,
+    )
+    .unwrap();
+    let mut target = doc_with(&["Target"]);
+    target
+        .import_fragment(
+            &ContentLocation::end(body_story(&target)),
+            &fragment,
+            oxoffice_docx::FragmentConflictPolicy::default(),
+        )
+        .unwrap();
+    let target = reopen(&mut target);
+    assert_eq!(texts(&target), ["Target", "Introduction"]);
+    assert_eq!(
+        bookmark_list(&target),
+        pairs(&[("_Toc217000001", "Introduction")])
+    );
+}
+
+#[test]
+fn a_range_with_a_leading_bookmark_that_ends_outside_it_is_refused_on_import() {
+    // `_Toc1` ends in the range and `Span` after it: the range keeps its
+    // start, so its copy holds `_Toc1`'s end without its start (taking the
+    // starts would leave `Span` without its end), and the import refuses an
+    // incomplete bookmark rather than writing one.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:bookmarkStart w:id="5" w:name="Span"/><w:p><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p><w:p><w:r><w:t>After</w:t></w:r></w:p><w:p><w:r><w:t>Last</w:t></w:r><w:bookmarkEnd w:id="5"/></w:p>"#,
+    );
+    let fragment = oxoffice_docx::DocumentFragment::from_range(
+        &doc,
+        &paragraph_location(&doc, "Introduction"),
+        &paragraph_location(&doc, "After"),
+        false,
+    )
+    .unwrap();
+    let mut target = doc_with(&["Target"]);
+    let error = target
+        .import_fragment(
+            &ContentLocation::end(body_story(&target)),
+            &fragment,
+            oxoffice_docx::FragmentConflictPolicy::default(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("bookmark ownership"), "{error}");
+    assert_eq!(texts(&target), ["Target"]);
+}

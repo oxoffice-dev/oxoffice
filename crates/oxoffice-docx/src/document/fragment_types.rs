@@ -247,7 +247,10 @@ impl DocumentFragment {
 
     /// Capture one non-empty, half-open range of direct story items.
     ///
-    /// `start` is included and `end` is excluded. Section properties can be
+    /// `start` is included and `end` is excluded, each with the bookmark
+    /// starts written just before a block belonging to that block: the range
+    /// ends before those of `end`, and starts before those of `start` when
+    /// every one of them ends inside the range. Section properties can be
     /// included only when `end` is the main body's final boundary.
     pub fn from_range(
         document: &Document,
@@ -264,11 +267,12 @@ impl DocumentFragment {
         }
         let (source, owner, _) = candidate.fragment_story_source_owner_and_owners(&start.story)?;
         let source_xml = source.xml.into_owned();
-        let (owner, _, start_index, item_count) =
+        let (owner, _, mut start_index, item_count) =
             fragment_content_boundary(&source_xml, &owner, start)?;
         let (_, checked_owner, _) = candidate.fragment_story_source_owner_and_owners(&end.story)?;
+        // The range ends before the bookmark starts that lead its end block.
         let (end_owner, _, end_index, _) =
-            fragment_content_boundary(&source_xml, &checked_owner, end)?;
+            fragment_insertion_boundary(&source_xml, &checked_owner, end)?;
         if owner.full != end_owner.full {
             return Err(Error::Other(
                 "document fragment range splits block ownership".to_owned(),
@@ -290,6 +294,21 @@ impl DocumentFragment {
             ));
         }
         let items = direct_story_content_items(&source_xml, &owner)?;
+        // The range starts before the bookmark starts that lead its start
+        // block when every one of them ends inside the range.
+        let leading = leading_bookmark_start_item(&source_xml, &items, start_index)?;
+        if leading < start_index
+            && owned_leading_bookmark_start_items(
+                &source_xml,
+                &items,
+                start_index,
+                start_index..end_index,
+            )?
+            .len()
+                == start_index - leading
+        {
+            start_index = leading;
+        }
         let content_start = items
             .first()
             .map(|item| item.full.start)

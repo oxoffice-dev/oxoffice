@@ -1662,16 +1662,44 @@ class Document:
     def tables(self) -> TableCollection: ...
     def add_paragraph(self, text: str = "", style: str | None = None) -> Paragraph: ...
     def add_table(self, rows: int, cols: int, style: str | None = None) -> Table: ...
-    def remove_content(self, index: int) -> bool: ...
-    def remove_content_range(self, start: int, end: int) -> int: ...
+    def remove_content(self, index: int) -> bool:
+        """Remove the direct body item at ``index``.
+
+        A bookmark start written between blocks belongs to the block after it (Google Docs writes a
+        heading's bookmark so): the starts just before the item whose bookmark ends inside it go too, so
+        each one moves the later items back by one more index.
+        """
+    def remove_content_range(self, start: int, end: int) -> int:
+        """Remove the direct body items ``start`` to ``end`` (excluded) and return how many items went.
+
+        A bookmark start written between blocks belongs to the block after it (Google Docs writes a
+        heading's bookmark so): the starts just before ``start`` whose bookmark ends inside the range go
+        too, and count in the result.
+        """
     @_overload
     def find_content_index(self, content: Paragraph | Table) -> int: ...
     @_overload
     def find_content_index(self, content: str) -> int: ...
     def find_content_indices(self, text: str) -> tuple[int, ...]: ...
-    def insert_paragraph(self, index: int, text: str, style: str | None = None) -> Paragraph: ...
-    def insert_table(self, index: int, rows: int, cols: int) -> Table: ...
-    def pop_content(self, index: int | StoryItem) -> ContentFragment: ...
+    def insert_paragraph(self, index: int, text: str, style: str | None = None) -> Paragraph:
+        """Insert a paragraph before the direct body item at ``index``.
+
+        A bookmark start written between blocks belongs to the block after it (Google Docs writes a
+        heading's bookmark so): the paragraph goes before those starts, at the index of the first one.
+        """
+    def insert_table(self, index: int, rows: int, cols: int) -> Table:
+        """Insert a table before the direct body item at ``index``.
+
+        A bookmark start written between blocks belongs to the block after it (Google Docs writes a
+        heading's bookmark so): the table goes before those starts, at the index of the first one.
+        """
+    def pop_content(self, index: int | StoryItem) -> ContentFragment:
+        """Remove the direct body item at ``index`` and return it as a fragment.
+
+        A bookmark start written between blocks belongs to the block after it (Google Docs writes a
+        heading's bookmark so): the starts just before the item whose bookmark ends inside it go too,
+        and are not part of the fragment, which keeps the bookmark's end without its start.
+        """
     def insert_content(
         self, destination: int | StoryItem | Story, fragment: ContentFragment
     ) -> None: ...

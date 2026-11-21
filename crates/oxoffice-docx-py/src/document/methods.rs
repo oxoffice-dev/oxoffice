@@ -4848,6 +4848,9 @@ impl PyDocument {
             if index > document.inner.content_count() {
                 return Err(PyIndexError::new_err("content index out of range"));
             }
+            // The paragraph goes before the bookmark starts that lead the
+            // block at `index`, as the native insertion places it.
+            let index = document.inner.block_insertion_index(index);
             let style = style
                 .map(|value| {
                     style_id_of_type(&document.inner, value, oxoffice_docx::StyleType::Paragraph)
@@ -4949,6 +4952,9 @@ impl PyDocument {
             if index > document.inner.content_count() {
                 return Err(PyIndexError::new_err("content index out of range"));
             }
+            // The table goes before the bookmark starts that lead the block
+            // at `index`, as the native insertion places it.
+            let index = document.inner.block_insertion_index(index);
             document.refuse_unsavable_body_edit(py)?;
             let inserted = oxoffice_docx::Document::detached_table(rows, cols);
             if let Ok((xml, snapshots)) = document.inner.detached_table_owner_snapshots(&inserted)

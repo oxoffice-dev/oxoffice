@@ -13,7 +13,8 @@ impl Document {
     /// with internal hyperlinks and dot-leader tab stops.
     ///
     /// # Arguments
-    /// * `index` - Body content index at which to insert the TOC
+    /// * `index` - Body content index at which to insert the TOC, before the
+    ///   bookmark starts that lead the block there
     /// * `max_level` - Maximum heading level to include (1-9, typically 3)
     pub fn insert_toc(&mut self, index: usize, max_level: u32) -> Result<()> {
         let mut candidate = self.clone_for_staging();
@@ -212,7 +213,7 @@ impl Document {
             .push(field_run("<w:fldChar w:fldCharType=\"end\"/>".to_owned()));
 
         // Step 4: Insert TOC paragraphs at the specified index
-        let insert_at = index.min(self.document.body.content.len());
+        let insert_at = self.block_insertion_index(index.min(self.document.body.content.len()));
         for (i, p) in toc_paragraphs.into_iter().enumerate() {
             self.document
                 .body

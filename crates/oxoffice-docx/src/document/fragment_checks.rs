@@ -740,6 +740,45 @@ pub(super) fn fragment_content_boundary(
     Ok((effective, paragraph.start, index, direct.len()))
 }
 
+/// [`fragment_content_boundary`] for an insertion: before the bookmark
+/// starts that lead the block at `location` (see `leading_bookmarks`).
+pub(super) fn fragment_insertion_boundary(
+    xml: &[u8],
+    owner: &StoryOwnerSpan,
+    location: &ContentLocation,
+) -> Result<(StoryOwnerSpan, usize, usize, usize)> {
+    let (owner, boundary, index, count) = fragment_content_boundary(xml, owner, location)?;
+    let (boundary, index) = widened_insertion_boundary(xml, &owner, boundary, index)?;
+    Ok((owner, boundary, index, count))
+}
+
+/// [`validated_content_boundary`] for an insertion: before the bookmark
+/// starts that lead the block at `location` (see `leading_bookmarks`).
+pub(super) fn validated_insertion_boundary(
+    xml: &[u8],
+    owner: &StoryOwnerSpan,
+    location: &ContentLocation,
+) -> Result<(usize, usize, usize)> {
+    let (boundary, index, count) = validated_content_boundary(xml, owner, location)?;
+    let (boundary, index) = widened_insertion_boundary(xml, owner, boundary, index)?;
+    Ok((boundary, index, count))
+}
+
+fn widened_insertion_boundary(
+    xml: &[u8],
+    owner: &StoryOwnerSpan,
+    boundary: usize,
+    index: usize,
+) -> Result<(usize, usize)> {
+    let items = direct_story_content_items(xml, owner)?;
+    let first = leading_bookmark_start_item(xml, &items, index)?;
+    Ok(if first == index {
+        (boundary, index)
+    } else {
+        (items[first].full.start, first)
+    })
+}
+
 pub(super) fn validated_content_boundary(
     xml: &[u8],
     owner: &StoryOwnerSpan,
