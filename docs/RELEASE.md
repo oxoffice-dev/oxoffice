@@ -33,9 +33,9 @@ uploaded.
 
 SemVer, one version for every crate and the wheel. While we are in 0.x, a
 breaking change bumps the minor version and anything else the patch version.
-A prerelease is `-alpha.N`, `-beta.N` or `-rc.N`, which PyPI and conda spell
-`aN`, `bN` and `rcN` (`0.2.0-rc.1` is `0.2.0rc1`); the workflow refuses any
-other.
+No prereleases yet: the workflow only takes `X.Y.Z`. A prerelease would need
+its PEP 440 and conda spellings (`0.2.0rc1`, no `-`) and a GitHub release
+that is not marked latest, which the installers would otherwise pick.
 `scripts/set_version.py` is the only thing that writes the version.
 
 ## What a release carries

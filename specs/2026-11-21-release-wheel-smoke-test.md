@@ -38,17 +38,20 @@ PDF, all on the main thread, and the `oxoffice` command answers
 The main thread alone guards little: 8 MiB on Linux and macOS, 2,000,000
 bytes under `python.exe`. So the job then measures the smallest thread stack
 on which the same work completes (a bisection in fresh processes, shown in
-the job summary) and **fails above a budget of 1 MiB** (`STACK_BUDGET_KIB`),
+the job summary, in steps of 16 KiB, 64 KiB on Windows where a reserve is
+rounded to that) and **fails above a budget of 1 MiB** (`STACK_BUDGET_KIB`),
 the main thread of most Windows programs that embed Python. On Windows the
 probe threads are made with `CreateThread` and
 `STACK_SIZE_PARAM_IS_A_RESERVATION`: `threading.stack_size` only sets the
 commit size there, and the executable's 2,000,000-byte reserve would hide
 any smaller need. A measure that completes on 64 KiB fails the job too, since
-the stack size was then not honoured.
+the stack size was then not honoured, and so does a probe that ends with a
+Python error, shown with its traceback rather than read as an overflow.
 
-The version the wheel reports is compared with the release version in its
-PEP 440 spelling (`0.2.0-rc.1` is `0.2.0rc1`), and `prepare` only accepts
-`X.Y.Z` and `-alpha.N`, `-beta.N`, `-rc.N` prereleases, before it tags.
+The version the wheel reports must be the release version, and `prepare`
+only accepts `X.Y.Z`, before it tags: a prerelease would need its own PEP 440
+and conda spellings and a GitHub release not marked latest, none of which the
+workflow does yet.
 
 It is a plain script, not pytest, so that nothing moves the work to another
 thread. It does not replace the tests: it checks that the wheels we publish

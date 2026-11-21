@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import oxoffice
@@ -29,7 +30,6 @@ import oxoffice.pptx as oxpptx
 # Windows programs that embed Python run it with that much. python.exe itself reserves 2,000,000 bytes, Linux and
 # macOS main threads 8 MiB.
 STACK_BUDGET_KIB = 1024
-PRERELEASES = {"alpha": "a", "beta": "b", "rc": "rc"}
 
 MARK = "Added by the oxoffice wheel smoke test"
 REPLACED = "Replaced by the oxoffice wheel smoke test"
@@ -90,6 +90,7 @@ def on_thread(corpus, kib):
             work(corpus, quiet=True)
         except BaseException as error:  # noqa: BLE001 - reported by the exit status
             raised.append(error)
+            traceback.print_exception(error)
 
     if sys.platform == "win32":
         run_on_windows_thread(run, kib * 1024)
@@ -131,15 +132,22 @@ def run_on_windows_thread(run, size):
 
 
 def fits(corpus, kib):
+    """Whether the work completes on a `kib` KiB thread stack, in a new process. A stack overflow kills that process;
+    an exit status of 1 is a Python error, which stops the measure with its traceback."""
     command = [sys.executable, "-I", __file__, str(corpus), "--thread-stack", str(kib)]
-    return subprocess.run(command, capture_output=True).returncode == 0
+    probe = subprocess.run(command, capture_output=True, text=True)
+    if probe.returncode == 1:
+        raise SystemExit(f"the probe on a {kib} KiB stack failed with an error, not an overflow:\n{probe.stderr}")
+    return probe.returncode == 0
 
 
-def stack_needed(corpus, low=64, high=8192, step=16):
-    """The smallest thread stack, to `step` KiB, on which the work completes, or None above `high`.
+def stack_needed(corpus, low=64, high=8192):
+    """The smallest thread stack on which the work completes, or None above `high`, in steps of 16 KiB, or 64 KiB on
+    Windows, which rounds a stack reserve up to that.
 
     The work must fail on `low` KiB: if it does not, the thread did not get the stack it asked for, and any number
     would be wrong."""
+    step = 64 if sys.platform == "win32" else 16
     if fits(corpus, low):
         raise SystemExit(f"the work completed on a {low} KiB thread stack: the stack size is not honoured here")
     if not fits(corpus, high):
@@ -148,15 +156,6 @@ def stack_needed(corpus, low=64, high=8192, step=16):
         middle = (low + high) // 2 // step * step
         low, high = (low, middle) if fits(corpus, middle) else (middle, high)
     return high
-
-
-def pep440(version):
-    """The version a wheel built for this release version reports: 0.2.0-rc.1 is 0.2.0rc1."""
-    release, _, prerelease = version.partition("-")
-    if not prerelease:
-        return release
-    kind, _, number = prerelease.partition(".")
-    return f"{release}{PRERELEASES[kind]}{number}"
 
 
 def main():
@@ -170,8 +169,7 @@ def main():
         return on_thread(args.corpus, args.thread_stack)
     assert threading.current_thread() is threading.main_thread()
     if args.version:
-        expected = pep440(args.version)
-        assert oxoffice.__version__ == expected, f"installed {oxoffice.__version__}, expected {expected}"
+        assert oxoffice.__version__ == args.version, f"installed {oxoffice.__version__}, expected {args.version}"
     command = subprocess.run(["oxoffice", "--version"], capture_output=True, text=True, check=True).stdout.strip()
     print(f"oxoffice {oxoffice.__version__} from {Path(oxoffice.__file__).parent}, command: {command}")
     work(args.corpus)

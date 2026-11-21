@@ -46,10 +46,10 @@ jobs:
           fetch-depth: 0
       - name: Check the version
         run: |
-          # A prerelease is -alpha.N, -beta.N or -rc.N, the ones PyPI and conda
-          # can name too (0.2.0-rc.1 is 0.2.0rc1 there).
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
-            echo "::error::'$VERSION' is not X.Y.Z or X.Y.Z-alpha.N, -beta.N, -rc.N"; exit 1
+          # No prereleases yet: conda, PyPI and the GitHub release would each
+          # need their own spelling or flag, and nothing maps them.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$VERSION' is not X.Y.Z (prereleases are not supported yet)"; exit 1
           fi
           if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
             echo "::error::tag v$VERSION already exists"; exit 1
