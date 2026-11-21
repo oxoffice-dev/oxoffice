@@ -4383,6 +4383,33 @@ impl CT_P {
         Ok(())
     }
 
+    /// Give the reference run of comment `id` that
+    /// [`Self::anchor_accepted_range`] wrote, a run with nothing but the
+    /// reference, the character style `style_id`, as Word styles a comment
+    /// mark. Returns whether such a run was found.
+    #[doc(hidden)]
+    pub fn style_comment_reference_run(&mut self, id: i32, style_id: &str) -> bool {
+        for path in self.accepted_run_paths() {
+            let Some(run) = self.accepted_run_segments_mut(path.segments()) else {
+                continue;
+            };
+            if run.properties.is_none()
+                && run.extra_xml.is_empty()
+                && matches!(
+                    run.content.as_slice(),
+                    [RunContent::CommentReference { id: found, .. }] if *found == id
+                )
+            {
+                run.properties = Some(CT_RPr {
+                    style_id: Some(style_id.to_owned()),
+                    ..Default::default()
+                });
+                return true;
+            }
+        }
+        false
+    }
+
     /// Insert one run at a checked accepted-view boundary atomically.
     #[doc(hidden)]
     pub fn insert_accepted_run(

@@ -722,6 +722,75 @@ fn epub_draws_a_localised_heading_7_as_a_level_6_heading() {
     assert!(tag.starts_with("<h6"), "a level-6 heading, not {tag:?}");
 }
 
+/// The content documents of an EPUB but its navigation, joined.
+fn epub_chapters(epub: &[u8]) -> String {
+    zip_names(epub)
+        .iter()
+        .filter(|name| name.ends_with(".xhtml") && !name.ends_with("nav.xhtml"))
+        .filter_map(|name| zip_entry(epub, name))
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+        .collect()
+}
+
+/// The start tag of the first element whose text begins with `text`, a
+/// document title left out.
+fn start_tag_before<'a>(xhtml: &'a str, text: &str) -> &'a str {
+    xhtml
+        .match_indices(text)
+        .map(|(at, _)| &xhtml[xhtml[..at].rfind('<').unwrap()..at])
+        .find(|tag| !tag.starts_with("<title"))
+        .unwrap_or_else(|| panic!("{text:?} is exported"))
+}
+
+#[test]
+fn epub_keeps_the_heading_and_anchor_of_a_localised_heading_without_outline_level_in_a_list() {
+    // A style made with StyleBuilder has no outline level, where Word writes
+    // one into its built-in heading styles: the built-in name alone decides.
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Titre2", "heading 2"))
+        .unwrap();
+    doc.add_paragraph("Before.");
+    doc.add_numbered_list_item("Numbered heading", 0)
+        .style("Titre2");
+    doc.add_numbered_list_item("Numbered item", 0);
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters = epub_chapters(&epub.bytes);
+    let tag = start_tag_before(&chapters, "Numbered heading");
+    assert!(tag.starts_with("<h2"), "a level-2 heading, not {tag:?}");
+    let anchor = tag
+        .split("id=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("the heading has an anchor: {tag:?}"));
+    let nav = String::from_utf8(zip_entry(&epub.bytes, "EPUB/nav.xhtml").unwrap()).unwrap();
+    let link = start_tag_before(&nav, "Numbered heading");
+    assert!(
+        link.contains(&format!("#{anchor}\"")),
+        "the navigation links the heading: {link:?}\n{nav}"
+    );
+}
+
+#[test]
+fn epub_reports_a_localised_heading_7_without_outline_level_drawn_at_level_6() {
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Titre7", "heading 7"))
+        .unwrap();
+    doc.add_paragraph("Deep heading").style("Titre7");
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters = epub_chapters(&epub.bytes);
+    let tag = start_tag_before(&chapters, "Deep heading");
+    assert!(tag.starts_with("<h6"), "a level-6 heading, not {tag:?}");
+    let messages: Vec<&str> = epub
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages.contains(&"heading level above 6 was reduced to level 6 during EPUB export"),
+        "{messages:?}"
+    );
+}
+
 #[test]
 fn headings_are_found_in_the_word_and_google_reports_alike() {
     assert_eq!(
