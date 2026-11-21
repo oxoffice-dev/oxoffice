@@ -8,7 +8,7 @@ use std::io::Cursor;
 use oxoffice_opc::OpcPackage;
 use oxoffice_pptx::{
     Comment, CommentAuthor, Emu, Error, Fill, ImportSlideOptions, Presentation, Section, ShapeKind,
-    ShapeOwner, SlideRef,
+    ShapeOwner, SlideRef, TransitionDirection, TransitionKind, ValidationIssue,
 };
 
 use crate::support::{corpus_deck, new_deck, reopen};
@@ -2253,5 +2253,141 @@ fn a_move_alone_drops_the_title_lists_and_a_slide_size_change_keeps_them() {
     assert_eq!(
         saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap(),
         before
+    );
+}
+
+// ---- Transitions and shape ids, as a tool checks a deck ----
+
+/// The effect and direction of each slide's transition, `None` without one.
+fn transition_kinds(
+    prs: &Presentation,
+) -> Vec<Option<(Option<TransitionKind>, Option<TransitionDirection>)>> {
+    prs.slides()
+        .map(|slide| slide.transition().map(|t| (t.kind, t.direction)))
+        .collect()
+}
+
+#[test]
+fn the_transitions_of_the_pitch_deck_are_read_from_every_producer() {
+    let authored = transition_kinds(&corpus_deck("authored/pitch.pptx"));
+    assert!(
+        authored.iter().all(Option::is_some),
+        "every slide of the pitch has a transition: {authored:?}"
+    );
+    assert_eq!(
+        authored[..2],
+        [
+            Some((Some(TransitionKind::Fade), None)),
+            Some((Some(TransitionKind::Push), Some(TransitionDirection::Up)))
+        ]
+    );
+    // Every producer's copy reads a transition, with its effect, on each
+    // slide whose file has one. PowerPoint keeps the authored effects and
+    // directions, but leaves out a kind's default (a cover from the left,
+    // read as `None`); Google and LibreOffice write their own effects.
+    for producer in ["powerpoint", "libreoffice", "google"] {
+        let path = format!("{producer}/pitch.pptx");
+        let read = transition_kinds(&corpus_deck(&path));
+        let package = OpcPackage::from_reader(Cursor::new(
+            std::fs::read(crate::support::corpus_root().join("files").join(&path)).unwrap(),
+        ))
+        .unwrap();
+        let in_file = (1..=read.len())
+            .map(|n| {
+                let part = package
+                    .get_part(&format!("/ppt/slides/slide{n}.xml"))
+                    .unwrap();
+                String::from_utf8_lossy(part).contains("<p:transition")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            read.iter()
+                .map(|t| matches!(t, Some((Some(_), _))))
+                .collect::<Vec<_>>(),
+            in_file,
+            "{producer}"
+        );
+        if producer == "powerpoint" {
+            let defaulted = authored
+                .iter()
+                .map(|t| {
+                    t.clone().map(|(kind, direction)| match kind {
+                        Some(TransitionKind::Cover) => (kind, None),
+                        _ => (kind, direction),
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(read, defaulted, "{producer}");
+        }
+    }
+}
+
+// LibreOffice writes a transition element on every slide of a deck that has
+// none, with only a duration: it reads as a transition without an effect,
+// as the file says, and the other producers' copies have none.
+#[test]
+fn a_deck_without_transitions_reads_none_except_libreoffice_s_empty_ones() {
+    for family in ["training", "deck"] {
+        for producer in ["authored", "powerpoint", "google"] {
+            let read = transition_kinds(&corpus_deck(&format!("{producer}/{family}.pptx")));
+            assert!(
+                read.iter().all(Option::is_none),
+                "{producer}/{family}: {read:?}"
+            );
+        }
+        let prs = corpus_deck(&format!("libreoffice/{family}.pptx"));
+        for slide in prs.slides() {
+            let transition = slide.transition().expect("LibreOffice writes one");
+            assert_eq!(transition.kind, None, "libreoffice/{family}");
+            assert_eq!(transition.duration_ms, Some(2000), "libreoffice/{family}");
+        }
+    }
+}
+
+#[test]
+fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
+    let mut prs = new_deck();
+    let blank = (0..prs.layout_count())
+        .find(|&index| prs.layout_name(index) == Some("Blank"))
+        .unwrap();
+    prs.add_slide(blank).unwrap();
+    for left in [1, 4] {
+        prs.slide_mut(0)
+            .unwrap()
+            .add_textbox(
+                Emu(left * 914_400),
+                Emu(914_400),
+                Emu(914_400),
+                Emu(914_400),
+            )
+            .unwrap();
+    }
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = "/ppt/slides/slide1.xml";
+    let xml = String::from_utf8(package.get_part(slide).unwrap().to_vec()).unwrap();
+    let ids = xml
+        .match_indices("<p:cNvPr id=\"")
+        .map(|(at, found)| {
+            let rest = &xml[at + found.len()..];
+            rest[..rest.find('"').unwrap()].to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 3, "the tree and two text boxes: {ids:?}");
+    // The second text box takes the first one's id, as some producers write.
+    let duplicated = xml.replacen(
+        &format!("<p:cNvPr id=\"{}\"", ids[2]),
+        &format!("<p:cNvPr id=\"{}\"", ids[1]),
+        1,
+    );
+    package.set_part(slide, duplicated.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let prs = Presentation::from_bytes(&bytes.into_inner()).expect("a duplicate id opens");
+    assert_eq!(
+        prs.validate(),
+        [ValidationIssue::DuplicateShapeId {
+            slide: 0,
+            id: ids[1].parse().unwrap()
+        }]
     );
 }

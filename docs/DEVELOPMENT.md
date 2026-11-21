@@ -227,6 +227,16 @@ themselves, on a few built documents and corpus files, always run. The
 update always renders the whole corpus and only rewrites the files that
 moved.
 
+**Deck text layout.** Tools check whether text fits its frame from
+`Presentation::text_layout_deterministic`, at the frame's width and at 95 %
+of it. Every frame of the training and pitch decks is pinned in
+`crates/oxoffice-pptx/tests/snapshots/text-layout/` (lines, text height,
+overflow, at both widths). A change that moves them rewrites those files
+(`OXOFFICE_SNAPSHOTS_UPDATE=1 cargo test --profile ci -p oxoffice-pptx
+--test pptx text_layout`) and says so in one line of its squash commit
+body, `Deck text layout moves: <why>`, so that the changelog tells the
+tools whose fit checks may change.
+
 ## Known limitations
 
 A limitation users can hit, with a workaround, gets its own file,
