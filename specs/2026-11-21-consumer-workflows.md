@@ -76,14 +76,12 @@ found four bugs (#340 to #343).
    flips the test until the line goes. Open issues a
    workflow meets are listed below, so that their fixes come first within
    their severity (label `priority: workflow`).
-4. **A migration note**, `docs/MIGRATING-FROM-RDOCX.md`, lists every name,
-   flag, key, default and refusal that differs from rdocx 0.17.0 / rpptx
-   0.15.0, with what to write instead. A Python test fails when a public name
-   of rdocx 0.17.0 / rpptx 0.15.0 is neither in oxoffice nor in the note.
-   No compatibility aliases.
+4. ~~A migration note from rdocx, checked by a test.~~ Dropped by the
+   user on 2026-11-21. No compatibility aliases either: the differences are
+   the ones this spec lists.
 5. **The minimum that covers the workflows.** A test is added where a
    workflow runs end to end on producer files, where a tool reads a CLI key,
-   for the migration note, and for the bugs a workflow meets; coverage for
+   and for the bugs a workflow meets; coverage for
    its own sake is left out (synthetic matrices the corpus copies already
    hold, a budget table, Markdown, the SVG twin of a figure). **One corpus
    family**, `record`, saved by Word then Google Docs: no corpus file takes
@@ -93,8 +91,7 @@ found four bugs (#340 to #343).
    numbered headings, footnotes, first-page footers), the training and pitch
    decks (rounded rectangles, connectors, a group, a hidden slide,
    transitions).
-6. **Kept as oxoffice decided**, written in the migration note rather than
-   changed: the package and CLI names; `save` refusing its source; new
+6. **Kept as oxoffice decided**, not changed: the package and CLI names; `save` refusing its source; new
    comments dated unless `undated=True`; `replace_all` and `docx replace`
    refusing text left out of reach; search reading a tab as `\t` and a break
    as `\n`; run text including simple field results; header and footer
@@ -112,7 +109,7 @@ runs on demand, as today).
 ## Map
 
 Status: **covered**, **partly**, **missing**, **different** (oxoffice
-decided otherwise, see the migration note). Module paths are under
+decided otherwise, kept as oxoffice decided). Module paths are under
 `crates/oxoffice-docx/tests/docx/` and `crates/oxoffice-pptx/tests/pptx/`
 unless named; PR numbers refer to the plan below.
 
@@ -127,9 +124,9 @@ unless named; PR numbers refer to the plan below.
 | I5 | Localised style ids are found and assigned by the id the file uses | covered | `fields_and_toc::rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings`, `paragraphs_and_styles::headings_are_found_in_the_word_and_google_reports_alike`, `comments::a_comment_added_to_a_localized_word_file_uses_its_comment_styles` | Kept by the walks on the French Word copies. Open: #169, #144 |
 | I6 | Refuse rather than write something wrong; a batch is all or nothing; the input is unchanged on refusal | covered | `text_and_runs::counted_replacement_changes_nothing_when_a_count_is_wrong`, `checked_replacement`, `save::saving_over_the_opened_file_is_refused`, CLI `docx_replace_reach` | CLI `replace --map` with a wrong count writes nothing (PR 3). Different: fields the update cannot compute keep their cache with a diagnostic, a PDF that drops content comes with diagnostics |
 | I7 | CLI JSON keys stay, or change in a release note | partly | `docx_stories` (`text --json`, `count --json`), `docx_comment_dates` (`comment list`, `comment add`), `pptx_duplicate_comments` (`pptx comment list`), `pptx_shapes` (`pptx shapes`) read the keys they need; `check_outputs.py` (`main`) a few more; no test pins a whole key set, none reads `diff`, `revision list` or `layout` | A keys-only snapshot of the commands the tools read, in those files (PR 3) |
-| I8 | Page numbers from the layout are close to Word's and stable within a release | partly | page counts pinned implicitly by the render baselines | Word's page counts come with render layer B; the changelog rule for layout moves (PR 2). Open: #156 |
+| I8 | Page numbers from the layout are close to Word's and stable within a release | partly | page counts pinned implicitly by the render baselines | Word's page counts come with render layer B; the changelog rule for layout moves (PR 6). Open: #156 |
 | I9 | Bytes in, bytes out, without touching the source | partly | `save::saving_elsewhere_leaves_the_source_as_it_was`, `test_save.py`, the corpus round trip | Covered enough; the edit walk saves elsewhere and reads the bytes back (PR 4) |
-| I10 | A value a call accepted is still accepted, or the change is in the migration note | partly | unchanged since 0.17.0, untested | #343 strict in Python (PR 4) |
+| I10 | A value a call accepted is still accepted, or the change is named | partly | unchanged since 0.17.0, untested | #343 strict in Python (PR 4) |
 | I11 | No network, LibreOffice or Office at run time; bundled fonts | partly | the render tests use the bundled fonts; their set is pinned by the resources hash | Not added: the render tests hold it |
 | I12 | No slowdown against rdocx 0.17.0 on these sizes | missing | scaling tests compare N with 16N only | Not added: the scaling tests stay the gate. Open: #5, #6, #234, #235 |
 
@@ -167,7 +164,7 @@ unless named; PR numbers refer to the plan below.
 | R10 | Run shading not drawn | breaks | Pixel probe, strict known failure (PR 5); #341 |
 | R11 | Replacement through Python 2 to 4 times the CLI | open | Not added; #5 |
 | R12 | A release with a broken TOC; `NUMPAGES` caches | holds | The thesis walk on every copy on `main` (PR 5) |
-| R13 | A text layout change in decks moved every height silently | no pin | The deck layout table (PR 6) and the changelog rule (PR 2) |
+| R13 | A text layout change in decks moved every height silently | no pin | The deck layout table and the changelog rule (PR 6) |
 | R14 | Slide transition not readable | holds, untested | Read in the deck walk (PR 6) |
 
 ### Names, CLI and release
@@ -188,7 +185,7 @@ unless named; PR numbers refer to the plan below.
   command or flag removed; keys of `text`, `diff`, `revision list`, `layout`,
   `comment list`, `compare` and the pptx commands unchanged since the import
   except `docx text --json` (story items gain `style`, run text includes
-  simple field results). Worth stating in the note: `revision list` says
+  simple field results). Worth knowing: `revision list` says
   `timestamp`, `comment list` says `date`; story kinds are spelled
   `table_cell` in `text` and `table-cell` in `revision list`; `story` is a
   string in `diff` and an object in `revision list`.
@@ -200,7 +197,8 @@ unless named; PR numbers refer to the plan below.
 Their fixes come first within their severity (label `priority: workflow`):
 #66, #156, #146, #30, #172, #5, #6, #82, #91,
 #169, #144, #120, #68, #234, #235, and the new #340 to
-#343.
+#343 and #356 (found by PR 3: `docx diff` reports comments a producer
+reordered as added and removed).
 
 ## Plan
 
@@ -212,14 +210,14 @@ independent review on the local commit before the push.
 | PR | Content | Modules | Runs | Budget |
 | --- | --- | --- | --- | --- |
 | 1 | This spec | `specs/` | — | — |
-| 2 | `docs: the migration note from rdocx`: `docs/MIGRATING-FROM-RDOCX.md`, its rows kept in `tests/migration/differences.toml` (a pull request that edits only Markdown runs no test); the public names of rdocx 0.17.0 and rpptx 0.15.0 as a committed list (classes, members, keyword arguments, CLI commands and flags); a check that each is in oxoffice or in a row, and that each row names something real; the changelog rule for layout moves in `docs/DEVELOPMENT.md` | `crates/oxoffice-py/tests/test_migration.py`, `tests/migration/` | PR | 2 s |
+| 2 | ~~The migration note from rdocx and its name check~~: dropped by the user on 2026-11-21 | — | — | — |
 | 3 | `test(cli)`: keys-only snapshots of what the tools read (`docx text`, `diff`, `revision list`, `layout`, `comment list`, `pptx text`, `fit`, `shapes`); `docx diff` of the authored copy against each producer's, differences pinned, one added comment = one row; `replace --map` with a wrong count writes nothing; `OXOFFICE_WORKFLOWS` in `ci.yml` (CI session) | existing files of `crates/oxoffice-cli/tests/` | PR (report, contract), `main` (every family) | 5 s |
 | 4 | `test(docx)`: the edit and review walk (W3, W8, W9, I1, I3, R7, R9) on the contract copies; #342 and #343 strict | `checked_replacement.rs`, `comments.rs`, `paragraphs_and_styles.rs`, a part-comparison helper in `support.rs`; `crates/oxoffice-py/tests/test_lengths.py` | PR (Word copy), `main` (every copy) | 8 s |
 | 5 | `test(docx)`: the page numbers, PDF and redline walk (W4, W5, W6, R3, R4, R8, R12) on the thesis copies; #340, #66 and #341 strict | `fields_and_toc.rs`, `revisions_and_compare.rs`, `pdf.rs` | PR (Word copy), `main` (every copy) | 8 s |
-| 6 | `test(pptx)`: the deck walk (W12, R13, R14) on the training and pitch copies, gated on the `render` feature (the WebAssembly job builds `--test pptx` without it) | `shapes_and_text.rs`, `slides_and_layouts.rs` | PR | 3 s |
+| 6 | `test(pptx)`: the deck walk (W12, R13, R14) on the training and pitch copies, gated on the `render` feature (the WebAssembly job builds `--test pptx` without it) | `shapes_and_text.rs`, `slides_and_layouts.rs`; the changelog rule for layout moves in `docs/DEVELOPMENT.md` | PR | 3 s |
 | 7 | `test(corpus)`: the `record` family (French style ids from Word, an unused linked pair, a TOC with `\u` next to a vertical merge, tables with pale run shading, content controls, comments by two people with a two-paragraph thread, tracked changes by one author), authored and saved by LibreOffice, then by Word and Word then Google on the Mac (a `word-google/` route in `produce.py`); the walks of PR 4 and PR 5 and a restyle twice on its copies | `tests/corpus/`, the modules above | PR | 6 s |
 
-Order: 2 and 3 first (the switch needs them), then 4, 5 and 6 in any order,
+Order: 3 first (the switch needs it), then 4, 5 and 6 in any order,
 7 last, with the Mac session. Pull requests 4 to 6 touch modules OX-D2 and
 OX-L also edit: a line to each before each. A bug a walk finds follows
 CLAUDE.md rule 10: one root cause, one issue, with its severity, area and a

@@ -121,11 +121,18 @@ fn the_deck_read_commands_keep_their_json_keys() {
             .arg("--json")
             .output()
             .expect("oxoffice runs");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         serde_json::from_slice::<Value>(&output.stdout).expect("JSON output")
     };
     for command in ["text", "fit", "shapes"] {
-        let outputs = decks.iter().map(|deck| read(command, deck)).collect::<Vec<_>>();
+        let outputs = decks
+            .iter()
+            .map(|deck| read(command, deck))
+            .collect::<Vec<_>>();
         assert_keys(&format!("pptx-{command}"), &outputs);
     }
 }

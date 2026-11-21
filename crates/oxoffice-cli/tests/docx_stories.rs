@@ -346,7 +346,8 @@ fn a_producer_copy_differs_from_its_source_only_by_what_that_producer_changes() 
 
 #[test]
 fn a_comment_added_to_a_copy_is_the_one_difference() {
-    let dir = std::env::temp_dir().join(format!("oxoffice-cli-diff-comment-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("oxoffice-cli-diff-comment-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     let source = path_of("google/report.docx");
     let edited = dir.join("edited.docx");
@@ -365,7 +366,11 @@ fn a_comment_added_to_a_copy_is_the_one_difference() {
         "--output",
         edited.to_str().unwrap(),
     ]);
-    assert!(added.status.success(), "{}", String::from_utf8_lossy(&added.stderr));
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
     let diff = read_json(&["docx", "diff", &source, edited.to_str().unwrap(), "--json"]);
     let _ = fs::remove_dir_all(&dir);
     let rows = diff["differences"].as_array().unwrap();
@@ -399,7 +404,12 @@ fn comments_a_producer_reordered_are_no_difference() {
         .unwrap()
         .iter()
         .filter(|row| row["story"] == "comment")
-        .map(|row| (row["change"].as_str().unwrap(), row["text_a"].as_str().unwrap_or("")))
+        .map(|row| {
+            (
+                row["change"].as_str().unwrap(),
+                row["text_a"].as_str().unwrap_or(""),
+            )
+        })
         .collect::<Vec<_>>();
     assert!(
         comments.len() == 1

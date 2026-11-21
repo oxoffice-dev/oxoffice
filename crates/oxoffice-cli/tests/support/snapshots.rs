@@ -61,7 +61,10 @@ pub fn assert_snapshot(name: &str, lines: &[String]) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots")
         .join(format!("{name}.txt"));
-    let found = lines.iter().map(|line| format!("{line}\n")).collect::<String>();
+    let found = lines
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
     if std::env::var_os("OXOFFICE_SNAPSHOTS_UPDATE").is_some() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &found).unwrap();
