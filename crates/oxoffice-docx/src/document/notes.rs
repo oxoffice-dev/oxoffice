@@ -45,13 +45,7 @@ impl Document {
             + 1;
         if candidate.style("FootnoteReference").is_none() {
             candidate
-                .add_style(
-                    StyleBuilder::character("FootnoteReference", "footnote reference")
-                        .run_properties(CT_RPr {
-                            vert_align: Some("superscript".into()),
-                            ..Default::default()
-                        }),
-                )
+                .add_style(note_reference_style(StoryKind::Footnote))
                 .expect("an in-memory document can publish its note style");
         }
         let specials = missing_note_specials(
@@ -124,14 +118,7 @@ impl Document {
         }
         let mut candidate = self.clone_for_staging();
         if candidate.style("FootnoteReference").is_none() {
-            candidate.add_style(
-                StyleBuilder::character("FootnoteReference", "footnote reference").run_properties(
-                    CT_RPr {
-                        vert_align: Some("superscript".into()),
-                        ..Default::default()
-                    },
-                ),
-            )?;
+            candidate.add_style(note_reference_style(StoryKind::Footnote))?;
         }
         candidate
             .read_story_paragraph(&position.location, |paragraph| paragraph.run_count())?
@@ -232,14 +219,7 @@ impl Document {
         }
         let mut candidate = self.clone_for_staging();
         if candidate.style("EndnoteReference").is_none() {
-            candidate.add_style(
-                StyleBuilder::character("EndnoteReference", "endnote reference").run_properties(
-                    CT_RPr {
-                        vert_align: Some("superscript".into()),
-                        ..Default::default()
-                    },
-                ),
-            )?;
+            candidate.add_style(note_reference_style(StoryKind::Endnote))?;
         }
         candidate
             .read_story_paragraph(&position.location, |paragraph| paragraph.run_count())?

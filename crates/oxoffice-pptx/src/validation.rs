@@ -3,7 +3,9 @@
 use super::*;
 
 /// A package or presentation invariant that would make a saved deck unsafe.
+/// New checks add variants, so a match needs a wildcard arm.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ValidationIssue {
     DuplicateShapeId {
         slide: usize,
@@ -48,12 +50,54 @@ pub enum ValidationIssue {
     MissingThemeRel {
         master: usize,
     },
+    /// A part that belongs to one slide (its legacy or PowerPoint comments,
+    /// its notes slide) related from more than one slide. PowerPoint repairs
+    /// such a deck and drops the part from all but one slide.
+    SharedSlidePart {
+        part: String,
+        /// The zero-based indices of the slides that relate to it.
+        slides: Vec<usize>,
+    },
     /// One violation at an explicitly supported checked XML grammar frontier.
     InvalidXmlChild {
         part: String,
         path: String,
         message: String,
     },
+}
+
+impl ValidationIssue {
+    /// The snake_case name of the variant, as Python's `ValidationIssue.kind`
+    /// gives it.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::DuplicateShapeId { .. } => "duplicate_shape_id",
+            Self::SlideIdOutOfRange { .. } => "slide_id_out_of_range",
+            Self::DuplicateSlideId { .. } => "duplicate_slide_id",
+            Self::MissingContentTypeOverride { .. } => "missing_content_type_override",
+            Self::DanglingRelationship { .. } => "dangling_relationship",
+            Self::UnreachableRelationshipTarget { .. } => "unreachable_relationship_target",
+            Self::EmptyTextBody { .. } => "empty_text_body",
+            Self::DuplicatePlaceholderIdx { .. } => "duplicate_placeholder_idx",
+            Self::OrphanMedia { .. } => "orphan_media",
+            Self::CustomShowReference { .. } => "custom_show_reference",
+            Self::MissingLayoutRel { .. } => "missing_layout_rel",
+            Self::MissingThemeRel { .. } => "missing_theme_rel",
+            Self::SharedSlidePart { .. } => "shared_slide_part",
+            Self::InvalidXmlChild { .. } => "invalid_xml_child",
+        }
+    }
+
+    /// Whether the issue is reported without blocking a save or an edit: a
+    /// checked XML grammar finding, or a slide part shared by older decks
+    /// (oxoffice 0.1.0 shared legacy comments after `duplicate_slide`),
+    /// which PowerPoint repairs on open.
+    pub(crate) fn is_report_only(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidXmlChild { .. } | Self::SharedSlidePart { .. }
+        )
+    }
 }
 
 /// One sentence per issue. Slides, masters and shapes are numbered from 1, as
@@ -108,6 +152,15 @@ impl std::fmt::Display for ValidationIssue {
             Self::MissingThemeRel { master } => {
                 write!(f, "slide master {} has no theme relationship", master + 1)
             }
+            Self::SharedSlidePart { part, slides } => write!(
+                f,
+                "{part} belongs to one slide but slides {} relate to it",
+                slides
+                    .iter()
+                    .map(|slide| (slide + 1).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::InvalidXmlChild {
                 part,
                 path,
@@ -1172,6 +1225,40 @@ impl Presentation {
             }
         }
 
+        // Comments and notes are per slide: no two slides relate to one part.
+        // Keyed by the lowercase part name; the first spelling is reported.
+        let mut owners_by_part: HashMap<String, (String, Vec<usize>)> = HashMap::new();
+        for (slide_index, slide) in self.slides.iter().enumerate() {
+            let Some(relationships) = self.package.get_part_rels(&slide.part_name) else {
+                continue;
+            };
+            for relationship in &relationships.items {
+                if relationship_is_external(relationship)
+                    || ![
+                        rel_types::COMMENTS,
+                        rel_types::POWERPOINT_COMMENTS,
+                        rel_types::NOTES_SLIDE,
+                    ]
+                    .contains(&relationship.rel_type.as_str())
+                {
+                    continue;
+                }
+                let part = OpcPackage::resolve_rel_target(&slide.part_name, &relationship.target);
+                let (_, slides) = owners_by_part
+                    .entry(part.to_ascii_lowercase())
+                    .or_insert_with(|| (part.to_string(), Vec::new()));
+                if !slides.contains(&slide_index) {
+                    slides.push(slide_index);
+                }
+            }
+        }
+        let mut shared_slide_parts = owners_by_part
+            .into_values()
+            .filter(|(_, slides)| slides.len() > 1)
+            .map(|(part, slides)| ValidationIssue::SharedSlidePart { part, slides })
+            .collect::<Vec<_>>();
+        shared_slide_parts.sort_by_key(ToString::to_string);
+
         for (master_index, master) in self.presentation.slide_master_ids.iter().enumerate() {
             let Some(relationship) = presentation_relationships
                 .and_then(|relationships| relationships.get_by_id(&master.relationship_id))
@@ -1240,6 +1327,7 @@ impl Presentation {
             .chain(custom_show_references)
             .chain(missing_layout_relationships)
             .chain(missing_theme_relationships)
+            .chain(shared_slide_parts)
             .chain(invalid_xml)
             .collect()
     }

@@ -68,7 +68,7 @@ impl Presentation {
         self.validate().iter().all(|issue| {
             // Finite XML diagnostics remain report-only at ordinary save.
             // Checked replacement owns raw/staged source admission separately.
-            if matches!(issue, ValidationIssue::InvalidXmlChild { .. }) {
+            if issue.is_report_only() {
                 return true;
             }
             let ValidationIssue::DuplicateShapeId { slide, .. } = issue else {
@@ -295,10 +295,32 @@ impl Presentation {
             .as_ref()
             .filter(|_| self.core_properties_dirty)
         {
-            let xml = properties.to_xml().map_err(|error| Error::MalformedPart {
-                part_name: self.core_properties_part_name.clone(),
-                message: error.to_string(),
-            })?;
+            // The part the file holds is patched field by field, as
+            // set_core_properties does: an untouched field keeps its bytes.
+            let source = self
+                .package
+                .package_rels
+                .get_by_type(rel_types::CORE_PROPERTIES)
+                .and_then(|_| self.package.get_part(&self.core_properties_part_name));
+            // A part the patch cannot express exactly (an empty value, a
+            // duplicate or nested element) is written whole, as before.
+            // Written whole, a character the file held as a reference has to
+            // go: no XML reader takes it written out.
+            let held = source.and_then(|source| CoreProperties::from_xml(source).ok());
+            let patched = source.zip(held.as_ref()).and_then(|(source, old)| {
+                crate::properties::patch_core_properties(source, old, properties).ok()
+            });
+            let xml = match patched {
+                Some(xml) => xml,
+                None => {
+                    let mut whole = properties.clone();
+                    whole.drop_held_non_xml_characters(held.as_ref());
+                    whole.to_xml().map_err(|error| Error::MalformedPart {
+                        part_name: self.core_properties_part_name.clone(),
+                        message: error.to_string(),
+                    })?
+                }
+            };
             package.set_part(&self.core_properties_part_name, xml);
             package.content_types.add_override(
                 &self.core_properties_part_name,

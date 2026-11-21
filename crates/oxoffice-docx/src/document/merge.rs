@@ -58,42 +58,119 @@ impl Document {
         self.commit_staged_mutation(candidate);
     }
 
-    /// Append the content of another document with a section break.
+    /// Append the content of another document with a section break, as
+    /// [`Self::append`] does. The destination's pages keep their layout; the
+    /// appended content starts a new section of `break_type` (continuous, on
+    /// the next, an even or an odd page) with the same section formatting
+    /// (page, columns, numbering format, first-page and even-page settings),
+    /// and the same headers and footers until it sets its own. Inner sections
+    /// the other document brings keep their own; its last one takes the new
+    /// section's formatting, as [`Self::append`] gives it the destination's.
     pub fn append_with_break(&mut self, other: &Document, break_type: crate::SectionBreak) {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
-        // Insert a section break paragraph before the merged content
-        let mut p = CT_P::new();
-        let sect_pr = match break_type {
-            crate::SectionBreak::NextPage => CT_SectPr::default_letter(),
-            crate::SectionBreak::Continuous => {
-                let mut sp = CT_SectPr::default_letter();
-                sp.section_type = Some(ST_SectionType::Continuous);
-                sp
-            }
-            crate::SectionBreak::EvenPage => {
-                let mut sp = CT_SectPr::default_letter();
-                sp.section_type = Some(ST_SectionType::EvenPage);
-                sp
-            }
-            crate::SectionBreak::OddPage => {
-                let mut sp = CT_SectPr::default_letter();
-                sp.section_type = Some(ST_SectionType::OddPage);
-                sp
-            }
-        };
-        p.properties = Some(CT_PPr {
-            sect_pr: Some(sect_pr),
-            ..Default::default()
-        });
-        candidate
+        // A final section a producer left implicit gets its properties
+        // written, so the break has section properties to carry: those of a
+        // last paragraph that ends a section move to the body, otherwise the
+        // last section's are copied (or Letter defaults).
+        if candidate.document.body.sect_pr.is_none() {
+            let content = &mut candidate.document.body.content;
+            let last_mark = match content.last_mut() {
+                Some(BodyContent::Paragraph(last)) => last
+                    .properties
+                    .as_mut()
+                    .and_then(|properties| properties.sect_pr.take()),
+                _ => None,
+            };
+            let final_section = last_mark.or_else(|| {
+                content.iter().rev().find_map(|item| match item {
+                    BodyContent::Paragraph(paragraph) => {
+                        let mut properties = paragraph.properties.as_ref()?.sect_pr.clone()?;
+                        properties.header_refs.clear();
+                        properties.footer_refs.clear();
+                        properties.change = None;
+                        Some(properties)
+                    }
+                    _ => None,
+                })
+            });
+            candidate.document.body.sect_pr =
+                Some(final_section.unwrap_or_else(CT_SectPr::default_letter));
+        }
+        let destination_final = candidate
             .document
             .body
-            .content
-            .push(BodyContent::Paragraph(Box::new(p)));
+            .sect_pr
+            .clone()
+            .expect("the final section properties were just written");
+        // The destination's section properties stay on its own pages: they
+        // move to the break paragraph. The appended content starts a new
+        // final section with the same formatting, as Word's section break
+        // copies it, inheriting the headers and footers, without the page
+        // number restart or the revision mark of the destination's section.
+        let sections = candidate.section_count();
+        candidate
+            .insert_section_in_place(sections)
+            .expect("a section can always be appended to an explicit final section");
+        // As Word does, the section mark goes on the destination's last
+        // paragraph when it holds none, instead of an empty paragraph.
+        let content = &mut candidate.document.body.content;
+        if let [
+            ..,
+            BodyContent::Paragraph(last),
+            BodyContent::Paragraph(mark),
+        ] = content.as_mut_slice()
+            // A tracked paragraph mark is not one: accepting or rejecting it
+            // merges the paragraph into the next and would take the mark away.
+            && last.properties.as_ref().is_none_or(|properties| {
+                properties.sect_pr.is_none()
+                    && properties.rpr.as_ref().is_none_or(|mark| {
+                        mark.revision_markers.is_empty() && mark.revision_xml.is_empty()
+                    })
+            })
+            && mark.runs.is_empty()
+        {
+            let sect_pr = mark
+                .properties
+                .as_mut()
+                .and_then(|properties| properties.sect_pr.take());
+            last.properties.get_or_insert_with(Default::default).sect_pr = sect_pr;
+            content.pop();
+        }
+        let mut appended = destination_final;
+        appended.header_refs.clear();
+        appended.footer_refs.clear();
+        appended.change = None;
+        if let Some(page_number) = appended.page_number.as_mut() {
+            page_number.start = None;
+        }
+        candidate.document.body.sect_pr = Some(appended);
         candidate
             .import_document_at(None, other)
             .expect("document append-with-break preflight failed");
+        // The first section of the appended content starts as the break
+        // asks; when the source brings sections of its own, the last one
+        // starts as it did in the source.
+        let last = candidate.section_count() - 1;
+        if last > sections {
+            let source_type = other
+                .document
+                .body
+                .sect_pr
+                .as_ref()
+                .and_then(|properties| properties.section_type);
+            if let Some(mut section) = candidate.section_mut(last) {
+                section.properties_mut().section_type = source_type;
+            }
+        }
+        if let Some(mut section) = candidate.section_mut(sections) {
+            section.properties_mut().section_type = match break_type {
+                crate::SectionBreak::NextPage => None,
+                crate::SectionBreak::Continuous => Some(ST_SectionType::Continuous),
+                crate::SectionBreak::EvenPage => Some(ST_SectionType::EvenPage),
+                crate::SectionBreak::OddPage => Some(ST_SectionType::OddPage),
+            };
+        }
         self.commit_staged_mutation(candidate);
     }
 

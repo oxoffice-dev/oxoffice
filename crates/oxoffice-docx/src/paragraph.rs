@@ -1025,16 +1025,18 @@ impl<'a> Paragraph<'a> {
     /// one `w:br`, where python-docx writes two. Empty text leaves no run, like
     /// [`crate::Document::add_paragraph`] with empty text.
     ///
-    /// Comment ranges, bookmarks and permission ranges are kept, wherever they
-    /// sit in the paragraph. Their starts move before the new run, their ends
-    /// after it, and each comment reference follows in its own run. A range
+    /// Comment ranges, bookmarks, permission ranges and footnote and endnote
+    /// marks are kept, wherever they sit in the paragraph. Their starts move
+    /// before the new run, their ends after it, and each comment reference
+    /// and each note mark follows in its own run, so no note loses its mark. A range
     /// inside the paragraph then covers the new text, and one that crosses the
     /// paragraph edge keeps its far end, so no anchor loses its partner.
     ///
-    /// Two cases are rejected, because dropping part of them would leave the
-    /// rest of the document unbalanced. One is a paragraph whose field
+    /// Three cases are rejected, because dropping part of them would leave
+    /// the rest of the document unbalanced. One is a paragraph holding the
+    /// tracked deletion of a note mark. Another is a paragraph whose field
     /// characters and field code do not balance within it, such as one
-    /// paragraph of a table of contents. The other is a paragraph holding only
+    /// paragraph of a table of contents. The last is a paragraph holding only
     /// one end of a tracked move range or of a custom XML revision range. When
     /// both ends of such a range are in the paragraph, both go with the
     /// tracked change they mark. On error the paragraph is unchanged.
@@ -1049,6 +1051,10 @@ impl<'a> Paragraph<'a> {
             .filter(|(position, raw)| CT_P::raw_is_root_attributes(*position, raw))
             .cloned()
             .collect();
+        // A note's own paragraph keeps the note's number first.
+        if let Some(number) = self.note_number_run() {
+            paragraph.runs.push(number);
+        }
         if !text.is_empty() {
             let mut inner = CT_R::new("");
             inner.content.clear();
@@ -1078,6 +1084,19 @@ impl<'a> Paragraph<'a> {
                 run.add_text(&pending);
             }
             paragraph.runs.push(inner);
+        }
+        // Inside the ranges that end after the text, as a cross-reference
+        // to a note number wraps the mark in its bookmark.
+        for (index, (endnote, id, custom_mark)) in
+            anchors.note_references.iter().cloned().enumerate()
+        {
+            // The how-many-th mark of that note, for its own run properties.
+            let nth = anchors.note_references[..index]
+                .iter()
+                .filter(|(known_endnote, known, _)| *known_endnote == endnote && *known == id)
+                .count();
+            let mark = self.kept_note_mark(endnote, id, custom_mark, nth);
+            paragraph.runs.push(mark);
         }
 
         let end = paragraph.runs.len();
@@ -1134,6 +1153,73 @@ impl<'a> Paragraph<'a> {
         Ok(())
     }
 
+    /// The run holding a note's own number (`w:footnoteRef` or
+    /// `w:endnoteRef`) in a note's paragraph, without its other content.
+    fn note_number_run(&self) -> Option<CT_R> {
+        let is_number = |raw: &Vec<u8>| {
+            ["footnoteRef", "endnoteRef"].iter().any(|name| {
+                let name = name.as_bytes();
+                raw.windows(name.len() + 2).any(|window| {
+                    matches!(window[0], b':' | b'<')
+                        && &window[1..=name.len()] == name
+                        && matches!(window[name.len() + 1], b'/' | b' ' | b'>')
+                })
+            })
+        };
+        let run = self
+            .inner
+            .source_runs()
+            .into_iter()
+            .find(|run| run.extra_xml.iter().any(is_number))?;
+        let mut number = run.clone();
+        number.replace_content(Vec::new());
+        Some(number)
+    }
+
+    /// The run [`Self::set_text`] keeps for the `nth` mark of a note: that
+    /// mark's own run properties when its run is a typed run of the
+    /// paragraph, else the note mark style.
+    fn kept_note_mark(
+        &self,
+        endnote: bool,
+        id: i32,
+        custom_mark: Option<String>,
+        nth: usize,
+    ) -> CT_R {
+        let properties = self
+            .inner
+            .source_runs()
+            .into_iter()
+            .filter(|run| {
+                run.content.iter().any(|item| match item {
+                    RunContent::FootnoteRef { id: known, .. } => !endnote && *known == id,
+                    RunContent::EndnoteRef { id: known, .. } => endnote && *known == id,
+                    _ => false,
+                })
+            })
+            .nth(nth)
+            .map(|run| run.properties.clone())
+            .unwrap_or_else(|| {
+                let style = if endnote {
+                    "EndnoteReference"
+                } else {
+                    "FootnoteReference"
+                };
+                Some(oxoffice_docx_oxml::properties::CT_RPr {
+                    style_id: Some(style.into()),
+                    ..Default::default()
+                })
+            });
+        let mut run = CT_R::new("");
+        run.properties = properties;
+        run.content = vec![if endnote {
+            RunContent::EndnoteRef { id, custom_mark }
+        } else {
+            RunContent::FootnoteRef { id, custom_mark }
+        }];
+        run
+    }
+
     /// Iterate over typed equations in paragraph source order.
     pub fn equations(&self) -> impl Iterator<Item = &OfficeMath> {
         self.inner.equations.iter().map(|(_, _, equation)| equation)
@@ -1170,8 +1256,10 @@ impl<'a> Paragraph<'a> {
         Ok(())
     }
 
-    /// Append a footnote reference run (`<w:footnoteReference w:id="..."/>`).
-    /// The footnote content itself is added via `Document::add_footnote`.
+    /// Append a footnote reference run (`<w:footnoteReference w:id="..."/>`)
+    /// styled `FootnoteReference`, a superscript mark; saving adds that style
+    /// when the document lacks it. The footnote content itself is added via
+    /// `Document::add_footnote`.
     pub fn add_footnote_ref(&mut self, id: i32) {
         use oxoffice_docx_oxml::text::{CT_R, RunContent};
         let mut r = CT_R::new("");
@@ -1179,6 +1267,12 @@ impl<'a> Paragraph<'a> {
             id,
             custom_mark: None,
         }];
+        // Styled as a note mark, as `Document::create_footnote` writes it;
+        // saving adds the style when the document lacks it.
+        r.properties = Some(oxoffice_docx_oxml::properties::CT_RPr {
+            style_id: Some("FootnoteReference".into()),
+            ..Default::default()
+        });
         self.inner.runs.push(r);
     }
 
@@ -2740,6 +2834,9 @@ struct RangeAnchors {
     comment_starts: Vec<i32>,
     comment_ends: Vec<i32>,
     comment_references: Vec<i32>,
+    /// Live note marks: whether an endnote, the id, and the custom mark
+    /// that follows the reference, if any.
+    note_references: Vec<(bool, i32, Option<String>)>,
     bookmark_starts: Vec<(i32, String)>,
     bookmark_ends: Vec<i32>,
     permission_starts: Vec<Vec<u8>>,
@@ -2780,11 +2877,24 @@ impl RangeAnchors {
         let mut ranges: Vec<(&str, bool, Option<String>)> = Vec::new();
         let mut buffer = Vec::new();
         let mut skipped = Vec::new();
+        // Open tracked deletions around the current element, and the note
+        // mark of the current run whose custom mark text is still to come.
+        let mut deleted = 0usize;
+        let mut pending_mark: Option<usize> = None;
         loop {
             let before = reader.buffer_position() as usize;
             let (element, empty) = match reader.read_event_into(&mut buffer) {
                 Ok(quick_xml::events::Event::Start(element)) => (element, false),
                 Ok(quick_xml::events::Event::Empty(element)) => (element, true),
+                Ok(quick_xml::events::Event::End(element)) => {
+                    match element.local_name().as_ref() {
+                        b"del" | b"moveFrom" => deleted = deleted.saturating_sub(1),
+                        b"r" => pending_mark = None,
+                        _ => {}
+                    }
+                    buffer.clear();
+                    continue;
+                }
                 Ok(quick_xml::events::Event::Eof) => break,
                 Ok(_) => {
                     buffer.clear();
@@ -2826,6 +2936,48 @@ impl RangeAnchors {
                 b"commentRangeStart" => push(&mut anchors.comment_starts),
                 b"commentRangeEnd" => push(&mut anchors.comment_ends),
                 b"commentReference" => push(&mut anchors.comment_references),
+                b"del" | b"moveFrom" if !empty => deleted += 1,
+                b"footnoteReference" | b"endnoteReference" => {
+                    let endnote = local == b"endnoteReference";
+                    if let Some(id) = id {
+                        if deleted > 0 {
+                            let kind = if endnote { "endnote" } else { "footnote" };
+                            return Err(crate::Error::Other(format!(
+                                "the paragraph holds the tracked deletion of the mark of \
+                                 {kind} {id}; accept or reject it first"
+                            )));
+                        }
+                        let custom = attribute(b"customMarkFollows")
+                            .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "on"));
+                        anchors
+                            .note_references
+                            .push((endnote, id, custom.then(String::new)));
+                        pending_mark = custom.then_some(anchors.note_references.len() - 1);
+                    }
+                }
+                b"footnoteRef" | b"endnoteRef" if deleted > 0 => {
+                    return Err(crate::Error::Other(
+                        "the paragraph holds the tracked deletion of its note number; accept or \
+                         reject it first"
+                            .to_owned(),
+                    ));
+                }
+                b"t" if !empty && pending_mark.is_some() => {
+                    let failed = |error: String| {
+                        crate::Error::Other(format!("paragraph anchor scan failed: {error}"))
+                    };
+                    let text = reader
+                        .read_text(element.name())
+                        .map_err(|error| failed(error.to_string()))?;
+                    let text = std::str::from_utf8(text.as_ref())
+                        .map_err(|error| failed(error.to_string()))?;
+                    let text = quick_xml::escape::unescape(text)
+                        .map_err(|error| failed(error.to_string()))?
+                        .into_owned();
+                    if let Some(index) = pending_mark.take() {
+                        anchors.note_references[index].2 = Some(text);
+                    }
+                }
                 b"bookmarkEnd" => push(&mut anchors.bookmark_ends),
                 b"bookmarkStart" => {
                     if let (Some(id), Some(name)) = (id, attribute(b"name"))

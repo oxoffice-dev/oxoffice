@@ -886,6 +886,17 @@ fn discover_toc_sources(
 ) -> Result<Vec<Vec<TocSource>>> {
     let mut paragraphs = Vec::new();
     collect_body_paragraphs(&document.document.body, &mut paragraphs, None);
+    // Direct body paragraphs whose deleted mark joins them to the next one.
+    let body = &document.document.body;
+    let joining = (0..body.content.len())
+        .filter(|index| body.accepted_paragraph_joins_next(*index))
+        .filter_map(|index| match &body.content[index] {
+            BodyContent::Paragraph(paragraph) => {
+                Some(std::ptr::from_ref(paragraph.as_ref()).addr())
+            }
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let context = FieldEvaluationContext::default();
     let sequence_snapshot = Arc::new(
         oxoffice_docx_layout::engine::evaluate_sequence_fields(&document.build_layout_input()?)
@@ -932,7 +943,17 @@ fn discover_toc_sources(
         evaluator.bind_numbering_layout(Arc::clone(numbering_layout));
         evaluator.sequence_snapshot = Some(Arc::clone(&sequence_snapshot));
         let mut sequence_value = None;
+        // Accepting a deleted paragraph mark joins the paragraph to the next
+        // one, which keeps the next paragraph's properties: the joining text
+        // opens that paragraph's entry.
+        let mut joined_title = String::new();
         for (paragraph_index, paragraph) in paragraphs.iter().enumerate() {
+            let joins_next = joining.contains(&std::ptr::from_ref(*paragraph).addr());
+            let joined_prefix = if joins_next {
+                String::new()
+            } else {
+                std::mem::take(&mut joined_title)
+            };
             let paragraph_fully_owned = spans.iter().any(|span| {
                 paragraph_index > span.begin_paragraph && paragraph_index < span.end_paragraph
             });
@@ -1034,14 +1055,6 @@ fn discover_toc_sources(
             if !paragraph_in_bookmark {
                 continue;
             }
-            let effective_heading = evaluator
-                .numbering_source(sequence_nodes[paragraph_index])
-                .and_then(|node| numbering_layout.paragraph_navigation_source(node))
-                .map(|(_, level, ..)| level);
-            let Some(level) = toc_paragraph_level(document, toc, paragraph, effective_heading)?
-            else {
-                continue;
-            };
             let title = accepted_runs
                 .iter()
                 .filter(|run| {
@@ -1059,9 +1072,22 @@ fn discover_toc_sources(
                 })
                 .map(|run| run.run.text())
                 .collect::<String>();
+            if joins_next {
+                joined_title.push_str(&title);
+                continue;
+            }
+            let title = joined_prefix + &title;
             if title.is_empty() {
                 continue;
             }
+            let effective_heading = evaluator
+                .numbering_source(sequence_nodes[paragraph_index])
+                .and_then(|node| numbering_layout.paragraph_navigation_source(node))
+                .map(|(_, level, ..)| level);
+            let Some(level) = toc_paragraph_level(document, toc, paragraph, effective_heading)?
+            else {
+                continue;
+            };
             let omit_page_number = toc
                 .omit_page_number_levels
                 .is_some_and(|(start, end)| (start..=end).contains(&level));

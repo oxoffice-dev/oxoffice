@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Cursor, Read};
 
 use oxoffice_docx::Document;
 
@@ -15,15 +14,7 @@ use crate::support::{corpus_files, corpus_manifest, corpus_root, map_in_parallel
 
 /// Every ZIP entry of a package, by name, as stored.
 fn entries(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("package is a ZIP");
-    (0..zip.len())
-        .map(|index| {
-            let mut entry = zip.by_index(index).expect("ZIP entry reads");
-            let mut data = Vec::new();
-            entry.read_to_end(&mut data).expect("ZIP entry inflates");
-            (entry.name().expect("ZIP entry name").into_owned(), data)
-        })
-        .collect()
+    crate::support::package_parts(bytes)
 }
 
 /// What went wrong with a file: broken (it does not open, save or reopen,

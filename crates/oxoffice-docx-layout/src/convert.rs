@@ -258,6 +258,7 @@ fn measure_word_line(
 ) -> f64 {
     let mut text: Option<(f64, f64)> = None;
     let mut object_ascent: Option<f64> = None;
+    let mut equation: Option<(f64, f64)> = None;
     for item in &line.items {
         match word_line_extent(item, fm) {
             Some(WordLineExtent::Text { ascent, descent }) => {
@@ -267,8 +268,24 @@ fn measure_word_line(
             Some(WordLineExtent::Object { height }) => {
                 object_ascent = Some(object_ascent.unwrap_or(0.0).max(height));
             }
+            Some(WordLineExtent::Equation { ascent, descent }) => {
+                let (equation_ascent, equation_descent) = equation.unwrap_or((0.0, 0.0));
+                equation = Some((equation_ascent.max(ascent), equation_descent.max(descent)));
+            }
             None => {}
         }
+    }
+    if let Some((equation_ascent, equation_descent)) = equation {
+        // An equation stands on the line's text, or on its paragraph mark
+        // when the line has no text: that text is what proportional spacing
+        // scales, and the equation only makes the line taller where it
+        // reaches beyond it.
+        let (ascent, descent) = text.or(mark).unwrap_or((0.0, 0.0));
+        line.ascent = ascent
+            .max(equation_ascent)
+            .max(object_ascent.unwrap_or(0.0));
+        line.descent = descent.max(equation_descent);
+        return ascent + descent;
     }
     match (text, object_ascent) {
         (None, None) => {
@@ -300,6 +317,10 @@ enum WordLineExtent {
     Text { ascent: f64, descent: f64 },
     /// An inline object resting on the baseline, which it does not scale.
     Object { height: f64 },
+    /// An equation, which stands on the line's text: it sets the line's
+    /// ascent and descent where it reaches beyond that text, and proportional
+    /// spacing scales the text alone.
+    Equation { ascent: f64, descent: f64 },
 }
 
 /// The extent of one line item on a Word line, or `None` when it takes none.
@@ -308,22 +329,29 @@ enum WordLineExtent {
 /// counted into its ascent, which is where Word puts it. A run the engine
 /// gave no extent, such as a bookmark target, stays without one, and a run
 /// whose font the manager does not hold keeps the extent it was shaped
-/// with. A group with a text baseline (an equation, a ruby or an East Asian
-/// layout) keeps the extent it was measured with and counts as text, as it
-/// always has. A picture, and a group drawn from its top such as a chart, is
-/// an object.
+/// with. An equation keeps the extent it was measured with, as an equation.
+/// Another group with a text baseline (a ruby or an East Asian layout) keeps
+/// its extent too and counts as text, as it always has. A picture, and a
+/// group drawn from its top such as a chart, is an object.
 fn word_line_extent(item: &LineItem, fm: &FontManager) -> Option<WordLineExtent> {
     let segment = match item {
         LineItem::Text(segment) | LineItem::Marker(segment) => segment,
         LineItem::MultilingualText(segment) => segment.base(),
         LineItem::Image { height, .. } => return Some(WordLineExtent::Object { height: *height }),
         LineItem::Group {
-            height, baseline, ..
+            height,
+            baseline,
+            math,
+            ..
         } => {
             let baseline = baseline
                 .filter(|baseline| baseline.is_finite() && height.is_finite())
                 .map(|baseline| baseline.clamp(0.0, height.max(0.0)));
             return Some(match baseline {
+                Some(baseline) if *math => WordLineExtent::Equation {
+                    ascent: baseline,
+                    descent: height - baseline,
+                },
                 Some(baseline) => WordLineExtent::Text {
                     ascent: baseline,
                     descent: height - baseline,

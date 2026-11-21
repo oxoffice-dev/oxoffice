@@ -1,9 +1,0 @@
-{
-  "id": "docx-removed-notes",
-  "format": "docx",
-  "area": "notes",
-  "title": "Replacing the text of a paragraph or a cell leaves its notes behind",
-  "symptom": "set_text on a paragraph or a cell, and replacing story content, drop the footnote and endnote marks but keep the notes as unreferenced notes",
-  "workaround": "remove the notes first (remove_footnote, remove_endnote, same names in Python), or remove the paragraph and add a new one",
-  "issue": 30
-}

@@ -432,6 +432,10 @@ impl<'a> RtfWriter<'a> {
         }
         let mut occurrences = BTreeMap::<usize, usize>::new();
         for (index, raw) in &properties.extra_xml {
+            // The default height: nothing is dropped.
+            if CT_TrPr::raw_is_bare_height(raw) {
+                continue;
+            }
             let occurrence = occurrences.entry(*index).or_insert(0);
             let suffix = if *occurrence == 0 {
                 String::new()
@@ -505,6 +509,10 @@ impl<'a> RtfWriter<'a> {
         }
         let mut occurrences = BTreeMap::<usize, usize>::new();
         for (index, raw) in &properties.extra_xml {
+            // The default height: nothing is dropped.
+            if CT_TrPr::raw_is_bare_height(raw) {
+                continue;
+            }
             let occurrence = occurrences.entry(*index).or_insert(0);
             let suffix = if *occurrence == 0 {
                 String::new()
@@ -716,7 +724,11 @@ impl<'a> RtfWriter<'a> {
                 "paragraph shading was dropped during RTF export",
             );
         }
-        if properties.rpr.is_some() {
+        if properties
+            .rpr
+            .as_ref()
+            .is_some_and(|properties| !properties.carries_nothing())
+        {
             self.diagnose(
                 &format!("{location}/ppr/rPr"),
                 "paragraph mark run properties were dropped during RTF export",
