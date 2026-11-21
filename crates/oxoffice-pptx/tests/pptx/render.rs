@@ -295,14 +295,23 @@ fn slide_facts(bytes: &[u8]) -> Vec<SlideFacts> {
         .collect()
 }
 
-/// The table styles a deck defines, by id: whether their whole-table
-/// borders draw lines between rows, and above or below the table.
-fn table_styles(xml: &str) -> HashMap<String, (bool, bool)> {
+/// The lines a table style's whole table draws: above its first row,
+/// between two rows, and below its last row.
+#[derive(Clone, Copy, Debug, Default)]
+struct StyleLines {
+    top: bool,
+    inside: bool,
+    bottom: bool,
+}
+
+/// The table styles a deck defines, by id, with the lines of their whole
+/// table.
+fn table_styles(xml: &str) -> HashMap<String, StyleLines> {
     elements_with_body(xml, "a:tblStyle")
         .into_iter()
         .filter_map(|style| {
             let id = attribute(style, "styleId")?.to_owned();
-            let borders = elements_with_body(style, "a:wholeTbl")
+            let lines = elements_with_body(style, "a:wholeTbl")
                 .first()
                 .map(|whole| {
                     let draws = |edge: &str| {
@@ -310,12 +319,24 @@ fn table_styles(xml: &str) -> HashMap<String, (bool, bool)> {
                             .first()
                             .is_some_and(|edge| draws_a_line(edge))
                     };
-                    (draws("a:insideH"), draws("a:top") || draws("a:bottom"))
+                    StyleLines {
+                        top: draws("a:top"),
+                        inside: draws("a:insideH"),
+                        bottom: draws("a:bottom"),
+                    }
                 })
                 .unwrap_or_default();
-            Some((id, borders))
+            Some((id, lines))
         })
         .collect()
+}
+
+/// Whether a table cell's own top and bottom lines draw, where it sets
+/// them, and whether it continues the merged cell above it.
+struct TableCell {
+    top: Option<bool>,
+    bottom: Option<bool>,
+    continues: bool,
 }
 
 /// PowerPoint's default table style, Medium Style 2 - Accent 1, built in
@@ -323,35 +344,84 @@ fn table_styles(xml: &str) -> HashMap<String, (bool, bool)> {
 /// between its cells.
 const MEDIUM_STYLE_2_ACCENT_1: &str = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
 
-/// How many horizontal rules a table needs at least: one between each two
-/// rows when its cells or its style draw lines between rows, and two more
-/// when they draw lines above or below it.
-fn table_rules(table: &str, styles: &HashMap<String, (bool, bool)>) -> usize {
-    let rows = elements(table, "a:tr").len();
+/// How many horizontal rules a table needs at least, one per boundary its
+/// cells draw: above its first row, between each two rows, below its last
+/// row. Each cell edge takes the cell's own `a:lnT` or `a:lnB` when set,
+/// drawing or `a:noFill`, and the style's line otherwise. Where a cell's
+/// bottom meets the next cell's top, the renderer keeps a cell's own line
+/// over the style's, then a drawn line over none. A boundary needs a rule
+/// when it is drawn across every column, so the inside of a merged cell
+/// needs none.
+fn table_rules(table: &str, styles: &HashMap<String, StyleLines>) -> usize {
     let style = elements_with_body(table, "a:tableStyleId")
         .first()
         .and_then(|element| element.split('>').nth(1))
         .and_then(|rest| rest.split('<').next())
         .map(str::trim)
         .and_then(|id| {
-            if id == MEDIUM_STYLE_2_ACCENT_1 {
-                Some((true, true))
-            } else {
-                styles.get(id).copied()
-            }
+            styles.get(id).copied().or_else(|| {
+                (id == MEDIUM_STYLE_2_ACCENT_1).then_some(StyleLines {
+                    top: true,
+                    inside: true,
+                    bottom: true,
+                })
+            })
         })
         .unwrap_or_default();
-    let cells = |edge: &str| {
-        elements_with_body(table, edge)
-            .iter()
-            .any(|line| draws_a_line(line))
-    };
-    let (inside, outside) = if cells("a:lnB") || cells("a:lnT") {
-        (true, true)
-    } else {
-        style
-    };
-    usize::from(inside) * rows.saturating_sub(1) + usize::from(outside) * 2
+    let rows: Vec<Vec<TableCell>> = elements_with_body(table, "a:tr")
+        .into_iter()
+        .map(|row| {
+            elements_with_body(row, "a:tc")
+                .into_iter()
+                .map(|cell| {
+                    let line = |name: &str| {
+                        elements_with_body(cell, name)
+                            .first()
+                            .map(|line| draws_a_line(line))
+                    };
+                    let start = format!("{}>", cell.split('>').next().unwrap_or_default());
+                    TableCell {
+                        top: line("a:lnT"),
+                        bottom: line("a:lnB"),
+                        continues: matches!(attribute(&start, "vMerge"), Some("1" | "true")),
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    (0..=rows.len())
+        .filter(|&boundary| {
+            let style_line = if boundary == 0 {
+                style.top
+            } else if boundary == rows.len() {
+                style.bottom
+            } else {
+                style.inside
+            };
+            // A cell's own line wins over the style's, then a drawn line
+            // over none.
+            let edge = |own: Option<bool>| (own.is_some(), own.unwrap_or(style_line));
+            columns > 0
+                && (0..columns).all(|column| {
+                    let above = boundary
+                        .checked_sub(1)
+                        .and_then(|row| rows[row].get(column));
+                    let below = rows.get(boundary).and_then(|cells| cells.get(column));
+                    if below.is_some_and(|cell| cell.continues) {
+                        return false;
+                    }
+                    [
+                        above.map(|cell| edge(cell.bottom)),
+                        below.map(|cell| edge(cell.top)),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .max()
+                    .is_some_and(|(_, draws)| draws)
+                })
+        })
+        .count()
 }
 
 /// Whether a line element draws: it holds a fill that is not `a:noFill` and
@@ -597,6 +667,9 @@ fn the_pictures_and_tables_of_a_corpus_deck_are_found_on_their_slides() {
         check_slide_pictures(&slides, &drawing.pdf, &mut |check, page, why| {
             found.push((check, page, why))
         });
+        check_slide_tables(&slides, &drawing.pdf, &mut |check, page, why| {
+            found.push((check, page, why))
+        });
         assert!(found.is_empty(), "{file}: {found:?}");
 
         // The same pictures expected one slide early are missed.
@@ -656,4 +729,130 @@ fn the_slide_checks_catch_a_wrong_size_and_words_on_another_slide() {
         [(Check::Text, 1), (Check::Text, 2)],
         "each slide's words on the other's page"
     );
+}
+
+/// A two-column table of `rows` rows with the style `style` (none when
+/// empty), each cell's properties given by its row.
+fn table(style: &str, rows: usize, cell: impl Fn(usize) -> String) -> String {
+    let style = if style.is_empty() {
+        String::new()
+    } else {
+        format!("<a:tableStyleId>{style}</a:tableStyleId>")
+    };
+    let rows: String = (0..rows)
+        .map(|row| {
+            let cell = format!(
+                "<a:tc><a:txBody><a:bodyPr/><a:p/></a:txBody><a:tcPr>{}</a:tcPr></a:tc>",
+                cell(row)
+            );
+            format!("<a:tr h=\"370840\">{cell}{cell}</a:tr>")
+        })
+        .collect();
+    format!(
+        "<a:tbl><a:tblPr firstRow=\"1\">{style}</a:tblPr><a:tblGrid>\
+         <a:gridCol w=\"3000000\"/><a:gridCol w=\"3000000\"/></a:tblGrid>{rows}</a:tbl>"
+    )
+}
+
+#[test]
+fn a_table_needs_a_rule_for_each_boundary_its_cells_or_its_style_draw() {
+    let styles = HashMap::new();
+    let line = |edge: &str| {
+        format!(
+            "<{edge} w=\"12700\"><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill></{edge}>"
+        )
+    };
+    let none = |edge: &str| format!("<{edge} w=\"12700\"><a:noFill/></{edge}>");
+    let header_only = |cell: String| {
+        move |row: usize| {
+            if row == 0 {
+                cell.clone()
+            } else {
+                String::new()
+            }
+        }
+    };
+    let rules = |table: String| table_rules(&table, &styles);
+
+    // A line under each row: none above the first.
+    assert_eq!(rules(table("", 6, |_| line("a:lnB"))), 6);
+    // A line under the header only.
+    assert_eq!(rules(table("", 6, header_only(line("a:lnB")))), 1);
+    // The default style draws every boundary, until the cells say no line.
+    assert_eq!(
+        rules(table(MEDIUM_STYLE_2_ACCENT_1, 6, |_| String::new())),
+        7
+    );
+    assert_eq!(
+        rules(table(MEDIUM_STYLE_2_ACCENT_1, 6, |_| none("a:lnT")
+            + &none("a:lnB"))),
+        0
+    );
+    // A cell's own no line under the header wins over the style's line
+    // above the next row.
+    assert_eq!(
+        rules(table(
+            MEDIUM_STYLE_2_ACCENT_1,
+            6,
+            header_only(none("a:lnB"))
+        )),
+        6
+    );
+    // Inside a cell merged down its column, the boundary is not drawn
+    // across the table.
+    let merged = table(MEDIUM_STYLE_2_ACCENT_1, 6, |_| String::new())
+        .replacen(
+            "</a:tr><a:tr h=\"370840\"><a:tc>",
+            "</a:tr><a:tr h=\"370840\"><a:tc vMerge=\"1\">",
+            1,
+        )
+        .replacen("<a:tc>", "<a:tc rowSpan=\"2\">", 1);
+    assert_eq!(rules(merged), 6);
+}
+
+/// The corpus deck `deck` with `from` replaced by `to` in its part `part`.
+fn deck_with(deck: &str, part: &str, from: &str, to: &str) -> Vec<u8> {
+    use std::io::Write;
+    let bytes =
+        std::fs::read(crate::support::corpus_root().join("files").join(deck)).expect("corpus file");
+    let mut source = zip::ZipArchive::new(Cursor::new(bytes)).expect("package is a ZIP");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..source.len() {
+        let mut entry = source.by_index(index).expect("ZIP entry");
+        let name = entry.name().expect("ZIP entry name").into_owned();
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).expect("ZIP entry reads");
+        if name == part {
+            let xml = String::from_utf8(data).expect("XML part");
+            assert!(xml.contains(from), "{deck} {part} has {from}");
+            data = xml.replace(from, to).into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::DEFAULT)
+            .expect("ZIP entry starts");
+        out.write_all(&data).expect("ZIP entry writes");
+    }
+    out.finish().expect("ZIP finishes").into_inner()
+}
+
+#[test]
+fn a_table_drawn_without_its_borders_is_reported() {
+    let file = "powerpoint/deck.pptx";
+    let bytes =
+        std::fs::read(crate::support::corpus_root().join("files").join(file)).expect("corpus file");
+    let slides = slide_facts(&bytes);
+    // The table of slide 3 takes No Style, No Grid instead of the default
+    // style, so it draws no line while its borders still need 5.
+    let borderless = deck_with(
+        file,
+        "ppt/slides/slide3.xml",
+        MEDIUM_STYLE_2_ACCENT_1,
+        "{2D5ABB26-0587-4C30-8999-92F81FD0307C}",
+    );
+    let deck = Presentation::from_bytes(&borderless).expect("the deck opens");
+    let drawing = draw(&deck).expect("the deck draws");
+    let mut found = Vec::new();
+    check_slide_tables(&slides, &drawing.pdf, &mut |check, page, _| {
+        found.push((check, page))
+    });
+    assert_eq!(found, [(Check::Tables, 3)]);
 }
