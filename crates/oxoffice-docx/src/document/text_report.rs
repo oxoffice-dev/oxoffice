@@ -65,8 +65,18 @@ impl Document {
     }
 
     fn read_other_story_texts(&self) -> Result<Vec<StoryText>> {
+        Ok(self
+            .read_other_stories()?
+            .into_iter()
+            .map(|story| story.text)
+            .collect())
+    }
+
+    /// [`Self::read_other_story_texts`], with where each direct table of a
+    /// story sits among its items.
+    fn read_other_stories(&self) -> Result<Vec<OtherStory>> {
         let mut main_part = None;
-        let mut stories: Vec<StoryText> = Vec::new();
+        let mut stories: Vec<OtherStory> = Vec::new();
         for item in self.story_item_snapshots()? {
             let story = item.location().story();
             if story.kind() == StoryKind::Body {
@@ -78,13 +88,24 @@ impl Document {
             {
                 continue;
             }
-            if stories.last().is_none_or(|last| &last.story != story) {
-                stories.push(StoryText {
-                    story: story.clone(),
-                    items: Vec::new(),
+            if stories.last().is_none_or(|last| &last.text.story != story) {
+                stories.push(OtherStory {
+                    text: StoryText {
+                        story: story.clone(),
+                        items: Vec::new(),
+                    },
+                    tables: Vec::new(),
                 });
             }
             let kind = item.location().item_kind();
+            if kind == StoryItemKind::Table
+                && item.is_direct_child()
+                && let Some(last) = stories.last_mut()
+            {
+                let position = last.text.items.len();
+                last.tables.push((position, table_cell_count(item.xml())));
+                continue;
+            }
             if !matches!(
                 kind,
                 StoryItemKind::Paragraph | StoryItemKind::ContentControl
@@ -94,7 +115,7 @@ impl Document {
             if item.is_direct_child()
                 && let Some(last) = stories.last_mut()
             {
-                last.items.push(StoryTextItem {
+                last.text.items.push(StoryTextItem {
                     index_path: item.location().index_path().to_vec(),
                     kind,
                     text: item.text().unwrap_or_default().to_owned(),
@@ -125,11 +146,17 @@ impl Document {
 
     /// Present accepted body text followed by readable other stories.
     /// If any other story is malformed, return main-only text and the CLI warning.
+    /// A table in a header, a footer, a note or a comment is reported where
+    /// it sits among the story's paragraphs, as the body's tables are.
     pub fn text_report(&self) -> TextReport {
         let mut text = self.text();
         let mut diagnostics = Vec::new();
-        let (stories, scope) = match self.other_story_texts() {
-            Ok(stories) => (stories, "all-supported-stories"),
+        let read = self.read_other_stories().map_err(|error| {
+            self.malformed_story_part()
+                .unwrap_or_else(|| error.to_string())
+        });
+        let (stories, scope) = match read {
+            Ok(stories) => (in_reading_order(stories), "all-supported-stories"),
             Err(reason) => {
                 diagnostics.push(TextDiagnostic {
                     message: format!("other stories left out: {reason}"),
@@ -161,7 +188,7 @@ impl Document {
         let mut count = 0;
         visit_body_paragraphs(&self.document.body.content, true, &mut |paragraph| {
             count += paragraph
-                .text()
+                .accepted_text()
                 .chars()
                 .filter(|character| include_spaces || !character.is_whitespace())
                 .count();
@@ -169,6 +196,103 @@ impl Document {
         count
     }
 }
+/// A story read for the text report, and each of its direct tables: the
+/// count of its items before the table, and the table cells it holds.
+struct OtherStory {
+    text: StoryText,
+    tables: Vec<(usize, usize)>,
+}
+
+/// Put the cells of each table where the table sits in its story. The cell
+/// stories of a part follow the story that holds their table, in source
+/// order, so the next table-cell stories of the same part, as many as the
+/// table has cells, and the stories they hold, go before the items that
+/// follow the table. A story is then split into the parts around its tables.
+fn in_reading_order(stories: Vec<OtherStory>) -> Vec<StoryText> {
+    let mut queue: std::collections::VecDeque<OtherStory> = stories.into();
+    let mut ordered = Vec::new();
+    while let Some(story) = queue.pop_front() {
+        place_tables(story, &mut queue, &mut ordered);
+    }
+    ordered
+}
+
+/// Push `story` with the stories of its tables' cells in place, and return
+/// how many table-cell stories that took from `queue`, nested ones included.
+fn place_tables(
+    story: OtherStory,
+    queue: &mut std::collections::VecDeque<OtherStory>,
+    ordered: &mut Vec<StoryText>,
+) -> usize {
+    let OtherStory {
+        text: StoryText { story: id, items },
+        tables,
+    } = story;
+    let mut items = items.into_iter();
+    let mut placed = 0;
+    let mut taken = 0;
+    for (position, cells) in tables {
+        ordered.push(StoryText {
+            story: id.clone(),
+            items: items.by_ref().take(position - placed).collect(),
+        });
+        placed = position;
+        let mut counted = 0;
+        while counted < cells {
+            let Some(next) = queue.pop_front() else {
+                break;
+            };
+            if next.text.story.part_name() != id.part_name() {
+                queue.push_front(next);
+                break;
+            }
+            if next.text.story.kind() == StoryKind::TableCell {
+                counted += 1;
+            }
+            counted += place_tables(next, queue, ordered);
+        }
+        taken += counted;
+    }
+    ordered.push(StoryText {
+        story: id,
+        items: items.collect(),
+    });
+    taken
+}
+
+/// The table cells in a table's XML, those of nested tables included: the
+/// story scanner makes each a table-cell story. The fallback copy of
+/// alternate content is not counted, as its stories are not read twice.
+fn table_cell_count(xml: &[u8]) -> usize {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut count = 0;
+    let mut fallback_depth = 0usize;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(element)) => {
+                let name = element.local_name();
+                if fallback_depth > 0 || name.as_ref() == b"Fallback" {
+                    fallback_depth += 1;
+                } else if name.as_ref() == b"tc" {
+                    count += 1;
+                }
+            }
+            Ok(Event::Empty(element))
+                if fallback_depth == 0 && element.local_name().as_ref() == b"tc" =>
+            {
+                count += 1;
+            }
+            Ok(Event::End(_)) if fallback_depth > 0 => fallback_depth -= 1,
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    count
+}
+
 /// Group the texts of the stories by package part, each part labelled with
 /// the kind of its first story, such as a header part holding table cells.
 /// A part without any text, such as an empty header variant, is left out.

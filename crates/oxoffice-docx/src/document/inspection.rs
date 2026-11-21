@@ -11,12 +11,14 @@ impl Document {
     /// 1`, `heading 2`...), which Word keeps when it saves in another language
     /// and localises the id, else by an id `Heading1`, `Heading2`..., among the
     /// body paragraphs, including those that body-level content
-    /// controls wrap. Table cells are not searched.
+    /// controls wrap. Table cells are not searched. The text is the
+    /// accepted-view text, as [`ParagraphRef::text`] reads it: tracked
+    /// insertions are included and tracked deletions are left out.
     pub fn headings(&self) -> Vec<(u32, String)> {
         let mut result = Vec::new();
         for p in block_paragraphs(&self.document.body.content) {
             if let Some(level) = self.detect_heading_level_for_toc(p) {
-                result.push((level, p.text()));
+                result.push((level, p.accepted_text()));
             }
         }
         result
@@ -83,10 +85,17 @@ impl Document {
     ///
     /// Returns metadata for each inline and anchored image found in body
     /// paragraphs, table cells and content controls, in document order.
+    /// Pictures only, as [`Self::pictures`] lists them: a chart, or a drawing
+    /// with neither an embedded nor a linked picture, is left out.
     pub fn images(&self) -> Vec<ImageInfo> {
         let mut result = Vec::new();
+        let is_picture = |embed_id: &str, link_id: &Option<String>, chart: &Option<String>| {
+            chart.is_none() && (!embed_id.is_empty() || link_id.is_some())
+        };
         visit_all_drawings(&self.document.body.content, &mut |drawing| {
-            if let Some(inline) = &drawing.inline {
+            if let Some(inline) = drawing.inline.as_ref().filter(|inline| {
+                is_picture(&inline.embed_id, &inline.link_id, &inline.chart_rel_id)
+            }) {
                 result.push(ImageInfo {
                     embed_id: inline.embed_id.clone(),
                     name: inline.name.clone(),
@@ -96,7 +105,9 @@ impl Document {
                     is_anchor: false,
                 });
             }
-            if let Some(anchor) = &drawing.anchor {
+            if let Some(anchor) = drawing.anchor.as_ref().filter(|anchor| {
+                is_picture(&anchor.embed_id, &anchor.link_id, &anchor.chart_rel_id)
+            }) {
                 result.push(ImageInfo {
                     embed_id: anchor.embed_id.clone(),
                     name: anchor.name.clone(),
@@ -168,11 +179,12 @@ impl Document {
     /// Counts whitespace-separated tokens across all paragraphs (including
     /// paragraphs inside table cells and content controls), leaving out the
     /// table rows that accepting every tracked change removes, as
-    /// [`Self::text`] does.
+    /// [`Self::text`] does. Each paragraph counts its accepted-view text:
+    /// tracked insertions are counted and tracked deletions are not.
     pub fn word_count(&self) -> usize {
         let mut count = 0;
         visit_body_paragraphs(&self.document.body.content, true, &mut |paragraph| {
-            count += paragraph.text().split_whitespace().count();
+            count += paragraph.accepted_text().split_whitespace().count();
         });
         count
     }

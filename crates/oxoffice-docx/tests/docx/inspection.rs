@@ -365,10 +365,7 @@ fn the_numbered_outline_of_the_word_report_keeps_its_typed_numbers_in_the_text()
     }
 }
 
-// Fails today: headings and document_outline read a heading's direct runs,
-// so text typed with tracked changes on is missing. Issue: #184
 #[test]
-#[should_panic(expected = "the heading reads its tracked insertion")]
 fn a_heading_typed_with_tracked_changes_on_reads_its_inserted_text() {
     let mut doc = doc_with_body(concat!(
         r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Annual </w:t></w:r>"#,
@@ -698,10 +695,7 @@ fn a_picture_repeated_in_the_long_report_shares_one_media_part() {
     assert!(paths[0] < paths[1] && paths[1] < paths[2], "{paths:?}");
 }
 
-// Fails today: images lists the manual's chart as an image whose embed id is
-// empty, so it has no bytes; pictures leaves it out. Issue: #186
 #[test]
-#[should_panic(expected = "every listed image has its bytes")]
 fn a_chart_is_not_listed_as_an_image() {
     let doc = corpus_doc("authored/manual.docx");
     let xml = doc.part_xml("word/document.xml").unwrap();
@@ -995,11 +989,7 @@ fn deleted_text_and_deleted_rows_are_not_counted() {
     assert_eq!(doc.character_count(false), 6 + 7);
 }
 
-// Fails today: word_count and character_count read a paragraph's direct runs,
-// so text inserted with tracked changes on is not counted, while text() and
-// the accepted view hold it. Issue: #184
 #[test]
-#[should_panic(expected = "the inserted word is counted")]
 fn text_inserted_with_tracked_changes_is_counted() {
     let mut doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:t xml:space="preserve">one two </w:t></w:r>"#,
@@ -1477,11 +1467,7 @@ fn the_text_report_lists_the_body_then_each_story_part_under_its_label() {
     );
 }
 
-// Fails today: the text report groups a header's paragraphs before the cells
-// of its tables, so a table between two header lines reads after both.
-// Issue: #188
 #[test]
-#[should_panic(expected = "the header table reads before the header's last line")]
 fn the_text_report_keeps_a_header_table_in_reading_order() {
     let mut doc = doc_with(&["Body"]);
     let header = concat!(
@@ -1507,6 +1493,49 @@ fn the_text_report_keeps_a_header_table_in_reading_order() {
     assert!(
         at("NW-2026-114") < at("Confidential"),
         "the header table reads before the header's last line: {text}"
+    );
+}
+
+#[test]
+fn the_text_report_keeps_nested_and_successive_header_tables_in_reading_order() {
+    let mut doc = doc_with(&["Body"]);
+    let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
+    let paragraph = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let grid =
+        "<w:tblPr/><w:tblGrid><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>";
+    // First table: a cell holding a nested table, then a line after it in
+    // the same cell; second table right after a line of the header.
+    let header = format!(
+        concat!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            "{}<w:tbl>{grid}<w:tr><w:tc>{}<w:tbl>{grid}<w:tr>{}{}</w:tr></w:tbl>{}</w:tc>{}</w:tr></w:tbl>",
+            "{}<w:tbl>{grid}<w:tr>{}{}</w:tr></w:tbl>{}</w:hdr>"
+        ),
+        paragraph("H1"),
+        paragraph("A1"),
+        cell("N1"),
+        cell("N2"),
+        paragraph("A2"),
+        cell("B1"),
+        paragraph("H2"),
+        cell("C1"),
+        cell("C2"),
+        paragraph("H3"),
+        grid = grid,
+    );
+    doc.set_raw_header_with_images(header.into_bytes(), &[], HdrFtrType::Default);
+    let doc = reopen(&mut doc);
+    let text = doc.text_report().text;
+    let label = text.find("--- header (").expect("a header section");
+    let lines: Vec<&str> = text[label..]
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.starts_with("--- "))
+        .collect();
+    assert_eq!(
+        lines,
+        ["H1", "A1", "N1", "N2", "A2", "B1", "H2", "C1", "C2", "H3"],
+        "{text}"
     );
 }
 
