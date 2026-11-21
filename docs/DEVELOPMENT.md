@@ -91,7 +91,7 @@ cargo check -p <crate> --all-targets
 cargo test -p <crate>                     # one crate
 cargo test -p <crate> --test <file>       # one integration binary
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo check --workspace --all-targets --all-features --profile scaling   # without debug assertions, as lint does
+cargo clippy --workspace --all-targets --all-features --profile scaling -- -D warnings   # without debug assertions, as lint does
 cargo fmt --all
 cargo build -p oxoffice-cli               # the `oxoffice` binary
 maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a venv
@@ -251,15 +251,16 @@ merge variant).
   their key changes and pull requests build those platforms from scratch,
   about 7 minutes more, until the next night: run
   `gh workflow run ci.yml --ref main` to refresh them at once.
-- **Lint checks the workspace without debug assertions** too (`cargo check
-  --workspace --all-targets --all-features --profile scaling`), on every
-  pull request, drafts and stacked ones included: every crate and target on
-  Linux, all features on. Clippy and the WebAssembly check use the dev
-  profile and the build job the `ci` one, all with debug assertions, so code
-  that compiles only with them (an item under `#[cfg(debug_assertions)]`
-  used or re-exported without the cfg) fails there first. It fails on
-  errors only, for now. Code behind a feature turned off, or for Windows
-  only, is still checked without debug assertions only by the nightly run.
+- **Lint runs clippy without debug assertions** too (`cargo clippy
+  --workspace --all-targets --all-features --profile scaling -- -D
+  warnings`), on every pull request, drafts and stacked ones included:
+  every crate and target on Linux, all features on, warnings denied. The
+  first clippy, the WebAssembly check and the build job all compile with
+  debug assertions, so code that compiles only with them (an item under
+  `#[cfg(debug_assertions)]` used or re-exported without the cfg), or that
+  is dead without them, fails there first. Code behind a feature turned
+  off, or for Windows only, is still checked without debug assertions only
+  by the nightly run.
 - **Python tests run in parallel** in the build job (`pytest -n auto`,
   pytest-xdist, one worker per CPU). A test writes only under `tmp_path`
   (or `tmp_path_factory`). The scaling job stays sequential: its timings

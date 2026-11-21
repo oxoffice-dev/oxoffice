@@ -46,7 +46,7 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 cargo check -p <crate> --all-targets
 cargo test -p <crate>
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo check --workspace --all-targets --all-features --profile scaling
+cargo clippy --workspace --all-targets --all-features --profile scaling -- -D warnings
 cargo fmt --all
 cargo build -p oxoffice-cli
 maturin develop -m crates/oxoffice-py/Cargo.toml
