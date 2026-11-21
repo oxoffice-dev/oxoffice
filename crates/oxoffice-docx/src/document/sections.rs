@@ -589,7 +589,7 @@ impl Document {
         Ok(())
     }
 
-    fn insert_section_in_place(&mut self, index: usize) -> Result<()> {
+    pub(super) fn insert_section_in_place(&mut self, index: usize) -> Result<()> {
         let count = self.section_count();
         if index > count {
             return Err(Error::Other(format!(
