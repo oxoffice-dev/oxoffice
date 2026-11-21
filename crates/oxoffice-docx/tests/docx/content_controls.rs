@@ -431,7 +431,7 @@ fn row_and_cell_controls_add_a_row_as_wide_as_the_table_and_a_cell_to_a_row() {
 }
 
 // Fails today: the typed table counts its direct rows only, so a row inside a
-// row control, as Word writes repeating table rows, is not one of its rows. Issue: TBD
+// row control, as Word writes repeating table rows, is not one of its rows. Issue: #148
 #[test]
 #[should_panic(expected = "the row inside the control is a row of the table")]
 fn a_row_inside_a_row_control_counts_among_the_table_rows() {
@@ -489,7 +489,7 @@ fn a_control_in_a_header_survives_a_save_and_the_form_calls_fill_and_reset_it() 
 }
 
 // Fails today: the tag setters walk the body only and return 0 for a control in
-// a header. Issue: TBD
+// a header. Issue: #148
 #[test]
 #[should_panic(expected = "the tag setter fills the header control")]
 fn a_value_set_by_tag_reaches_a_control_in_a_header() {
@@ -775,7 +775,7 @@ fn a_text_value_replaces_the_content_and_ends_the_placeholder_state() {
 const PROMPTING: &str = r#"<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:alias w:val="Name"/><w:tag w:val="name"/><w:id w:val="42"/><w:showingPlcHdr/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>Type your name</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
 
 // Fails today: the value goes into the prompt's run and keeps its Placeholder
-// Text style, so Word shows the value greyed out like a prompt. Issue: TBD
+// Text style, so Word shows the value greyed out like a prompt. Issue: #147
 #[test]
 #[should_panic(expected = "the value is not styled as placeholder text")]
 fn a_value_set_on_a_prompt_drops_the_placeholder_text_style() {
@@ -801,7 +801,7 @@ fn a_value_set_on_a_prompt_drops_the_placeholder_text_style() {
 }
 
 // Fails today: a line feed in a value is written inside w:t, which Word shows
-// as a space, where the other text setters write a w:br. Issue: TBD
+// as a space, where the other text setters write a w:br. Issue: #147
 #[test]
 #[should_panic(expected = "the line break is written as a w:br")]
 fn a_line_break_in_a_value_is_written_as_a_break() {
@@ -1014,7 +1014,7 @@ fn a_list_value_is_one_of_its_items_chosen_by_display_text_or_value() {
 }
 
 // Fails today: a combo box refuses a value outside its items, as a drop-down
-// list does, though Word lets a combo box take any text. Issue: TBD
+// list does, though Word lets a combo box take any text. Issue: #147
 #[test]
 #[should_panic(expected = "a combo box takes text outside its items")]
 fn a_combo_box_accepts_text_outside_its_items() {
@@ -1498,7 +1498,7 @@ fn the_corpus_forms_list_their_fourteen_controls_with_tags_aliases_and_kinds() {
 }
 
 // Fails today: ContentControlRef::text joins the paragraphs of a block control
-// with nothing between them, where a cell's text puts a line feed. Issue: TBD
+// with nothing between them, where a cell's text puts a line feed. Issue: #147
 #[test]
 #[should_panic(expected = "one line per paragraph")]
 fn the_text_of_a_control_of_several_paragraphs_reads_one_line_per_paragraph() {
@@ -1514,7 +1514,7 @@ fn the_text_of_a_control_of_several_paragraphs_reads_one_line_per_paragraph() {
 }
 
 // Fails today: the value goes into the first paragraph and the others stay as
-// empty paragraphs, so Word shows blank lines under it. Issue: TBD
+// empty paragraphs, so Word shows blank lines under it. Issue: #147
 #[test]
 #[should_panic(expected = "the value is the only paragraph of the control")]
 fn a_value_set_on_a_control_of_several_paragraphs_leaves_one_paragraph() {

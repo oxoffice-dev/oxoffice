@@ -90,6 +90,33 @@
     "issue": 82
   },
   {
+    "id": "docx-content-control-values",
+    "format": "docx",
+    "area": "forms",
+    "title": "Content control values keep the prompt's style, and text() glues a block control's paragraphs",
+    "symptom": "a value set on a control showing its prompt stays greyed out in Word, a line feed shows as a space, extra paragraphs stay empty, a combo box refuses free text, and text() runs paragraphs together",
+    "workaround": "read a block control's paragraphs through story_items rather than text() (same names in Python)",
+    "issue": 147
+  },
+  {
+    "id": "docx-header-content-controls",
+    "format": "docx",
+    "area": "forms",
+    "title": "The tag setters do not reach content controls in headers",
+    "symptom": "set_content_control_value_by_tag returns 0 for a control in a header, and content_controls() lists body controls only",
+    "workaround": "fill the control with fill_form and a content control tag target, which reaches every story (same name in Python)",
+    "issue": 148
+  },
+  {
+    "id": "docx-long-date-controls",
+    "format": "docx",
+    "area": "forms",
+    "title": "A date content control in Word's long date format cannot be set",
+    "symptom": "setting a control formatted d MMMM yyyy fails with \"unsupported or missing date format\", and protect_form refuses rules naming it",
+    "workaround": "give the control a yyyy-MM-dd or dd/MM/yyyy date format first (set_content_control_type, same name in Python), then set the value",
+    "issue": 149
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",
