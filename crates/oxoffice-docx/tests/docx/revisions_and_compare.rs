@@ -860,6 +860,21 @@ fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
     assert_eq!(texts(&accepted(&mut doc)), ["first", "", "added"]);
 }
 
+// Fails today: the LibreOffice copy of the corpus report refuses any edited
+// version, even one appended paragraph. Issue: #32
+#[test]
+#[should_panic(expected = "comparison acceptance does not reproduce the edited stories")]
+fn a_libreoffice_report_compares_with_an_edited_copy() {
+    let original = texts(&corpus_doc("libreoffice/report.docx"));
+    let mut edited = corpus_doc("libreoffice/report.docx");
+    edited.add_paragraph("A closing remark.");
+    let mut doc = redline(corpus_doc("libreoffice/report.docx"), &edited);
+    let mut expected = original.clone();
+    expected.push("A closing remark.".to_owned());
+    assert_eq!(texts(&accepted(&mut doc)), expected);
+    assert_eq!(texts(&rejected(&mut doc)), original);
+}
+
 // Fails today: a paragraph appended after a table that ends the body is
 // refused. Issue: #32
 #[test]
