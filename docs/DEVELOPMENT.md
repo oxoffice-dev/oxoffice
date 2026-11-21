@@ -49,13 +49,25 @@ or wants to merge it runs that review or asks for one.
 - **The author answers every finding** in the thread: fixed, with the commit,
   or why it is not a defect. A major finding is fixed unless the maintainer
   waives it.
-- **The review covers the merged head.** After the reviewed head, what
-  cannot change behaviour needs nothing more (a rebase without conflict, a
-  typo in prose); any change to code, tests, workflows or the meaning of a
-  document, fixes included, gets a review of the delta.
+- **At most two reviews per pull request**: one full review, then at most
+  one delta review, and only after a major was fixed (or after a change of
+  behaviour no finding asked for). A third review needs the maintainer's
+  agreement; beyond that budget the maintainer decides from the evidence
+  (mutation checks, `git range-diff`), without another round.
+- **Minors never trigger a review.** Fix one with a proof stated in the
+  answer (a test that fails without the fix, or a mutation check), or open a
+  follow-up issue, or say why it is not a defect. A minor that would need a
+  risky change goes to a follow-up issue, not into the pull request.
+- **A rebase or merge that only resolves a conflict in data**
+  (`limitations.json`, a generated page, the `GROWING` or test-module lists,
+  a moved context line) needs no review: `git range-diff` and the tests, and
+  one line in the thread saying so. A rebase without conflict needs nothing.
+- **A delta review judges the delta only**: defects the new commits bring,
+  or majors they fail to fix. No new finding on code the delta does not
+  touch.
 - **Light review**, still posted, for documentation (links, anchors, text
   agrees with the code and the other docs) and pure code moves (nothing but
-  location changed).
+  location changed). It counts as the full review.
 
 See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
