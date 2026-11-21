@@ -79,7 +79,9 @@ with open("report.pdf", "wb") as output:
   legacy form fields of the body as form fields, text, check boxes, lists and dates with their
   values. A control tagged `signature` or `signature:<name>` becomes an empty
   signature field. It needs the accepted view, and
-  `to_pdf_with_diagnostics` names each control of the body it leaves static.
+  `to_pdf_with_diagnostics` names each control of the body that would be a
+  field but is left static (a picture control without a signature tag or a
+  group control is no field).
 - Python collections with negative indexes, slices, iteration, and explicit
   stale-handle errors after structural changes.
 

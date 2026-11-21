@@ -1334,9 +1334,10 @@ fn legacy(id: u32, name: &str, data: &str, instruction: &str, result: Option<&st
     )
 }
 
-/// A legacy form as Word saves it: a text field with help text and a
+/// A legacy form shaped as Word saves it: a text field with help text and a
 /// maximum length, a check box, a drop-down, a disabled field, a computed
-/// date and an empty text field.
+/// date and an empty text field. The drop-down stores its result, which
+/// Word does not write: one with none draws nothing today (#170).
 fn legacy_form() -> Document {
     let company = legacy(
         0,
@@ -1473,6 +1474,97 @@ fn legacy_fields_draw_exactly_what_the_static_layout_draws() {
         count_fragments(&page.elements, &mut fragments);
     }
     assert_eq!(fragments, 6, "every legacy field has its widget");
+    let texts: Vec<String> = fragment_texts(&with_fields.layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "Acme",
+            "\u{2612}",
+            "Green",
+            "R-12",
+            "21/11/2026",
+            "\u{2002}\u{2002}\u{2002}\u{2002}\u{2002}"
+        ],
+        "each fragment holds its field's result and nothing beside it"
+    );
+    let outside = page_text(&with_fields.layout.pages);
+    for label in [
+        "Company: ",
+        " Subscribe",
+        "Colour: ",
+        "Reference: ",
+        " Date: ",
+        "City: ",
+    ] {
+        assert!(
+            outside.contains(label),
+            "{label:?} stays on the page: {outside:?}"
+        );
+    }
+}
+
+/// A legacy text field inside a tracked deletion, its instruction and result
+/// in plain runs, so the model reads it as a field. Word writes `delInstrText`
+/// there, which the model does not read as a field at all (checked below).
+const DELETED_LEGACY: &str = r#"<w:del w:id="90" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Old"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Old value</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
+
+#[test]
+fn a_legacy_field_in_a_tracked_deletion_is_no_field_and_says_so() {
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>{DELETED_LEGACY}</w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(field_names(&layout.layout).is_empty());
+    assert_eq!(
+        diagnostics_about(&layout.layout, "Old"),
+        ["form field \"Old\" stays static: a tracked change deletes it"]
+    );
+
+    // Around it, a rich text control holds no live field: it is the field.
+    let doc = doc_with_body(&format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="notes"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>{DELETED_LEGACY}</w:p></w:sdtContent></w:sdt>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(field_names(&layout.layout), ["notes"]);
+
+    // Word's own shape of a deleted field is no field to begin with.
+    let word_shape = DELETED_LEGACY
+        .replace("w:instrText", "w:delInstrText")
+        .replace("<w:t>Old value</w:t>", "<w:delText>Old value</w:delText>");
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>{word_shape}</w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(field_names(&layout.layout).is_empty());
+}
+
+#[test]
+fn a_legacy_field_whose_form_data_does_not_read_stays_static_and_says_so() {
+    // The selected entry is past the end of the list.
+    let size = legacy(
+        0,
+        "Size",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:ddList><w:result w:val="5"/><w:listEntry w:val="S"/><w:listEntry w:val="M"/></w:ddList>"#,
+        "FORMDROPDOWN",
+        Some("M"),
+    );
+    let doc = doc_with_body(&format!("<w:p>{size}</w:p>"));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(field_names(&layout.layout).is_empty());
+    let said: Vec<&str> = layout
+        .layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .filter(|message| message.contains("stays static"))
+        .collect();
+    assert_eq!(
+        said,
+        ["form field \"untitled\" stays static: its form data does not read"]
+    );
 }
 
 #[test]

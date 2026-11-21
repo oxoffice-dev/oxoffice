@@ -287,8 +287,9 @@ pub struct LayoutInput {
     pub fonts: Vec<FontFile>,
     /// Checked physical embedded font bodies with every owned source alias.
     pub embedded_fonts: Vec<EmbeddedFontSource>,
-    /// Lay out the content controls of the main body as fillable form
-    /// fields: `LayoutResult::form_fields` and their fragments.
+    /// Lay out the content controls and legacy form fields of the main body
+    /// as fillable form fields: `LayoutResult::form_fields` and their
+    /// fragments.
     pub form_fields: bool,
     /// Result-local: the main-story paragraphs by source node, and whether
     /// a block control field encloses them. Only these paragraphs draw form

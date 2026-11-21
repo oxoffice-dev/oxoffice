@@ -120,7 +120,9 @@ fn holds_mappable(control: &CT_Sdt) -> bool {
                 .revisions
                 .iter()
                 .any(|(_, _, revision)| revision_holds(revision))
-            || paragraph.source_runs().into_iter().any(run_holds_legacy)
+            || crate::engine::accepted_runs(paragraph)
+                .into_iter()
+                .any(|(run, _)| run_holds_legacy(run))
     }
     fn table_holds(table: &CT_Tbl) -> bool {
         !table.content_controls.is_empty()
@@ -872,14 +874,36 @@ impl<'a> Inventory<'a> {
             .map(|field| std::ptr::from_ref(*field))
             .zip(0u32..)
             .collect();
+        // A field in a tracked deletion is not drawn: it says so, as a
+        // deleted control does, and takes no name.
+        let accepted: std::collections::HashSet<*const CT_R> =
+            crate::engine::accepted_runs(paragraph)
+                .into_iter()
+                .map(|(run, _)| std::ptr::from_ref(run))
+                .collect();
         let mut top_level = std::collections::HashSet::new();
         for (at, run) in runs.iter().enumerate() {
+            let deleted = !accepted.contains(&std::ptr::from_ref(*run));
             for content in &run.content {
                 let RunContent::Field(field) = content else {
                     continue;
                 };
                 top_level.insert(std::ptr::from_ref(field));
                 if field.legacy_form.is_none() {
+                    // Form data that does not read leaves no legacy form.
+                    if !deleted && field.validate_legacy_form_owner().is_err() {
+                        self.faults.push(format!(
+                            "form field {:?} stays static: its form data does not read",
+                            legacy_name(field)
+                        ));
+                    }
+                    continue;
+                }
+                if deleted {
+                    self.faults.push(format!(
+                        "form field {:?} stays static: a tracked change deletes it",
+                        legacy_name(field)
+                    ));
                     continue;
                 }
                 match field.legacy_form_value() {
