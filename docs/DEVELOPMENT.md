@@ -98,7 +98,11 @@ Finish what you start.
   (`S1 data loss`, `S2 wrong result`, `S3 rare or workaround`, `S4 polish`),
   an area label (`area: docx`, `area: pptx`, `area: render`,
   `area: python`, `area: ci`) and a "Seen with" line (which producer, which
-  kind of file). Search for an existing issue first.
+  kind of file). Search for an existing issue first. The bug report form
+  (`.github/ISSUE_TEMPLATE/bug.yml`) asks for what happens, what it was seen
+  with, what was expected and an issue of the same cause; labels are set at
+  triage. An issue opened with `gh issue create --body-file` skips the
+  form: give it the same parts.
 - **Order of work**: S1 at once, S2 next, S3 and S4 in batches by module,
   one pull request per batch, never one pull request per trivial issue.
 - **Test rounds are scheduled, not continuous.** A round that finds bugs

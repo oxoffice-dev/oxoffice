@@ -1,0 +1,3 @@
+# Blank issues stay open to the web form and to `gh issue create --body-file`,
+# which the bug report form does not apply to.
+blank_issues_enabled: true
