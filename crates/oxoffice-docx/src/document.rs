@@ -9932,6 +9932,7 @@ fn bytes_declare_namespace(bytes: &[u8]) -> bool {
 /// The root start tag of emitted item bytes binds `w` to a namespace other
 /// than Word. Only the root start tag is scanned, so a matching byte sequence
 /// inside a text run or opaque payload cannot disable the span check.
+#[cfg(debug_assertions)]
 fn root_declares_foreign_word(bytes: &[u8]) -> bool {
     let Some(end) = bytes.iter().position(|byte| *byte == b'>') else {
         return false;
