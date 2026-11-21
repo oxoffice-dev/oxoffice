@@ -9,6 +9,7 @@ mod comments;
 mod content_controls;
 mod corpus;
 mod fields_and_toc;
+mod inspection;
 mod lists;
 mod notes;
 mod paragraphs_and_styles;
