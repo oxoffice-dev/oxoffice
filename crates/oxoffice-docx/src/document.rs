@@ -49137,14 +49137,44 @@ impl Document {
 
     /// Replace multiple placeholders at once. Returns total replacements.
     ///
+    /// The pairs apply together, each to the text as it was before the call:
+    /// a value is never searched by another pair, so `{"left": "right",
+    /// "right": "left"}` swaps the two words. Where two placeholders overlap,
+    /// the longer one (in characters) wins, then the one that sorts first,
+    /// whatever the order of the map. [`Self::try_replace_all_expected`]
+    /// applies ordered pairs one after another instead, as Python
+    /// `Document.replace_all` and the CLI's `replace --map` do: their pairs
+    /// come in a list, so a later pair sees what an earlier one wrote.
+    ///
     /// Cheaper than calling [`Self::replace_text`] per entry: the document is
-    /// serialised and re-parsed once for the whole batch rather than once per
-    /// placeholder.
+    /// serialised and re-parsed once per pass for the whole batch rather than
+    /// once per placeholder.
     pub fn replace_all(&mut self, replacements: &std::collections::HashMap<&str, &str>) -> usize {
-        let pairs: Vec<(&str, &str)> = replacements.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut pairs: Vec<(&str, &str)> = replacements.iter().map(|(k, v)| (*k, *v)).collect();
+        pairs.sort_by(|(left, _), (right, _)| {
+            (right.chars().count().cmp(&left.chars().count())).then(left.cmp(right))
+        });
+        // Each placeholder becomes a private marker first, then each marker
+        // its value, so that no value meets another pair.
+        let markers = batch_markers(&pairs);
+        let to_markers = pairs
+            .iter()
+            .zip(&markers)
+            .map(|((placeholder, _), marker)| (*placeholder, marker.as_str()))
+            .collect::<Vec<_>>();
+        let to_values = markers
+            .iter()
+            .zip(&pairs)
+            .map(|(marker, (_, value))| (marker.as_str(), *value))
+            .collect::<Vec<_>>();
         let mut candidate = self.clone_for_staging();
         let count = candidate
-            .replace_batch(&pairs)
+            .replace_batch(&to_markers)
+            .expect("text replacement package preflight failed");
+        // Even with no match counted: the VML copy of a text box is rewritten
+        // without counting.
+        candidate
+            .replace_batch(&to_values)
             .expect("text replacement package preflight failed");
         self.commit_staged_mutation(candidate);
         count
@@ -54523,6 +54553,39 @@ fn document_story_parts(stories: &[StoryText]) -> Vec<(StoryKind, &str, Vec<&str
     }
     parts.retain(|(_, _, texts)| texts.iter().any(|text| !text.trim().is_empty()));
     parts
+}
+
+/// One marker per pair of a [`Document::replace_all`] batch: a character of
+/// the supplementary private use area between two copies of a delimiter that
+/// no placeholder or value holds, so that no marker overlaps another or text
+/// the caller wrote.
+fn batch_markers(pairs: &[(&str, &str)]) -> Vec<String> {
+    let delimiter = (0x10_FF00..=0x10_FFFD)
+        .rev()
+        .filter_map(char::from_u32)
+        .find(|delimiter| {
+            pairs.iter().all(|(placeholder, value)| {
+                !placeholder.contains(*delimiter) && !value.contains(*delimiter)
+            })
+        })
+        .unwrap_or('\u{10FFFD}');
+    // The index in base 0xFF00, one private character per digit, below the
+    // delimiters, so a marker never holds its delimiter.
+    (0..pairs.len())
+        .map(|index| {
+            let mut marker = String::from(delimiter);
+            let mut rest = index;
+            loop {
+                marker.extend(char::from_u32(0x10_0000 + (rest % 0xFF00) as u32));
+                rest /= 0xFF00;
+                if rest == 0 {
+                    break;
+                }
+            }
+            marker.push(delimiter);
+            marker
+        })
+        .collect()
 }
 
 fn document_story_kind_name(kind: StoryKind) -> &'static str {
