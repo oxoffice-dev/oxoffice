@@ -161,6 +161,7 @@ use headers_footers::{
     header_footer_story_has_expected_root, header_type_index, materialize_header_footer_inheritance,
 };
 use media::chart_with_workbook_relationship;
+pub use numbering::{ListItemKind, NumberingJournal};
 pub use replace::ReplacementCountMismatch;
 
 mod drawing_xml;
@@ -185,7 +186,7 @@ use identifiers::{
     IdentifierDefinition, IdentifierXmlCategory, frame_drawings_are_absent,
     identifier_xml_is_well_formed, read_child_canonical_facts, relationship_owner_identity,
     reserve_lowest_i32, reserve_part_from_set, reserve_relationship_from_cursor, reserve_u32,
-    scan_identifier_definitions, split_relationship_ids_at_head,
+    reserve_u32_or_lowest_free, scan_identifier_definitions, split_relationship_ids_at_head,
 };
 pub(crate) use main_part::{CommentParagraphRead, CommentParagraphValue};
 use main_part::{

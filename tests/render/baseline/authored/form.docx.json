@@ -1,10 +1,10 @@
 {
   "file": "authored/form.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "reason": "a legacy drop-down that stores no result draws its selected entry (#170)",
   "resources": "0a5e654e3522ff7d666f2c92f94606b67b6a73030dfd6f426e60382564a37462",
-  "outline_and_tags": "0e99ed94981c860009a7f11a6d8a02adb27be36208dec04c6efc5de6da0cad55",
+  "outline_and_tags": "a076dd8390d3f1f08effa45393ba5b959c2c22aa5967a8f4bfeefc086049822a",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
-    {"page": 1, "pixels": "79c3567ff316258d51183092c65bac5c16dc90887727fa53d6c863117f058295", "content": "9dec7c80824057cdf80a6a5bbdf2687cbdcc73aae0fef02d390987ae0873fb30", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+    {"page": 1, "pixels": "ec59618174e2cb3d2ae42dfa431b5390a1e4d34c39714a14dcf61c9db496982c", "content": "3cf5f2a5fe58104944a2b3a3780e5ea9126304b20b9ad8bbf040cb2f65b449f9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
   ]
 }

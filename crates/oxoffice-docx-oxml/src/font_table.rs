@@ -124,6 +124,24 @@ impl FontRecord {
         }
     }
 
+    /// Whether an attribute this record keeps, at any depth and in any
+    /// namespace, has the value `value`. Its modelled faces' relationship ids
+    /// are fields, not kept attributes.
+    fn mentions_value(&self, value: &str) -> bool {
+        raw_attributes_mention(&self.raw_attributes, value)
+            || raw_attributes_mention(&self.alternate_name_raw_attributes, value)
+            || raw_attributes_mention(&self.family_raw_attributes, value)
+            || raw_attributes_mention(&self.pitch_raw_attributes, value)
+            || self
+                .embedded_fonts
+                .iter()
+                .any(|embedded| raw_attributes_mention(&embedded.raw_attributes, value))
+            || self
+                .raw_children
+                .iter()
+                .any(|(_, raw)| raw_xml_mentions_value(raw, value))
+    }
+
     /// Keep a child this model does not read, verbatim at its schema slot,
     /// or after the last known child when it has none.
     fn retain_field_or_child(
@@ -352,6 +370,8 @@ impl FontTable {
     /// or unknown ones) go with it, unless one names a relationship: only the
     /// relationships of modelled embedded faces are cleaned up after it.
     /// Retained attributes and opaque embedded faces are still refused.
+    /// `Document::remove_font` also refuses when the kept XML names, in another
+    /// namespace, a relationship nothing else would use after the record.
     pub fn can_remove_font(&self, name: &str) -> Result<bool> {
         let mut matches = self.fonts.iter().filter(|font| font.name == name);
         let Some(font) = matches.next() else {
@@ -569,25 +589,27 @@ impl FontTable {
             .count()
     }
 
+    /// Whether the record named `name` keeps an attribute whose value is
+    /// `value`, at any depth and in any namespace, besides its modelled faces'
+    /// relationship ids: the test the cleanup after a removal applies to keep
+    /// a relationship.
+    pub fn record_mentions_value(&self, name: &str, value: &str) -> bool {
+        self.fonts
+            .iter()
+            .filter(|font| font.name == name)
+            .any(|font| font.mentions_value(value))
+    }
+
     pub fn retained_raw_mentions_relationship(&self, relationship_id: &str) -> bool {
         raw_attributes_mention(&self.raw_attributes, relationship_id)
             || self
                 .raw_children
                 .iter()
                 .any(|(_, raw)| raw_xml_mentions_value(raw, relationship_id))
-            || self.fonts.iter().any(|font| {
-                raw_attributes_mention(&font.raw_attributes, relationship_id)
-                    || raw_attributes_mention(&font.alternate_name_raw_attributes, relationship_id)
-                    || raw_attributes_mention(&font.family_raw_attributes, relationship_id)
-                    || raw_attributes_mention(&font.pitch_raw_attributes, relationship_id)
-                    || font.embedded_fonts.iter().any(|embedded| {
-                        raw_attributes_mention(&embedded.raw_attributes, relationship_id)
-                    })
-                    || font
-                        .raw_children
-                        .iter()
-                        .any(|(_, raw)| raw_xml_mentions_value(raw, relationship_id))
-            })
+            || self
+                .fonts
+                .iter()
+                .any(|font| font.mentions_value(relationship_id))
     }
 }
 

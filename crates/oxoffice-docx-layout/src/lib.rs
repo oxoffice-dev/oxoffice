@@ -423,8 +423,9 @@ impl WordLayoutResult {
     /// Return placed fragments for one direct body item by its source index.
     ///
     /// Modeled items return one fragment per occupied page. Preserved content
-    /// that does not enter layout returns an empty slice. An out-of-range body
-    /// index returns `None`.
+    /// that does not enter layout, and an empty paragraph that takes no room
+    /// (the one holding a section break after an absorbed page break),
+    /// return an empty slice. An out-of-range body index returns `None`.
     pub fn body_layout_fragments(&self, body_index: usize) -> Option<&[WordBodyLayoutFragment]> {
         self.body_fragments.get(body_index).map(Vec::as_slice)
     }

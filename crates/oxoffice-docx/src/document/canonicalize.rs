@@ -236,7 +236,15 @@ impl Document {
             .iter()
             .map(|instance| (instance.num_id, instance.abstract_num_id))
             .collect::<HashMap<_, _>>();
+        // Identifiers that content names and the save does not renumber stay
+        // taken: those of the source, and those naming a list the document
+        // does not define, so that no renumbered list takes one of them.
         let mut occupied_nums = self.identifiers.preserved_numbering_instance_ids.clone();
+        occupied_nums.extend(
+            self.content_numbering_instance_ids()
+                .into_iter()
+                .filter(|id| !semantic_nums.contains(id)),
+        );
         let mut occupied_abstract = self.identifiers.preserved_abstract_numbering_ids.clone();
         let referenced_abstract = abstract_by_num.values().copied().collect::<HashSet<_>>();
         occupied_abstract.extend(
@@ -251,7 +259,7 @@ impl Document {
         for old_num in semantic_nums {
             num_remap.insert(
                 old_num,
-                reserve_u32(&mut occupied_nums, 1, "numbering instance")?,
+                reserve_u32_or_lowest_free(&mut occupied_nums, 1, "numbering instance")?,
             );
             if let Some(old_abstract) = abstract_by_num.get(&old_num)
                 && !self
@@ -1785,7 +1793,10 @@ impl Document {
                     relationships
                         .items
                         .iter()
-                        .filter(|relationship| relationship.rel_type == rel_types::IMAGE)
+                        .filter(|relationship| {
+                            relationship.rel_type == rel_types::IMAGE
+                                && relationship_is_internal(relationship)
+                        })
                         .all(|relationship| {
                             self.identifiers
                                 .part_is_preserved(&OpcPackage::resolve_rel_target(
@@ -1825,8 +1836,11 @@ impl Document {
                 continue;
             };
             for id in ids {
+                // A linked picture's relationship is External: its target is
+                // an address, not a part to move.
                 if let Some(relationship) = relationships.get_by_id(id)
                     && relationship.rel_type == rel_types::IMAGE
+                    && relationship_is_internal(relationship)
                 {
                     let part = OpcPackage::resolve_rel_target(owner, &relationship.target);
                     if !self.identifiers.part_is_preserved(&part) && !ordered.contains(&part) {
@@ -1858,7 +1872,9 @@ impl Document {
         for (owner, _) in &owners {
             if let Some(relationships) = self.package.get_part_rels_mut(owner) {
                 for relationship in &mut relationships.items {
-                    if relationship.rel_type == rel_types::IMAGE {
+                    if relationship.rel_type == rel_types::IMAGE
+                        && relationship_is_internal(relationship)
+                    {
                         let old = OpcPackage::resolve_rel_target(owner, &relationship.target);
                         if let Some(updated) = remap.get(&old) {
                             relationship.target = relative_descendant_target(owner, updated);

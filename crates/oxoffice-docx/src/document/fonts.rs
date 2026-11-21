@@ -419,6 +419,30 @@ impl Document {
         else {
             return Ok(None);
         };
+        // The cleanup after the record removes only its modelled faces'
+        // relationships, so one its kept XML names another way must still be
+        // used by the rest of the table once the record is gone.
+        let named = self
+            .font_table_part_name
+            .as_deref()
+            .and_then(|part| self.package.get_part_rels(part))
+            .map(|relationships| {
+                relationships
+                    .items
+                    .iter()
+                    .filter(|relationship| {
+                        !record
+                            .embedded_fonts
+                            .iter()
+                            .any(|face| face.relationship_id == relationship.id)
+                            && self.font_table.as_ref().is_some_and(|table| {
+                                table.record_mentions_value(name, &relationship.id)
+                            })
+                    })
+                    .map(|relationship| relationship.id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let removed = self.project_font_records(&[record])?.remove(0);
         let mut candidate = self.font_table_mutation_candidate()?;
         let references = candidate
@@ -428,6 +452,19 @@ impl Document {
             .remove_font(name)
             .expect("font record existed before staging")
             .embedded_fonts;
+        let table = candidate
+            .font_table
+            .as_ref()
+            .expect("font-table mutation candidate has a model");
+        if let Some(orphan) = named.iter().find(|id| {
+            table.embedded_relationship_reference_count(id) == 0
+                && !table.retained_raw_mentions_relationship(id)
+        }) {
+            return Err(oxoffice_docx_oxml::OxmlError::InvalidValue(format!(
+                "cannot remove a font record whose retained XML names a relationship: font {name} names {orphan}, which nothing else in the font table uses"
+            ))
+            .into());
+        }
         for reference in references {
             candidate.remove_embedded_font_part(&reference)?;
         }

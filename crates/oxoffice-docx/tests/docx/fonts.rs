@@ -726,12 +726,15 @@ fn a_font_record_whose_kept_xml_names_a_relationship_is_still_refused() {
 fn a_relationship_prefix_counts_only_where_it_is_in_scope() {
     // (case, a record the guard refuses, the same record with the prefix out
     // of scope where the relationship id is, which goes). The font table
-    // binds `r` to the relationships namespace.
+    // binds `r` to the relationships namespace. The id an out-of-scope prefix
+    // names is not a relationship of the font table: one that is, named
+    // outside the relationships namespace, is refused too, since it would
+    // stay with nothing to use it.
     let cases = [
         (
             "redeclared in a nested element",
             r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:wrap xmlns:x="urn:example:fonts"><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
-            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:wrap xmlns:x="urn:example:fonts" xmlns:r="urn:example:other"><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
+            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:wrap xmlns:x="urn:example:fonts" xmlns:r="urn:example:other"><x:face r:id="rId8"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
         ),
         (
             "bound on the record, redeclared in a nested element",
@@ -739,13 +742,13 @@ fn a_relationship_prefix_counts_only_where_it_is_in_scope() {
                 r#"<w:font w:name="Gelasio" xmlns:rel="{REL_NS}"><x:wrap xmlns:x="urn:example:fonts"><x:face rel:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
             ),
             format!(
-                r#"<w:font w:name="Gelasio" xmlns:rel="{REL_NS}"><x:wrap xmlns:x="urn:example:fonts" xmlns:rel="urn:example:other"><x:face rel:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+                r#"<w:font w:name="Gelasio" xmlns:rel="{REL_NS}"><x:wrap xmlns:x="urn:example:fonts" xmlns:rel="urn:example:other"><x:face rel:id="rId8"/></x:wrap><w:family w:val="roman"/></w:font>"#
             ),
         ),
         (
             "unbound in a nested element",
             r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
-            r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:r=""><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
+            r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:r=""><x:face r:id="rId8"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
         ),
         (
             "rebound in a sibling that has closed",
@@ -753,7 +756,7 @@ fn a_relationship_prefix_counts_only_where_it_is_in_scope() {
                 r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:q="urn:example:other"><x:links xmlns:q="{REL_NS}"><x:face q:id="rId9"/></x:links></x:wrap><w:family w:val="roman"/></w:font>"#
             ),
             format!(
-                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:q="urn:example:other"><x:links xmlns:q="{REL_NS}"><x:note/></x:links><x:face q:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:q="urn:example:other"><x:links xmlns:q="{REL_NS}"><x:note/></x:links><x:face q:id="rId8"/></x:wrap><w:family w:val="roman"/></w:font>"#
             ),
         ),
         (
@@ -762,7 +765,7 @@ fn a_relationship_prefix_counts_only_where_it_is_in_scope() {
                 r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:links xmlns:q="{REL_NS}"><x:note q:id="rId9"/></x:links></x:wrap><w:family w:val="roman"/></w:font>"#
             ),
             format!(
-                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:links xmlns:q="{REL_NS}"><x:note/></x:links><x:face q:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:links xmlns:q="{REL_NS}"><x:note/></x:links><x:face q:id="rId8"/></x:wrap><w:family w:val="roman"/></w:font>"#
             ),
         ),
     ];
@@ -946,6 +949,54 @@ fn a_word_record_with_embedded_faces_goes_with_their_relationships_parts_and_con
             .content_type_for("/word/fonts/font3.odttf"),
         Some(OBFUSCATED_FONT_TYPE)
     );
+}
+
+#[test]
+fn a_font_record_naming_a_relationship_outside_its_namespace_is_still_refused() {
+    // rId9 relates the font table to a font part; the kept XML names it
+    // through an attribute in another namespace, so removing the record
+    // would leave the relationship and the part with nothing to use them.
+    let named = r#"<x:face xmlns:x="urn:example:fonts" x:rel="rId9"/>"#;
+    let mut doc = doc_with_font_record(&format!(
+        r#"<w:font w:name="Gelasio"><w:charset w:val="00"/>{named}</w:font>"#
+    ));
+    let before = doc.to_bytes().expect("document saves");
+    let error = doc
+        .remove_font("Gelasio")
+        .expect_err("the record names rId9")
+        .to_string();
+    assert!(
+        error.contains("retained XML names a relationship: font Gelasio names rId9"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().expect("document saves"), before);
+
+    // Another record naming rId9 keeps it in use: the first one goes, and
+    // the last one is refused.
+    let mut doc = doc_with_font_record(&format!(
+        r#"<w:font w:name="Gelasio">{named}</w:font><w:font w:name="Lora">{named}</w:font>"#
+    ));
+    doc.remove_font("Gelasio").expect("Lora still names rId9");
+    assert!(doc.remove_font("Lora").is_err());
+    assert_eq!(font_names(&reopen(&mut doc)), ["Lora"]);
+
+    // A record naming its own modelled face's relationship goes with it.
+    let mut doc = doc_with_font_record(&format!(
+        r#"<w:font w:name="Gelasio"><w:embedRegular r:id="rId9" w:fontKey="{KEY}"/>{named}</w:font>"#
+    ));
+    doc.remove_font("Gelasio")
+        .expect("rId9 is the record's own face");
+    let mut doc = reopen(&mut doc);
+    assert!(font_names(&doc).is_empty());
+    assert!(font_parts(&saved_package(&mut doc)).is_empty());
+
+    // A value that names no relationship of the font table does not block.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:face xmlns:x="urn:example:fonts" x:rel="rId77"/></w:font>"#,
+    );
+    doc.remove_font("Gelasio")
+        .expect("rId77 is not a relationship of the font table");
+    assert!(font_names(&reopen(&mut doc)).is_empty());
 }
 
 #[test]

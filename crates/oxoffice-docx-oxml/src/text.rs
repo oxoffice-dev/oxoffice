@@ -50,9 +50,7 @@ pub(crate) use bindings::{
     retained_owner_work, retained_raw_roots, retained_root_plan, retained_source_envelope,
     root_attribute_value_prefixes, root_binding_scope, write_raw_with_word_override_in,
 };
-pub use bindings::{
-    declare_w14_on_part_root, drop_w14_paragraph_identities, is_root_attribute_record,
-};
+pub use bindings::{declare_w14_on_part_root, is_root_attribute_record};
 use emission::{FieldXmlRecord, field_source_prefix};
 pub(crate) use owner_check::{discard_checked_paragraph, validate_word_owner_fragment};
 pub use run::{
@@ -603,7 +601,6 @@ pub(crate) struct WordOperationWork {
     template_current_inputs: HashSet<usize>,
     retained_inputs: HashSet<usize>,
     stored_inputs: HashSet<usize>,
-    formatting_inputs: HashSet<usize>,
     original_current_inputs: HashSet<OriginalFieldKey>,
     original_source_ranges: std::collections::BTreeMap<(usize, usize), usize>,
     pub(crate) field_origins: Arc<std::sync::Mutex<FieldOriginRegistry>>,
@@ -4381,6 +4378,33 @@ impl CT_P {
         }
         *self = paragraph;
         Ok(())
+    }
+
+    /// Give the reference run of comment `id` that
+    /// [`Self::anchor_accepted_range`] wrote, a run with nothing but the
+    /// reference, the character style `style_id`, as Word styles a comment
+    /// mark. Returns whether such a run was found.
+    #[doc(hidden)]
+    pub fn style_comment_reference_run(&mut self, id: i32, style_id: &str) -> bool {
+        for path in self.accepted_run_paths() {
+            let Some(run) = self.accepted_run_segments_mut(path.segments()) else {
+                continue;
+            };
+            if run.properties.is_none()
+                && run.extra_xml.is_empty()
+                && matches!(
+                    run.content.as_slice(),
+                    [RunContent::CommentReference { id: found, .. }] if *found == id
+                )
+            {
+                run.properties = Some(CT_RPr {
+                    style_id: Some(style_id.to_owned()),
+                    ..Default::default()
+                });
+                return true;
+            }
+        }
+        false
     }
 
     /// Insert one run at a checked accepted-view boundary atomically.

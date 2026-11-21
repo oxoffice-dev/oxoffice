@@ -1929,19 +1929,18 @@ fn referenced_hyperlink_ids(content: &[BodyContent]) -> Vec<String> {
     ids
 }
 
+/// The heading level a paragraph is exported at, before the level-6 clamp:
+/// its own outline level, else the shared heading rule (built-in name
+/// `heading N`, else id), else its style's outline level.
 fn projected_heading_level(paragraph: &CT_P, styles: &CT_Styles) -> Option<u32> {
     let properties = paragraph.properties.as_ref()?;
     if let Some(level) = properties.outline_lvl {
         return level.checked_add(1);
     }
-    let style_id = properties.style_id.as_deref()?;
-    if let Some(level) = style_id
-        .strip_prefix("Heading")
-        .and_then(|level| level.parse::<u32>().ok())
-        .filter(|level| (1..=9).contains(level))
-    {
+    if let Some(level) = crate::document::paragraph_heading_level(paragraph, styles) {
         return Some(level);
     }
+    let style_id = properties.style_id.as_deref()?;
     styles
         .get_by_id(style_id)
         .and_then(|style| style.ppr.as_ref())
@@ -1949,6 +1948,10 @@ fn projected_heading_level(paragraph: &CT_P, styles: &CT_Styles) -> Option<u32> 
         .and_then(|level| level.checked_add(1))
 }
 
+/// Whether a list paragraph is exported as a heading rather than a list
+/// item: by its own outline level, the shared heading rule (built-in name
+/// `heading N`, else id) or its style's outline level. `styles` are the
+/// source styles, which keep the names.
 fn projects_as_heading(paragraph: &CT_P, styles: &CT_Styles) -> bool {
     let Some(properties) = &paragraph.properties else {
         return false;
@@ -1956,16 +1959,12 @@ fn projects_as_heading(paragraph: &CT_P, styles: &CT_Styles) -> bool {
     if properties.outline_lvl.is_some_and(|level| level <= 8) {
         return true;
     }
+    if crate::document::paragraph_heading_level(paragraph, styles).is_some() {
+        return true;
+    }
     let Some(style_id) = properties.style_id.as_deref() else {
         return false;
     };
-    if style_id
-        .strip_prefix("Heading")
-        .and_then(|level| level.parse::<u32>().ok())
-        .is_some_and(|level| (1..=9).contains(&level))
-    {
-        return true;
-    }
     styles
         .get_by_id(style_id)
         .and_then(|style| style.ppr.as_ref())
@@ -2377,7 +2376,7 @@ fn emit_list_level(
             push_bounded_xhtml(output, "</li>\n")?;
         }
         let anchor = heading_anchors.get(index).map(String::as_str);
-        let preserve_heading = projects_as_heading(paragraph, &input.styles);
+        let preserve_heading = projects_as_heading(paragraph, source_styles);
         let value = list_values.get(index).copied().unwrap_or(expected_value);
         if list.kind == ListKind::Ordered && value != expected_value {
             push_bounded_xhtml(output, &format!("<li value=\"{value}\">"))?;
@@ -2432,11 +2431,14 @@ fn render_source_block(
     let image_occurrences = supported_image_occurrences(content, input);
     let mut content = render_body_projection(content)
         .ok_or_else(|| epub_error("unsupported source block reached EPUB projection"))?;
+    // The HTML writer reads the heading level from a `HeadingN` id: give it
+    // the level the shared rule reads in the source style, whatever its
+    // localised id, at most 6.
     if let BodyContent::Paragraph(paragraph) = &mut content
-        && crate::document::paragraph_heading_level(paragraph, source_styles)
-            .is_some_and(|level| level > 6)
+        && let Some(level) = crate::document::paragraph_heading_level(paragraph, source_styles)
     {
-        paragraph.properties.get_or_insert_default().style_id = Some("Heading6".to_owned());
+        paragraph.properties.get_or_insert_default().style_id =
+            Some(format!("Heading{}", level.min(6)));
     }
     if suppress_numbering && let BodyContent::Paragraph(paragraph) = &mut content {
         let properties = paragraph.properties.get_or_insert_default();

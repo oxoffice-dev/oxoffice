@@ -2,8 +2,8 @@
   "id": "docx-pdf-pagination",
   "format": "docx",
   "area": "pdf",
-  "title": "PDF pages: a blank page before a section break, endnotes over a final table, outline entries on the wrong page",
-  "symptom": "a page break just before a next-page section break leaves a blank page; endnotes overlap a table that ends the document; an outline entry opens the page before a heading moved by keep with next",
-  "workaround": "remove the page break before a next-page section break; end the document with a paragraph after a final table; put a page break before such a heading",
+  "title": "PDF pages: endnotes over a final table, outline entries on the wrong page, a blank page in rare section breaks",
+  "symptom": "endnotes overlap a table that ends the document; an outline entry opens the page before a heading moved by keep with next; a page break beside a wrapping floating picture, or an empty paragraph with page break before, just before a next-page section break still leaves a blank page; an odd-page or even-page section starts on the next page whatever its number",
+  "workaround": "end the document with a paragraph after a final table; put a page break before such a heading; remove the page break before such a section break; add a page break where an odd-page or even-page section should skip a page",
   "issue": 156
 }

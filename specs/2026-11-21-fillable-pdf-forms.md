@@ -541,8 +541,8 @@ Rust first, then the CLI and Python. Each pull request has its own check.
      - Legacy marks name the main-story paragraph, as control marks do, and
        a legacy field in a rotated cell or a vertical section stays static
        and says so.
-     - A legacy drop-down with no stored result draws nothing today (#170),
-       so it gathers nothing, stays static and says so.
+     - A legacy drop-down with no stored result, as Word saves one, draws
+       its selected entry (#170) and becomes a field like the others.
      - Word's empty text field, five en spaces, has no value.
      - A legacy field nested in another field, or whose form data does not
        read, stays static with a diagnostic. A field the model does not read
