@@ -30555,7 +30555,7 @@ fn parse_instruction_syntax(
     Vec<ParsedFieldSummary>,
 ) {
     let mut raw = String::new();
-    let mut tokens = Vec::new();
+    let mut lexer = FieldLexer::new();
     let mut text = String::new();
     let mut fields = Vec::new();
     let mut summaries = Vec::new();
@@ -30566,23 +30566,21 @@ fn parse_instruction_syntax(
                 text.push_str(&value);
             }
             InstructionPart::Nested(field, summary) => {
-                tokens.extend(lex_field_text(&text));
+                lexer.text(&text);
                 text.clear();
-                let index = fields.len();
+                lexer.nested(fields.len());
                 fields.push(Some(field));
                 summaries.push(summary);
-                tokens.push(InstructionToken {
-                    argument: InstructionOperand::Nested(index),
-                    quoted: false,
-                    source_span: None,
-                    well_formed: true,
-                });
             }
         }
     }
-    tokens.extend(lex_field_text(&text));
+    lexer.text(&text);
 
-    (classify_instruction_tokens(raw, tokens), fields, summaries)
+    (
+        classify_instruction_tokens(raw, lexer.finish()),
+        fields,
+        summaries,
+    )
 }
 
 fn classify_instruction_tokens(raw: String, tokens: Vec<InstructionToken>) -> InstructionSyntax {
@@ -30710,70 +30708,150 @@ fn switch_takes_argument(field_name: &str, switch_name: &str) -> bool {
 }
 
 fn lex_field_text(input: &str) -> Vec<InstructionToken> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut characters = input.char_indices().peekable();
-    let mut quoted = false;
-    let mut token_was_quoted = false;
-    let mut token_start = None;
-    let mut quote_closed = false;
-    let mut well_formed = true;
-    while let Some((offset, character)) = characters.next() {
-        if !quoted && character.is_whitespace() {
-            if !current.is_empty() || token_was_quoted {
-                tokens.push(InstructionToken {
-                    argument: InstructionOperand::Text(std::mem::take(&mut current)),
-                    quoted: token_was_quoted,
-                    source_span: token_start.map(|start| start..offset),
-                    well_formed,
-                });
-            }
-            token_start = None;
-            token_was_quoted = false;
-            quote_closed = false;
-            well_formed = true;
-            continue;
+    let mut lexer = FieldLexer::new();
+    lexer.text(input);
+    lexer.finish()
+}
+
+/// Splits a field instruction into operands, one text segment or nested field
+/// at a time. A nested field is one atom of its operand, so a quote stays open
+/// across it: `IF "{ MERGEFIELD Country }" = "France"` reads the nested field
+/// as the quoted operand, as Word does.
+struct FieldLexer {
+    tokens: Vec<InstructionToken>,
+    /// The operand being read: text, nested fields, or a mix of both.
+    pieces: Vec<InstructionOperand>,
+    quoted: bool,
+    token_was_quoted: bool,
+    token_start: Option<usize>,
+    token_end: usize,
+    quote_closed: bool,
+    well_formed: bool,
+}
+
+impl FieldLexer {
+    fn new() -> Self {
+        Self {
+            tokens: Vec::new(),
+            pieces: Vec::new(),
+            quoted: false,
+            token_was_quoted: false,
+            token_start: None,
+            token_end: 0,
+            quote_closed: false,
+            well_formed: true,
         }
-        token_start.get_or_insert(offset);
-        if quoted {
-            match character {
-                '"' => {
-                    quoted = false;
-                    quote_closed = true;
-                }
-                '\\' if characters
-                    .peek()
-                    .is_some_and(|(_, next)| matches!(next, '"' | '\\')) =>
-                {
-                    current.push(characters.next().expect("peeked character exists").1);
-                }
-                _ => current.push(character),
+    }
+
+    /// Read one text segment. Source spans are offsets in this segment, so
+    /// they only mean something when the instruction is one segment.
+    fn text(&mut self, input: &str) {
+        let mut characters = input.char_indices().peekable();
+        while let Some((offset, character)) = characters.next() {
+            if !self.quoted && character.is_whitespace() {
+                self.token_end = offset;
+                self.end_token();
+                continue;
             }
-        } else {
-            if quote_closed {
-                well_formed = false;
-            }
-            match character {
-                '"' => {
-                    if !current.is_empty() {
-                        well_formed = false;
+            self.token_start.get_or_insert(offset);
+            if self.quoted {
+                match character {
+                    '"' => {
+                        self.quoted = false;
+                        self.quote_closed = true;
                     }
-                    quoted = true;
-                    token_was_quoted = true;
+                    '\\' if characters
+                        .peek()
+                        .is_some_and(|(_, next)| matches!(next, '"' | '\\')) =>
+                    {
+                        self.push_char(characters.next().expect("peeked character exists").1);
+                    }
+                    _ => self.push_char(character),
                 }
-                _ => current.push(character),
+            } else {
+                if self.quote_closed {
+                    self.well_formed = false;
+                }
+                match character {
+                    '"' => {
+                        if !self.pieces.is_empty() {
+                            self.well_formed = false;
+                        }
+                        self.quoted = true;
+                        self.token_was_quoted = true;
+                    }
+                    _ => self.push_char(character),
+                }
+            }
+        }
+        self.token_end = input.len();
+    }
+
+    /// Read one nested field, the `index`th of the instruction.
+    fn nested(&mut self, index: usize) {
+        if !self.quoted && self.quote_closed {
+            self.well_formed = false;
+        }
+        self.pieces.push(InstructionOperand::Nested(index));
+    }
+
+    fn push_char(&mut self, character: char) {
+        if let Some(InstructionOperand::Text(text)) = self.pieces.last_mut() {
+            text.push(character);
+        } else {
+            self.pieces
+                .push(InstructionOperand::Text(character.to_string()));
+        }
+    }
+
+    fn end_token(&mut self) {
+        let pieces = std::mem::take(&mut self.pieces);
+        let quoted = self.token_was_quoted;
+        let well_formed = self.well_formed && !self.quoted;
+        let span = self.token_start.map(|start| start..self.token_end);
+        self.token_start = None;
+        self.token_was_quoted = false;
+        self.quote_closed = false;
+        self.well_formed = true;
+        let has_nested = pieces
+            .iter()
+            .any(|piece| matches!(piece, InstructionOperand::Nested(_)));
+        match <[InstructionOperand; 1]>::try_from(pieces) {
+            Ok([argument]) => self.tokens.push(InstructionToken {
+                source_span: (!has_nested).then_some(span).flatten(),
+                argument,
+                quoted,
+                well_formed,
+            }),
+            Err(pieces) if pieces.is_empty() => {
+                if quoted {
+                    self.tokens.push(InstructionToken {
+                        argument: InstructionOperand::Text(String::new()),
+                        quoted,
+                        source_span: span,
+                        well_formed,
+                    });
+                }
+            }
+            // Text joined to a nested field, or two nested fields in one
+            // operand: the model holds no such operand, so each piece is one
+            // and the token is marked ill-formed.
+            Err(pieces) => {
+                self.tokens
+                    .extend(pieces.into_iter().map(|argument| InstructionToken {
+                        argument,
+                        quoted,
+                        source_span: None,
+                        well_formed: false,
+                    }))
             }
         }
     }
-    if !current.is_empty() || token_was_quoted {
-        tokens.push(InstructionToken {
-            argument: InstructionOperand::Text(current),
-            quoted: token_was_quoted,
-            source_span: token_start.map(|start| start..input.len()),
-            well_formed: well_formed && !quoted,
-        });
+
+    fn finish(mut self) -> Vec<InstructionToken> {
+        self.end_token();
+        self.tokens
     }
-    tokens
 }
 
 /// Replace only bibliography l, f and m token spans, retaining other raw spelling.
