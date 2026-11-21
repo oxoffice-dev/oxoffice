@@ -285,6 +285,43 @@ fn no_page_of_a_corpus_report_is_blank() {
 }
 
 #[test]
+fn a_table_of_contents_entry_saved_by_libreoffice_keeps_its_title() {
+    // LibreOffice writes the whole entry (number, tab, title, tab, page) as
+    // the result of its PAGEREF; Word writes the page number alone.
+    let entry = |result: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="right" w:pos="9000"/></w:tabs></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">PAGEREF _Toc1 \h</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r>{result}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let heading = r#"<w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Motivation</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#;
+    let libreoffice = entry("<w:t>1.1</w:t><w:tab/><w:t>Motivation</w:t><w:tab/><w:t>7</w:t>");
+    let word = entry("<w:t>7</w:t>");
+    // A level whose entry has no tab stop separates its parts with spaces.
+    let spaced = entry("<w:t xml:space=\"preserve\">1.2 Research questions 9</w:t>");
+    // The entry inside another field's result, closed in the same paragraph.
+    let nested = format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> QUOTE "x" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        entry("<w:t>1.3</w:t><w:tab/><w:t>Scope</w:t><w:tab/><w:t>8</w:t>")
+            .split_once("</w:pPr>")
+            .expect("an entry has paragraph properties")
+            .1
+            .trim_end_matches("</w:p>")
+    );
+    let pdf = pdf_of(&doc_with_body(&format!(
+        "{libreoffice}{word}{spaced}{nested}{heading}"
+    )));
+    let lines: Vec<String> = lines(&pdf.drawn(0))
+        .into_iter()
+        .map(|line| squeeze(&line.text))
+        .collect();
+    assert_eq!(
+        lines[..4],
+        ["1.1Motivation7", "1", "1.2Researchquestions9", "1.3Scope8"],
+        "the LibreOffice entries keep their stored text, the Word one gets the page"
+    );
+}
+
+#[test]
 fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
     let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;

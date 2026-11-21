@@ -66,7 +66,7 @@ use field_format::{
 };
 pub use field_format::{
     format_numeric_field_general, format_numeric_field_picture, format_page_field_result,
-    section_page_number_format,
+    page_reference_keeps_stored_display, section_page_number_format,
 };
 pub use fonts_annotations::{WordFontSlot, resolve_font_family};
 use fonts_annotations::{
