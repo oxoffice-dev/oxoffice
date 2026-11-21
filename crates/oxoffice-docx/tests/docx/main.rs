@@ -24,6 +24,7 @@ mod pdf_forms;
 mod pictures;
 mod properties_and_settings;
 mod property_strings;
+mod reader_view;
 mod render;
 mod revisions_and_compare;
 mod save;

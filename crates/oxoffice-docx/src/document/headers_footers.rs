@@ -1578,9 +1578,15 @@ impl Document {
             };
             self.first_usable_header_footer_reference(refs, hdr_type, is_header)
         })?;
+        // The text a reader sees: simple field results and tracked
+        // insertions included.
         Some(
             self.load_header_footer(&reference.rel_id, is_header)?
-                .text(),
+                .paragraphs
+                .iter()
+                .map(CT_P::accepted_text)
+                .collect::<Vec<_>>()
+                .join("\n"),
         )
     }
 }

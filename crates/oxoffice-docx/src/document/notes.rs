@@ -17,7 +17,7 @@ impl Document {
                 let text = f
                     .paragraphs
                     .iter()
-                    .map(|p| p.text())
+                    .map(|p| p.accepted_text())
                     .collect::<Vec<_>>()
                     .join("\n");
                 (f.id, text)

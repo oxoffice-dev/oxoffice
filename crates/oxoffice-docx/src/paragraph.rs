@@ -125,14 +125,11 @@ impl<'a> HyperlinkRef<'a> {
             .any(|(name, _)| name != "xmlns" && !name.starts_with("xmlns:"))
     }
 
-    /// Get the combined text of the hyperlink runs, field results included,
-    /// as [`crate::Paragraph::text`] reads each run.
+    /// Get the combined text of the hyperlink as a reader sees it: its runs
+    /// with their field results and the tracked insertions inside it, as
+    /// [`crate::Paragraph::text`] reads them.
     pub fn text(&self) -> String {
-        let hyperlink = self.inner();
-        self.paragraph.runs[hyperlink.run_start..hyperlink.run_end]
-            .iter()
-            .map(CT_R::accepted_text)
-            .collect()
+        self.paragraph.accepted_hyperlink_text(self.index)
     }
 
     /// Iterate over hyperlink children in source order.

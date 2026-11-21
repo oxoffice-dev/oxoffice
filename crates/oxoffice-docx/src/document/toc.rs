@@ -71,7 +71,7 @@ impl Document {
                 && let Some(level) = self.detect_heading_level_for_toc(p)
                 && level <= max_level
             {
-                let text = p.text();
+                let text = p.accepted_text();
                 if !text.trim().is_empty() {
                     let Some(suffix) = next_toc_bookmark_suffix(&occupied_suffixes, toc_counter)
                     else {

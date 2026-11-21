@@ -756,7 +756,7 @@ impl CommentRef<'_> {
         self.inner
             .paragraphs
             .iter()
-            .map(CT_P::text)
+            .map(CT_P::accepted_text)
             .collect::<Vec<_>>()
             .join("\n")
     }

@@ -250,8 +250,7 @@ fn emit_paragraph(
     if role("HTMLThematicBreak", "HTML Thematic Break") {
         text = "---".to_owned();
     } else if role("HTMLPreformatted", "HTML Preformatted") || quoted_pre {
-        let (accepted, _) = para.accepted_view_with_field_owners();
-        let code = accepted.text();
+        let code = para.accepted_text();
         let code = code.strip_suffix('\n').unwrap_or(&code);
         let length = code
             .split(|character| character != '`')
