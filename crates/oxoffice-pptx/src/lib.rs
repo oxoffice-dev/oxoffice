@@ -24154,9 +24154,10 @@ impl<'a> Shapes<'a> {
     /// [`ShapeRef::children`] gives paths relative to that group.
     ///
     /// An alternate-content block is visited but not entered: the members of
-    /// its fallback cannot be edited, so that every shape the walk gives can
-    /// be. [`ShapeRef::children`] reads them. The walk keeps its own stack, so
-    /// deeply nested groups cannot overflow the thread's stack.
+    /// its fallback cannot be edited, and [`ShapeRef::children`] reads them.
+    /// The block itself is read-only too, as when iterating: an edit returns
+    /// an error. The walk keeps its own stack, so deeply nested groups cannot
+    /// overflow the thread's stack.
     pub fn walk(self) -> ShapeWalk<'a> {
         ShapeWalk {
             levels: vec![(self.children, self.indices)],
