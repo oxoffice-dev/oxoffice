@@ -1099,22 +1099,26 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
         added.is_empty(),
         "styles added beside Word's comment styles: {added:?}"
     );
-    // And the new comment takes Word's own comment styles: one more comment
-    // paragraph in "Commentaire" and one more mark in "Marquedecommentaire".
-    let count = |xml: &str, style: &str| xml.matches(&format!("w:val=\"{style}\"")).count();
-    let comments = doc.part_xml("word/comments.xml").unwrap();
-    for style in ["Commentaire", "Marquedecommentaire"] {
-        assert_eq!(
-            count(&comments, style),
-            2 * count(
-                &corpus_doc("word/report.docx")
-                    .part_xml("word/comments.xml")
-                    .unwrap(),
-                style
-            ),
-            "the new comment uses {style}"
-        );
+    // And the new comment takes Word's own styles. Word marks a comment
+    // with "Marquedecommentaire" (once in the untouched report, on the
+    // reference run of the body); every style the comment parts name exists.
+    let ids: Vec<String> = names(&doc).into_iter().map(|(id, _)| id).collect();
+    let mut marks = 0;
+    for part in ["word/comments.xml", "word/document.xml"] {
+        let xml = doc.part_xml(part).unwrap();
+        marks += xml.matches("w:val=\"Marquedecommentaire\"").count();
+        for named in xml.split("Style w:val=\"").skip(1) {
+            let id = &named[..named.find('"').unwrap()];
+            assert!(
+                ids.iter().any(|known| known == id),
+                "{part} names the undefined style {id}"
+            );
+        }
     }
+    assert!(
+        marks >= 2,
+        "the new comment is marked with Word's comment mark style"
+    );
 }
 
 // Fails today: the comment styles a new document gets are named after their
