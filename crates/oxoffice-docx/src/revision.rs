@@ -2409,6 +2409,8 @@ impl<'a> XmlTree<'a> {
     /// Relocation preserves the source context, including prefixes used only
     /// in opaque values. A child-local declaration wins over inherited context.
     /// Identical source and destination bindings need no extra declaration.
+    /// A default namespace the destination declares and the source lacks is
+    /// undeclared only for a subtree with an unprefixed element.
     fn relocation_namespaces(
         &self,
         index: usize,
@@ -2442,11 +2444,26 @@ impl<'a> XmlTree<'a> {
             && destination
                 .iter()
                 .any(|(prefix, value)| prefix.is_empty() && !value.is_empty())
+            && self.has_unprefixed_element(index)
         {
             changed.push((String::new(), String::new()));
         }
         changed.sort();
         changed
+    }
+
+    /// Whether an element of this subtree has no prefix, and so takes the
+    /// default namespace in scope.
+    fn has_unprefixed_element(&self, index: usize) -> bool {
+        let mut pending = vec![index];
+        while let Some(at) = pending.pop() {
+            let element = &self.elements[at];
+            if !element.name.contains(':') {
+                return true;
+            }
+            pending.extend(element.children.iter().copied());
+        }
+        false
     }
 
     fn render(
