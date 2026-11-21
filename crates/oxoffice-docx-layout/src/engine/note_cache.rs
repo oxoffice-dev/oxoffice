@@ -20,11 +20,21 @@ pub(super) fn stored_note_cache_runs(
         paint_scope: 0,
     });
     let locked = inherited_locked || field.locked() == Some(true);
-    // A legacy checkbox draws the box of its state, whatever result it
-    // stores, nested in another field's result too: Word stores none.
-    if let Some(glyph) = super::paragraph::drawn_legacy_checkbox(field) {
+    // On the page, a legacy checkbox draws the box of its state, whatever
+    // result it stores: nested in another field's result, or deleted in the
+    // tracked view. Navigation text, which passes no input, keeps its text.
+    if input.is_some()
+        && let Some(glyph) = super::paragraph::drawn_legacy_checkbox(field)
+    {
         let mut run = CT_R::new(glyph);
-        run.properties = field.begin_run_properties().or_else(|| inherited.cloned());
+        // The formatting of its stored result, else of the run opening it,
+        // as at the top level.
+        run.properties = field
+            .cached_result_runs()
+            .and_then(|runs| runs.first())
+            .and_then(|first| first.properties.clone())
+            .or_else(|| field.begin_run_properties())
+            .or_else(|| inherited.cloned());
         if let Some(oxoffice_docx_oxml::text::LegacyCheckBoxSize::HalfPoints(size)) = field
             .legacy_form
             .as_ref()

@@ -771,9 +771,7 @@ fn layout_paragraph_with_source_and_table(
                     projected.revision,
                     Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
                 ) {
-                    // A deleted legacy checkbox still draws the box of its
-                    // state, struck through with its run, as Word does.
-                    (drawn_legacy_checkbox(field).map(str::to_owned), None)
+                    (None, None)
                 } else {
                     computed_layout_field(field, source, source_node, input, num_state, diagnostics)
                 };

@@ -1545,18 +1545,24 @@ fn a_legacy_checkbox_takes_its_opening_run_style() {
 }
 
 #[test]
-fn a_legacy_checkbox_inside_another_fields_result_draws_its_box() {
-    // An IF field whose stored result holds a checkbox as Word saves it,
-    // with no result run of its own.
+fn a_legacy_checkbox_inside_another_fields_result_draws_its_box_at_its_size() {
+    // An IF field whose stored result holds checkboxes as Word saves them,
+    // with no result run of their own.
     let doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-        word_checkbox("<w:sizeAuto/>", true)
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        word_checkbox("<w:sizeAuto/>", true),
+        word_checkbox(r#"<w:size w:val="24"/>"#, false)
     ));
-    let texts: String = drawn_runs(&doc)
-        .into_iter()
-        .map(|(text, _, _)| text)
+    let runs = drawn_runs(&doc);
+    let drawn: Vec<(&str, f64)> = runs
+        .iter()
+        .map(|(text, size, _)| (text.as_str(), *size))
         .collect();
-    assert_eq!(texts, "\u{2612}", "the nested box draws from its state");
+    assert_eq!(
+        drawn,
+        [("\u{2612}", 10.0), ("\u{2610}", 12.0)],
+        "each nested box draws from its state, at the opening run's size or its own"
+    );
 }
 
 #[test]
@@ -1582,6 +1588,11 @@ fn a_legacy_checkbox_in_a_tracked_deletion_draws_its_box_in_the_tracked_view() {
         "the deleted box draws: {texts:?}"
     );
     assert!(!texts.contains('X'), "not its stored X: {texts:?}");
+    let accepted: String = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(accepted, " kept", "the accepted view draws no box");
 }
 
 #[test]
