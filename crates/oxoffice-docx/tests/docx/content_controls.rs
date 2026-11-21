@@ -261,6 +261,46 @@ fn prompt(target: FormFieldTarget, required: bool, text: &str) -> FormFieldRule 
     }
 }
 
+/// Set the value of the control tagged `tag` with the tag setter, or with a
+/// form fill when `by_form`.
+fn set_value(doc: &mut Document, tag: &str, value: &str, by_form: bool) {
+    if by_form {
+        let rule = prompt(target(tag), false, "");
+        assert_eq!(
+            doc.fill_form(&[rule], &[assign(target(tag), text(value))])
+                .expect("the form fill writes the value"),
+            [1]
+        );
+    } else {
+        assert_eq!(
+            doc.set_content_control_value_by_tag(tag, value)
+                .expect("the tag setter writes the value"),
+            1
+        );
+    }
+}
+
+/// The two ways to set a value, for the messages of the tests that try both.
+fn way(by_form: bool) -> &'static str {
+    if by_form { "fill_form" } else { "tag setter" }
+}
+
+/// The `w:sdtContent` of the control tagged `tag`, as `part` saves now.
+fn saved_content(doc: &Document, part: &str, tag: &str) -> String {
+    let xml = doc.part_xml(part).expect("part is present");
+    let at = xml
+        .find(&format!("<w:tag w:val=\"{tag}\"/>"))
+        .unwrap_or_else(|| panic!("no control has tag {tag} in {part}"));
+    let start = at + xml[at..].find("<w:sdtContent").expect("its content starts");
+    let end = at + xml[at..].find("</w:sdtContent>").expect("its content ends");
+    xml[start..end].to_owned()
+}
+
+/// The number of `w:p` in `xml`.
+fn paragraph_count(xml: &str) -> usize {
+    Regex::new(r"<w:p[\s>/]").unwrap().find_iter(xml).count()
+}
+
 /// A document whose header holds an empty plain text control tagged "title".
 fn doc_with_header_control() -> Document {
     let mut doc = doc_with(&["Body"]);
@@ -778,41 +818,221 @@ fn a_text_value_replaces_the_content_and_ends_the_placeholder_state() {
 /// formatting for the value in the control's own `w:rPr`.
 const PROMPTING: &str = r#"<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:alias w:val="Name"/><w:tag w:val="name"/><w:id w:val="42"/><w:showingPlcHdr/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>Type your name</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
 
+/// Text, style id, bold and italic of one run.
+type RunFormatting = (String, Option<String>, Option<bool>, Option<bool>);
+
+/// The formatting of each run with text of the first paragraph, those of its
+/// inline controls included.
+fn run_formatting(doc: &Document) -> Vec<RunFormatting> {
+    doc.paragraph(0)
+        .unwrap()
+        .runs()
+        .map(|run| {
+            (
+                run.text(),
+                run.style_id().map(str::to_owned),
+                run.bold_value(),
+                run.italic_value(),
+            )
+        })
+        .filter(|(text, ..)| !text.is_empty())
+        .collect()
+}
+
 #[test]
 fn a_value_set_on_a_prompt_drops_the_placeholder_text_style() {
-    let mut doc = doc_with_body(PROMPTING);
-    doc.set_content_control_value_by_tag("name", "Ada Lovelace")
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["Name: Ada Lovelace"]);
-    let paragraph = doc.paragraph(0).unwrap();
-    let styles: Vec<(String, Option<String>)> = paragraph
-        .runs()
-        .map(|run| (run.text(), run.style_id().map(str::to_owned)))
-        .filter(|(text, _)| !text.is_empty())
-        .collect();
-    assert_eq!(
-        styles,
-        [
-            ("Name: ".to_owned(), None),
-            ("Ada Lovelace".to_owned(), None)
-        ],
-        "the value is not styled as placeholder text"
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(PROMPTING);
+        set_value(&mut doc, "name", "Ada Lovelace", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["Name: Ada Lovelace"], "{}", way(by_form));
+        let styles: Vec<(String, Option<String>)> = run_formatting(&doc)
+            .into_iter()
+            .map(|(text, style, ..)| (text, style))
+            .collect();
+        assert_eq!(
+            styles,
+            [
+                ("Name: ".to_owned(), None),
+                ("Ada Lovelace".to_owned(), None)
+            ],
+            "{}: the value is not styled as placeholder text",
+            way(by_form)
+        );
+    }
+}
+
+#[test]
+fn a_value_set_on_a_prompt_takes_the_run_properties_of_the_control() {
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(PROMPTING);
+        set_value(&mut doc, "name", "Ada Lovelace", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            run_formatting(&doc),
+            [
+                ("Name: ".to_owned(), None, None, None),
+                ("Ada Lovelace".to_owned(), None, Some(true), None)
+            ],
+            "{}: the value is bold, as the control's w:rPr says",
+            way(by_form)
+        );
+    }
+    // Run properties under a prefix the control declares: the value's run,
+    // outside the control's properties, needs the declaration too.
+    let prefixed = PROMPTING.replace(
+        "<w:sdtPr><w:rPr><w:b/></w:rPr>",
+        r#"<w:sdtPr xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><x:rPr><x:b/></x:rPr>"#,
     );
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(&prefixed);
+        set_value(&mut doc, "name", "Ada Lovelace", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            run_formatting(&doc)[1],
+            ("Ada Lovelace".to_owned(), None, Some(true), None),
+            "{}",
+            way(by_form)
+        );
+    }
+    // A value over an earlier value keeps that value's formatting.
+    let earlier = r#"<w:p><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="name"/><w:id w:val="42"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:i/></w:rPr><w:t>Grace Hopper</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(earlier);
+        set_value(&mut doc, "name", "Ada Lovelace", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            run_formatting(&doc),
+            [("Ada Lovelace".to_owned(), None, None, Some(true))],
+            "{}",
+            way(by_form)
+        );
+    }
+}
+
+#[test]
+fn a_value_set_on_a_prompt_in_a_localized_placeholder_style_drops_that_style() {
+    // French Word gives the built-in style an id of its own, and keeps its
+    // English name.
+    let localized = r#"<w:style w:type="character" w:styleId="Textedelespacerserv"><w:name w:val="Placeholder Text"/><w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:color w:val="666666"/></w:rPr></w:style>"#;
+    // The control has no run properties of its own: the run keeps its
+    // other formatting.
+    for (properties, italic) in [
+        (r#"<w:rStyle w:val="Textedelespacerserv"/>"#, None),
+        (
+            r#"<w:rStyle w:val="Textedelespacerserv"/><w:i/>"#,
+            Some(true),
+        ),
+    ] {
+        let body = format!(
+            r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="name"/><w:id w:val="42"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:rPr>{properties}</w:rPr><w:t>Saisissez votre nom</w:t></w:r></w:sdtContent></w:sdt></w:p>"#
+        );
+        for by_form in [false, true] {
+            let mut doc = with_style(&mut doc_with_body(&body), localized);
+            set_value(&mut doc, "name", "Ada Lovelace", by_form);
+            let doc = reopen(&mut doc);
+            assert_eq!(
+                run_formatting(&doc),
+                [("Ada Lovelace".to_owned(), None, None, italic)],
+                "{properties}, {}: the value is not greyed out",
+                way(by_form)
+            );
+        }
+    }
+}
+
+/// `doc` saved with `style` added to its styles part.
+fn with_style(doc: &mut Document, style: &str) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(
+        package
+            .get_part("/word/styles.xml")
+            .expect("styles")
+            .to_vec(),
+    )
+    .expect("styles are UTF-8");
+    let end = xml.rfind("</w:styles>").expect("styles end");
+    let xml = format!("{}{style}{}", &xml[..end], &xml[end..]);
+    package.set_part("/word/styles.xml", xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document with the style opens")
 }
 
 #[test]
 fn a_line_break_in_a_value_is_written_as_a_break() {
-    let mut doc = doc_with_body(PROMPTING);
-    doc.set_content_control_value_by_tag("name", "Ada Lovelace\nLondon")
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let (_, xml) = control_item(&doc, &body(&doc), "name");
-    assert!(xml.contains("Ada Lovelace"), "{xml}");
-    assert!(
-        has(&xml, "w:br") && !xml.contains("Lovelace\nLondon"),
-        "the line break is written as a w:br: {xml}"
-    );
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(PROMPTING);
+        set_value(&mut doc, "name", "Ada Lovelace\nLondon", by_form);
+        let doc = reopen(&mut doc);
+        let (_, xml) = control_item(&doc, &body(&doc), "name");
+        assert!(xml.contains("Ada Lovelace"), "{}: {xml}", way(by_form));
+        assert!(
+            has(&xml, "w:br") && !xml.contains("Lovelace\nLondon"),
+            "{}: the line break is written as a w:br: {xml}",
+            way(by_form)
+        );
+        assert_eq!(
+            value(&doc, "name"),
+            "Ada Lovelace\nLondon",
+            "{}",
+            way(by_form)
+        );
+    }
+}
+
+#[test]
+fn a_tab_and_a_carriage_return_in_a_value_are_written_as_a_tab_and_a_break() {
+    let piece = Regex::new(r"<w:(t|tab|br)\b[^>]*?(/>|>([^<]*)</w:t>)").unwrap();
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(PROMPTING);
+        set_value(&mut doc, "name", "Ada\tLovelace\rLondon\r\nUK", by_form);
+        let doc = reopen(&mut doc);
+        let content = saved_content(&doc, "word/document.xml", "name");
+        let pieces: Vec<&str> = piece
+            .captures_iter(&content)
+            .map(|captures| match &captures[1] {
+                "t" => captures.get(3).map_or("", |text| text.as_str()),
+                "tab" => "TAB",
+                _ => "BR",
+            })
+            .collect();
+        assert_eq!(
+            pieces,
+            ["Ada", "TAB", "Lovelace", "BR", "London", "BR", "UK"],
+            "{}: a lone carriage return and a Windows line ending are one break each: {content}",
+            way(by_form)
+        );
+        assert_eq!(
+            value(&doc, "name"),
+            "Ada\tLovelace\nLondon\nUK",
+            "{}",
+            way(by_form)
+        );
+    }
+}
+
+#[test]
+fn a_line_break_in_a_value_keeps_a_run_child_after_the_text_after_the_value() {
+    let body = r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="name"/><w:id w:val="42"/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:t>Grace</w:t><x:mark xmlns:x="urn:example"/></w:r></w:sdtContent></w:sdt></w:p>"#;
+    let child = Regex::new(r"<(w:t|w:br|x:mark)\b").unwrap();
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(body);
+        set_value(&mut doc, "name", "Ada\nLondon", by_form);
+        let doc = reopen(&mut doc);
+        let content = saved_content(&doc, "word/document.xml", "name");
+        let order = child
+            .captures_iter(&content)
+            .map(|captures| captures[1].to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            ["w:t", "w:br", "w:t", "x:mark"],
+            "{}: {content}",
+            way(by_form)
+        );
+    }
 }
 
 #[test]
@@ -1034,6 +1254,51 @@ fn a_combo_box_accepts_text_outside_its_items() {
 }
 
 #[test]
+fn a_bound_combo_box_stores_text_outside_its_items_and_a_form_takes_it() {
+    let items = vec![("France".to_owned(), "FR".to_owned())];
+    let mut doc = typed_control(
+        "country",
+        ContentControlTypePayload::ComboBox {
+            items: items.clone(),
+        },
+    );
+    let store = doc
+        .add_custom_xml_store(b"<supplier><country>FR</country></supplier>", &[])
+        .unwrap();
+    let location = control_at(&doc, &body(&doc), "country");
+    doc.set_content_control_binding(&location, &store, "/supplier/country", None)
+        .unwrap();
+    doc.set_content_control_value_by_tag("country", "Belgium")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(value(&doc, "country"), "Belgium");
+    assert_eq!(
+        doc.part_xml("customXml/item1.xml").unwrap(),
+        "<supplier><country>Belgium</country></supplier>"
+    );
+
+    let rule = prompt(target("country"), true, "Choose a country");
+    assert_eq!(
+        doc.fill_form(
+            std::slice::from_ref(&rule),
+            &[assign(target("country"), text("Luxembourg"))]
+        )
+        .unwrap(),
+        [1]
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(value(&doc, "country"), "Luxembourg");
+    assert_eq!(
+        doc.part_xml("customXml/item1.xml").unwrap(),
+        "<supplier><country>Luxembourg</country></supplier>"
+    );
+    assert!(
+        doc.validate_form(&[rule]).unwrap().is_empty(),
+        "free text in a combo box is a value"
+    );
+}
+
+#[test]
 fn picture_and_group_controls_refuse_a_text_value() {
     let mut source = Document::new();
     source.add_picture(PNG, "logo.png", Length::inches(1.0), Length::inches(1.0));
@@ -1188,6 +1453,46 @@ fn bound_checkbox_and_date_controls_store_what_word_reads() {
 // ---- Repeating, cloning, moving, unwrapping, removing ----
 
 #[test]
+fn the_text_of_a_repeating_section_reads_its_items_with_their_inline_controls() {
+    // Word's usual layout: each item a paragraph "Name: " and an inline
+    // plain text control.
+    let item = |id: i32, name: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:id w:val="{id}"/><w15:repeatingSectionItem xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name{id}"/><w:id w:val="{}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{name}</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>"#,
+            id + 10
+        )
+    };
+    let doc = doc_with_body(&format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="people"/><w:id w:val="1"/><w15:repeatingSection xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/></w:sdtPr><w:sdtContent>{}{}</w:sdtContent></w:sdt>"#,
+        item(2, "Ada"),
+        item(3, "Grace")
+    ));
+    assert_eq!(texts(&doc), ["Name: Ada", "Name: Grace"]);
+    let found = listed(&doc);
+    let read: Vec<(Option<SdtType>, String)> = found
+        .into_iter()
+        .map(|(_, _, kind, text)| (kind, text))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            (
+                Some(SdtType::RepeatingSection),
+                "Name: Ada\nName: Grace".to_owned()
+            ),
+            (Some(SdtType::RepeatingSectionItem), "Name: Ada".to_owned()),
+            (Some(SdtType::PlainText), "Ada".to_owned()),
+            (
+                Some(SdtType::RepeatingSectionItem),
+                "Name: Grace".to_owned()
+            ),
+            (Some(SdtType::PlainText), "Grace".to_owned()),
+        ],
+        "a paragraph reads as the document reads it"
+    );
+}
+
+#[test]
 fn a_repeating_section_repeats_its_item_and_keeps_the_last_one() {
     let mut doc = doc_with_body(
         r#"<w:sdt><w:sdtPr><w:tag w:val="lines"/><w:id w:val="1"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Line item</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
@@ -1200,8 +1505,7 @@ fn a_repeating_section_repeats_its_item_and_keeps_the_last_one() {
     let mut doc = reopen(&mut doc);
 
     // The section's content became its first item, and the repeat a second
-    // one. The section's own text() is not checked: it leaves nested controls
-    // out (#147).
+    // one. The section reads its items' paragraphs, one line each.
     let found = listed(&doc);
     let kinds: Vec<_> = found
         .iter()
@@ -1219,6 +1523,7 @@ fn a_repeating_section_repeats_its_item_and_keeps_the_last_one() {
             (None, Some(3), Some(SdtType::RepeatingSectionItem)),
         ]
     );
+    assert_eq!(found[0].3, "Line item\nLine item");
     assert_eq!(found[1].3, "Line item");
     assert_eq!(found[2].3, "Line item");
     assert_eq!(texts(&doc), ["Line item", "Line item"]);
@@ -1497,43 +1802,119 @@ fn the_corpus_forms_list_their_fourteen_controls_with_tags_aliases_and_kinds() {
 
 #[test]
 fn the_text_of_a_control_of_several_paragraphs_reads_one_line_per_paragraph() {
-    let doc = corpus_doc("authored/form.docx");
-    let address = doc.content_controls_by_tag("registered_address");
-    assert_eq!(address.len(), 1);
-    assert!(address[0].text().starts_with("2 Canal Wharf"));
-    assert_eq!(
-        address[0].text(),
-        "2 Canal Wharf\nLeeds LS11 5PS\nUnited Kingdom",
-        "one line per paragraph"
-    );
+    for name in ["authored/form.docx", "word/form.docx"] {
+        let doc = corpus_doc(name);
+        let address = doc.content_controls_by_tag("registered_address");
+        assert_eq!(address.len(), 1, "{name}");
+        assert_eq!(
+            address[0].text(),
+            "2 Canal Wharf\nLeeds LS11 5PS\nUnited Kingdom",
+            "{name}: one line per paragraph"
+        );
+    }
 }
 
 #[test]
 fn a_value_set_on_a_control_of_several_paragraphs_leaves_one_paragraph() {
-    let mut doc = corpus_doc("authored/form.docx");
-    assert_eq!(
-        doc.set_content_control_value_by_tag("registered_address", "1 New Road, Leeds")
-            .unwrap(),
-        1
-    );
-    let doc = reopen(&mut doc);
-    assert_eq!(value(&doc, "registered_address"), "1 New Road, Leeds");
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    let tag = xml
-        .find(r#"<w:tag w:val="registered_address"/>"#)
-        .expect("the address control");
-    let content = &xml[tag..tag
-        + xml[tag..]
-            .find("</w:sdtContent>")
-            .expect("its content ends")];
-    let paragraphs = Regex::new(r"<w:p[\s>/]")
-        .unwrap()
-        .find_iter(content)
-        .count();
-    assert_eq!(
-        paragraphs, 1,
-        "the value is the only paragraph of the control: {content}"
-    );
+    // Word's copy gives each paragraph a w14:paraId and rsids.
+    for name in ["authored/form.docx", "word/form.docx"] {
+        for by_form in [false, true] {
+            let mut doc = corpus_doc(name);
+            set_value(&mut doc, "registered_address", "1 New Road, Leeds", by_form);
+            let doc = reopen(&mut doc);
+            assert_eq!(value(&doc, "registered_address"), "1 New Road, Leeds");
+            let content = saved_content(&doc, "word/document.xml", "registered_address");
+            assert_eq!(
+                paragraph_count(&content),
+                1,
+                "{name}, {}: the value is the only paragraph of the control: {content}",
+                way(by_form)
+            );
+        }
+    }
+}
+
+#[test]
+fn a_value_drops_the_emptied_paragraphs_whose_paragraphs_and_runs_carry_identifiers() {
+    // Google Docs writes rsids on every paragraph and run.
+    let body = r#"<w:sdt><w:sdtPr><w:tag w:val="address"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3"><w:r w:rsidR="00A1B2C3"><w:t>2 Canal Wharf</w:t></w:r></w:p><w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3"><w:r w:rsidR="00D4E5F6"><w:t>Leeds</w:t></w:r></w:p></w:sdtContent></w:sdt>"#;
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(body);
+        set_value(&mut doc, "address", "1 New Road", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["1 New Road"], "{}", way(by_form));
+        let content = saved_content(&doc, "word/document.xml", "address");
+        assert_eq!(paragraph_count(&content), 1, "{}: {content}", way(by_form));
+    }
+}
+
+#[test]
+fn a_value_set_on_a_control_without_a_run_keeps_line_breaks_and_leaves_one_paragraph() {
+    // A block rich text control holds one empty paragraph when inserted.
+    for by_form in [false, true] {
+        let mut doc = doc_with_control("notes");
+        set_value(&mut doc, "notes", "Ada\nLondon", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["Intro", "Ada\nLondon"], "{}", way(by_form));
+        let content = saved_content(&doc, "word/document.xml", "notes");
+        assert!(
+            has(&content, "w:br") && !content.contains("Ada\nLondon"),
+            "{}: the line break is written as a w:br: {content}",
+            way(by_form)
+        );
+    }
+    let body = r#"<w:sdt><w:sdtPr><w:tag w:val="notes"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p/><w:p/></w:sdtContent></w:sdt>"#;
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(body);
+        set_value(&mut doc, "notes", "Ada", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["Ada"], "{}", way(by_form));
+        let content = saved_content(&doc, "word/document.xml", "notes");
+        assert_eq!(paragraph_count(&content), 1, "{}: {content}", way(by_form));
+    }
+}
+
+#[test]
+fn a_value_keeps_a_paragraph_of_the_control_that_holds_a_section_break_or_a_tracked_mark() {
+    let kept = [
+        (
+            "w:sectPr",
+            r#"<w:pPr><w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr></w:pPr>"#,
+        ),
+        (
+            "w:ins",
+            r#"<w:pPr><w:rPr><w:ins w:id="90" w:author="Ada" w:date="2026-11-21T10:00:00Z"/></w:rPr></w:pPr>"#,
+        ),
+        (
+            "w:del",
+            r#"<w:pPr><w:rPr><w:del w:id="91" w:author="Ada" w:date="2026-11-21T10:00:00Z"/></w:rPr></w:pPr>"#,
+        ),
+        (
+            "w:pPrChange",
+            r#"<w:pPr><w:jc w:val="center"/><w:pPrChange w:id="92" w:author="Ada" w:date="2026-11-21T10:00:00Z"><w:pPr/></w:pPrChange></w:pPr>"#,
+        ),
+    ];
+    // A section break, an inserted or deleted paragraph mark, a paragraph
+    // property change: the emptied paragraph goes, the one with the state
+    // stays.
+    for (state, properties) in kept {
+        let body = format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="terms"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Old terms</w:t></w:r></w:p><w:p><w:r><w:t>more</w:t></w:r></w:p><w:p>{properties}<w:r><w:t>end</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>After</w:t></w:r></w:p>"#
+        );
+        for by_form in [false, true] {
+            let mut doc = doc_with_body(&body);
+            set_value(&mut doc, "terms", "New terms", by_form);
+            let doc = reopen(&mut doc);
+            let content = saved_content(&doc, "word/document.xml", "terms");
+            assert_eq!(
+                paragraph_count(&content),
+                2,
+                "{state}, {}: {content}",
+                way(by_form)
+            );
+            assert!(has(&content, state), "{state}, {}: {content}", way(by_form));
+        }
+    }
 }
 
 #[test]
@@ -1709,11 +2090,13 @@ fn the_thesis_table_of_contents_is_a_document_part_control_in_both_producers() {
                 .all(|c| c.control_type() == Some(SdtType::DocumentPartObject) && c.tag().is_none()),
             "{name}"
         );
-        // The entries, without pinning how text() joins the control's
-        // paragraphs (#147).
+        // The entries, each on a line of its own.
         let toc = controls[0].text();
         for entry in ["Contents", "Introduction\t1", "Literature review"] {
-            assert!(toc.contains(entry), "{name}: {entry} in {toc}");
+            assert!(
+                toc.lines().any(|line| line.contains(entry)),
+                "{name}: {entry} in {toc}"
+            );
         }
         let xml = doc.part_xml("word/document.xml").unwrap();
         assert_eq!(

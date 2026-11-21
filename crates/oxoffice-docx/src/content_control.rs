@@ -3,18 +3,25 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use oxoffice_docx_oxml::CT_RPr;
 use oxoffice_docx_oxml::content_control::{CT_DataBinding, CT_Sdt, SdtContent, SdtType};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
+use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, CT_Text, RunContent};
+use oxoffice_docx_oxml::text::{
+    BreakType, CT_P, CT_R, CT_Text, RunContent, is_root_attribute_record,
+};
 use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
 use quick_xml::reader::{NsReader, Reader};
 
-use crate::{ContentFragment, ContentLocation, Document, Error, Result, StoryItemKind, StoryKind};
+use crate::{
+    ContentFragment, ContentLocation, Document, Error, ParagraphRef, Result, StoryItemKind,
+    StoryKind,
+};
 
 const CUSTOM_XML_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
@@ -58,7 +65,11 @@ impl ContentControlRef<'_> {
             .and_then(|properties| properties.control_type)
     }
 
-    /// The control's text, one line per paragraph, nested controls included.
+    /// The control's text: one line per paragraph of the control and of the
+    /// block controls nested in it, each read as the document reads a
+    /// paragraph, its inline controls included. A table, a row or a cell
+    /// reads as its cells' text run together, each cell's paragraphs on
+    /// lines of their own.
     pub fn text(&self) -> String {
         let mut text = String::new();
         collect_sdt_text(self.inner, &mut text);
@@ -226,10 +237,13 @@ impl Document {
             return Ok(0);
         }
 
-        let replacements = selected
-            .iter()
-            .map(|(index, value, _)| (*index, value.clone()))
-            .collect::<HashMap<_, _>>();
+        let replacements = ControlReplacements {
+            values: selected
+                .iter()
+                .map(|(index, value, _)| (*index, value.clone()))
+                .collect(),
+            placeholder_styles: placeholder_style_ids(&self.styles),
+        };
         let mut staged_document = self.document.clone();
         replace_document_controls(&mut staged_document.body, &replacements)?;
         staged_document.to_xml()?;
@@ -287,7 +301,7 @@ fn collect_sdt_lines(sdt: &CT_Sdt, lines: &mut Vec<String>) {
 }
 
 fn paragraph_text(paragraph: &CT_P) -> String {
-    paragraph.runs.iter().map(CT_R::text).collect()
+    ParagraphRef { inner: paragraph }.text()
 }
 
 fn table_text(table: &CT_Tbl) -> String {
@@ -315,10 +329,33 @@ fn cell_text(cell: &CT_Tc) -> String {
     lines.join("\n")
 }
 
-fn replace_document_controls(
-    body: &mut CT_Body,
-    replacements: &HashMap<usize, ControlValue>,
-) -> Result<()> {
+/// The values to write, by control index in document order, and the ids of
+/// the Placeholder Text style, which marks a prompt's run.
+struct ControlReplacements {
+    values: HashMap<usize, ControlValue>,
+    placeholder_styles: Vec<String>,
+}
+
+/// The ids of the Placeholder Text style: Word's own, and those of the
+/// styles named so, as Word in another language writes them (French
+/// `Textedelespacerserv`, German `Platzhaltertext`).
+fn placeholder_style_ids(styles: &CT_Styles) -> Vec<String> {
+    let mut ids = vec!["PlaceholderText".to_owned()];
+    for style in &styles.styles {
+        if style.style_type == StyleType::Character
+            && style
+                .name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("Placeholder Text"))
+            && !ids.contains(&style.style_id)
+        {
+            ids.push(style.style_id.clone());
+        }
+    }
+    ids
+}
+
+fn replace_document_controls(body: &mut CT_Body, replacements: &ControlReplacements) -> Result<()> {
     let expected_count = body.content_controls().len();
     let mut index = 0usize;
     for content in &mut body.content {
@@ -333,7 +370,12 @@ fn replace_document_controls(
             BodyContent::RawXml(_) => {}
         }
     }
-    if index != expected_count || replacements.keys().any(|selected| *selected >= index) {
+    if index != expected_count
+        || replacements
+            .values
+            .keys()
+            .any(|selected| *selected >= index)
+    {
         return Err(Error::Other(
             "content-control traversal changed during staged mutation".to_owned(),
         ));
@@ -343,10 +385,10 @@ fn replace_document_controls(
 
 fn replace_one_control(
     control: &mut CT_Sdt,
-    replacements: &HashMap<usize, ControlValue>,
+    replacements: &ControlReplacements,
     index: &mut usize,
 ) -> Result<()> {
-    if let Some(value) = replacements.get(index) {
+    if let Some(value) = replacements.values.get(index) {
         let mut current = String::new();
         collect_sdt_text(control, &mut current);
         if current != value.display || value.checkbox.is_some() {
@@ -354,6 +396,7 @@ fn replace_one_control(
                 control,
                 &value.display,
                 value.checkbox.as_ref().map(|(_, font)| font.as_str()),
+                &replacements.placeholder_styles,
             )?;
         }
         if let Some(properties) = &mut control.properties {
@@ -375,7 +418,7 @@ fn replace_one_control(
 
 fn replace_nested_controls(
     control: &mut CT_Sdt,
-    replacements: &HashMap<usize, ControlValue>,
+    replacements: &ControlReplacements,
     index: &mut usize,
 ) -> Result<()> {
     for content in &mut control.content {
@@ -395,7 +438,7 @@ fn replace_nested_controls(
 
 fn replace_paragraph_controls(
     paragraph: &mut CT_P,
-    replacements: &HashMap<usize, ControlValue>,
+    replacements: &ControlReplacements,
     index: &mut usize,
 ) -> Result<()> {
     for position in 0..=paragraph.runs.len() {
@@ -412,7 +455,7 @@ fn replace_paragraph_controls(
 
 fn replace_table_controls(
     table: &mut CT_Tbl,
-    replacements: &HashMap<usize, ControlValue>,
+    replacements: &ControlReplacements,
     index: &mut usize,
 ) -> Result<()> {
     for position in 0..=table.rows.len() {
@@ -432,7 +475,7 @@ fn replace_table_controls(
 
 fn replace_row_controls(
     row: &mut CT_Row,
-    replacements: &HashMap<usize, ControlValue>,
+    replacements: &ControlReplacements,
     index: &mut usize,
 ) -> Result<()> {
     for position in 0..=row.cells.len() {
@@ -452,7 +495,7 @@ fn replace_row_controls(
 
 fn replace_cell_controls(
     cell: &mut CT_Tc,
-    replacements: &HashMap<usize, ControlValue>,
+    replacements: &ControlReplacements,
     index: &mut usize,
 ) -> Result<()> {
     for content in &mut cell.content {
@@ -469,33 +512,42 @@ fn replace_cell_controls(
     Ok(())
 }
 
-fn replace_display_text(control: &mut CT_Sdt, value: &str, font: Option<&str>) -> Result<()> {
-    let mut replacement = DisplayReplacement {
+fn replace_display_text(
+    control: &mut CT_Sdt,
+    value: &str,
+    font: Option<&str>,
+    placeholder_styles: &[String],
+) -> Result<()> {
+    let (showing_placeholder, prompt_properties) = match &control.properties {
+        Some(properties) => (
+            properties.showing_placeholder()?,
+            properties.run_properties()?,
+        ),
+        None => (false, None),
+    };
+    let replacement = || DisplayReplacement {
         value,
         font,
+        showing_placeholder,
+        prompt_properties: prompt_properties.as_ref(),
+        placeholder_styles,
         wrote_value: false,
         saw_run: false,
     };
-    replace_sdt_display(control, &mut replacement);
-    if replacement.wrote_value {
-        drop_emptied_paragraphs(control);
-        return Ok(());
-    }
-    if add_text_to_first_paragraph(control, value) {
-        if font.is_some() {
-            let mut replacement = DisplayReplacement {
-                value,
-                font,
-                wrote_value: false,
-                saw_run: false,
-            };
-            replace_sdt_display(control, &mut replacement);
+    let mut first = replacement();
+    replace_sdt_display(control, &mut first);
+    if !first.wrote_value {
+        if !add_text_to_first_paragraph(control, value) {
+            return Err(Error::Other(
+                "content control has no typed text display location".to_owned(),
+            ));
         }
-        return Ok(());
+        // The new run takes the value as the first run of any control does:
+        // its line breaks, the font, and the control's run properties.
+        replace_sdt_display(control, &mut replacement());
     }
-    Err(Error::Other(
-        "content control has no typed text display location".to_owned(),
-    ))
+    drop_emptied_paragraphs(control);
+    Ok(())
 }
 
 /// Remove the paragraphs of a block control that the value left empty, so
@@ -528,18 +580,41 @@ fn drop_emptied_paragraphs(control: &mut CT_Sdt) {
     });
 }
 
-/// Whether a paragraph holds only runs without content.
+/// Whether a paragraph holds only runs without content. The attributes of
+/// the paragraph and of its runs, such as Word's `w14:paraId` and `w:rsidR`,
+/// are no content. A section break and a tracked paragraph mark or property
+/// change are: they would go with the paragraph.
 fn is_empty_paragraph(paragraph: &CT_P) -> bool {
-    paragraph.runs.iter().all(|run| {
-        run.extra_xml.is_empty()
-            && run
+    let keeps_state = paragraph.properties.as_ref().is_some_and(|properties| {
+        properties.sect_pr.is_some()
+            || properties.change.is_some()
+            || !properties.revision_xml.is_empty()
+            || properties.numbering_revision.is_some()
+            || !properties.numbering_revision_xml.is_empty()
+            || properties
+                .rpr
+                .as_ref()
+                .is_some_and(|mark| !mark.revision_markers.is_empty() || mark.change.is_some())
+    });
+    !keeps_state
+        && paragraph.runs.iter().all(|run| {
+            run.extra_xml.iter().enumerate().all(|(index, raw)| {
+                run.extra_xml_positions
+                    .get(index)
+                    .is_some_and(|encoded| CT_R::raw_child_is_root_attributes(*encoded))
+                    && is_root_attribute_record(raw)
+            }) && run
                 .content
                 .iter()
                 .all(|content| matches!(content, RunContent::Text(text) if text.text.is_empty()))
-    }) && paragraph.hyperlinks.is_empty()
+        })
+        && paragraph.hyperlinks.is_empty()
         && paragraph.comment_ranges.is_empty()
         && paragraph.bookmark_markers.is_empty()
-        && paragraph.extra_xml.is_empty()
+        && paragraph
+            .extra_xml
+            .iter()
+            .all(|(position, raw)| CT_P::raw_is_root_attributes(*position, raw))
         && paragraph.content_controls.is_empty()
         && paragraph.revisions.is_empty()
         && paragraph.equations.is_empty()
@@ -549,6 +624,12 @@ fn is_empty_paragraph(paragraph: &CT_P) -> bool {
 struct DisplayReplacement<'a> {
     value: &'a str,
     font: Option<&'a str>,
+    /// The control shows its placeholder: its text is a prompt.
+    showing_placeholder: bool,
+    /// The control's own run properties, for a value over a prompt.
+    prompt_properties: Option<&'a CT_RPr>,
+    /// The ids of the Placeholder Text style, which marks a prompt's run.
+    placeholder_styles: &'a [String],
     wrote_value: bool,
     saw_run: bool,
 }
@@ -569,6 +650,9 @@ fn replace_sdt_display(control: &mut CT_Sdt, replacement: &mut DisplayReplacemen
 fn replace_run_display(run: &mut CT_R, replacement: &mut DisplayReplacement<'_>) {
     let is_first_run = !replacement.saw_run;
     replacement.saw_run = true;
+    if is_first_run {
+        take_prompt_properties(run, replacement);
+    }
     if is_first_run && let Some(font) = replacement.font {
         let properties = run.properties.get_or_insert_with(Default::default);
         properties.font_ascii = Some(font.to_owned());
@@ -640,31 +724,69 @@ fn replace_run_display(run: &mut CT_R, replacement: &mut DisplayReplacement<'_>)
     }
     if let Some(at) = written_at {
         break_value_lines(run, at, replacement.value);
-        // The value replaces a prompt: it does not keep the prompt's style.
-        if let Some(properties) = &mut run.properties
-            && properties.style_id.as_deref() == Some("PlaceholderText")
-        {
-            properties.style_id = None;
-        }
     }
 }
 
-/// Write the line feeds of a value at content index `at` as line breaks, as
-/// the other text setters do, instead of raw inside one `w:t`.
-fn break_value_lines(run: &mut CT_R, at: usize, value: &str) {
-    if !value.contains('\n') {
+/// Give the run that receives a value written over a prompt the control's
+/// own run properties (ECMA-376 17.5.2.27), or, when the control has none,
+/// drop the prompt's Placeholder Text style. The text is a prompt when the
+/// control shows its placeholder or the run has that style. A value written
+/// over an earlier value keeps its run's properties.
+fn take_prompt_properties(run: &mut CT_R, replacement: &DisplayReplacement<'_>) {
+    let styled = run
+        .properties
+        .as_ref()
+        .and_then(|properties| properties.style_id.as_deref())
+        .is_some_and(|style| replacement.placeholder_styles.iter().any(|id| id == style));
+    if !styled && !replacement.showing_placeholder {
         return;
     }
-    let mut items = Vec::new();
-    for (index, line) in value.split('\n').enumerate() {
-        if index > 0 {
-            items.push(RunContent::Break(BreakType::Line));
-        }
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if !line.is_empty() {
-            items.push(RunContent::Text(CT_Text::new(line)));
-        }
+    if let Some(properties) = replacement.prompt_properties {
+        *run.ensure_properties() = properties.clone();
+    } else if styled && let Some(properties) = &mut run.properties {
+        properties.style_id = None;
     }
+}
+
+/// The run content of a value: its text, with a tab as `w:tab` and a line
+/// feed, a carriage return or the two together as one `w:br`, as the other
+/// text setters write them.
+fn value_content(value: &str) -> Vec<RunContent> {
+    let mut items = Vec::new();
+    let mut text = String::new();
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        let separator = match character {
+            '\t' => RunContent::Tab,
+            '\n' | '\r' => {
+                if character == '\r' {
+                    characters.next_if_eq(&'\n');
+                }
+                RunContent::Break(BreakType::Line)
+            }
+            _ => {
+                text.push(character);
+                continue;
+            }
+        };
+        if !text.is_empty() {
+            items.push(RunContent::Text(CT_Text::new(&std::mem::take(&mut text))));
+        }
+        items.push(separator);
+    }
+    if !text.is_empty() || items.is_empty() {
+        items.push(RunContent::Text(CT_Text::new(&text)));
+    }
+    items
+}
+
+/// Write the tabs and line breaks of a value at content index `at` as
+/// `w:tab` and `w:br`, instead of raw inside one `w:t`.
+fn break_value_lines(run: &mut CT_R, at: usize, value: &str) {
+    if !value.contains(['\t', '\n', '\r']) {
+        return;
+    }
+    let items = value_content(value);
     let added = items.len() - 1;
     let property_boundary = usize::from(run.properties.is_some());
     for position in &mut run.extra_xml_positions {
@@ -4197,6 +4319,10 @@ struct ControlPatch {
     checked: Option<bool>,
     display: Option<String>,
     font: Option<String>,
+    /// For a value: whether the control showed its placeholder, so that the
+    /// value takes the control's run properties. `None` for a placeholder
+    /// reset, whose text keeps the prompt's formatting.
+    prompt: Option<bool>,
 }
 
 struct LogicalPatch {
@@ -4533,6 +4659,15 @@ fn checkbox_policy(xml: &[u8], checkbox: &XmlElem, checked: bool) -> Result<(cha
 }
 
 fn in_scope_xmlns(xml: &[u8], start: usize) -> Result<String> {
+    Ok(in_scope_declarations(xml, start)?
+        .into_iter()
+        .map(|(name, uri)| format!(" {name}=\"{}\"", xml_attr(&uri)))
+        .collect())
+}
+
+/// The namespace declarations in scope at the element starting at `start`,
+/// its own included, as attribute names (`xmlns`, `xmlns:w`) and namespaces.
+fn in_scope_declarations(xml: &[u8], start: usize) -> Result<Vec<(String, String)>> {
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
@@ -4542,20 +4677,19 @@ fn in_scope_xmlns(xml: &[u8], start: usize) -> Result<String> {
             .read_resolved_event_into(&mut buffer)
             .map_err(|error| form_fault(format!("content control XML is invalid: {error}")))?;
         if before == start {
-            let mut declarations = String::new();
+            let mut declarations = Vec::new();
             for (declaration, namespace) in reader.resolver().bindings() {
-                let uri = String::from_utf8_lossy(namespace.0);
-                let escaped = xml_attr(&uri);
+                let uri = String::from_utf8_lossy(namespace.0).into_owned();
                 match declaration {
                     quick_xml::name::PrefixDeclaration::Default => {
-                        declarations.push_str(&format!(" xmlns=\"{escaped}\""));
+                        declarations.push(("xmlns".to_owned(), uri));
                     }
                     quick_xml::name::PrefixDeclaration::Named(prefix) => {
                         let prefix = String::from_utf8_lossy(prefix);
                         if prefix == "xml" {
                             continue;
                         }
-                        declarations.push_str(&format!(" xmlns:{prefix}=\"{escaped}\""));
+                        declarations.push((format!("xmlns:{prefix}"), uri));
                     }
                 }
             }
@@ -5674,6 +5808,7 @@ fn value_patch(
         checked,
         display: Some(display),
         font,
+        prompt: Some(control.placeholder),
     };
     let bound = control.binding.as_ref().map(|_| bound);
     Ok((patch, bound))
@@ -5708,6 +5843,7 @@ fn placeholder_patch(
         checked: None,
         display: Some(text.to_owned()),
         font: None,
+        prompt: None,
     };
     let bound = control.binding.as_ref().map(|_| String::new());
     Ok((patch, bound))
@@ -5781,13 +5917,14 @@ fn apply_form_plan(candidate: &mut Document, state: &FormState, plan: &FormPlan)
         located.push((patch.part.clone(), control.start, patch.patch.clone()));
     }
     located.sort_by_key(|item| std::cmp::Reverse(item.1));
+    let placeholder_styles = placeholder_style_ids(&candidate.styles);
     for (part, start, patch) in &located {
         let xml = buffers
             .iter_mut()
             .find(|(name, _)| name == part)
             .map(|(_, xml)| xml)
             .ok_or_else(|| form_fault("form story part is missing"))?;
-        apply_control_patch(xml, *start, patch)?;
+        apply_control_patch(xml, *start, patch, &placeholder_styles)?;
     }
     for (part, xml) in buffers {
         candidate.write_story_part(&part, xml)?;
@@ -5836,7 +5973,12 @@ fn ensure_legacy_stable(state: &FormState, plan: &FormPlan) -> Result<()> {
     Ok(())
 }
 
-fn apply_control_patch(xml: &mut Vec<u8>, start: usize, patch: &ControlPatch) -> Result<()> {
+fn apply_control_patch(
+    xml: &mut Vec<u8>,
+    start: usize,
+    patch: &ControlPatch,
+    placeholder_styles: &[String],
+) -> Result<()> {
     if let Some(placeholder) = patch.placeholder {
         let bounds = sdt_bounds(xml, start)?;
         let updated =
@@ -5857,7 +5999,14 @@ fn apply_control_patch(xml: &mut Vec<u8>, start: usize, patch: &ControlPatch) ->
         edit_checked(xml, start, checked)?;
     }
     if let Some(display) = &patch.display {
-        rewrite_display(xml, start, display, patch.font.as_deref())?;
+        rewrite_display(
+            xml,
+            start,
+            display,
+            patch.font.as_deref(),
+            patch.prompt,
+            placeholder_styles,
+        )?;
     }
     Ok(())
 }
@@ -5932,11 +6081,18 @@ fn edit_checked(xml: &mut Vec<u8>, sdt_start: usize, checked: bool) -> Result<()
     insert_markup(xml, checkbox.range.start, &markup)
 }
 
+/// Write a control's display text: the value in its first `w:t`, its tabs
+/// and line breaks as `w:tab` and `w:br`, every other text of the control
+/// emptied, as the typed tag setters write it. A value over a prompt takes
+/// the control's own run properties, and a block control keeps no paragraph
+/// the value left empty.
 fn rewrite_display(
     xml: &mut Vec<u8>,
     sdt_start: usize,
     value: &str,
     font: Option<&str>,
+    prompt: Option<bool>,
+    placeholder_styles: &[String],
 ) -> Result<()> {
     let mut separators = Vec::new();
     {
@@ -5965,53 +6121,269 @@ fn rewrite_display(
             .clone();
         xml.splice(range, Vec::new());
     }
-    let elems = index_elements(xml)?;
-    let sdt = find_sdt(&elems, sdt_start)?;
-    let mut starts = Vec::new();
-    for elem in &elems {
-        if elem.word && elem.local == b"t" && accepted_display_text(&elems, sdt, elem) {
-            starts.push(elem.range.start);
-        }
-    }
+    let mut starts = display_text_starts(xml, sdt_start)?;
     if starts.is_empty() {
-        return insert_display(xml, sdt_start, value, font);
+        // A control without text gets an empty run, which then takes the
+        // value as the first text of any control does.
+        insert_display(xml, sdt_start)?;
+        starts = display_text_starts(xml, sdt_start)?;
     }
-    starts.sort_unstable();
+    let first = *starts
+        .first()
+        .ok_or_else(|| form_fault("content control has no typed text display location"))?;
+    let mut content = value_content(value).into_iter().peekable();
+    let head = match content.next_if(|item| matches!(item, RunContent::Text(_))) {
+        Some(RunContent::Text(text)) => text.text,
+        _ => String::new(),
+    };
     for (index, start) in starts.iter().enumerate().rev() {
-        let text = if index == 0 { value } else { "" };
+        let text = if index == 0 { head.as_str() } else { "" };
         set_element_text(xml, *start, text)?;
     }
-    if let (Some(font), Some(start)) = (font, starts.first()) {
-        apply_display_font(xml, *start, font)?;
+    insert_after_text(xml, first, &content.collect::<Vec<_>>())?;
+    if let Some(showing_placeholder) = prompt {
+        take_display_prompt_properties(
+            xml,
+            sdt_start,
+            first,
+            showing_placeholder,
+            placeholder_styles,
+        )?;
     }
-    Ok(())
+    if let Some(font) = font {
+        apply_display_font(xml, first, font)?;
+    }
+    drop_emptied_display_paragraphs(xml, sdt_start)
 }
 
-fn apply_display_font(xml: &mut Vec<u8>, text_start: usize, font: &str) -> Result<()> {
+/// The starts of the control's display `w:t` elements, in document order.
+fn display_text_starts(xml: &[u8], sdt_start: usize) -> Result<Vec<usize>> {
     let elems = index_elements(xml)?;
+    let sdt = find_sdt(&elems, sdt_start)?;
+    let mut starts: Vec<usize> = elems
+        .iter()
+        .filter(|elem| elem.word && elem.local == b"t" && accepted_display_text(&elems, sdt, elem))
+        .map(|elem| elem.range.start)
+        .collect();
+    starts.sort_unstable();
+    Ok(starts)
+}
+
+/// The run that holds the display element starting at `start`.
+fn display_run_of(elems: &[XmlElem], start: usize) -> Result<&XmlElem> {
     let text = elems
         .iter()
-        .find(|elem| elem.range.start == text_start)
+        .find(|elem| elem.range.start == start)
         .ok_or_else(|| form_fault("stale form target"))?;
     let mut parent = text.parent;
-    let mut run_start = None;
     while let Some(id) = parent {
         let current = elems
             .iter()
             .find(|elem| elem.id == id)
             .ok_or_else(|| form_fault("stale form target"))?;
         if current.word && current.local == b"r" {
-            run_start = Some(current.range.start);
-            break;
+            return Ok(current);
         }
         parent = current.parent;
     }
-    let run_start = run_start
-        .ok_or_else(|| form_fault("content control has no typed text display location"))?;
-    let run = elems
+    Err(form_fault(
+        "content control has no typed text display location",
+    ))
+}
+
+/// Write the run content that follows a value's first text, its tabs,
+/// breaks and further texts, right after the `w:t` starting at `text_start`.
+fn insert_after_text(xml: &mut Vec<u8>, text_start: usize, content: &[RunContent]) -> Result<()> {
+    if content.is_empty() {
+        return Ok(());
+    }
+    let elems = index_elements(xml)?;
+    let run = display_run_of(&elems, text_start)?;
+    let prefix = match name_prefix(element_qname(&xml[run.range.clone()])?) {
+        "" => String::new(),
+        prefix => format!("{prefix}:"),
+    };
+    let mut markup = String::new();
+    for item in content {
+        match item {
+            RunContent::Tab => markup.push_str(&format!("<{prefix}tab/>")),
+            RunContent::Text(text) => {
+                let space = if needs_preserve(&text.text) {
+                    " xml:space=\"preserve\""
+                } else {
+                    ""
+                };
+                let escaped = escaped_text(&text.text);
+                markup.push_str(&format!("<{prefix}t{space}>{escaped}</{prefix}t>"));
+            }
+            _ => markup.push_str(&format!("<{prefix}br/>")),
+        }
+    }
+    let end = elems
         .iter()
-        .find(|elem| elem.range.start == run_start)
-        .ok_or_else(|| form_fault("stale form target"))?;
+        .find(|elem| elem.range.start == text_start)
+        .ok_or_else(|| form_fault("stale form target"))?
+        .range
+        .end;
+    xml.splice(end..end, markup.into_bytes());
+    Ok(())
+}
+
+/// Give the run of a value written over a prompt the control's own
+/// `w:sdtPr/w:rPr` (ECMA-376 17.5.2.27), copied with the namespaces it needs,
+/// or, when the control has none, drop the prompt's Placeholder Text style,
+/// as `take_prompt_properties` does in the typed model.
+fn take_display_prompt_properties(
+    xml: &mut Vec<u8>,
+    sdt_start: usize,
+    text_start: usize,
+    showing_placeholder: bool,
+    placeholder_styles: &[String],
+) -> Result<()> {
+    let elems = index_elements(xml)?;
+    let sdt = find_sdt(&elems, sdt_start)?;
+    let run = display_run_of(&elems, text_start)?;
+    let run_properties = direct_child(&elems, run.id, true, false, b"rPr");
+    let style = run_properties
+        .and_then(|properties| direct_child(&elems, properties.id, true, false, b"rStyle"));
+    let styled = style
+        .and_then(|style| style.val.as_deref())
+        .is_some_and(|style| placeholder_styles.iter().any(|id| id == style));
+    if !styled && !showing_placeholder {
+        return Ok(());
+    }
+    let sdt_properties = direct_child(&elems, sdt.id, true, false, b"sdtPr");
+    let control_properties = sdt_properties
+        .and_then(|properties| direct_child(&elems, properties.id, true, false, b"rPr"));
+    if let (Some(sdt_properties), Some(control_properties)) = (sdt_properties, control_properties) {
+        let copy = copied_run_properties(xml, sdt_properties, control_properties, run)?;
+        let range = run_properties.map_or(run.open_end..run.open_end, |properties| {
+            properties.range.clone()
+        });
+        xml.splice(range, copy);
+    } else if let (true, Some(properties), Some(style)) = (styled, run_properties, style) {
+        let range = if direct_children(&elems, properties.id).count() == 1 {
+            properties.range.clone()
+        } else {
+            style.range.clone()
+        };
+        xml.splice(range, Vec::new());
+    }
+    Ok(())
+}
+
+/// The control's `w:rPr`, to go into a run of its content, with the
+/// namespace declarations in scope at its `w:sdtPr` that are not at the run.
+fn copied_run_properties(
+    xml: &[u8],
+    sdt_properties: &XmlElem,
+    properties: &XmlElem,
+    run: &XmlElem,
+) -> Result<Vec<u8>> {
+    let at_run = in_scope_declarations(xml, run.range.start)?;
+    let mut reader = Reader::from_reader(&xml[properties.range.start..properties.open_end]);
+    let own: Vec<Vec<u8>> = match reader.read_event() {
+        Ok(Event::Start(start) | Event::Empty(start)) => start
+            .attributes()
+            .with_checks(false)
+            .flatten()
+            .map(|attribute| attribute.key.as_ref().to_vec())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let missing: String = in_scope_declarations(xml, sdt_properties.range.start)?
+        .into_iter()
+        .filter(|declaration| {
+            !at_run.contains(declaration) && !own.contains(&declaration.0.as_bytes().to_vec())
+        })
+        .map(|(name, uri)| format!(" {name}=\"{}\"", xml_attr(&uri)))
+        .collect();
+    let mut tag = xml[properties.range.start..properties.open_end].to_vec();
+    if !missing.is_empty() {
+        insert_into_start_tag(&mut tag, &missing)?;
+    }
+    tag.extend_from_slice(&xml[properties.open_end..properties.range.end]);
+    Ok(tag)
+}
+
+/// Remove the paragraphs of a block control that the value left empty, as
+/// `drop_emptied_paragraphs` does in the typed model: the first stays if all
+/// are empty.
+fn drop_emptied_display_paragraphs(xml: &mut Vec<u8>, sdt_start: usize) -> Result<()> {
+    let elems = index_elements(xml)?;
+    let sdt = find_sdt(&elems, sdt_start)?;
+    let Some(content) = direct_child(&elems, sdt.id, true, false, b"sdtContent") else {
+        return Ok(());
+    };
+    let paragraphs: Vec<&XmlElem> = direct_children(&elems, content.id)
+        .filter(|elem| elem.word && elem.local == b"p")
+        .collect();
+    if paragraphs.len() < 2 {
+        return Ok(());
+    }
+    let mut emptied = Vec::new();
+    for paragraph in &paragraphs {
+        if display_paragraph_is_empty(xml, &elems, paragraph)? {
+            emptied.push(paragraph.range.clone());
+        }
+    }
+    if emptied.len() == paragraphs.len() {
+        emptied.remove(0);
+    }
+    for range in emptied.into_iter().rev() {
+        xml.splice(range, Vec::new());
+    }
+    Ok(())
+}
+
+/// Whether a paragraph holds only runs of empty text, as
+/// `is_empty_paragraph` reads one in the typed model: attributes are no
+/// content, but a section break and a tracked paragraph mark or property
+/// change in its `w:pPr` are.
+fn display_paragraph_is_empty(xml: &[u8], elems: &[XmlElem], paragraph: &XmlElem) -> Result<bool> {
+    for child in direct_children(elems, paragraph.id) {
+        if !child.word {
+            return Ok(false);
+        }
+        match child.local.as_slice() {
+            b"pPr" => {
+                let keeps_state = elems.iter().any(|inner| {
+                    inner.range.start > child.range.start
+                        && inner.range.end <= child.range.end
+                        && inner.word
+                        && matches!(
+                            inner.local.as_slice(),
+                            b"sectPr"
+                                | b"pPrChange"
+                                | b"rPrChange"
+                                | b"ins"
+                                | b"del"
+                                | b"moveFrom"
+                                | b"moveTo"
+                        )
+                });
+                if keeps_state {
+                    return Ok(false);
+                }
+            }
+            b"r" => {
+                for item in direct_children(elems, child.id) {
+                    let empty_text = item.local == b"t" && element_text(xml, item)?.is_empty();
+                    if !item.word || !(item.local == b"rPr" || empty_text) {
+                        return Ok(false);
+                    }
+                }
+            }
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+fn apply_display_font(xml: &mut Vec<u8>, text_start: usize, font: &str) -> Result<()> {
+    let elems = index_elements(xml)?;
+    let run = display_run_of(&elems, text_start)?;
+    let run_start = run.range.start;
     let properties = direct_child(&elems, run.id, true, false, b"rPr");
     if properties.is_none() {
         let markup = display_font_properties(font);
@@ -6062,17 +6434,15 @@ fn display_font_element(font: &str) -> String {
     )
 }
 
-fn insert_display(
-    xml: &mut Vec<u8>,
-    sdt_start: usize,
-    value: &str,
-    font: Option<&str>,
-) -> Result<()> {
+/// Give a control without display text an empty run: in its first
+/// paragraph, in a new paragraph for a block control without one, or in its
+/// content for an inline control.
+fn insert_display(xml: &mut Vec<u8>, sdt_start: usize) -> Result<()> {
     let elems = index_elements(xml)?;
     let sdt = find_sdt(&elems, sdt_start)?;
     let inline = ancestor_local(&elems, sdt.parent, b"p");
     let prefix = display_prefix(xml, &elems, sdt)?;
-    let markup = display_run(&prefix, value, font);
+    let markup = display_run(&prefix);
     if !inline {
         if let Some(paragraph) = elems.iter().find(|elem| {
             elem.word
@@ -6099,18 +6469,11 @@ fn display_prefix(xml: &[u8], elems: &[XmlElem], sdt: &XmlElem) -> Result<String
     Ok(name_prefix(element_qname(&xml[content.range.clone()])?).to_owned())
 }
 
-fn display_run(prefix: &str, value: &str, font: Option<&str>) -> String {
-    let text = escaped_text(value);
-    let space = if needs_preserve(value) {
-        " xml:space=\"preserve\""
-    } else {
-        ""
-    };
-    let properties = font.map(display_font_properties).unwrap_or_default();
+fn display_run(prefix: &str) -> String {
     if prefix.is_empty() {
-        format!("<r>{properties}<t{space}>{text}</t></r>")
+        "<r><t></t></r>".to_owned()
     } else {
-        format!("<{prefix}:r>{properties}<{prefix}:t{space}>{text}</{prefix}:t></{prefix}:r>")
+        format!("<{prefix}:r><{prefix}:t></{prefix}:t></{prefix}:r>")
     }
 }
 
