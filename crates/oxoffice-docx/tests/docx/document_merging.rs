@@ -1,6 +1,7 @@
 //! Combining documents: `append`, `append_with_break` with each break kind,
 //! `insert_document` at a body index, `import_fragment` of a range of another
-//! document under each conflict policy, and `insert_content` of a paragraph
+//! document under each conflict policy (from and into headers, footers and
+//! table cells too), and `insert_content` of a paragraph
 //! taken from another document, with what follows the content: styles, lists,
 //! pictures, links, notes, comments, bookmarks, controls, revisions, sections.
 
@@ -530,6 +531,53 @@ fn appended_bookmarks_and_controls_get_distinct_identities() {
     );
     let ids: Vec<_> = control_list(&doc).into_iter().map(|c| c.0).collect();
     assert!(all_distinct(&ids), "appended controls keep distinct ids");
+}
+
+#[test]
+fn appending_drops_the_other_documents_final_section_and_keeps_the_destination_s() {
+    let mut source = doc_with(&["wide"]);
+    source.set_page_size(Length::mm(297.0), Length::mm(210.0));
+    source.set_landscape();
+    source.set_margins(
+        Length::inches(0.3),
+        Length::inches(0.3),
+        Length::inches(0.3),
+        Length::inches(0.3),
+    );
+    source.set_header("Source header");
+    let source = reopen(&mut source);
+    let mut doc = doc_with(&["dest"]);
+    doc.set_header("Dest header");
+    let mut doc = reopen(&mut doc);
+    let layout = |doc: &Document| {
+        let section = doc.section(0).expect("a first section");
+        (
+            section.page_size(),
+            section.orientation(),
+            section.margins(),
+        )
+    };
+    let before = layout(&doc);
+    assert_ne!(layout(&source), before, "the two layouts differ");
+
+    doc.append(&source);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "wide"]);
+    assert_eq!(doc.section_count(), 1, "no section of the source comes in");
+    assert_eq!(layout(&doc), before, "the destination's page layout stays");
+    assert_eq!(header_shown(&doc, 0).as_deref(), Some("Dest header"));
+    let headers: Vec<_> = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .filter(|story| story.kind() == StoryKind::Header)
+        .map(|story| story_texts(&doc, &story))
+        .collect();
+    assert_eq!(
+        headers,
+        [["Dest header"]],
+        "the source's header is not carried"
+    );
 }
 
 // ---- append_with_break ----
@@ -1205,6 +1253,164 @@ fn a_renamed_linked_style_keeps_a_reciprocal_link() {
     doc.validate_style_graph().unwrap();
 }
 
+// ---- import_fragment into and from other stories ----
+
+/// The first story of `kind` in `doc`.
+fn story_of(doc: &Document, kind: StoryKind) -> StoryId {
+    doc.stories()
+        .expect("stories are listed")
+        .into_iter()
+        .find(|story| story.kind() == kind)
+        .expect("the document has a story of this kind")
+}
+
+/// The text of each paragraph of `story`, a table as `[table]`.
+fn story_texts(doc: &Document, story: &StoryId) -> Vec<String> {
+    doc.story_items(story)
+        .expect("story items are listed")
+        .iter()
+        .filter_map(|item| match item.kind() {
+            StoryItemKind::Table => Some("[table]".to_owned()),
+            StoryItemKind::Paragraph => Some(item.text().expect("item text").unwrap_or_default()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The addresses of the links of `story`.
+fn story_link_urls(doc: &Document, story: &StoryId) -> Vec<Option<String>> {
+    doc.story_items(story)
+        .expect("story items are listed")
+        .iter()
+        .flat_map(|item| item.links().expect("item links"))
+        .map(|link| link.url)
+        .collect()
+}
+
+/// A saved document of two paragraphs: `source`, then the one-pixel picture
+/// followed by a link to `https://source.example/`.
+fn with_picture_and_link() -> Document {
+    let mut source = with_picture("source");
+    source.append_hyperlink("source site", "https://source.example/");
+    reopen(&mut source)
+}
+
+#[test]
+fn a_fragment_imported_into_a_header_or_a_footer_lands_there_with_its_picture_and_link() {
+    let source = with_picture_and_link();
+    let mut doc = doc_with(&["dest"]);
+    doc.set_header("Head");
+    doc.set_footer("Foot");
+    let destination = saved(&mut reopen(&mut doc));
+    for (kind, own) in [(StoryKind::Header, "Head"), (StoryKind::Footer, "Foot")] {
+        let mut doc = Document::from_bytes(&destination).unwrap();
+        let end = ContentLocation::end(story_of(&doc, kind));
+        doc.import_fragment(
+            &end,
+            &whole_body(&source),
+            FragmentConflictPolicy::default(),
+        )
+        .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+        let doc = reopen(&mut doc);
+        let story = story_of(&doc, kind);
+        assert_eq!(
+            story_texts(&doc, &story),
+            [own, "source", "source site"],
+            "{kind:?}"
+        );
+        assert_eq!(texts(&doc), ["dest"], "{kind:?}: the body is unchanged");
+        let (other_kind, other_own) = if kind == StoryKind::Header {
+            (StoryKind::Footer, "Foot")
+        } else {
+            (StoryKind::Header, "Head")
+        };
+        let other = story_of(&doc, other_kind);
+        assert_eq!(
+            story_texts(&doc, &other),
+            [other_own],
+            "{kind:?}: the other story is unchanged"
+        );
+        let pictures: Vec<_> = doc
+            .pictures()
+            .unwrap()
+            .into_iter()
+            .map(|picture| (picture.location.story().kind(), picture.bytes))
+            .collect();
+        assert_eq!(pictures, [(kind, PNG.to_vec())], "{kind:?}: the picture");
+        assert_eq!(
+            story_link_urls(&doc, &story),
+            [Some("https://source.example/".to_owned())],
+            "{kind:?}: the link"
+        );
+        let errors: Vec<_> = doc
+            .validate()
+            .unwrap()
+            .findings
+            .into_iter()
+            .filter(|finding| finding.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "{kind:?}: {errors:?}");
+    }
+}
+
+#[test]
+fn a_fragment_imported_into_a_table_cell_lands_in_that_cell_only() {
+    let source = doc_with(&["one", "two"]);
+    let mut doc = doc_with(&["before"]);
+    {
+        let mut table = doc.add_table(1, 2);
+        table.cell(0, 0).unwrap().set_text("left");
+        table.cell(0, 1).unwrap().set_text("right");
+    }
+    doc.add_paragraph("after");
+    let mut doc = reopen(&mut doc);
+    let body_before = body_items(&doc);
+    let cell = story_of(&doc, StoryKind::TableCell);
+    doc.import_fragment(
+        &ContentLocation::end(cell),
+        &whole_body(&source),
+        FragmentConflictPolicy::default(),
+    )
+    .unwrap();
+    let doc = reopen(&mut doc);
+    let cells: Vec<_> = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .filter(|story| story.kind() == StoryKind::TableCell)
+        .map(|story| story_texts(&doc, &story))
+        .collect();
+    assert_eq!(cells, [vec!["left", "one", "two"], vec!["right"]]);
+    assert_eq!(body_items(&doc), body_before, "the body keeps its items");
+}
+
+#[test]
+fn a_fragment_taken_from_a_header_or_a_table_cell_imports_into_the_body() {
+    let mut source = doc_with(&["source body"]);
+    source.set_header("Header line");
+    source
+        .add_table(1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .set_text("Cell line");
+    let mut source = reopen(&mut source);
+    let before = saved(&mut source);
+    let mut doc = doc_with(&["first", "last"]);
+    for kind in [StoryKind::Header, StoryKind::TableCell] {
+        let story = story_of(&source, kind);
+        let start = source.story_items(&story).unwrap()[0].location().clone();
+        let fragment =
+            DocumentFragment::from_range(&source, &start, &ContentLocation::end(story), false)
+                .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+        let at = item_at(&doc, doc.content_count() - 1);
+        doc.import_fragment(&at, &fragment, FragmentConflictPolicy::default())
+            .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["first", "Header line", "Cell line", "last"]);
+    assert_eq!(saved(&mut source), before, "the source is left as it was");
+}
+
 // ---- insert_content ----
 
 #[test]
@@ -1332,6 +1538,77 @@ fn the_form_imported_into_itself_keeps_every_control_tag_with_new_ids() {
     );
     let names: Vec<_> = bookmark_list(&doc).into_iter().map(|b| b.0).collect();
     assert!(all_distinct(&names), "{names:?}");
+}
+
+#[test]
+fn the_contract_imported_into_itself_answers_each_imported_reply_with_an_imported_comment() {
+    let source = corpus_doc("authored/contract.docx");
+    let original = comment_list(&source);
+    let replies = original.iter().filter(|c| c.3.is_some()).count();
+    assert!(replies > 0, "the contract has replies: {original:?}");
+    let mut doc = corpus_doc("authored/contract.docx");
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let doc = reopen(&mut doc);
+    let merged = comment_list(&doc);
+    let original_ids: HashSet<i32> = original.iter().map(|c| c.0).collect();
+    // The destination's own comments keep their ids, text and thread.
+    let kept: Vec<_> = merged
+        .iter()
+        .filter(|c| original_ids.contains(&c.0))
+        .cloned()
+        .collect();
+    assert_eq!(kept, original);
+    let imported: Vec<_> = merged
+        .iter()
+        .filter(|c| !original_ids.contains(&c.0))
+        .collect();
+    assert_eq!(imported.len(), original.len(), "{merged:?}");
+    let imported_ids: HashSet<i32> = imported.iter().map(|c| c.0).collect();
+    let imported_replies: Vec<_> = imported.iter().filter(|c| c.3.is_some()).collect();
+    assert_eq!(imported_replies.len(), replies);
+    for reply in imported_replies {
+        let parent = reply.3.unwrap();
+        assert!(
+            imported_ids.contains(&parent),
+            "imported reply {} answers comment {parent}, not an imported one",
+            reply.0
+        );
+        // The parent is the imported copy of the source's parent.
+        let source_reply = original
+            .iter()
+            .find(|c| (&c.1, &c.2) == (&reply.1, &reply.2) && c.3.is_some())
+            .expect("the reply comes from the source");
+        let source_parent = original
+            .iter()
+            .find(|c| Some(c.0) == source_reply.3)
+            .unwrap();
+        let imported_parent = imported.iter().find(|c| c.0 == parent).unwrap();
+        assert_eq!(
+            (&imported_parent.1, &imported_parent.2),
+            (&source_parent.1, &source_parent.2)
+        );
+    }
+}
+
+#[test]
+fn the_form_imported_into_itself_holds_both_copies_of_its_bookmarks() {
+    let source = corpus_doc("authored/form.docx");
+    let original = bookmark_list(&source);
+    assert_eq!(original.len(), 6, "{original:?}");
+    let mut doc = corpus_doc("authored/form.docx");
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let doc = reopen(&mut doc);
+    let merged = bookmark_list(&doc);
+    assert_eq!(merged.len(), 12, "6 + 6 bookmarks: {merged:?}");
+    let names: Vec<_> = merged.iter().map(|b| b.0.clone()).collect();
+    assert!(all_distinct(&names), "{names:?}");
+    assert_eq!(merged[..6], original[..], "the originals stay first");
+    let texts_of = |list: &[(String, String)]| list.iter().map(|b| b.1.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        texts_of(&merged[6..]),
+        texts_of(&original),
+        "the imported copies mark the same texts"
+    );
 }
 
 /// The destination <- source pairs of report copies that append merges today.

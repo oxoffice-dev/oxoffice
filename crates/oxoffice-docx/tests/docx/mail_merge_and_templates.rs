@@ -1,7 +1,8 @@
 //! Filling a document from data and working with templates: `{{ tag }}`
 //! templates with loops and conditions, merge fields filled record by record,
 //! rich merge regions, the mail-merge settings and recipient package, building
-//! blocks, and `.dotx` templates saved as documents.
+//! blocks, `.dotx` templates saved as documents, and the refusal to save a
+//! VBA project under a macro-free extension.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -9,13 +10,14 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use oxoffice_docx::{
-    BuildingBlock, BuildingBlockKind, ChartData, ChartKind, Document,
+    BuildingBlock, BuildingBlockKind, ChartData, ChartKind, CommentDate, Document,
     DrawingHorizontalRelativeFrom, DrawingVerticalRelativeFrom, DrawingWrap,
-    FragmentConflictPolicy, HdrFtrType, Length, MailMerge, MailMergeData, MailMergeDestination,
-    MailMergeDocumentType, MailMergeFormatContext, MailMergeFormattedText,
-    MailMergePackageDiagnosticKind, MailMergePackageOptions, MailMergePackageSource,
-    MailMergeRecord, MailMergeSourcePolicy, MailMergeValue, PictureAnchor, StoryKind,
-    TextBoxDirection, TextBoxOptions, WordCreationProfile, WordPackageClass,
+    FragmentConflictPolicy, HdrFtrType, HeaderFooterKind, Length, MailMerge, MailMergeData,
+    MailMergeDestination, MailMergeDocumentType, MailMergeFieldMapping, MailMergeFormatContext,
+    MailMergeFormattedText, MailMergeImage, MailMergePackageDiagnosticKind,
+    MailMergePackageOptions, MailMergePackageSource, MailMergeRecipient, MailMergeRecord,
+    MailMergeSourcePolicy, MailMergeValue, PictureAnchor, StoryKind, TextBoxDirection,
+    TextBoxOptions, TextCommentOptions, WordCreationProfile, WordPackageClass,
 };
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::text::CT_P;
@@ -416,6 +418,74 @@ fn tags_in_headers_footers_tables_and_notes_are_filled() {
     // A new note starts with a space after its mark, as Word writes it.
     assert_eq!(doc.footnotes(), [(footnote, " Note Ada".to_owned())]);
     assert_eq!(endnote_text(&doc, endnote), " End R-7");
+}
+
+#[test]
+fn tags_in_block_and_inline_content_controls_are_filled() {
+    let mut doc = doc_with_body(concat!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="11"/><w:tag w:val="block"/></w:sdtPr><w:sdtContent>"#,
+        r#"<w:p><w:r><w:t>Block {{ who }}</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Ref </w:t></w:r><w:sdt><w:sdtPr><w:id w:val="12"/><w:tag w:val="inline"/></w:sdtPr>"#,
+        r#"<w:sdtContent><w:r><w:t>{{ ref }}</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    ));
+    let count = doc
+        .render_template(&json!({ "who": "Ada", "ref": "R-7" }))
+        .unwrap();
+    assert_eq!(count, 2);
+    let doc = reopen(&mut doc);
+    let controls: Vec<(Option<i32>, Option<String>, String)> = doc
+        .content_controls()
+        .iter()
+        .map(|control| {
+            (
+                control.id(),
+                control.tag().map(str::to_owned),
+                control.text(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        controls,
+        [
+            (Some(11), Some("block".to_owned()), "Block Ada".to_owned()),
+            (Some(12), Some("inline".to_owned()), "R-7".to_owned()),
+        ],
+        "each control keeps its identity and shows its value"
+    );
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("{{"), "{xml}");
+}
+
+#[test]
+fn a_tag_in_a_comment_is_left_as_written() {
+    // The template fills the stories that print (body, headers, footers,
+    // notes, text boxes); review comments are skipped, tag and all.
+    let mut doc = doc_with(&["Commented {{ who }}"]);
+    doc.add_comment_on_text(
+        "Commented",
+        "Ann",
+        "Ask {{ who }}",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(doc.render_template(&json!({ "who": "Ada" })).unwrap(), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Commented Ada"]);
+    let comments: Vec<String> = doc
+        .comments()
+        .iter()
+        .map(|comment| comment.text())
+        .collect();
+    assert_eq!(comments, ["Ask {{ who }}"]);
+    assert_eq!(
+        doc.comment_anchor_text(doc.comments()[0].id())
+            .unwrap()
+            .as_deref(),
+        Some("Commented")
+    );
 }
 
 // ---- Loops and conditions ----
@@ -994,6 +1064,78 @@ fn a_header_merge_field_is_filled_per_record_but_cannot_vary_between_sections() 
     assert_eq!(merged.header_text().as_deref(), Some("Account Shared"));
 }
 
+/// The text of the default header section `section` shows, if any.
+fn header_shown(doc: &Document, section: usize) -> Option<String> {
+    let shown = doc
+        .section_story(section, HeaderFooterKind::Header, HdrFtrType::Default)
+        .expect("section index in range")?;
+    Some(
+        doc.story_items(shown.story())
+            .expect("header reads")
+            .iter()
+            .map(|item| item.text().expect("header text").unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+#[test]
+fn every_section_of_a_sectioned_merge_keeps_the_template_page_size_and_header() {
+    let mut template = doc_with_body(&format!(r#"<w:p>{}</w:p>"#, merge_field("Name")));
+    template.set_page_size(Length::mm(148.0), Length::mm(210.0));
+    template.set_header("Letterhead");
+    let template = reopen(&mut template);
+    let size = template.section(0).unwrap().page_size();
+    assert_ne!(
+        size,
+        reopen(&mut Document::new()).section(0).unwrap().page_size(),
+        "the template's page size is not the default"
+    );
+    let names = ["Ada", "Bob", "Cy"];
+    let flat: Vec<_> = names.iter().map(|name| record(&[("Name", name)])).collect();
+    let rich = MailMergeData {
+        records: names
+            .iter()
+            .map(|name| MailMergeRecord {
+                values: BTreeMap::from([("Name".to_owned(), text(name))]),
+                regions: BTreeMap::new(),
+            })
+            .collect(),
+        sources: BTreeMap::new(),
+    };
+    for (how, mut merged) in [
+        ("flat", template.mail_merge_sections(&flat).unwrap()),
+        (
+            "rich",
+            template.mail_merge_sections_rich(&rich, None).unwrap(),
+        ),
+    ] {
+        let merged = reopen(&mut merged);
+        assert_eq!(texts(&merged), ["Ada", "", "Bob", "", "Cy"], "{how}");
+        assert_eq!(merged.section_count(), 3, "{how}");
+        for index in 0..3 {
+            assert_eq!(
+                merged.section(index).unwrap().page_size(),
+                size,
+                "{how}: section {index} keeps the page size"
+            );
+            assert_eq!(
+                header_shown(&merged, index).as_deref(),
+                Some("Letterhead"),
+                "{how}: section {index} shows the header"
+            );
+            let own = merged
+                .section_story(index, HeaderFooterKind::Header, HdrFtrType::Default)
+                .unwrap()
+                .unwrap();
+            assert!(
+                !own.is_inherited(),
+                "{how}: section {index} has its own header"
+            );
+        }
+    }
+}
+
 /// A recipient of the corpus letters.
 fn letter_recipient() -> BTreeMap<String, String> {
     record(&[
@@ -1175,6 +1317,209 @@ fn a_rich_merge_puts_a_whole_document_in_place_of_a_field() {
             "Signed"
         ]
     );
+}
+
+/// One table row of these cells, each a paragraph of raw runs.
+fn row(cells: &[String]) -> String {
+    let cells: String = cells
+        .iter()
+        .map(|cell| format!("<w:tc><w:p>{cell}</w:p></w:tc>"))
+        .collect();
+    format!("<w:tr>{cells}</w:tr>")
+}
+
+/// A run of plain text.
+fn run(text: &str) -> String {
+    format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+}
+
+/// A one-cell row spanning the two columns, holding only this merge field.
+fn marker_row(name: &str) -> String {
+    format!(
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr>"#,
+        merge_field(name)
+    )
+}
+
+/// A two-column table of these rows, then an empty paragraph.
+fn table(rows: &[String]) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="2000"/></w:tblGrid>{}</w:tbl><w:p/>"#,
+        rows.concat()
+    )
+}
+
+/// The text of every cell of body table 0, row by row.
+fn table_texts(doc: &Document) -> Vec<Vec<String>> {
+    let table = doc.table(0).expect("the table");
+    (0..table.row_count())
+        .map(|index| {
+            let row = table.row(index).unwrap();
+            (0..row.cell_count())
+                .map(|cell| row.cell(cell).unwrap().text())
+                .collect()
+        })
+        .collect()
+}
+
+fn cells(texts: &[&str]) -> Vec<String> {
+    texts.iter().map(|text| (*text).to_owned()).collect()
+}
+
+#[test]
+fn a_rich_merge_repeats_the_table_rows_between_its_marker_rows() {
+    // The invoice layout: a heading row, one row per line, a total row.
+    let template = doc_with_body(&table(&[
+        row(&[run("Item"), run("Qty")]),
+        marker_row("TableStart:Lines"),
+        row(&[merge_field("Item"), merge_field("Qty")]),
+        marker_row("TableEnd:Lines"),
+        row(&[run("Total"), merge_field("Total")]),
+    ]));
+    let line = |item: &str, qty: &str| MailMergeRecord {
+        values: BTreeMap::from([
+            ("Item".to_owned(), text(item)),
+            ("Qty".to_owned(), text(qty)),
+        ]),
+        regions: BTreeMap::new(),
+    };
+    let invoice = |total: &str, lines: Vec<MailMergeRecord>| MailMergeRecord {
+        values: BTreeMap::from([("Total".to_owned(), text(total))]),
+        regions: BTreeMap::from([("Lines".to_owned(), lines)]),
+    };
+    let data = MailMergeData {
+        records: vec![
+            invoice("7", vec![line("Pen", "2"), line("Ink", "5")]),
+            invoice("0", Vec::new()),
+        ],
+        sources: BTreeMap::new(),
+    };
+    let mut outputs = template.mail_merge_rich(&data, None).unwrap();
+    assert_eq!(
+        table_texts(&reopen(&mut outputs[0])),
+        [
+            cells(&["Item", "Qty"]),
+            cells(&["Pen", "2"]),
+            cells(&["Ink", "5"]),
+            cells(&["Total", "7"]),
+        ]
+    );
+    // An empty region leaves neither its marker rows nor its rows.
+    assert_eq!(
+        table_texts(&reopen(&mut outputs[1])),
+        [cells(&["Item", "Qty"]), cells(&["Total", "0"])]
+    );
+}
+
+#[test]
+fn region_markers_sharing_a_row_with_other_cells_are_refused() {
+    // The markers must own their whole row: in the first and last cells of
+    // the repeated row they are refused, and the template stays as it was.
+    let mut template = doc_with_body(&table(&[row(&[
+        format!("{}{}", merge_field("TableStart:Lines"), merge_field("Item")),
+        format!("{}{}", merge_field("Qty"), merge_field("TableEnd:Lines")),
+    ])]));
+    let before = template.to_bytes().unwrap();
+    let data = MailMergeData {
+        records: vec![MailMergeRecord {
+            values: BTreeMap::new(),
+            regions: BTreeMap::from([("Lines".to_owned(), Vec::new())]),
+        }],
+        sources: BTreeMap::new(),
+    };
+    let error = refusal(template.mail_merge_rich(&data, None));
+    assert!(
+        error.contains("region field TableStart:Lines must own its whole block"),
+        "{error}"
+    );
+    assert_eq!(template.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn an_image_value_puts_its_picture_in_place_of_the_field() {
+    let template = doc_with_body(&format!(
+        r#"<w:p>{}{}</w:p><w:p>{}</w:p>"#,
+        run("Logo: "),
+        merge_field("Logo"),
+        merge_field("Name")
+    ));
+    let logo = |width: Length| MailMergeImage {
+        data: PNG.to_vec(),
+        filename: "logo.png".to_owned(),
+        width,
+        height: Length::inches(0.5),
+    };
+    let data = |width: Length| MailMergeData {
+        records: vec![MailMergeRecord {
+            values: BTreeMap::from([
+                ("Logo".to_owned(), MailMergeValue::Image(logo(width))),
+                ("Name".to_owned(), text("Acme")),
+            ]),
+            regions: BTreeMap::new(),
+        }],
+        sources: BTreeMap::new(),
+    };
+    let mut outputs = template
+        .mail_merge_rich(&data(Length::inches(1.0)), None)
+        .unwrap();
+    let merged = reopen(&mut outputs[0]);
+    assert_eq!(texts(&merged), ["Logo: ", "Acme"]);
+    let images: Vec<_> = merged
+        .images()
+        .into_iter()
+        .map(|image| {
+            (
+                merged.image_data(&image.embed_id),
+                image.width_emu,
+                image.height_emu,
+            )
+        })
+        .collect();
+    assert_eq!(images, [(Some(PNG.to_vec()), 914_400, 457_200)]);
+    let xml = merged.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("MERGEFIELD Logo"), "{xml}");
+
+    let error = refusal(template.mail_merge_rich(&data(Length::emu(0)), None));
+    assert!(
+        error.contains("image Logo has non-positive dimensions"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_region_a_record_does_not_hold_reads_the_named_source() {
+    let template = doc_with_body(&format!(
+        r#"<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p>"#,
+        merge_field("Client"),
+        merge_field("TableStart:Products"),
+        merge_field("Product"),
+        merge_field("TableEnd:Products"),
+    ));
+    let product = |name: &str| MailMergeRecord {
+        values: BTreeMap::from([("Product".to_owned(), text(name))]),
+        regions: BTreeMap::new(),
+    };
+    let client = |name: &str, regions: BTreeMap<String, Vec<MailMergeRecord>>| MailMergeRecord {
+        values: BTreeMap::from([("Client".to_owned(), text(name))]),
+        regions,
+    };
+    let data = MailMergeData {
+        records: vec![
+            client("Acme", BTreeMap::new()),
+            // A region of the record's own wins over the named source.
+            client(
+                "Bolt",
+                BTreeMap::from([("Products".to_owned(), vec![product("Custom")])]),
+            ),
+        ],
+        sources: BTreeMap::from([("Products".to_owned(), vec![product("Pen"), product("Ink")])]),
+    };
+    let mut outputs = template.mail_merge_rich(&data, None).unwrap();
+    let merged: Vec<Vec<String>> = outputs
+        .iter_mut()
+        .map(|output| texts(&reopen(output)))
+        .collect();
+    assert_eq!(merged, [vec!["Acme", "Pen", "Ink"], vec!["Bolt", "Custom"]]);
 }
 
 // ---- Mail-merge settings and recipient data ----
@@ -1363,6 +1708,84 @@ fn an_external_recipient_source_is_blocked_offline_and_takes_caller_rows() {
         .to_string();
     assert!(error.contains("not a file or https"), "{error}");
     assert_eq!(other.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn a_package_with_field_mappings_and_recipients_survives_a_save() {
+    let mapping = |column: u32, name: &str| MailMergeFieldMapping {
+        column,
+        source_name: name.to_owned(),
+        mapped_name: name.to_owned(),
+        language: None,
+        dynamic_address: None,
+    };
+    let recipient = |tag: &[u8], active: bool| MailMergeRecipient {
+        column: 0,
+        unique_tag: tag.to_vec(),
+        active,
+    };
+    let options = |recipients: Vec<MailMergeRecipient>| MailMergePackageOptions {
+        settings: package_settings(),
+        source: MailMergePackageSource::Embedded {
+            columns: vec!["FirstName".to_owned(), "City".to_owned()],
+            records: vec![
+                vec!["Zoë".to_owned(), "Lyon".to_owned()],
+                vec!["Bob".to_owned(), "Nice".to_owned()],
+            ],
+        },
+        mappings: vec![mapping(0, "FirstName"), mapping(1, "City")],
+        recipients,
+    };
+
+    let mut doc = doc_with_body(&format!("<w:p>{}</w:p>", merge_field("FirstName")));
+    let with_recipients = options(vec![
+        recipient(b"Zo\xc3\xab", true),
+        recipient(b"Bob", false),
+    ]);
+    doc.set_mail_merge_package(with_recipients.clone()).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.mail_merge_package().unwrap(), Some(with_recipients));
+    let recipients = doc.part_xml("word/recipientData.xml").unwrap();
+    assert_eq!(
+        recipients.matches("<w:recipientData>").count(),
+        2,
+        "{recipients}"
+    );
+    // Recipient rows can leave a recipient out, which the merge does not
+    // evaluate: such a package is not applied.
+    let prepared = doc
+        .prepare_mail_merge_data(MailMergeSourcePolicy::Offline, None)
+        .unwrap();
+    assert!(prepared.records.is_empty());
+    assert_eq!(
+        prepared
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.kind)
+            .collect::<Vec<_>>(),
+        [MailMergePackageDiagnosticKind::UnsupportedSource]
+    );
+
+    // Without recipients, the faithful mappings feed the merge.
+    let without = options(Vec::new());
+    doc.set_mail_merge_package(without.clone()).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.mail_merge_package().unwrap(), Some(without));
+    let prepared = doc
+        .prepare_mail_merge_data(MailMergeSourcePolicy::Offline, None)
+        .unwrap();
+    assert!(
+        prepared.diagnostics.is_empty(),
+        "{:?}",
+        prepared.diagnostics
+    );
+    assert_eq!(
+        prepared.records,
+        [
+            record(&[("FirstName", "Zoë"), ("City", "Lyon")]),
+            record(&[("FirstName", "Bob"), ("City", "Nice")])
+        ]
+    );
 }
 
 // ---- Building blocks ----
@@ -1568,4 +1991,83 @@ fn a_new_minimal_template_knows_its_class_before_a_save() {
         matches!(class, Ok(WordPackageClass::Template)),
         "a new minimal template knows its class: {class:?}"
     );
+}
+
+// ---- Macro-enabled documents ----
+
+const MACRO_DOCUMENT_TYPE: &str = "application/vnd.ms-word.document.macroEnabled.main+xml";
+const VBA_PROJECT_RELATIONSHIP: &str =
+    "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+const VBA_PART: &str = "/word/vbaProject.bin";
+
+/// A macro-enabled document whose main part carries a VBA project, as
+/// Word saves a `.docm`.
+fn macro_enabled_document() -> Document {
+    let bytes = doc_with(&["Macro text"]).to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let main = package.main_document_part().unwrap();
+    package.set_part(VBA_PART, b"opaque VBA project".to_vec());
+    package
+        .content_types
+        .add_override(VBA_PART, "application/vnd.ms-office.vbaProject");
+    package
+        .content_types
+        .add_override(&main, MACRO_DOCUMENT_TYPE);
+    package
+        .get_or_create_part_rels(&main)
+        .add(VBA_PROJECT_RELATIONSHIP, "vbaProject.bin");
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).expect("the macro-enabled document opens")
+}
+
+fn carries_vba(bytes: &[u8]) -> bool {
+    OpcPackage::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .get_part(VBA_PART)
+        .is_some()
+}
+
+#[test]
+fn a_document_with_a_vba_project_is_refused_under_a_macro_free_extension() {
+    let scratch = Scratch::new("vba");
+    let mut doc = macro_enabled_document();
+    assert_eq!(
+        doc.package_class().unwrap(),
+        WordPackageClass::MacroEnabledDocument
+    );
+    for extension in ["docx", "dotx"] {
+        let path = scratch.0.join(format!("macro.{extension}"));
+        // A file already there stays as it was.
+        fs::write(&path, b"previous").unwrap();
+        let error = doc.save(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("carries a VBA project"),
+            "{extension}: {error}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"previous", "{extension}");
+        let error = doc.to_bytes_for_path(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("save it as .docm or .dotm"),
+            "{extension}: {error}"
+        );
+    }
+
+    for (extension, class) in [
+        ("docm", WordPackageClass::MacroEnabledDocument),
+        ("dotm", WordPackageClass::MacroEnabledTemplate),
+    ] {
+        let path = scratch.0.join(format!("macro.{extension}"));
+        doc.save(&path).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(carries_vba(&bytes), "{extension}: the project stays");
+        let saved = Document::from_bytes(&bytes).unwrap();
+        assert_eq!(saved.package_class().unwrap(), class, "{extension}");
+        assert_eq!(texts(&saved), ["Macro text"], "{extension}");
+    }
+
+    // The explicit conversion is the documented way through, VBA kept.
+    let converted = doc.to_bytes_as(WordPackageClass::Document).unwrap();
+    assert_eq!(main_part_content_type(&converted), MAIN_DOCUMENT_TYPE);
+    assert!(carries_vba(&converted));
 }
