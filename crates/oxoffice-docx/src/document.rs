@@ -48493,8 +48493,8 @@ impl Document {
     /// A tab reads as `\t` and every break, a page or column break included,
     /// as `\n`, as in [`crate::Paragraph::text`], so a match does not skip
     /// them and one that holds them removes them. A `\t` in `replacement`
-    /// becomes a tab and a `\n`, `\r` or `\r\n` a line break, as
-    /// [`crate::Paragraph::set_text`] writes them.
+    /// becomes a tab and a `\n`, `\r` or `\r\n` one line break: a page or
+    /// column break written back by a replacement is a line break.
     ///
     /// A `replacement` that contains `placeholder` is substituted once, not
     /// repeatedly.
@@ -49235,8 +49235,9 @@ impl Document {
     /// Render scalar and structural template tags from structured JSON data.
     ///
     /// Tags use `{{ path.to.value }}` syntax and may cross ordinary Word run
-    /// boundaries. String, number and boolean leaves render as text, while
-    /// `null` renders as an empty string. Missing paths, malformed tags, and
+    /// boundaries. String, number and boolean leaves render as text, a tab in
+    /// a value as a tab and a line ending as a line break, while `null`
+    /// renders as an empty string. Missing paths, malformed tags, and
     /// object or array leaves return an error without changing the document.
     /// Dedicated main-body paragraphs and table rows may contain nested
     /// `{% for item in path %}` or `{% if path %}` blocks with their matching
@@ -50121,7 +50122,8 @@ impl Document {
     ///
     /// The text reads tabs and breaks as [`Self::replace_text`] does: `\s`
     /// matches a tab and any break, a page break included, so a pattern such
-    /// as `\s+` replaces them too.
+    /// as `\s+` replaces them too, and a break a capture group writes back
+    /// becomes a line break.
     pub fn replace_regex(&mut self, pattern: &str, replacement: &str) -> Result<usize> {
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let re =

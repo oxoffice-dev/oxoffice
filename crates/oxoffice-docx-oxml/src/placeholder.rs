@@ -1102,10 +1102,10 @@ fn replace_matches_in(
             emptied.extend(first_run + 1..=last_run);
         }
 
-        // Text before `byte_start` is untouched and the replacement now
-        // occupies `byte_start..byte_start + replacement.len()`, so this stays
-        // on a char boundary of the rebuilt text.
-        search_from = byte_start + replacement.len();
+        // Text before `byte_start` is untouched and the replacement now reads
+        // as its written items do, a `\r\n` as one break, so this stays on a
+        // char boundary of the rebuilt text.
+        search_from = byte_start + read_back_len(&replacement, item_text);
 
         total += 1;
     }
@@ -1703,6 +1703,15 @@ fn replace_in_run(
             CT_R::set_raw_child_position(position, new);
         }
     }
+}
+
+/// The length of `replacement` once written, as `item_text` reads its items
+/// back: a Windows line ending is one break, and a template edit reads no
+/// tab or break at all.
+fn read_back_len(replacement: &str, item_text: ItemText) -> usize {
+    let mut items = Vec::new();
+    push_replacement(&mut items, CT_Text::new(""), "", replacement, "");
+    items.iter().filter_map(item_text).map(str::len).sum()
 }
 
 /// Push `prefix`, `replacement` and `suffix` as run items: the replacement's

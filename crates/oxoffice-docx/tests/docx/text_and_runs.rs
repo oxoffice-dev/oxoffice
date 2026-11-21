@@ -835,6 +835,41 @@ fn a_replacement_keeps_the_unmodelled_children_of_its_run() {
 }
 
 #[test]
+fn a_replacement_with_windows_line_endings_resumes_the_search_where_it_ends() {
+    // "\r\n" is written as one break, which reads back as one "\n": the
+    // search goes on right after it, on a character boundary.
+    let mut doc = doc_with_body(r#"<w:p><w:r><w:t>«{adresse}»</w:t></w:r></w:p>"#);
+    assert_eq!(doc.replace_text("{adresse}", "1 rue Haute\r\nParis"), 1);
+    assert_eq!(texts(&doc), ["«1 rue Haute\nParis»"]);
+
+    let mut doc = doc_with_body(r#"<w:p><w:r><w:t>Ligne 1</w:t><w:br/><w:t>Été</w:t></w:r></w:p>"#);
+    assert_eq!(doc.replace_text("\n", "\r\n"), 1);
+    assert_eq!(texts(&doc), ["Ligne 1\nÉté"]);
+
+    let mut doc = doc_with_body(r#"<w:p><w:r><w:t>{x}{x}</w:t></w:r></w:p>"#);
+    assert_eq!(
+        doc.replace_text("{x}", "\r\n"),
+        2,
+        "the next match is not skipped"
+    );
+    assert_eq!(texts(&reopen(&mut doc)), ["\n\n"]);
+}
+
+#[test]
+fn a_template_value_with_a_tab_or_a_line_ending_renders_as_a_tab_or_a_break() {
+    let mut doc = doc_with_body(r#"<w:p><w:r><w:t>{{ addr }}</w:t></w:r></w:p>"#);
+    doc.render_template(&serde_json::json!({ "addr": "Main St\r\nParis\tFR" }))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Main St\nParis\tFR"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains("<w:t>Main St</w:t><w:br/><w:t>Paris</w:t><w:tab/><w:t>FR</w:t>"),
+        "{xml}"
+    );
+}
+
+#[test]
 fn a_template_tag_after_a_tab_or_a_break_renders_in_place() {
     // Template tags read only the run text, so a tab or a break before a
     // tag must not shift the replacement.
