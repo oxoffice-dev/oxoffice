@@ -341,6 +341,17 @@ struct AutofitOwner {
     contexts: Vec<AutofitContext>,
 }
 
+/// What a slide edit changed, for the package metadata that counts slides.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MetadataEdit {
+    /// Slides were added: counts and title lists follow.
+    Addition,
+    /// A slide was removed: counts, title lists and the thumbnail follow.
+    Removal,
+    /// A slide was hidden or shown: the hidden-slide count follows.
+    Visibility,
+}
+
 const DEFAULT_POWERPOINT_AUTHORS_PART: &str = "/ppt/authors.xml";
 const EXTENDED_PROPERTIES_NS: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
@@ -10302,7 +10313,7 @@ impl Presentation {
         }
         let mut staged = self.clone();
         let inserted = staged.duplicate_slide_in_place(index)?;
-        staged.refresh_document_metadata(true, false)?;
+        staged.refresh_document_metadata(MetadataEdit::Addition)?;
         *self = staged;
         self.slides
             .get(inserted)
@@ -10355,7 +10366,7 @@ impl Presentation {
             Some(&destination_layout),
             None,
         )?;
-        staged.refresh_document_metadata(true, false)?;
+        staged.refresh_document_metadata(MetadataEdit::Addition)?;
         self.commit_candidate(staged)?;
         self.slides
             .get(inserted)
@@ -10735,7 +10746,7 @@ impl Presentation {
             &original_main_ids,
         )?;
         let inserted_indexes = (inserted..inserted + copies.len()).collect();
-        staged.refresh_document_metadata(true, false)?;
+        staged.refresh_document_metadata(MetadataEdit::Addition)?;
         self.commit_candidate(staged)?;
         Ok((inserted_indexes, diagnostics))
     }
@@ -10915,26 +10926,28 @@ impl Presentation {
         self.slides.remove(index);
         prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
-        self.refresh_document_metadata(true, true)
+        self.refresh_document_metadata(MetadataEdit::Removal)
     }
 
     /// Keeps the package metadata in step with a slide edit.
     ///
-    /// `docProps/app.xml` gets the slide, notes and hidden-slide counts of
-    /// the deck, where it has them. With `titles`, an edit that adds or
-    /// removes slides, it also loses its title lists (`HeadingPairs`,
-    /// `TitlesOfParts`), which may name a removed slide or miss a new one:
-    /// their group names are localised, so a title cannot be picked out, and
-    /// PowerPoint writes them again on its next save. A move changes neither
-    /// the counts nor what the lists hold, so it leaves app.xml alone. An
-    /// app.xml the source-preserving patch cannot edit (one outside its
-    /// namespace, or with a count in a foreign namespace) is left as it was
-    /// rather than refusing the edit.
+    /// `docProps/app.xml` gets the deck's counts where it has them: after a
+    /// slide is added or removed, the slide, notes and hidden-slide counts,
+    /// and its title lists (`HeadingPairs`, `TitlesOfParts`) go, as they may
+    /// name a removed slide or miss a new one: their group names are
+    /// localised, so a title cannot be picked out, and PowerPoint writes them
+    /// again on its next save. After a hide or a show, only the hidden-slide
+    /// count. A move changes no count and is left out; the lists then keep
+    /// the old order. An app.xml the source-preserving patch cannot edit (one
+    /// outside its namespace, or with a count in a foreign namespace) is left
+    /// as it was rather than refusing the edit.
     ///
-    /// With `thumbnail`, a removal, the package thumbnail goes too: it
-    /// pictures the slide that was first when the deck was last saved, which
-    /// moves and inserts may have taken anywhere.
-    fn refresh_document_metadata(&mut self, titles: bool, thumbnail: bool) -> Result<()> {
+    /// After a removal the package thumbnail goes too: it pictures the slide
+    /// that was first when the deck was last saved, which moves and inserts
+    /// may have taken anywhere.
+    fn refresh_document_metadata(&mut self, edit: MetadataEdit) -> Result<()> {
+        let thumbnail = edit == MetadataEdit::Removal;
+        let titles = edit != MetadataEdit::Visibility;
         let thumbnails = self
             .package
             .package_rels
@@ -10971,16 +10984,18 @@ impl Presentation {
                 .unwrap_or(i32::MAX)
         };
         let mut new = old.clone();
-        new.slides = old.slides.map(|_| count(|_| true));
-        // `Notes` counts slides containing notes, not empty notes pages.
-        new.notes = old.notes.map(|_| {
-            count(|record| {
-                record
-                    .notes
-                    .as_ref()
-                    .is_some_and(|notes| !notes.notes.notes_text().trim().is_empty())
-            })
-        });
+        if titles {
+            new.slides = old.slides.map(|_| count(|_| true));
+            // `Notes` counts slides containing notes, not empty notes pages.
+            new.notes = old.notes.map(|_| {
+                count(|record| {
+                    record
+                        .notes
+                        .as_ref()
+                        .is_some_and(|notes| !notes.notes.notes_text().trim().is_empty())
+                })
+            });
+        }
         new.hidden_slides = old
             .hidden_slides
             .map(|_| count(|record| record.slide.hidden()));
@@ -12793,7 +12808,7 @@ impl Presentation {
             notes: None,
             comments: None,
         }));
-        self.refresh_document_metadata(true, false)?;
+        self.refresh_document_metadata(MetadataEdit::Addition)?;
         self.slides
             .last()
             .map(|record| slide_ref(record))
@@ -23212,12 +23227,17 @@ fn slide_mut(presentation: &mut Presentation, index: usize) -> SlideMut<'_> {
 impl<'a> SlideMut<'a> {
     /// Sets whether the slide is hidden from the slideshow.
     pub fn set_hidden(&mut self, hidden: bool) {
+        if self.presentation.slides[self.index].slide.hidden() == hidden {
+            return;
+        }
         Arc::make_mut(&mut self.presentation.slides[self.index])
             .slide
             .set_hidden(hidden);
         // Only the hidden-slide count changes. Metadata that cannot be
         // refreshed is left as it was: it is no reason to refuse a hide.
-        let _ = self.presentation.refresh_document_metadata(false, false);
+        let _ = self
+            .presentation
+            .refresh_document_metadata(MetadataEdit::Visibility);
     }
 
     /// Sets a direct DrawingML fill without replacing a theme reference.

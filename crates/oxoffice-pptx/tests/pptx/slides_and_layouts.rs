@@ -1169,8 +1169,8 @@ fn saved_part_text(prs: &Presentation, part_name: &str) -> Option<String> {
 #[test]
 fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
     let mut prs = corpus_deck("powerpoint/deck.pptx");
-    prs.slide_mut(3).unwrap().set_hidden(true);
     let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    prs.slide_mut(3).unwrap().set_hidden(true);
     assert!(
         before.contains("<vt:lpstr>Highlights</vt:lpstr>"),
         "{before}"
@@ -1295,19 +1295,25 @@ fn the_notes_count_after_a_removal_counts_slides_with_notes_text() {
 
 #[test]
 fn added_duplicated_and_imported_slides_are_counted_in_the_package_metadata() {
-    let source = corpus_deck("google/deck.pptx");
+    // Google's Highlights slide, hidden, with its notes.
+    let mut source = corpus_deck("google/deck.pptx");
+    source.slide_mut(1).unwrap().set_hidden(true);
     type Edit = fn(&mut Presentation, &Presentation);
-    let edits: [(&str, Edit); 3] = [
+    let edits: [(&str, Edit); 4] = [
         ("add", |prs, _| {
             let layout = layout_named(prs, "Title Only");
             prs.add_slide(layout).unwrap();
+        }),
+        ("add at", |prs, _| {
+            let layout = layout_named(prs, "Title Only");
+            prs.add_slide_at(layout, 0).unwrap();
         }),
         ("duplicate", |prs, _| {
             prs.duplicate_slide(1).unwrap();
         }),
         ("import", |prs, source| {
             let layout = layout_named(prs, "Title Only");
-            prs.import_slide(source, 0, Some(layout), None).unwrap();
+            prs.import_slide(source, 1, Some(layout), None).unwrap();
         }),
     ];
     for (name, edit) in edits {
@@ -1317,10 +1323,20 @@ fn added_duplicated_and_imported_slides_are_counted_in_the_package_metadata() {
         let prs = reopen(&prs);
         let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
         assert!(app.contains("<Slides>5</Slides>"), "{name}: {app}");
-        // The duplicate of Highlights brings its notes along.
-        let notes = if name == "duplicate" { 2 } else { 1 };
+        // The duplicate of Highlights and the imported one bring their
+        // notes along; the imported one is hidden.
+        let notes = if matches!(name, "duplicate" | "import") {
+            2
+        } else {
+            1
+        };
         assert!(
             app.contains(&format!("<Notes>{notes}</Notes>")),
+            "{name}: {app}"
+        );
+        let hidden = usize::from(name == "import");
+        assert!(
+            app.contains(&format!("<HiddenSlides>{hidden}</HiddenSlides>")),
             "{name}: {app}"
         );
         assert!(
@@ -1377,4 +1393,28 @@ fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged()
     let prs = corpus_deck("authored/deck.pptx");
     let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
     assert!(app.contains("<Slides>0</Slides>"), "{app}");
+}
+
+#[test]
+fn hiding_a_slide_recounts_hidden_slides_only_and_a_no_op_changes_nothing() {
+    // The authored deck says it has no slide and no notes.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+
+    prs.slide_mut(0).unwrap().set_hidden(false);
+    assert_eq!(saved_part_text(&prs, "/docProps/app.xml").unwrap(), before);
+
+    prs.slide_mut(0).unwrap().set_hidden(true);
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert_eq!(
+        app,
+        before.replace(
+            "<HiddenSlides>0</HiddenSlides>",
+            "<HiddenSlides>1</HiddenSlides>"
+        )
+    );
+    assert!(
+        app.contains("<Slides>0</Slides>") && app.contains("<Notes>0</Notes>"),
+        "{app}"
+    );
 }
