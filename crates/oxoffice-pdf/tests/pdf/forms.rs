@@ -643,7 +643,41 @@ fn a_tagged_fragment_drawn_on_the_page_is_an_artifact() {
     let read = pdf(&layout);
     let later = read.page_content(1);
     assert_eq!(read.drawn_text(&later), "later");
-    assert!(contains(&later, b"/Artifact BMC"));
+    let artifact = position(&later, b"/Artifact BMC").expect("an artifact sequence");
+    let text = position(&later, b"BT").expect("the text");
+    let end = position(&later, b"EMC").expect("the end of the sequence");
+    assert!(
+        artifact < text && text < end,
+        "the artifact surrounds the text"
+    );
+}
+
+/// Where `needle` first sits in `haystack`.
+fn position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+#[test]
+fn a_fragment_drawn_inside_a_tagged_paragraph_is_that_paragraph_content() {
+    let layout = tagged(with_fields(
+        layout(vec![
+            vec![fragment(0, line(72.0, 100.0, 200.0), "first")],
+            vec![paragraph(vec![
+                run("Notes:", Point { x: 72.0, y: 112.0 }, 11.0),
+                fragment(0, line(120.0, 100.0, 200.0), "later"),
+            ])],
+        ]),
+        vec![field("notes", text_kind("first later"))],
+    ));
+    let read = pdf(&layout);
+    let later = read.page_content(1);
+    assert_eq!(read.drawn_text(&later), "Notes:later");
+    assert!(
+        !contains(&later, b"/Artifact"),
+        "no artifact inside a marked sequence"
+    );
 }
 
 fn structure_id(value: u32) -> StructureId {
