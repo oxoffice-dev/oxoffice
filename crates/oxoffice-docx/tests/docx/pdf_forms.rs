@@ -251,6 +251,19 @@ const CORPUS_FORM_CONTROLS: [&str; 14] = [
     "reviewed",
 ];
 
+/// The legacy form fields of the Word-shaped corpus form, after its
+/// `contact_person` control. LibreOffice's copy keeps them in a shape the
+/// model does not read as fields (#139). Its `PaymentTerms` drop-down draws
+/// nothing today (#170), so it stays static and says so.
+const CORPUS_LEGACY_FIELDS: [&str; 6] = [
+    "BankName",
+    "IBAN",
+    "BIC",
+    "PaymentTerms",
+    "RemittanceEmail",
+    "Declaration",
+];
+
 #[test]
 fn the_corpus_forms_export_their_controls_as_fields() {
     for name in ["authored/form.docx", "libreoffice/form.docx"] {
@@ -258,7 +271,11 @@ fn the_corpus_forms_export_their_controls_as_fields() {
         let with_fields = doc.layout_with_options(fillable()).unwrap();
         let built = &with_fields.layout.form_fields;
         let names: Vec<&str> = built.iter().map(|field| field.name.as_str()).collect();
-        assert_eq!(names, CORPUS_FORM_CONTROLS, "{name}");
+        let mut expected = CORPUS_FORM_CONTROLS.to_vec();
+        if name.starts_with("authored/") {
+            expected.splice(8..8, CORPUS_LEGACY_FIELDS);
+        }
+        assert_eq!(names, expected, "{name}");
         let field = |wanted: &str| built.iter().find(|field| field.name == wanted).unwrap();
         assert!(
             matches!(field("signature").kind, FormFieldKind::Signature),
@@ -275,7 +292,15 @@ fn the_corpus_forms_export_their_controls_as_fields() {
             .map(|diagnostic| &diagnostic.message)
             .filter(|message| message.contains("stays static"))
             .collect();
-        assert!(said.is_empty(), "{name}: {said:?}");
+        if name.starts_with("authored/") {
+            assert_eq!(
+                said,
+                ["form control \"PaymentTerms\" stays static: what it draws could not be gathered"],
+                "{name}: only the drop-down #170 leaves blank"
+            );
+        } else {
+            assert!(said.is_empty(), "{name}: {said:?}");
+        }
         let without = doc.layout_with_options(RenderOptions::default()).unwrap();
         assert_eq!(
             drawing(&with_fields.layout.pages),
@@ -285,8 +310,8 @@ fn the_corpus_forms_export_their_controls_as_fields() {
         let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
         assert_eq!(
             exported.len(),
-            names.len(),
-            "{name}: every field has a widget"
+            names.len() - said.len(),
+            "{name}: every field but the static ones has a widget"
         );
         let signature = &exported
             .iter()
@@ -1294,4 +1319,269 @@ fn a_control_whose_properties_do_not_decode_stays_static_and_says_so() {
         doc.to_pdf_with_options(fillable()).is_ok(),
         "the export still succeeds"
     );
+}
+
+/// A legacy form field as Word saves it: the form data on the field's begin
+/// mark, a bookmark of the same name around it, and its result, if any.
+fn legacy(id: u32, name: &str, data: &str, instruction: &str, result: Option<&str>) -> String {
+    let result = result.map_or_else(String::new, |text| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#
+        )
+    });
+    format!(
+        r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="{name}"/>{data}</w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r>{result}<w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkEnd w:id="{id}"/>"#
+    )
+}
+
+/// A legacy form as Word saves it: a text field with help text and a
+/// maximum length, a check box, a drop-down, a disabled field, a computed
+/// date and an empty text field.
+fn legacy_form() -> Document {
+    let company = legacy(
+        0,
+        "Company",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:helpText w:type="text" w:val="Legal name"/><w:textInput><w:maxLength w:val="40"/></w:textInput>"#,
+        "FORMTEXT",
+        Some("Acme"),
+    );
+    let check = legacy(
+        1,
+        "Check1",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="1"/></w:checkBox>"#,
+        "FORMCHECKBOX",
+        None,
+    );
+    let colour = legacy(
+        2,
+        "Colour",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:ddList><w:result w:val="1"/><w:listEntry w:val="Red"/><w:listEntry w:val="Green"/><w:listEntry w:val="Blue"/></w:ddList>"#,
+        "FORMDROPDOWN",
+        Some("Green"),
+    );
+    let reference = legacy(
+        3,
+        "Reference",
+        r#"<w:enabled w:val="0"/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("R-12"),
+    );
+    let today = legacy(
+        4,
+        "Today",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput><w:type w:val="currentDate"/><w:format w:val="dd/MM/yyyy"/></w:textInput>"#,
+        "FORMTEXT",
+        Some("21/11/2026"),
+    );
+    let city = legacy(
+        5,
+        "City",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("&#8194;&#8194;&#8194;&#8194;&#8194;"),
+    );
+    doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Company: </w:t></w:r>{company}</w:p>
+<w:p>{check}<w:r><w:t xml:space="preserve"> Subscribe</w:t></w:r></w:p>
+<w:p><w:r><w:t xml:space="preserve">Colour: </w:t></w:r>{colour}</w:p>
+<w:p><w:r><w:t xml:space="preserve">Reference: </w:t></w:r>{reference}<w:r><w:t xml:space="preserve"> Date: </w:t></w:r>{today}</w:p>
+<w:p><w:r><w:t xml:space="preserve">City: </w:t></w:r>{city}</w:p>"#
+    ))
+}
+
+fn names_of(doc: &Document) -> Vec<String> {
+    doc.layout_with_options(fillable())
+        .unwrap()
+        .layout
+        .form_fields
+        .iter()
+        .map(|field| field.name.clone())
+        .collect()
+}
+
+#[test]
+fn legacy_form_fields_become_named_fields_with_their_values() {
+    let doc = legacy_form();
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let fields_out = &layout.layout.form_fields;
+    let names: Vec<&str> = fields_out.iter().map(|field| field.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Company", "Check1", "Colour", "Reference", "Today", "City"]
+    );
+    assert!(matches!(
+        &fields_out[0].kind,
+        FormFieldKind::Text { value, max_len: Some(40), multiline: false } if value == "Acme"
+    ));
+    assert_eq!(fields_out[0].tooltip.as_deref(), Some("Legal name"));
+    assert!(matches!(
+        fields_out[1].kind,
+        FormFieldKind::CheckBox { checked: true }
+    ));
+    assert!(matches!(
+        &fields_out[2].kind,
+        FormFieldKind::Choice { options, value: Some(value), editable: false }
+            if value == "Green" && options.len() == 3 && options[0].value == "Red"
+    ));
+    assert!(
+        matches!(&fields_out[5].kind, FormFieldKind::Text { value, .. } if value.is_empty()),
+        "five en spaces are Word's empty text field"
+    );
+
+    let (_, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    let by_name = |name: &str| {
+        fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, dict)| dict.clone())
+            .unwrap_or_else(|| panic!("no field {name}"))
+    };
+    assert_eq!(text(by_name("Company").get(b"V").unwrap()), "Acme");
+    assert_eq!(
+        by_name("Company").get(b"MaxLen").unwrap().as_i64().unwrap(),
+        40
+    );
+    assert_eq!(text(by_name("Company").get(b"TU").unwrap()), "Legal name");
+    assert_eq!(
+        by_name("Check1").get(b"V").unwrap().as_name().unwrap(),
+        b"Yes"
+    );
+    assert_eq!(text(by_name("Colour").get(b"V").unwrap()), "Green");
+    let read_only = |name: &str| {
+        by_name(name)
+            .get(b"Ff")
+            .ok()
+            .and_then(|flags| flags.as_i64().ok())
+            .is_some_and(|flags| flags & 1 == 1)
+    };
+    assert!(read_only("Reference"), "a disabled field is read only");
+    assert!(read_only("Today"), "a computed date is read only");
+    assert!(!read_only("Company"));
+}
+
+#[test]
+fn legacy_fields_draw_exactly_what_the_static_layout_draws() {
+    let doc = legacy_form();
+    let with_fields = doc.layout_with_options(fillable()).unwrap();
+    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert_eq!(
+        drawing(&with_fields.layout.pages),
+        drawing(&without.layout.pages)
+    );
+    let mut fragments = 0;
+    for page in &with_fields.layout.pages {
+        count_fragments(&page.elements, &mut fragments);
+    }
+    assert_eq!(fragments, 6, "every legacy field has its widget");
+}
+
+#[test]
+fn a_legacy_check_box_draws_its_other_state() {
+    fn alternates(elements: &[PositionedElement], out: &mut Vec<String>) {
+        for element in elements {
+            match element {
+                PositionedElement::FormField(fragment) => {
+                    for alternate in &fragment.alternate {
+                        if let PositionedElement::Text(run) = alternate {
+                            out.push(run.text.clone());
+                        }
+                    }
+                }
+                PositionedElement::MarkedContent { children, .. } => alternates(children, out),
+                PositionedElement::Group(group) => alternates(&group.children, out),
+                _ => {}
+            }
+        }
+    }
+    let layout = legacy_form().layout_with_options(fillable()).unwrap();
+    let mut found = Vec::new();
+    for page in &layout.layout.pages {
+        alternates(&page.elements, &mut found);
+    }
+    assert_eq!(found, ["\u{2610}"], "the checked box can draw unchecked");
+}
+
+#[test]
+fn a_control_around_a_legacy_field_is_a_container() {
+    let inner = legacy(
+        0,
+        "Inner",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("typed"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="wrapper"/><w:richText/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">Name: </w:t></w:r>{inner}</w:sdtContent></w:sdt></w:p>
+<w:sdt><w:sdtPr><w:tag w:val="block"/><w:richText/></w:sdtPr><w:sdtContent><w:p>{}</w:p></w:sdtContent></w:sdt>"#,
+        legacy(
+            1,
+            "InBlock",
+            r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+            "FORMTEXT",
+            Some("more"),
+        )
+    ));
+    assert_eq!(names_of(&doc), ["Inner", "InBlock"]);
+    let (_, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    let found: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(found, ["Inner", "InBlock"], "both get a widget");
+}
+
+#[test]
+fn legacy_fields_and_controls_are_numbered_in_document_order() {
+    let first = legacy(
+        0,
+        "First",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("one"),
+    );
+    let last = legacy(
+        1,
+        "Last",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("four"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{first}<w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="second"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>two</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="third"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>three</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> </w:t></w:r>{last}</w:p>"#
+    ));
+    assert_eq!(names_of(&doc), ["First", "second", "third", "Last"]);
+}
+
+#[test]
+fn a_legacy_field_in_a_rotated_cell_stays_static_and_says_so() {
+    let field = legacy(
+        0,
+        "Turned",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("up"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="1500"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:textDirection w:val="btLr"/></w:tcPr><w:p>{field}</w:p></w:tc></w:tr></w:tbl><w:p/>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(layout.layout.form_fields.is_empty());
+    let said = diagnostics_about(&layout.layout, "Turned");
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("its cell's text is rotated"), "{said:?}");
+}
+
+#[test]
+fn a_legacy_field_inside_another_field_stays_static_and_says_so() {
+    let inner = r#"<w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Nested"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>inner</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> QUOTE "x" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{inner}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(layout.layout.form_fields.is_empty());
+    let said = layout
+        .layout
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("\"Nested\" stays static"))
+        .count();
+    assert_eq!(said, 1);
 }

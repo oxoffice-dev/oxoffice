@@ -158,7 +158,7 @@ refused at open when one of its parts holds a control character.
 | Encryption | ⚠️ | — | ⚠️ | open and save with a password, from Rust only for now |
 ### Fillable PDF forms
 
-A Word form exports to a PDF that the recipient fills in, and signs, in Acrobat Reader or any PDF viewer. Its content controls become fields: text, check boxes, lists and dates, with their current values. Word's own PDF export flattens forms.
+A Word form exports to a PDF that the recipient fills in, and signs, in Acrobat Reader or any PDF viewer. Its content controls and legacy form fields become fields: text, check boxes, lists and dates, with their current values. Word's own PDF export flattens forms.
 
 ```bash
 oxoffice docx convert form.docx --to pdf --fillable-forms
@@ -169,7 +169,7 @@ pdf = Document("form.docx").to_pdf(fillable_forms=True)
 ```
 
 - **Signature field.** Tag a text or picture content control `signature`, or `signature:<name>` for several, in Word's control properties. It becomes an empty signature field, ready to sign in Acrobat Reader. A tag like `signature_date` stays a text field.
-- **Names.** A field takes the control's tag, else its title. A `.` becomes `_`, and a name used again takes `_2`, `_3`... The `signature` tag ignores case.
+- **Names.** A field takes the control's tag, else its title, or the legacy field's name. A `.` becomes `_`, and a name used again takes `_2`, `_3`... The `signature` tag ignores case.
 - **Values.** A control showing its placeholder exports empty, with the placeholder as the field's tooltip.
 - **What stays static.** Controls outside the main body (headers, footers, text boxes...) stay static. So do body controls split across pages or columns, in a rotated cell or a vertical section, or around a floating picture, each with a diagnostic. See `oxoffice limitations`.
 

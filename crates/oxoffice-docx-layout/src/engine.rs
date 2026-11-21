@@ -137,7 +137,7 @@ use note_cache::{
 pub use paragraph::layout_paragraph;
 pub(crate) use paragraph::{
     layout_paragraph_with_grid, layout_paragraph_with_source_and_direction,
-    layout_paragraph_with_source_in_table,
+    layout_paragraph_with_source_in_table, source_fields,
 };
 use sources::TextBoxSourceBinding;
 use structure::{

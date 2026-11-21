@@ -231,8 +231,8 @@ green. `--revision-style` needs `--revision-view tracked`.
 Unknown view names are usage errors. HTML and Markdown conversion refuse
 the tracked view before creating output.
 
-`convert --to pdf --fillable-forms` exports the content controls of the body as
-fillable PDF form fields: text, check boxes, lists and dates, with their
+`convert --to pdf --fillable-forms` exports the content controls and legacy
+form fields of the body as fillable PDF form fields: text, check boxes, lists and dates, with their
 current values. A control tagged `signature` or `signature:<name>` becomes an
 empty signature field. The flag needs `--to pdf` and the accepted view.
 `oxoffice limitations` lists the kinds of controls it leaves static, and a

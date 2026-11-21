@@ -526,6 +526,26 @@ Rust first, then the CLI and Python. Each pull request has its own check.
    - Scope: `FORMTEXT`, `FORMCHECKBOX` and `FORMDROPDOWN` marked by their
      field source and numbered with the content controls.
    - Check: the Word layout tests on Word-shaped legacy fields.
+   - As built:
+     - Lands after pull request 6, so the feature ships end to end (Rust,
+       CLI, Python) first. 5b widens what it covers, and narrows the
+       limitation pull request 6 adds.
+     - A legacy field's runs carry a mark of their own, the field's index
+       among the paragraph's fields, including the stored result runs drawn
+       as ordinary runs. Fields are numbered with the content controls by
+       the first physical run each draws.
+     - A content control around a legacy field is a container, as it is
+       around another control: the legacy field becomes the field.
+     - Legacy marks name the main-story paragraph, as control marks do, and
+       a legacy field in a rotated cell or a vertical section stays static
+       and says so.
+     - A legacy drop-down with no stored result draws nothing today (#170),
+       so it gathers nothing, stays static and says so.
+     - Word's empty text field, five en spaces, has no value.
+     - A legacy field nested in another field, or whose form data does not
+       read, stays static with a diagnostic. A field the model does not read
+       as one, such as LibreOffice's with a bookmark inside (#139), is not
+       seen at all.
 6. **`feat(cli,python): fillable pdf forms`.**
    - Scope:
      - the CLI flag, the Python keyword and stubs, the Python tests;

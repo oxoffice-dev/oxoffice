@@ -1,0 +1,9 @@
+{
+  "id": "docx-pdf-forms-empty-controls",
+  "format": "docx",
+  "area": "pdf forms",
+  "title": "Empty controls get no fillable field yet",
+  "symptom": "with fillable_forms, a control without content or placeholder stays static, with a diagnostic that it \"stays static\"",
+  "workaround": "give empty controls placeholder text",
+  "issue": 133
+}

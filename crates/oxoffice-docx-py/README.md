@@ -75,8 +75,8 @@ with open("report.pdf", "wb") as output:
   `revision_style="legal"` for blue insertions, red deletions and green moves.
   Legal styling requires the tracked view and leaves stored formatting intact.
 - Fillable PDF forms: `to_pdf(fillable_forms=True)` and
-  `to_pdfa_deterministic(fillable_forms=True)` export the content controls of
-  the body as form fields, text, check boxes, lists and dates with their
+  `to_pdfa_deterministic(fillable_forms=True)` export the content controls and
+  legacy form fields of the body as form fields, text, check boxes, lists and dates with their
   values. A control tagged `signature` or `signature:<name>` becomes an empty
   signature field. It needs the accepted view, and
   `to_pdf_with_diagnostics` names each control of the body it leaves static.
