@@ -1,11 +1,12 @@
 """Check what the skill examples wrote, after run_examples.py: the files each example promises, with the
 content it describes. Reads them with oxoffice, python-docx and python-pptx. A document's paragraphs are read from
-`oxoffice docx text --json` (one call per file): on a build with debug assertions, walking `Document.paragraphs`
+`oxoffice docx text --json` (one call per file, cached): on a build with debug assertions, walking `Document.paragraphs`
 costs tens of milliseconds per paragraph, minutes for the whole check.
 
     python tests/skills/check_outputs.py WORK_DIR
 """
 
+import functools
 import json
 import re
 import subprocess
@@ -23,12 +24,16 @@ WORK = Path(sys.argv[1])
 d = WORK / "docx"
 
 
+@functools.cache
 def paragraphs(name):
-    """The paragraphs of `oxoffice docx text --json`: the body's, as Document.paragraphs lists them, then each
-    table cell's, with `text`, `style`, `runs` (text and formatting), `path` and `body_index`."""
-    out = subprocess.run(["oxoffice", "docx", "text", "--json", str(d / name)], check=True, capture_output=True,
-                         text=True, encoding="utf-8").stdout
-    return json.loads(out)["paragraphs"]
+    """The paragraphs of `oxoffice docx text --json`, in document order: the body's and, marked by their `path`,
+    the table cells', each with `text`, `style`, `runs` (text and formatting), `path` and `body_index`. The body's
+    are those of Document.paragraphs in a document without tracked paragraph-mark deletions or tables inside
+    content controls, as every output here."""
+    res = subprocess.run(["oxoffice", "docx", "text", "--json", str(d / name)], capture_output=True,
+                         text=True, encoding="utf-8")
+    assert res.returncode == 0, f"oxoffice docx text --json {name}: {res.stderr.strip()}"
+    return json.loads(res.stdout)["paragraphs"]
 
 
 in_cell = lambda q: any(step["kind"] == "cell" for step in q["path"])
@@ -91,6 +96,7 @@ page = lambda name: next(s.split("\t")[-1] for s in texts_of(name) if s.startswi
 assert int(page("fields.docx")) == int(page("toc.docx")) + 1   # update_layout_backed_fields followed the page break
 i = next(k for k, s in enumerate(texts_of("styled.docx")) if s.startswith("The overall condition index"))
 styled = oxoffice.docx.Document.open(d / "styled.docx").paragraphs[i]
+assert styled.text.startswith("The overall condition index")   # the JSON's index is the handle's
 assert (styled.style, styled.paragraph_format.space_after, styled.paragraph_format.keep_with_next) == ("Caption", oxoffice.docx.Pt(12), True)
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cli.docx").comments] == [("about 12 mm", "Which reference?")]
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cell.docx").comments] == [("spalled concrete", "Which face?")]

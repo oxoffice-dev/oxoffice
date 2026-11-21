@@ -163,7 +163,7 @@ jobs:
   # two repositories (tests/skills/README.md). They run on main only, against
   # the Linux wheel and command that `build` just made and tested, and read
   # the skills' default branch: a change on either side shows on the next
-  # push to main. A `ci` build takes about 9 minutes locally, 20 on a runner.
+  # push to main. A `ci` build takes about 9 minutes locally, 18 on a runner.
   skill-examples:
     name: Skill examples
     if: github.event_name != 'pull_request'
