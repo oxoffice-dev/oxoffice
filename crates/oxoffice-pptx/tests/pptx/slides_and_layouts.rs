@@ -1482,8 +1482,10 @@ fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
     // titles, whose zero text counts go as any stale text count does.
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
         let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml")
-            .map(|app| app.replace("<Words>0</Words><Paragraphs>0</Paragraphs>", ""));
+        let before = saved_part_text(&prs, "/docProps/app.xml").map(|app| {
+            app.replace("<Words>0</Words>", "")
+                .replace("<Paragraphs>0</Paragraphs>", "")
+        });
         prs.remove_slide(1).unwrap();
         let prs = reopen(&prs);
         assert_eq!(saved_part_text(&prs, "/docProps/app.xml"), before, "{name}");
@@ -1578,7 +1580,7 @@ fn hiding_a_slide_updates_only_the_hidden_slide_count() {
 }
 
 #[test]
-fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged() {
+fn slide_edits_add_no_counts_to_decks_without_them_and_leave_an_unedited_deck_unchanged() {
     // The authored deck says it has no slide: an added one makes it five.
     let mut prs = corpus_deck("authored/deck.pptx");
     let layout = prs.slide_layout_index(0).unwrap();
@@ -1588,8 +1590,10 @@ fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged()
 
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
         let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml")
-            .map(|app| app.replace("<Words>0</Words><Paragraphs>0</Paragraphs>", ""));
+        let before = saved_part_text(&prs, "/docProps/app.xml").map(|app| {
+            app.replace("<Words>0</Words>", "")
+                .replace("<Paragraphs>0</Paragraphs>", "")
+        });
         prs.duplicate_slide(1).unwrap();
         prs.slide_mut(0).unwrap().set_hidden(true);
         assert_eq!(
@@ -2167,4 +2171,46 @@ fn a_slide_text_edit_drops_the_stale_title_lists_and_text_counts_and_keeps_the_t
     assert!(app.contains("<Slides>4</Slides>"), "{app}");
     // The core title is the user's: a slide edit leaves it alone.
     assert_eq!(saved_part_text(&saved, "/docProps/core.xml").unwrap(), core);
+}
+
+#[test]
+fn a_text_count_set_after_a_pending_slide_edit_is_kept() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("A new title")
+        .unwrap();
+    let mut app = prs.application_properties().unwrap().clone();
+    app.words = Some(120);
+    prs.set_application_properties(app).unwrap();
+    assert_eq!(prs.application_properties().unwrap().words, Some(120));
+    let saved = reopen(&prs);
+    assert_eq!(saved.application_properties().unwrap().words, Some(120));
+    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
+    assert!(!app.contains("<TitlesOfParts>"), "{app}");
+}
+
+#[test]
+fn a_move_alone_drops_the_title_lists_and_a_slide_size_change_keeps_them() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.move_slide(0, 2).unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    for gone in [
+        "<HeadingPairs>",
+        "<TitlesOfParts>",
+        "<Words>",
+        "<Paragraphs>",
+    ] {
+        assert!(!app.contains(gone), "{gone}: {app}");
+    }
+
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    prs.set_slide_size(Emu(9_144_000), Emu(6_858_000)).unwrap();
+    assert_eq!(
+        saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap(),
+        before
+    );
 }

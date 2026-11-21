@@ -338,23 +338,27 @@ impl Presentation {
                 package.package_rels.add(rel_types::CORE_PROPERTIES, target);
             }
         }
-        let old_presentation = match self
+        // Whether presentation.xml changed, and whether its slide list did:
+        // app.xml's title lists and text counts are then stale.
+        let compare = |old: Option<&CT_Presentation>| {
+            (
+                old != Some(&self.presentation),
+                old.is_none_or(|old| old.slide_ids != self.presentation.slide_ids),
+            )
+        };
+        let (presentation_changed, slide_list_changed) = match self
             .parsed
             .as_deref()
             .and_then(|parsed| parsed.presentation(&self.package, &self.presentation_part))
         {
-            Some(parsed) => Some(parsed.clone()),
-            None => self
-                .package
-                .get_part(&self.presentation_part)
-                .and_then(|xml| CT_Presentation::from_xml(xml).ok()),
+            Some(parsed) => compare(Some(parsed)),
+            None => compare(
+                self.package
+                    .get_part(&self.presentation_part)
+                    .and_then(|xml| CT_Presentation::from_xml(xml).ok())
+                    .as_ref(),
+            ),
         };
-        let presentation_changed = old_presentation.as_ref() != Some(&self.presentation);
-        // The slide list changed: app.xml's title lists and text counts are
-        // stale.
-        let slide_list_changed = old_presentation
-            .as_ref()
-            .is_none_or(|old| old.slide_ids != self.presentation.slide_ids);
         if !preserve_unchanged_modelled_parts || presentation_changed {
             package.set_part(
                 &self.presentation_part,
@@ -472,7 +476,7 @@ impl Presentation {
         }
         // What app.xml must follow: its counts after a slide, its notes or
         // the slide list changed; its title lists and text counts go after
-        // the slide list or a slide's text changed, not after a hide or a
+        // the slide list or a slide's content changed, not after a hide or a
         // show alone.
         let mut counts_changed = slide_list_changed;
         let mut text_changed = slide_list_changed;

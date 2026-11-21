@@ -183,6 +183,17 @@ impl PartialEq for AppProperties {
 }
 
 impl AppProperties {
+    /// These properties with the unmodelled children, their order and
+    /// namespaces of `retained`: what a caller cannot set follows the part
+    /// as it is now, not as it was when the caller copied it.
+    #[doc(hidden)]
+    pub fn with_retained_xml_of(mut self, retained: &AppProperties) -> Self {
+        self.child_order = retained.child_order.clone();
+        self.extra_xml = retained.extra_xml.clone();
+        self.extra_namespaces = retained.extra_namespaces.clone();
+        self
+    }
+
     /// Parse a `docProps/app.xml` part.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
         let mut reader = Reader::from_reader(xml);

@@ -104,7 +104,7 @@ impl Presentation {
     /// Removes one slide and its owned package graph by zero-based index.
     ///
     /// The package metadata stops naming it: `docProps/app.xml` counts the
-    /// slides left and drops its title lists, unless the source-preserving
+    /// slides left and drops its title lists and text counts, unless the source-preserving
     /// patch cannot edit it (one outside its namespace, say), and the package
     /// thumbnail, which may picture it, goes.
     pub fn remove_slide(&mut self, index: usize) -> Result<()> {
@@ -421,7 +421,7 @@ impl Presentation {
     /// next index; a legacy reply whose parent comment is on another slide
     /// brings a copy of that parent along, as an import does.
     ///
-    /// `docProps/app.xml` counts the new slide and drops its title lists,
+    /// `docProps/app.xml` counts the new slide and drops its title lists and text counts,
     /// which PowerPoint writes again on its next save.
     ///
     /// In a deck with sections, the slide joins the section of the slide
@@ -638,7 +638,7 @@ impl Presentation {
 
     /// Synthesizes a new slide from one layout selected by zero-based index.
     ///
-    /// `docProps/app.xml` counts the new slide and drops its title lists,
+    /// `docProps/app.xml` counts the new slide and drops its title lists and text counts,
     /// which PowerPoint writes again on its next save.
     ///
     /// In a deck with sections, the slide joins the section of the slide

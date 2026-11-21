@@ -3,7 +3,7 @@
   "format": "pptx",
   "area": "metadata",
   "title": "The package thumbnail and an app.xml oxoffice cannot patch go stale after slide edits",
-  "symptom": "a save after a slide edit refreshes docProps/app.xml (slide, notes and hidden-slide counts) and drops what it does not recount (the title lists, Words and Paragraphs), but an app.xml the source-preserving patch cannot edit (one outside its namespace, for example) is left as it was, and the package thumbnail keeps the first slide as it was saved until a slide is removed; the core title (dc:title) is the user's and never follows the slides",
+  "symptom": "a save after a slide edit refreshes docProps/app.xml (slide, notes and hidden-slide counts) and drops what it does not recount (the title lists, Words and Paragraphs), but an app.xml the source-preserving patch cannot edit (one outside its namespace, for example) is left as it was, an edit of a layout, a master or a theme alone keeps the title lists (which name fonts and themes too), and the package thumbnail keeps the first slide as it was saved until a slide is removed; the core title (dc:title) is the user's and never follows the slides",
   "workaround": "set the counts and the title through the document properties before saving (Rust set_application_properties and set_core_properties, Python prs.app_properties and prs.core_properties, CLI oxoffice pptx meta set --title for the title); for the thumbnail, add a slide and remove it again, which drops it",
   "issue": 103
 }

@@ -141,11 +141,12 @@ impl Presentation {
     /// Returns cached application properties without dirtying retained XML.
     ///
     /// A save after a slide edit refreshes the slide, notes and hidden-slide
-    /// counts of `docProps/app.xml`. After a change of slide text or of the
-    /// slide list it also drops what oxoffice does not recount: the title
-    /// lists (`HeadingPairs`, `TitlesOfParts`) and the `Words` and
-    /// `Paragraphs` counts, which PowerPoint writes again on its next save.
-    /// A hide or a show alone keeps them.
+    /// counts of `docProps/app.xml`. After any edit of a slide's content but
+    /// a hide or a show, or a change of the slide list, it also drops what
+    /// oxoffice does not recount: the title lists (`HeadingPairs`,
+    /// `TitlesOfParts`) and the `Words` and `Paragraphs` counts, which
+    /// PowerPoint writes again on its next save. A hide or a show alone
+    /// keeps them.
     pub fn application_properties(&self) -> Option<&AppProperties> {
         self.application_properties.as_ref()
     }
@@ -167,6 +168,14 @@ impl Presentation {
         let generated = properties
             .to_xml()
             .map_err(|e| invalid_shape_mutation("application properties", e.to_string()))?;
+        // A slide edit still pending refreshes app.xml when it is committed:
+        // commit it first, so that this write lands after that refresh.
+        let pending = self.clone();
+        self.commit_candidate(pending)?;
+        let properties = match &self.application_properties {
+            Some(current) => properties.with_retained_xml_of(current),
+            None => properties,
+        };
         if self.application_properties.as_ref() == Some(&properties) {
             return Ok(());
         }
