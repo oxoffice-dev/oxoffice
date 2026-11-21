@@ -731,6 +731,49 @@ fn a_match_across_runs_removes_every_matched_tab_and_text() {
 }
 
 #[test]
+fn a_match_that_starts_on_a_tab_puts_the_replacement_in_its_place() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Total:</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>42</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(doc.replace_text("\t42", " 43"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Total: 43"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("<w:tab/>"), "the matched tab goes: {xml}");
+}
+
+#[test]
+fn a_replacement_keeps_the_unmodelled_children_of_its_run() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>a</w:t><w:tab/><w:t>b</w:t><w:lastRenderedPageBreak/><w:t>c</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(doc.replace_text("a\tb", "X"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Xc"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains("<w:t>X</w:t><w:lastRenderedPageBreak/><w:t>c</w:t>"),
+        "the page break mark keeps its place: {xml}"
+    );
+}
+
+#[test]
+fn a_template_tag_after_a_tab_or_a_break_renders_in_place() {
+    // Template tags read only the run text, so a tab or a break before a
+    // tag must not shift the replacement.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Name:</w:t><w:tab/><w:t>{{ name }}</w:t></w:r></w:p><w:p><w:r><w:t>{{ street }}</w:t><w:br/><w:t>{{ city }}</w:t></w:r></w:p>"#,
+    );
+    doc.render_template(&serde_json::json!({
+        "name": "Ada",
+        "street": "Main St",
+        "city": "Paris"
+    }))
+    .unwrap();
+    assert_eq!(texts(&reopen(&mut doc)), ["Name:\tAda", "Main St\nParis"]);
+}
+
+#[test]
 fn a_match_over_a_symbol_in_a_run_keeps_the_symbol() {
     // A symbol has no text, so a search reads over it; the replacement takes
     // the matched text and leaves the symbol after it.

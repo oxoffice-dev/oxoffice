@@ -45,11 +45,11 @@
     "issue": 7
   },
   {
-    "id": "docx-replace-across-tabs",
+    "id": "docx-text-hyphens-and-positional-tabs",
     "format": "docx",
-    "area": "replace",
+    "area": "text",
     "title": "Non-breaking hyphens and positional tabs are missing from paragraph text",
-    "symptom": "Paragraph text and text search skip w:noBreakHyphen and w:ptab, so \"co-op\" written with a non-breaking hyphen reads \"coop\" and a search for \"co-op\" finds nothing; the paragraph text setter turns a Windows line ending into two breaks",
+    "symptom": "Paragraph text and text search skip w:noBreakHyphen and w:ptab, so \"co-op\" written with a non-breaking hyphen reads \"coop\", a search for \"co-op\" finds nothing, and replacing \"coop\" leaves the hyphen after the replacement; the paragraph text setter turns a Windows line ending into two breaks",
     "workaround": "search for the text on each side of the hyphen or positional tab; pass \\n line endings to the text setter",
     "issue": 26
   },
