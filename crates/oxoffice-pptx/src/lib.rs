@@ -6375,7 +6375,10 @@ impl Presentation {
             .map(|size| (size.cx, size.cy))
     }
 
-    /// Replaces only the slide dimensions after validating both values.
+    /// Replaces the slide dimensions after validating both values.
+    ///
+    /// A size type such as `screen16x9` names the old dimensions, so new ones
+    /// drop it and the deck reads as a custom size.
     pub fn set_slide_size(&mut self, width: Emu, height: Emu) -> Result<()> {
         self.presentation
             .set_slide_size(width, height)

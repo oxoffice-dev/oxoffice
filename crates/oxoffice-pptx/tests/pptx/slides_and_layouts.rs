@@ -861,9 +861,7 @@ fn the_slide_size_takes_four_by_three_widescreen_or_custom_and_refuses_nonsense(
     assert_eq!(prs.to_bytes().unwrap(), before);
 }
 
-// Fails today: set_slide_size keeps the old `type`, a 4:3 deck says screen16x9. Issue: #41
 #[test]
-#[should_panic(expected = "a 4:3 deck is saved as")]
 fn a_deck_resized_to_four_by_three_is_not_saved_as_widescreen() {
     let mut prs = new_deck();
     assert!(saved_slide_size_element(&prs).contains("type=\"screen16x9\""));
@@ -873,6 +871,29 @@ fn a_deck_resized_to_four_by_three_is_not_saved_as_widescreen() {
         !size.contains("type=") || size.contains("type=\"screen4x3\""),
         "a 4:3 deck is saved as {size}"
     );
+}
+
+#[test]
+fn a_slide_size_type_stays_with_its_size_and_goes_with_a_new_one() {
+    let mut prs = new_deck();
+    let (width, height) = prs.slide_size().unwrap();
+    prs.set_slide_size(width, height).unwrap();
+    assert!(
+        saved_slide_size_element(&reopen(&prs)).contains("type=\"screen16x9\""),
+        "the same size keeps its type"
+    );
+
+    // The authored corpus deck already says screen4x3 on a wide size.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    assert!(saved_slide_size_element(&prs).contains("type=\"screen4x3\""));
+    assert_ne!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
+    prs.set_slide_size(Emu(9_906_000), Emu(6_858_000)).unwrap();
+    let prs = reopen(&prs);
+    assert_eq!(
+        saved_slide_size_element(&prs),
+        r#"<p:sldSz cx="9906000" cy="6858000"/>"#
+    );
+    assert_eq!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
 }
 
 #[test]

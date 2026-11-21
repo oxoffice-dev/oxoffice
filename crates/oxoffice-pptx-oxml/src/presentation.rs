@@ -1562,6 +1562,12 @@ impl CT_Presentation {
         validate_dimension("sldSz", "cx", cx)?;
         validate_dimension("sldSz", "cy", cy)?;
         if let Some(size) = &mut self.slide_size {
+            // A size type (screen16x9, A4...) names fixed dimensions: once
+            // they change it no longer holds, and an absent type reads as
+            // custom.
+            if (size.cx, size.cy) != (cx, cy) {
+                size.kind = None;
+            }
             size.cx = cx;
             size.cy = cy;
         } else {
