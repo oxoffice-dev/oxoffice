@@ -1361,9 +1361,16 @@ pub(super) fn validate_fragment_relationships(
         })?;
     for id in relationship_ids {
         let Some(relationship) = relationships.get_by_id(&id) else {
+            // A taken fragment may come from another document; hand-written XML
+            // names a wrong id.
+            let hint = if fragment.relationships.is_empty() {
+                ""
+            } else {
+                "; move content between documents with DocumentFragment::from_range and \
+                 import_fragment"
+            };
             return Err(Error::Other(format!(
-                "content fragment references missing relationship {id} in {}; move content \
-                 between documents with DocumentFragment::from_range and import_fragment",
+                "content fragment references missing relationship {id} in {}{hint}",
                 destination.part_name
             )));
         };

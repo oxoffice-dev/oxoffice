@@ -1260,7 +1260,7 @@ fn a_paragraph_from_another_document_never_takes_the_destinations_link() {
         }
         Err(error) => {
             // The relationship id names the destination's own link here.
-            assert!(error.to_string().contains("import_fragment"), "{error}");
+            assert!(error.to_string().contains("where it was taken"), "{error}");
             assert_eq!(doc.to_bytes().unwrap(), before, "a refusal changes nothing");
         }
     }
@@ -1516,8 +1516,40 @@ fn a_picture_from_another_document_never_shows_the_destinations_picture() {
             );
         }
         Err(error) => {
-            assert!(error.to_string().contains("import_fragment"), "{error}");
+            assert!(error.to_string().contains("where it was taken"), "{error}");
             assert_eq!(doc.to_bytes().unwrap(), before);
         }
     }
+}
+
+#[test]
+fn a_picture_cut_saved_and_pasted_in_its_document_keeps_its_image() {
+    let image = [PNG, &[3u8]].concat();
+    let mut doc = doc_with(&["Body"]);
+    doc.add_picture(&image, "p.png", Length::inches(1.0), Length::inches(1.0));
+    let mut doc = reopen(&mut doc);
+    let cut = doc.remove_content_at(&item_at(&doc, 1)).unwrap();
+    let mut doc = reopen(&mut doc);
+    doc.insert_content(&ContentLocation::end(body(&doc)), cut)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].bytes, image);
+}
+
+#[test]
+fn replacing_a_paragraph_with_its_own_xml_keeps_its_paragraph_id() {
+    let mut doc = doc_with_body(concat!(
+        r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="3C4D5E6F" w14:textId="55555555">"#,
+        r#"<w:r><w:t>before</w:t></w:r></w:p><w:p><w:r><w:t>other</w:t></w:r></w:p>"#,
+    ));
+    let location = item_at(&doc, 0);
+    let xml = String::from_utf8(doc.paragraph_element_xml(&location).unwrap()).unwrap();
+    doc.replace_paragraph_xml(&location, &xml.replace("before", "after"))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["after", "other"]);
+    let saved = doc.part_xml("word/document.xml").unwrap();
+    assert!(saved.contains("3C4D5E6F"), "{saved}");
 }
