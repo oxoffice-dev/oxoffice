@@ -1171,6 +1171,18 @@ pub(crate) enum BoundaryOwner {
 /// The content controls, revision wrappers, smart tags and inline custom
 /// XML elements at run `boundary` of `paragraph`, in document order.
 pub(crate) fn boundary_owners(paragraph: &CT_P, boundary: usize) -> Vec<BoundaryOwner> {
+    ordered_boundary_owners(paragraph, boundary)
+        .into_iter()
+        .map(|(_, owner)| owner)
+        .collect()
+}
+
+/// [`boundary_owners`] with the place each takes among the raw children of
+/// the boundary.
+fn ordered_boundary_owners(
+    paragraph: &CT_P,
+    boundary: usize,
+) -> Vec<(AcceptedOwnerOrder, BoundaryOwner)> {
     let mut owners = paragraph
         .content_controls
         .iter()
@@ -1227,7 +1239,7 @@ pub(crate) fn boundary_owners(paragraph: &CT_P, boundary: usize) -> Vec<Boundary
     // A control goes before the raw child of the same slot.
     owners
         .sort_by_key(|(order, owner)| (*order, !matches!(owner, BoundaryOwner::ContentControl(_))));
-    owners.into_iter().map(|(_, owner)| owner).collect()
+    owners
 }
 
 /// Whether `raw` is a smart tag or an inline custom XML element with
@@ -2326,7 +2338,8 @@ impl CT_P {
     /// document order. Those of content controls, tracked insertions and
     /// moves in, smart tags, inline custom XML elements and simple fields
     /// are included, deleted and moved-away runs are left out, and the
-    /// hyperlink spans cover the same runs as in the source. Content
+    /// hyperlink spans cover the same runs as in the source, and the
+    /// paragraph's own equations stay at their run boundary. Content
     /// controls, revisions, wrappers and markers are not kept. Borrowed when
     /// the paragraph holds none of them, since its runs are then the view.
     #[doc(hidden)]
@@ -2356,8 +2369,39 @@ impl CT_P {
         let mut inline_boundaries = Vec::new();
         // The index into `self.hyperlinks` of the hyperlink each run is in.
         let mut links = Vec::new();
+        // Equations stay at their place among the projected runs.
+        let mut equations = Vec::new();
         for boundary in 0..=self.runs.len() {
-            for owner in boundary_owners(self, boundary) {
+            // An equation is the raw child of its slot, after the owners
+            // that go before that child.
+            let mut steps = ordered_boundary_owners(self, boundary)
+                .into_iter()
+                .map(|(order, owner)| {
+                    let rank = usize::from(!matches!(owner, BoundaryOwner::ContentControl(_)));
+                    ((order, rank), Some(owner), None)
+                })
+                .chain(
+                    self.equations
+                        .iter()
+                        .filter(|(at, _, _)| *at == boundary)
+                        .map(|(_, slot, equation)| {
+                            (
+                                (AcceptedOwnerOrder::Raw(*slot), 2),
+                                None,
+                                Some((*slot, equation)),
+                            )
+                        }),
+                )
+                .collect::<Vec<_>>();
+            steps.sort_by_key(|(order, _, _)| *order);
+            for (_, owner, equation) in steps {
+                if let Some((slot, equation)) = equation {
+                    equations.push((runs.len(), slot, equation.clone()));
+                    continue;
+                }
+                let Some(owner) = owner else {
+                    continue;
+                };
                 let mut owned = Vec::new();
                 let link = match owner {
                     BoundaryOwner::ContentControl(index) => {
@@ -2469,6 +2513,7 @@ impl CT_P {
                 properties: self.properties.clone(),
                 runs,
                 hyperlinks,
+                equations,
                 ..CT_P::new()
             }),
             inline_boundaries,

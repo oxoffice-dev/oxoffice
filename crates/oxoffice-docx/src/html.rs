@@ -1081,8 +1081,8 @@ fn base64_lines(bytes: &[u8]) -> String {
     output
 }
 
-fn mhtml_export_html(document: &Document) -> Result<(String, Vec<MhtmlResource>)> {
-    let html = document.to_html();
+fn mhtml_export_html(document: &Document) -> Result<(String, Vec<MhtmlResource>, Vec<String>)> {
+    let (html, _, equations) = document.html_document_with_equation_diagnostics();
     // The HTML emitter writes the pictures in the order this visitor reaches
     // them, those of content controls, tracked insertions, smart tags and
     // custom XML included.
@@ -1181,7 +1181,7 @@ fn mhtml_export_html(document: &Document) -> Result<(String, Vec<MhtmlResource>)
             "document contains images the HTML emitter did not serialize",
         ));
     }
-    Ok((output, resources))
+    Ok((output, resources, equations))
 }
 
 fn choose_boundary(html: &[u8], resources: &[MhtmlResource]) -> String {
@@ -1258,7 +1258,8 @@ fn paragraph_mhtml_losses(
                 )?;
                 continue;
             }
-            ParagraphItemRef::Equation(_) => "dropped Word equation",
+            // Written as MathML by the HTML emitter.
+            ParagraphItemRef::Equation(_) => continue,
             ParagraphItemRef::ContentControl(control) => {
                 let location = format!("{location}/item[{index}]");
                 push_mhtml_loss(
@@ -1675,8 +1676,23 @@ fn mhtml_write_diagnostics(document: &Document) -> Result<Vec<MhtmlDiagnostic>> 
 }
 
 fn to_mhtml_with_limits(document: &Document, limits: MhtmlLimits) -> Result<MhtmlWriteResult> {
-    let diagnostics = mhtml_write_diagnostics(document)?;
-    let (html, resources) = mhtml_export_html(document)?;
+    let mut diagnostics = mhtml_write_diagnostics(document)?;
+    let (html, resources, equations) = mhtml_export_html(document)?;
+    // An equation is written as MathML; one it cannot write is reported.
+    for message in equations {
+        if diagnostics.len() >= Limits::default().diagnostics {
+            return Err(mhtml_error(
+                None,
+                0,
+                "MHTML export exceeds the diagnostic limit",
+            ));
+        }
+        diagnostics.push(MhtmlDiagnostic {
+            location: "body/equation".to_owned(),
+            property: None,
+            message,
+        });
+    }
     let boundary = choose_boundary(html.as_bytes(), &resources);
     let mut output = Vec::new();
     let mut append = |value: &[u8]| -> Result<()> {

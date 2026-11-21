@@ -3,17 +3,21 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
+use oxoffice_docx_oxml::math::OfficeMath;
 use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::styles::CT_Styles;
 use oxoffice_docx_oxml::table::CT_Tbl;
 use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
-use crate::{Block, Counted, HtmlInput, ImageData, ListCounter, body_blocks, cell_blocks};
+use crate::{
+    Block, Counted, EquationWriter, HtmlInput, ImageData, ListCounter, body_blocks, cell_blocks,
+};
 
 /// Emit the full body content as Markdown.
 pub(crate) fn emit_markdown(
     input: &HtmlInput,
     charts: &HashMap<String, crate::ChartTable>,
+    equations: &dyn EquationWriter,
 ) -> String {
     let styles = &input.styles;
     let hyperlink_urls = &input.hyperlink_urls;
@@ -61,7 +65,15 @@ pub(crate) fn emit_markdown(
         match block {
             Block::Paragraph(p, boundaries) => {
                 let counted = counter.paragraph(&p);
-                emit_paragraph(&mut out, &p, &boundaries, input, counted, &mut list_levels);
+                emit_paragraph(
+                    &mut out,
+                    &p,
+                    &boundaries,
+                    input,
+                    equations,
+                    counted,
+                    &mut list_levels,
+                );
                 for id in crate::paragraph_chart_ids(&p) {
                     if let Some(chart) = charts.get(&id) {
                         leave_list(&mut out, &mut list_levels);
@@ -72,7 +84,7 @@ pub(crate) fn emit_markdown(
             Block::Table(tbl) => {
                 counter.table(tbl);
                 let mut table = String::new();
-                emit_table(&mut table, tbl, styles, hyperlink_urls, images);
+                emit_table(&mut table, tbl, styles, hyperlink_urls, images, equations);
                 if !table.is_empty() {
                     let path = container_path(
                         tbl.properties.as_ref().and_then(|p| p.style_id.as_deref()),
@@ -188,6 +200,7 @@ fn emit_paragraph(
     para: &CT_P,
     boundaries: &[usize],
     input: &HtmlInput,
+    equations: &dyn EquationWriter,
     counted: Counted,
     list_levels: &mut Vec<MarkdownList>,
 ) {
@@ -209,7 +222,8 @@ fn emit_paragraph(
     let mut heading_level = detected_level.filter(|&level| level < 10);
 
     // Collect inline text for the paragraph
-    let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries);
+    let mut text =
+        collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries, equations);
 
     let style_id = para
         .properties
@@ -633,6 +647,7 @@ fn collect_paragraph_text(
     hyperlink_urls: &HashMap<String, String>,
     images: &HashMap<String, ImageData>,
     boundaries: &[usize],
+    equations: &dyn EquationWriter,
 ) -> String {
     let mut out = String::new();
 
@@ -667,6 +682,11 @@ fn collect_paragraph_text(
         if boundaries.contains(&run_idx) || projected_boundaries.contains(&run_idx) {
             pieces.push((String::new(), Marks::default()));
         }
+        if let Some(math) = equations_latex(para, run_idx, equations) {
+            push_inline(&mut out, &pieces, current_link);
+            pieces.clear();
+            out.push_str(&math);
+        }
         let in_link = hyperlink_map.get(&run_idx).copied();
         if in_link != current_link {
             push_inline(&mut out, &pieces, current_link);
@@ -676,8 +696,37 @@ fn collect_paragraph_text(
         collect_run_pieces(run, styles, images, &mut pieces);
     }
     push_inline(&mut out, &pieces, current_link);
+    if let Some(math) = equations_latex(para, para.runs.len(), equations) {
+        out.push_str(&math);
+    }
 
     out
+}
+
+/// The equations at a run boundary as LaTeX: `$...$` inline, `$$...$$` for
+/// each equation of a display, on one line so that a list item or a table
+/// cell holds it.
+fn equations_latex(para: &CT_P, boundary: usize, equations: &dyn EquationWriter) -> Option<String> {
+    let mut out = String::new();
+    let mut push = |math: &oxoffice_docx_oxml::math::CT_OMath, delimiter: &str| {
+        if let Some(latex) = equations.latex(math) {
+            let latex = latex.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !latex.is_empty() {
+                out.push_str(&format!("{delimiter}{latex}{delimiter}"));
+            }
+        }
+    };
+    for equation in crate::equations_at(para, boundary) {
+        match equation {
+            OfficeMath::Inline(math) => push(math, "$"),
+            OfficeMath::Display(display) => {
+                for math in &display.equations {
+                    push(math, "$$");
+                }
+            }
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// Append formatted pieces to `out`, as the text of a link when `link` is set.
@@ -1242,6 +1291,7 @@ fn emit_table(
     styles: &CT_Styles,
     hyperlink_urls: &HashMap<String, String>,
     images: &HashMap<String, ImageData>,
+    equations: &dyn EquationWriter,
 ) {
     if tbl.rows().is_empty() {
         return;
@@ -1268,7 +1318,7 @@ fn emit_table(
             if cells.len() < start {
                 cells.resize(start, String::new());
             }
-            let text = collect_cell_text(cell, styles, hyperlink_urls, images);
+            let text = collect_cell_text(cell, styles, hyperlink_urls, images, equations);
             cells.push(text);
         }
         if cells.len() > max_cols {
@@ -1343,6 +1393,7 @@ fn collect_cell_text(
     styles: &CT_Styles,
     hyperlink_urls: &HashMap<String, String>,
     images: &HashMap<String, ImageData>,
+    equations: &dyn EquationWriter,
 ) -> String {
     let mut parts = Vec::new();
 
@@ -1353,8 +1404,15 @@ fn collect_cell_text(
                 // written as HTML line breaks. A pipe would end the cell, in
                 // a link destination too, so every pipe is escaped, and GFM
                 // removes the escape before it reads the cell's inlines.
-                let text = collect_paragraph_text(&p, styles, hyperlink_urls, images, &boundaries)
-                    .replace(PAGE_BREAK, " ");
+                let text = collect_paragraph_text(
+                    &p,
+                    styles,
+                    hyperlink_urls,
+                    images,
+                    &boundaries,
+                    equations,
+                )
+                .replace(PAGE_BREAK, " ");
                 let trimmed = text.trim().replace(LINE_BREAK, "<br>").replace('|', "\\|");
                 if !trimmed.is_empty() {
                     parts.push(trimmed);
@@ -1371,7 +1429,9 @@ fn collect_cell_text(
                     .map(|row| {
                         row.cells()
                             .into_iter()
-                            .map(|cell| collect_cell_text(cell, styles, hyperlink_urls, images))
+                            .map(|cell| {
+                                collect_cell_text(cell, styles, hyperlink_urls, images, equations)
+                            })
                             .filter(|text| !text.is_empty())
                             .collect::<Vec<_>>()
                             .join(" \\| ")

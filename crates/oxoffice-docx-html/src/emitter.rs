@@ -2,8 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use oxoffice_docx_oxml::document::CT_Body;
-use oxoffice_docx_oxml::numbering::CT_Numbering;
+use oxoffice_docx_oxml::math::OfficeMath;
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_Jc;
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
@@ -13,20 +12,22 @@ use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharact
 use crate::css;
 use crate::sanitize::{escape_html, escape_html_attr, safe_url};
 use crate::{
-    Block, Counted, HtmlOptions, ImageData, ListCounter, ListItem, ListKind, body_blocks,
-    cell_blocks,
+    Block, Counted, EquationWriter, HtmlInput, HtmlOptions, ImageData, ListCounter, ListItem,
+    ListKind, body_blocks, cell_blocks,
 };
 
 /// Emit the full body content as HTML.
 pub(crate) fn emit_body(
-    body: &CT_Body,
-    styles: &CT_Styles,
-    numbering: Option<&CT_Numbering>,
-    images: &HashMap<String, ImageData>,
-    hyperlink_urls: &HashMap<String, String>,
+    input: &HtmlInput,
     options: &HtmlOptions,
     charts: &HashMap<String, crate::ChartTable>,
+    equations: &dyn EquationWriter,
 ) -> String {
+    let body = &input.document.body;
+    let styles = &input.styles;
+    let numbering = input.numbering.as_ref();
+    let images = &input.images;
+    let hyperlink_urls = &input.hyperlink_urls;
     let mut out = String::new();
     let mut counter = ListCounter::new(styles, numbering);
     // The open lists, outermost first; each holds its open item, in which
@@ -73,15 +74,39 @@ pub(crate) fn emit_body(
                         close_list(&mut out, &mut lists);
                     }
                     out.push_str("<p>");
-                    emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
+                    emit_paragraph_content(
+                        &mut out,
+                        &p,
+                        styles,
+                        images,
+                        hyperlink_urls,
+                        options,
+                        equations,
+                    );
                     out.push_str("</p>");
                 } else if let Some(item) = item {
                     open_item(&mut out, &mut lists, &item);
                     out.push_str(&format!("<li{}>", direction_attribute(&p, styles)));
-                    emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
+                    emit_paragraph_content(
+                        &mut out,
+                        &p,
+                        styles,
+                        images,
+                        hyperlink_urls,
+                        options,
+                        equations,
+                    );
                 } else {
                     close_lists(&mut out, &mut lists);
-                    emit_paragraph(&mut out, &p, styles, images, hyperlink_urls, options);
+                    emit_paragraph(
+                        &mut out,
+                        &p,
+                        styles,
+                        images,
+                        hyperlink_urls,
+                        options,
+                        equations,
+                    );
                 }
                 for id in crate::paragraph_chart_ids(&p) {
                     if let Some(chart) = charts.get(&id) {
@@ -93,7 +118,15 @@ pub(crate) fn emit_body(
             Block::Table(tbl) => {
                 counter.table(tbl);
                 close_lists(&mut out, &mut lists);
-                emit_table(&mut out, tbl, styles, images, hyperlink_urls, options);
+                emit_table(
+                    &mut out,
+                    tbl,
+                    styles,
+                    images,
+                    hyperlink_urls,
+                    options,
+                    equations,
+                );
             }
         }
     }
@@ -209,6 +242,7 @@ fn emit_paragraph(
     images: &HashMap<String, ImageData>,
     hyperlink_urls: &HashMap<String, String>,
     options: &HtmlOptions,
+    equations: &dyn EquationWriter,
 ) {
     let heading_level = detect_heading_level(para.properties.as_ref(), styles);
 
@@ -233,7 +267,15 @@ fn emit_paragraph(
         ));
     }
 
-    emit_paragraph_content(out, para, styles, images, hyperlink_urls, options);
+    emit_paragraph_content(
+        out,
+        para,
+        styles,
+        images,
+        hyperlink_urls,
+        options,
+        equations,
+    );
 
     out.push_str(&format!("</{tag}>\n"));
 }
@@ -284,6 +326,7 @@ fn emit_paragraph_content(
     images: &HashMap<String, ImageData>,
     hyperlink_urls: &HashMap<String, String>,
     options: &HtmlOptions,
+    equations: &dyn EquationWriter,
 ) {
     // The runs the text readers read, those of content controls, tracked
     // insertions, smart tags and custom XML included, deleted ones left out.
@@ -309,6 +352,7 @@ fn emit_paragraph_content(
     let mut current_link: Option<&str> = None;
 
     for (run_idx, run) in para.runs.iter().enumerate() {
+        emit_equations(out, para, run_idx, equations);
         let in_link = hyperlink_map.get(&run_idx).copied();
 
         // Open/close link tags as needed
@@ -335,6 +379,31 @@ fn emit_paragraph_content(
     // Close any open link
     if current_link.is_some() {
         out.push_str("</a>");
+    }
+    emit_equations(out, para, para.runs.len(), equations);
+}
+
+/// Write the equations at a run boundary as MathML, a display equation as
+/// block `<math>` elements.
+fn emit_equations(out: &mut String, para: &CT_P, boundary: usize, equations: &dyn EquationWriter) {
+    for equation in crate::equations_at(para, boundary) {
+        match equation {
+            OfficeMath::Inline(math) => {
+                if let Some(mathml) = equations.mathml(math) {
+                    out.push_str(&mathml);
+                }
+            }
+            OfficeMath::Display(display) => {
+                for math in &display.equations {
+                    if let Some(mathml) = equations.mathml(math) {
+                        out.push_str(&match mathml.strip_prefix("<math") {
+                            Some(rest) => format!("<math display=\"block\"{rest}"),
+                            None => mathml,
+                        });
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -530,6 +599,7 @@ fn emit_table(
     images: &HashMap<String, ImageData>,
     hyperlink_urls: &HashMap<String, String>,
     options: &HtmlOptions,
+    equations: &dyn EquationWriter,
 ) {
     if tbl.accepted_view_removes() {
         return;
@@ -646,10 +716,18 @@ fn emit_table(
             for block in cell_blocks(cell) {
                 match block {
                     Block::Paragraph(p, _) => {
-                        emit_paragraph(out, &p, styles, images, hyperlink_urls, options);
+                        emit_paragraph(out, &p, styles, images, hyperlink_urls, options, equations);
                     }
                     Block::Table(nested) => {
-                        emit_table(out, nested, styles, images, hyperlink_urls, options);
+                        emit_table(
+                            out,
+                            nested,
+                            styles,
+                            images,
+                            hyperlink_urls,
+                            options,
+                            equations,
+                        );
                     }
                 }
             }

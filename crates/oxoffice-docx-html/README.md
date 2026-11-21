@@ -9,9 +9,15 @@ from semantic Word content without running pagination.
 - Complete HTML document output and body-only fragments.
 - Markdown conversion from the same semantic input.
 - Style, numbering, link, and image projection through `HtmlInput`.
-- A flow-output path with no page-layout or fixed-output dependency.
+- A flow-output path: no pagination runs. List numbers come from the
+  numbering counter of `oxoffice-docx-layout`, so they are the numbers layout
+  draws.
 - Semantic tables, lists, hyperlinks, images, fields, and run formatting lower
   through one owned input model for both complete and fragment output.
+- Equations as MathML in HTML and LaTeX in Markdown through an
+  `EquationWriter` (the `*_with_equations` functions); `oxoffice-docx`
+  supplies its converters. The functions without a writer leave equations
+  out.
 
 ## Use it when
 

@@ -1390,34 +1390,162 @@ fn the_exports_hold_the_body_only() {
 
 // ---- Equations ----
 
-// Fails today: an OfficeMath equation is left out of both exports, with no
-// diagnostic. A fix writes it in its place or reports it. Issue: #262
+const MATH_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
 #[test]
-#[should_panic(expected = "the equation x=1 is missing from")]
-fn equations_reach_both_exports() {
-    let doc = reopen(&mut doc_with_body(concat!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Let </w:t></w:r>"#,
-        r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x=1</m:t></m:r></m:oMath>"#,
-        r#"<w:r><w:t xml:space="preserve"> hold.</w:t></w:r></w:p>"#,
+fn equations_reach_both_exports_in_their_place() {
+    let doc = reopen(&mut doc_with_body(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Let </w:t></w:r>"#,
+            r#"<m:oMath xmlns:m="{ns}"><m:r><m:t>x=1</m:t></m:r></m:oMath>"#,
+            r#"<w:r><w:t xml:space="preserve"> hold.</w:t></w:r></w:p>"#,
+            r#"<w:p><m:oMathPara xmlns:m="{ns}"><m:oMath><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num>"#,
+            r#"<m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>"#,
+        ),
+        ns = MATH_NAMESPACE
     )));
     assert_eq!(doc.paragraph(0).unwrap().equations().count(), 1);
-    let compact = |text: &str| text.split_whitespace().collect::<String>();
-    let reported = |diagnostics: &[String]| {
-        diagnostics.iter().any(|message| {
-            let message = message.to_lowercase();
-            message.contains("math") || message.contains("equation")
-        })
-    };
+
     let (html, diagnostics) = doc.to_html_fragment_with_diagnostics();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let inline = html.find("<math").expect("the inline equation is MathML");
     assert!(
-        compact(&html_texts(&html, "p").concat()).contains("x=1") || reported(&diagnostics),
-        "the equation x=1 is missing from the HTML: {html} {diagnostics:?}"
+        html.find("Let ").unwrap() < inline && inline < html.find(" hold.").unwrap(),
+        "the equation stays between the words around it: {html}"
     );
+    assert!(
+        html.contains("<p><math display=\"block\""),
+        "the display equation is a block: {html}"
+    );
+    assert!(html.contains("<mfrac>"), "{html}");
+
     let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert!(
-        compact(&markdown).contains("x=1") || reported(&diagnostics),
-        "the equation x=1 is missing from the Markdown: {markdown} {diagnostics:?}"
+        markdown.contains("Let $x=1$ hold.") || markdown.contains("Let $x = 1$ hold."),
+        "{markdown}"
     );
+    assert!(markdown.contains("$$\\frac{a}{b}$$"), "{markdown}");
+
+    // EPUB writes MathML too, and names the documents that hold it.
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        !epub
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("equation")),
+        "{:?}",
+        epub.diagnostics
+    );
+    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
+    let mut chapters = String::new();
+    let mut package = String::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut text = String::new();
+        if name.ends_with(".opf") {
+            std::io::Read::read_to_string(&mut entry, &mut package).unwrap();
+        } else if name.ends_with(".xhtml") && !name.ends_with("nav.xhtml") {
+            std::io::Read::read_to_string(&mut entry, &mut text).unwrap();
+            chapters.push_str(&text);
+        }
+    }
+    assert_eq!(chapters.matches("<math").count(), 2, "{chapters}");
+    assert!(chapters.contains("<math display=\"block\""), "{chapters}");
+    assert!(package.contains("properties=\"mathml\""), "{package}");
+
+    // RTF and ODT cannot write an equation yet: each says so.
+    let rtf = doc.to_rtf_bytes().unwrap();
+    let dropped = |messages: Vec<&str>, format: &str| {
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| **message
+                    == format!("Word equation was dropped during {format} export"))
+                .count(),
+            2,
+            "{messages:?}"
+        );
+    };
+    dropped(
+        rtf.diagnostics.iter().map(|d| d.message.as_str()).collect(),
+        "RTF",
+    );
+    let odt = doc.to_odt_bytes().unwrap();
+    dropped(
+        odt.diagnostics.iter().map(|d| d.message.as_str()).collect(),
+        "ODT",
+    );
+
+    // MHTML holds the same HTML and no longer reports the equations dropped.
+    let mhtml = doc.to_mhtml_bytes().unwrap();
+    assert!(
+        !mhtml
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("equation")),
+        "{:?}",
+        mhtml
+            .diagnostics
+            .iter()
+            .map(|diagnostic| &diagnostic.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn equations_of_tracked_and_table_paragraphs_reach_both_exports() {
+    let equation =
+        format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}"><m:r><m:t>y</m:t></m:r></m:oMath>"#);
+    let doc = reopen(&mut doc_with_body(&format!(
+        concat!(
+            // A tracked insertion before the equation: the accepted view
+            // keeps the equation after the inserted text.
+            r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">Then </w:t></w:r></w:ins>"#,
+            "{eq}",
+            r#"<w:r><w:t xml:space="preserve"> grows.</w:t></w:r></w:p>"#,
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t xml:space="preserve">cell </w:t></w:r>{eq}</w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:p/>"#,
+        ),
+        eq = equation
+    )));
+    let html = doc.to_html_fragment();
+    let math = html.find("<math").expect("{html}");
+    assert!(
+        html.find("Then ").unwrap() < math && math < html.find(" grows.").unwrap(),
+        "{html}"
+    );
+    assert_eq!(html.matches("<math").count(), 2, "{html}");
+    let markdown = doc.to_markdown();
+    assert!(markdown.contains("Then $y$ grows."), "{markdown}");
+    assert!(markdown.contains("| cell $y$ |"), "{markdown}");
+}
+
+#[test]
+fn every_equation_of_the_word_paper_reaches_both_exports() {
+    let doc = corpus_doc("word/paper.docx");
+    let count: usize = doc
+        .paragraphs()
+        .iter()
+        .map(|paragraph| {
+            paragraph
+                .equations()
+                .map(|equation| match equation {
+                    oxoffice_docx_oxml::math::OfficeMath::Inline(_) => 1,
+                    oxoffice_docx_oxml::math::OfficeMath::Display(display) => {
+                        display.equations.len()
+                    }
+                })
+                .sum::<usize>()
+        })
+        .sum();
+    assert!(count >= 11, "{count}");
+    let (html, diagnostics) = doc.to_html_fragment_with_diagnostics();
+    assert_eq!(html.matches("<math").count(), count, "{diagnostics:?}");
+    let (markdown, _) = doc.to_markdown_with_diagnostics();
+    let dollars = markdown.matches('$').count();
+    assert!(dollars >= 2 * count, "{markdown}");
 }
 
 // ---- Corpus ----
