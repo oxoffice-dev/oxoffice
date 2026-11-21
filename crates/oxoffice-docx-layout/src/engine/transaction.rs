@@ -1370,7 +1370,12 @@ impl Engine {
                         ))
                     })?;
                 }
-                apply_page_background(&mut pagination.pages, &mut pagination.paint, input)?;
+                apply_page_background(
+                    &mut pagination.pages,
+                    &mut pagination.paint,
+                    input,
+                    &pagination.blank_pages,
+                )?;
                 pagination.paint.validate(&pagination.pages)?;
                 pagination.paint.boundaries.clear();
                 for (page, policies) in pagination

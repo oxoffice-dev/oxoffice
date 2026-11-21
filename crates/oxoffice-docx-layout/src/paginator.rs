@@ -932,6 +932,9 @@ pub(crate) struct SharedPagination {
     pub body_fragments: Vec<(usize, WordBodyLayoutFragment)>,
     pub last_flow_space: Option<PageFlowSpace>,
     pub endnotes_placed: Vec<NoteRef>,
+    /// The indices of the blank pages added before odd-page and even-page
+    /// sections, which nothing is painted on.
+    pub blank_pages: Vec<usize>,
 }
 
 /// Paginate across multiple sections, each with its own geometry and header/footer.
@@ -1174,6 +1177,7 @@ pub(crate) fn paginate_shared_sections(
             body_fragments: Vec::new(),
             last_flow_space: None,
             endnotes_placed: Vec::new(),
+            blank_pages: Vec::new(),
         };
     }
     if sections.len() == 1 {
@@ -1232,6 +1236,7 @@ pub(crate) fn paginate_shared_sections(
             body_fragments: result.body_fragments,
             last_flow_space: result.last_flow_space,
             endnotes_placed,
+            blank_pages: Vec::new(),
         };
     }
 
@@ -1245,6 +1250,7 @@ pub(crate) fn paginate_shared_sections(
     let mut next_section_page_number = 1usize;
     let mut last_flow_space = None;
     let mut endnotes_placed = Vec::new();
+    let mut blank_pages = Vec::new();
     let mut section_index = 0;
     while section_index < sections.len() {
         let section = &sections[section_index];
@@ -1322,21 +1328,23 @@ pub(crate) fn paginate_shared_sections(
             }
             section_end_last_page = result.pages.last().map(|page| page.page_number);
         }
-        // An odd-page or even-page section starts on a page of its parity:
-        // when both the number it asks for (its own start, or the one it
-        // continues) and the physical page it would take have the other
-        // parity, this group ends with a blank page, as Word and LibreOffice
-        // print it: no header, footer, border or line number, only the page.
+        // An odd-page or even-page section starts on a physical page of its
+        // parity: when the next page has the other one, this group ends with
+        // a blank page of the next section's size, as LibreOffice prints it.
+        // It takes the number the next section would continue from, and
+        // nothing is painted on it: no header, footer, border, line number or
+        // page colour.
         if let Some(next) = sections.get(group_end)
             && let Some(parity) = next.parity
         {
-            let continued = result.pages.last().map_or(section_page_number, |page| {
-                page.displayed_page_number.saturating_add(1)
-            });
             let physical = page_offset + result.pages.len() + 1;
-            let wrong = |number: usize| (number % 2 == 1) != (parity == SectionParity::Odd);
-            if wrong(next.page_number_start.unwrap_or(continued)) && wrong(physical) {
+            if (physical % 2 == 1) != (parity == SectionParity::Odd) {
+                let continued = result.pages.last().map_or(section_page_number, |page| {
+                    page.displayed_page_number.saturating_add(1)
+                });
                 let geometry = PageGeometry {
+                    page_width: next.geometry.page_width,
+                    page_height: next.geometry.page_height,
                     page_borders: None,
                     column_separator: false,
                     ..boundary.geometry.clone()
@@ -1358,6 +1366,7 @@ pub(crate) fn paginate_shared_sections(
                     None,
                 );
                 section_end_last_page = blank.pages.last().map(|page| page.page_number);
+                blank_pages.push(physical - 1);
                 result.paint.policies.append(&mut blank.paint.policies);
                 result.paint.boundaries.append(&mut blank.paint.boundaries);
                 result.pages.append(&mut blank.pages);
@@ -1428,6 +1437,7 @@ pub(crate) fn paginate_shared_sections(
         body_fragments,
         last_flow_space,
         endnotes_placed,
+        blank_pages,
     }
 }
 

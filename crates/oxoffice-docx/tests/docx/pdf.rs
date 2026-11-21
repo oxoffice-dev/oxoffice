@@ -382,14 +382,13 @@ fn an_odd_or_even_page_section_starts_on_a_page_of_its_parity() {
         pages(&two, "evenPage", ""),
         ["Body", "Two", "", "Next", "Last"]
     );
-    // A section that restarts its numbering at 1 keeps it, with no blank
-    // page, as LibreOffice draws the Word thesis.
+    // The physical page decides, whatever number the section asks for, as
+    // LibreOffice prints it (Word was not run): an odd section restarting at
+    // 1 or at 2 still skips page 2, an even one restarting at 1 takes it.
     assert_eq!(
         pages(&one, "oddPage", r#"<w:pgNumType w:start="1"/>"#),
-        ["Body", "Next", "Last"]
+        ["Body", "", "Next", "Last"]
     );
-    // A start of the wrong parity on a page of the wrong parity gets one, and
-    // an even start 1 on the even page 2 none, as LibreOffice draws them.
     assert_eq!(
         pages(&one, "oddPage", r#"<w:pgNumType w:start="2"/>"#),
         ["Body", "", "Next", "Last"]
@@ -425,6 +424,40 @@ fn the_blank_page_before_an_odd_page_section_draws_nothing() {
     };
     assert!(red(0) > 0, "the first page has its border");
     assert_eq!(red(1), 0, "the blank page has none");
+}
+
+#[test]
+fn the_blank_page_before_an_odd_page_section_has_its_size_and_no_page_colour() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let landscape = r#"<w:sectPr><w:type w:val="oddPage"/><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr>{landscape}</w:pPr></w:p><w:p><w:r><w:t>Last</w:t></w:r></w:p>"#
+    ));
+    // A green page colour on every page.
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let xml = xml.replacen("<w:body>", r#"<w:background w:color="00FF00"/><w:body>"#, 1);
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 4);
+    // The blank page takes the size of the section it comes before.
+    assert_eq!(pdf.page_size(1), (792.0, 612.0));
+    let green = |page: usize| {
+        Pixels::decode(&doc.render_page_to_png(page, 36.0).unwrap().expect("page"))
+            .rgba
+            .chunks(4)
+            .filter(|pixel| pixel[..3] == [0, 0xFF, 0])
+            .count()
+    };
+    assert!(
+        green(0) > 0 && green(2) > 0,
+        "the pages around it are green"
+    );
+    assert_eq!(green(1), 0, "the blank page is not");
 }
 
 #[test]
@@ -1738,11 +1771,17 @@ fn the_thesis_numbers_its_pages_and_keeps_its_landscape_pages_figure_notes_and_o
 
     // The title page has no number, the front matter counts in roman
     // numerals, the chapters from 1 again; odd numbers sit on the right.
+    // The odd-page first chapter starts on a right-hand page, after a blank
+    // page that draws nothing when the front matter ends on one.
     let footer = |page: usize| pages[page].iter().find(|line| line.y < margin);
     assert!(footer(0).is_none(), "{:?}", footer(0));
     let chapter = page_with("Regional distributors keep stock");
+    assert_eq!(chapter % 2, 0, "chapter 1 is on an odd physical page");
     let roman = ["ii", "iii", "iv", "v", "vi", "vii"];
     for page in 1..count {
+        if page + 1 == chapter && pages[page].is_empty() {
+            continue;
+        }
         let (number, value) = match page < chapter {
             true => (roman[page - 1].to_owned(), page + 1),
             false => ((page - chapter + 1).to_string(), page - chapter + 1),
