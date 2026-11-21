@@ -133,7 +133,10 @@ edit.
    element's resource limits, characters XML 1.0 can carry, the relationship
    ids and parts it references, admission of raw XML input as today. The
    staged save (canonicalization, resource guard, serialization, reread) runs
-   in `save` and the outputs (`to_bytes`, render, convert). A form operation
+   in `save` and the outputs (`to_bytes`, render, convert). Its error is as
+   useful as the save can make it: it names the part and, where the save can
+   tell, the element and the journal operation that introduced it. A form
+   operation
    checks the controls it changes; its whole-document validation moves to
    the save too (#7). The refusal of edits on a body already known to be
    unsavable (`refuse_unsavable_body_edit`) stays: it is computed at open and
@@ -145,7 +148,8 @@ edit.
    is already unique and renumbers only duplicates and missing ids, so the
    file holds what the reads showed. This changes save output in one way:
    ids added by edits keep their allocation order instead of being
-   renumbered in document order.
+   renumbered in document order. The pull requests that change it say so in
+   their body, and the changelog carries it.
 4. **Edits say what they touched.** The binding drains the same journal,
    through a `#[doc(hidden)]` facade call as it reaches
    `direct_body_paragraph_facts` today, and updates its handle inventory from
@@ -169,8 +173,9 @@ raises, never another element; a save writes what the reads showed.
 What moves, and is accepted:
 
 - An edit that passes its element checks but leaves the document unsavable
-  is reported by `save`, not by the edit. The save error names the part, not
-  the edit, and the edit is already in place. The oracle makes every such
+  is reported by `save`, not by the edit, and the edit is already in place.
+  The save error names the part, and the element and journal operation where
+  it can (decision 2). The oracle makes every such
   case a test failure in debug builds, so the gap is a bug in the element
   checks, not a behaviour.
 - Rust callers meet that error at save too. A CLI command saves within the
