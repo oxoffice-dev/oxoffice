@@ -114,11 +114,12 @@ jobs:
         run: |
           if [ -d crates/oxoffice-py/tests ]; then python -m pytest crates/oxoffice-py/tests -q; else echo "no Python tests yet"; fi
 
-  # The scaling tests time every mutating call at N and 4N. They need a build
-  # without debug assertions (the `scaling` profile), built here beside the
-  # `ci` one so that pull requests wait no longer. A ready pull request into
-  # main times the QUICK set on Linux; main times every call on the three
-  # platforms. Drafts and stacked pull requests skip it.
+  # The scaling tests time every mutating call at N and 16N (docx) or 4N
+  # (pptx). They need a build without debug assertions (the `scaling`
+  # profile), built here beside the `ci` one so that pull requests wait no
+  # longer. A ready pull request into main times the QUICK set on Linux; main
+  # times every call on the three platforms. Drafts and stacked pull requests
+  # skip it.
   scaling:
     name: Scaling (${{ matrix.os }})
     if: github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)
