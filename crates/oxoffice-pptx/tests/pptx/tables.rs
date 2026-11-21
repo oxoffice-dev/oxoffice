@@ -1206,6 +1206,10 @@ fn canonical_table(bytes: &[u8]) -> Vec<String> {
             };
             match (&event, element) {
                 (Event::Start(e), Some((element, is_table))) if depth > 0 || is_table => {
+                    if depth == 0 {
+                        // Each table element counts on its own.
+                        tables.push(std::mem::take(&mut events));
+                    }
                     events.push(tag(e, &element));
                     depth += 1;
                 }
@@ -1220,14 +1224,21 @@ fn canonical_table(bytes: &[u8]) -> Vec<String> {
                 (Event::Text(t), _) if depth > 0 => {
                     events.push(String::from_utf8_lossy(t).into_owned())
                 }
+                // `&amp;` and `&#13;` come as references, CDATA on its own.
+                (Event::GeneralRef(r), _) if depth > 0 => {
+                    events.push(format!("&{};", String::from_utf8_lossy(r)))
+                }
+                (Event::CData(c), _) if depth > 0 => {
+                    events.push(String::from_utf8_lossy(c).into_owned())
+                }
                 (Event::Eof, _) => break,
                 _ => {}
             }
         }
-        if !events.is_empty() {
-            tables.push(events);
-        }
+        tables.push(events);
     }
+    // The pushes before each table and after each part leave empty lists.
+    tables.retain(|events| !events.is_empty());
     assert_eq!(tables.len(), 1, "one table in the deck");
     tables.remove(0)
 }
