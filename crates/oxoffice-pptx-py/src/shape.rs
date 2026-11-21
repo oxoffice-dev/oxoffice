@@ -2207,7 +2207,9 @@ impl PyShapeCollection {
 
     /// Every shape of this collection and of the groups below it, depth first
     /// in z-order, a group before its children, as `(depth, shape)` pairs:
-    /// depth 0 for the shapes of this collection.
+    /// depth 0 for the shapes of this collection. An alternate-content block
+    /// is listed but not entered, since its fallback members cannot be
+    /// edited; its own `.shapes` reads them.
     fn walk(&self, py: Python<'_>) -> PyResult<Vec<(usize, Py<PyShape>)>> {
         let owner = self.validate(py)?;
         let presentation = self.presentation.borrow(py);

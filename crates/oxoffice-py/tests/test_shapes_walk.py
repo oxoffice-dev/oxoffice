@@ -2,81 +2,86 @@
 children, as (depth, shape) pairs whose shapes are live handles."""
 
 import io
-import shutil
 import zipfile
 from pathlib import Path
-
-import pytest
 
 import oxoffice.pptx as oxpptx
 
 CORPUS = Path(__file__).resolve().parents[3] / "tests" / "corpus" / "files"
 INCH = oxpptx.Inches(1)
+NESTED = [(0, "a"), (0, "outer"), (1, "b"), (1, "inner"), (2, "c"), (1, "d"), (0, "e")]
 
 
 def add_box(shapes, name):
     box = shapes.add_textbox(INCH, INCH, INCH, INCH)
     box.name = name
     box.text_frame.text = name
-    return box
 
 
-@pytest.fixture
-def deck(tmp_path):
-    """A copy of the corpus deck with a slide holding a, outer [b, inner [c], d], e."""
-    path = tmp_path / "deck.pptx"
-    shutil.copy(CORPUS / "powerpoint" / "deck.pptx", path)
-    prs = oxpptx.Presentation(path)
-    slide = prs.slides.add_slide(prs.slide_layouts[len(prs.slide_layouts) - 1])
-    add_box(slide.shapes, "a")
-    outer = slide.shapes.add_group_shape()
+def add_nested(shapes):
+    """Appends a, outer [b, inner [c], d], e to `shapes`."""
+    add_box(shapes, "a")
+    outer = shapes.add_group_shape()
     outer.name = "outer"
     add_box(outer.shapes, "b")
     inner = outer.shapes.add_group_shape()
     inner.name = "inner"
     add_box(inner.shapes, "c")
     add_box(outer.shapes, "d")
-    add_box(slide.shapes, "e")
+    add_box(shapes, "e")
+
+
+def nested_deck():
+    """The corpus deck with a new last slide holding a, outer [b, inner [c], d], e.
+
+    Called from the test bodies, which conftest runs on a thread with a large stack, never from a fixture, which runs
+    on the main thread."""
+    prs = oxpptx.Presentation(CORPUS / "powerpoint" / "deck.pptx")
+    slide = prs.slides.add_slide(prs.slide_layouts[len(prs.slide_layouts) - 1])
+    add_nested(slide.shapes)
     return prs
 
 
-def names(walked):
-    return [(depth, shape.name) for depth, shape in walked if shape.name in "a outer b inner c d e".split()]
+def walked(shapes):
+    return [(depth, shape.name) for depth, shape in shapes.walk()]
 
 
-def test_walk_visits_a_group_before_its_children_in_z_order(deck):
-    slide = deck.slides[-1]
-    assert names(slide.shapes.walk()) == [(0, "a"), (0, "outer"), (1, "b"), (1, "inner"), (2, "c"), (1, "d"),
-                                          (0, "e")]
-    assert len(slide.shapes.walk()) == len(slide.shapes) + 4
+def test_walk_visits_a_group_before_its_children_in_z_order():
+    shapes = nested_deck().slides[-1].shapes
+    placeholders = [(0, shape.name) for shape in shapes[:len(shapes) - 3]]
+    assert walked(shapes) == placeholders + NESTED
 
 
-def test_walk_of_a_group_starts_at_depth_zero(deck):
-    outer = next(shape for shape in deck.slides[-1].shapes if shape.name == "outer")
-    assert names(outer.shapes.walk()) == [(0, "b"), (0, "inner"), (1, "c"), (0, "d")]
+def test_walk_of_a_group_starts_at_depth_zero():
+    outer = next(shape for shape in nested_deck().slides[-1].shapes if shape.name == "outer")
+    assert walked(outer.shapes) == [(0, "b"), (0, "inner"), (1, "c"), (0, "d")]
 
 
-def test_walked_shapes_are_live_handles(deck, tmp_path):
-    c = next(shape for depth, shape in deck.slides[-1].shapes.walk() if shape.name == "c")
+def test_a_walked_handle_edits_its_own_shape(tmp_path):
+    prs = nested_deck()
+    c = next(shape for _, shape in prs.slides[-1].shapes.walk() if shape.name == "c")
     c.text_frame.text = "changed through the walk"
-    deck.save(tmp_path / "out.pptx")
-    saved = oxpptx.Presentation(tmp_path / "out.pptx")
-    texts = [shape.text_frame.text for _, shape in saved.slides[-1].shapes.walk() if shape.has_text_frame]
-    assert "changed through the walk" in texts
+    prs.save(tmp_path / "out.pptx")
+    shapes = oxpptx.Presentation(tmp_path / "out.pptx").slides[-1].shapes
+    texts = {shape.name: shape.text_frame.text for _, shape in shapes.walk() if shape.has_text_frame}
+    assert {name: texts[name] for name in "abcde"} == {"a": "a", "b": "b", "c": "changed through the walk",
+                                                        "d": "d", "e": "e"}
 
 
-def test_walk_covers_layouts_and_masters(deck):
-    layout = deck.slide_layouts[0]
-    assert [shape.name for _, shape in layout.shapes.walk()] == [shape.name for shape in layout.shapes]
-    master = layout.slide_master
-    assert len(master.shapes.walk()) >= len(master.shapes)
+def test_walk_covers_layouts_and_masters():
+    prs = oxpptx.Presentation(CORPUS / "powerpoint" / "deck.pptx")
+    layout = prs.slide_layouts[0]
+    for shapes in (layout.shapes, layout.slide_master.shapes):
+        before = [(0, shape.name) for shape in shapes]
+        add_nested(shapes)
+        assert walked(shapes) == before + NESTED
 
 
 def bare_shape(id_, name):
     return f'<p:sp><p:nvSpPr><p:cNvPr id="{id_}" name="{name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp>'
 
 
-def test_walk_enters_the_fallback_of_alternate_content():
+def test_walk_lists_alternate_content_without_entering_it():
     block = ('<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
              '<mc:Choice xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" Requires="p14">'
              f'{bare_shape(900, "choice")}</mc:Choice>'
@@ -89,8 +94,10 @@ def test_walk_enters_the_fallback_of_alternate_content():
             if item.filename == "ppt/slides/slide1.xml":
                 data = data.replace(b"</p:spTree>", block.encode() + b"</p:spTree>")
             target.writestr(item, data)
-    prs = oxpptx.Presentation.from_bytes(out.getvalue())
-    walked = prs.slides[0].shapes.walk()
-    assert [(depth, shape.name) for depth, shape in walked[-2:]] == [(1, "fallback a"), (1, "fallback b")]
-    assert "choice" not in [shape.name for _, shape in walked]
-    assert len(walked) == len(prs.slides[0].shapes) + 2
+    shapes = oxpptx.Presentation.from_bytes(out.getvalue()).slides[0].shapes
+    pairs = shapes.walk()
+    assert [depth for depth, _ in pairs] == [0] * len(shapes)
+    assert [shape.name for shape in shapes[-1].shapes] == ["fallback a", "fallback b"]
+    for _, shape in pairs[:-1]:
+        shape.name = f"{shape.name} renamed"
+    assert all(shape.name.endswith(" renamed") for shape in shapes[:-1])

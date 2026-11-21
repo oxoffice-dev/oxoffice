@@ -100,7 +100,8 @@ paragraphs and line breaks both written as newlines. `--notes` prints one
 outline. JSON output always carries the notes.
 
 `shapes` lists the shapes of every slide, or of `--slide N`, depth first in
-z-order: a group, then the shapes inside it, indented one more step. Each line
+z-order: a group, then the shapes inside it, indented one more step. An
+alternate-content block is listed as one shape, without its fallback. Each line
 has the shape id, kind, name, direct position and size in EMU, and the first 50
 characters of its text. `--json` gives, for each shape, its `path` (z-order
 index in the slide, then in each group below it), `depth`, id, name, kind,

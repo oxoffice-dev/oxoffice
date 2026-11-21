@@ -24142,15 +24142,21 @@ impl DoubleEndedIterator for Shapes<'_> {
 impl ExactSizeIterator for Shapes<'_> {}
 
 impl<'a> Shapes<'a> {
-    /// Visits the shapes left in this iterator and everything inside them,
-    /// depth first in z-order: a group comes before its children.
+    /// Visits the shapes left in this iterator and, below each group, the
+    /// shapes inside it, depth first in z-order: a group comes before its
+    /// children.
     ///
     /// Each shape comes with its path: its index in this collection, then in
-    /// each group below it, so its depth is `path.len() - 1` and
-    /// [`Presentation::part_shape_at`] finds it again. Groups and the
-    /// selected fallback of an alternate-content block are entered, as
-    /// [`ShapeRef::children`] does. The walk keeps its own stack, so deeply
-    /// nested groups cannot overflow the thread's stack.
+    /// each group below it, so its depth is `path.len() - 1`. For a walk of a
+    /// slide's, layout's or master's own shapes ([`SlideRef::shapes`],
+    /// [`Presentation::part_shapes`]), [`Presentation::part_shape_at`] and
+    /// [`Presentation::shape_mut_at`] find each path again; a walk of
+    /// [`ShapeRef::children`] gives paths relative to that group.
+    ///
+    /// An alternate-content block is visited but not entered: the members of
+    /// its fallback cannot be edited, so that every shape the walk gives can
+    /// be. [`ShapeRef::children`] reads them. The walk keeps its own stack, so
+    /// deeply nested groups cannot overflow the thread's stack.
     pub fn walk(self) -> ShapeWalk<'a> {
         ShapeWalk {
             levels: vec![(self.children, self.indices)],
@@ -24180,15 +24186,16 @@ impl<'a> Iterator for ShapeWalk<'a> {
                 self.path.pop();
                 continue;
             };
-            let shape = shape_ref(&children[index]);
+            let child = &children[index];
             let mut path = self.path.clone();
             path.push(index);
-            let inner = shape.child_slice();
-            if !inner.is_empty() {
-                self.levels.push((inner, 0..inner.len()));
+            if let ShapeTreeChild::GroupShape(group) = child
+                && !group.children.is_empty()
+            {
+                self.levels.push((&group.children, 0..group.children.len()));
                 self.path.push(index);
             }
-            return Some((path, shape));
+            return Some((path, shape_ref(child)));
         }
     }
 }

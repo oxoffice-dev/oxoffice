@@ -82,22 +82,45 @@ fn walk_visits_a_group_before_its_children_in_z_order() {
 }
 
 #[test]
-fn every_walked_path_finds_its_shape_again() {
-    let (prs, _) = nested();
-    let walked: Vec<_> = prs.slide(0).unwrap().shapes().walk().collect();
-    assert_eq!(walked.len(), prs.slide(0).unwrap().shapes().len() + 4);
-    for (path, shape) in walked {
-        assert!(
-            prs.part_shape_at(ShapeOwner::Slide(0), &path).unwrap() == shape,
-            "{path:?}"
-        );
+fn every_walked_path_finds_its_shape_again_and_edits_it() {
+    let (mut prs, _) = nested();
+    let paths: Vec<_> = {
+        let slide = prs.slide(0).unwrap();
+        let walked: Vec<_> = slide.shapes().walk().collect();
+        assert_eq!(walked.len(), slide.shapes().len() + 4);
+        for (path, shape) in &walked {
+            assert!(
+                prs.part_shape_at(ShapeOwner::Slide(0), path).unwrap() == *shape,
+                "{path:?}"
+            );
+        }
+        let owned: Vec<_> = prs
+            .part_shapes(ShapeOwner::Slide(0))
+            .unwrap()
+            .walk()
+            .map(|(path, _)| path)
+            .collect();
+        let paths: Vec<_> = walked.into_iter().map(|(path, _)| path).collect();
+        assert_eq!(owned, paths);
+        paths
+    };
+    for (index, path) in paths.iter().enumerate() {
+        prs.shape_mut_at(ShapeOwner::Slide(0), path)
+            .unwrap()
+            .set_name(&format!("walked {index}"))
+            .unwrap();
     }
-    let owned: Vec<_> = prs
-        .part_shapes(ShapeOwner::Slide(0))
+    let renamed: Vec<_> = prs
+        .slide(0)
         .unwrap()
+        .shapes()
         .walk()
+        .map(|(_, shape)| shape.non_visual_name().unwrap())
         .collect();
-    assert_eq!(owned.len(), prs.slide(0).unwrap().shapes().walk().count());
+    let expected: Vec<_> = (0..paths.len())
+        .map(|index| format!("walked {index}"))
+        .collect();
+    assert_eq!(renamed, expected);
 }
 
 #[test]
@@ -168,24 +191,25 @@ fn deck_with_alternate_content() -> Presentation {
 }
 
 #[test]
-fn walk_enters_the_fallback_of_alternate_content() {
-    let prs = deck_with_alternate_content();
+fn walk_lists_alternate_content_without_entering_it() {
+    let mut prs = deck_with_alternate_content();
     let slide = prs.slide(0).unwrap();
     let n = slide.shapes().len() - 1;
     let walked: Vec<_> = slide.shapes().walk().collect();
-    let kinds: Vec<_> = walked[n..]
-        .iter()
-        .map(|(path, shape)| (path.clone(), shape.kind(), shape.non_visual_name()))
+    assert_eq!(walked.len(), n + 1);
+    let (path, block) = &walked[n];
+    assert_eq!(path, &[n]);
+    assert_eq!(block.kind(), ShapeKind::AlternateContent);
+    let fallback: Vec<_> = block
+        .children()
+        .map(|shape| shape.non_visual_name().unwrap())
         .collect();
-    assert_eq!(
-        kinds,
-        [
-            (vec![n], ShapeKind::AlternateContent, None),
-            (vec![n, 0], ShapeKind::Shape, Some("fallback a".to_owned())),
-            (vec![n, 1], ShapeKind::Shape, Some("fallback b".to_owned())),
-        ]
-    );
-    for (path, shape) in walked {
-        assert!(prs.part_shape_at(ShapeOwner::Slide(0), &path).unwrap() == shape);
+    assert_eq!(fallback, ["fallback a", "fallback b"]);
+    let paths: Vec<_> = walked.into_iter().map(|(path, _)| path).collect();
+    for path in paths {
+        assert!(
+            prs.shape_mut_at(ShapeOwner::Slide(0), &path).is_ok(),
+            "{path:?}"
+        );
     }
 }
