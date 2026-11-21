@@ -3180,31 +3180,10 @@ fn collect_reference_field_name(instruction: &str, references: &mut Vec<String>)
     }
 }
 
-/// The switch whose argument names the bookmark a field refers to, or `None`
-/// when its first argument does: `REF`, `PAGEREF`, `NOTEREF`, `GOTOBUTTON`,
-/// `SET` and `ASK` name it first, `HYPERLINK` after `\l`, `TOC` after `\b`.
-fn reference_field_switch(name: &str) -> Option<Option<&'static str>> {
-    match name.to_ascii_uppercase().as_str() {
-        "REF" | "PAGEREF" | "NOTEREF" | "GOTOBUTTON" | "SET" | "ASK" => Some(None),
-        "HYPERLINK" => Some(Some("l")),
-        "TOC" => Some(Some("b")),
-        _ => None,
-    }
-}
-
-/// The bookmark a field refers to (see [`reference_field_switch`]).
+/// The bookmark a field refers to (see
+/// [`oxoffice_docx_oxml::text::bookmark_reference_span`]).
 fn reference_field_name(instruction: &str) -> Option<String> {
-    let field = Field::new(instruction, "");
-    let argument = match reference_field_switch(&field.instruction.name)? {
-        None => field.instruction.arguments.first(),
-        Some(switch) => field
-            .instruction
-            .switches
-            .iter()
-            .find(|candidate| candidate.name.eq_ignore_ascii_case(switch))
-            .and_then(|candidate| candidate.argument.as_ref()),
-    };
-    argument.and_then(argument_text).map(str::to_owned)
+    oxoffice_docx_oxml::text::bookmark_reference_span(instruction).map(|(_, name)| name)
 }
 
 /// The new name of the bookmark `old` names, when an import renamed it.
@@ -3385,17 +3364,20 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                         Error::Other(format!("invalid field instruction entity: {error}"))
                     })?;
                     instruction.text.push_str(&decoded);
-                    instruction.spans.push((before, after));
+                    instruction
+                        .spans
+                        .push((before, after, Some(decoded.into_owned())));
                 }
             }
             Event::CData(text) if body_depth.is_some() && in_instruction_text => {
                 if let Some(instruction) = complex.last_mut()
                     && instruction.collecting
                 {
-                    instruction.text.push_str(&text.decode().map_err(|error| {
+                    let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
-                    })?);
-                    instruction.spans.push((before, after));
+                    })?;
+                    instruction.text.push_str(&decoded);
+                    instruction.spans.push((before, after, None));
                 }
             }
             Event::End(element) => {
@@ -3740,7 +3722,9 @@ pub(super) fn add_identity_attribute_edit(
 struct ComplexInstructionEdit {
     text: String,
     collecting: bool,
-    spans: Vec<(usize, usize)>,
+    /// Each source span of the instruction text with its decoded text, or
+    /// `None` for a CDATA span, which is not edited.
+    spans: Vec<(usize, usize, Option<String>)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3759,8 +3743,11 @@ fn collect_body_reference_edits(
         return Ok(false);
     }
     if local.as_ref() == b"hyperlink" {
-        if let Some((key, old)) =
-            resolved_element_attribute(element, resolver, b"anchor", AttributeNamespace::Word)?
+        // A link with an address names a place in that address.
+        if resolved_element_attribute(element, resolver, b"id", AttributeNamespace::Relationship)?
+            .is_none()
+            && let Some((key, old)) =
+                resolved_element_attribute(element, resolver, b"anchor", AttributeNamespace::Word)?
             && let Some(replacement) = renamed_bookmark(&remap.bookmark_names, &old)
         {
             add_attribute_value_edit(xml, start, end, &key, replacement, true, edits)?;
@@ -3793,23 +3780,39 @@ fn collect_body_reference_edits(
                 }
             }
             Some("end") => {
+                // Only the source span that holds the whole name is edited, so
+                // no text moves around a nested field; a name split across
+                // spans, or in CDATA, is left as it is.
                 if let Some(instruction) = complex.pop()
-                    && let Some(updated) =
-                        remap_reference_instruction(&instruction.text, &remap.bookmark_names)
-                    && let Some((first, remaining)) = instruction.spans.split_first()
+                    && let Some((range, replacement)) =
+                        renamed_reference_range(&instruction.text, &remap.bookmark_names)
                 {
-                    edits.push(FieldSourceEdit {
-                        start: first.0,
-                        end: first.1,
-                        replacement: quick_xml::escape::escape(&updated)
-                            .into_owned()
-                            .into_bytes(),
-                    });
-                    edits.extend(remaining.iter().map(|(start, end)| FieldSourceEdit {
-                        start: *start,
-                        end: *end,
-                        replacement: Vec::new(),
-                    }));
+                    let mut offset = 0;
+                    for (start, end, decoded) in &instruction.spans {
+                        let length = decoded.as_ref().map_or_else(|| usize::MAX / 2, String::len);
+                        if let Some(decoded) = decoded
+                            && offset <= range.start
+                            && range.end <= offset + length
+                        {
+                            let mut updated = decoded.clone();
+                            updated.replace_range(
+                                range.start - offset..range.end - offset,
+                                &replacement,
+                            );
+                            edits.push(FieldSourceEdit {
+                                start: *start,
+                                end: *end,
+                                replacement: quick_xml::escape::escape(&updated)
+                                    .into_owned()
+                                    .into_bytes(),
+                            });
+                            break;
+                        }
+                        if decoded.is_none() {
+                            break;
+                        }
+                        offset += length;
+                    }
                 }
             }
             _ => {}
@@ -3851,25 +3854,21 @@ fn remap_reference_instruction(
     instruction: &str,
     names: &BTreeMap<String, String>,
 ) -> Option<String> {
-    let old = reference_field_name(instruction)?;
-    let replacement = renamed_bookmark(names, &old)?;
-    let command_end = instruction
-        .find(char::is_whitespace)
-        .unwrap_or(instruction.len());
-    // A switch names the bookmark after it, maybe after an argument holding
-    // the same text (a HYPERLINK address).
-    let after = match reference_field_switch(&Field::new(instruction, "").instruction.name)? {
-        None => command_end,
-        Some(switch) => {
-            let lowered = instruction.to_ascii_lowercase();
-            command_end + lowered[command_end..].find(&format!("\\{switch}"))? + 2
-        }
-    };
-    let relative = instruction[after..].find(&old)?;
-    let start = after + relative;
+    let (range, replacement) = renamed_reference_range(instruction, names)?;
     let mut updated = instruction.to_owned();
-    updated.replace_range(start..start + old.len(), replacement);
+    updated.replace_range(range, &replacement);
     Some(updated)
+}
+
+/// Where the instruction names a bookmark the import renamed, and its new
+/// name: the name's own bytes, never the keyword or another operand.
+fn renamed_reference_range(
+    instruction: &str,
+    names: &BTreeMap<String, String>,
+) -> Option<(std::ops::Range<usize>, String)> {
+    let (range, old) = oxoffice_docx_oxml::text::bookmark_reference_span(instruction)?;
+    let replacement = renamed_bookmark(names, &old)?;
+    Some((range, replacement.clone()))
 }
 
 pub(crate) fn attribute_value_span(

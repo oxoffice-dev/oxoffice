@@ -1019,7 +1019,7 @@ fn every_reference_to_a_renamed_bookmark_follows_it_whatever_its_kind_or_case() 
     let source = doc_with_body(&format!(
         concat!(
             r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
-            "{}{}{}{}{}",
+            "{}{}{}{}{}{}",
             r#"<w:p><w:hyperlink w:anchor="MARK"><w:r><w:t>src jump</w:t></w:r></w:hyperlink></w:p>"#,
         ),
         field(r#"REF mark \h"#, "src marked"),
@@ -1034,6 +1034,11 @@ fn every_reference_to_a_renamed_bookmark_follows_it_whatever_its_kind_or_case() 
             field(r#"GOTOBUTTON Mark "Go""#, "Go"),
             field(r#"SET Mark "value""#, ""),
             field(r#"TOC \o "1-3" \b Mark"#, "contents"),
+        ),
+        format!(
+            "{}{}",
+            field(r#"XE "Entry" \r Mark"#, ""),
+            field(r#"INDEX \b Mark"#, "index"),
         ),
     ));
     let mut doc = with_identities("dst");
@@ -1053,11 +1058,14 @@ fn every_reference_to_a_renamed_bookmark_follows_it_whatever_its_kind_or_case() 
             "REF Mark \\h".to_owned(),
             format!("REF {renamed} \\h"),
             format!("HYPERLINK \\l \"{renamed}\""),
-            format!("HYPERLINK \"https://example.com/Mark\" \\l \"{renamed}\""),
+            // With an address, \l names a place in that address: left alone.
+            "HYPERLINK \"https://example.com/Mark\" \\l \"Mark\"".to_owned(),
             format!("NOTEREF {renamed} \\h"),
             format!("GOTOBUTTON {renamed} \"Go\""),
             format!("SET {renamed} \"value\""),
             format!("TOC \\o \"1-3\" \\b {renamed}"),
+            format!("XE \"Entry\" \\r {renamed}"),
+            format!("INDEX \\b {renamed}"),
         ]
     );
     let anchors: Vec<_> = doc
@@ -1896,4 +1904,39 @@ fn replacing_a_paragraph_with_its_own_xml_keeps_its_paragraph_id() {
     assert_eq!(texts(&doc), ["after", "other"]);
     let saved = doc.part_xml("word/document.xml").unwrap();
     assert!(saved.contains("3C4D5E6F"), "{saved}");
+
+#[test]
+fn a_short_bookmark_name_is_renamed_in_its_operand_not_in_the_keyword() {
+    let field = |instruction: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+                r#"<w:r><w:instrText xml:space="preserve"> {} </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>x</w:t></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+            ),
+            instruction
+        )
+    };
+    let source = doc_with_body(&format!(
+        "{}{}{}",
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="A"/><w:r><w:t>a</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+        field(r#"ASK A "Rate?""#),
+        field(r#"REF A"#),
+    ));
+    let mut doc = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="A"/><w:r><w:t>dst</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+    );
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let doc = reopen(&mut doc);
+    let renamed = bookmark_list(&doc)
+        .into_iter()
+        .find(|(_, text)| text == "a")
+        .map(|(name, _)| name)
+        .unwrap();
+    assert_ne!(renamed, "A");
+    assert_eq!(
+        field_instructions(&doc),
+        [format!("ASK {renamed} \"Rate?\""), format!("REF {renamed}")]
+    );
 }
