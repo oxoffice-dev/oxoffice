@@ -2205,6 +2205,48 @@ impl PyShapeCollection {
         )
     }
 
+    /// Every shape of this collection and of the groups below it, depth first
+    /// in z-order, a group before its children, as `(depth, shape)` pairs:
+    /// depth 0 for the shapes of this collection. An alternate-content block
+    /// is listed but not entered, since its fallback members cannot be
+    /// edited; its own `.shapes` reads them.
+    fn walk(&self, py: Python<'_>) -> PyResult<Vec<(usize, Py<PyShape>)>> {
+        let owner = self.validate(py)?;
+        let presentation = self.presentation.borrow(py);
+        let segments = presentation
+            .current_path(&self.path)
+            .ok_or_else(|| PyIndexError::new_err("owner is absent"))?
+            .segs;
+        let paths: Vec<Vec<usize>> = if self
+            .path
+            .segs
+            .iter()
+            .any(|segment| matches!(segment, PathSeg::Shape(_)))
+        {
+            shape_ref_at(&presentation, &self.path).map_or_else(Vec::new, |group| {
+                group.children().walk().map(|(path, _)| path).collect()
+            })
+        } else {
+            presentation
+                .inner
+                .part_shapes(owner)
+                .map_err(|error| pptx_to_pyerr(py, error))?
+                .walk()
+                .map(|(path, _)| path)
+                .collect()
+        };
+        paths
+            .into_iter()
+            .map(|path| {
+                let mut segs = segments.clone();
+                segs.extend(path.iter().map(|&index| PathSeg::Shape(index)));
+                let handle = presentation.capture_path(segs, None)?;
+                let shape = Py::new(py, PyShape::new(self.presentation.clone_ref(py), handle))?;
+                Ok((path.len() - 1, shape))
+            })
+            .collect()
+    }
+
     #[getter]
     fn title(&self, py: Python<'_>) -> PyResult<Option<Py<PyShape>>> {
         self.validate(py)?;

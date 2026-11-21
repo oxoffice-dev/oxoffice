@@ -143,6 +143,12 @@ fn validate_elements(elements: &[PositionedElement]) -> Result<(), PdfError> {
                 validate_elements(&group.children)?;
             }
             PositionedElement::MarkedContent { children, .. } => validate_elements(children)?,
+            // A widget with its appearance, Print flag and no action is
+            // archival; what it draws is checked like page content.
+            PositionedElement::FormField(fragment) => {
+                validate_elements(&fragment.children)?;
+                validate_elements(&fragment.alternate)?;
+            }
             PositionedElement::Image { .. } => {}
             _ => return Err(PdfError::UnsupportedColor),
         }

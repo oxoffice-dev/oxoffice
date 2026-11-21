@@ -679,11 +679,72 @@ impl PyParagraph {
     }
 }
 
+/// A stretch of a paragraph's literal run text, as `Paragraph.find_text`
+/// finds it, for `Document.isolate_span`.
+#[pyclass(name = "TextSpan", frozen, skip_from_py_object)]
+pub struct PyTextSpan {
+    pub(crate) paragraph: Py<PyParagraph>,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
+#[pymethods]
+impl PyTextSpan {
+    #[getter]
+    fn paragraph(&self, py: Python<'_>) -> Py<PyParagraph> {
+        self.paragraph.clone_ref(py)
+    }
+
+    #[getter]
+    fn start(&self) -> usize {
+        self.start
+    }
+
+    #[getter]
+    fn end(&self) -> usize {
+        self.end
+    }
+
+    fn __repr__(&self) -> String {
+        format!("TextSpan(start={}, end={})", self.start, self.end)
+    }
+}
+
 #[pymethods]
 impl PyParagraph {
     #[getter]
     fn element<'py>(slf: &Bound<'py, Self>) -> Bound<'py, Self> {
         slf.clone()
+    }
+
+    /// The `occurrence`-th match of `text`, counted from zero, in the
+    /// paragraph's literal run text, or `None`. Tabs, breaks, field results,
+    /// drawings, symbols, smart tags and custom XML are not searched, and a
+    /// match never crosses a tab, a break, a field, a drawing, a symbol, a
+    /// non-breaking hyphen, or a picture, shape or object kept as raw XML.
+    /// A footnote, endnote or comment reference mark is not a barrier.
+    #[pyo3(signature = (text, occurrence = 0))]
+    fn find_text(
+        slf: &Bound<'_, Self>,
+        text: &str,
+        occurrence: usize,
+    ) -> PyResult<Option<PyTextSpan>> {
+        let py = slf.py();
+        let this = slf.borrow();
+        let location = this.validate(py)?;
+        let span = {
+            let document = this.document.borrow(py);
+            location
+                .read(&document.inner, |paragraph| {
+                    paragraph.find_text(text, occurrence)
+                })
+                .map_err(|error| crate::docx_to_pyerr(py, error))?
+        };
+        Ok(span.map(|span| PyTextSpan {
+            paragraph: slf.clone().unbind(),
+            start: span.start,
+            end: span.end,
+        }))
     }
 
     #[getter]

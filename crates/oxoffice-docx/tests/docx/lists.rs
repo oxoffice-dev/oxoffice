@@ -4,10 +4,13 @@
 //! graph check, and the list markers a reader sees, on new documents and on
 //! the lists Word, Google Docs, LibreOffice and python-docx saved.
 
+use std::io::Cursor;
+
 use oxoffice_docx::{
     Alignment, Document, ListLevel, ListLevelRestart, ListLevelSuffix, ListNumberFormat,
     NumberedOutlineNode, NumberingLevelOverride, StyleBuilder, Twips,
 };
+use oxoffice_opc::OpcPackage;
 
 use crate::support::{corpus_doc, doc_with, reopen, texts};
 
@@ -326,6 +329,37 @@ fn restart_numbering_refuses_bullets_plain_paragraphs_and_missing_ones() {
         assert!(error.contains(message), "paragraph {paragraph}: {error}");
     }
     assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn restart_numbering_refuses_an_instance_with_data_it_would_lose() {
+    // A durable id names its instance and is not copied; any other unknown
+    // attribute would be lost by the copy, so the restart is refused.
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("step", 0);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    // A durableId in another namespace is not Word's: it is refused too.
+    for attribute in [r#"x:tag="kept""#, r#"x:durableId="7""#] {
+        let xml = xml.replacen(
+            "<w:num w:numId=\"1\"",
+            &format!("<w:num xmlns:x=\"urn:example\" {attribute} w:numId=\"1\""),
+            1,
+        );
+        assert!(xml.contains(attribute), "the instance carries {attribute}");
+        package.set_part("/word/numbering.xml", xml.into_bytes());
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut bytes).unwrap();
+        let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+        let error = doc.restart_numbering(0, 1).unwrap_err().to_string();
+        assert!(
+            error.contains("cannot project unsupported override source"),
+            "{attribute}: {error}"
+        );
+    }
 }
 
 // List definitions and instances.
@@ -679,6 +713,91 @@ fn a_style_linked_to_a_list_level_numbers_every_paragraph_of_that_style() {
 }
 
 #[test]
+fn an_instance_update_keeps_the_style_links_of_its_levels() {
+    // Heading1 and Heading2 are linked both ways to the list's levels; an
+    // update that would drop the levels' names of them is refused.
+    let (mut doc, id) = numbered_headings();
+    let plain = doc
+        .add_numbering_definition(&[ListLevel::decimal(), ListLevel::decimal()])
+        .unwrap();
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(id, plain, &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    doc.update_numbering_instance(
+        id,
+        definition_of(&doc, id),
+        &[NumberingLevelOverride::new(0).start(3)],
+    )
+    .unwrap();
+    assert_eq!(
+        markers(&doc)[0],
+        "3",
+        "an update that keeps the links goes through"
+    );
+}
+
+#[test]
+fn an_instance_update_keeps_a_style_link_held_by_a_swapped_in_level() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet())],
+        )
+        .unwrap();
+    doc.add_style(StyleBuilder::paragraph("Points", "Points"))
+        .unwrap();
+    doc.link_style_to_numbering("Points", swapped, 0).unwrap();
+    let link = doc.numbering_instance(swapped).unwrap().level_overrides[0]
+        .paragraph_style_link
+        .clone();
+    assert_eq!(
+        link.as_deref(),
+        Some("Points"),
+        "the swapped-in level holds the link"
+    );
+
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(swapped, definition_of(&doc, swapped), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn a_level_that_names_a_style_not_numbered_by_it_is_refused() {
+    // The other way round from LibreOffice's one-way link: the level names
+    // Heading2, whose style no longer points at any list.
+    let (mut doc, _) = numbered_headings();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let style = xml
+        .find(r#"w:styleId="Heading2""#)
+        .expect("the Heading2 style");
+    let start = style + xml[style..].find("<w:numPr>").expect("its numbering");
+    let end = start + xml[start..].find("</w:numPr>").unwrap() + "</w:numPr>".len();
+    let xml = format!("{}{}", &xml[..start], &xml[end..]);
+    package.set_part("/word/styles.xml", xml.into_bytes());
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(
+        error.contains("and style 'Heading2' are not reciprocally linked"),
+        "{error}"
+    );
+}
+
+#[test]
 fn headings_linked_to_a_list_show_their_numbers_in_the_outline() {
     fn flatten(nodes: &[NumberedOutlineNode], out: &mut Vec<String>) {
         for node in nodes {
@@ -828,10 +947,11 @@ fn list_items_of_every_producer_read_the_same_after_a_save() {
 }
 
 #[test]
-fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
+fn items_added_to_the_corpus_reports_continue_their_lists() {
     for (name, bullet) in [
         ("word/report.docx", SYMBOL_BULLET),
         ("google/report.docx", "●"),
+        ("libreoffice/report.docx", SYMBOL_BULLET),
         ("authored/report.docx", SYMBOL_BULLET),
     ] {
         let mut doc = corpus_doc(name);
@@ -864,11 +984,32 @@ fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
     }
 }
 
-// Known failures.
-
-// Fails today: LibreOffice keeps List Bullet's numbering but drops the level's style back-link, and every list edit is refused. Issue: #29
 #[test]
-#[should_panic(expected = "are not reciprocally linked")]
+fn roman_markers_go_up_to_3999_then_show_the_number() {
+    for (format, start, expected) in [
+        (
+            ListNumberFormat::UpperRoman,
+            3998,
+            ["MMMCMXCVIII.", "MMMCMXCIX.", "4000."],
+        ),
+        (
+            ListNumberFormat::LowerRoman,
+            3998,
+            ["mmmcmxcviii.", "mmmcmxcix.", "4000."],
+        ),
+    ] {
+        let (mut doc, id) = single_list(&[ListLevel::new(format.clone()).start(start)]);
+        add_items(&mut doc, id, &[0; 3]);
+        assert_eq!(markers(&doc), expected, "{format:?}");
+    }
+    // A hostile start value draws a short marker.
+    let (mut doc, id) =
+        single_list(&[ListLevel::new(ListNumberFormat::LowerRoman).start(u32::MAX)]);
+    add_items(&mut doc, id, &[0]);
+    assert_eq!(markers(&doc), [format!("{}.", u32::MAX)]);
+}
+
+#[test]
 fn items_can_be_added_to_a_libreoffice_report() {
     let mut doc = corpus_doc("libreoffice/report.docx");
     doc.try_add_bullet_list_item("New point", 0).unwrap();
@@ -883,9 +1024,64 @@ fn items_can_be_added_to_a_libreoffice_report() {
     assert_eq!(list_lines(&doc), expected);
 }
 
-// Fails today: Word writes w16cid:durableId on every list instance, and a restart refuses an instance with attributes it does not model. Issue: #29
 #[test]
-#[should_panic(expected = "cannot project unsupported override source")]
+fn every_list_edit_works_on_a_libreoffice_report() {
+    // LibreOffice keeps the numbering of its List Bullet style and drops the
+    // level's link back to the style: a one-way link, which Word reads.
+    let mut doc = corpus_doc("libreoffice/report.docx");
+    let point = doc
+        .paragraph(paragraph_starting(&doc, "Subscription revenue"))
+        .unwrap();
+    assert_eq!(point.style_id(), Some("ListBullet"));
+    let effective = doc.effective_paragraph_properties(&point);
+    let (id, level) = (effective.num_id.unwrap(), effective.num_ilvl.unwrap_or(0));
+    assert_eq!(
+        doc.numbering_level(id, level).unwrap().paragraph_style,
+        None
+    );
+    doc.validate_numbering_graph().unwrap();
+
+    doc.add_bullet_list_item("New point", 0);
+    let step = doc.paragraph_count();
+    doc.add_numbered_list_item("New step", 0);
+    doc.restart_numbering(step, 5).unwrap();
+    assert_ne!(doc.add_list_definition(&[ListLevel::decimal()]), 0);
+    doc.add_numbering_definition(&[ListLevel::bullet()])
+        .unwrap();
+    let mut unlinked = corpus_doc("libreoffice/report.docx");
+    unlinked
+        .unlink_style_from_numbering("ListBullet", id, level)
+        .unwrap();
+    let style = unlinked.style("ListBullet").unwrap();
+    let properties = style.paragraph_properties().unwrap();
+    assert_eq!(
+        (properties.num_id, properties.num_ilvl),
+        (None, None),
+        "unlinking removes the style's side of a one-way link"
+    );
+    unlinked.validate_numbering_graph().unwrap();
+    doc.link_style_to_numbering("ListBullet", id, level)
+        .unwrap();
+    assert_eq!(
+        doc.numbering_level(id, level).unwrap().paragraph_style,
+        Some("ListBullet"),
+        "linking completes the link"
+    );
+    doc.validate_numbering_graph().unwrap();
+
+    let doc = reopen(&mut doc);
+    let lines = list_lines(&doc);
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            format!("{SYMBOL_BULLET} New point"),
+            "5. New step".to_owned()
+        ]
+    );
+    doc.validate_numbering_graph().unwrap();
+}
+
+#[test]
 fn a_new_numbered_list_can_be_started_in_a_word_report() {
     let mut doc = corpus_doc("word/report.docx");
     doc.try_add_numbered_list_item_with_restart("First of a new list", 0, true)
@@ -901,9 +1097,64 @@ fn a_new_numbered_list_can_be_started_in_a_word_report() {
     );
 }
 
-// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29
 #[test]
-#[should_panic(expected = "left: \"Subscription revenue reached")]
+fn a_new_numbered_list_can_be_started_in_word_google_and_python_docx_reports() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "authored/report.docx",
+    ] {
+        let durable_ids = |numbering: &str| -> Vec<String> {
+            numbering
+                .split("w16cid:durableId=\"")
+                .skip(1)
+                .map(|rest| rest[..rest.find('"').unwrap()].to_owned())
+                .collect()
+        };
+        let mut doc = corpus_doc(name);
+        let original = durable_ids(&doc.part_xml("word/numbering.xml").unwrap());
+        let instances = doc.numbering_instances().len();
+        doc.try_add_numbered_list_item("Fourth step", 0).unwrap();
+        doc.try_add_numbered_list_item_with_restart("First of a new list", 0, true)
+            .unwrap();
+        doc.try_add_numbered_list_item("Second of the new list", 0)
+            .unwrap();
+
+        let doc = reopen(&mut doc);
+        let lines = list_lines(&doc);
+        assert_eq!(
+            lines[lines.len() - 3..],
+            [
+                "4. Fourth step",
+                "1. First of a new list",
+                "2. Second of the new list"
+            ],
+            "{name}"
+        );
+        doc.validate_numbering_graph().unwrap();
+        // Word names each list instance with a w16cid:durableId: they all
+        // stay, and the new instance does not copy the one it restarts.
+        assert_eq!(doc.numbering_instances().len(), instances + 1, "{name}");
+        assert_eq!(
+            durable_ids(&doc.part_xml("word/numbering.xml").unwrap()),
+            original,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn the_word_report_names_its_list_instances_with_durable_ids() {
+    let numbering = corpus_doc("word/report.docx")
+        .part_xml("word/numbering.xml")
+        .unwrap();
+    assert!(
+        numbering.matches("w16cid:durableId=\"").count() >= 2,
+        "{numbering}"
+    );
+}
+
+#[test]
 fn markdown_shows_word_list_paragraphs_as_list_items() {
     let markdown = corpus_doc("word/report.docx").to_markdown();
     let line = |prefix: &str| {
@@ -923,9 +1174,299 @@ fn markdown_shows_word_list_paragraphs_as_list_items() {
     );
 }
 
-// Fails today: the layout starts a lettered list again at "a." after "z." where Word goes on with "aa.". Issue: #29
+/// The list element (`<ul>` or `<ol>`) that holds the HTML item showing
+/// `text`: the last list tag opened before it.
+fn html_list_of<'a>(html: &'a str, text: &str) -> &'a str {
+    let at = html
+        .find(text)
+        .unwrap_or_else(|| panic!("no HTML holds {text:?}"));
+    let before = &html[..at];
+    let ul = before.rfind("<ul>");
+    let ol = before.rfind("<ol>");
+    let closed = before.rfind("</ul>").max(before.rfind("</ol>"));
+    match ul.max(ol) {
+        Some(open) if Some(open) > closed => {
+            if ul == Some(open) {
+                "ul"
+            } else {
+                "ol"
+            }
+        }
+        _ => "none",
+    }
+}
+
 #[test]
-#[should_panic(expected = r#"left: ["a.", "b."]"#)]
+fn exports_show_the_report_lists_of_every_producer() {
+    // Word, LibreOffice and python-docx number these paragraphs through
+    // their List Bullet and List Number styles, Google Docs on the paragraphs.
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+        "authored/report.docx",
+    ] {
+        let doc = corpus_doc(name);
+        let markdown = doc.to_markdown();
+        for item in [
+            "- Subscription revenue reached 4.2 million euros, up from 3.7 million.",
+            "- The Lyon warehouse opened on schedule and serves the southern region.",
+            "1. Hire two support engineers for the evening shift.",
+        ] {
+            assert!(
+                markdown.lines().any(|line| line == item),
+                "{name}: Markdown shows {item:?}:\n{markdown}"
+            );
+        }
+        let html = doc.to_html_fragment();
+        assert_eq!(
+            html_list_of(&html, "Subscription revenue reached"),
+            "ul",
+            "{name}"
+        );
+        assert_eq!(
+            html_list_of(&html, "Hire two support engineers"),
+            "ol",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn exports_keep_headings_numbered_through_their_style_as_headings() {
+    // Word numbers its headings by linking the heading styles to a list.
+    let (doc, _) = numbered_headings();
+    let markdown = doc.to_markdown();
+    for line in ["# Introduction", "## Scope", "# Method"] {
+        assert!(
+            markdown.lines().any(|candidate| candidate == line),
+            "Markdown keeps {line:?}:\n{markdown}"
+        );
+    }
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<h1>Introduction</h1>"), "{html}");
+    assert!(html.contains("<h2>Scope</h2>"), "{html}");
+    assert!(!html.contains("<ol>"), "{html}");
+}
+
+#[test]
+fn exports_follow_a_style_numbered_through_its_based_on_chain_or_the_default_style() {
+    let (mut doc, id) = single_list(&[ListLevel::bullet()]);
+    doc.add_style(StyleBuilder::paragraph("Points", "Points"))
+        .unwrap();
+    doc.link_style_to_numbering("Points", id, 0).unwrap();
+    doc.add_style(StyleBuilder::paragraph("SubPoints", "Sub points").based_on("Points"))
+        .unwrap();
+    doc.add_paragraph("inherited point").style("SubPoints");
+    assert_eq!(markers(&doc), ["•"]);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == "- inherited point")
+    );
+    assert_eq!(
+        html_list_of(&doc.to_html_fragment(), "inherited point"),
+        "ul"
+    );
+
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.link_style_to_numbering("Normal", id, 0).unwrap();
+    doc.add_paragraph("default style step");
+    assert_eq!(markers(&doc), ["1."]);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == "1. default style step")
+    );
+}
+
+#[test]
+fn exports_leave_a_level_without_marker_out_of_lists() {
+    let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
+    add_items(&mut doc, id, &[0]);
+    assert_eq!(markers(&doc), [""]);
+    assert!(doc.to_markdown().lines().any(|line| line == "item 1"));
+    assert_eq!(html_list_of(&doc.to_html_fragment(), "item 1"), "none");
+}
+
+#[test]
+fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
+    // Contracts number their clauses and leave the sub-paragraphs unmarked
+    // on a `none` level: layout keeps counting the clauses around them.
+    let (mut doc, id) =
+        single_list(&[ListLevel::decimal(), ListLevel::new(ListNumberFormat::None)]);
+    add_items(&mut doc, id, &[0, 1, 0, 1, 0]);
+    assert_eq!(markers(&doc), ["1.", "", "2.", "", "3."]);
+
+    let markdown = doc.to_markdown();
+    let lines: Vec<&str> = markdown.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        [
+            "1. item 1",
+            "   item 2",
+            "1. item 3",
+            "   item 4",
+            "1. item 5"
+        ],
+        "one list, each sub-paragraph under its clause:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<ol>").count(), 1, "{html}");
+    assert!(html.contains("<li>item 1<p>item 2</p></li>"), "{html}");
+}
+
+#[test]
+fn exports_keep_counting_a_clause_whose_body_text_follows_its_sub_items() {
+    // A clause, its sub-item (a), then body text of the clause on a `none`
+    // level shallower than the sub-item, then the next clause.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::None),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%3."),
+    ]);
+    add_items(&mut doc, id, &[0, 2, 1, 0]);
+    assert_eq!(markers(&doc), ["1.", "a.", "", "2."]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        !markdown.lines().any(|line| line == "item 3"),
+        "the body text stays in the list:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    // One outer list from the first clause to the second.
+    let outer = html.find("<ol>").unwrap();
+    let second = html.find("item 4").unwrap();
+    assert!(
+        !html[outer..second].contains("</ol>\n<p>item 3</p>\n<ol>"),
+        "the outer list does not close around the body text: {html}"
+    );
+    assert_eq!(
+        html.matches("</ol>").count(),
+        html.matches("<ol>").count(),
+        "{html}"
+    );
+    assert!(
+        html[..second].rfind("<ol>").unwrap() < html.find("item 3").unwrap(),
+        "no list opens again before the second clause: {html}"
+    );
+}
+
+#[test]
+fn exports_close_a_list_before_an_unmarked_paragraph_of_another_list() {
+    // A body style linked to a `none` level of another list only borrows its
+    // indent: layout draws it outside the bullet list before it.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let indents = doc
+        .add_numbering_definition(&[ListLevel::new(ListNumberFormat::None)])
+        .unwrap();
+    let indents = doc.add_numbering_instance(indents, &[]).unwrap();
+    add_items(&mut doc, bullets, &[0]);
+    doc.add_paragraph("indented body").numbering(indents, 0);
+    assert_eq!(markers(&doc), ["•", ""]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.lines().any(|line| line == "indented body"),
+        "a plain paragraph after the list:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("</ul>\n<p>indented body</p>"), "{html}");
+}
+
+#[test]
+fn odt_export_reports_a_definition_start_a_swapped_in_level_does_not_change() {
+    // Layout counts from the definition's start, 3, whatever the swapped-in
+    // level says; ODT resets it, and says so.
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal().start(1))],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    assert_eq!(markers(&doc), ["3."]);
+    let start_diagnostic = |doc: &Document| {
+        doc.to_odt_bytes()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("custom list start value"))
+    };
+    // A start override is counted first: 1 here, which ODT keeps.
+    let (mut overridden, plain) = single_list(&[ListLevel::decimal().start(3)]);
+    let one = overridden
+        .add_numbering_instance(
+            definition_of(&overridden, plain),
+            &[NumberingLevelOverride::new(0).start(1)],
+        )
+        .unwrap();
+    add_items(&mut overridden, one, &[0]);
+    assert_eq!(markers(&overridden), ["1."]);
+    assert!(!start_diagnostic(&overridden), "no false reset diagnostic");
+    let odt = doc.to_odt_bytes().unwrap();
+    assert!(
+        odt.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("custom list start value")),
+        "{:?}",
+        odt.diagnostics
+            .iter()
+            .map(|diagnostic| &diagnostic.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn markdown_starts_a_swapped_in_level_where_layout_does() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal().start(5))],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    let marker = markers(&doc).remove(0);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == format!("{marker} item 1")),
+        "Markdown starts at {marker}: {}",
+        doc.to_markdown()
+    );
+}
+
+#[test]
+fn exports_show_the_level_an_instance_swaps_in() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let dashed = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet().level_text("–"))],
+        )
+        .unwrap();
+    add_items(&mut doc, dashed, &[0]);
+    assert_eq!(markers(&doc), ["–"]);
+
+    assert!(doc.to_markdown().lines().any(|line| line == "- item 1"));
+    assert_eq!(html_list_of(&doc.to_html_fragment(), "item 1"), "ul");
+    let odt = doc.to_odt_bytes().unwrap();
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    let (id, _) = reread
+        .paragraph(0)
+        .unwrap()
+        .numbering()
+        .expect("a list item");
+    assert_eq!(
+        reread.numbering_is_bullet(id),
+        Some(true),
+        "the ODT list is a bullet list"
+    );
+}
+
+#[test]
 fn lettered_lists_go_on_with_doubled_letters_after_z() {
     let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::LowerLetter)]);
     add_items(&mut doc, id, &[0; 28]);
@@ -933,9 +1474,35 @@ fn lettered_lists_go_on_with_doubled_letters_after_z() {
     assert_eq!(markers(&doc)[26..], ["aa.", "bb."]);
 }
 
-// Fails today: numbering_is_bullet reads the definition only, not the instance's replacement level that layout draws. Issue: #29
 #[test]
-#[should_panic(expected = "left: Some(false)")]
+fn lettered_lists_triple_their_letters_after_zz_in_both_cases() {
+    for (format, expected) in [
+        (ListNumberFormat::LowerLetter, ["zz.", "aaa.", "bbb."]),
+        (ListNumberFormat::UpperLetter, ["ZZ.", "AAA.", "BBB."]),
+    ] {
+        let (mut doc, id) = single_list(&[ListLevel::new(format.clone()).start(52)]);
+        add_items(&mut doc, id, &[0; 3]);
+        assert_eq!(markers(&doc), expected, "{format:?}");
+    }
+}
+
+#[test]
+fn letter_markers_start_again_after_thirty_repeats() {
+    // A guard against a hostile start value: 780 is 30 "z", then "a" again.
+    let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::LowerLetter).start(780)]);
+    add_items(&mut doc, id, &[0; 2]);
+    assert_eq!(
+        markers(&doc),
+        [format!("{}.", "z".repeat(30)), "a.".to_owned()]
+    );
+
+    let (mut doc, id) =
+        single_list(&[ListLevel::new(ListNumberFormat::LowerLetter).start(u32::MAX)]);
+    add_items(&mut doc, id, &[0]);
+    assert_eq!(markers(&doc), ["uuuuuuuuuu."]);
+}
+
+#[test]
 fn a_list_whose_instance_swaps_in_a_bullet_level_reads_as_a_bullet_list() {
     let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
     let dashed = doc
@@ -945,8 +1512,71 @@ fn a_list_whose_instance_swaps_in_a_bullet_level_reads_as_a_bullet_list() {
         )
         .unwrap();
     add_items(&mut doc, dashed, &[0]);
+    assert_eq!(doc.numbering_is_bullet(dashed), Some(true));
+    assert_eq!(doc.numbering_is_bullet(numbered), Some(false));
 
+    // A save renumbers the instances made in this session by first use, so
+    // the reopened list is found through its paragraph.
     let doc = reopen(&mut doc);
     assert_eq!(markers(&doc), ["–"]);
-    assert_eq!(doc.numbering_is_bullet(dashed), Some(true));
+    let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
+    assert_eq!(doc.numbering_is_bullet(id), Some(true));
+}
+
+#[test]
+fn a_bullet_list_whose_instance_swaps_in_a_numbered_level_reads_as_numbered() {
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let numbered = doc
+        .add_numbering_instance(
+            definition_of(&doc, bullets),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal())],
+        )
+        .unwrap();
+    let restarted = doc
+        .add_numbering_instance(
+            definition_of(&doc, bullets),
+            &[NumberingLevelOverride::new(0).start(3)],
+        )
+        .unwrap();
+    add_items(&mut doc, numbered, &[0]);
+    assert_eq!(doc.numbering_is_bullet(numbered), Some(false));
+    assert_eq!(
+        doc.numbering_is_bullet(restarted),
+        Some(true),
+        "a start override keeps the definition's level"
+    );
+    assert_eq!(doc.numbering_is_bullet(bullets), Some(true));
+
+    let doc = reopen(&mut doc);
+    assert_eq!(markers(&doc), ["1."]);
+    let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
+    assert_eq!(doc.numbering_is_bullet(id), Some(false));
+}
+
+#[test]
+fn a_swapped_in_level_without_a_format_reads_as_numbered() {
+    // A level with no w:numFmt is decimal, as layout draws it.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, bullets),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal())],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    let override_start = xml.find("<w:lvlOverride").expect("the swapped-in level");
+    let format = r#"<w:numFmt w:val="decimal"/>"#;
+    let at = override_start + xml[override_start..].find(format).expect("its format");
+    let xml = format!("{}{}", &xml[..at], &xml[at + format.len()..]);
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    assert_eq!(markers(&doc), ["1."]);
+    let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
+    assert_eq!(doc.numbering_is_bullet(id), Some(false));
 }

@@ -121,6 +121,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Count a literal text in every story, by story kind
+    ///
+    /// Counts what `text --json` reads, paragraph by paragraph, in the
+    /// accepted view: the body with its table cells, text boxes and content
+    /// controls, each header and footer part, the footnotes, the endnotes and
+    /// the comments. Occurrences do not overlap and never cross the end of a
+    /// paragraph, so a count above what `replace` replaces names text that
+    /// replacement cannot reach, such as a match across the edge of a
+    /// content control.
+    Count {
+        /// Path to the DOCX file
+        file: PathBuf,
+        /// Literal, case-sensitive text to count
+        text: String,
+        /// Output the counts as schema-1 JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect deterministic top-level body layout geometry
     Layout {
         /// Path to the DOCX file
@@ -304,6 +322,13 @@ enum Command {
     /// unchanged. Any other change to it fails with its location and creates
     /// no output. Section properties holding revisions must also remain
     /// unchanged in both inputs. Changing them fails without creating output.
+    ///
+    /// Bookmark ids, which Word renumbers on every save, and the `_Toc` names
+    /// a rebuilt table of contents gives its heading bookmarks are no change:
+    /// a body bookmark both files hold keeps the original's id, a heading
+    /// paired with one of the original's takes its `_Toc` name, a new heading
+    /// takes a fresh one where the original uses its own, and the links and
+    /// page references of the edited file follow them.
     Compare {
         /// Original DOCX file
         original: PathBuf,
@@ -809,6 +834,7 @@ pub fn run(cli: Cli) {
 
         Command::Inspect { file, json } => commands::inspect(&file, json),
         Command::Text { file, json } => commands::text(&file, json),
+        Command::Count { file, text, json } => commands::count(&file, &text, json),
         Command::Layout {
             file,
             json,

@@ -86,11 +86,11 @@ pub use document::{
     NumberingFormat, NumberingInstance, NumberingLevel, NumberingLevelOverride, OutlineNode,
     PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RenderOptions,
     ReplacementCountMismatch, Section, SectionRef, SectionStory, StoryError, StoryId,
-    StoryItemKind, StoryItemRef, StoryItemSnapshot, StoryKind, StoryText, StoryTextItem,
-    TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions,
-    UnsupportedXmlRef, ValidationFinding, ValidationReport, ValidationSeverity,
-    WordCreationProfile, WordPackageClass, derive_font_key, take_direct_fragment_bytes,
-    validate_document_bytes, validate_document_file,
+    StoryItemKind, StoryItemRef, StoryItemSnapshot, StoryKind, StoryParagraph, StoryText,
+    StoryTextItem, TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport,
+    TextWatermarkOptions, UnsupportedXmlRef, ValidationFinding, ValidationReport,
+    ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
+    take_direct_fragment_bytes, validate_document_bytes, validate_document_file,
 };
 pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,
@@ -162,7 +162,8 @@ pub use paragraph::{
     Alignment, BorderStyle, DropCap, FrameAnchor, FrameWrap, HyperlinkItemRef, HyperlinkRef,
     Paragraph, ParagraphBorderEdge, ParagraphBorderRef, ParagraphFrame, ParagraphItemRef,
     ParagraphMark, ParagraphMarkRef, ParagraphRef, ParagraphTextAlignment, ParagraphTextDirection,
-    SectionBreak, TabAlignment, TabLeader, TabStopRef, TextboxTightWrap, auto_line_spacing,
+    SectionBreak, TabAlignment, TabLeader, TabStopRef, TextSpan, TextboxTightWrap,
+    auto_line_spacing,
 };
 pub use redaction::RedactionReport;
 pub use revision::{RevisionKind, RevisionRef, StoryRevision};

@@ -7,7 +7,7 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use oxoffice_docx_oxml::document::BodyContent;
-use oxoffice_docx_oxml::numbering::ST_NumberFormat;
+use oxoffice_docx_oxml::numbering::{CT_Lvl, ST_NumberFormat};
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::{ST_HighlightColor, ST_Jc, ST_Underline};
 use oxoffice_docx_oxml::table::{
@@ -1167,18 +1167,63 @@ impl<'a> OdtWriter<'a> {
     }
 
     fn list_level_has_producer_format(&self, num_id: u32, level: u32) -> bool {
-        self.document
-            .numbering
-            .as_ref()
-            .and_then(|numbering| numbering.get_abstract_num_for(num_id))
-            .and_then(|abstract_num| {
-                abstract_num
-                    .levels
-                    .iter()
-                    .find(|definition| definition.ilvl == level)
-            })
+        self.effective_list_level(num_id, level)
             .and_then(|definition| definition.num_fmt.as_ref())
             .is_some_and(|format| matches!(format, ST_NumberFormat::Other(_)))
+    }
+
+    /// The number a list level starts at, as layout counts it: the
+    /// instance's start override, else the definition's start, which a
+    /// swapped-in level does not change.
+    fn list_start(&self, num_id: u32, level: u32) -> u32 {
+        let Some(numbering) = self.document.numbering.as_ref() else {
+            return 1;
+        };
+        numbering
+            .nums
+            .iter()
+            .find(|item| item.num_id == num_id)
+            .and_then(|instance| {
+                instance
+                    .level_overrides
+                    .iter()
+                    .find(|item| item.ilvl == level)
+            })
+            .and_then(|item| item.start_override)
+            .or_else(|| {
+                numbering
+                    .get_abstract_num_for(num_id)?
+                    .levels
+                    .iter()
+                    .find(|item| item.ilvl == level)?
+                    .start
+            })
+            .unwrap_or(1)
+    }
+
+    /// The definition's level, or the level the instance swaps in for it, as
+    /// layout draws it.
+    fn effective_list_level(&self, num_id: u32, level: u32) -> Option<&CT_Lvl> {
+        let numbering = self.document.numbering.as_ref()?;
+        let definition = numbering
+            .get_abstract_num_for(num_id)?
+            .levels
+            .iter()
+            .find(|item| item.ilvl == level)?;
+        Some(
+            numbering
+                .nums
+                .iter()
+                .find(|item| item.num_id == num_id)
+                .and_then(|instance| {
+                    instance
+                        .level_overrides
+                        .iter()
+                        .find(|item| item.ilvl == level)
+                })
+                .and_then(|item| item.level.as_ref())
+                .unwrap_or(definition),
+        )
     }
 
     fn effective_run_properties(&self, paragraph: &CT_P, run: &CT_R) -> CT_RPr {
@@ -1312,22 +1357,12 @@ impl<'a> OdtWriter<'a> {
 
     fn scan_flattened_producer_list_losses(&mut self, num_id: u32, level: u32) -> Result<()> {
         self.scan_numbering_container_losses(num_id)?;
-        let definition = self
-            .document
-            .numbering
-            .as_ref()
-            .and_then(|numbering| numbering.get_abstract_num_for(num_id))
-            .and_then(|abstract_num| {
-                abstract_num
-                    .levels
-                    .iter()
-                    .find(|definition| definition.ilvl == level)
-            });
+        let definition = self.effective_list_level(num_id, level);
         let losses = definition.map_or(
             (false, false, false, false, false, false, false),
             |definition| {
                 (
-                    definition.start.is_some_and(|start| start != 1),
+                    self.list_start(num_id, level) != 1,
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),
@@ -1694,8 +1729,7 @@ impl<'a> OdtWriter<'a> {
             .numbering
             .as_ref()
             .and_then(|numbering| numbering.get_abstract_num_for(num_id));
-        let level_definition = abstract_num
-            .and_then(|abstract_num| abstract_num.levels.iter().find(|item| item.ilvl == level));
+        let level_definition = self.effective_list_level(num_id, level);
         let (
             is_bullet,
             is_decimal,
@@ -1721,7 +1755,7 @@ impl<'a> OdtWriter<'a> {
                             format,
                             Some(ST_NumberFormat::Bullet | ST_NumberFormat::Decimal)
                         ),
-                    definition.start.unwrap_or(1),
+                    self.list_start(num_id, level),
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),

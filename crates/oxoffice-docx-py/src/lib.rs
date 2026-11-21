@@ -18,11 +18,11 @@ use document::{
     PyFieldsUpdateReport, PyHeaderFooter, PyHeaderFooterVariant, PyHyperlink,
     PyLayoutBackedFieldUpdateReport, PyLayoutFragment, PyLayoutPage, PyListLevel, PyNote,
     PyRevision, PyRunPosition, PyRunRange, PySection, PySectionHandle, PySettings, PyStory,
-    PyStoryItem, PyStoryRunPosition, PyStoryRunRange, PyStyle, PySvgDiagnostic, PySvgRenderResult,
-    PyTocRebuildReport,
+    PyStoryItem, PyStoryParagraph, PyStoryRunPosition, PyStoryRunRange, PyStyle, PySvgDiagnostic,
+    PySvgRenderResult, PyTocRebuildReport,
 };
 use formatting::{PyColorFormat, PyFont, PyParagraphFormat};
-use paragraph::{PyParagraph, PyParagraphCollection};
+use paragraph::{PyParagraph, PyParagraphCollection, PyTextSpan};
 use run::{PyRun, PyRunCollection};
 use table::{
     PyCell, PyCellCollection, PyCellParagraphCollection, PyRow, PyRowCollection, PyTable,
@@ -243,6 +243,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyRevision>()?;
     module.add_class::<PyStory>()?;
     module.add_class::<PyStoryItem>()?;
+    module.add_class::<PyStoryParagraph>()?;
     module.add_class::<PyContentFragment>()?;
     module.add_class::<PyCoreProperties>()?;
     module.add_class::<PyHyperlink>()?;
@@ -257,6 +258,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyListLevel>()?;
     module.add_class::<PyChart>()?;
     module.add_class::<PyParagraph>()?;
+    module.add_class::<PyTextSpan>()?;
     module.add_class::<PyParagraphCollection>()?;
     module.add_class::<PyRun>()?;
     module.add_class::<PyRunCollection>()?;

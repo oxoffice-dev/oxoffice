@@ -1116,11 +1116,8 @@ dependencies = [
  "oxoffice-core",
  "oxoffice-drawing",
  "oxoffice-layout",
- "oxoffice-opc",
- "oxoffice-pdf",
  "oxoffice-sml",
  "quick-xml",
- "tiny-skia",
 ]
 
 [[package]]
@@ -1129,6 +1126,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "oxoffice-docx-cli",
+ "oxoffice-pptx",
  "oxoffice-pptx-cli",
  "serde_json",
 ]
@@ -1305,6 +1303,7 @@ name = "oxoffice-pdf"
 version = "0.1.0"
 dependencies = [
  "jpeg-encoder",
+ "lopdf",
  "miniz_oxide 0.9.1",
  "oxoffice-layout",
  "oxoffice-media",

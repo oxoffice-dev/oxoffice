@@ -10,7 +10,7 @@ use oxoffice_docx_oxml::shared::{
 };
 use oxoffice_docx_oxml::text::{
     AcceptedRunPath, AcceptedRunPathSegment, BreakType, CT_P, CT_R, CommentRangeMarker,
-    HyperlinkSpan, RunContent, hyperlink_revision_index,
+    HyperlinkSpan, RunContent, SpecialCharacter, hyperlink_revision_index,
 };
 use oxoffice_docx_oxml::units::{HalfPoint, Twips};
 
@@ -882,6 +882,117 @@ pub fn auto_line_spacing(multiple: f64) -> Twips {
     }
 }
 
+/// A stretch of a paragraph's literal run text, `[start, end)` in Unicode
+/// scalar values, as [`ParagraphRef::find_text`] finds it: the text that
+/// [`Paragraph::split_run`] offsets count, where tabs, breaks, fields,
+/// drawings and symbols have no width, and the text of smart tags and custom
+/// XML elements is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// The `occurrence`-th match of `text`, counted from zero, in the literal run
+/// text of `paragraph`, without overlaps, that crosses none of the items that
+/// show something there but have no width in it.
+///
+/// Each stretch between two such items is searched on its own, so a match
+/// that would cross one never hides a later one that overlaps it.
+fn find_literal_text(paragraph: &CT_P, text: &str, occurrence: usize) -> Option<TextSpan> {
+    if text.is_empty() {
+        return None;
+    }
+    let literal = paragraph.accepted_literal_text();
+    let length = text.chars().count();
+    // The byte offset of each character, and of the end.
+    let bytes = literal
+        .char_indices()
+        .map(|(byte, _)| byte)
+        .chain(std::iter::once(literal.len()))
+        .collect::<Vec<_>>();
+    let chars = bytes.len() - 1;
+    let mut remaining = occurrence;
+    let mut from = 0;
+    for to in literal_barriers(paragraph)
+        .into_iter()
+        .chain(std::iter::once(chars))
+    {
+        if to <= from {
+            continue;
+        }
+        let stretch = &literal[bytes[from]..bytes[to]];
+        let mut chars_before = from;
+        let mut bytes_seen = 0;
+        for (byte, _) in stretch.match_indices(text) {
+            chars_before += stretch[bytes_seen..byte].chars().count();
+            bytes_seen = byte;
+            if remaining == 0 {
+                return Some(TextSpan {
+                    start: chars_before,
+                    end: chars_before + length,
+                });
+            }
+            remaining -= 1;
+        }
+        from = to;
+    }
+    None
+}
+
+/// The sorted literal offsets where something shows in the paragraph with no
+/// width in its literal text: a tab, a break, a carriage return, a
+/// non-breaking hyphen, a positioned tab, a field, a drawing, a symbol, and a
+/// raw run child such as `mc:AlternateContent`, `w:pict` or `w:object`.
+///
+/// Footnote, endnote and comment reference marks are not barriers, so a match
+/// can run across one, and neither are soft hyphens, last rendered page
+/// breaks and the records that keep run root attributes, which show nothing.
+fn literal_barriers(paragraph: &CT_P) -> Vec<usize> {
+    let mut barriers = Vec::new();
+    let mut offset = 0;
+    for path in paragraph.accepted_run_paths() {
+        let Some(run) = paragraph.accepted_run(&path) else {
+            continue;
+        };
+        // The literal offset before each content item, then after the last.
+        let mut before = Vec::with_capacity(run.content.len() + 1);
+        for item in &run.content {
+            before.push(offset);
+            match item {
+                RunContent::Text(text) | RunContent::DeletedText(text) => {
+                    offset += text.text.chars().count();
+                }
+                RunContent::FootnoteRef { .. }
+                | RunContent::EndnoteRef { .. }
+                | RunContent::CommentReference { .. }
+                | RunContent::SpecialCharacter(SpecialCharacter::SoftHyphen) => {}
+                _ => barriers.push(offset),
+            }
+        }
+        before.push(offset);
+        // A raw child position counts the properties and the content items
+        // before it. Without positions, raw children are written last.
+        let positioned = run.extra_xml_positions.len() == run.extra_xml.len();
+        let properties = usize::from(run.properties.is_some());
+        for (index, raw) in run.extra_xml.iter().enumerate() {
+            let encoded = positioned.then(|| run.extra_xml_positions[index]);
+            if CT_R::raw_child_shows_nothing(raw, encoded) {
+                continue;
+            }
+            let items = encoded.map_or(run.content.len(), |encoded| {
+                CT_R::raw_child_position(encoded)
+                    .saturating_sub(properties)
+                    .min(run.content.len())
+            });
+            barriers.push(before[items]);
+        }
+    }
+    barriers.sort_unstable();
+    barriers.dedup();
+    barriers
+}
+
 /// A mutable reference to a paragraph in a document.
 pub struct Paragraph<'a> {
     pub(crate) inner: &'a mut CT_P,
@@ -909,7 +1020,8 @@ impl<'a> Paragraph<'a> {
     /// Every run, hyperlink, field, picture, content control, tracked change
     /// and other inline child is replaced by one run without direct
     /// formatting. A tab becomes `w:tab` and a line feed or a carriage return
-    /// becomes `w:br`, as in python-docx. Empty text leaves no run, like
+    /// becomes `w:br`, as in python-docx. A Windows line ending (`\r\n`) is
+    /// one `w:br`, where python-docx writes two. Empty text leaves no run, like
     /// [`crate::Document::add_paragraph`] with empty text.
     ///
     /// Comment ranges, bookmarks and permission ranges are kept, wherever they
@@ -941,10 +1053,15 @@ impl<'a> Paragraph<'a> {
             inner.content.clear();
             let mut run = Run { inner: &mut inner };
             let mut pending = String::new();
-            for character in text.chars() {
+            let mut characters = text.chars().peekable();
+            while let Some(character) = characters.next() {
                 if !matches!(character, '\t' | '\n' | '\r') {
                     pending.push(character);
                     continue;
+                }
+                // A Windows line ending is one break.
+                if character == '\r' {
+                    characters.next_if_eq(&'\n');
                 }
                 if !pending.is_empty() {
                     run.add_text(&pending);
@@ -1277,6 +1394,33 @@ impl<'a> Paragraph<'a> {
         } else {
             Err(crate::Error::Other("accepted run path is stale".to_owned()))
         }
+    }
+
+    /// Find the `occurrence`-th match of `text`, counted from zero, as
+    /// [`ParagraphRef::find_text`] does.
+    pub fn find_text(&self, text: &str, occurrence: usize) -> Option<TextSpan> {
+        find_literal_text(self.inner, text, occurrence)
+    }
+
+    /// Split runs so that `span` covers whole runs, and return the indexes of
+    /// those runs, as [`Self::run`] counts runs, so that they can be
+    /// formatted or a range can start and end around them.
+    ///
+    /// The text does not change: each run split keeps its properties, its
+    /// hyperlink, its tracked insertion or its inline content control. A tab,
+    /// a break, a field, a drawing or another text-free item right before or
+    /// right after the span stays out of the returned runs, in a run of its
+    /// own when it shared one with the span's text, so formatting the span or
+    /// replacing its text leaves it alone. A last rendered page break, which
+    /// shows nothing, is not split off. An empty span, or one past the end of
+    /// the literal text, is an error, and on error the paragraph is unchanged.
+    pub fn isolate_span(&mut self, span: TextSpan) -> crate::Result<std::ops::Range<usize>> {
+        let mut paragraph = self.inner.clone();
+        let (first, last) = paragraph
+            .split_accepted_literal_span(span.start, span.end)
+            .map_err(|error| crate::Error::Other(error.to_string()))?;
+        *self.inner = paragraph;
+        Ok(first..last)
     }
 
     /// Split the run at `run_index` at a Unicode scalar offset of its literal
@@ -2777,6 +2921,27 @@ impl<'a> ParagraphRef<'a> {
     /// smart tags, inline custom XML elements and simple fields.
     pub fn text(&self) -> String {
         self.inner.accepted_text()
+    }
+
+    /// Find the `occurrence`-th match of `text`, counted from zero, in the
+    /// paragraph's literal run text, without overlaps.
+    ///
+    /// Matches are case-sensitive and read the accepted view, inline content
+    /// controls, hyperlinks and tracked insertions included. They are found
+    /// in the text that [`Paragraph::split_run`] offsets count. What
+    /// [`Self::text`] shows there besides, a tab, a break, the result of a
+    /// field (simple or complex: a page number, a date, a cross-reference), a
+    /// drawing or a symbol, is not searched, and a match never crosses it,
+    /// nor a non-breaking hyphen, a carriage return, or a picture, shape or
+    /// object kept as raw XML (`mc:AlternateContent`, `w:pict`, `w:object`).
+    /// The text of smart tags and custom XML elements is not searched either,
+    /// but a match can run across the place where one sits. A footnote,
+    /// endnote or comment reference mark is not a barrier: a match can run
+    /// across one, and the isolated span then holds its run.
+    /// `None` when there is no such match or `text` is empty.
+    /// [`Paragraph::isolate_span`] turns the span into whole runs.
+    pub fn find_text(&self, text: &str, occurrence: usize) -> Option<TextSpan> {
+        find_literal_text(self.inner, text, occurrence)
     }
 
     /// Iterate over typed equations in paragraph source order.

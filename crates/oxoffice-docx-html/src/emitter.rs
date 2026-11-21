@@ -26,15 +26,39 @@ pub(crate) fn emit_body(
 ) -> String {
     let mut out = String::new();
     let mut list_stack: Vec<ListState> = Vec::new();
+    // The list and level of each open item, outermost first.
+    let mut open_items: Vec<(u32, u32)> = Vec::new();
 
     for block in body_blocks(body, false) {
         match block {
             Block::Paragraph(p, _) => {
-                let list_info = detect_list(&p, numbering);
+                // A heading numbered through its style, as Word numbers its
+                // headings, stays a heading; only its own numbering makes it
+                // a list item.
+                let list_info = detect_list(&p, styles, numbering).filter(|_| {
+                    detect_heading_level(p.properties.as_ref(), styles).is_none()
+                        || crate::has_own_numbering(&p)
+                });
+
+                // A paragraph on a `none` level goes on the open item of its
+                // list at its level or above, and that list stays open.
+                let continued = if list_info.is_none()
+                    && detect_heading_level(p.properties.as_ref(), styles).is_none()
+                {
+                    crate::unmarked_list_level(&p, styles, numbering).and_then(|(num_id, level)| {
+                        open_items
+                            .iter()
+                            .rposition(|&(id, item)| id == num_id && item <= level)
+                    })
+                } else {
+                    None
+                };
 
                 // Close lists that are no longer active
-                while let Some(top) = list_stack.last() {
-                    if let Some((_, level)) = &list_info {
+                while continued.is_none()
+                    && let Some(top) = list_stack.last()
+                {
+                    if let Some((_, level, _)) = &list_info {
                         if *level <= top.level && top.level > 0 {
                             close_list(&mut out, &mut list_stack);
                         } else {
@@ -45,7 +69,39 @@ pub(crate) fn emit_body(
                     }
                 }
 
-                if let Some((is_ordered, level)) = list_info {
+                if let Some(index) = continued {
+                    if index + 1 == open_items.len() && out.ends_with("</li>\n") {
+                        // Inside the item just written.
+                        out.truncate(out.len() - "</li>\n".len());
+                        out.push_str("<p>");
+                        emit_paragraph_content(
+                            &mut out,
+                            &p,
+                            styles,
+                            images,
+                            hyperlink_urls,
+                            options,
+                        );
+                        out.push_str("</p></li>\n");
+                    } else {
+                        // After the deeper lists, in the list of that item.
+                        let depth = open_items[index].1 as usize + 1;
+                        while list_stack.len() > depth {
+                            close_list(&mut out, &mut list_stack);
+                        }
+                        open_items.truncate(index + 1);
+                        out.push_str("<p>");
+                        emit_paragraph_content(
+                            &mut out,
+                            &p,
+                            styles,
+                            images,
+                            hyperlink_urls,
+                            options,
+                        );
+                        out.push_str("</p>\n");
+                    }
+                } else if let Some((is_ordered, level, num_id)) = list_info {
                     // Open new list levels if needed
                     let current_depth = list_stack.len() as u32;
                     if current_depth <= level {
@@ -61,11 +117,16 @@ pub(crate) fn emit_body(
                     out.push_str("<li>");
                     emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
                     out.push_str("</li>\n");
+                    while open_items.last().is_some_and(|&(_, item)| item >= level) {
+                        open_items.pop();
+                    }
+                    open_items.push((num_id, level));
                 } else {
                     // Close all remaining lists
                     while !list_stack.is_empty() {
                         close_list(&mut out, &mut list_stack);
                     }
+                    open_items.clear();
                     emit_paragraph(&mut out, &p, styles, images, hyperlink_urls, options);
                 }
                 for id in crate::paragraph_chart_ids(&p) {
@@ -73,6 +134,7 @@ pub(crate) fn emit_body(
                         while !list_stack.is_empty() {
                             close_list(&mut out, &mut list_stack);
                         }
+                        open_items.clear();
                         emit_chart_table(&mut out, chart);
                     }
                 }
@@ -81,6 +143,7 @@ pub(crate) fn emit_body(
                 while !list_stack.is_empty() {
                     close_list(&mut out, &mut list_stack);
                 }
+                open_items.clear();
                 emit_table(&mut out, tbl, styles, images, hyperlink_urls, options);
             }
         }
@@ -135,31 +198,14 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
     None
 }
 
-/// Detect if a paragraph is a list item.
-fn detect_list(para: &CT_P, numbering: Option<&CT_Numbering>) -> Option<(bool, u32)> {
-    let ppr = para.properties.as_ref()?;
-    let num_id = ppr.num_id?;
-    let ilvl = ppr.num_ilvl.unwrap_or(0);
-
-    if num_id == 0 {
-        return None;
-    }
-
-    let numbering = numbering?;
-
-    // Look up the numbering definition to determine if ordered or bullet
-    let abstract_id = numbering
-        .nums
-        .iter()
-        .find(|n| n.num_id == num_id)
-        .map(|n| n.abstract_num_id)?;
-
-    let abstract_num = numbering
-        .abstract_nums
-        .iter()
-        .find(|a| a.abstract_num_id == abstract_id)?;
-
-    let level = abstract_num.levels.iter().find(|l| l.ilvl == ilvl)?;
+/// Detect if a paragraph is a list item, through its style too. Returns
+/// (is_ordered, ilvl, num_id).
+fn detect_list(
+    para: &CT_P,
+    styles: &CT_Styles,
+    numbering: Option<&CT_Numbering>,
+) -> Option<(bool, u32, u32)> {
+    let (num_id, ilvl, level, _) = crate::list_level(para, styles, numbering?)?;
 
     use oxoffice_docx_oxml::numbering::ST_NumberFormat;
     let is_ordered = match level.num_fmt.as_ref() {
@@ -171,13 +217,13 @@ fn detect_list(para: &CT_P, numbering: Option<&CT_Numbering>) -> Option<(bool, u
             | ST_NumberFormat::LowerRoman
             | ST_NumberFormat::UpperLetter
             | ST_NumberFormat::LowerLetter
-            | ST_NumberFormat::Ordinal
-            | ST_NumberFormat::None,
+            | ST_NumberFormat::Ordinal,
         ) => true,
+        // A `none` level draws no marker, as in layout: not a list item.
         Some(_) => return None,
     };
 
-    Some((is_ordered, ilvl))
+    Some((is_ordered, ilvl, num_id))
 }
 
 /// Emit a complete paragraph element.

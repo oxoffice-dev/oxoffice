@@ -1144,7 +1144,14 @@ fn number_format_has_visible_renderer(format: &ST_NumberFormat) -> bool {
     )
 }
 
+/// The Roman marker of `n`. Past 3999, which classic Roman numerals cannot
+/// write and the Roman page fields refuse, the marker is the decimal number:
+/// a guard against a hostile start value, which would otherwise make a
+/// marker of millions of letters.
 fn to_roman(mut n: u32, upper: bool) -> String {
+    if n > 3999 {
+        return n.to_string();
+    }
     let vals = [
         (1000, "M"),
         (900, "CM"),
@@ -1170,13 +1177,19 @@ fn to_roman(mut n: u32, upper: bool) -> String {
     if upper { result } else { result.to_lowercase() }
 }
 
+/// The letter marker of `n`: a to z, then the letter doubled (aa to zz),
+/// tripled, and so on, as Word numbers a lettered list.
 fn to_letter(n: u32, upper: bool) -> String {
+    /// A guard against a hostile start value, which would make a marker of
+    /// millions of letters: past 30 repeats the sequence starts again.
+    const MAX_REPEATS: u32 = 30;
     if n == 0 {
         return String::new();
     }
+    let position = (n - 1) % (26 * MAX_REPEATS);
     let base = if upper { b'A' } else { b'a' };
-    let idx = ((n - 1) % 26) as u8;
-    String::from(char::from(base + idx))
+    let letter = char::from(base + (position % 26) as u8);
+    std::iter::repeat_n(letter, (position / 26 + 1) as usize).collect()
 }
 
 /// Collect the style chain from the given style up through basedOn ancestors.

@@ -64,6 +64,7 @@ cargo install oxoffice-cli --version '^0.1.0'
 oxoffice docx inspect report.docx
 oxoffice docx text report.docx
 oxoffice docx text report.docx --json
+oxoffice docx count report.docx 'Acme Corp' --json
 oxoffice docx layout report.docx --json
 oxoffice docx replace template.docx -p TOKEN -v ready --expect 1 -o report.docx
 oxoffice docx convert report.docx --to pdf -o report.pdf
@@ -122,6 +123,12 @@ byte for byte when both inputs hold it unchanged. Editing, deleting, moving or
 inserting such an owner is refused with its location, without publishing output.
 Section properties holding revisions must also stay unchanged in both inputs.
 Changing them fails without publishing output.
+Bookmark ids, which Word renumbers on every save, and the `_Toc` names a
+rebuilt table of contents gives its heading bookmarks are no change: a body
+bookmark both files hold keeps the original's id, a heading paired with one of
+the original's takes its `_Toc` name, a new heading takes a fresh one where the
+original uses its own, and the links and page references of the edited file
+follow them.
 Reported counts include newly created revisions only, even when a new review
 uses an existing author's name.
 
@@ -181,7 +188,27 @@ language, and character style values. The record has `all-supported-stories`
 scope, and its `stories` array lists the other stories as plain `text` does,
 one entry per story with its Python `Story.kind` name as `kind`, its
 `part_name`, its `owner_index`, and `items`. Each item is a direct paragraph or
-block content control with its story `index_path`, its `kind`, and its `text`.
+block content control with its story `index_path`, its `kind`, its direct
+`style` (always `null` for a content control), and its `text`. When the styles
+cannot be read, `style` is `null` throughout and one warning goes to stderr.
+
+`count` counts a literal, case-sensitive text in every paragraph of every
+story, as `Document::count_text` does: the body with its table cells, text
+boxes and block content controls, each header and footer part, the footnotes,
+the endnotes and the comments, in the accepted view. A text box in a run inside
+an inline smart tag or custom XML element is not counted yet (#78). It prints one
+`kind: count` line per story kind that holds the text, in the order body,
+header, footer, footnote, endnote, comment, then `total: N` and
+`outside comments: N`, the count of what `replace` searches. With `--json`,
+the record holds `text`, `revision_view`, `counts` (an object keyed by story
+kind), `total` and `outside_comments`. Occurrences do not overlap and never cross the end of a
+paragraph. A header or footer counts once per part, as `replace` replaces it
+once per part, so an `outside comments` count above what `replace --expect`
+finds names text that replacement cannot reach, such as a match across the
+edge of a content control or a tracked insertion, or the paragraphs of a block
+custom XML element. Comments are counted in `total` only: `replace` never
+searches them. Part names are OPC names, with a leading slash
+(`/word/header1.xml`). An empty text exits unsuccessfully.
 
 `convert --to md` and `convert --to html` append the same stories after the
 body, one section per part under a bold label. They leave comments out,

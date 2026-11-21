@@ -5,6 +5,7 @@
 
 mod conformance;
 mod font;
+mod forms;
 mod image;
 pub mod raster;
 mod structure;

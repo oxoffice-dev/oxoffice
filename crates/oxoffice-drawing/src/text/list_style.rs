@@ -18,19 +18,23 @@ use super::paragraph::{
 };
 
 /// DrawingML list defaults for each of the nine paragraph levels.
+///
+/// Each level is boxed: a `CT_TextParagraphProperties` is a few KB, and ten
+/// inline made every master, presentation and text body that carries a list
+/// style tens of KB, copied on the stack each time one moved.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug, Default)]
 pub struct CT_TextListStyle {
-    pub default_paragraph_properties: Option<CT_TextParagraphProperties>,
-    pub level1: Option<CT_TextParagraphProperties>,
-    pub level2: Option<CT_TextParagraphProperties>,
-    pub level3: Option<CT_TextParagraphProperties>,
-    pub level4: Option<CT_TextParagraphProperties>,
-    pub level5: Option<CT_TextParagraphProperties>,
-    pub level6: Option<CT_TextParagraphProperties>,
-    pub level7: Option<CT_TextParagraphProperties>,
-    pub level8: Option<CT_TextParagraphProperties>,
-    pub level9: Option<CT_TextParagraphProperties>,
+    pub default_paragraph_properties: Option<Box<CT_TextParagraphProperties>>,
+    pub level1: Option<Box<CT_TextParagraphProperties>>,
+    pub level2: Option<Box<CT_TextParagraphProperties>>,
+    pub level3: Option<Box<CT_TextParagraphProperties>>,
+    pub level4: Option<Box<CT_TextParagraphProperties>>,
+    pub level5: Option<Box<CT_TextParagraphProperties>>,
+    pub level6: Option<Box<CT_TextParagraphProperties>>,
+    pub level7: Option<Box<CT_TextParagraphProperties>>,
+    pub level8: Option<Box<CT_TextParagraphProperties>>,
+    pub level9: Option<Box<CT_TextParagraphProperties>>,
     raw_attributes: Vec<(String, String)>,
     source_root: Vec<String>,
     source_tag: String,
@@ -220,9 +224,9 @@ impl CT_TextListStyle {
             if self.default_paragraph_properties.is_some() {
                 return Err(TextError::DuplicateElement("defPPr".to_owned()));
             }
-            self.default_paragraph_properties = Some(
+            self.default_paragraph_properties = Some(Box::new(
                 CT_TextParagraphProperties::from_xml_with_namespaces(&raw, namespaces)?,
-            );
+            ));
             *boundary = (*boundary).max(1);
             return Ok(());
         }
@@ -273,11 +277,12 @@ impl CT_TextListStyle {
             }
             let mut properties = defaults
                 .default_paragraph_properties
-                .clone()
+                .as_deref()
+                .cloned()
                 .unwrap_or_default();
             for overlay in [
                 defaults.level(level),
-                self.default_paragraph_properties.as_ref(),
+                self.default_paragraph_properties.as_deref(),
                 self.level(level),
             ]
             .into_iter()
@@ -365,15 +370,15 @@ impl CT_TextListStyle {
     /// Returns one level by its one-based DrawingML number.
     pub fn level(&self, level: usize) -> Option<&CT_TextParagraphProperties> {
         match level {
-            1 => self.level1.as_ref(),
-            2 => self.level2.as_ref(),
-            3 => self.level3.as_ref(),
-            4 => self.level4.as_ref(),
-            5 => self.level5.as_ref(),
-            6 => self.level6.as_ref(),
-            7 => self.level7.as_ref(),
-            8 => self.level8.as_ref(),
-            9 => self.level9.as_ref(),
+            1 => self.level1.as_deref(),
+            2 => self.level2.as_deref(),
+            3 => self.level3.as_deref(),
+            4 => self.level4.as_deref(),
+            5 => self.level5.as_deref(),
+            6 => self.level6.as_deref(),
+            7 => self.level7.as_deref(),
+            8 => self.level8.as_deref(),
+            9 => self.level9.as_deref(),
             _ => None,
         }
     }
@@ -395,7 +400,7 @@ impl CT_TextListStyle {
             9 => &mut self.level9,
             _ => return,
         };
-        *slot = Some(properties);
+        *slot = Some(Box::new(properties));
     }
 }
 

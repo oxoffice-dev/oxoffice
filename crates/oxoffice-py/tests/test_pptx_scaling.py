@@ -563,7 +563,7 @@ READS = {"Presentation.export_html", "Presentation.export_markdown", "Presentati
          "Presentation.save_html", "Presentation.save_markdown", "Presentation.save_odp", "Presentation.text_layout",
          "Presentation.validate", "Presentation.verify_signatures", "Slide.extract_media", "Shape.effective_geometry",
          "Table.cell", "ThemeColors.keys", "TextStyleList.level", "CustomProperties.get", "SlideLayoutCollection.index",
-         "SlideCollection.index"}
+         "SlideCollection.index", "ShapeCollection.walk"}
 
 
 def mutating_surface():

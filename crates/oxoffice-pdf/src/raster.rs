@@ -488,7 +488,10 @@ fn render_elements(
                     }
                 }
             }
-            PositionedElement::MarkedContent { children, .. } => {
+            PositionedElement::MarkedContent { children, .. }
+            | PositionedElement::FormField(oxoffice_layout::FormFieldFragment {
+                children, ..
+            }) => {
                 render_elements(pixmap, fonts, children, transform, mask);
             }
             _ => {}
