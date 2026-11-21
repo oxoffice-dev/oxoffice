@@ -284,10 +284,7 @@ fn paragraph_text_setter_turns_tabs_and_line_feeds_into_tab_and_break_items() {
     );
 }
 
-// Fails today: `\r` and `\n` each become a break, so a Windows line ending
-// gives two. Issue: #26
 #[test]
-#[should_panic(expected = "a Windows line ending is one break")]
 fn paragraph_text_setter_turns_a_windows_line_ending_into_one_break() {
     let mut doc = doc_with(&["old"]);
     doc.paragraph_mut(0).unwrap().set_text("c\r\nd").unwrap();
@@ -298,6 +295,53 @@ fn paragraph_text_setter_turns_a_windows_line_ending_into_one_break() {
         ["text:c", "break:Line", "text:d"],
         "a Windows line ending is one break"
     );
+}
+
+#[test]
+fn story_text_turns_a_windows_line_ending_into_one_break() {
+    let mut doc = doc_with(&["old"]);
+    let location = doc
+        .story_items(&doc.stories().unwrap()[0])
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the body paragraph")
+        .location()
+        .clone();
+    doc.set_story_text(&location, "c\r\nd").unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        ["c\nd"],
+        "as the paragraph text setter writes it"
+    );
+}
+
+#[test]
+fn paragraph_text_setter_keeps_a_lone_carriage_return_and_doubled_line_endings() {
+    let mut doc = doc_with(&["old"]);
+    doc.paragraph_mut(0)
+        .unwrap()
+        .set_text("a\rb\r\n\r\nc\n\rd")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        run_items(&paragraph, 0),
+        [
+            "text:a",
+            "break:Line",
+            "text:b",
+            "break:Line",
+            "break:Line",
+            "text:c",
+            "break:Line",
+            "break:Line",
+            "text:d"
+        ],
+        "a lone \\r is one break, two Windows endings two, a \\n then a \\r two"
+    );
+    assert_eq!(texts(&doc), ["a\nb\n\nc\n\nd"]);
 }
 
 // Fails today: text reading drops `w:noBreakHyphen` and `w:ptab`, which Word shows as a hyphen and a tab. Issue: #26

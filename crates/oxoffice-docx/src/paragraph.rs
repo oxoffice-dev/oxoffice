@@ -909,7 +909,8 @@ impl<'a> Paragraph<'a> {
     /// Every run, hyperlink, field, picture, content control, tracked change
     /// and other inline child is replaced by one run without direct
     /// formatting. A tab becomes `w:tab` and a line feed or a carriage return
-    /// becomes `w:br`, as in python-docx. Empty text leaves no run, like
+    /// becomes `w:br`, as in python-docx. A Windows line ending (`\r\n`) is
+    /// one `w:br`, where python-docx writes two. Empty text leaves no run, like
     /// [`crate::Document::add_paragraph`] with empty text.
     ///
     /// Comment ranges, bookmarks and permission ranges are kept, wherever they
@@ -941,10 +942,15 @@ impl<'a> Paragraph<'a> {
             inner.content.clear();
             let mut run = Run { inner: &mut inner };
             let mut pending = String::new();
-            for character in text.chars() {
+            let mut characters = text.chars().peekable();
+            while let Some(character) = characters.next() {
                 if !matches!(character, '\t' | '\n' | '\r') {
                     pending.push(character);
                     continue;
+                }
+                // A Windows line ending is one break.
+                if character == '\r' {
+                    characters.next_if_eq(&'\n');
                 }
                 if !pending.is_empty() {
                     run.add_text(&pending);
