@@ -103,12 +103,14 @@ nothing in the PDF to read, so it reads the renderer's diagnostics.
 
 1. The PDF opens, has as many pages as there are PNGs, and each page has the
    size of its section or of the slide.
-2. No page is empty: every docx page draws text or a picture inside its
-   margins, not only its header and footer (what `pdf.rs` calls the body
-   text); a slide is checked through 3 and 7, slide by slide. The blank page
-   of #156 breaks this in every copy of the report: those four files are the
-   first entries of `known.toml`, and the proof that the check catches a real
-   file.
+2. No page is empty: every docx page draws text or a picture more than an
+   inch from its top and bottom edges, not only its header and footer (the
+   `body_text` of `pdf.rs`, which reads no section from the layout); a slide
+   is checked through 3 and 7, slide by slide. The blank page of #156 breaks
+   this in every copy of the report: those four files are the first entries
+   of `known.toml`, and the proof that the check catches a real file. A page
+   left blank on purpose, before a section that starts on an odd or even
+   page, is listed there too, as by design instead of with an issue.
 3. The text is there: every word the render must draw is drawn, read back
    through the PDF's ToUnicode maps. For docx, the body with its tables, text
    boxes and content controls, the headers and footers each section uses, the
@@ -123,7 +125,7 @@ nothing in the PDF to read, so it reads the renderer's diagnostics.
 6. No text is drawn over other text: no two lines of a page overlap by more
    than half the smaller line's height and more than one em across.
 7. Every picture of the document is drawn at least once, at a non-zero size,
-   inside its page.
+   inside its page; for pptx, every picture of a slide on that slide's page.
 8. Every table is drawn: the text of each cell is there (3), and a table with
    borders draws at least as many horizontal rules as it has rows.
 9. Nothing is dropped: a renderer diagnostic that says content was not drawn
@@ -137,14 +139,16 @@ failure is strict: once the file passes, the test fails until the entry goes.
 **Exact baseline.** `tests/render/baseline/docx.json` and `pptx.json`, each
 written by its own test binary, hold for each corpus file its page count and,
 per page, the SHA-256 of the decoded PNG pixels, of the page's inflated PDF
-content stream and of its link annotations (rectangles and targets), plus,
+content stream, of its link annotations (rectangles and targets) and of the
+rest of its page dictionary (its own entries, references left out), plus,
 per file, one hash of the inflated PDF resources (font subsets, ToUnicode
-maps, images; metadata left out) and one of the outline and the structure
-tree (references resolved). The pixels are what a reader sees; the PDF
-entries cover the PDF writer, a code path of its own (rdocx's reason for its
-fingerprint). Unlike rdocx, the file's bytes are not hashed: a change of
-compression or metadata alone is not a render change, and every other part
-is covered. About 200 bytes a page: under 250 KB for the corpus, within a
+maps, images; metadata left out), one of the outline and the structure tree
+(references resolved) and one of the catalog's other entries. The pixels are
+what a reader sees; the PDF entries cover the PDF writer, a code path of its
+own (rdocx's reason for its fingerprint). Unlike rdocx, the file's bytes are
+not hashed: a change of compression or metadata alone is not a render
+change. Form fields, off on the default route, are left to their own tests.
+About 250 bytes a page: under 300 KB for the corpus, within a
 budget of 1 MB for `tests/render/` without the references, checked by a
 test.
 
@@ -152,8 +156,9 @@ test.
   that moved. Because the bytes are the same on every platform, one baseline
   serves Linux, macOS and Windows, and there is no tolerance to tune.
 - `OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render`
-  (and `-p oxoffice-pptx --test pptx`) rewrites that binary's baseline for the
-  whole corpus and records the reason; an empty reason is refused. The update lands
+  (and `-p oxoffice-pptx --test pptx`) renders the whole corpus whatever
+  `OXOFFICE_RENDER` says, rewrites that binary's baseline and records the
+  reason; an empty reason is refused. The update lands
   in the pull request that changes the render, in a commit of its own whose
   message states the expected change.
 - A test proves the check bites: one changed pixel, and one changed byte of
@@ -165,8 +170,10 @@ moved twice: with the pull request's wheel (after) and with `main`'s latest
 Linux wheel, the `wheel-linux` artifact the build job already keeps (before;
 kept only when its decoded-pixel hash is the one the base's baseline holds,
 `git show <base>:tests/render/baseline/<format>.json`, otherwise the report
-says that `main` moved). The step runs even when the test step failed
-(`!cancelled()`), and its job needs `actions: read` to fetch another run's
+says that `main` moved). The step fetches the base commit first (the
+checkout is one commit deep), runs even when the test step failed, once the
+wheel was built (`!cancelled()` and the build step's success), and its job
+declares `contents: read` and `actions: read` to fetch another run's
 artifact. `tests/render/diff.py` (Pillow, already in `ci.txt`)
 writes before, after and a picture of the changed pixels in red for each such
 page, uploads them as the `render-diff` artifact, and puts a table in the job
@@ -187,10 +194,13 @@ time added to the Linux test step of a pull request.
 
 An environment variable chooses the set: `OXOFFICE_RENDER=subset`, `full` or
 `off`. CI sets it: `subset` on Linux for pull requests and pushes to `main`,
-`off` on macOS and Windows for pull requests, `full` on the three platforms
-at night, which then catches a platform that drifts, a day later at most.
-Unset, it means `off`: a plain `cargo test` builds every dependency
-unoptimised, which none of the measurements covers. The local run is
+from the first layer A pull request on, `off` on macOS and Windows for pull
+requests, `full` on the three platforms at night, which then catches a
+platform that drifts, a day later at most. Under CI (`CI` set), a missing
+variable fails the render test instead of skipping it, so that dropping it
+from `ci.yml` cannot turn layer A off. Outside CI, unset means `off`: a plain
+`cargo test` builds every dependency unoptimised, which none of the
+measurements covers. The local run is
 `OXOFFICE_RENDER=subset cargo test --profile ci -p oxoffice-docx --test docx render`;
 the first pull request measures the test profile and makes `subset` the
 default if it is cheap enough.
@@ -315,14 +325,15 @@ at most.
 
 1. This spec, documentation only.
 2. `test(docx)`: layer A for docx: `render.rs`, its baseline, `known.toml`
-   with issues for what breaks today, the update command, the budget test and
-   the proof that the check fails. The pull request measures its CI time and
-   the test profile.
+   with issues for what breaks today, the update command, the budget test,
+   the proof that the check fails, and `OXOFFICE_RENDER=subset` on the Linux
+   test step of `ci.yml` (with the CI session). The pull request measures its
+   CI time and the test profile.
 3. `test(pptx)`: layer A for pptx. The perf and refactoring sessions hear when
    2 and 3 land.
-4. `ci`: the before and after report and the `OXOFFICE_RENDER` settings, with
-   the CI session (and a longer retention for `wheel-linux`, kept one day
-   today, if the report often finds it gone).
+4. `ci`: the before and after report, `off` on macOS and Windows for pull
+   requests and `full` at night, with the CI session (and a longer retention
+   for `wheel-linux`, kept one day today, if the report often finds it gone).
 5. `test(corpus)`: references: `produce.py --export-pdf` run on the Mac,
    `references.toml`, the LibreOffice exporter.
 6. `test(render)`: the scorer, its calibration, the floors, `gaps.toml` and
