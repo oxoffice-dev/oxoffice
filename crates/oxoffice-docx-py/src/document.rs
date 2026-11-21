@@ -5817,7 +5817,7 @@ fn body_unfingerprinted_address(address: &WordOwnerAddress) -> WordOwnerAddress 
     }
 }
 
-/// Debug proof that a piece inventory matches the guarded full inventory.
+/// Debug proof that a piece inventory matches the full inventory.
 /// Body story fingerprints are set aside. Other fields and projections compare
 /// as the full path publishes them.
 #[cfg(debug_assertions)]
@@ -6275,8 +6275,9 @@ fn move_word_owner_body_item(location: &mut WordOwnerLocation, item: usize) {
     }
 }
 
-/// Binary search that counts each probed projection record.
-fn counted_partition_point(
+/// Binary search over projection records: the index of the first one `pred`
+/// rejects, as `slice::partition_point` finds it.
+fn location_partition_point(
     items: &[Option<oxoffice_docx::ContentLocation>],
     mut pred: impl FnMut(&Option<oxoffice_docx::ContentLocation>) -> bool,
 ) -> usize {
@@ -6543,7 +6544,7 @@ impl PyDocument {
         {
             return Ok(None);
         }
-        let table = counted_partition_point(&self.indexes.body_tables, |location| {
+        let table = location_partition_point(&self.indexes.body_tables, |location| {
             head(location) < Some(first)
         });
         for location in &self.indexes.body_tables {
@@ -7105,7 +7106,7 @@ impl PyDocument {
             .collect::<Vec<_>>();
         assert_eq!(actual, expected, "spliced Word owner inventory");
         let indexes =
-            { WordOwnerIndexes::prepare(&self.owners, WordIndexProjections::of(&self.inner)) }
+            WordOwnerIndexes::prepare(&self.owners, WordIndexProjections::of(&self.inner))
                 .expect("a spliced inventory has rebuilt indexes");
         let locations = |locations: &[Option<oxoffice_docx::ContentLocation>]| {
             locations
@@ -12220,164 +12221,160 @@ impl PyDocument {
         table_index: usize,
         table_ordinal: usize,
     ) {
-        {
-            let fresh = word_block_owners(&self.inner, &self.inner.body_children()[body_slot])
-                .expect("a published table reads")
-                .expect("a published table has owner facts");
-            let piece = self.pieces.as_ref().expect("active pieces").blocks[body_slot]
-                .owners
-                .as_ref()
-                .expect("piece owners");
-            let content = |location: &oxoffice_docx::ContentLocation| {
-                if location.story().kind() == oxoffice_docx::StoryKind::Body {
-                    unfingerprinted_location(location)
-                } else {
-                    location.clone()
-                }
-            };
-            let facts = |facts: &WordOwnerFacts| {
+        let fresh = word_block_owners(&self.inner, &self.inner.body_children()[body_slot])
+            .expect("a published table reads")
+            .expect("a published table has owner facts");
+        let piece = self.pieces.as_ref().expect("active pieces").blocks[body_slot]
+            .owners
+            .as_ref()
+            .expect("piece owners");
+        let content = |location: &oxoffice_docx::ContentLocation| {
+            if location.story().kind() == oxoffice_docx::StoryKind::Body {
+                unfingerprinted_location(location)
+            } else {
+                location.clone()
+            }
+        };
+        let facts = |facts: &WordOwnerFacts| {
+            (
+                facts
+                    .items
+                    .iter()
+                    .filter(|(location, _, _)| {
+                        location.story().kind() == oxoffice_docx::StoryKind::Body
+                            || location.item_kind() == oxoffice_docx::StoryItemKind::Table
+                    })
+                    .map(|(location, slot, read)| (content(location), *slot, read.clone()))
+                    .collect::<Vec<_>>(),
+                facts
+                    .cells
+                    .iter()
+                    .map(|(table, row, cell, story)| (content(table), *row, *cell, story.clone()))
+                    .collect::<Vec<_>>(),
+                facts.paragraphs.clone(),
+                facts.links.clone(),
+            )
+        };
+        assert_eq!(
+            facts(&piece.facts),
+            facts(&fresh.facts),
+            "local cell piece facts"
+        );
+        assert_eq!(
+            (
+                &piece.relationships,
+                piece.body_items,
+                piece.cell_stories,
+                piece.text_boxes,
+                &piece.paragraphs,
+                piece.tables,
+                piece.local_table_membership,
+                &piece.cell_paragraphs,
+            ),
+            (
+                &fresh.relationships,
+                fresh.body_items,
+                fresh.cell_stories,
+                fresh.text_boxes,
+                &fresh.paragraphs,
+                fresh.tables,
+                fresh.local_table_membership,
+                &fresh.cell_paragraphs,
+            ),
+            "local cell piece counts"
+        );
+        assert!(piece.holds_field || !fresh.holds_field);
+        let WordOwnerLocation::Table(location) = &self.owners[table_index].location else {
+            panic!("a local cell table owner")
+        };
+        let cells = &self.indexes.cells_by_parent[&table_index];
+        let base = cells
+            .iter()
+            .filter_map(|index| match &self.owners[*index].location {
+                WordOwnerLocation::Cell { story, .. } => Some(story.owner_index()),
+                _ => None,
+            })
+            .min()
+            .expect("table cells");
+        let stories = (base, 0);
+        let place = |route: &oxoffice_docx::ContentLocation| {
+            placed_route(route, location.story(), (location.index_path()[0], stories))
+        };
+        let mut placed = fresh.facts.clone();
+        for (route, slot, _) in &mut placed.items {
+            *route = place(route);
+            *slot = slot.map(|_| body_slot);
+        }
+        for (table, _, _, story) in &mut placed.cells {
+            *table = place(table);
+            *story = placed_story(story, stories);
+        }
+        for (route, _, _) in &mut placed.paragraphs {
+            *route = place(route);
+        }
+        let expected = word_piece_owner_addresses(placed, 0);
+        let record = |address: &WordOwnerAddress, parent: Option<&WordOwnerLocation>| {
+            format!(
+                "{:?}",
                 (
-                    facts
-                        .items
-                        .iter()
-                        .filter(|(location, _, _)| {
-                            location.story().kind() == oxoffice_docx::StoryKind::Body
-                                || location.item_kind() == oxoffice_docx::StoryItemKind::Table
-                        })
-                        .map(|(location, slot, read)| (content(location), *slot, read.clone()))
-                        .collect::<Vec<_>>(),
-                    facts
-                        .cells
-                        .iter()
-                        .map(|(table, row, cell, story)| {
-                            (content(table), *row, *cell, story.clone())
-                        })
-                        .collect::<Vec<_>>(),
-                    facts.paragraphs.clone(),
-                    facts.links.clone(),
+                    owner_location_without_body(&address.location),
+                    parent.map(owner_location_without_body),
+                    address.body_slot,
+                    address.projection_ordinal,
+                    &address.read_facts,
                 )
-            };
-            assert_eq!(
-                facts(&piece.facts),
-                facts(&fresh.facts),
-                "local cell piece facts"
-            );
-            assert_eq!(
-                (
-                    &piece.relationships,
-                    piece.body_items,
-                    piece.cell_stories,
-                    piece.text_boxes,
-                    &piece.paragraphs,
-                    piece.tables,
-                    piece.local_table_membership,
-                    &piece.cell_paragraphs,
-                ),
-                (
-                    &fresh.relationships,
-                    fresh.body_items,
-                    fresh.cell_stories,
-                    fresh.text_boxes,
-                    &fresh.paragraphs,
-                    fresh.tables,
-                    fresh.local_table_membership,
-                    &fresh.cell_paragraphs,
-                ),
-                "local cell piece counts"
-            );
-            assert!(piece.holds_field || !fresh.holds_field);
-            let WordOwnerLocation::Table(location) = &self.owners[table_index].location else {
-                panic!("a local cell table owner")
-            };
-            let cells = &self.indexes.cells_by_parent[&table_index];
-            let base = cells
-                .iter()
-                .filter_map(|index| match &self.owners[*index].location {
-                    WordOwnerLocation::Cell { story, .. } => Some(story.owner_index()),
-                    _ => None,
-                })
-                .min()
-                .expect("table cells");
-            let stories = (base, 0);
-            let place = |route: &oxoffice_docx::ContentLocation| {
-                placed_route(route, location.story(), (location.index_path()[0], stories))
-            };
-            let mut placed = fresh.facts.clone();
-            for (route, slot, _) in &mut placed.items {
-                *route = place(route);
-                *slot = slot.map(|_| body_slot);
-            }
-            for (table, _, _, story) in &mut placed.cells {
-                *table = place(table);
-                *story = placed_story(story, stories);
-            }
-            for (route, _, _) in &mut placed.paragraphs {
-                *route = place(route);
-            }
-            let expected = word_piece_owner_addresses(placed, 0);
-            let record = |address: &WordOwnerAddress, parent: Option<&WordOwnerLocation>| {
-                format!(
-                    "{:?}",
-                    (
-                        owner_location_without_body(&address.location),
-                        parent.map(owner_location_without_body),
-                        address.body_slot,
-                        address.projection_ordinal,
-                        &address.read_facts,
-                    )
+            )
+        };
+        let mut wanted = expected
+            .iter()
+            .map(|address| {
+                let mut address = body_unfingerprinted_address(address);
+                if address.parent.is_none() {
+                    address.projection_ordinal = Some(table_ordinal);
+                }
+                record(
+                    &address,
+                    address.parent.map(|parent| &expected[parent].location),
                 )
+            })
+            .collect::<Vec<_>>();
+        let mut actual = Vec::new();
+        let mut pending = vec![table_index];
+        while let Some(index) = pending.pop() {
+            let owner = &self.owners[index];
+            let address = WordOwnerAddress {
+                location: owner.location.clone(),
+                parent: owner.parent,
+                body_slot: owner.body_slot,
+                projection_ordinal: owner.projection_ordinal,
+                read_facts: owner.read_facts.clone(),
             };
-            let mut wanted = expected
-                .iter()
-                .map(|address| {
-                    let mut address = body_unfingerprinted_address(address);
-                    if address.parent.is_none() {
-                        address.projection_ordinal = Some(table_ordinal);
-                    }
-                    record(
-                        &address,
-                        address.parent.map(|parent| &expected[parent].location),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut actual = Vec::new();
-            let mut pending = vec![table_index];
-            while let Some(index) = pending.pop() {
-                let owner = &self.owners[index];
-                let address = WordOwnerAddress {
-                    location: owner.location.clone(),
-                    parent: owner.parent,
-                    body_slot: owner.body_slot,
-                    projection_ordinal: owner.projection_ordinal,
-                    read_facts: owner.read_facts.clone(),
-                };
-                let parent = owner.parent.map(|parent| &self.owners[parent].location);
-                actual.push(record(&address, parent));
-                for children in [
-                    self.indexes.cells_by_parent.get(&index),
-                    self.indexes.paragraphs_by_parent.get(&index),
-                    self.indexes.runs_by_parent.get(&index),
-                    self.indexes.tables_by_parent.get(&index),
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    pending.extend(children);
-                }
+            let parent = owner.parent.map(|parent| &self.owners[parent].location);
+            actual.push(record(&address, parent));
+            for children in [
+                self.indexes.cells_by_parent.get(&index),
+                self.indexes.paragraphs_by_parent.get(&index),
+                self.indexes.runs_by_parent.get(&index),
+                self.indexes.tables_by_parent.get(&index),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                pending.extend(children);
             }
-            wanted.sort();
-            actual.sort();
-            assert_eq!(actual, wanted, "local cell owner records");
-            if let Some((routes, _)) = &fresh.cell_paragraphs {
-                for ((_, row, cell), routes) in routes {
-                    assert_eq!(
-                        self.indexes
-                            .cell_paragraphs
-                            .get(&(table_ordinal, *row, *cell)),
-                        Some(&routes.iter().map(place).collect::<Vec<_>>()),
-                        "local cell paragraph routes"
-                    );
-                }
+        }
+        wanted.sort();
+        actual.sort();
+        assert_eq!(actual, wanted, "local cell owner records");
+        if let Some((routes, _)) = &fresh.cell_paragraphs {
+            for ((_, row, cell), routes) in routes {
+                assert_eq!(
+                    self.indexes
+                        .cell_paragraphs
+                        .get(&(table_ordinal, *row, *cell)),
+                    Some(&routes.iter().map(place).collect::<Vec<_>>()),
+                    "local cell paragraph routes"
+                );
             }
         }
     }

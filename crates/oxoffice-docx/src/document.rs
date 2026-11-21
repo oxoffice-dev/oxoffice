@@ -4143,9 +4143,8 @@ fn nested_modeled_namespace_owners(xml: &[u8]) -> Result<Vec<NestedNamespaceOwne
     namespace_owners_from_spans(xml, &spans)
 }
 
-/// Owner rows for spans already read from `xml`. The caller notes the scan.
-/// A whole part uses [`nested_modeled_namespace_owners`]. A frame uses
-/// [`note_frame_namespace_scan`] and does not add those bytes to `scanned`.
+/// Owner rows for spans already read from `xml`. A whole part uses
+/// [`nested_modeled_namespace_owners`].
 fn namespace_owners_from_spans(
     xml: &[u8],
     spans: &[ModeledOwnerSpan],
@@ -6612,7 +6611,7 @@ fn read_child_canonical_facts(
 }
 
 /// Drawing facts on a frame stay on the whole scanner. A relationship id does
-/// not. The note is the scan that actually runs.
+/// not.
 fn frame_drawings_are_absent(xml: &[u8]) -> bool {
     let (drawings, error) = drawing_occurrences(xml);
     if error.is_some() || !drawings.is_empty() {
@@ -9310,7 +9309,7 @@ impl PreparedMainRead<'_> {
             .document
             .main_story_layout(&self.xml, &self.content, &self.children, false)
             .ok();
-        Document::stories_in_sources(self.sources(related), main, self.children.len())
+        Document::stories_in_sources(self.sources(related), main)
     }
 
     fn owner_and_layout<'a>(
@@ -9337,15 +9336,9 @@ impl PreparedMainRead<'_> {
     ) -> Result<()> {
         if self.scoped_main_source_by_blocks(canonical, &canonical_span, original, &retained_span) {
             #[cfg(debug_assertions)]
-            {
-                self.document.prove_whole_scoped_main_source(
-                    canonical,
-                    canonical_span,
-                    original,
-                    retained_span,
-                )
-            }
-            .expect("the child proof differs from the whole scoped proof");
+            self.document
+                .prove_whole_scoped_main_source(canonical, canonical_span, original, retained_span)
+                .expect("the child proof differs from the whole scoped proof");
             return Ok(());
         }
         self.document.prove_whole_scoped_main_source(
@@ -29460,13 +29453,12 @@ impl Document {
     fn story_sources_and_main_layout(
         &self,
         items: bool,
-    ) -> Result<(Vec<StorySource<'_>>, Option<MainStoryLayout>, usize)> {
+    ) -> Result<(Vec<StorySource<'_>>, Option<MainStoryLayout>)> {
         let (sources, content, children) = self.spanned_story_sources()?;
-        let child_count = children.len();
         let layout = self
             .main_story_layout(&sources[0].xml, &content, &children, items)
             .ok();
-        Ok((sources, layout, child_count))
+        Ok((sources, layout))
     }
 
     /// The story sources after the main part, in [`Self::story_sources`]
@@ -29540,14 +29532,13 @@ impl Document {
     /// Discover every supported Word story owner in stable document and
     /// relationship order.
     pub fn stories(&self) -> Result<Vec<StoryId>> {
-        let (sources, main, child_count) = self.story_sources_and_main_layout(false)?;
-        Self::stories_in_sources(sources, main, child_count)
+        let (sources, main) = self.story_sources_and_main_layout(false)?;
+        Self::stories_in_sources(sources, main)
     }
 
     fn stories_in_sources(
         sources: Vec<StorySource<'_>>,
         main: Option<MainStoryLayout>,
-        _child_count: usize,
     ) -> Result<Vec<StoryId>> {
         let mut stories = Vec::new();
         let mut seen = HashSet::new();
@@ -30911,13 +30902,14 @@ impl Document {
                 xml: Cow::Borrowed(source.xml.as_ref()),
             })
             .collect();
-        let Some(refreshed) = Self::stories_in_sources(borrowed, main, children.len())?
-            .into_iter()
-            .find(|candidate| {
-                candidate.kind == previous.kind
-                    && candidate.part_name == previous.part_name
-                    && candidate.owner_index == previous.owner_index
-            })
+        let Some(refreshed) =
+            Self::stories_in_sources(borrowed, main)?
+                .into_iter()
+                .find(|candidate| {
+                    candidate.kind == previous.kind
+                        && candidate.part_name == previous.part_name
+                        && candidate.owner_index == previous.owner_index
+                })
         else {
             return Ok(None);
         };
@@ -47220,7 +47212,7 @@ impl Document {
                 .collect();
             // Collect the complete discovery before selection. An unrelated
             // malformed source keeps its original precedence.
-            let story = Self::stories_in_sources(borrowed, main, children.len())?
+            let story = Self::stories_in_sources(borrowed, main)?
                 .into_iter()
                 .find(|story| {
                     story.kind == story_kind
@@ -47930,15 +47922,12 @@ impl Document {
     ) -> Result<Vec<(StoryKind, String, i32, usize)>> {
         let stories = if let Some(writer) = template.as_deref_mut() {
             let (main, record) = self.serialized_main_part_in(Some(writer))?;
-            let (layout, child_count) = if let Some(record) = record {
+            let layout = if let Some(record) = record {
                 let (content, children) = record.body_spans()?;
-                (
-                    self.main_story_layout(&main, &content, &children, false)
-                        .ok(),
-                    children.len(),
-                )
+                self.main_story_layout(&main, &content, &children, false)
+                    .ok()
             } else {
-                (None, self.document.body.content.len())
+                None
             };
             let mut sources = vec![StorySource {
                 root_kind: StoryKind::Body,
@@ -47946,7 +47935,7 @@ impl Document {
                 xml: Cow::Owned(main),
             }];
             sources.extend(self.related_story_sources()?);
-            Self::stories_in_sources(sources, layout, child_count)?
+            Self::stories_in_sources(sources, layout)?
         } else {
             self.stories()?
         };
