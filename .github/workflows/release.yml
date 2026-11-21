@@ -7,7 +7,8 @@ name: Release
 #      SHA256SUMS and a signed build provenance attestation covering them all
 #   4. publishes the wheels and the sdist to PyPI and the conda packages to
 #      prefix.dev, both through trusted publishers
-# With dry_run, it builds from main and publishes nothing.
+# With dry_run, it builds the commit main points at when its first job starts,
+# in every job, and publishes nothing.
 
 on:
   workflow_dispatch:
@@ -72,13 +73,16 @@ jobs:
       - name: Commit and tag
         id: commit
         run: |
+          # The commit of main this run started from: a dry run builds it in
+          # every job, while main may move during the run.
+          base="$(git rev-parse HEAD)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock CHANGELOG.md
           git commit -m "chore(release): v$VERSION"
           git tag -a "v$VERSION" -m "oxoffice v$VERSION"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "ref=main" >> "$GITHUB_OUTPUT"
+            echo "ref=$base" >> "$GITHUB_OUTPUT"
           else
             git push origin HEAD:main "v$VERSION"
             echo "ref=v$VERSION" >> "$GITHUB_OUTPUT"
@@ -222,7 +226,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          # A dry run builds main as it is, without the new version.
+          # A dry run builds a commit of main without the new version.
           extra=()
           if [ "$DRY_RUN" != true ]; then extra=(--version "$VERSION"); fi
           python -I scripts/wheel_smoke.py tests/corpus/files --measure "${extra[@]}"

@@ -6,8 +6,11 @@ One manual workflow, no manual tags, no hand-edited changelog.
 
 1. Make sure `main` is green.
 2. Run a dry run first: Actions, **Release**, **Run workflow**, the version,
-   **dry_run** ticked. It builds `main` as it is and runs every check but the
-   one that the wheels carry the new version, and publishes nothing.
+   **dry_run** ticked. Every job builds the commit `main` points at when the
+   run's first job starts, even if `main` moves meanwhile (the smoke check
+   takes its script and corpus from the commit the run was started from, so
+   a dry run from a branch tests that branch's check); it runs every check
+   but the one that the wheels carry the new version, and publishes nothing.
 3. Run it again without **dry_run**. The workflow sets the version,
    regenerates `CHANGELOG.md` with git-cliff, commits `chore(release):
    vX.Y.Z`, tags `vX.Y.Z`, builds, checks each wheel on its platform with
