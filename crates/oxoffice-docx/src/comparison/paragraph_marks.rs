@@ -288,6 +288,7 @@ pub(super) fn trailing_paragraph<'a>(
             run.content,
             run.kind,
             run.move_id,
+            run.carried,
             metadata,
         )?);
         *previous_moved = run.move_id.is_some();
@@ -303,6 +304,7 @@ pub(super) fn trailing_paragraph<'a>(
         run.paragraph,
         run.kind,
         run.move_id,
+        run.carried,
         merged.clone(),
         metadata,
     )?);
@@ -310,17 +312,19 @@ pub(super) fn trailing_paragraph<'a>(
 }
 
 /// A body owner one side alone holds, written with its own `kind` marks:
-/// moved under `move_id`, deleted or inserted.
+/// moved under `move_id`, deleted or inserted, `carried` or not (see
+/// [`deleted_paragraph`]).
 pub(super) fn unmatched_body_owner<'a>(
     content: &'a BodyContent,
     kind: &'static str,
     move_id: Option<i32>,
+    carried: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<(EmittedOwner<'a>, String)> {
     let xml = match (move_id, kind) {
         (Some(id), _) => moved_body_content(content, kind, id, metadata)?,
-        (None, "del") => deleted_body_content(content, metadata)?,
-        (None, _) => inserted_body_content(content, metadata)?,
+        (None, "del") => deleted_body_content(content, carried, metadata)?,
+        (None, _) => inserted_body_content(content, carried, metadata)?,
     };
     Ok((
         EmittedOwner::of(content, content, Some(kind), metadata)?,
@@ -383,10 +387,14 @@ fn mark_previous_paragraph_with_id<'a>(
 /// paragraph before has on that side, so this paragraph carries the accepted
 /// properties with a `w:pPrChange` and a mark `w:rPrChange` that hold the
 /// rejected ones, and both resolutions keep each paragraph's properties.
+///
+/// Its simple fields are written as for [`deleted_paragraph`], unless it is
+/// moved or `carried`.
 pub(super) fn final_paragraph<'a>(
     paragraph: &'a CT_P,
     kind: &str,
     move_id: Option<i32>,
+    carried: bool,
     merged: PropertySide<'a>,
     metadata: &mut Metadata<'_>,
 ) -> Result<(EmittedOwner<'a>, String)> {
@@ -400,11 +408,17 @@ pub(super) fn final_paragraph<'a>(
     output.push_str(&final_paragraph_properties_xml(
         &own, &accepted, &rejected, metadata,
     )?);
-    let children = paragraph_children_xml(paragraph, kind == "del", metadata)?;
+    let (children, published) = paragraph_children_xml(
+        paragraph,
+        kind == "del",
+        move_id.is_none() && !carried,
+        metadata,
+    )?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         kind == "del",
         false,
+        &published,
         &mut |content| match move_id {
             Some(id) => metadata.ids.generated(IdAllocator::revision_with_id(
                 kind,

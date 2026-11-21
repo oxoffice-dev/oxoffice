@@ -2,10 +2,13 @@
 
 use super::*;
 
+/// Pair each deleted owner with an equal inserted one as a move, except the
+/// `unmovable` owners of each side.
 pub(super) fn pair_moves(
     aligned: &[(Option<usize>, Option<usize>)],
     original: &[String],
     edited: &[String],
+    unmovable: [HashSet<usize>; 2],
     ids: &mut IdAllocator,
 ) -> Result<MovePairs> {
     let mut pairs = MovePairs {
@@ -15,10 +18,12 @@ pub(super) fn pair_moves(
     let unmatched_edited = aligned
         .iter()
         .filter_map(|(left, right)| left.is_none().then_some(*right).flatten())
+        .filter(|right| !unmovable[1].contains(right))
         .collect::<Vec<_>>();
     for left in aligned
         .iter()
         .filter_map(|(left, right)| right.is_none().then_some(*left).flatten())
+        .filter(|left| !unmovable[0].contains(left))
     {
         let Some(right) = unmatched_edited
             .iter()

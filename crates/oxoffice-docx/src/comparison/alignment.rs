@@ -294,11 +294,12 @@ pub(super) fn replace_changed_paragraph_runs(
         {
             return Ok(false);
         }
+        // A simple field goes with its paragraph as a whole complex field
+        // (see `paragraph_children_xml`); a complex field could span others.
         for paragraph in [left, right] {
             if paragraph_field_events(paragraph)?
                 .iter()
                 .any(|event| matches!(event, FieldEvent::Begin | FieldEvent::End))
-                || paragraph_wraps_simple_field(paragraph)?
             {
                 return Ok(false);
             }
@@ -341,39 +342,53 @@ pub(super) fn replace_changed_paragraph_runs(
 /// Aligned original and edited owner indices.
 pub(super) type Alignment = Vec<(Option<usize>, Option<usize>)>;
 
-/// Refuse a whole deleted, inserted or moved paragraph that holds a simple
-/// field outside a complex field carried with it.
+/// The whole deleted or inserted paragraphs, by index on each side, that hold
+/// a simple field outside a complex field carried with them.
 ///
-/// A tracked result alone cannot authorize retiring its simple-field shell.
-/// Whole-paragraph publication therefore retains the existing refusal unless
-/// the complete carried owner supplies the admitted shell-lifetime proof.
-pub(super) fn refuse_uncarried_field_owners(
+/// Their emitters write each such field as one complex field in a wrapper of
+/// its own (see [`paragraph_children_xml`]). A move pair gives one id to both
+/// ends, which such a wrapper cannot share, so these paragraphs are not moved.
+pub(super) fn uncarried_field_owners(
     aligned: &[(Option<usize>, Option<usize>)],
     original: &[Option<&CT_P>],
     edited: &[Option<&CT_P>],
     carried: &CarriedParagraphs,
-    location: &str,
-) -> Result<()> {
+) -> Result<[HashSet<usize>; 2]> {
+    let mut owners = [HashSet::new(), HashSet::new()];
     for (left, right) in aligned {
-        let paragraph = match (left, right) {
-            (Some(i), None) if !carried.original.contains(i) => original[*i],
-            (None, Some(j)) if !carried.edited.contains(j) => edited[*j],
-            _ => None,
+        let (side, index, paragraph) = match (left, right) {
+            (Some(i), None) if !carried.original.contains(i) => (0, *i, original[*i]),
+            (None, Some(j)) if !carried.edited.contains(j) => (1, *j, edited[*j]),
+            _ => continue,
         };
         if let Some(paragraph) = paragraph
             && paragraph_wraps_simple_field(paragraph)?
         {
-            return Err(Error::Other(format!(
-                "comparison cannot track a whole paragraph's simple field outside a field it replaces at {location}"
-            )));
+            owners[side].insert(index);
         }
     }
-    Ok(())
+    Ok(owners)
 }
 
 /// Whether this paragraph has a simple-field owner on the existing direct or
 /// hyperlink path that requires complete carriage for whole-paragraph changes.
 fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
+    let paths = simple_field_paths(paragraph)?;
+    Ok(paths.direct || paths.linked)
+}
+
+/// Where a paragraph holds the simple fields a whole-paragraph change must
+/// track: as its own children, or inside a hyperlink.
+pub(super) struct SimpleFieldPaths {
+    direct: bool,
+    pub(super) linked: bool,
+}
+
+pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
+    let mut paths = SimpleFieldPaths {
+        direct: false,
+        linked: false,
+    };
     let xml = paragraph_xml(paragraph)?;
     let word_starts = word_element_starts(&xml)?;
     let mut reader = Reader::from_reader(xml.as_bytes());
@@ -393,7 +408,7 @@ fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
                 buffer.clear();
                 continue;
             }
-            Event::Eof => return Ok(false),
+            Event::Eof => return Ok(paths),
             _ => {
                 buffer.clear();
                 continue;
@@ -402,7 +417,11 @@ fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
         let local = element.local_name();
         let parent_wrapped = open.last().copied();
         if word && parent_wrapped == Some(true) && local.as_ref() == b"fldSimple" {
-            return Ok(true);
+            if open.len() == 1 {
+                paths.direct = true;
+            } else {
+                paths.linked = true;
+            }
         }
         if !empty {
             open.push(

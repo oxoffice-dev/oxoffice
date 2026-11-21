@@ -126,8 +126,8 @@ use run_source::{
 };
 
 use alignment::{
-    Alignment, align, pair_gaps_by_kind, refuse_uncarried_field_owners,
-    replace_changed_paragraph_runs, validate_field_alignment,
+    Alignment, align, pair_gaps_by_kind, replace_changed_paragraph_runs, simple_field_paths,
+    uncarried_field_owners, validate_field_alignment,
 };
 use leaf_publications::{
     complete_run_selection, emitted_fragment_leaves, preserve_run_source,
@@ -188,7 +188,7 @@ use fields::{
     compared_run_xml, comparison_instruction_eq, containing_run, conversion_namespace_facts,
     conversion_source_inventory, field_carrier_source_budget, field_result_source_paragraph,
     field_source_sequence_budget, prepared_field_result_owner, publish_run_source, run_field,
-    run_is_field,
+    run_is_field, whole_simple_field,
 };
 use granular::{
     GranularAction, align_between_shells, compare_granular_paragraph, granular_action,
@@ -286,6 +286,17 @@ struct FieldConversionWitness {
     generated_spans: [String; 2],
 }
 
+/// A simple field written as one complex field with the paragraph that
+/// holds it, inserted or deleted whole. Only the input that keeps the
+/// paragraph holds the field: the witness names that occurrence and the one
+/// revision id of the wrapper that publishes the whole field.
+#[derive(Clone, Debug)]
+struct WholeFieldWitness {
+    source: FieldSourceOccurrence,
+    revision_id: i32,
+    generated_span: String,
+}
+
 struct Metadata<'a> {
     author: &'a str,
     timestamp: &'a str,
@@ -301,6 +312,7 @@ struct Metadata<'a> {
     paired_field_story: Option<String>,
     leaf_publications: Vec<LeafPublication>,
     field_conversions: Vec<FieldConversionWitness>,
+    whole_field_conversions: Vec<WholeFieldWitness>,
 }
 
 #[derive(Clone)]
@@ -617,6 +629,7 @@ impl Document {
                     paired_field_story: None,
                     leaf_publications: Vec::new(),
                     field_conversions: Vec::new(),
+                    whole_field_conversions: Vec::new(),
                 },
                 &mut Vec::new(),
             )
@@ -756,6 +769,7 @@ impl Document {
             paired_field_story: None,
             leaf_publications: Vec::new(),
             field_conversions: Vec::new(),
+            whole_field_conversions: Vec::new(),
         };
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
@@ -1047,6 +1061,7 @@ impl Document {
             &edited_package,
             &field_stories,
             &metadata.field_conversions,
+            &metadata.whole_field_conversions,
             1,
             &new_ids,
         )?;
@@ -1086,6 +1101,7 @@ impl Document {
             &original_package,
             &field_stories,
             &metadata.field_conversions,
+            &metadata.whole_field_conversions,
             0,
             &new_ids,
         )?;
@@ -1370,6 +1386,9 @@ struct TrailingRun<'a, 'l> {
     paragraph: &'a CT_P,
     kind: &'static str,
     move_id: Option<i32>,
+    /// Whether it is replaced whole inside a complex field (see
+    /// [`deleted_paragraph`]).
+    carried: bool,
     /// Whether it is the first paragraph of the run, and the only one.
     first: bool,
     single: bool,

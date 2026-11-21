@@ -220,13 +220,6 @@ pub(super) fn compare_control_from_xml(
             &edited_signatures,
             metadata.options,
         )?;
-        refuse_uncarried_field_owners(
-            &aligned,
-            &original_paragraphs,
-            &edited_paragraphs,
-            &carried,
-            location,
-        )?;
         let trailing_paragraph_insert_start = aligned
             .iter()
             .enumerate()
@@ -332,6 +325,7 @@ pub(super) fn compare_control_from_xml(
                     )?,
                 )),
                 (Some(i), None) => {
+                    let whole = carried.original.contains(&i);
                     if let SdtContent::Paragraph(paragraph) = original_content[i]
                         && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                     {
@@ -345,6 +339,7 @@ pub(super) fn compare_control_from_xml(
                                 marked_control_content(
                                     original_content[i],
                                     "del",
+                                    whole,
                                     &bindings,
                                     metadata,
                                 )?,
@@ -354,6 +349,7 @@ pub(super) fn compare_control_from_xml(
                                 paragraph,
                                 "del",
                                 None,
+                                whole,
                                 trailing_merged.clone(),
                                 metadata,
                             )?);
@@ -363,7 +359,9 @@ pub(super) fn compare_control_from_xml(
                     {
                         let merged =
                             mark_previous_paragraph(&mut content, "del", &bindings, metadata)?;
-                        content.push(final_paragraph(paragraph, "del", None, merged, metadata)?);
+                        content.push(final_paragraph(
+                            paragraph, "del", None, whole, merged, metadata,
+                        )?);
                     } else {
                         content.push((
                             EmittedOwner::of_control(
@@ -375,6 +373,7 @@ pub(super) fn compare_control_from_xml(
                             marked_control_content(
                                 original_content[i],
                                 "del",
+                                whole,
                                 &bindings,
                                 metadata,
                             )?,
@@ -382,6 +381,7 @@ pub(super) fn compare_control_from_xml(
                     }
                 }
                 (None, Some(j)) => {
+                    let whole = carried.edited.contains(&j);
                     if let SdtContent::Paragraph(paragraph) = edited_content[j]
                         && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                     {
@@ -395,6 +395,7 @@ pub(super) fn compare_control_from_xml(
                                 marked_control_content(
                                     edited_content[j],
                                     "ins",
+                                    whole,
                                     &bindings,
                                     metadata,
                                 )?,
@@ -404,6 +405,7 @@ pub(super) fn compare_control_from_xml(
                                 paragraph,
                                 "ins",
                                 None,
+                                whole,
                                 trailing_merged.clone(),
                                 metadata,
                             )?);
@@ -413,7 +415,9 @@ pub(super) fn compare_control_from_xml(
                     {
                         let merged =
                             mark_previous_paragraph(&mut content, "ins", &bindings, metadata)?;
-                        content.push(final_paragraph(paragraph, "ins", None, merged, metadata)?);
+                        content.push(final_paragraph(
+                            paragraph, "ins", None, whole, merged, metadata,
+                        )?);
                     } else {
                         content.push((
                             EmittedOwner::of_control(
@@ -422,7 +426,13 @@ pub(super) fn compare_control_from_xml(
                                 Some("ins"),
                                 metadata,
                             )?,
-                            marked_control_content(edited_content[j], "ins", &bindings, metadata)?,
+                            marked_control_content(
+                                edited_content[j],
+                                "ins",
+                                whole,
+                                &bindings,
+                                metadata,
+                            )?,
                         ));
                     }
                 }
@@ -1042,12 +1052,15 @@ fn compare_control_runs_with_options(
 fn marked_control_content(
     content: &SdtContent,
     kind: &str,
+    carried: bool,
     destination_parent: &NamespaceBindings,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match content {
-        SdtContent::Paragraph(paragraph) if kind == "del" => deleted_paragraph(paragraph, metadata),
-        SdtContent::Paragraph(paragraph) => inserted_paragraph(paragraph, metadata),
+        SdtContent::Paragraph(paragraph) if kind == "del" => {
+            deleted_paragraph(paragraph, carried, metadata)
+        }
+        SdtContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         SdtContent::Table(table) => marked_table(table, kind, metadata),
         SdtContent::Row(row) => marked_row(row, kind, metadata),
         SdtContent::Run(run) => {

@@ -5,38 +5,14 @@
 # `message` is text the failure must hold, so that a failure with another
 # cause still fails the test.
 
-# The contents oxoffice rebuilt write their page references as simple
-# fields, and the comparison refuses the new heading's entry. The small
-# thesis is the one the tests build (support.rs), walked on pull requests.
-[[known]]
-file = "small-thesis"
-workflow = "redline-rebuilt-toc"
-issue = 66
-message = "comparison cannot track a whole paragraph's simple field"
-
-[[known]]
-file = "word/thesis.docx"
-workflow = "redline-rebuilt-toc"
-issue = 66
-message = "comparison cannot track a whole paragraph's simple field"
-
-[[known]]
-file = "libreoffice/thesis.docx"
-workflow = "redline-rebuilt-toc"
-issue = 66
-message = "comparison cannot track a whole paragraph's simple field"
-
-[[known]]
-file = "authored/thesis.docx"
-workflow = "redline-rebuilt-toc"
-issue = 66
-message = "comparison cannot track a whole paragraph's simple field"
-
+# With the contents oxoffice rebuilt on both versions, the comparison tracks
+# the new heading's entry (#66); Google's copy then stops on a paragraph whose
+# boundary structures differ.
 [[known]]
 file = "google/thesis.docx"
 workflow = "redline-rebuilt-toc"
-issue = 66
-message = "comparison cannot track a whole paragraph's simple field"
+issue = 448
+message = "comparison cannot revise paragraph boundary structures at body/paragraph[157]"
 
 # Google Docs writes a paragraph mark with empty run properties; the first
 # pass leaves an empty paragraph properties element there, which the second

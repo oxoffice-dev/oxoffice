@@ -43,10 +43,11 @@ pub(super) fn compare_body_content(
 
 pub(super) fn deleted_body_content(
     content: &BodyContent,
+    carried: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match content {
-        BodyContent::Paragraph(paragraph) => deleted_paragraph(paragraph, metadata),
+        BodyContent::Paragraph(paragraph) => deleted_paragraph(paragraph, carried, metadata),
         BodyContent::Table(table) => marked_table(table, "del", metadata),
         BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
             "comparison cannot delete an unmatched content-control or opaque body node".to_owned(),
@@ -56,10 +57,11 @@ pub(super) fn deleted_body_content(
 
 pub(super) fn inserted_body_content(
     content: &BodyContent,
+    carried: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match content {
-        BodyContent::Paragraph(paragraph) => inserted_paragraph(paragraph, metadata),
+        BodyContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         BodyContent::Table(table) => marked_table(table, "ins", metadata),
         BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
             "comparison cannot insert an unmatched content-control or opaque body node".to_owned(),
@@ -446,8 +448,8 @@ pub(super) fn compare_paragraph(
         {
             return Ok(format!(
                 "{}{}",
-                deleted_paragraph(original, metadata)?,
-                inserted_paragraph(edited, metadata)?
+                deleted_paragraph(original, false, metadata)?,
+                inserted_paragraph(edited, false, metadata)?
             ));
         }
         if metadata.options.ignore_formatting
