@@ -27,6 +27,9 @@ struct FragmentMark {
     page_index: usize,
     /// Marked content sequences the page opens before the fragment.
     mcid_before: i32,
+    /// The fragment's rank among the page's fragments, which orders
+    /// fragments with no marked content between them.
+    sequence: u32,
     /// The structure element of the marked content around the fragment.
     parent: Option<StructureId>,
 }
@@ -49,10 +52,15 @@ struct FormPlacement {
     parent: BTreeMap<i32, StructureId>,
 }
 
+/// Where a kid shows in the page's reading order: its page, the marked
+/// content it is or precedes, and among fragments before that marked content
+/// their rank. Marked content ranks after the fragments that precede it.
+type ReadingOrder = (usize, i32, u32);
+
 /// A widget's `/Form` element placed under its parent element.
 #[derive(Debug, Clone, Copy)]
 struct FormKid {
-    order: (usize, i32),
+    order: ReadingOrder,
     element: Ref,
 }
 
@@ -94,6 +102,7 @@ impl<'a> PreparedStructure<'a> {
             let mut marks = Marks {
                 page_index,
                 next_mcid: 0,
+                next_fragment: 0,
                 occurrences: &mut occurrences,
                 fragments: &mut fragments,
             };
@@ -133,8 +142,8 @@ impl<'a> PreparedStructure<'a> {
                 .and_then(|mark| mark.parent)
                 .filter(|parent| self.node_refs.contains_key(parent))
                 .unwrap_or(self.structure.root);
-            let order = mark.map_or((widget.page_index, i32::MAX), |mark| {
-                (mark.page_index, mark.mcid_before)
+            let order = mark.map_or((widget.page_index, i32::MAX, u32::MAX), |mark| {
+                (mark.page_index, mark.mcid_before, mark.sequence)
             });
             placement.kids.entry(parent).or_default().push(FormKid {
                 order,
@@ -335,8 +344,11 @@ impl<'a> PreparedStructure<'a> {
         for (index, child) in node.children.iter().enumerate() {
             if let Some(reference) = self.node_ref(*child) {
                 kids.push((
-                    self.first_occurrence(*child, form_kids)
-                        .unwrap_or((usize::MAX, i32::MAX)),
+                    self.first_occurrence(*child, form_kids).unwrap_or((
+                        usize::MAX,
+                        i32::MAX,
+                        u32::MAX,
+                    )),
                     forms.len() + index,
                     StructureKid::Element(reference),
                 ));
@@ -352,7 +364,7 @@ impl<'a> PreparedStructure<'a> {
             .enumerate()
         {
             kids.push((
-                (mark.page_index, mark.mcid),
+                (mark.page_index, mark.mcid, u32::MAX),
                 mark_offset + index,
                 StructureKid::MarkedContent(mark),
             ));
@@ -367,12 +379,12 @@ impl<'a> PreparedStructure<'a> {
         &self,
         id: StructureId,
         form_kids: &BTreeMap<StructureId, Vec<FormKid>>,
-    ) -> Option<(usize, i32)> {
+    ) -> Option<ReadingOrder> {
         let own = self
             .occurrences
             .get(&id)
             .and_then(|marks| marks.first())
-            .map(|mark| (mark.page_index, mark.mcid));
+            .map(|mark| (mark.page_index, mark.mcid, u32::MAX));
         let form = form_kids
             .get(&id)
             .and_then(|kids| kids.iter().map(|kid| kid.order).min());
@@ -460,6 +472,7 @@ fn marked_ids_exist(elements: &[PositionedElement], structure: &DocumentStructur
 struct Marks<'m> {
     page_index: usize,
     next_mcid: i32,
+    next_fragment: u32,
     occurrences: &'m mut BTreeMap<StructureId, Vec<MarkOccurrence>>,
     fragments: &'m mut Vec<FragmentMark>,
 }
@@ -490,12 +503,16 @@ impl Marks<'_> {
                     self.collect(children, parent);
                 }
                 // Its children are drawn without marks, so they number nothing.
-                PositionedElement::FormField(fragment) => self.fragments.push(FragmentMark {
-                    field: fragment.field,
-                    page_index: self.page_index,
-                    mcid_before: self.next_mcid,
-                    parent,
-                }),
+                PositionedElement::FormField(fragment) => {
+                    self.fragments.push(FragmentMark {
+                        field: fragment.field,
+                        page_index: self.page_index,
+                        mcid_before: self.next_mcid,
+                        sequence: self.next_fragment,
+                        parent,
+                    });
+                    self.next_fragment += 1;
+                }
                 _ => {}
             }
         }

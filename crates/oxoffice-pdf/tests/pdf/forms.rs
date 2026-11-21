@@ -1109,4 +1109,45 @@ fn a_field_in_a_list_item_sits_in_its_list_body() {
         .as_dict()
         .unwrap();
     assert_eq!(parent.get(b"S").unwrap().as_name().unwrap(), b"LBody");
+    let form_id = nums[position * 2 + 1].as_reference().unwrap();
+    let listed = match read.resolve(parent.get(b"K").unwrap()) {
+        lopdf::Object::Array(kids) => kids.clone(),
+        other => vec![other.clone()],
+    };
+    assert!(
+        listed
+            .iter()
+            .any(|kid| kid.as_reference().ok() == Some(form_id)),
+        "the list body lists the form element"
+    );
+}
+
+#[test]
+fn fragments_with_no_marked_content_between_them_keep_their_page_order() {
+    let layout = tagged_paragraphs(
+        with_fields(
+            layout(vec![vec![
+                in_paragraph(2, vec![fragment(0, line(72.0, 100.0, 200.0), "First")]),
+                fragment(1, line(72.0, 130.0, 200.0), "Loose"),
+            ]]),
+            vec![
+                field("first", text_kind("First")),
+                field("loose", text_kind("Loose")),
+            ],
+        ),
+        1,
+    );
+    let read = pdf(&layout);
+    let root = read.dict(read.catalog(), b"StructTreeRoot");
+    let document = read.resolve(root.get(b"K").unwrap()).as_dict().unwrap();
+    let kids = match read.resolve(document.get(b"K").unwrap()) {
+        lopdf::Object::Array(kids) => kids.clone(),
+        other => vec![other.clone()],
+    };
+    let roles: Vec<Vec<u8>> = kids.iter().map(|kid| role(&read, kid)).collect();
+    assert_eq!(
+        roles,
+        [b"P".to_vec(), b"Form".to_vec()],
+        "the paragraph's field comes first on the page"
+    );
 }
