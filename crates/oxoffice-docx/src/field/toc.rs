@@ -815,7 +815,7 @@ struct TocBookmarkAllocator {
 }
 
 impl TocBookmarkAllocator {
-    pub(super) fn new(state: TocBookmarkState, authored_names: &HashSet<String>) -> Self {
+    fn new(state: TocBookmarkState, authored_names: &HashSet<String>) -> Self {
         let mut names = state.names;
         names.retain(|name| !authored_names.contains(name));
         Self {
