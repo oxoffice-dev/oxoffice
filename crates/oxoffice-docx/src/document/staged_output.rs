@@ -292,6 +292,7 @@ impl Document {
         let comments_owned = self.comments_owned;
         let comments_extended_owned = self.comments_extended_owned;
         let embedded_invalidated_signatures = self.embedded_invalidated_signatures.clone();
+        let freed_image_relationships = self.freed_image_relationships.clone();
         let package_signatures_invalidated = self.package_signatures_invalidated;
         let source_path = self.source_path.clone();
         let opened = self.parsed.as_deref().filter(|_| in_memory);
@@ -335,6 +336,7 @@ impl Document {
         reopened.comments_owned = comments_owned;
         reopened.comments_extended_owned = comments_extended_owned;
         reopened.embedded_invalidated_signatures = embedded_invalidated_signatures;
+        reopened.freed_image_relationships = freed_image_relationships;
         reopened.package_signatures_invalidated = package_signatures_invalidated;
         reopened.source_path = source_path;
         reopened.install_carried_body_scans(carried_scans);

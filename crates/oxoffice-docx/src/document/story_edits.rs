@@ -587,6 +587,19 @@ impl Document {
         fragment.relationships = referenced_relationships(&candidate, &location.story, &fragment)?;
         let mut updated = source_xml;
         updated.drain(item.full);
+        // The fragment's pictures go at the next write if nothing names them
+        // then (it may be inserted again before).
+        let referenced = xml_attribute_values(&updated)?;
+        for (relationship, _) in &fragment.relationships {
+            if relationship.rel_type == rel_types::IMAGE
+                && relationship_is_internal(relationship)
+                && !referenced.contains(&relationship.id)
+            {
+                candidate
+                    .freed_image_relationships
+                    .push((part_name.clone(), relationship.id.clone()));
+            }
+        }
         set_story_source_xml(&mut candidate, &part_name, updated)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
