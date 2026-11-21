@@ -17,7 +17,10 @@ name: CI
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
-# for the release workflow.
+# for the release workflow. Only runs on main (pushes, the nightly run, a
+# dispatch on main) save the Rust caches, even when a test fails after the
+# compile; pull requests restore them. See
+# specs/2026-11-21-faster-build-job.md.
 
 # Changes that only touch documentation do not build anything.
 on:
@@ -59,7 +62,8 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          cache-workspace-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - name: Limitations page is up to date
         run: python3 scripts/limitations_doc.py --check
@@ -78,7 +82,8 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          cache-workspace-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
 
   build:
@@ -100,9 +105,18 @@ jobs:
         with:
           python-version: "3.12"
       - run: rustup show active-toolchain
+      # maturin builds the wheel with MACOSX_DEPLOYMENT_TARGET=11.0. Set for
+      # the whole job, cargo test shares the units both builds have in common
+      # instead of rebuilding them because the variable differs (the workspace
+      # crates still compile twice: their features differ).
+      - name: One deployment target for the wheel and the tests
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          cache-workspace-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the wheel
         shell: bash
         run: |
@@ -132,10 +146,12 @@ jobs:
           else
             echo "no Rust integration tests yet"
           fi
+      # One worker per CPU (pytest-xdist). Tests write only under tmp_path.
+      # The scaling job stays sequential: its timings need a quiet runner.
       - name: Python tests
         shell: bash
         run: |
-          if [ -d crates/oxoffice-py/tests ]; then python -m pytest crates/oxoffice-py/tests -q; else echo "no Python tests yet"; fi
+          if [ -d crates/oxoffice-py/tests ]; then python -m pytest crates/oxoffice-py/tests -q -n auto; else echo "no Python tests yet"; fi
 
   # The scaling tests time every mutating call at N and 16N (docx) or 4N
   # (pptx). They need a build without debug assertions (the `scaling`
@@ -160,7 +176,8 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          cache-workspace-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the wheel without debug assertions
         shell: bash
         run: |
