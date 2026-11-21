@@ -1704,3 +1704,77 @@ fn a_footnote_reference_moved_within_its_paragraph_is_compared() {
         ["Claim[Source] and more."]
     );
 }
+
+/// A new document holding these paragraphs, each with its footnote if any,
+/// the notes created in paragraph order as Word numbers them when it saves.
+fn doc_with_notes_in_order(paragraphs: &[(&str, Option<&str>)]) -> Document {
+    let mut doc = Document::new();
+    let ids = paragraphs
+        .iter()
+        .map(|(_, note)| note.map(|note| doc.add_footnote(note)))
+        .collect::<Vec<_>>();
+    for ((text, _), id) in paragraphs.iter().zip(ids) {
+        let mut paragraph = doc.add_paragraph(text);
+        if let Some(id) = id {
+            paragraph.add_footnote_ref(id);
+        }
+    }
+    doc
+}
+
+#[test]
+fn a_note_added_before_others_is_the_only_note_change() {
+    // Word numbers notes by position: the new first note takes the id of
+    // the old first one, and every later note moves up one.
+    let sections = [
+        ("One.", Some("A")),
+        ("Two.", Some("B")),
+        ("Three.", Some("C")),
+    ];
+    let edited = doc_with_notes_in_order(&[
+        ("Zero.", Some("N")),
+        ("One.", Some("A")),
+        ("Two.", Some("B")),
+        ("Three.", Some("C")),
+    ]);
+    let mut doc = redline(doc_with_notes_in_order(&sections), &edited);
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        Vec::<String>::new()
+    );
+    let inserted = revision_texts(&doc, RevisionKind::Insertion);
+    assert!(
+        !inserted
+            .iter()
+            .any(|text| ["A", "B", "C"].contains(&text.as_str())),
+        "an unchanged note is not revised: {inserted:?}"
+    );
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Zero.[N]", "One.[A]", "Two.[B]", "Three.[C]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["One.[A]", "Two.[B]", "Three.[C]"]
+    );
+}
+
+#[test]
+fn a_paragraph_moved_with_its_footnote_is_deleted_and_inserted_with_the_note() {
+    // A move would leave its two ends naming one note, so the paragraph is
+    // deleted with its note and inserted again with a new one.
+    let original = doc_with_notes_in_order(&[("Claim.", Some("Source")), ("Other.", None)]);
+    let edited = doc_with_notes_in_order(&[("Other.", None), ("Claim.", Some("Source"))]);
+    let mut doc = redline(original, &edited);
+    assert!(
+        !kinds(&doc).contains(&RevisionKind::MoveFrom),
+        "{:?}",
+        kinds(&doc)
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Other.", "Claim.[Source]"]);
+    assert_eq!(copy.footnotes().len(), 1);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[Source]", "Other."]);
+    assert_eq!(copy.footnotes().len(), 1);
+}

@@ -1005,9 +1005,10 @@ impl Document {
     /// a body bookmark both documents hold keeps this document's id, a heading
     /// paired with one of this document's takes its `_Toc` name, a new heading
     /// takes a fresh one where this document uses its own, and the links and
-    /// page references of `edited` follow them. A footnote whose reference
-    /// moved is deleted with its old reference and inserted again, under a new
-    /// id, with the new one, as Word shows it.
+    /// page references of `edited` follow them. Footnote ids, which Word also
+    /// renumbers, take this document's, the notes paired in reference order. A
+    /// footnote whose reference moved is deleted with its old reference and
+    /// inserted again, under a new id, with the new one, as Word shows it.
     pub fn compare(
         &mut self,
         edited: &Document,
@@ -1028,6 +1029,19 @@ impl Document {
         timestamp: &str,
         options: &ComparisonOptions,
     ) -> Result<Vec<ComparisonDiagnostic>> {
+        self.compare_pass(edited, author, timestamp, options, &[])
+    }
+
+    /// One comparison pass. `renumbered` holds the ids an earlier pass gave
+    /// the edited notes whose reference moved: they stay new notes.
+    fn compare_pass(
+        &mut self,
+        edited: &Document,
+        author: &str,
+        timestamp: &str,
+        options: &ComparisonOptions,
+        renumbered: &[i32],
+    ) -> Result<Vec<ComparisonDiagnostic>> {
         validate_revision_timestamp(timestamp)?;
         validate_comparison_options(options)?;
         let edited_input = edited;
@@ -1036,6 +1050,7 @@ impl Document {
         if !story_ignored(options, ComparisonStoryKind::Footnote) {
             retire_completed_footnote_inputs(&mut original, &mut edited)?;
             reconcile_footnote_custody_inputs(&original, &mut edited)?;
+            reconcile_footnote_ids(&original, &mut edited, renumbered)?;
         }
         if !story_ignored(options, ComparisonStoryKind::Main) {
             reconcile_body_bookmarks(&original, &mut edited, options)?;
@@ -1378,13 +1393,14 @@ impl Document {
             // new note: the comparison runs again with it under a new id, so
             // the original note is deleted with its reference and the edited
             // one inserted with its own. Nothing was written to this document.
-            let Some(renumbered) = renumbered_footnotes(&original, edited_input, &moved)? else {
+            let Some((next, ids)) = renumbered_footnotes(&original, edited_input, &moved)? else {
                 return Err(Error::Other(format!(
                     "comparison would give footnote {} more physical references than either input: its reference moved to another site",
                     moved[0]
                 )));
             };
-            return self.compare_with_options(&renumbered, author, timestamp, options);
+            let renumbered = renumbered.iter().copied().chain(ids).collect::<Vec<_>>();
+            return self.compare_pass(&next, author, timestamp, options, &renumbered);
         }
         if snapshot_comments {
             let revision_id = metadata.ids.allocate()?;
@@ -6476,16 +6492,170 @@ fn moved_pending_references(
         .collect())
 }
 
+/// Word numbers footnotes by position when it saves, so one note added near
+/// the top gives every later note a new id, and the comparison would pair
+/// different notes by id. Before comparing, the edited notes take the ids of
+/// the original's: the notes referenced in the main story are paired in
+/// reference order by their text (the longest common sequence, then the
+/// notes left between two pairs, by position, when both sides leave as many).
+/// A note only the edited input holds keeps its id, or takes a new one where
+/// the original uses it. Nothing changes when a note is referenced twice or
+/// outside the main story, when a reference sits in a tracked change, or
+/// while note custody of an earlier comparison is pending.
+fn reconcile_footnote_ids(
+    original: &Document,
+    edited: &mut Document,
+    renumbered: &[i32],
+) -> Result<()> {
+    let (Some(left_part), Some(right_part)) =
+        (FootnotePart::of(original)?, FootnotePart::of(edited)?)
+    else {
+        return Ok(());
+    };
+    if left_part.xml == right_part.xml
+        || !note_markers(original)?.is_empty()
+        || !note_markers(edited)?.is_empty()
+    {
+        return Ok(());
+    }
+    let references = |document: &Document| -> Result<Option<Vec<i32>>> {
+        let sites = footnote_reference_sites(document)?;
+        if sites
+            .iter()
+            .any(|site| site.part != document.doc_part_name || site.revision.is_some())
+        {
+            return Ok(None);
+        }
+        let ids = sites.iter().map(|site| site.id).collect::<Vec<_>>();
+        let unique = ids.iter().collect::<HashSet<_>>();
+        Ok((unique.len() == ids.len()).then_some(ids))
+    };
+    let (Some(left_ids), Some(right_ids)) = (references(original)?, references(edited)?) else {
+        return Ok(());
+    };
+    let texts = |part: &FootnotePart| -> Result<HashMap<i32, String>> {
+        let tree = crate::revision::XmlTree::parse(part.xml.as_bytes())?;
+        let mut texts = HashMap::new();
+        for (index, node) in tree.elements.iter().enumerate() {
+            if node.word && node.local == "footnote" && node.parent == Some(tree.root) {
+                let id = word_attributes(&tree, part.xml.as_bytes(), index)?
+                    .get("id")
+                    .and_then(|id| id.parse::<i32>().ok());
+                if let Some(id) = id {
+                    texts.insert(id, paragraph_text(&tree, part.xml.as_bytes(), index));
+                }
+            }
+        }
+        Ok(texts)
+    };
+    let (left_texts, right_texts) = (texts(&left_part)?, texts(&right_part)?);
+    let left_normal = left_part.normal();
+    let right_normal = right_part.normal();
+    let sequence =
+        |ids: &[i32], texts: &HashMap<i32, String>, normal: &BTreeMap<i32, &FootnoteOwner>| {
+            ids.iter()
+                .filter(|id| normal.contains_key(id))
+                .map(|id| (*id, texts.get(id).cloned().unwrap_or_default()))
+                .collect::<Vec<_>>()
+        };
+    let left = sequence(&left_ids, &left_texts, &left_normal);
+    let mut right = sequence(&right_ids, &right_texts, &right_normal);
+    right.retain(|(id, _)| !renumbered.contains(id));
+    let text_of = |notes: &[(i32, String)]| {
+        notes
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut ids = HashMap::new();
+    for (index, other) in strict_pairs(&text_of(&left), &text_of(&right)) {
+        ids.insert(right[other].0, left[index].0);
+    }
+    let mut next = left_normal
+        .keys()
+        .chain(right_normal.keys())
+        .copied()
+        .max()
+        .unwrap_or(0);
+    for &id in right_normal.keys() {
+        if !ids.contains_key(&id) && left_normal.contains_key(&id) {
+            next = next
+                .checked_add(1)
+                .ok_or_else(|| Error::Other("comparison footnote ids are exhausted".into()))?;
+            ids.insert(id, next);
+        }
+    }
+    ids.retain(|from, to| from != to);
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let notes = rewrite_word_ids(right_part.xml.as_bytes(), "footnote", &ids)?;
+    crate::document::set_story_source_xml(edited, &right_part.name, notes)?;
+    let main = edited.doc_part_name.clone();
+    let body = rewrite_word_ids(
+        edited
+            .package
+            .get_part(&main)
+            .ok_or_else(|| Error::Other("comparison input has no main part".into()))?,
+        "footnoteReference",
+        &ids,
+    )?;
+    crate::document::set_story_source_xml(edited, &main, body)
+}
+
+/// The `w:t` text under the element `index`.
+fn paragraph_text(tree: &crate::revision::XmlTree<'_>, xml: &[u8], index: usize) -> String {
+    let end = tree.elements[index].end;
+    tree.elements[index + 1..]
+        .iter()
+        .take_while(|child| child.start < end)
+        .filter(|child| child.word && child.local == "t" && !child.empty)
+        .map(|child| String::from_utf8_lossy(&xml[child.open_end..child.close_start]))
+        .collect()
+}
+
+/// The pairs [`align`] makes, less those it makes by position in a gap where
+/// one side leaves more items than the other.
+fn strict_pairs(left: &[String], right: &[String]) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let mut gap = Vec::new();
+    let mut uneven = false;
+    for entry in align(left, right) {
+        match entry {
+            (Some(index), Some(other)) if left[index] == right[other] => {
+                if !uneven {
+                    pairs.append(&mut gap);
+                }
+                gap.clear();
+                uneven = false;
+                pairs.push((index, other));
+            }
+            (Some(index), Some(other)) => gap.push((index, other)),
+            _ => uneven = true,
+        }
+    }
+    if !uneven {
+        pairs.append(&mut gap);
+    }
+    pairs
+}
+
 /// A copy of the edited input with each of these footnotes under a new id,
-/// in its footnotes part and at its references, or None when that cannot be
-/// done faithfully: a reference outside the main story, or the note custody
-/// of an earlier comparison, which keeps its notes' ids.
+/// in its footnotes part and at its references, and the new ids; or None
+/// when that cannot be done faithfully: a reference outside the main story,
+/// or the pending note custody of an earlier comparison, which keeps its
+/// notes' ids.
 fn renumbered_footnotes(
     original: &Document,
     edited: &Document,
     moved: &[i32],
-) -> Result<Option<Document>> {
+) -> Result<Option<(Document, Vec<i32>)>> {
     let mut renumbered = comparison_input(edited)?;
+    // Completed custody is retired as the first pass retired it.
+    let units = validate_footnote_custody(&renumbered, &crate::revision::RevisionScope::All)?;
+    if !units.iter().any(|unit| !unit.revisions.is_empty()) {
+        retire_note_markers(&mut renumbered, &units, None)?;
+    }
     let Some(part) = FootnotePart::of(&renumbered)? else {
         return Ok(None);
     };
@@ -6521,7 +6691,7 @@ fn renumbered_footnotes(
         &ids,
     )?;
     crate::document::set_story_source_xml(&mut renumbered, &main, body)?;
-    Ok(Some(renumbered))
+    Ok(Some((renumbered, ids.into_values().collect())))
 }
 
 /// `xml` with the `w:id` of every Word element of this local name mapped.
