@@ -16,7 +16,10 @@ impl Document {
     /// end markers. Loop paths require arrays and introduce lexical scopes.
     /// Conditions use JSON truthiness, where false, null, zero, and empty
     /// strings or collections are false. Comments are left as written: their
-    /// tags are not rendered.
+    /// tags are not rendered. A note in a loop is copied with each paragraph
+    /// that references it, and a note no rendered paragraph references any
+    /// more goes; the returned count still includes the tags such a note
+    /// held.
     ///
     /// This additive API is native-only. Python, WASM, and CLI binding surfaces
     /// remain unchanged and continue to preserve documents rendered here.

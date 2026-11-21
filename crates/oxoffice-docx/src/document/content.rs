@@ -904,7 +904,26 @@ impl Document {
     /// is passed over, and a part whose notes cannot be matched one to one
     /// with its owners keeps all of them.
     pub(crate) fn remove_unreferenced_notes(&mut self, before: &[u8], after: &[u8]) -> Result<()> {
-        let referenced = note_reference_ids_in(before)?;
+        self.remove_unreferenced_notes_or_copies(before, &[], after)
+    }
+
+    /// [`Self::remove_unreferenced_notes`], where the notes made during the
+    /// edit (`copies`, by kind and id, such as the notes a template loop
+    /// copied) are candidates too: a copy nothing references `after` goes.
+    pub(crate) fn remove_unreferenced_notes_or_copies(
+        &mut self,
+        before: &[u8],
+        copies: &[(StoryKind, i32)],
+        after: &[u8],
+    ) -> Result<()> {
+        let mut referenced = note_reference_ids_in(before)?;
+        for (kind, id) in copies {
+            match kind {
+                StoryKind::Footnote => referenced.footnotes.insert(*id),
+                StoryKind::Endnote => referenced.endnotes.insert(*id),
+                _ => false,
+            };
+        }
         if referenced.is_empty() {
             return Ok(());
         }
@@ -918,14 +937,32 @@ impl Document {
                 kept.endnotes.extend(story.endnotes);
             }
         }
-        let gone = NoteReferenceIds {
+        let mut gone = NoteReferenceIds {
             footnotes: &referenced.footnotes - &kept.footnotes,
             endnotes: &referenced.endnotes - &kept.endnotes,
         };
         if gone.is_empty() {
             return Ok(());
         }
+        // A note a note or a comment references stays too: a template loop
+        // copies a note together with the notes it references.
         self.flush_to_package()?;
+        let mut scanned = BTreeSet::new();
+        for story in self.related_story_sources()? {
+            if matches!(
+                story.root_kind,
+                StoryKind::Footnote | StoryKind::Endnote | StoryKind::Comment
+            ) && scanned.insert(story.part_name.clone())
+                && let Some(xml) = self.package.get_part(&story.part_name)
+            {
+                let story = note_reference_ids_in(xml)?;
+                gone.footnotes.retain(|id| !story.footnotes.contains(id));
+                gone.endnotes.retain(|id| !story.endnotes.contains(id));
+            }
+        }
+        if gone.is_empty() {
+            return Ok(());
+        }
         for (kind, ids) in [
             (StoryKind::Footnote, &gone.footnotes),
             (StoryKind::Endnote, &gone.endnotes),

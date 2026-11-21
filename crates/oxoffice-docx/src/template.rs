@@ -2575,6 +2575,16 @@ pub(crate) fn render_grammar(
     let mut main_sources = crate::document::TemplateMainSources::default();
     let originals =
         candidate.template_programs_scoped(&mut operation, &lineage, &mut main_sources)?;
+    // The main part as the template holds it, to find the notes a loop
+    // copied or a false condition dropped once the output is rendered.
+    let notes_before = match main_sources.source.as_ref() {
+        Some(source) => source.as_bytes().to_vec(),
+        None => candidate
+            .package
+            .get_part(&candidate.doc_part_name)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default(),
+    };
     candidate.prepare_staged_template_package(&mut operation, &mut lineage, &mut main_sources)?;
     let mut sources =
         candidate.template_programs_scoped(&mut operation, &lineage, &mut main_sources)?;
@@ -2875,6 +2885,16 @@ pub(crate) fn render_grammar(
     for (part, original, rendered) in charts {
         candidate.template_publish_scalar_part(&part, &original, rendered)?;
     }
+    // A note whose reference only the template held goes: a loop gave each
+    // copy a note of its own, and a false condition dropped the reference.
+    // A copy an outer loop made and an inner loop copied again is a
+    // candidate too.
+    let copies = allocations
+        .iter()
+        .map(|(kind, _, _, _, new_id)| (*kind, *new_id))
+        .collect::<Vec<_>>();
+    let notes_after = candidate.main_part_snapshot()?;
+    candidate.remove_unreferenced_notes_or_copies(&notes_before, &copies, &notes_after)?;
     let prepared = candidate.prepare_and_reopen_staged()?;
     drop(evaluation);
     document.commit_template(prepared);
