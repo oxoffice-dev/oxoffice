@@ -413,7 +413,9 @@ pub(super) fn deleted_paragraph(
 ) -> Result<String> {
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&paragraph_mark_properties(paragraph, "del", metadata)?);
-    let (children, published) = paragraph_children_xml(paragraph, true, !carried, metadata)?;
+    let (mut children, mut published) =
+        paragraph_children_xml(paragraph, true, !carried, metadata)?;
+    place_shared_bookmarks(&mut children, &mut published, true, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         true,
@@ -437,7 +439,9 @@ pub(super) fn inserted_paragraph(
 ) -> Result<String> {
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&paragraph_mark_properties(paragraph, "ins", metadata)?);
-    let (children, published) = paragraph_children_xml(paragraph, false, !carried, metadata)?;
+    let (mut children, mut published) =
+        paragraph_children_xml(paragraph, false, !carried, metadata)?;
+    place_shared_bookmarks(&mut children, &mut published, false, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         false,
@@ -451,6 +455,74 @@ pub(super) fn inserted_paragraph(
     )?);
     output.push_str(&closing);
     metadata.ids.generated(output)
+}
+
+/// Write each bookmark both inputs hold once, where the edited input has it.
+///
+/// No tracked change records a bookmark. The children of a whole `deleted`
+/// paragraph leave such a bookmark out, and those of a whole inserted one
+/// keep it outside their revision marks (`published`), so that rejecting the
+/// insertion keeps it. The bookmarks moved that way are recorded for the
+/// rejection's check.
+pub(super) fn place_shared_bookmarks(
+    children: &mut String,
+    published: &mut Vec<Range<usize>>,
+    deleted: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<()> {
+    for (range, id) in shared_bookmark_markers(children, &metadata.shared_bookmarks)?
+        .into_iter()
+        .rev()
+    {
+        metadata.relocated_bookmarks.insert(id);
+        if !deleted {
+            published.push(range);
+            continue;
+        }
+        for field in published.iter_mut() {
+            if field.start >= range.end {
+                *field = field.start - range.len()..field.end - range.len();
+            }
+        }
+        children.replace_range(range, "");
+    }
+    Ok(())
+}
+
+/// The direct `w:bookmarkStart` and `w:bookmarkEnd` children of a paragraph's
+/// XML whose bookmark both inputs hold, as byte ranges and ids.
+fn shared_bookmark_markers(xml: &str, shared: &HashSet<i32>) -> Result<Vec<(Range<usize>, i32)>> {
+    if shared.is_empty() {
+        return Ok(Vec::new());
+    }
+    let opening = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>";
+    let input = format!("{opening}{xml}</w:body></w:document>");
+    let tree = crate::revision::XmlTree::parse(input.as_bytes())?;
+    let Some(paragraph) = tree
+        .elements
+        .iter()
+        .position(|element| element.word && element.local == "p")
+    else {
+        return Ok(Vec::new());
+    };
+    let mut markers = Vec::new();
+    for &child in &tree.elements[paragraph].children {
+        let element = &tree.elements[child];
+        if !element.word || !matches!(element.local.as_str(), "bookmarkStart" | "bookmarkEnd") {
+            continue;
+        }
+        if let Some(id) = word_attributes(&tree, input.as_bytes(), child)?
+            .get("id")
+            .and_then(|id| id.parse::<i32>().ok())
+            .filter(|id| shared.contains(id))
+        {
+            markers.push((
+                element.start - opening.len()..element.end - opening.len(),
+                id,
+            ));
+        }
+    }
+    Ok(markers)
 }
 
 /// Stage a whole paragraph without its properties, retaining actual run source

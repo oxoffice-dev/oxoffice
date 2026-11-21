@@ -1300,6 +1300,11 @@ class Document:
         order. A footnote whose reference moved is deleted with its old
         reference and inserted again, under a new id, with the new one, as Word
         shows it.
+
+        No tracked change records a bookmark: a paragraph whose bookmarks
+        differ is deleted and inserted whole, and a bookmark both documents
+        hold is written once, outside the revision marks, where ``edited`` has
+        it, so rejecting keeps it beside the restored paragraph.
         """
     @property
     def comments(self) -> tuple[Comment, ...]: ...

@@ -1369,6 +1369,8 @@ fn tracked_field_result(
         leaf_publications: Vec::new(),
         field_conversions: Vec::new(),
         whole_field_conversions: Vec::new(),
+        shared_bookmarks: HashSet::new(),
+        relocated_bookmarks: HashSet::new(),
     };
     let mut diagnostics = Vec::new();
     let result = compare_paragraph(

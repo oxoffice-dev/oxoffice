@@ -69,7 +69,10 @@ mod source_scopes;
 mod stories;
 mod text_boxes;
 
-use bookmarks::{reconcile_body_bookmarks, rewritten_opening, word_attributes};
+use bookmarks::{
+    holds_bookmarks_once, reconcile_body_bookmarks, rewritten_opening, shared_bookmark_ids,
+    without_bookmarks, word_attributes,
+};
 use field_conversions::validate_field_conversion_role;
 use guard::{
     guard_mask_coordinates, guard_source_body_at, guard_story_owners, guard_story_part,
@@ -210,7 +213,7 @@ use paragraph_properties::{
     clear_default_orientation, deleted_paragraph, final_paragraph_properties_xml,
     inserted_paragraph, modeled_paragraph_properties, nonempty_paragraph_properties,
     paragraph_children_xml, paragraph_properties_differ, paragraph_properties_xml,
-    section_properties_xml,
+    place_shared_bookmarks, section_properties_xml,
 };
 use paragraphs::{
     coalesced_held_owner_equal, coalesced_paragraphs_equal, compare_body_content,
@@ -313,6 +316,13 @@ struct Metadata<'a> {
     leaf_publications: Vec<LeafPublication>,
     field_conversions: Vec<FieldConversionWitness>,
     whole_field_conversions: Vec<WholeFieldWitness>,
+    /// The ids of the bookmarks both inputs hold (see
+    /// [`shared_bookmark_ids`]), which a whole deleted or inserted paragraph
+    /// writes once, untracked, where the edited input has them.
+    shared_bookmarks: HashSet<i32>,
+    /// Those of them a whole paragraph moved that way, whose place the
+    /// rejection does not restore.
+    relocated_bookmarks: HashSet<i32>,
 }
 
 #[derive(Clone)]
@@ -480,6 +490,11 @@ impl Document {
     /// renumbers, take this document's, the notes paired in reference order. A
     /// footnote whose reference moved is deleted with its old reference and
     /// inserted again, under a new id, with the new one, as Word shows it.
+    ///
+    /// No tracked change records a bookmark: a paragraph whose bookmarks
+    /// differ is deleted and inserted whole, and a bookmark both documents
+    /// hold is written once, outside the revision marks, where `edited` has
+    /// it, so rejecting keeps it beside the restored paragraph.
     pub fn compare(
         &mut self,
         edited: &Document,
@@ -630,6 +645,8 @@ impl Document {
                     leaf_publications: Vec::new(),
                     field_conversions: Vec::new(),
                     whole_field_conversions: Vec::new(),
+                    shared_bookmarks: HashSet::new(),
+                    relocated_bookmarks: HashSet::new(),
                 },
                 &mut Vec::new(),
             )
@@ -770,6 +787,8 @@ impl Document {
             leaf_publications: Vec::new(),
             field_conversions: Vec::new(),
             whole_field_conversions: Vec::new(),
+            shared_bookmarks: shared_bookmark_ids(&original, &edited)?,
+            relocated_bookmarks: HashSet::new(),
         };
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
@@ -1088,10 +1107,35 @@ impl Document {
             |document| document.reject_revision_ids(&new_ids),
             Some(&new_ids),
         )?;
-        let mut rejected_package =
-            normalized_package(&rejected, &original_stories, options, &text_box_markers)?;
-        let mut original_package =
-            normalized_package(&original, &original_stories, options, &text_box_markers)?;
+        // A bookmark both inputs hold that a whole paragraph wrote where the
+        // edited input has it stays there when the paragraph is rejected: the
+        // rejection holds it once, under its name, wherever it lands.
+        let relocated = &metadata.relocated_bookmarks;
+        if !relocated.is_empty() && !holds_bookmarks_once(&rejected, &original, relocated)? {
+            return Err(Error::Other(
+                "comparison rejection does not hold each bookmark both inputs hold once".to_owned(),
+            ));
+        }
+        let (rejected_view, original_view) = if relocated.is_empty() {
+            (None, None)
+        } else {
+            (
+                Some(without_bookmarks(&rejected, relocated)?),
+                Some(without_bookmarks(&original, relocated)?),
+            )
+        };
+        let mut rejected_package = normalized_package(
+            rejected_view.as_ref().unwrap_or(&rejected),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
+        let mut original_package = normalized_package(
+            original_view.as_ref().unwrap_or(&original),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
         if main_ignored {
             original_package.0 = rejected_package.0.clone();
         }

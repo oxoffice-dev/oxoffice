@@ -355,6 +355,11 @@ enum Command {
     /// order. A footnote whose reference moved is deleted with its old
     /// reference and inserted again, under a new id, with the new one, as Word
     /// shows it.
+    ///
+    /// No tracked change records a bookmark: a paragraph whose bookmarks
+    /// differ is deleted and inserted whole, and a bookmark both files hold is
+    /// written once, outside the revision marks, where the edited file has it,
+    /// so rejecting keeps it beside the restored paragraph.
     Compare {
         /// Original DOCX file
         original: PathBuf,

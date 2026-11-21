@@ -277,11 +277,26 @@ pub(super) fn replace_changed_paragraph_runs(
     // differ, or it is the last owner, whose inserted paragraph mark no
     // rejection can remove. It becomes a deleted and an inserted paragraph,
     // which the trailing-paragraph rule then closes on the mark before them.
-    // A bookmark or comment range of either side that the other input also
-    // holds would then be held twice, as when a producer renumbers its
-    // bookmarks, so such a pair keeps its refusal.
+    // A bookmark both inputs hold is written once, where the edited input
+    // has it (see `shared_bookmark_markers`), and the insertion then comes
+    // first, so that rejecting it leaves that bookmark on the restored
+    // paragraph. A comment range of either side that the other input also
+    // holds would be held twice, so such a pair keeps its refusal.
     let all_original = markers(original.iter().flatten().copied());
     let all_edited = markers(edited.iter().flatten().copied());
+    let comment_ranges = |markers: HashSet<String>| {
+        markers
+            .into_iter()
+            .filter(|marker| marker.starts_with("comment "))
+            .collect::<HashSet<_>>()
+    };
+    let shares = |left: &CT_P, right: &CT_P, comments: bool| {
+        let (mut left, mut right) = (markers([left].into_iter()), markers([right].into_iter()));
+        if comments {
+            (left, right) = (comment_ranges(left), comment_ranges(right));
+        }
+        !left.is_disjoint(&all_edited) || !right.is_disjoint(&all_original)
+    };
     let unpaired = |position: usize, i: usize, j: usize| -> Result<bool> {
         let (Some(left), Some(right)) = (original[i], edited[j]) else {
             return Ok(false);
@@ -289,8 +304,7 @@ pub(super) fn replace_changed_paragraph_runs(
         if original_signatures[i] == edited_signatures[j]
             || !paragraph_boundaries_differ(left, right, options)
             || (left.bookmark_markers == right.bookmark_markers && position + 1 != aligned.len())
-            || !markers([left].into_iter()).is_disjoint(&all_edited)
-            || !markers([right].into_iter()).is_disjoint(&all_original)
+            || shares(left, right, true)
         {
             return Ok(false);
         }
@@ -313,8 +327,16 @@ pub(super) fn replace_changed_paragraph_runs(
             if let (Some(i), Some(j)) = aligned[index]
                 && unpaired(index, i, j)?
             {
-                replaced.push((Some(i), None));
-                replaced.push((None, Some(j)));
+                let (Some(left), Some(right)) = (original[i], edited[j]) else {
+                    unreachable!("an unpaired entry holds two paragraphs")
+                };
+                if index + 1 != aligned.len() && shares(left, right, false) {
+                    replaced.push((None, Some(j)));
+                    replaced.push((Some(i), None));
+                } else {
+                    replaced.push((Some(i), None));
+                    replaced.push((None, Some(j)));
+                }
             } else {
                 replaced.push(aligned[index]);
             }
@@ -335,6 +357,44 @@ pub(super) fn replace_changed_paragraph_runs(
             }
         }
         index = range.end;
+    }
+    // A whole inserted paragraph that writes a bookmark a deleted paragraph
+    // before it held, among the deletions right before it, goes before that
+    // deletion: rejecting the insertion then leaves the bookmark on the
+    // restored paragraph. Insertions keep their order, and so do deletions,
+    // and the story's last entry stays last.
+    let bookmarks = |paragraph: &CT_P| {
+        markers([paragraph].into_iter())
+            .into_iter()
+            .filter(|marker| marker.starts_with("bookmark "))
+            .collect::<HashSet<_>>()
+    };
+    for index in 0..replaced.len().saturating_sub(1) {
+        let (None, Some(j)) = replaced[index] else {
+            continue;
+        };
+        let Some(right) = edited[j].filter(|_| !carried.edited.contains(&j)) else {
+            continue;
+        };
+        let held = bookmarks(right);
+        if held.is_empty() {
+            continue;
+        }
+        let mut target = None;
+        for at in (0..index).rev() {
+            match replaced[at] {
+                (Some(i), None) if !carried.original.contains(&i) => {
+                    if original[i].is_some_and(|left| !bookmarks(left).is_disjoint(&held)) {
+                        target = Some(at);
+                    }
+                }
+                _ => break,
+            }
+        }
+        if let Some(target) = target {
+            let entry = replaced.remove(index);
+            replaced.insert(target, entry);
+        }
     }
     Ok((replaced, carried))
 }
