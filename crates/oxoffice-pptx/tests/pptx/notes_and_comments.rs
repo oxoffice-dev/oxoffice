@@ -196,7 +196,13 @@ fn powerpoint_comment_deck(created: &str) -> Vec<u8> {
 /// comment (`p:cmLst`, as PowerPoint 2007 to 2019 wrote them) by a legacy
 /// author.
 fn deck_with_legacy_comments(slides: usize) -> Presentation {
-    let mut package = package_of(&blank_deck(slides));
+    with_legacy_comment(&blank_deck(slides))
+}
+
+/// `prs` with one legacy comment by a legacy author on its
+/// `/ppt/slides/slide1.xml`, the first slide of every corpus deck.
+fn with_legacy_comment(prs: &Presentation) -> Presentation {
+    let mut package = package_of(prs);
     package.set_part(
         "/ppt/commentAuthors.xml",
         br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1061,10 +1067,7 @@ fn removing_a_slide_removes_its_legacy_comments() {
     );
 }
 
-// Fails today: the legacy comment part sits at /ppt/comments/comment1.xml,
-// the name add_comment guards, so any modern comment is refused. Issue: #39
 #[test]
-#[should_panic(expected = "CollaborationPartCollision")]
 fn a_modern_comment_can_be_added_to_a_deck_with_legacy_comments() {
     let mut prs = deck_with_legacy_comments(2);
     prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
@@ -1092,4 +1095,45 @@ fn a_comment_author_keeps_the_tabs_and_line_feeds_of_its_name() {
         (ada.name.as_str(), ada.initials.as_deref()),
         ("Ada\tLovelace\nR&D", Some("A\tL"))
     );
+}
+
+#[test]
+fn modern_comments_join_legacy_ones_on_every_editors_deck() {
+    for name in CORPUS_DECKS {
+        let mut prs = with_legacy_comment(&corpus_deck(name));
+        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
+            .unwrap();
+
+        prs.add_comment(
+            0,
+            comment(&guid(1), ADA, MONDAY, "Beside the legacy remark"),
+        )
+        .unwrap();
+        prs.add_comment(1, comment(&guid(2), ADA, MONDAY, "On the next slide"))
+            .unwrap();
+
+        let reopened = reopen(&prs);
+        assert_eq!(
+            comment_texts(&reopened, 0),
+            ["Beside the legacy remark"],
+            "{name}"
+        );
+        assert_eq!(comment_texts(&reopened, 1), ["On the next slide"], "{name}");
+        let package = package_of(&reopened);
+        let legacy = package
+            .get_part_rels("/ppt/slides/slide1.xml")
+            .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
+            .expect("the first slide still points at its legacy comments");
+        assert_eq!(legacy.target, "../comments/comment1.xml", "{name}");
+        assert!(
+            part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"),
+            "{name}"
+        );
+        assert_eq!(parts_under(&reopened, "ppt/comments/").len(), 3, "{name}");
+        assert!(
+            reopened.validate().is_empty(),
+            "{name}: {:?}",
+            reopened.validate()
+        );
+    }
 }

@@ -343,7 +343,6 @@ struct AutofitOwner {
 const DEFAULT_POWERPOINT_AUTHORS_PART: &str = "/ppt/authors.xml";
 const CLASSIC_COMMENT_AUTHORS_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
-const DEFAULT_POWERPOINT_COMMENTS_PART: &str = "/ppt/comments/comment1.xml";
 const MAX_SMARTART_TRANSFER_DIAGRAM_PARTS: usize = 128;
 const CHART_EX_RELATIONSHIP: &str =
     "http://schemas.microsoft.com/office/2014/relationships/chartEx";
@@ -9637,21 +9636,8 @@ impl Presentation {
         self.validate_comment_identity(&comment.id, &comment.author_id)?;
         let mut staged = self.clone();
         if staged.slides[slide_index].comments.is_none() {
-            if staged
-                .package
-                .contains_part(DEFAULT_POWERPOINT_COMMENTS_PART)
-                && !staged.slides.iter().any(|slide| {
-                    slide.comments.as_ref().is_some_and(|comments| {
-                        comments
-                            .part_name
-                            .eq_ignore_ascii_case(DEFAULT_POWERPOINT_COMMENTS_PART)
-                    })
-                })
-            {
-                return Err(Error::CollaborationPartCollision {
-                    part_name: DEFAULT_POWERPOINT_COMMENTS_PART.to_owned(),
-                });
-            }
+            // A free name, so legacy comment parts (PowerPoint 2007 to 2019
+            // wrote them as `/ppt/comments/commentN.xml`) stay as they are.
             let comment_part = MediaNamer::scan(
                 "/ppt/comments",
                 "comment",
