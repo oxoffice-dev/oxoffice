@@ -20587,23 +20587,26 @@ fn paragraph_formatting(paragraph: &CT_P) -> Option<CT_PPr> {
 }
 
 /// Row properties as the model writes them, without their revision records.
-/// The writer leaves out an empty container, such as the `<w:trPr></w:trPr>`
-/// LibreOffice writes, so it reads as no properties.
+/// An empty container, such as the `<w:trPr></w:trPr>` LibreOffice writes,
+/// reads as no properties.
 fn row_formatting(row: &CT_Row) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     if let Some(mut properties) = row.properties.clone() {
         properties.revision_markers.clear();
         properties.revision_xml.clear();
+        properties.from_source = false;
         properties.to_xml(&mut writer)?;
     }
     Ok(writer.into_inner())
 }
 
-/// Cell properties as the model writes them, which leaves out empty
-/// containers such as LibreOffice's `<w:tcBorders></w:tcBorders>`.
+/// Cell properties as the model writes them. Empty containers, such as
+/// LibreOffice's `<w:tcBorders></w:tcBorders>` or the `<w:tcPr/>` Google
+/// Docs writes, read as no properties.
 fn cell_formatting(cell: &CT_Tc) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
-    if let Some(properties) = &cell.properties {
+    if let Some(mut properties) = cell.properties.clone() {
+        properties.from_source = false;
         properties.to_xml(&mut writer)?;
     }
     Ok(writer.into_inner())

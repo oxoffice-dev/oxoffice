@@ -774,6 +774,9 @@ fn formatted_empty_cell(source: &CT_Tc, width: Option<CT_TblWidth>) -> Result<CT
     properties.h_merge = None;
     properties.v_merge = None;
     properties.width = width;
+    // A new cell writes only the formatting it carries, not an empty
+    // `<w:tcPr/>` read with its source.
+    properties.from_source = false;
     if properties != CT_TcPr::default() {
         cell.properties = Some(properties);
     }
@@ -1086,14 +1089,20 @@ impl<'a> Table<'a> {
             ));
         }
         let mut row = CT_Row::new();
-        row.properties = last.properties.clone().map(|mut properties| {
-            properties.revision_markers.clear();
-            properties.revision_xml.clear();
-            properties.revision_xml_positions.clear();
-            properties.extra_xml.clear();
-            properties.moved_away = false;
-            properties
-        });
+        // A new row carries only the formatting it writes, as a new cell does.
+        row.properties = last
+            .properties
+            .clone()
+            .map(|mut properties| {
+                properties.revision_markers.clear();
+                properties.revision_xml.clear();
+                properties.revision_xml_positions.clear();
+                properties.extra_xml.clear();
+                properties.moved_away = false;
+                properties.from_source = false;
+                properties
+            })
+            .filter(|properties| *properties != CT_TrPr::default());
         for cell in &last.cells {
             let source = cell.properties.as_ref();
             let mut copy = formatted_empty_cell(cell, source.and_then(|p| p.width.clone()))?;

@@ -1563,7 +1563,10 @@ pub enum VMerge {
 }
 
 /// `CT_TrPr` — Table row properties.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// Two values are equal when they carry the same properties and both, or
+/// neither, write an empty element.
+#[derive(Debug, Clone, Default)]
 pub struct CT_TrPr {
     /// Row height in twips
     pub height: Option<Twips>,
@@ -1605,10 +1608,66 @@ pub struct CT_TrPr {
     /// author, which `Document::accept_all` removes the row for.
     #[doc(hidden)]
     pub moved_away: bool,
+    /// Whether this element was read from a part. A read one is written back
+    /// even when it carries nothing; one built through the API is written
+    /// only when it carries something.
+    #[doc(hidden)]
+    pub from_source: bool,
+}
+
+impl PartialEq for CT_TrPr {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            height,
+            height_rule,
+            header,
+            jc,
+            grid_before,
+            grid_after,
+            width_before,
+            width_after,
+            cell_spacing,
+            hidden,
+            cant_split,
+            cnf_style,
+            revision_markers,
+            revision_xml,
+            revision_xml_positions,
+            extra_xml,
+            moved_away,
+            from_source: _,
+        } = self;
+        *height == other.height
+            && *height_rule == other.height_rule
+            && *header == other.header
+            && *jc == other.jc
+            && *grid_before == other.grid_before
+            && *grid_after == other.grid_after
+            && *width_before == other.width_before
+            && *width_after == other.width_after
+            && *cell_spacing == other.cell_spacing
+            && *hidden == other.hidden
+            && *cant_split == other.cant_split
+            && *cnf_style == other.cnf_style
+            && *revision_markers == other.revision_markers
+            && *revision_xml == other.revision_xml
+            && *revision_xml_positions == other.revision_xml_positions
+            && *extra_xml == other.extra_xml
+            && *moved_away == other.moved_away
+            && self.writes_empty_element() == other.writes_empty_element()
+    }
 }
 
 #[allow(non_snake_case)]
 impl CT_TrPr {
+    /// A `<w:trPr/>` read from a part, written back as it was.
+    pub(crate) fn empty_from_source() -> Self {
+        Self {
+            from_source: true,
+            ..Self::default()
+        }
+    }
+
     pub fn from_xml(reader: &mut Reader<&[u8]>) -> Result<Self> {
         Self::from_xml_with_prefixes_and_owner_bindings(reader, &["w".to_owned()], &[])
     }
@@ -1625,7 +1684,7 @@ impl CT_TrPr {
         word_prefixes: &[String],
         owner_bindings: &[(String, String)],
     ) -> Result<Self> {
-        let mut pr = CT_TrPr::default();
+        let mut pr = CT_TrPr::empty_from_source();
         let mut boundary = 0usize;
         let mut buf = Vec::new();
 
@@ -1635,7 +1694,11 @@ impl CT_TrPr {
                     let name = e.name();
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     let (at, next) = tr_pr_raw_boundary(name.as_ref(), boundary, &prefixes);
-                    if is_word_element(name.as_ref(), b"trHeight", &prefixes) {
+                    // A child without the value it is modelled by stays
+                    // verbatim in the raw branch below.
+                    if is_word_element(name.as_ref(), b"trHeight", &prefixes)
+                        && get_word_val_attr(e, &prefixes)?.is_some()
+                    {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
@@ -1652,18 +1715,19 @@ impl CT_TrPr {
                         }
                     } else if is_word_element(name.as_ref(), b"tblHeader", &prefixes) {
                         pr.header = Some(parse_word_toggle(e, &prefixes)?);
-                    } else if is_word_element(name.as_ref(), b"jc", &prefixes) {
-                        if let Some(val) = get_word_val_attr(e, &prefixes)? {
-                            pr.jc = ST_Jc::from_str(&val).ok();
-                        }
-                    } else if is_word_element(name.as_ref(), b"gridBefore", &prefixes) {
-                        pr.grid_before = get_word_val_attr(e, &prefixes)?
-                            .map(|value| TableScalar::Unsigned.unsigned(&value))
-                            .transpose()?;
-                    } else if is_word_element(name.as_ref(), b"gridAfter", &prefixes) {
-                        pr.grid_after = get_word_val_attr(e, &prefixes)?
-                            .map(|value| TableScalar::Unsigned.unsigned(&value))
-                            .transpose()?;
+                    } else if is_word_element(name.as_ref(), b"jc", &prefixes)
+                        && let Some(jc) = get_word_val_attr(e, &prefixes)?
+                            .and_then(|val| ST_Jc::from_str(&val).ok())
+                    {
+                        pr.jc = Some(jc);
+                    } else if is_word_element(name.as_ref(), b"gridBefore", &prefixes)
+                        && let Some(val) = get_word_val_attr(e, &prefixes)?
+                    {
+                        pr.grid_before = Some(TableScalar::Unsigned.unsigned(&val)?);
+                    } else if is_word_element(name.as_ref(), b"gridAfter", &prefixes)
+                        && let Some(val) = get_word_val_attr(e, &prefixes)?
+                    {
+                        pr.grid_after = Some(TableScalar::Unsigned.unsigned(&val)?);
                     } else if is_word_element(name.as_ref(), b"wBefore", &prefixes) {
                         pr.width_before =
                             Some(CT_TblWidth::from_xml_attrs_with_prefixes(e, &prefixes)?);
@@ -1675,8 +1739,10 @@ impl CT_TrPr {
                             Some(CT_TblWidth::from_xml_attrs_with_prefixes(e, &prefixes)?);
                     } else if is_word_element(name.as_ref(), b"hidden", &prefixes) {
                         pr.hidden = Some(parse_word_toggle(e, &prefixes)?);
-                    } else if is_word_element(name.as_ref(), b"cnfStyle", &prefixes) {
-                        pr.cnf_style = get_word_val_attr(e, &prefixes)?;
+                    } else if is_word_element(name.as_ref(), b"cnfStyle", &prefixes)
+                        && let Some(val) = get_word_val_attr(e, &prefixes)?
+                    {
+                        pr.cnf_style = Some(val);
                     } else if is_word_element(name.as_ref(), b"cantSplit", &prefixes) {
                         pr.cant_split = Some(parse_word_toggle(e, &prefixes)?);
                     } else if is_word_element(name.as_ref(), b"ins", &prefixes)
@@ -1774,7 +1840,8 @@ impl CT_TrPr {
     ) -> Result<()> {
         let _source_scope =
             (role == XmlWriteRole::Source).then(|| crate::text::root_binding_scope(0));
-        if self.is_empty() {
+        let empty = self.is_empty();
+        if empty && !self.from_source {
             return Ok(());
         }
 
@@ -1784,6 +1851,9 @@ impl CT_TrPr {
         } else {
             "w".to_owned()
         };
+        if empty {
+            return root.write(writer, true);
+        }
         root.write(writer, false)?;
 
         // cnfStyle comes first in the schema sequence for both trPr and tcPr.
@@ -1940,6 +2010,10 @@ impl CT_TrPr {
             && self.extra_xml.is_empty()
     }
 
+    fn writes_empty_element(&self) -> bool {
+        self.from_source && self.is_empty()
+    }
+
     fn write_revision_xml_at<W: std::io::Write>(
         &self,
         writer: &mut Writer<W>,
@@ -2021,7 +2095,10 @@ impl ST_VerticalJc {
 }
 
 /// `CT_TcPr` — Table cell properties.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// Two values are equal when they carry the same properties and both, or
+/// neither, write an empty element.
+#[derive(Debug, Clone, Default)]
 pub struct CT_TcPr {
     /// Cell width
     pub width: Option<CT_TblWidth>,
@@ -2048,10 +2125,57 @@ pub struct CT_TcPr {
     /// Unmodelled property children retained at their schema insertion slots.
     #[doc(hidden)]
     pub extra_xml: Vec<(usize, Vec<u8>)>,
+    /// Whether this element was read from a part. A read one is written back
+    /// even when it carries nothing, as the `<w:tcPr/>` Google Docs writes in
+    /// every cell; one built through the API is written only when it carries
+    /// something.
+    #[doc(hidden)]
+    pub from_source: bool,
+}
+
+impl PartialEq for CT_TcPr {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            width,
+            grid_span,
+            h_merge,
+            v_merge,
+            borders,
+            shading,
+            v_align,
+            no_wrap,
+            cell_margin,
+            text_direction,
+            cnf_style,
+            extra_xml,
+            from_source: _,
+        } = self;
+        *width == other.width
+            && *grid_span == other.grid_span
+            && *h_merge == other.h_merge
+            && *v_merge == other.v_merge
+            && *borders == other.borders
+            && *shading == other.shading
+            && *v_align == other.v_align
+            && *no_wrap == other.no_wrap
+            && *cell_margin == other.cell_margin
+            && *text_direction == other.text_direction
+            && *cnf_style == other.cnf_style
+            && *extra_xml == other.extra_xml
+            && self.writes_empty_element() == other.writes_empty_element()
+    }
 }
 
 #[allow(non_snake_case)]
 impl CT_TcPr {
+    /// A `<w:tcPr/>` read from a part, written back as it was.
+    pub(crate) fn empty_from_source() -> Self {
+        Self {
+            from_source: true,
+            ..Self::default()
+        }
+    }
+
     pub fn from_xml(reader: &mut Reader<&[u8]>) -> Result<Self> {
         Self::from_xml_with_prefixes_and_owner_bindings(reader, &["w".to_owned()], &[])
     }
@@ -2068,7 +2192,7 @@ impl CT_TcPr {
         word_prefixes: &[String],
         owner_bindings: &[(String, String)],
     ) -> Result<Self> {
-        let mut pr = CT_TcPr::default();
+        let mut pr = CT_TcPr::empty_from_source();
         let mut boundary = 0;
         let mut buf = Vec::new();
 
@@ -2144,25 +2268,27 @@ impl CT_TcPr {
         let name = e.name();
         if is_word_element(name.as_ref(), b"tcW", word_prefixes) {
             pr.width = Some(CT_TblWidth::from_xml_attrs_with_prefixes(e, word_prefixes)?);
-        } else if is_word_element(name.as_ref(), b"gridSpan", word_prefixes) {
-            if let Some(val) = get_word_val_attr(e, word_prefixes)? {
-                let span = TableScalar::PositiveSpan.unsigned(&val)?;
-                pr.grid_span = Some(span);
-            }
+        } else if is_word_element(name.as_ref(), b"gridSpan", word_prefixes)
+            && let Some(val) = get_word_val_attr(e, word_prefixes)?
+        {
+            let span = TableScalar::PositiveSpan.unsigned(&val)?;
+            pr.grid_span = Some(span);
         } else if is_word_element(name.as_ref(), b"hMerge", word_prefixes) {
             pr.h_merge = Some(get_word_val_attr(e, word_prefixes)?.unwrap_or_default());
         } else if is_word_element(name.as_ref(), b"vMerge", word_prefixes) {
             pr.v_merge = Some(TableScalar::merge(
                 get_word_val_attr(e, word_prefixes)?.as_deref(),
             )?);
-        } else if is_word_element(name.as_ref(), b"vAlign", word_prefixes) {
-            if let Some(val) = get_word_val_attr(e, word_prefixes)? {
-                pr.v_align = Some(ST_VerticalJc::from_str(&val));
-            }
+        } else if is_word_element(name.as_ref(), b"vAlign", word_prefixes)
+            && let Some(val) = get_word_val_attr(e, word_prefixes)?
+        {
+            pr.v_align = Some(ST_VerticalJc::from_str(&val));
         } else if is_word_element(name.as_ref(), b"shd", word_prefixes) {
             pr.shading = Some(CT_Shd::from_xml_attrs_with_prefixes(e, word_prefixes)?);
-        } else if is_word_element(name.as_ref(), b"cnfStyle", word_prefixes) {
-            pr.cnf_style = get_word_val_attr(e, word_prefixes)?;
+        } else if is_word_element(name.as_ref(), b"cnfStyle", word_prefixes)
+            && let Some(val) = get_word_val_attr(e, word_prefixes)?
+        {
+            pr.cnf_style = Some(val);
         } else if is_word_element(name.as_ref(), b"noWrap", word_prefixes) {
             pr.no_wrap = Some(parse_word_toggle(e, word_prefixes)?);
         } else if is_word_element(name.as_ref(), b"tcMar", word_prefixes) {
@@ -2209,6 +2335,7 @@ impl CT_TcPr {
         if self.is_empty() {
             return Ok(());
         }
+        let empty = self.carries_nothing();
 
         let mut start = crate::text::FieldXmlStart::new("w:tcPr", emission)?;
         let prefix = if role == XmlWriteRole::Source {
@@ -2216,6 +2343,9 @@ impl CT_TcPr {
         } else {
             "w".to_owned()
         };
+        if empty {
+            return start.write(writer, true);
+        }
 
         start.write(writer, false)?;
 
@@ -2321,8 +2451,14 @@ impl CT_TcPr {
         Ok(())
     }
 
-    /// Whether these properties write nothing: an empty `w:tcPr` is left out.
+    /// Whether these properties write nothing: an empty `w:tcPr` built through
+    /// the API is left out, while one read from a part is written back.
     pub fn is_empty(&self) -> bool {
+        self.carries_nothing() && !self.from_source
+    }
+
+    /// Whether no property is set, whether or not the element is written.
+    fn carries_nothing(&self) -> bool {
         self.width.is_none()
             && self.grid_span.is_none()
             && self.h_merge.is_none()
@@ -2335,6 +2471,10 @@ impl CT_TcPr {
             && self.text_direction.is_none()
             && self.cnf_style.is_none()
             && self.extra_xml.is_empty()
+    }
+
+    fn writes_empty_element(&self) -> bool {
+        self.from_source && self.carries_nothing()
     }
 }
 
@@ -2735,7 +2875,9 @@ impl CT_Tc {
                         content.push(CellContent::Paragraph(paragraph));
                     } else if is_word_element(name.as_ref(), b"tbl", &prefixes) {
                         content.push(CellContent::Table(CT_Tbl::new()));
-                    } else if !is_word_element(name.as_ref(), b"tcPr", &prefixes) {
+                    } else if is_word_element(name.as_ref(), b"tcPr", &prefixes) {
+                        properties = Some(CT_TcPr::empty_from_source());
+                    } else {
                         extra_xml.push((
                             content.len(),
                             crate::text::raw_with_external_bindings(
@@ -3172,7 +3314,9 @@ impl CT_Row {
                             }
                         }
                         cells.push(cell);
-                    } else if !is_word_element(name.as_ref(), b"trPr", &prefixes) {
+                    } else if is_word_element(name.as_ref(), b"trPr", &prefixes) {
+                        properties = Some(CT_TrPr::empty_from_source());
+                    } else {
                         extra_xml.push((
                             cells.len(),
                             crate::text::raw_with_external_bindings(
@@ -3996,4 +4140,57 @@ pub(crate) fn source_value_is_modeled(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod empty_property_tests {
+    use super::*;
+
+    const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+    fn read(xml: &str) -> CT_Tbl {
+        CT_Tbl::from_xml_fragment_checked(xml.as_bytes()).unwrap()
+    }
+
+    /// One row of one cell, with these row and cell properties.
+    fn table(row: &str, cell: &str) -> CT_Tbl {
+        read(&format!(
+            r#"<w:tbl {W}><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{row}<w:tc>{cell}<w:p/></w:tc></w:tr></w:tbl>"#
+        ))
+    }
+
+    /// The table written, then read again.
+    fn reread(table: &CT_Tbl) -> CT_Tbl {
+        let mut writer = Writer::new(Vec::new());
+        table.to_xml(&mut writer).unwrap();
+        let xml = String::from_utf8(writer.into_inner()).unwrap();
+        read(&xml.replacen("<w:tbl", &format!("<w:tbl {W}"), 1))
+    }
+
+    #[test]
+    fn row_and_cell_properties_read_back_as_the_model_that_wrote_them() {
+        // Empty, as Google Docs writes `w:tcPr` and LibreOffice `w:trPr`.
+        let empty = table("<w:trPr/>", "<w:tcPr></w:tcPr>");
+        assert_eq!(reread(&empty), empty);
+        assert_ne!(empty, table("", ""), "an empty element is not no element");
+
+        // Read empty, then given a value.
+        let mut edited = empty.clone();
+        edited.rows[0].properties.as_mut().unwrap().cant_split = Some(true);
+        edited.rows[0].cells[0].properties.as_mut().unwrap().v_align = Some(ST_VerticalJc::Center);
+        assert_eq!(reread(&edited), edited);
+
+        // Built with a value: the same properties, written the same way.
+        let mut built = table("", "");
+        built.rows[0].properties = Some(CT_TrPr {
+            cant_split: Some(true),
+            ..CT_TrPr::default()
+        });
+        built.rows[0].cells[0].properties = Some(CT_TcPr {
+            v_align: Some(ST_VerticalJc::Center),
+            ..CT_TcPr::default()
+        });
+        assert_eq!(reread(&built), built);
+        assert_eq!(built, edited);
+    }
 }

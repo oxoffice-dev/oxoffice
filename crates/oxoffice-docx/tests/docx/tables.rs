@@ -1244,9 +1244,34 @@ fn a_property_edit_in_place_changes_the_table_and_keeps_its_cells() {
     }
 }
 
+/// A one-cell table whose cell holds these properties and this paragraph.
+fn one_cell_table(properties: &str, paragraph: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{properties}{paragraph}</w:tc></w:tr></w:tbl><w:p/>"#
+    )
+}
+
+#[test]
+fn google_docs_and_libreoffice_reports_render_as_templates() {
+    // Google Docs writes an empty `w:tcPr` in every table cell, LibreOffice
+    // an empty `w:trPr` in every row.
+    for name in ["google/report.docx", "libreoffice/report.docx"] {
+        let mut doc = corpus_doc(name);
+        let before = cell_texts(&doc, 0);
+        assert_eq!(
+            doc.render_template(&serde_json::json!({}))
+                .unwrap_or_else(|e| panic!("{name}: {e}")),
+            0,
+            "{name}"
+        );
+        let doc = reopen(&mut doc);
+        assert_eq!(cell_texts(&doc, 0), before, "{name}");
+    }
+}
+
 #[test]
 fn a_cell_property_is_edited_in_place_unless_it_is_the_cells_first() {
-    // Word writes the width of every cell, Google Docs none.
+    // Word writes the width of every cell, Google Docs an empty `w:tcPr`.
     let mut word = corpus_doc("word/report.docx");
     let edited = word
         .edit_table_properties_in_place(0, |table| {
@@ -1263,9 +1288,8 @@ fn a_cell_property_is_edited_in_place_unless_it_is_the_cells_first() {
         Some("FFFF00")
     );
 
-    // A first property writes a `w:tcPr`, which moves the cell's paragraphs.
+    // Google's empty `w:tcPr` is written already, so a property fills it.
     let mut google = corpus_doc("google/report.docx");
-    let before = google.to_bytes().expect("the report saves");
     let edited = google
         .edit_table_properties_in_place(0, |table| {
             table
@@ -1274,8 +1298,26 @@ fn a_cell_property_is_edited_in_place_unless_it_is_the_cells_first() {
                 .set_shading_checked("FFFF00")
         })
         .expect("the edit runs");
+    assert_eq!(edited, Some(()));
+    let google = reopen(&mut google);
+    assert_eq!(
+        google.table(0).unwrap().cell(1, 0).unwrap().shading_fill(),
+        Some("FFFF00")
+    );
+
+    // A first property writes a `w:tcPr`, which moves the cell's paragraphs.
+    let mut bare = doc_with_body(&one_cell_table("", "<w:p/>"));
+    let before = bare.to_bytes().expect("the document saves");
+    let edited = bare
+        .edit_table_properties_in_place(0, |table| {
+            table
+                .cell(0, 0)
+                .expect("the cell")
+                .set_shading_checked("FFFF00")
+        })
+        .expect("the edit runs");
     assert_eq!(edited, None);
-    assert_eq!(google.to_bytes().expect("the report saves"), before);
+    assert_eq!(bare.to_bytes().expect("the document saves"), before);
 }
 
 #[test]
@@ -1324,4 +1366,106 @@ fn a_failed_or_panicking_in_place_table_edit_leaves_the_table_as_it_was() {
     assert!(panicked.is_err(), "the panic reaches the caller");
     assert!(doc.edit_table_properties_in_place(99, |_| Ok(())).is_err());
     assert_eq!(doc.to_bytes().expect("the report saves"), before);
+}
+
+#[test]
+fn a_template_tag_in_a_cell_with_empty_properties_renders() {
+    let mut doc = doc_with_body(&one_cell_table(
+        "<w:tcPr/>",
+        "<w:p><w:r><w:t>{{ v }}</w:t></w:r></w:p>",
+    ));
+    assert_eq!(
+        doc.render_template(&serde_json::json!({ "v": "V" }))
+            .unwrap(),
+        1
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(cell_texts(&doc, 0), [["V"]]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("<w:tc><w:tcPr/><w:p"), "{xml}");
+}
+
+#[test]
+fn a_save_keeps_empty_cell_properties() {
+    for properties in ["<w:tcPr/>", "<w:tcPr></w:tcPr>"] {
+        let body = one_cell_table(properties, "<w:p/>");
+        let doc = reopen(&mut doc_with_body(&body));
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert!(
+            xml.contains(&format!("<w:tc>{properties}<w:p/></w:tc>")),
+            "{xml}"
+        );
+
+        // An edit of the cell writes it again from the model.
+        let mut doc = doc_with_body(&body);
+        doc.try_set_cell_text(0, 0, 0, "x").unwrap();
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert!(xml.contains("<w:tc><w:tcPr/><w:p>"), "{xml}");
+        assert_eq!(cell_texts(&doc, 0), [["x"]]);
+    }
+}
+
+#[test]
+fn a_save_keeps_cell_properties_written_without_a_value() {
+    for properties in [
+        "<w:tcPr><w:vAlign/></w:tcPr>",
+        "<w:tcPr><w:gridSpan/></w:tcPr>",
+        "<w:tcPr><w:cnfStyle/><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vAlign/></w:tcPr>",
+    ] {
+        let mut doc = doc_with_body(&one_cell_table(properties, "<w:p/>"));
+        doc.try_set_cell_text(0, 0, 0, "x").unwrap();
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert!(xml.contains(&format!("<w:tc>{properties}<w:p>")), "{xml}");
+    }
+}
+
+#[test]
+fn a_save_keeps_empty_row_properties() {
+    // Children written without the value they are read by stay as written.
+    let valueless = r#"<w:trPr><w:cnfStyle/><w:gridBefore/><w:gridAfter/><w:trHeight w:hRule="exact"/><w:jc/></w:trPr>"#;
+    for (properties, saved) in [
+        ("<w:trPr/>", "<w:trPr/>"),
+        ("<w:trPr></w:trPr>", "<w:trPr/>"),
+        (valueless, valueless),
+    ] {
+        let body = format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{properties}<w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
+        );
+        let mut doc = doc_with_body(&body);
+        doc.try_set_cell_text(0, 0, 0, "x").unwrap();
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert!(xml.contains(&format!("<w:tr>{saved}<w:tc>")), "{xml}");
+    }
+}
+
+#[test]
+fn a_row_added_beside_empty_properties_writes_none() {
+    // A new row and its cells write only the formatting they carry.
+    let mut doc = doc_with_body(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr/><w:tc><w:tcPr/><w:p/></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    doc.table_mut(0).unwrap().add_row().unwrap();
+    // The new row has no properties in the model either, so an export does
+    // not report row formatting it would drop.
+    let odt = doc.to_odt_bytes().unwrap();
+    let paths = odt
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.path.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !paths.iter().any(|path| path.ends_with("row[1]/trPr")),
+        "{paths:?}"
+    );
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(
+            "<w:tr><w:trPr/><w:tc><w:tcPr/><w:p/></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc></w:tr>"
+        ),
+        "{xml}"
+    );
 }
