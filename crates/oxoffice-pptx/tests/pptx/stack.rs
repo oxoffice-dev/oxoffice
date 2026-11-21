@@ -4,8 +4,9 @@
 //! some of these values, sometimes several copies: when a text list style
 //! carried its ten levels inline, a slide master was 82 KB and opening a deck
 //! needed about 820 KiB of stack, most of the 1 MiB a Windows program that
-//! embeds Python gives its main thread. `scripts/wheel_smoke.py` measures the
-//! stack of each release wheel; this test catches the cause early.
+//! embeds Python gives its main thread. The release workflow is to measure
+//! the stack of each wheel it builds (#15); this test catches the cause in
+//! every pull request.
 
 use std::mem::size_of;
 
