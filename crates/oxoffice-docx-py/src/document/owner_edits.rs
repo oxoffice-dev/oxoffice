@@ -2127,6 +2127,124 @@ impl PyDocument {
         }
     }
 
+    /// Append a list item. Its numbering half runs in place first, and the
+    /// facade keeps a journal of it; the paragraph is then published by the
+    /// body splice when the body allows one, as `add_paragraph` publishes
+    /// its paragraph, and by a checked revision otherwise. Either way it
+    /// keeps the handles `add_paragraph` keeps. A step that fails or panics
+    /// before the paragraph reaches the document undoes the numbering half,
+    /// so the document is left as it was. After it, only the commit of the
+    /// splice remains, the window `add_paragraph` has too.
+    pub(super) fn append_list_item(
+        slf: Py<Self>,
+        py: Python<'_>,
+        kind: oxoffice_docx::ListItemKind,
+        text: &str,
+        level: u32,
+        operation: &'static str,
+    ) -> PyResult<Py<PyParagraph>> {
+        let mut document = slf.borrow_mut(py);
+        document.refuse_unsavable_body_edit(py)?;
+        let index = document.inner.paragraph_count();
+        let slot = document.inner.content_count();
+        let (num_id, journal) = document
+            .inner
+            .begin_list_item(kind, text, level)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let paragraph = oxoffice_docx::Document::list_item_paragraph(text, num_id, level);
+        let staged = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::stage_appended_paragraph(
+                &slf,
+                py,
+                &mut document,
+                index,
+                slot,
+                &paragraph,
+                operation,
+            )
+        }));
+        let staged = match staged {
+            Ok(Ok(staged)) => staged,
+            Ok(Err(error)) => {
+                document.inner.undo_numbering_edit(journal);
+                return Err(error);
+            }
+            Err(panic) => {
+                document.inner.undo_numbering_edit(journal);
+                std::panic::resume_unwind(panic)
+            }
+        };
+        match staged {
+            StagedAppend::Splice(prepared, result) => {
+                document.inner.append_body_paragraph(paragraph);
+                debug_assert_eq!(prepared.plan.paragraph, index);
+                document.commit_body_splice(*prepared, &WordPublication::AppendBody)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(slot, true);
+                Ok(result)
+            }
+            StagedAppend::Revision(candidate, result) => {
+                document.install_inner(*candidate);
+                Ok(result)
+            }
+        }
+    }
+
+    /// Every fallible step of publishing `paragraph`, a plain paragraph made
+    /// outside the document, appended at body `slot` as paragraph `index`,
+    /// before it reaches the document: the prepared splice, or the committed
+    /// revision of a candidate that holds it.
+    #[allow(clippy::too_many_arguments)]
+    fn stage_appended_paragraph(
+        slf: &Py<Self>,
+        py: Python<'_>,
+        document: &mut PyDocument,
+        index: usize,
+        slot: usize,
+        paragraph: &oxoffice_docx_oxml::CT_P,
+        operation: &'static str,
+    ) -> PyResult<StagedAppend> {
+        let publication = WordPublication::AppendBody;
+        let path = smallvec![PathSeg::Body(0), PathSeg::Para(index)];
+        if let Ok(Some(facts)) = document.inner.direct_body_paragraph_facts(paragraph)
+            && let Some(plan) = document.plan_body_splice(
+                py,
+                BodySplice {
+                    slot,
+                    removed: 0,
+                    inserted: Some(SplicedBodyItem::Paragraph(facts.0, facts.1)),
+                },
+            )?
+        {
+            let prepared = document.prepare_body_splice(plan, operation, &publication)?;
+            let path = document
+                .revisions
+                .capture_prepared(&prepared.revision, path)
+                .map_err(revision_to_pyerr)?;
+            let result = Py::new(
+                py,
+                PyParagraph::new(slf.clone_ref(py), path)
+                    .bind_prepared_splice(document, &prepared)?,
+            )?;
+            return Ok(StagedAppend::Splice(Box::new(prepared), result));
+        }
+        let mut candidate = document.inner.clone_for_staging();
+        candidate.append_body_paragraph(paragraph.clone());
+        let prepared = document.prepare_word_revision(py, &candidate, operation, publication)?;
+        let path = document
+            .revisions
+            .capture_prepared(&prepared.revision, path)
+            .map_err(revision_to_pyerr)?;
+        let result = Py::new(
+            py,
+            PyParagraph::new(slf.clone_ref(py), path)
+                .bind_prepared(py, document, &prepared, &candidate, None)?,
+        )?;
+        document.commit_word_revision(prepared)?;
+        Ok(StagedAppend::Revision(Box::new(candidate), result))
+    }
+
     pub(super) fn append_paragraph_candidate(
         slf: Py<Self>,
         py: Python<'_>,

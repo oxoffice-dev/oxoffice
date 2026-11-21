@@ -492,16 +492,6 @@ impl DocumentIdentifiers {
         reserve_u32(&mut self.drawing_ids, 1, "drawing")
     }
 
-    pub(super) fn reserve_numbering_ids(&mut self) -> Result<(u32, u32)> {
-        let mut abstract_ids = self.abstract_numbering_ids.clone();
-        let mut instance_ids = self.numbering_instance_ids.clone();
-        let abstract_id = reserve_u32(&mut abstract_ids, 0, "abstract numbering")?;
-        let instance_id = reserve_u32(&mut instance_ids, 1, "numbering instance")?;
-        self.abstract_numbering_ids = abstract_ids;
-        self.numbering_instance_ids = instance_ids;
-        Ok((abstract_id, instance_id))
-    }
-
     pub(super) fn reserve_abstract_numbering_id(&mut self) -> Result<u32> {
         reserve_u32(&mut self.abstract_numbering_ids, 0, "abstract numbering")
     }
@@ -1188,6 +1178,29 @@ pub(super) fn reserve_u32(
         )));
     }
     Ok(candidate)
+}
+
+/// [`reserve_u32`], or the lowest free identifier at or above `minimum`
+/// when the one after the highest occupied overflows: content can name the
+/// last identifier for a list the document does not define.
+pub(super) fn reserve_u32_or_lowest_free(
+    occupied: &mut HashSet<u32>,
+    minimum: u32,
+    category: &str,
+) -> Result<u32> {
+    let after_highest = occupied
+        .iter()
+        .copied()
+        .max()
+        .is_some_and(|highest| highest.checked_add(1).is_some());
+    if occupied.is_empty() || after_highest {
+        return reserve_u32(occupied, minimum, category);
+    }
+    let free = (minimum..=u32::MAX)
+        .find(|id| !occupied.contains(id))
+        .ok_or_else(|| Error::Other(format!("{category} id range is exhausted")))?;
+    occupied.insert(free);
+    Ok(free)
 }
 
 fn ensure_numeric_relationship_capacity(maximum: Option<u32>, required: usize) -> Result<()> {
