@@ -1259,8 +1259,10 @@ class Document:
         names a rebuilt table of contents gives its heading bookmarks are no
         change: a body bookmark both documents hold keeps this document's id, a
         heading paired with one of this document's takes its ``_Toc`` name, a
-        new heading takes a fresh one where this document uses its own, and
-        the links and page references of ``edited`` follow them.
+        new heading takes a fresh one where this document uses its own, and the
+        links and page references of ``edited`` follow them. A footnote whose
+        reference moved is deleted with its old reference and inserted again,
+        under a new id, with the new one, as Word shows it.
         """
     @property
     def comments(self) -> tuple[Comment, ...]: ...

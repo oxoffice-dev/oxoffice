@@ -1003,9 +1003,11 @@ impl Document {
     /// Bookmark ids, which Word renumbers on every save, and the `_Toc` names
     /// a rebuilt table of contents gives its heading bookmarks are no change:
     /// a body bookmark both documents hold keeps this document's id, a heading
-    /// paired with one of this document's takes its `_Toc` name, a new
-    /// heading takes a fresh one where this document uses its own, and the
-    /// links and page references of `edited` follow them.
+    /// paired with one of this document's takes its `_Toc` name, a new heading
+    /// takes a fresh one where this document uses its own, and the links and
+    /// page references of `edited` follow them. A footnote whose reference
+    /// moved is deleted with its old reference and inserted again, under a new
+    /// id, with the new one, as Word shows it.
     pub fn compare(
         &mut self,
         edited: &Document,
@@ -1028,6 +1030,7 @@ impl Document {
     ) -> Result<Vec<ComparisonDiagnostic>> {
         validate_revision_timestamp(timestamp)?;
         validate_comparison_options(options)?;
+        let edited_input = edited;
         let mut original = comparison_input(self)?;
         let mut edited = comparison_input(edited)?;
         if !story_ignored(options, ComparisonStoryKind::Footnote) {
@@ -1361,13 +1364,28 @@ impl Document {
             };
             candidate.package.set_part(&story.part_name, tracked_story);
         }
-        compare_footnote_parts(
+        let moved = compare_footnote_parts(
             &original,
             &edited,
             &mut candidate,
             &mut metadata,
             &mut diagnostics,
         )?;
+        if !moved.is_empty() {
+            // A footnote whose reference moved to another site would be
+            // referenced twice, from the deleted original site and from the
+            // inserted edited one. As Word does, the edited note becomes a
+            // new note: the comparison runs again with it under a new id, so
+            // the original note is deleted with its reference and the edited
+            // one inserted with its own. Nothing was written to this document.
+            let Some(renumbered) = renumbered_footnotes(&original, edited_input, &moved)? else {
+                return Err(Error::Other(format!(
+                    "comparison would give footnote {} more physical references than either input: its reference moved to another site",
+                    moved[0]
+                )));
+            };
+            return self.compare_with_options(&renumbered, author, timestamp, options);
+        }
         if snapshot_comments {
             let revision_id = metadata.ids.allocate()?;
             let mut carried_comments = edited_comments.clone();
@@ -6365,20 +6383,20 @@ fn note_fragment_envelope(xml: &str, bindings: &NamespaceBindings, note: bool) -
     String::from_utf8(writer.into_inner()).map_err(utf8_error)
 }
 
-/// A footnote that both inputs reference must not reach the pending result
-/// with more physical references than either input gives it. That happens
-/// when its reference moves to another site, for example a new note inserted
+/// The footnotes both inputs reference that would reach the pending result
+/// with more physical references than either input gives them. That happens
+/// when a reference moves to another site, for example a new note inserted
 /// before it takes its id in the edited input: the deleted original reference
 /// and the inserted edited one then name one owner, a shared reference that
 /// Word for Mac 16.115 cannot open, and the owner's text change pairs two
-/// different notes. Refuse before any note custody is written.
-fn refuse_shared_pending_references(
+/// different notes. Found before any note custody is written.
+fn moved_pending_references(
     candidate: &Document,
     left_refs: &[FootnoteReferenceSite],
     right_refs: &[FootnoteReferenceSite],
     left_normal: &BTreeMap<i32, &FootnoteOwner>,
     right_normal: &BTreeMap<i32, &FootnoteOwner>,
-) -> Result<()> {
+) -> Result<Vec<i32>> {
     let count = |sites: &[FootnoteReferenceSite], id: i32| {
         sites.iter().filter(|site| site.id == id).count()
     };
@@ -6389,19 +6407,87 @@ fn refuse_shared_pending_references(
         .copied()
         .collect::<Vec<_>>();
     if common.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let pending = footnote_reference_sites(candidate)?;
-    for id in common {
-        let most = count(left_refs, id).max(count(right_refs, id));
-        let actual = count(&pending, id);
-        if actual > most {
-            return Err(Error::Other(format!(
-                "comparison would give footnote {id} {actual} physical references where each input has at most {most}: its reference moved to another site"
-            )));
+    Ok(common
+        .into_iter()
+        .filter(|&id| count(&pending, id) > count(left_refs, id).max(count(right_refs, id)))
+        .collect())
+}
+
+/// A copy of the edited input with each of these footnotes under a new id,
+/// in its footnotes part and at its references, or None when that cannot be
+/// done faithfully: a reference outside the main story, or the note custody
+/// of an earlier comparison, which keeps its notes' ids.
+fn renumbered_footnotes(
+    original: &Document,
+    edited: &Document,
+    moved: &[i32],
+) -> Result<Option<Document>> {
+    let mut renumbered = comparison_input(edited)?;
+    let Some(part) = FootnotePart::of(&renumbered)? else {
+        return Ok(None);
+    };
+    if !note_markers(&renumbered)?.is_empty()
+        || footnote_reference_sites(&renumbered)?
+            .iter()
+            .any(|site| moved.contains(&site.id) && site.part != renumbered.doc_part_name)
+    {
+        return Ok(None);
+    }
+    let mut next = FootnotePart::of(original)?
+        .iter()
+        .chain([&part])
+        .flat_map(|part| part.owners.iter().filter_map(|owner| owner.id))
+        .max()
+        .unwrap_or(0);
+    let mut ids = HashMap::new();
+    for &id in moved {
+        next = next
+            .checked_add(1)
+            .ok_or_else(|| Error::Other("comparison footnote ids are exhausted".into()))?;
+        ids.insert(id, next);
+    }
+    let notes = rewrite_word_ids(part.xml.as_bytes(), "footnote", &ids)?;
+    crate::document::set_story_source_xml(&mut renumbered, &part.name, notes)?;
+    let main = renumbered.doc_part_name.clone();
+    let body = rewrite_word_ids(
+        renumbered
+            .package
+            .get_part(&main)
+            .ok_or_else(|| Error::Other("comparison input has no main part".into()))?,
+        "footnoteReference",
+        &ids,
+    )?;
+    crate::document::set_story_source_xml(&mut renumbered, &main, body)?;
+    Ok(Some(renumbered))
+}
+
+/// `xml` with the `w:id` of every Word element of this local name mapped.
+fn rewrite_word_ids(xml: &[u8], local: &str, ids: &HashMap<i32, i32>) -> Result<Vec<u8>> {
+    let tree = crate::revision::XmlTree::parse(xml)?;
+    let mut edits = Vec::new();
+    for (index, node) in tree.elements.iter().enumerate() {
+        if !node.word || node.local != local {
+            continue;
+        }
+        let updated = rewritten_opening(&tree, xml, index, |name, value| {
+            let id = std::str::from_utf8(value).ok()?.parse::<i32>().ok()?;
+            (name == "id")
+                .then(|| ids.get(&id))
+                .flatten()
+                .map(|id| id.to_string().into_bytes())
+        })?;
+        if let Some(updated) = updated {
+            edits.push((node.start..node.open_end, updated));
         }
     }
-    Ok(())
+    let mut updated = xml.to_vec();
+    for (range, value) in edits.into_iter().rev() {
+        updated.splice(range, value);
+    }
+    Ok(updated)
 }
 
 fn compare_footnote_parts(
@@ -6410,14 +6496,14 @@ fn compare_footnote_parts(
     candidate: &mut Document,
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
-) -> Result<()> {
+) -> Result<Vec<i32>> {
     if story_ignored(metadata.options, ComparisonStoryKind::Footnote) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let left = FootnotePart::of(original)?;
     let right = FootnotePart::of(edited)?;
     if left.is_none() && right.is_none() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     // Generated Word markup must carry its own binding beside retained aliases
     // and producer-local shadows in the related part.
@@ -6443,13 +6529,16 @@ fn compare_footnote_parts(
         .unwrap_or_else(|| empty.clone());
     let left_refs = footnote_reference_sites(original)?;
     let right_refs = footnote_reference_sites(edited)?;
-    refuse_shared_pending_references(
+    let moved = moved_pending_references(
         candidate,
         &left_refs,
         &right_refs,
         &left_normal,
         &right_normal,
     )?;
+    if !moved.is_empty() {
+        return Ok(moved);
+    }
     let added = right
         .as_ref()
         .map(|part| {
@@ -6631,7 +6720,7 @@ fn compare_footnote_parts(
     if emitted {
         validate_footnote_custody(candidate, &crate::revision::RevisionScope::All)?;
     }
-    Ok(())
+    Ok(Vec::new())
 }
 
 fn close_note_revision_headers(xml: &str, bindings: &NamespaceBindings) -> Result<String> {
