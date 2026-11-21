@@ -5160,7 +5160,6 @@ pub struct ScopedWordSource {
     word_source_map: WordSourceMap,
     word_events: Vec<crate::text::TemplateWordEvent>,
     constructors: Option<std::sync::Arc<ConstructorFailures>>,
-    payload: Option<Box<ImportedPayload>>,
     operation: std::sync::Arc<()>,
 }
 
@@ -5192,43 +5191,9 @@ impl ScopedWordSource {
         coverage.add_ordinary_ranges(current.ordinary.clone());
         coverage
     }
-
-    fn imported_owner_kind(&self, owner: &std::ops::Range<usize>) -> Option<bool> {
-        // The usual Field owner is already committed in this source domain.
-        // Avoid cloning every other Field for each small scalar event.
-        if self
-            .publication
-            .lock()
-            .expect("publication coverage poisoned")
-            .covers_ranges(std::slice::from_ref(owner))
-        {
-            return Some(true);
-        }
-        let coverage = self.current_publication();
-        if coverage.covers_ranges(std::slice::from_ref(owner)) {
-            return Some(true);
-        }
-        let first = coverage
-            .ordinary
-            .partition_point(|range| range.end <= owner.start);
-        coverage
-            .ordinary
-            .get(first)
-            .is_some_and(|range| range.start <= owner.start && owner.end <= range.end)
-            .then_some(false)
-    }
 }
 
-// This binding is inseparable from the produced owned buffer. Only the moved
-// rewrite path can consume it. A Weak parent retains no source/model bytes.
-struct ImportedPayload {
-    parent: std::sync::Weak<std::sync::Mutex<WordPublicationCoverage>>,
-    owner: std::ops::Range<usize>,
-    // Some(len), including zero, is exact Field prepayment. None is ordinary.
-    prepaid: Option<usize>,
-}
-
-// Both carrier assembly and imported splicing use this one byte/map recipe.
+// Carrier assembly uses this one byte/map recipe.
 // The caller chooses its actual admission boundary before materialization.
 struct SourceAssembly<'s> {
     chunks: Vec<&'s [u8]>,
@@ -5802,64 +5767,6 @@ impl<'a> ScopedWordOperation<'a> {
         self.template_copy_work.reserve(bytes)
     }
 
-    /// Serialize only a current paragraph frozen at checked-operation ingress.
-    /// Its retained/current records are distinct from original OPC ranges.
-    pub fn source_model_paragraph(
-        &mut self,
-        paragraph: &'a CT_P,
-    ) -> Result<(CT_P, ScopedWordSource)> {
-        let owner = std::ptr::from_ref(paragraph) as usize;
-        if !self
-            .current_paragraphs
-            .get(&owner)
-            .is_some_and(|frozen| std::ptr::eq(*frozen, paragraph))
-        {
-            return Err(OxmlError::InvalidValue(
-                "paragraph is not in the frozen operation input".into(),
-            ));
-        }
-        admit_word_model(WordOwner::Paragraph(paragraph))?;
-        let mut roots = paragraph.writer_field_roots();
-        roots.extend(
-            crate::text::ordered_normalization_children(paragraph)?
-                .into_iter()
-                .map(|(field, _)| field),
-        );
-        self.field_work.register_model_fields(roots)?;
-        self.field_work
-            .register_model_result_properties(paragraph)?;
-        let mut prepared = paragraph.clone();
-        prepared.normalize_field_owners_in(&mut self.field_work)?;
-        let mut writer = quick_xml::Writer::new(self.field_work.model_source_output());
-        prepared
-            .write_xml_core_in(
-                &mut writer,
-                None,
-                crate::text::XmlWriteRole::Source,
-                None,
-                &mut self.field_work,
-                None,
-            )
-            .map_err(|error| self.field_work.writer_error(error))?;
-        let (bytes, source_map) = writer.into_inner().into_mapped_parts();
-        // This is constructor policy inventory of a produced buffer, never an
-        // ingress registration or credit for that generated buffer.
-        let admitted = admit_word_source(&bytes, &[], None, None)?;
-        let source = ScopedWordSource {
-            publication: source_map.publication_output(),
-            initial_delivery: false,
-            word_source_map: WordSourceMap::generated(bytes.len()),
-            source_map,
-            word_events: Vec::new(),
-            constructors: Some(admitted.constructors),
-            bytes,
-            payload: None,
-            read_facts: Default::default(),
-            operation: std::sync::Arc::clone(&self.identity),
-        };
-        Ok((prepared, source))
-    }
-
     /// Select only an original entry frozen at this checked operation's ingress.
     pub fn source_part(
         &mut self,
@@ -5879,7 +5786,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events: Vec::new(),
             constructors: Some(std::sync::Arc::new(constructors)),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         })
@@ -5900,7 +5806,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events: Vec::new(),
             constructors: Some(std::sync::Arc::new(constructors)),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         })
@@ -6247,7 +6152,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: Some(admitted.constructors),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         })
@@ -6288,7 +6192,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: None,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
@@ -6352,7 +6255,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: None,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
@@ -6412,7 +6314,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: Some(admitted.constructors),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         })
@@ -6465,7 +6366,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: None,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
@@ -6512,7 +6412,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: None,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
@@ -6639,52 +6538,10 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: None,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
         self.declare_source_w14_on_root(source)
-    }
-
-    /// Emit the actual glossary structural edit recipe with its source witnesses.
-    pub fn source_model_glossary(
-        &mut self,
-        glossary: &crate::glossary::CT_GlossaryDocument,
-        text_origins: &[(&crate::text::CT_Text, &'a crate::text::CT_Text)],
-        field_origins: &[(&crate::text::Field, &'a crate::text::Field)],
-        raw_origins: &[(&[u8], &'a [u8])],
-    ) -> Result<ScopedWordSource> {
-        self.validate_template_word_origins(text_origins, field_origins, raw_origins)?;
-        glossary.validate_resource_limits()?;
-        self.register_template_model_fields(
-            glossary
-                .doc_parts
-                .iter()
-                .map(|part| WordOwner::Body(&part.body))
-                .collect(),
-            field_origins,
-        )?;
-        let lease = self.field_work.template_word_source_context(
-            text_origins,
-            field_origins,
-            raw_origins,
-        )?;
-        let output = glossary.to_xml_in(Some(lease.work))?;
-        drop(lease);
-        let admitted = admit_word_source(&output.bytes, &[], None, None)?;
-        let source_map = output.source_map.expect("scoped glossary map");
-        Ok(ScopedWordSource {
-            publication: source_map.publication_output(),
-            initial_delivery: false,
-            word_source_map: WordSourceMap::generated(output.bytes.len()),
-            bytes: output.bytes,
-            source_map,
-            word_events: output.events,
-            constructors: Some(admitted.constructors),
-            payload: None,
-            read_facts: Default::default(),
-            operation: std::sync::Arc::clone(&self.identity),
-        })
     }
 
     fn original_word_source_map(&self, source: &WordSourceMap) -> Result<WordSourceMap> {
@@ -6742,7 +6599,6 @@ impl<'a> ScopedWordOperation<'a> {
             word_source_map: WordSourceMap::original(start..end),
             word_events: Vec::new(),
             constructors: Some(admitted.constructors),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         })
@@ -6764,7 +6620,7 @@ impl<'a> ScopedWordOperation<'a> {
         coverage.add_ranges(assembly.coverage.fields.clone());
         let copied = coverage.copied_field_bytes(assembly.length)?;
         // Admission and all fallible map/length preparation precede the one
-        // actual copy reservation. Imported rewrite has its own reservation.
+        // actual copy reservation.
         self.field_work.reserve_source_publication_copy(
             &assembly.source_map,
             &coverage.fields,
@@ -6918,7 +6774,6 @@ impl<'a> ScopedWordOperation<'a> {
             word_source_map: assembly.word_source_map,
             word_events: assembly.word_events,
             constructors,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         }
@@ -7023,7 +6878,6 @@ impl<'a> ScopedWordOperation<'a> {
             bytes,
             word_events,
             constructors: Some(constructors),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         })
@@ -7176,76 +7030,6 @@ impl<'a> ScopedWordOperation<'a> {
         Ok(notes)
     }
 
-    /// Emit the actual note-family model paired with its successful reader.
-    #[doc(hidden)]
-    pub fn source_model_notes_from_read(
-        &mut self,
-        notes: &crate::footnotes::CT_Footnotes,
-        endnotes: bool,
-        source: &ScopedWordSource,
-    ) -> Result<ScopedWordSource> {
-        self.check_source(source)?;
-        let reads = source
-            .read_facts
-            .lock()
-            .expect("returned Word facts poisoned");
-        let reads = reads
-            .as_ref()
-            .ok_or_else(|| OxmlError::InvalidValue("source has no successful model read".into()))?;
-        let mut texts = Vec::new();
-        let mut raws = Vec::new();
-        let mut owners = Vec::new();
-        for (index, note) in notes.footnotes.iter().enumerate() {
-            for paragraph in &note.paragraphs {
-                admit_word_model(WordOwner::Paragraph(paragraph))?;
-                owners.push(WordOwner::Paragraph(paragraph));
-            }
-            if let Some(paragraphs) = reads.notes.get(index) {
-                for (index, maps) in paragraphs {
-                    let paragraph = note.paragraphs.get(*index).ok_or_else(|| {
-                        OxmlError::InvalidValue("returned note paragraph path changed".into())
-                    })?;
-                    let (child_texts, child_raws) =
-                        returned_block_inputs(WordOwner::Paragraph(paragraph), maps)?;
-                    texts.extend(child_texts);
-                    raws.extend(child_raws);
-                }
-            }
-        }
-        let fields = self.template_model_field_origins(owners.clone(), &[]);
-        self.register_template_model_fields(owners, &fields)?;
-        let (output, lease) = self
-            .field_work
-            .template_read_source_output(&texts, &raws, &fields)?;
-        let mut writer = Writer::new(output);
-        let (root, item) = if endnotes {
-            ("w:endnotes", "w:endnote")
-        } else {
-            ("w:footnotes", "w:footnote")
-        };
-        notes.write_xml_root_in(&mut writer, root, item, Some(lease.work))?;
-        let (bytes, source_map, word_events) = writer.into_inner().into_word_parts();
-        drop(lease);
-        let source = ScopedWordSource {
-            publication: source_map.publication_output(),
-            initial_delivery: false,
-            word_source_map: WordSourceMap::generated(bytes.len()),
-            bytes,
-            source_map,
-            word_events,
-            constructors: None,
-            payload: None,
-            read_facts: Default::default(),
-            operation: std::sync::Arc::clone(&self.identity),
-        };
-        let mut source = self.declare_source_w14_on_root(source)?;
-        if source.constructors.is_none() {
-            source.constructors =
-                Some(admit_word_source(&source.bytes, &[], None, None)?.constructors);
-        }
-        Ok(source)
-    }
-
     /// Emit exactly the selected note from its actual reader vector position.
     #[doc(hidden)]
     pub fn source_model_note_from_read(
@@ -7311,7 +7095,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: None,
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
@@ -7409,7 +7192,6 @@ impl<'a> ScopedWordOperation<'a> {
                 source_map,
                 word_events: Vec::new(),
                 constructors,
-                payload: None,
                 read_facts: Default::default(),
                 operation: std::sync::Arc::clone(&self.identity),
             },
@@ -7591,7 +7373,6 @@ impl<'a> ScopedWordOperation<'a> {
             source_map,
             word_events,
             constructors: Some(admitted.constructors),
-            payload: None,
             read_facts: Default::default(),
             operation: std::sync::Arc::clone(&self.identity),
         };
@@ -7644,168 +7425,6 @@ impl<'a> ScopedWordOperation<'a> {
             .expect("field origin registry poisoned")
             .commit_publication_owner(WordOwner::Paragraph(&paragraph), &admitted.source_map);
         Ok(paragraph)
-    }
-
-    /// Produce an import scalar under a proved whole current owner.
-    /// Raw mode deliberately leaves XML validation to the existing later reader.
-    #[doc(hidden)]
-    pub fn source_imported_field_xml(
-        &mut self,
-        source: &ScopedWordSource,
-        owner: std::ops::Range<usize>,
-        value: &str,
-        escape: bool,
-    ) -> Result<ScopedWordSource> {
-        self.check_source(source)?;
-        if self.field_work.resource_refused() {
-            return Err(self.field_work.writer_error(OxmlError::InvalidValue(
-                "scoped operation resource admission refused".into(),
-            )));
-        }
-        if owner.start >= owner.end || owner.end > source.bytes.len() {
-            return Err(OxmlError::InvalidValue(
-                "imported scalar owner range is invalid".into(),
-            ));
-        }
-        let field = source.imported_owner_kind(&owner).ok_or_else(|| {
-            OxmlError::InvalidValue("imported scalar owner lacks proved whole ownership".into())
-        })?;
-        let bytes = self.field_work.produce_imported_xml(value, escape, field)?;
-        let mut publication = WordPublicationCoverage::default();
-        if field && !bytes.is_empty() {
-            publication.add_ranges(std::iter::once(0..bytes.len()).collect());
-        }
-        let length = bytes.len();
-        Ok(ScopedWordSource {
-            initial_delivery: false,
-            bytes,
-            publication: std::sync::Arc::new(std::sync::Mutex::new(publication)),
-            source_map: WordSourceMap::generated(length),
-            word_source_map: WordSourceMap::generated(length),
-            word_events: Vec::new(),
-            constructors: None,
-            payload: Some(Box::new(ImportedPayload {
-                parent: std::sync::Arc::downgrade(&source.publication),
-                owner,
-                prepaid: field.then_some(length),
-            })),
-            read_facts: Default::default(),
-            operation: std::sync::Arc::clone(&self.identity),
-        })
-    }
-
-    /// Consume only actual scalar payloads produced for this exact parent.
-    /// Unchanged pieces retain their maps. Replacements grant no input credit.
-    #[doc(hidden)]
-    pub fn rewrite_imported_source(
-        &mut self,
-        source: ScopedWordSource,
-        mut edits: Vec<(std::ops::Range<usize>, ScopedWordSource)>,
-    ) -> Result<ScopedWordSource> {
-        self.check_source(&source)?;
-        if self.field_work.resource_refused() {
-            return Err(self.field_work.writer_error(OxmlError::InvalidValue(
-                "scoped operation resource admission refused".into(),
-            )));
-        }
-        if edits.is_empty() {
-            return Ok(source);
-        }
-        edits.sort_by_key(|(range, _)| range.start);
-        let coverage = source.current_publication();
-        let parent = std::sync::Arc::downgrade(&source.publication);
-        let mut previous = 0;
-        let mut projected = source.bytes.len();
-        let mut demand = coverage
-            .fields
-            .iter()
-            .try_fold(0usize, |sum, field| sum.checked_add(field.len()))
-            .ok_or_else(|| OxmlError::InvalidValue("imported Field output work overflow".into()))?;
-        let mut pieces = Vec::new();
-        for (range, payload) in &edits {
-            self.check_source(payload)?;
-            let binding = payload.payload.as_ref().ok_or_else(|| {
-                OxmlError::InvalidValue("replacement is not a produced scalar payload".into())
-            })?;
-            if !std::sync::Weak::ptr_eq(&parent, &binding.parent) {
-                return Err(OxmlError::InvalidValue(
-                    "scalar payload belongs to another source occurrence".into(),
-                ));
-            }
-            if range.start < previous
-                || range.start > range.end
-                || range.end > source.bytes.len()
-                || range.start < binding.owner.start
-                || binding.owner.end < range.end
-                || range.is_empty()
-                    && (range.start <= binding.owner.start || range.end >= binding.owner.end)
-            {
-                return Err(OxmlError::InvalidValue(
-                    "imported scalar edit range is invalid".into(),
-                ));
-            }
-            let field = coverage.covers_ranges(std::slice::from_ref(&binding.owner));
-            let ordinary_index = coverage
-                .ordinary
-                .partition_point(|owner| owner.end <= binding.owner.start);
-            let ordinary = coverage.ordinary.get(ordinary_index).is_some_and(|owner| {
-                owner.start <= binding.owner.start && binding.owner.end <= owner.end
-            });
-            if binding.prepaid.is_some() != field
-                || !field && !ordinary
-                || binding
-                    .prepaid
-                    .is_some_and(|length| length != payload.bytes.len())
-            {
-                return Err(OxmlError::InvalidValue(
-                    "scalar payload ownership or prepayment is invalid".into(),
-                ));
-            }
-            projected = projected
-                .checked_sub(range.len())
-                .and_then(|length| length.checked_add(payload.bytes.len()))
-                .ok_or_else(|| OxmlError::InvalidValue("imported source length overflow".into()))?;
-            let first = coverage
-                .fields
-                .partition_point(|field| field.end <= range.start);
-            for field in coverage.fields[first..]
-                .iter()
-                .take_while(|field| field.start < range.end)
-            {
-                let start = field.start.max(range.start);
-                let end = field.end.min(range.end);
-                if start < end {
-                    demand = demand.checked_sub(end - start).ok_or_else(|| {
-                        OxmlError::InvalidValue("imported Field removal work overflow".into())
-                    })?;
-                }
-            }
-            if binding.prepaid.is_none() {
-                for field in payload.current_publication().fields {
-                    demand = demand.checked_add(field.len()).ok_or_else(|| {
-                        OxmlError::InvalidValue("imported Field output work overflow".into())
-                    })?;
-                }
-            }
-            pieces.push((Some(&source), previous..range.start, &[][..]));
-            pieces.push((Some(payload), 0..payload.bytes.len(), &[][..]));
-            previous = range.end;
-        }
-        pieces.push((Some(&source), previous..source.bytes.len(), &[][..]));
-        let assembly = self.source_assembly(&pieces)?;
-        debug_assert_eq!(assembly.length, projected);
-        // All validation/map preparation finishes before this reservation or
-        // byte growth. No active ambient exemption survives a moved payload.
-        let mut copied = assembly.source_map.materialized_publication();
-        copied.add_ranges(assembly.coverage.fields.clone());
-        // Scalar payloads have generated maps and their own exact prepayment.
-        // Only unchanged original Field pieces can add first-copy raw input.
-        self.field_work.reserve_source_publication_copy(
-            &assembly.source_map,
-            &copied.fields,
-            demand,
-        )?;
-        Ok(self.materialize_source(assembly, None))
     }
 
     /// Copy one actual source occurrence without renewing any input role.
@@ -7870,7 +7489,6 @@ impl<'a> ScopedWordOperation<'a> {
             word_source_map,
             word_events,
             constructors,
-            payload: None,
             read_facts: Default::default(),
             operation,
         })
@@ -8087,25 +7705,6 @@ impl<'a> ScopedWordOperation<'a> {
         )?
         .with_source_map(source_map)?;
         CT_Document::from_xml_admitted(&wrapped, admitted, None)
-    }
-
-    pub fn replace_block(
-        &mut self,
-        range: std::ops::Range<usize>,
-        scope: &std::collections::BTreeMap<String, String>,
-        paragraph: Option<usize>,
-        placeholder: &str,
-        replacement: &str,
-    ) -> Result<(Vec<u8>, usize)> {
-        let delivered = std::cell::Cell::new(false);
-        self.replace_block_with_literal_input(
-            range,
-            scope,
-            paragraph,
-            placeholder,
-            replacement,
-            &delivered,
-        )
     }
 
     /// Replace one scoped block using this actual caller literal event. Paired
