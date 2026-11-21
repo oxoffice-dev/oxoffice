@@ -401,6 +401,7 @@ fn number_formats_show_the_markers_word_shows_and_keep_their_names() {
         (LowerLetter, ["a.", "b.", "c.", "d."]),
         (UpperRoman, ["I.", "II.", "III.", "IV."]),
         (LowerRoman, ["i.", "ii.", "iii.", "iv."]),
+        (Chicago, ["*.", "\u{2020}.", "\u{2021}.", "\u{a7}."]),
         (Bullet, ["•", "•", "•", "•"]),
     ] {
         let (mut doc, id) = single_list(&[ListLevel::new(format.clone())]);
@@ -417,7 +418,7 @@ fn number_formats_show_the_markers_word_shows_and_keep_their_names() {
         Other("Decimal".to_owned()),
         "format names are case-sensitive"
     );
-    for name in ["decimalZero", "ordinal", "cardinalText", "chicago"] {
+    for name in ["decimalZero", "ordinal", "cardinalText"] {
         let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::from_name(name))]);
         add_items(&mut doc, id, &[0]);
         let doc = reopen(&mut doc);

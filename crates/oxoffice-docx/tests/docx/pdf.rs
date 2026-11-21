@@ -1251,10 +1251,9 @@ fn notes_are_drawn_where_word_prints_them() {
     );
 }
 
-// Fails today: with no number format set, endnotes are numbered 1, 2, 3 like
-// footnotes; Word and LibreOffice number them i, ii, iii. Issue: #158
+// With no number format set, Word and LibreOffice number footnotes 1, 2, 3
+// and endnotes i, ii, iii.
 #[test]
-#[should_panic(expected = "the endnote marks read")]
 fn endnotes_are_numbered_in_lower_roman_by_default() {
     let mut doc = doc_with(&["First claim", "Second claim"]);
     for index in 0..2 {
@@ -1272,6 +1271,144 @@ fn endnotes_are_numbered_in_lower_roman_by_default() {
     );
     let marks = [texts[1], texts[3]];
     assert_eq!(marks, ["i", "ii"], "the endnote marks read {marks:?}");
+}
+
+/// The raised marks of a page whose paragraphs each cite one note: the line
+/// after each paragraph.
+fn marks_after(pdf: &Pdf, paragraphs: &[&str]) -> Vec<String> {
+    let lines = lines(&pdf.drawn(0));
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    paragraphs
+        .iter()
+        .map(|paragraph| {
+            let at = texts
+                .iter()
+                .position(|text| text == paragraph)
+                .unwrap_or_else(|| panic!("{paragraph:?} in {texts:?}"));
+            texts[at + 1].to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn note_marks_follow_the_number_format_of_their_policy() {
+    use oxoffice_docx::{NoteFamily, NoteNumberFormat, NotePlacement, NotePolicy, NoteRestart};
+    let paragraphs = ["First claim", "Second claim", "Third claim"];
+    let policy = |format, placement| NotePolicy {
+        format,
+        start: 1,
+        restart: NoteRestart::Continuous,
+        placement,
+    };
+    // A document policy for each family, then a section policy that
+    // overrides it.
+    for (family, document, section, expected) in [
+        (
+            NoteFamily::Footnote,
+            NoteNumberFormat::UpperLetter,
+            None,
+            ["A", "B", "C"],
+        ),
+        (
+            NoteFamily::Footnote,
+            NoteNumberFormat::UpperLetter,
+            Some(NoteNumberFormat::LowerRoman),
+            ["i", "ii", "iii"],
+        ),
+        (
+            NoteFamily::Endnote,
+            NoteNumberFormat::Decimal,
+            None,
+            ["1", "2", "3"],
+        ),
+        (
+            NoteFamily::Endnote,
+            NoteNumberFormat::Decimal,
+            Some(NoteNumberFormat::UpperRoman),
+            ["I", "II", "III"],
+        ),
+    ] {
+        let mut doc = doc_with(&paragraphs);
+        for index in 0..paragraphs.len() {
+            let cited = doc.paragraph_story_location(index).unwrap().unwrap();
+            match family {
+                NoteFamily::Footnote => doc.create_footnote(&cited, "Source.").unwrap(),
+                NoteFamily::Endnote => doc.create_endnote(&cited, "Source.").unwrap(),
+            };
+        }
+        let placement = match family {
+            NoteFamily::Footnote => NotePlacement::PageBottom,
+            NoteFamily::Endnote => NotePlacement::DocumentEnd,
+        };
+        doc.set_note_policy(family, policy(document, placement))
+            .unwrap();
+        if let Some(format) = section {
+            doc.section_mut(0)
+                .unwrap()
+                .set_note_policy(family, policy(format, placement))
+                .unwrap();
+        }
+        let pdf = pdf_of(&reopen(&mut doc));
+        assert_eq!(
+            marks_after(&pdf, &paragraphs),
+            expected,
+            "{family:?} {document:?} {section:?}"
+        );
+    }
+}
+
+#[test]
+fn note_marks_follow_a_section_policy_read_from_the_file() {
+    // Word's footnote dialog offers *, †, ‡, §; a file may also name a format
+    // oxoffice cannot draw, which gives decimal marks rather than none.
+    let paragraphs = [
+        "First claim",
+        "Second claim",
+        "Third claim",
+        "Fourth claim",
+        "Fifth claim",
+    ];
+    // A section policy naming only where endnotes go keeps i, ii, iii.
+    for (endnotes, properties, expected) in [
+        (
+            false,
+            r#"<w:footnotePr><w:numFmt w:val="chicago"/></w:footnotePr>"#,
+            ["*", "\u{2020}", "\u{2021}", "\u{a7}", "**"],
+        ),
+        (
+            false,
+            r#"<w:footnotePr><w:numFmt w:val="decimalEnclosedCircle"/></w:footnotePr>"#,
+            ["1", "2", "3", "4", "5"],
+        ),
+        (
+            true,
+            r#"<w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr>"#,
+            ["i", "ii", "iii", "iv", "v"],
+        ),
+    ] {
+        let mut doc = doc_with(&paragraphs);
+        for index in 0..paragraphs.len() {
+            let cited = doc.paragraph_story_location(index).unwrap().unwrap();
+            if endnotes {
+                doc.create_endnote(&cited, "Source.").unwrap();
+            } else {
+                doc.create_footnote(&cited, "Source.").unwrap();
+            }
+        }
+        let bytes = doc.to_bytes().unwrap();
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+        let part = package.main_document_part().expect("main document part");
+        let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen("<w:sectPr>", &format!("<w:sectPr>{properties}"), 1);
+        assert!(xml.contains(properties), "the section takes the policy");
+        package.set_part(&part, xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let doc = Document::from_bytes(&out.into_inner()).unwrap();
+        let pdf = pdf_of(&doc);
+        assert_eq!(marks_after(&pdf, &paragraphs), expected, "{properties}");
+    }
 }
 
 // Fails today: endnotes are drawn over a table that ends the document, at
