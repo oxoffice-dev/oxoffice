@@ -1,6 +1,6 @@
 ---
 date: 2026-11-20
-status: accepted
+status: shipped
 scope: docx, pptx, cli, python
 ---
 
@@ -67,7 +67,7 @@ One pull request per row group, each with tests on the corpus:
 - Unoptimised builds overflow the 2 MiB stack of a test thread on some
   PowerPoint edits (already on `main`): `.cargo/config.toml` gives test
   threads 8 MiB, the size the CLI uses.
-- **6. `Shapes::walk()`**: `SlideRef::shapes()` and `ShapeRef::children()`
+- **6. `Shapes::walk()`** (#21): `SlideRef::shapes()` and `ShapeRef::children()`
   now return a named `Shapes` iterator (still an `ExactSizeIterator` of
   `ShapeRef`), and `Presentation::part_shapes(owner)` gives the same for a
   layout or master. `Shapes::walk()` visits the shapes left in it and those
@@ -122,7 +122,7 @@ One pull request per row group, each with tests on the corpus:
   The cost is linear in the document (measured ×3.8 per 4× paragraphs), and
   the scaling tests now time `story_paragraphs` and `count_text` against
   the linear bound.
-- **5. Find and isolate a span**: `ParagraphRef::find_text(text,
+- **5. Find and isolate a span** (#118): `ParagraphRef::find_text(text,
   occurrence)` (and the same on `Paragraph`) returns a `TextSpan { start,
   end }` in the paragraph's literal run text, the text `split_run` offsets
   count: case-sensitive, without overlaps, in the accepted view, inline
@@ -141,7 +141,11 @@ One pull request per row group, each with tests on the corpus:
   when it starts or ends the run that holds the span's text (Word often
   starts a run with the tab before its text), so bolding the span or
   setting its text leaves it alone; `add_comment_on_text` shares the split
-  and keeps such an item out of the comment range. Python:
+  and keeps such an item out of the comment range. A run split now takes an
+  edge (`SplitEdge`); `split_run` keeps its plain cut, where the text-free
+  content at the cut goes to the second run, and the doc of `CT_P::split_run`
+  (oxoffice-docx-oxml), which said the opposite, now says so (a change of
+  that cut would be a decision of its own). Python:
   `Paragraph.find_text(text, occurrence=0)` returns a `TextSpan` (paragraph,
   start, end), and `Document.isolate_span(span)` returns `(first, last)` for
   a paragraph of the body, a table cell, a header, a footer, a note or a
@@ -207,7 +211,7 @@ One pull request per row group, each with tests on the corpus:
 - PowerPoint: the helper only checked counts, which
   `Presentation::try_replace_all_expected` and `pptx replace --map --expect`
   already do; nothing new there.
-- **3a. Comment dates**: `occurrence` and the anchor check of
+- **3a. Comment dates** (#85): `occurrence` and the anchor check of
   `add_comment_on_text` were already there; the default date moves first,
   for every comment and reply, as decided for the night by the
   orchestration session: a comment or a reply created without a date is
@@ -227,7 +231,7 @@ One pull request per row group, each with tests on the corpus:
   edited reply with its own date, or none when it had none, never now. The
   facade reads the clock in one place, `revision::rfc3339_now`; tests pass
   explicit dates where they compare bytes.
-- **3b. Comments on a text**: `add_comment_on_text(anchor, author, text,
+- **3b. Comments on a text** (#110): `add_comment_on_text(anchor, author, text,
   TextCommentOptions { occurrence, tables_only, initials, date })`, with
   `Default`, on the model of `SaveOptions` and `ReplaceOptions` (a breaking
   change of a function released in 0.1.0, decided for the night by the
@@ -243,8 +247,22 @@ One pull request per row group, each with tests on the corpus:
   tables_only=False)`, CLI `comment add --anchor TEXT --tables-only` (with
   `--anchor` only). The CLI already had `--anchor` and `--occurrence`; the
   plan's `--text` is the comment's own text.
+- **`strip_generated_bookmarks`** (#55): the comparison takes the original's
+  bookmark ids and generated TOC names, see
+  [2026-11-21-comparison-bookmark-identities.md](2026-11-21-comparison-bookmark-identities.md)
+  (closes #3; limitation `docx-compare-toc-bookmarks` removed).
+- Also from the night: `Document::replace_all` over a map applies its pairs
+  together (#90, closes #53), so a swap no longer depends on the map's order.
+- **7. The skills drop both scripts**: in oxoffice-skills
+  (oxoffice-dev/oxoffice-skills#1), once a release ships these calls; the
+  library side of this spec is complete.
+- Open follow-ups: `story_paragraphs` misses a text box inside an inline
+  smart tag or custom XML element (#78); comments do not write Word's
+  `w16cex:dateUtc` (no issue yet).
 
 ## Links
 
 - [ROADMAP.md](../ROADMAP.md), how the library is meant to be used.
 - [2026-11-20-known-limitations-in-the-cli.md](2026-11-20-known-limitations-in-the-cli.md)
+- Pull requests: #10, #18, #21, #24, #55, #85, #90, #110, #118; the skills
+  side: oxoffice-dev/oxoffice-skills#1.
