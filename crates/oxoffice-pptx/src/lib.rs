@@ -25733,26 +25733,19 @@ fn split_cell(table: &mut CT_Table, row: usize, column: usize) -> std::result::R
     }
     let row_span = origin.row_span;
     let grid_span = origin.grid_span;
+    // The merge flags mark the covered cells. Their own spans are 1, or, in
+    // the top row and the left column, repeat the origin's: PowerPoint and
+    // python-pptx repeat them, LibreOffice writes 1.
     for current_row in row..=bottom {
         for current_column in column..=right {
             let cell = &table.rows[current_row].cells[current_column];
-            let expected = (
-                if current_row == row { row_span } else { 1 },
-                if current_column == column {
-                    grid_span
-                } else {
-                    1
-                },
-                current_column != column,
-                current_row != row,
-            );
-            if (
-                cell.row_span,
-                cell.grid_span,
-                cell.horizontal_merge,
-                cell.vertical_merge,
-            ) != expected
-            {
+            let flags = (cell.horizontal_merge, cell.vertical_merge)
+                == (current_column != column, current_row != row);
+            let row_span_ok =
+                cell.row_span == 1 || (current_row == row && cell.row_span == row_span);
+            let grid_span_ok =
+                cell.grid_span == 1 || (current_column == column && cell.grid_span == grid_span);
+            if !(flags && row_span_ok && grid_span_ok) {
                 return Err("merge origin does not have a valid continuation rectangle".to_owned());
             }
         }

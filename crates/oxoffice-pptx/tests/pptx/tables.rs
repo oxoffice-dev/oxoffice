@@ -1330,9 +1330,7 @@ fn table_merged_by_libreoffice() -> String {
     )
 }
 
-// Fails today: split wants the covered cells of the top row and left column to repeat the origin's spans, and LibreOffice writes 1 there. Issue: #44
 #[test]
-#[should_panic(expected = "merge origin does not have a valid continuation rectangle")]
 fn a_block_merged_by_libreoffice_can_be_split() {
     let mut prs = deck_with_table(3, 3);
     prs.replace_table_xml_at(ShapeOwner::Slide(0), &[0], &table_merged_by_libreoffice())
@@ -1357,6 +1355,33 @@ fn a_block_merged_by_libreoffice_can_be_split() {
     let table = table(&prs, 0, 0);
     assert!((0..3).all(|row| (0..3).all(|column| is_plain(&table, row, column))));
     assert_eq!(table.cell(0, 0).unwrap().text(), "merged");
+}
+
+#[test]
+fn a_merged_block_whose_covered_cell_names_another_span_is_not_split() {
+    // A covered cell of the top row may say 1 or repeat the origin's 2.
+    let broken = table_merged_by_libreoffice().replacen(
+        r#"<a:tc hMerge="1" rowSpan="1">"#,
+        r#"<a:tc hMerge="1" rowSpan="3">"#,
+        1,
+    );
+    let mut prs = deck_with_table(3, 3);
+    prs.replace_table_xml_at(ShapeOwner::Slide(0), &[0], &broken)
+        .unwrap();
+    let mut prs = reopen(&prs);
+    let before = prs.to_bytes().unwrap();
+
+    let refused = table_mut(&mut prs, 0, 0)
+        .cell_mut(0, 0)
+        .unwrap()
+        .split()
+        .unwrap_err();
+
+    assert!(
+        refused.to_string().contains("continuation rectangle"),
+        "{refused}"
+    );
+    assert_eq!(prs.to_bytes().unwrap(), before);
 }
 
 // Fails today: removing a column moves the frame edge by its width, and Google's 3,000,000 EMU frame around a 7,315,200 EMU grid would go negative. Issue: #44
