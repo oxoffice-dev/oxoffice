@@ -3561,7 +3561,7 @@ fn a_locked_simple_field_and_an_empty_dirty_one_keep_their_flags_when_tracked_wh
             } else {
                 rejected(&mut doc)
             };
-            assert_eq!(field_flags(&kept), [expected.clone()]);
+            assert_eq!(field_flags(&kept), std::slice::from_ref(&expected));
             assert_eq!(texts(&kept), texts(&doc_with_body(&with)));
             let mut dropped = if inserted {
                 rejected(&mut doc)
