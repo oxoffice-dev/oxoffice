@@ -14,8 +14,6 @@ pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,
 };
 
-#[cfg(debug_assertions)]
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -2994,7 +2992,7 @@ struct MediaStore {
 
 impl MediaStore {
     fn scan(package: &OpcPackage) -> Self {
-        Self::scan_hashing(package, |bytes| hash_medium(bytes))
+        Self::scan_hashing(package, |bytes| MediaId::from_bytes(bytes))
     }
 
     /// The store [`MediaStore::scan`] gives for `package`, hashing only the
@@ -3013,7 +3011,7 @@ impl MediaStore {
             known
                 .get(&Arc::as_ptr(bytes))
                 .copied()
-                .unwrap_or_else(|| hash_medium(bytes))
+                .unwrap_or_else(|| MediaId::from_bytes(bytes))
         })
     }
 
@@ -3146,12 +3144,6 @@ impl MediaStore {
             }
         }
     }
-}
-
-/// Hashes a medium a scan finds in a package.
-fn hash_medium(bytes: &[u8]) -> MediaId {
-    note_commit_work(|work| work.hashed += 1);
-    MediaId::from_bytes(bytes)
 }
 
 fn register_content_type(
@@ -4241,7 +4233,6 @@ impl Presentation {
                 slides.push(record);
                 continue;
             }
-            note_commit_work(|work| work.parsed += 1);
             let slide_xml = required_part(&package, &slide_part)?;
             let slide = CT_Slide::from_xml(slide_xml).map_err(|error| Error::MalformedPart {
                 part_name: slide_part.clone(),
@@ -4325,7 +4316,6 @@ impl Presentation {
             "invalid presentation at byte save boundary: {:?}",
             self.validate()
         );
-        note_commit_work(|work| work.zip_writes += 1);
         let mut output = Cursor::new(Vec::new());
         self.saved_package()?.write_to(&mut output)?;
         Ok(output.into_inner())
@@ -4354,10 +4344,8 @@ impl Presentation {
         );
         let package = self.saved_package()?;
         if let Some(parsed) = self.parsed.as_deref() {
-            ensure_reread_zip_note();
             return Ok(package.reread(&parsed.package)?);
         }
-        note_commit_work(|work| work.zip_writes += 1);
         let mut output = Cursor::new(Vec::new());
         package.write_to(&mut output)?;
         output.set_position(0);
@@ -4379,7 +4367,7 @@ impl Presentation {
         #[cfg(debug_assertions)]
         match (
             &same,
-            without_commit_work(|| Ok::<_, Error>(self.to_bytes()? == other.to_bytes()?)),
+            (|| Ok::<_, Error>(self.to_bytes()? == other.to_bytes()?))(),
         ) {
             (Ok(same), Ok(bytes)) => assert_eq!(*same, bytes, "saves_as differs from to_bytes"),
             (Err(same), Err(bytes)) => assert_eq!(same.to_string(), bytes.to_string()),
@@ -5767,7 +5755,6 @@ impl Presentation {
             let parsed_from =
                 |part: &str| parsed.is_some_and(|parsed| parsed.same_bytes(&self.package, part));
             let slide_changed = !parsed_from(&record.part_name) && {
-                note_commit_work(|work| work.parsed += 1);
                 self.package
                     .get_part(&record.part_name)
                     .and_then(|xml| CT_Slide::from_xml(xml).ok())
@@ -5775,7 +5762,6 @@ impl Presentation {
                     != Some(&record.slide)
             };
             if !preserve_unchanged_modelled_parts || slide_changed {
-                note_commit_work(|work| work.serialized += 1);
                 package.set_part(
                     &record.part_name,
                     record
@@ -5789,7 +5775,6 @@ impl Presentation {
             }
             if let Some(notes) = &record.notes {
                 let notes_changed = !parsed_from(&notes.part_name) && {
-                    note_commit_work(|work| work.parsed += 1);
                     self.package
                         .get_part(&notes.part_name)
                         .and_then(|xml| CT_NotesSlide::from_xml(xml).ok())
@@ -5797,7 +5782,6 @@ impl Presentation {
                         != Some(&notes.notes)
                 };
                 if !preserve_unchanged_modelled_parts || notes_changed {
-                    note_commit_work(|work| work.serialized += 1);
                     package.set_part(
                         &notes.part_name,
                         notes.notes.to_xml().map_err(|error| Error::MalformedPart {
@@ -8214,14 +8198,12 @@ impl Presentation {
     /// the ZIP.
     fn reopen(&self, package: OpcPackage) -> Result<Self> {
         let Some(parsed) = self.parsed.as_deref() else {
-            note_commit_work(|work| work.zip_writes += 1);
             let mut output = Cursor::new(Vec::new());
             package.write_to(&mut output)?;
             let mut reopened = Self::from_bytes(output.get_ref())?;
             reopened.source_path = self.source_path.clone();
             return Ok(reopened);
         };
-        ensure_reread_zip_note();
         let package = package.reread(&parsed.package)?;
         let mut reopened = Self::from_package_reusing(package, Some((parsed, &self.media_store)))?;
         reopened.parsed = Some(Arc::new(Parsed::of(&reopened, Some(parsed))));
@@ -8240,7 +8222,7 @@ impl Presentation {
         {
             let mut through_zip = self.clone();
             through_zip.parsed = None;
-            let expected = without_commit_work(|| commit(&through_zip));
+            let expected = commit(&through_zip);
             assert_same_commit(&committed, &expected);
         }
         committed
@@ -21904,7 +21886,6 @@ fn resolve_master_records(
             masters.push(record);
             continue;
         }
-        note_commit_work(|work| work.parsed += 1);
         let master = CT_SlideMaster::from_xml(required_part(package, &part_name)?)
             .map_err(|error| error.to_string());
         masters.push(Arc::new(MasterRecord {
@@ -21954,7 +21935,6 @@ fn resolve_layouts(
                 layouts.push(record);
                 continue;
             }
-            note_commit_work(|work| work.parsed += 1);
             let xml = required_part(package, &part_name)?;
             let layout = CT_SlideLayout::from_xml(xml).map_err(|error| Error::MalformedPart {
                 part_name: part_name.clone(),
@@ -23159,7 +23139,6 @@ fn resolve_notes_master(
     if let Some(master) = parsed.and_then(|parsed| parsed.notes_master(package, &part_name)) {
         return Ok((Some(part_name), Some(master)));
     }
-    note_commit_work(|work| work.parsed += 1);
     let master =
         CT_NotesMaster::from_xml(required_part(package, &part_name)?).map_err(|error| {
             Error::MalformedPart {
@@ -23194,7 +23173,6 @@ fn resolve_handout_master(
     if let Some(master) = parsed.and_then(|parsed| parsed.handout_master(package, &part_name)) {
         return Ok((Some(part_name), Some(master)));
     }
-    note_commit_work(|work| work.parsed += 1);
     let master =
         CT_HandoutMaster::from_xml(required_part(package, &part_name)?).map_err(|error| {
             Error::MalformedPart {
@@ -32206,7 +32184,7 @@ impl Presentation {
         // well and assert the same identities or the same error.
         #[cfg(debug_assertions)]
         if self.parsed.is_some() {
-            let scanned = without_commit_work(|| field_identities(&package, None));
+            let scanned = field_identities(&package, None);
             match (&inventory, &scanned) {
                 (Ok(kept), Ok(scanned)) => {
                     assert_eq!(kept, scanned, "kept field identities differ")
@@ -32239,7 +32217,6 @@ fn field_identities(package: &OpcPackage, parsed: Option<&Parsed>) -> Result<Has
 
 /// The identities of the DrawingML text fields of one XML part, uppercase.
 fn part_field_identities(name: &str, bytes: &[u8]) -> Result<Vec<String>> {
-    note_commit_work(|work| work.parsed += 1);
     let mut ids = Vec::new();
     let mut reader = quick_xml::Reader::from_reader(bytes);
     // Keep the legacy vendor declaration rules and raw URI matching, while
@@ -33468,78 +33445,6 @@ fn path_of_id(children: &[ShapeTreeChild], shape_id: u32) -> Option<Vec<usize>> 
         }
     }
     None
-}
-
-/// Work that staging, reopening and saving a package did on this thread,
-/// whose amount could follow the deck: parts parsed, slide and notes parts
-/// serialized, media hashed and packages written as a ZIP, by
-/// `to_bytes` included. Debug builds count it.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
-struct CommitWork {
-    parsed: usize,
-    serialized: usize,
-    hashed: usize,
-    zip_writes: usize,
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static COMMIT_WORK: Cell<CommitWork> = const {
-        Cell::new(CommitWork { parsed: 0, serialized: 0, hashed: 0, zip_writes: 0 })
-    };
-    static COMMIT_WORK_PAUSED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Installs the debug note `OpcPackage::reread` runs before its ZIP fallback.
-/// PowerPoint commit counters are the only caller. The note is paused with
-/// the other commit counters, so a debug byte comparison does not count.
-#[cfg(debug_assertions)]
-fn ensure_reread_zip_note() {
-    oxoffice_opc::set_reread_zip_note(Some(count_reread_zip_write));
-}
-
-#[cfg(not(debug_assertions))]
-fn ensure_reread_zip_note() {}
-
-#[cfg(debug_assertions)]
-fn count_reread_zip_write() {
-    note_commit_work(|work| work.zip_writes += 1);
-}
-
-pub(crate) fn note_embedded_zip_write() {
-    note_commit_work(|work| work.zip_writes += 1);
-}
-
-fn note_commit_work(count: impl FnOnce(&mut CommitWork)) {
-    #[cfg(debug_assertions)]
-    if !COMMIT_WORK_PAUSED.get() {
-        let mut work = COMMIT_WORK.get();
-        count(&mut work);
-        COMMIT_WORK.set(work);
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = count;
-}
-
-/// Debug builds only: the work staging and reopening packages did on this
-/// thread since the previous call, as parts parsed, slide and notes parts
-/// serialized, media hashed and packages written as a ZIP, so that the
-/// binding tests can compare decks of N and 4N slides.
-#[doc(hidden)]
-#[cfg(debug_assertions)]
-pub fn take_commit_work() -> [usize; 4] {
-    ensure_reread_zip_note();
-    let work = COMMIT_WORK.replace(CommitWork::default());
-    [work.parsed, work.serialized, work.hashed, work.zip_writes]
-}
-
-#[cfg(debug_assertions)]
-fn without_commit_work<T>(run: impl FnOnce() -> T) -> T {
-    let paused = COMMIT_WORK_PAUSED.replace(true);
-    let result = run();
-    COMMIT_WORK_PAUSED.set(paused);
-    result
 }
 
 /// Asserts that a commit gives what the commit through the ZIP gives: the

@@ -411,7 +411,6 @@ impl PyShape {
             .ok_or_else(|| PyIndexError::new_err("slide owner absent"))?
             .shapes()
         {
-            crate::presentation::note_fx260_ppt(1);
             if matches!(
                 child.kind(),
                 oxoffice_pptx::ShapeKind::Connector

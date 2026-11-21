@@ -4,45 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxoffice_py_support::RevisionCounter;
-#[cfg(debug_assertions)]
-use std::cell::Cell;
 
-// Debug builds, which the binding tests use, count the owner inventory work.
-#[cfg(debug_assertions)]
-thread_local! {
-    static FX260_PPT_VISITS: Cell<usize> = const { Cell::new(0) };
-}
-
-pub(crate) fn note_fx260_ppt(count: usize) {
-    #[cfg(debug_assertions)]
-    FX260_PPT_VISITS.with(|cell| cell.set(cell.get().saturating_add(count)));
-    #[cfg(not(debug_assertions))]
-    let _ = count;
-}
-
-#[cfg(debug_assertions)]
-fn fx260_ppt_visits() -> usize {
-    FX260_PPT_VISITS.with(|cell| cell.get())
-}
-
-/// Debug builds only: the owner inventory work counted since the previous
-/// call, so that the Python tests can compare decks of N and 4N slides.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_inventory_work")]
-pub(crate) fn inventory_work() -> usize {
-    FX260_PPT_VISITS.with(|cell| cell.replace(0))
-}
-
-/// Debug builds only: the work staging and reopening packages did since the
-/// previous call, as parts parsed, slide and notes parts serialized, media
-/// hashed and packages written as a ZIP.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_commit_work")]
-pub(crate) fn commit_work() -> [usize; 4] {
-    oxoffice_pptx::take_commit_work()
-}
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyList, PyString, PyTuple};
@@ -2741,7 +2703,6 @@ impl PartOwners {
     }
 
     fn index(&mut self, index: usize) {
-        note_fx260_ppt(1);
         let owner = &self.owners[index];
         let body = matches!(owner.address.physical, PhysicalOwner::TextBody { .. });
         self.by_path
@@ -2836,7 +2797,6 @@ impl OwnerParts {
         layout_index: Option<usize>,
         body: bool,
     ) -> Option<&LiveOwner> {
-        note_fx260_ppt(1);
         let part = self.part(OwnerPart::of(path))?;
         let key = (smallvec::SmallVec::from_slice(path), layout_index, body);
         part.owners.get(*part.by_path.get(&key)?)
@@ -3005,15 +2965,6 @@ pub(crate) struct PreparedOwners {
     /// The generations this edit retires or replaces, in preparation order.
     #[cfg(debug_assertions)]
     retired: Vec<u64>,
-}
-
-/// Runs a debug-only cross-check without counting its work.
-#[cfg(debug_assertions)]
-fn without_work_count<T>(run: impl FnOnce() -> T) -> T {
-    let visits = fx260_ppt_visits();
-    let result = run();
-    FX260_PPT_VISITS.with(|cell| cell.set(visits));
-    result
 }
 
 /// Debug builds check that carrying parts over prepares what walking every
@@ -3218,7 +3169,6 @@ fn slide_owner_addresses(
     index: usize,
     out: &mut Vec<OwnerAddress>,
 ) -> PyResult<()> {
-    let start = out.len();
     let slide = inner
         .slide(index)
         .ok_or_else(|| PyValueError::new_err("slide owner is absent"))?;
@@ -3239,7 +3189,6 @@ fn slide_owner_addresses(
             out,
         )?;
     }
-    note_fx260_ppt(out.len() - start);
     Ok(())
 }
 
@@ -3249,7 +3198,6 @@ fn master_owner_addresses(
     inner: &oxoffice_pptx::Presentation,
     out: &mut Vec<OwnerAddress>,
 ) -> PyResult<()> {
-    let start = out.len();
     for index in 0..inner.layout_count() {
         // Originating layout parts provide physical ownership independently of order.
         let part = inner
@@ -3316,7 +3264,6 @@ fn master_owner_addresses(
             }
         }
     }
-    note_fx260_ppt(out.len() - start);
     Ok(())
 }
 
@@ -3430,7 +3377,6 @@ impl PyPresentation {
         let Some(generation) = captured.owner_generation() else {
             return Some(captured.clone());
         };
-        note_fx260_ppt(1);
         let owner = self.owners.owner(generation)?;
         let mut path = captured.clone();
         let end = match &owner.address.physical {
@@ -3571,7 +3517,6 @@ impl PyPresentation {
                 let shape = owners
                     .iter()
                     .find(|owner| {
-                        note_fx260_ppt(1);
                         owner.address.path == segs
                             && matches!(owner.address.physical, PhysicalOwner::Shape { .. })
                     })
@@ -3820,10 +3765,10 @@ impl PyPresentation {
         // parts over prepares exactly what walking every part prepares.
         #[cfg(debug_assertions)]
         if carried.masters || carried.slides.iter().any(Option::is_some) {
-            let walked = without_work_count(|| {
+            let walked = {
                 let none = CarriedParts::none(candidate);
                 self.prepare_parts(candidate, operation, preserved, &none, changed)
-            });
+            };
             assert_same_preparation(&prepared, &walked);
         }
         prepared
@@ -3955,7 +3900,6 @@ impl PyPresentation {
         let mut retained_ends = Vec::new();
         for (_, _, list) in &old_parts {
             for proof in list.iter() {
-                note_fx260_ppt(1);
                 if !seen.insert(proof.generation) {
                     return Err(fail("duplicate owner survival proof"));
                 }
@@ -4313,7 +4257,6 @@ impl PyPresentation {
         &self,
         operation: &'static str,
     ) -> PyResult<oxoffice_py_support::PreparedRevision> {
-        note_fx260_ppt(1);
         self.revisions
             .prepare_scopes(operation, &[], &[])
             .map_err(oxoffice_py_support::revision_to_pyerr)
@@ -4353,7 +4296,6 @@ impl PyPresentation {
         // is bound after successful append, before installing these owners.
         let shape_id = None;
         let kind = oxoffice_pptx::ShapeKind::Shape;
-        note_fx260_ppt(1);
         let slide_identity = PartIdentity::Slide(slide_id);
         let shape_path = smallvec![PathSeg::Slide(slide_index), PathSeg::Shape(shape_index)];
         let mut paragraph_path = shape_path.clone();
@@ -4535,7 +4477,6 @@ impl PyPresentation {
         shape_owner_addresses(shape, slide.clone(), path.segs.clone(), &mut addresses)?;
         let mut indices = Vec::with_capacity(addresses.len());
         for address in addresses {
-            note_fx260_ppt(1);
             let body = matches!(address.physical, PhysicalOwner::TextBody { .. });
             let key = (address.path, address.layout_index, body);
             let index = *owners
@@ -4551,7 +4492,6 @@ impl PyPresentation {
         }
         let mut retired = Vec::new();
         for &index in &indices {
-            note_fx260_ppt(1);
             let owner = &owners.owners[index];
             if index != selected {
                 retired.push(owner.owner.clone());
@@ -4570,7 +4510,6 @@ impl PyPresentation {
         let updates = indices
             .into_iter()
             .map(|index| {
-                note_fx260_ppt(1);
                 let mut owner = owners.owners[index].clone();
                 if index != selected {
                     owner.owner = revision
@@ -4613,7 +4552,6 @@ impl PyPresentation {
             .part_mut(prepared.part)
             .expect("prepared shape part");
         for (index, owner) in prepared.updates {
-            note_fx260_ppt(1);
             self.owners
                 .by_generation
                 .remove(&owners.owners[index].owner.generation());
@@ -4854,7 +4792,7 @@ impl PyPresentation {
         }
         let proofs = self.matched_footer_owners(candidate, changed.clone(), &next);
         #[cfg(debug_assertions)]
-        without_work_count(|| self.assert_footer_owners(candidate, &carried, &changed, &proofs))?;
+        self.assert_footer_owners(candidate, &carried, &changed, &proofs)?;
         proofs
     }
 
