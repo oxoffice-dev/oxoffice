@@ -1731,3 +1731,70 @@ fn a_control_whose_text_is_only_a_tracked_insertion_follows_a_legacy_field_befor
     ));
     assert_eq!(names_of(&doc), ["First", "late"]);
 }
+
+/// The fields' names with the value each shows, or the kind of a field
+/// that is not text.
+fn names_and_values(doc: &Document) -> Vec<(String, String)> {
+    doc.layout_with_options(fillable())
+        .unwrap()
+        .layout
+        .form_fields
+        .iter()
+        .map(|field| match &field.kind {
+            FormFieldKind::Text { value, .. } => (field.name.clone(), value.clone()),
+            other => (field.name.clone(), format!("{other:?}")),
+        })
+        .collect()
+}
+
+#[test]
+fn an_empty_control_after_a_tracked_insertion_in_a_container_takes_the_later_name() {
+    // The empty control has no run: it orders by the controls listed
+    // before it, the inserted one included.
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="person"/><w:richText/></w:sdtPr><w:sdtContent><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:ins><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let named = names_and_values(&doc);
+    assert_eq!(
+        named[0],
+        ("name".to_owned(), "Jane".to_owned()),
+        "{named:?}"
+    );
+}
+
+#[test]
+fn a_control_without_a_run_follows_a_legacy_field_before_it() {
+    let first = legacy(
+        0,
+        "F",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("one"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{first}<w:sdt><w:sdtPr><w:tag w:val="F"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt></w:p>"#
+    ));
+    let named = names_and_values(&doc);
+    assert_eq!(named[0], ("F".to_owned(), "one".to_owned()), "{named:?}");
+}
+
+#[test]
+fn a_legacy_field_that_wraps_beside_text_says_form_field() {
+    let words = "wrapping words ".repeat(30);
+    let field = legacy(
+        0,
+        "Beside",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some(&words),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Label: </w:t></w:r>{field}<w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = diagnostics_about(&layout.layout, "Beside");
+    assert_eq!(
+        said,
+        ["form field \"Beside\": other text on its lines sits under its box"]
+    );
+}

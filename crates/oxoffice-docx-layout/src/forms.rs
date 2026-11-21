@@ -894,11 +894,27 @@ impl<'a> Inventory<'a> {
             .enumerate()
             .map(|(position, run)| (std::ptr::from_ref(*run), position))
             .collect();
+        // A control of the paragraph that holds no run at all orders by its
+        // own boundary: before the run that follows it.
+        let boundary: HashMap<*const CT_Sdt, usize> = paragraph
+            .content_controls
+            .iter()
+            .map(|(at, _, _, control)| {
+                let after = paragraph
+                    .runs
+                    .get(*at)
+                    .and_then(|run| position.get(&std::ptr::from_ref(run)).copied())
+                    .unwrap_or(runs.len());
+                (std::ptr::from_ref(control), after)
+            })
+            .collect();
         let mut inline = Vec::new();
         let mut last = 0;
         for (ordinal, control) in controls.order.iter().enumerate() {
             let ordinal = u32::try_from(ordinal).unwrap_or(u32::MAX - 1);
-            last = first_run(control, &position).unwrap_or(last);
+            last = first_run(control, &position)
+                .or_else(|| boundary.get(&std::ptr::from_ref(*control)).copied())
+                .unwrap_or(last);
             if controls.mark_of(control) == Some(ordinal) {
                 inline.push((last, Inline::Control(ordinal, control)));
             }
