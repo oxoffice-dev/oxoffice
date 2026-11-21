@@ -122,7 +122,8 @@ def report(path: Path) -> None:
         doc.add_paragraph(step, style="List Number")
     comment_target = doc.add_paragraph("The budget for the billing migration is still to be confirmed.")
     comment = doc.add_comment(comment_target.runs, text="Confirm with finance before sending.", author="Reviewer", initials="RV")
-    # The pilot's date: every producer's copy of the report carries it.
+    # The pilot source's date, so that the source matches the pilot's copies
+    # (Word keeps it to the minute).
     comment._comment_elm.set(qn("w:date"), "2026-11-20T21:51:59Z")
 
     doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
