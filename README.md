@@ -126,7 +126,7 @@ refused at open when one of its parts holds a control character.
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
 | Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields and final tables; writing your own edits as tracked changes is on the [roadmap](ROADMAP.md) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
-| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect; a value set over a control's prompt keeps the prompt's style, a block control's text reads as one line, the tag setters and the listing miss controls in headers, and a date control in Word's long format cannot be set yet; fillable PDF fields are coming |
+| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect, export to fillable PDF fields; the tag setters and the listing miss controls in headers, and a date control in Word's long format cannot be set yet |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |

@@ -5,6 +5,8 @@ mod charts;
 mod corpus;
 mod notes_and_comments;
 mod pictures;
+#[cfg(feature = "render")]
+mod render;
 mod save;
 mod shapes_and_text;
 mod shapes_walk;

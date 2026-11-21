@@ -1,9 +1,0 @@
-{
-  "id": "docx-legacy-dropdown-without-result",
-  "format": "docx",
-  "area": "pdf forms",
-  "title": "A legacy drop-down with no stored result draws nothing and stays static",
-  "symptom": "a FORMDROPDOWN field that stores no result, as Word saves one, draws no text in PDF and PNG output, and with fillable_forms it stays static with a diagnostic that \"what it draws could not be gathered\"",
-  "workaround": "replace the drop-down with a drop-down list content control",
-  "issue": 170
-}

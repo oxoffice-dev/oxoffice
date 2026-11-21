@@ -11,8 +11,11 @@ use quick_xml::{Reader, Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
-use crate::numbering::{local_namespace_overrides, namespace_bindings, word_prefixes_at};
-use crate::properties::is_word_element;
+use crate::numbering::{
+    local_namespace_overrides, namespace_bindings, parse_scoped_rpr_with_observation,
+    word_prefixes_at,
+};
+use crate::properties::{CT_RPr, is_word_element};
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::revision::CT_Revision;
 use crate::table::{CT_Row, CT_Tbl, CT_Tc};
@@ -401,11 +404,19 @@ impl CT_SdtPr {
                         selected = Some(pair);
                     }
                 }
-                let (display, bound) = selected.ok_or_else(|| {
-                    OxmlError::InvalidValue(format!(
-                        "unknown {label} value {value:?}, choices: {choices:?}"
-                    ))
-                })?;
+                // A combo box also takes text outside its items, as Word lets
+                // one; a drop-down list takes only an item.
+                let (display, bound) = match selected {
+                    Some(pair) => pair,
+                    None if self.control_type == Some(SdtType::ComboBox) => {
+                        (value.to_owned(), value.to_owned())
+                    }
+                    None => {
+                        return Err(OxmlError::InvalidValue(format!(
+                            "unknown {label} value {value:?}, choices: {choices:?}"
+                        )));
+                    }
+                };
                 Ok((display, bound, None))
             }
             _ => Ok((value.to_owned(), value.to_owned(), None)),
@@ -656,11 +667,7 @@ impl CT_SdtPr {
             Some("sdtContentLocked") => SdtLock::SdtContentLocked,
             _ => SdtLock::Unlocked,
         };
-        let showing_placeholder = match self.raw_property(b"showingPlcHdr")? {
-            None => false,
-            Some(None) => true,
-            Some(Some(value)) => crate::settings::parse_on_off(&value).unwrap_or(false),
-        };
+        let showing_placeholder = self.showing_placeholder()?;
         let payload = match self.control_type {
             None | Some(SdtType::RichText) => SdtFormPayload::RichText,
             Some(SdtType::PlainText) => SdtFormPayload::PlainText {
@@ -698,6 +705,36 @@ impl CT_SdtPr {
             showing_placeholder,
             payload,
         })
+    }
+
+    /// `w:showingPlcHdr`: whether the content shows the placeholder, not a
+    /// value.
+    pub fn showing_placeholder(&self) -> Result<bool> {
+        Ok(match self.raw_property(b"showingPlcHdr")? {
+            None => false,
+            Some(None) => true,
+            Some(Some(value)) => crate::settings::parse_on_off(&value).unwrap_or(false),
+        })
+    }
+
+    /// `w:rPr`: the run properties of text that replaces the placeholder
+    /// (ECMA-376 17.5.2.27), or `None` when the control has none.
+    pub fn run_properties(&self) -> Result<Option<CT_RPr>> {
+        for slot in &self.slots {
+            let PropertySlot::Raw(raw) = slot else {
+                continue;
+            };
+            let mut reader = Reader::from_reader(raw.as_slice());
+            let (Event::Start(start) | Event::Empty(start)) = reader.read_event()? else {
+                continue;
+            };
+            let prefixes = word_prefixes_at(&start, &self.source_prefixes)?;
+            if is_word_element(start.name().as_ref(), b"rPr", &prefixes) {
+                return parse_scoped_rpr_with_observation(raw, &self.source_prefixes, &[], None)
+                    .map(Some);
+            }
+        }
+        Ok(None)
     }
 
     /// A raw property element of the main namespace by local name: `Some`
@@ -4304,8 +4341,8 @@ mod form_facts_tests {
 
     const NAMESPACES: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
 
-    /// The form facts of a block control with these properties and content.
-    fn facts(properties: &str) -> SdtFormFacts {
+    /// The properties of a block control with these properties and content.
+    fn sdt_properties(properties: &str) -> CT_SdtPr {
         let xml = format!(
             "<w:sdt {NAMESPACES}><w:sdtPr>{properties}</w:sdtPr><w:sdtContent><w:p><w:r><w:t>x</w:t></w:r></w:p></w:sdtContent></w:sdt>"
         );
@@ -4318,8 +4355,42 @@ mod form_facts_tests {
             .unwrap()
             .properties
             .unwrap()
-            .form_facts()
-            .unwrap()
+    }
+
+    /// The form facts of a block control with these properties and content.
+    fn facts(properties: &str) -> SdtFormFacts {
+        sdt_properties(properties).form_facts().unwrap()
+    }
+
+    #[test]
+    fn a_control_reads_its_own_run_properties_under_any_prefix_of_the_main_namespace() {
+        let word = sdt_properties(
+            r#"<w:rPr><w:rFonts w:ascii="Arial"/><w:b/><w:color w:val="1F3864"/></w:rPr><w:id w:val="1"/><w:showingPlcHdr/>"#,
+        )
+        .run_properties()
+        .unwrap()
+        .expect("the control has run properties");
+        assert_eq!(word.bold, Some(true));
+        assert_eq!(word.font_ascii.as_deref(), Some("Arial"));
+        assert_eq!(word.color.as_deref(), Some("1F3864"));
+        let prefixed = sdt_properties(
+            r#"<ns0:rPr xmlns:ns0="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><ns0:i/></ns0:rPr>"#,
+        )
+        .run_properties()
+        .unwrap()
+        .expect("run properties under another prefix");
+        assert_eq!(prefixed.italic, Some(true));
+        // None of another namespace, and none at all.
+        for properties in [
+            r#"<x:rPr xmlns:x="urn:example"><x:b/></x:rPr><w:id w:val="1"/>"#,
+            r#"<w:id w:val="1"/>"#,
+        ] {
+            assert_eq!(
+                sdt_properties(properties).run_properties().unwrap(),
+                None,
+                "{properties}"
+            );
+        }
     }
 
     #[test]

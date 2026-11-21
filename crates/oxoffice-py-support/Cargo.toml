@@ -13,6 +13,7 @@ homepage.workspace = true
 
 [dependencies]
 oxoffice-core = { workspace = true }
+oxoffice-layout = { workspace = true }
 oxoffice-opc = { workspace = true, features = ["digital-signatures"] }
 pyo3 = { workspace = true }
 smallvec = { workspace = true }

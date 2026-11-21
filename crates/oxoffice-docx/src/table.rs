@@ -1519,8 +1519,14 @@ impl<'a> Table<'a> {
         self
     }
 
-    /// Set the table width as a percentage in place.
+    /// Set the table width as a percentage in place, clamped to 0–100 as
+    /// Word writes it. A NaN leaves the width as it was; use
+    /// [`Self::set_width_mode`] to have a bad value refused.
     pub fn set_width_pct(&mut self, percent: f64) {
+        if percent.is_nan() {
+            return;
+        }
+        let percent = percent.clamp(0.0, 100.0);
         self.ensure_tbl_pr().width = Some(CT_TblWidth::pct(percent_fiftieths(percent)));
     }
 
@@ -2985,13 +2991,15 @@ impl<'a> TableRef<'a> {
             .is_some_and(|properties| properties.width.is_some())
     }
 
-    /// Whether explicit table borders are present.
+    /// Whether explicit table borders draw a line: an edge set to `nil` or
+    /// `none` does not count, as for paragraphs; an edge the model keeps as
+    /// raw XML (a diagonal) counts whatever its value.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties
             .as_ref()
             .and_then(|properties| properties.borders.as_ref())
-            .is_some_and(|borders| !borders.is_empty())
+            .is_some_and(|borders| borders.draws_an_edge() || !borders.extra_xml.is_empty())
     }
 
     /// Whether explicit table shading is present.
@@ -3372,13 +3380,15 @@ impl<'a> CellRef<'a> {
             .is_some_and(|properties| properties.width.is_some())
     }
 
-    /// Whether explicit cell borders are present.
+    /// Whether explicit cell borders draw a line: an edge set to `nil` or
+    /// `none` does not count, as for paragraphs; an edge the model keeps as
+    /// raw XML (a diagonal) counts whatever its value.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties
             .as_ref()
             .and_then(|properties| properties.borders.as_ref())
-            .is_some_and(|borders| !borders.is_empty())
+            .is_some_and(|borders| borders.draws_an_edge() || !borders.extra_xml.is_empty())
     }
 
     /// Whether explicit cell shading is present.

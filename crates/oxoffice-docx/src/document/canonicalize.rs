@@ -1785,7 +1785,10 @@ impl Document {
                     relationships
                         .items
                         .iter()
-                        .filter(|relationship| relationship.rel_type == rel_types::IMAGE)
+                        .filter(|relationship| {
+                            relationship.rel_type == rel_types::IMAGE
+                                && relationship_is_internal(relationship)
+                        })
                         .all(|relationship| {
                             self.identifiers
                                 .part_is_preserved(&OpcPackage::resolve_rel_target(
@@ -1825,8 +1828,11 @@ impl Document {
                 continue;
             };
             for id in ids {
+                // A linked picture's relationship is External: its target is
+                // an address, not a part to move.
                 if let Some(relationship) = relationships.get_by_id(id)
                     && relationship.rel_type == rel_types::IMAGE
+                    && relationship_is_internal(relationship)
                 {
                     let part = OpcPackage::resolve_rel_target(owner, &relationship.target);
                     if !self.identifiers.part_is_preserved(&part) && !ordered.contains(&part) {
@@ -1858,7 +1864,9 @@ impl Document {
         for (owner, _) in &owners {
             if let Some(relationships) = self.package.get_part_rels_mut(owner) {
                 for relationship in &mut relationships.items {
-                    if relationship.rel_type == rel_types::IMAGE {
+                    if relationship.rel_type == rel_types::IMAGE
+                        && relationship_is_internal(relationship)
+                    {
                         let old = OpcPackage::resolve_rel_target(owner, &relationship.target);
                         if let Some(updated) = remap.get(&old) {
                             relationship.target = relative_descendant_target(owner, updated);

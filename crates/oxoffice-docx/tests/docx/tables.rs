@@ -878,6 +878,34 @@ fn table_percentages_round_to_the_nearest_fiftieth_through_both_setters() {
 }
 
 #[test]
+fn the_unchecked_percentage_setter_keeps_to_what_word_writes() {
+    for (percent, stored) in [
+        (150.0, 100.0),
+        (-5.0, 0.0),
+        (f64::INFINITY, 100.0),
+        (f64::NEG_INFINITY, 0.0),
+    ] {
+        let mut doc = Document::new();
+        doc.add_table(1, 1).set_width_pct(percent);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.table(0).unwrap().width_mode(),
+            Some(TableWidth::Percentage(stored)),
+            "{percent}"
+        );
+    }
+    // NaN names no width: the one already set stays.
+    let mut doc = Document::new();
+    doc.add_table(1, 1).set_width_pct(40.0);
+    doc.table_mut(0).unwrap().set_width_pct(f64::NAN);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.table(0).unwrap().width_mode(),
+        Some(TableWidth::Percentage(40.0))
+    );
+}
+
+#[test]
 fn a_cell_reads_its_tracked_insertions_as_its_paragraphs_do() {
     let doc = doc_with_body(concat!(
         r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>"#,
@@ -1592,5 +1620,45 @@ fn a_row_added_beside_empty_properties_writes_none() {
             "<w:tr><w:trPr/><w:tc><w:tcPr/><w:p/></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc></w:tr>"
         ),
         "{xml}"
+    );
+}
+
+#[test]
+fn table_and_cell_edges_set_to_nil_or_none_draw_no_border() {
+    let table = |borders: &str, cell_borders: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblBorders>{borders}</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders>{cell_borders}</w:tcBorders></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        )
+    };
+    let undrawn = table(
+        r#"<w:top w:val="nil"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideH w:val="nil"/>"#,
+        r#"<w:top w:val="nil"/><w:bottom w:val="none"/>"#,
+    );
+    let drawn = table(
+        r#"<w:top w:val="nil"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#,
+        r#"<w:top w:val="nil"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#,
+    );
+
+    let doc = doc_with_body(&undrawn);
+    let table_ref = doc.table(0).unwrap();
+    assert!(!table_ref.has_borders(), "nil and none edges only");
+    assert!(!table_ref.cell(0, 0).unwrap().has_borders());
+    assert!(
+        !doc.to_html_fragment().contains("border:"),
+        "{}",
+        doc.to_html_fragment()
+    );
+
+    let doc = doc_with_body(&drawn);
+    let table_ref = doc.table(0).unwrap();
+    assert!(table_ref.has_borders(), "one drawn edge among nil ones");
+    assert!(table_ref.cell(0, 0).unwrap().has_borders());
+    assert_eq!(
+        doc.to_html_fragment()
+            .matches("border:1px solid #000")
+            .count(),
+        2,
+        "{}",
+        doc.to_html_fragment()
     );
 }

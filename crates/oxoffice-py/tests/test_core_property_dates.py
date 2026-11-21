@@ -72,8 +72,8 @@ def test_a_stored_date_reads_as_its_utc_instant_or_none(package, field, text, ex
     assert read is None or read.utcoffset() == datetime.timedelta(0)
 
 
-# Where the Word binding's own copy of the conversion still answers differently, until #249 moves it to the shared one.
-WORD_DIFFERS = [
+# Endings the old Word copy of the conversion read at a shifted instant, or not at all (#249).
+TAILS = [
     ("2026-11-21T10:00:00.503+02:00", datetime.datetime(2026, 11, 21, 8, tzinfo=UTC)),
     ("2026-11-21T10:00:00+0200", None),
     ("2026-11-21T10:00:00+00:60", None),
@@ -83,13 +83,9 @@ WORD_DIFFERS = [
 ]
 
 
-@pytest.mark.parametrize("package", [
-    pytest.param(oxdocx, marks=pytest.mark.xfail(strict=True, reason="#249: the Word binding reads these at a "
-                                                 "shifted instant, or not at all")),
-    oxpptx,
-], ids=["docx", "pptx"])
+@BOTH
 @pytest.mark.parametrize("field", FIELDS)
-@pytest.mark.parametrize(("text", "expected"), WORD_DIFFERS, ids=[text for text, _ in WORD_DIFFERS])
+@pytest.mark.parametrize(("text", "expected"), TAILS, ids=[text for text, _ in TAILS])
 def test_a_date_is_read_at_its_right_instant_or_not_at_all(package, field, text, expected):
     read = getattr(with_stored_date(package, field, text).core_properties, field)
     assert read == expected
@@ -145,3 +141,4 @@ def test_an_absent_author_reads_as_an_empty_string(package):
     doc.core_properties.title = "A title"
     doc.core_properties.author = None
     assert doc.core_properties.author == ""
+

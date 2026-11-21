@@ -20,13 +20,17 @@ pub(super) fn stored_note_cache_runs(
         paint_scope: 0,
     });
     let locked = inherited_locked || field.locked() == Some(true);
-    // On the page, a legacy checkbox draws the box of its state, whatever
-    // result it stores: nested in another field's result, or deleted in the
-    // tracked view. Navigation text, which passes no input, keeps its text.
-    if input.is_some()
-        && let Some(glyph) = super::paragraph::drawn_legacy_checkbox(field)
-    {
-        let mut run = CT_R::new(glyph);
+    // A legacy checkbox draws the box of its state, whatever result it
+    // stores, and a drop-down that stores no result its selected entry:
+    // nested in another field's result, or deleted in the tracked view. The
+    // box is drawn on the page only: navigation text, which passes no input,
+    // keeps the checkbox's text. A drop-down's entry is text, and navigation
+    // text reads it too.
+    let drawn = super::paragraph::drawn_legacy_checkbox(field)
+        .filter(|_| input.is_some())
+        .or_else(|| super::paragraph::drawn_legacy_dropdown(field));
+    if let Some(drawn) = drawn {
+        let mut run = CT_R::new(drawn);
         // The formatting of its stored result, else of the run opening it,
         // as at the top level.
         run.properties = field

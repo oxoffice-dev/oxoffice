@@ -8,7 +8,7 @@ mod slide;
 mod table;
 mod text;
 
-use pyo3::exceptions::{PyIndexError, PyRuntimeError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
@@ -18,29 +18,14 @@ use presentation::{
     PyValidationIssue,
 };
 
-pub(crate) fn normalize_index(index: isize, len: usize, kind: &str) -> PyResult<usize> {
-    let normalized = if index < 0 {
-        len as isize + index
-    } else {
-        index
-    };
-    if normalized < 0 || normalized >= len as isize {
-        return Err(PyIndexError::new_err(format!("{kind} index out of range")));
-    }
-    Ok(normalized as usize)
-}
+pub(crate) use oxoffice_py_support::normalize_index;
 
 fn public_exception_type<'py>(py: Python<'py>, class_name: &str) -> PyResult<Bound<'py, PyType>> {
-    py.import("oxoffice.pptx")
-        .and_then(|module| module.getattr(class_name))
-        .and_then(|class| class.cast_into::<PyType>().map_err(Into::into))
+    oxoffice_py_support::public_exception_type(py, "oxoffice.pptx", class_name)
 }
 
 fn public_error(py: Python<'_>, class_name: &str, message: String) -> PyErr {
-    match public_exception_type(py, class_name) {
-        Ok(class) => PyErr::from_type(class, (message,)),
-        Err(_) => PyRuntimeError::new_err(message),
-    }
+    oxoffice_py_support::public_error(py, "oxoffice.pptx", class_name, message)
 }
 
 /// A counted replacement that matched a different number of times than the

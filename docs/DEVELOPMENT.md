@@ -98,7 +98,12 @@ Finish what you start.
   (`S1 data loss`, `S2 wrong result`, `S3 rare or workaround`, `S4 polish`),
   an area label (`area: docx`, `area: pptx`, `area: render`,
   `area: python`, `area: ci`) and a "Seen with" line (which producer, which
-  kind of file). Search for an existing issue first.
+  kind of file, which system). Search for an existing issue first. The bug report form
+  (`.github/ISSUE_TEMPLATE/bug.yml`) asks for what happens, what it was seen
+  with, what was expected and, if known, an issue with the same cause;
+  labels are set at triage. An issue opened with `gh issue create
+  --body-file` skips the form: give it the same `###` headings (What
+  happens, Seen with, Expected, Same cause as).
 - **Order of work**: S1 at once, S2 next, S3 and S4 in batches by module,
   one pull request per batch, never one pull request per trivial issue.
 - **Test rounds are scheduled, not continuous.** A round that finds bugs
@@ -176,15 +181,16 @@ neither fails a flat call nor reads as a fix.
 
 ## Render tests
 
-The `render` module of the docx test binary renders every Word file of the
-corpus as `convert` and `render` do, with the bundled fonts, and checks two
-things (see [the spec](../specs/2026-11-21-render-fidelity.md)). The pieces
-that depend on no facade (the PDF reader, the hashes, the baseline files and
-the checks) live in the dev-only crate `oxoffice-render-test`.
+The `render` modules of the docx and pptx test binaries render every file
+of the corpus as `convert` and `render` do, with the bundled fonts, and
+check two things (see [the spec](../specs/2026-11-21-render-fidelity.md)).
+What they share (the PDF reader, the hashes, the baseline files and the
+checks) lives in the dev-only crate `oxoffice-render-test`.
 
 - **Invariants**, read from the PDF and the page images: page sizes in the
-  order of the sections, no page with only its header and footer, every
-  word drawn and inside its page, no empty-box glyph, no text over text,
+  order of the sections (one page of the slide size per slide), no page
+  with only its header and footer, every word drawn and inside its page (a
+  slide's words on its own page), no empty-box glyph, no text over text,
   every picture and table border drawn, no diagnostic but those known to
   change nothing drawn. What fails today is listed in
   `tests/render/known.toml` with its issue, and an entry fails the test once
@@ -199,6 +205,7 @@ the checks) live in the dev-only crate `oxoffice-render-test`.
 ```bash
 OXOFFICE_RENDER=subset cargo test --profile ci -p oxoffice-docx --test docx render   # check
 OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render
+# the same with -p oxoffice-pptx --test pptx for the decks
 ```
 
 `OXOFFICE_RENDER` is `subset` (the corpus without its `long-*` files),

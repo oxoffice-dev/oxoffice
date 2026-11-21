@@ -1223,14 +1223,23 @@ fn emit_table(
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut max_cols = 0;
 
+    let limit = crate::emitter::grid_limit(tbl);
     // Rows and cells that content controls wrap are written in place.
     for row in tbl
         .rows()
         .into_iter()
         .filter(|row| !row.accepted_view_removes())
     {
+        // GFM cannot span: a cell spanning several grid columns, or the
+        // columns a row omits before its first cell, leave empty cells, so
+        // that every cell stays in its grid column.
         let mut cells: Vec<String> = Vec::new();
-        for cell in row.cells() {
+        let ranges = crate::emitter::grid_ranges(row, limit);
+        for (cell, &(start, _)) in row.cells().into_iter().zip(&ranges) {
+            // Starts clamped to the table's width can repeat: only grow.
+            if cells.len() < start {
+                cells.resize(start, String::new());
+            }
             let text = collect_cell_text(cell, styles, hyperlink_urls, images);
             cells.push(text);
         }
@@ -1260,15 +1269,18 @@ fn emit_table(
 
     // Emit separator
     out.push('|');
-    let header_cells = tbl
+    // Each column takes the alignment of the header cell that starts there.
+    let header = tbl
         .rows()
         .into_iter()
-        .find(|row| !row.accepted_view_removes())
-        .map(|row| row.cells())
-        .unwrap_or_default();
+        .find(|row| !row.accepted_view_removes());
+    let header_cells = header.map(|row| row.cells()).unwrap_or_default();
+    let header_ranges = header.map_or_else(Vec::new, |row| crate::emitter::grid_ranges(row, limit));
     for column in 0..max_cols {
-        let alignment = header_cells
-            .get(column)
+        let alignment = header_ranges
+            .iter()
+            .position(|&(start, _)| start == column)
+            .and_then(|index| header_cells.get(index))
             .and_then(|cell| cell.paragraphs().first().copied())
             .and_then(|paragraph| paragraph.properties.as_ref())
             .and_then(|properties| properties.jc);

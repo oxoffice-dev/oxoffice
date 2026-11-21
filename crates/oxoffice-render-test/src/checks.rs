@@ -163,10 +163,20 @@ pub fn check_empty_pages(
 /// letter starts a new word, so that a note mark drawn against its word
 /// (`rate¹`) still reads as the word.
 pub fn words(text: &str) -> Vec<String> {
+    split_words(text, false)
+}
+
+/// [`words`], numbers included: for a deck, whose only computed numbers are
+/// its slide numbers and dates.
+pub fn all_words(text: &str) -> Vec<String> {
+    split_words(text, true)
+}
+
+fn split_words(text: &str, numbers: bool) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
     let flush = |word: &mut String, words: &mut Vec<String>| {
-        if !word.is_empty() && !is_number(word) {
+        if !word.is_empty() && (numbers || !is_number(word)) {
             words.push(std::mem::take(word));
         }
         word.clear();
