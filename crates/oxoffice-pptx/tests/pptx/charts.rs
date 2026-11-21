@@ -470,9 +470,7 @@ fn axis_titles_given_at_creation_are_written_on_the_axes() {
     assert!(value_axis.contains("Euros (k)"), "{xml}");
 }
 
-// Fails today: labels state only showPercent, so LibreOffice shows every field. Issue: #42
 #[test]
-#[should_panic(expected = "data labels leave a field to the reader")]
 fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
     // The facade has no reader for data labels: read the chart part. Readers
     // disagree on an absent flag, so each field must be stated.
@@ -486,6 +484,38 @@ fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
                 flags.get(field).map(String::as_str),
                 Some("0"),
                 "{kind:?}: data labels leave a field to the reader: {field}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pie_labels_on_every_editors_deck_state_every_field_through_a_save() {
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let id = chart_on(&mut prs, 1, ChartKind::Pie, &shares());
+        // An edit of the reopened chart writes its part again from the model.
+        let mut prs = reopen(&prs);
+        prs.set_chart_legend(1, id, Some(true), None, None).unwrap();
+        let flags = data_label_flags(&only_chart_xml(&reopen(&prs)));
+        let expected = [
+            ("showLegendKey", "0"),
+            ("showVal", "0"),
+            ("showCatName", "0"),
+            ("showSerName", "0"),
+            ("showPercent", "1"),
+            ("showBubbleSize", "0"),
+        ];
+        for (field, value) in expected {
+            assert_eq!(
+                flags.get(field).map(String::as_str),
+                Some(value),
+                "{name}: {field}"
             );
         }
     }
