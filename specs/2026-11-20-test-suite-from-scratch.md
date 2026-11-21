@@ -173,5 +173,7 @@ a manifest: producer and version, features it carries, licence, size.
   which fails on the first list of problems).
 - Measured locally on 0.1.0 (Linux): 8 min 41 s on a `ci` build, 2 min 56 s on
   a `scaling` build. The `ci` build was kept: it is the wheel the other jobs
-  test, and its debug assertions check the examples' edits too. The job has
-  a 30 minute timeout.
+  test, and its debug assertions check the examples' edits too. On a runner
+  the examples take about 18 minutes; the job has a 40 minute timeout. The
+  checks read paragraphs through `docx text --json`: walking
+  `Document.paragraphs` on that build took over 6 minutes.

@@ -163,13 +163,13 @@ jobs:
   # two repositories (tests/skills/README.md). They run on main only, against
   # the Linux wheel and command that `build` just made and tested, and read
   # the skills' default branch: a change on either side shows on the next
-  # push to main. A `ci` build takes about 9 minutes locally.
+  # push to main. A `ci` build takes about 9 minutes locally, 20 on a runner.
   skill-examples:
     name: Skill examples
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -194,7 +194,7 @@ jobs:
           oxoffice --version
           git -C oxoffice-skills log -1 --format='oxoffice-skills %h %s'
       - name: Run the examples
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: |
           python tests/skills/make_fixtures.py "$RUNNER_TEMP/skills/fixtures"
           python tests/skills/run_examples.py --skills oxoffice-skills/plugin/skills \

@@ -1,11 +1,14 @@
 """Check what the skill examples wrote, after run_examples.py: the files each example promises, with the
-content it describes. Reads them with oxoffice, python-docx and python-pptx.
+content it describes. Reads them with oxoffice, python-docx and python-pptx. A document's paragraphs are read from
+`oxoffice docx text --json` (one call per file): on a build with debug assertions, walking `Document.paragraphs`
+costs tens of milliseconds per paragraph, minutes for the whole check.
 
     python tests/skills/check_outputs.py WORK_DIR
 """
 
 import json
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -18,7 +21,30 @@ import oxoffice.pptx
 
 WORK = Path(sys.argv[1])
 d = WORK / "docx"
-texts = [p.text for p in oxoffice.docx.Document.open(d / "edited.docx").paragraphs]
+
+
+def paragraphs(name):
+    """The paragraphs of `oxoffice docx text --json`: the body's, as Document.paragraphs lists them, then each
+    table cell's, with `text`, `style`, `runs` (text and formatting), `path` and `body_index`."""
+    out = subprocess.run(["oxoffice", "docx", "text", "--json", str(d / name)], check=True, capture_output=True,
+                         text=True, encoding="utf-8").stdout
+    return json.loads(out)["paragraphs"]
+
+
+in_cell = lambda q: any(step["kind"] == "cell" for step in q["path"])
+body = lambda name: [q for q in paragraphs(name) if not in_cell(q)]
+texts_of = lambda name: [q["text"] for q in body(name)]
+
+
+def cell_text(name, first, row, col):
+    """The text of a cell of the table whose first cell reads `first`."""
+    cells = [q for q in paragraphs(name) if in_cell(q)]
+    at = lambda q: tuple(s["index"] for s in q["path"] if s["kind"] in ("row", "cell"))
+    table = next(q["body_index"] for q in cells if at(q) == (0, 0) and q["text"] == first)
+    return "\n".join(q["text"] for q in cells if q["body_index"] == table and at(q) == (row, col))
+
+
+texts = texts_of("edited.docx")
 assert any("Issue C, for approval" in t for t in texts) and any("two points lower" in t for t in texts)
 doc = oxoffice.docx.Document.open(d / "commented.docx")
 first = next(c for c in doc.comments if c.parent_id is None)
@@ -29,21 +55,19 @@ reviewed = oxoffice.docx.Document.open(d / "reviewed.docx")
 root = next(c for c in reviewed.comments if c.id == first.id)
 assert (root.anchor_text, root.resolved, len(reviewed.comments)) == ("bearing positions", True, len(doc.comments))
 assert [c.parent_id for c in reviewed.comments if c.text == "The 2019 survey marks."] == [root.id]
-assert not any(p.text.startswith("the bearing at pier 2") for p in reviewed.paragraphs)
+assert not any(s.startswith("the bearing at pier 2") for s in texts_of("reviewed.docx"))
 assert oxoffice.docx.Document.open(d / "moved-cli.docx").comments[0].anchor_text == "bearing positions"
-scoped = oxoffice.docx.Document.open(d / "scoped.docx")
-method = [p.text for p in scoped.paragraphs if "Drainage performance was checked" in p.text]
+method = [s for s in texts_of("scoped.docx") if "Drainage performance was checked" in s]
 assert method[0].startswith("Drainage performance was checked by pouring water at the high points of each span")
 assert all("high points of the deck" in t for t in method[1:]) and len(method) > 1
-actions = [scoped.tables[next(k for k, tb in enumerate(scoped.tables) if tb.cell(0, 0).text == "Ref")].cell(r, 5).text
-           for r in (1, 5)]
+actions = [cell_text("scoped.docx", "Ref", r, 5) for r in (1, 5)]
 assert actions == ["Monitor", "No action"]
-texts_of = lambda name: [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs]
 issue = texts_of("issue-c.docx")
 assert any("Issue C" in s for s in issue) and not any("Issue B" in s for s in issue)
 report = texts_of("report.docx")
 for name in ("checked.docx", "accepted.docx"):
-    assert any("two points lower" in s for s in texts_of(name)) and not any("three points lower" in s for s in texts_of(name))
+    lines = texts_of(name)
+    assert any("two points lower" in s for s in lines) and not any("three points lower" in s for s in lines)
 assert len(oxoffice.docx.Document.open(d / "accepted.docx").revisions) == 0
 added = texts_of("added.docx")
 k = next(k for k, s in enumerate(added) if s.startswith("None of these defects"))
@@ -60,13 +84,13 @@ def toc_links(name):   # a rebuilt TOC links each entry to a _Toc bookmark and g
 
 assert toc_links("report.docx") == (0, 0, 0)   # the input's TOC is plain cached text
 for name in ("toc.docx", "fields.docx"):
-    entries = [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs if re.fullmatch(r"TOC\d", q.style or "")]
+    entries = [q["text"] for q in body(name) if re.fullmatch(r"TOC\d", q["style"] or "")]
     assert len(entries) > 3 and all(s.split("\t")[-1].isdigit() for s in entries)
     assert toc_links(name) == (len(entries), len(entries), len(entries)), (name, toc_links(name), len(entries))
-page = lambda name: next(q.text.split("\t")[-1] for q in oxoffice.docx.Document.open(d / name).paragraphs
-                         if q.text.startswith("Access arrangements\t"))
+page = lambda name: next(s.split("\t")[-1] for s in texts_of(name) if s.startswith("Access arrangements\t"))
 assert int(page("fields.docx")) == int(page("toc.docx")) + 1   # update_layout_backed_fields followed the page break
-styled = next(q for q in oxoffice.docx.Document.open(d / "styled.docx").paragraphs if q.text.startswith("The overall condition index"))
+i = next(k for k, s in enumerate(texts_of("styled.docx")) if s.startswith("The overall condition index"))
+styled = oxoffice.docx.Document.open(d / "styled.docx").paragraphs[i]
 assert (styled.style, styled.paragraph_format.space_after, styled.paragraph_format.keep_with_next) == ("Caption", oxoffice.docx.Pt(12), True)
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cli.docx").comments] == [("about 12 mm", "Which reference?")]
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cell.docx").comments] == [("spalled concrete", "Which face?")]
@@ -82,15 +106,12 @@ nobm = oxoffice.docx.Document.open(d / "redline-nobm.docx")
 assert [(r.kind, r.story.kind) for r in nobm.revisions] == [("deletion", "body"), ("insertion", "body")]
 red = oxoffice.docx.Document.open(d / "redline.docx")
 assert [(r.kind, r.story.kind) for r in red.revisions] == [("deletion", "body"), ("insertion", "body")]
-bold = oxoffice.docx.Document.open(d / "bold.docx")
-assert any(r.text == "safety of path users" and r.font.bold for p in bold.paragraphs for r in p.runs)
-assert not any(t.startswith("Access equipment, traffic management")
-               for t in (p.text for p in oxoffice.docx.Document.open(d / "restructured.docx").paragraphs))
-assert any("Replace the handrail caps" == c.text for t in oxoffice.docx.Document.open(d / "table.docx").tables
-           for row in t.rows for c in row.cells)
+assert any(r["text"] == "safety of path users" and r["formatting"]["bold"] for q in body("bold.docx") for r in q["runs"])
+assert not any(s.startswith("Access equipment, traffic management") for s in moved)
+assert any(q["text"] == "Replace the handrail caps" for q in paragraphs("table.docx") if in_cell(q))
 with zipfile.ZipFile(d / "from-template.docx") as z:
     assert b"wordprocessingml.document.main+xml" in z.read("[Content_Types].xml")
-assert [p.text for p in oxoffice.docx.Document.open(d / "note.docx").paragraphs] == ["Site visit note", "Visited on 27 September 2026."]
+assert texts_of("note.docx") == ["Site visit note", "Visited on 27 September 2026."]
 check = docx.Document(d / "checklist.docx")
 assert check.core_properties.title == "Inspection checklist" and check.core_properties.author == "Claude"
 assert [(p.style.name, p.text) for p in check.paragraphs] == [
@@ -99,18 +120,17 @@ assert [(p.style.name, p.text) for p in check.paragraphs] == [
 assert check.styles["Note box"].font.italic and check.styles["Note box"].base_style.name == "Normal"
 num = [p._p.pPr.numPr for p in check.paragraphs[2:]]
 assert all(n is not None and n.numId.val == num[0].numId.val for n in num)
-toc = oxoffice.docx.Document.open(d / "with-toc.docx")
-assert [p.text.split("\t")[0] for p in toc.paragraphs if p.style == "TOC1"] == ["Scope", "Findings", "Recommendations"]
-assert all(p.text.split("\t")[1].isdigit() for p in toc.paragraphs if p.style == "TOC1")
+toc1 = [q["text"] for q in body("with-toc.docx") if q["style"] == "TOC1"]
+assert [s.split("\t")[0] for s in toc1] == ["Scope", "Findings", "Recommendations"]
+assert all(s.split("\t")[1].isdigit() for s in toc1)
 with zipfile.ZipFile(d / "with-toc.docx") as z:
     assert b'TOC \\o "1-2" \\h' in z.read("word/document.xml")
-visit = oxoffice.docx.Document.open(d / "visit.docx")
-assert [p.style for p in visit.paragraphs][:1] == ["Heading1"] and visit.tables[0].cell(1, 0).text == "Pier 2"
+assert body("visit.docx")[0]["style"] == "Heading1" and cell_text("visit.docx", "Item", 1, 0) == "Pier 2"
 form = oxoffice.docx.Document.open(d / "filled-form.docx")
 assert [(c.tag, c.text) for c in form.content_controls() if c.tag == "status"] == [("status", "Final")]
 assert [(f.name, f.value) for f in form.legacy_form_fields()] == [("Inspector", "Inspector A")]
 assert (form.document_protection.mode, form.document_protection.enforcement) == ("forms", True)
-findings = [p.text for p in oxoffice.docx.Document.open(d / "findings.docx").paragraphs]
+findings = texts_of("findings.docx")
 assert findings[:2] == ["Findings", "Inserted after the heading."]
 with zipfile.ZipFile(d / "chart.docx") as z:
     chart = re.findall(r"<c:v>([^<]*)</c:v>", z.read("word/charts/chart1.xml").decode())
