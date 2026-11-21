@@ -670,6 +670,30 @@ fn a_search_does_not_match_across_a_tab_inside_a_run() {
 }
 
 #[test]
+fn searches_that_skipped_a_tab_inside_one_run_return_and_change_nothing() {
+    // Before the search read tabs, these looped forever in release builds
+    // (doubling the text) or panicked.
+    for (body, search, replacement) in [
+        (r#"<w:t>Name</w:t><w:tab/><w:t>Ada</w:t>"#, "eA", "e A"),
+        (
+            r#"<w:t xml:space="preserve">Name: </w:t><w:tab/><w:t xml:space="preserve"> John</w:t>"#,
+            "  ",
+            " ",
+        ),
+        (r#"<w:t>A</w:t><w:tab/><w:t>CME</w:t>"#, "ACME", "Acme"),
+    ] {
+        let mut doc = doc_with_body(&format!("<w:p><w:r>{body}</w:r></w:p>"));
+        let before = texts(&doc);
+        assert_eq!(doc.replace_text(search, replacement), 0, "{search:?}");
+        assert_eq!(texts(&doc), before, "{search:?}");
+    }
+    // The same text with its tab in the search is replaced, tab included.
+    let mut doc = doc_with_body(r#"<w:p><w:r><w:t>A</w:t><w:tab/><w:t>CME</w:t></w:r></w:p>"#);
+    assert_eq!(doc.replace_text("A\tCME", "Acme"), 1);
+    assert_eq!(texts(&reopen(&mut doc)), ["Acme"]);
+}
+
+#[test]
 fn a_search_sees_tabs_and_breaks_as_paragraph_text_shows_them() {
     let mut doc = doc_with(&[""]);
     doc.paragraph_mut(0)
