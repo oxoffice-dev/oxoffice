@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
 use oxoffice_core::xml_text::resolve_entity;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -707,7 +707,7 @@ impl TextValue {
             start.push_attribute(("xml:space", "preserve"));
         }
         if self.source_attributes.is_empty() {
-            push_raw_attributes(&mut start, &self.raw_attributes);
+            push_attributes(&mut start, &self.raw_attributes);
         } else {
             let unknown: String = self
                 .source_attributes
@@ -1101,7 +1101,7 @@ impl TextFont {
         }
         let mut start = BytesStart::new(tag);
         start.push_attribute(("typeface", self.typeface.as_str()));
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         write_empty(writer, start)
     }
 }
@@ -1313,7 +1313,7 @@ impl TextHyperlink {
         push_optional_bool(&mut start, "history", self.history);
         push_optional_bool(&mut start, "highlightClick", self.highlight_click);
         push_optional_bool(&mut start, "endSnd", self.end_sound);
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         if self.raw_children.is_empty() {
             return write_empty(writer, start);
         }
@@ -1951,7 +1951,7 @@ impl CT_TextCharacterProperties {
             start.push_attribute(("baseline", value));
         }
         if self.source_attributes.is_empty() {
-            push_raw_attributes(&mut start, &self.raw_attributes);
+            push_attributes(&mut start, &self.raw_attributes);
         } else {
             let modeled = ["sz", "b", "i", "u", "strike", "spc", "baseline"];
             let preserved: Vec<String> = self
@@ -4403,12 +4403,6 @@ fn capture_raw_attributes(
     Ok(raw)
 }
 
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
 fn required_attr(start: &BytesStart<'_>, name: &[u8]) -> Result<String> {
     text_attr(start, name)?
         .filter(|value| !value.is_empty())
@@ -4562,16 +4556,6 @@ fn push_optional_bool(start: &mut BytesStart<'_>, name: &'static str, value: Opt
 
 fn push_owned_attr(start: &mut BytesStart<'_>, name: &'static str, value: String) {
     start.push_attribute((name, value.as_str()));
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn write_start<W: Write>(writer: &mut Writer<W>, start: BytesStart<'_>) -> Result<()> {

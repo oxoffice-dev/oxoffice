@@ -1,5 +1,5 @@
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, push_attributes};
 use oxoffice_core::xml::{local_name, matches_local_name, push_escaped_attribute};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -1124,12 +1124,6 @@ fn decoded_attr(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>> {
         }
     }
     Ok(None)
-}
-
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &RawAttributes) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
 }
 
 fn reject_duplicate<T>(value: &Option<T>, name: impl Into<String>) -> Result<()> {
