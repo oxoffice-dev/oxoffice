@@ -98,7 +98,7 @@ Finish what you start.
   (`S1 data loss`, `S2 wrong result`, `S3 rare or workaround`, `S4 polish`),
   an area label (`area: docx`, `area: pptx`, `area: render`,
   `area: python`, `area: ci`) and a "Seen with" line (which producer, which
-  kind of file). Search for an existing issue first. The bug report form
+  kind of file, which system). Search for an existing issue first. The bug report form
   (`.github/ISSUE_TEMPLATE/bug.yml`) asks for what happens, what it was seen
   with, what was expected and, if known, an issue with the same cause;
   labels are set at triage. An issue opened with `gh issue create
