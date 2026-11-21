@@ -338,22 +338,58 @@ fn a_field_added_to_a_hyperlink_reads_in_the_link_text() {
     assert_eq!(texts(&doc), ["See page 2", "2"]);
 }
 
-// Fails today: a w:fldSimple inside w:hyperlink is kept raw at the next open, so its result drops out of every text reader. Issue: #146
 #[test]
-#[should_panic(expected = "the link keeps the field result after a reopen")]
 fn a_simple_field_inside_a_hyperlink_reads_after_a_reopen() {
     let mut doc = Document::new();
     doc.add_paragraph("")
         .add_internal_hyperlink("See page ", "total", None)
         .add_field("PAGEREF total", "2")
         .unwrap();
+    doc.add_paragraph("")
+        .add_internal_hyperlink("", "total", None)
+        .add_field("PAGEREF total", "2")
+        .unwrap();
     let doc = reopen(&mut doc);
     assert_eq!(
         texts(&doc),
-        ["See page 2"],
+        ["See page 2", "2"],
         "the link keeps the field result after a reopen"
     );
     assert_eq!(link_text(&doc, 0), "See page 2");
+    assert_eq!(link_text(&doc, 1), "2", "alone in the link run");
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_in_a_file_reads_and_saves_as_written() {
+    // As a file writes it: a w:fldSimple with its result, and an empty one.
+    let body = r#"<w:p><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGEREF total "><w:r><w:t>2</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> of </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "/></w:hyperlink></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        assert_eq!(texts(doc), ["See page 2 of "]);
+        assert_eq!(link_text(doc, 0), "See page 2 of ");
+        let mut fields = Vec::new();
+        for run in doc.paragraph(0).unwrap().runs() {
+            for item in run.items() {
+                if let RunItemRef::Field(field) = item {
+                    fields.push((field.kind(), field.instruction().trim().to_owned()));
+                }
+            }
+        }
+        assert_eq!(
+            fields,
+            [
+                (FieldKind::Simple, "PAGEREF total".to_owned()),
+                (FieldKind::Simple, "NUMPAGES".to_owned())
+            ]
+        );
+    }
+    let package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(body), "the link saves as it was read: {xml}");
 }
 
 #[test]
