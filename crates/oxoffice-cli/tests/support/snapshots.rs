@@ -2,7 +2,9 @@
 //! paths of a JSON output, and short text listings, each kept in a file under
 //! `tests/snapshots/`. A change shows as a diff of that file in the pull
 //! request that makes it. `OXOFFICE_SNAPSHOTS_UPDATE=1` rewrites the files a
-//! run reads; a changed key also needs its line in the migration note.
+//! run reads, outside CI only; run it with `OXOFFICE_WORKFLOWS=full` so that
+//! every file is read. A changed key is a change users see: say it in the
+//! pull request.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -56,29 +58,60 @@ pub fn key_paths(value: &Value) -> BTreeSet<String> {
     paths
 }
 
-/// `lines` equal `tests/snapshots/<name>.txt`, one line each.
-pub fn assert_snapshot(name: &str, lines: &[String]) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+/// Whether this run rewrites the snapshots instead of checking them.
+fn updating() -> bool {
+    let update = std::env::var("OXOFFICE_SNAPSHOTS_UPDATE").is_ok_and(|value| value == "1");
+    assert!(
+        !(update && std::env::var_os("CI").is_some()),
+        "OXOFFICE_SNAPSHOTS_UPDATE is for a local run, never under CI"
+    );
+    update
+}
+
+/// `tests/snapshots/<name>.txt`.
+pub fn snapshot_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots")
-        .join(format!("{name}.txt"));
-    let found = lines
-        .iter()
-        .map(|line| format!("{line}\n"))
-        .collect::<String>();
-    if std::env::var_os("OXOFFICE_SNAPSHOTS_UPDATE").is_some() {
+        .join(format!("{name}.txt"))
+}
+
+/// `lines` equal `tests/snapshots/<name>.txt`, one line each, in order. Line
+/// ends are read either way: a Windows checkout may turn them into CRLF.
+pub fn assert_snapshot(name: &str, lines: &[String]) {
+    let path = snapshot_path(name);
+    if updating() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, &found).unwrap();
+        let text = lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+        fs::write(&path, text).unwrap();
         return;
     }
-    let kept = fs::read_to_string(&path).unwrap_or_default();
-    if kept != found {
-        let kept_lines = kept.lines().collect::<BTreeSet<_>>();
-        let found_lines = lines.iter().map(String::as_str).collect::<BTreeSet<_>>();
-        let gone = kept_lines.difference(&found_lines).collect::<Vec<_>>();
-        let new = found_lines.difference(&kept_lines).collect::<Vec<_>>();
+    let kept = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "{} moved: gone {gone:?}, new {new:?}; if that is intended, rerun with \
-             OXOFFICE_SNAPSHOTS_UPDATE=1 and say it in the pull request",
+            "{}: {e}; write it with OXOFFICE_SNAPSHOTS_UPDATE=1",
+            path.display()
+        )
+    });
+    let kept = kept
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .collect::<Vec<_>>();
+    let found = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    if kept != found {
+        let gone = kept
+            .iter()
+            .filter(|line| !found.contains(line))
+            .collect::<Vec<_>>();
+        let new = found
+            .iter()
+            .filter(|line| !kept.contains(line))
+            .collect::<Vec<_>>();
+        panic!(
+            "{} moved: gone {gone:?}, new {new:?}, kept {kept:#?}, found {found:#?}; if that is \
+             intended, rerun with OXOFFICE_SNAPSHOTS_UPDATE=1 OXOFFICE_WORKFLOWS=full and say it \
+             in the pull request",
             path.display()
         );
     }

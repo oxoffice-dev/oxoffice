@@ -163,7 +163,10 @@ fn replace_map_with_a_wrong_count_writes_nothing_and_leaves_the_input_as_it_was(
     ]);
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("Northwind"), "{stderr}");
+    assert!(
+        stderr.contains("pair 1: expected 7 replacement(s) of \"Northwind\", found 1"),
+        "{stderr}"
+    );
     assert!(!output.exists(), "the first pair is not published alone");
     assert_eq!(fs::read(&input).unwrap(), before);
 }

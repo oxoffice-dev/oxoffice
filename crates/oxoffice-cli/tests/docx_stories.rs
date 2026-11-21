@@ -15,7 +15,7 @@ use serde_json::Value;
 #[path = "support/snapshots.rs"]
 mod snapshots;
 
-use snapshots::{assert_keys, assert_snapshot, corpus, every_copy};
+use snapshots::{assert_keys, assert_snapshot, corpus, every_copy, snapshot_path};
 
 fn report(producer: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -307,12 +307,14 @@ fn diffed_families() -> Vec<String> {
 
 #[test]
 fn a_producer_copy_differs_from_its_source_only_by_what_that_producer_changes() {
+    let mut read = Vec::new();
     for family in diffed_families() {
         for producer in ["word", "google", "libreoffice"] {
             let copy = format!("{producer}/{family}.docx");
-            if !corpus(&copy).exists() {
-                continue;
-            }
+            assert!(
+                corpus(&copy).exists(),
+                "{copy}: every family has this producer's copy"
+            );
             let diff = read_json(&[
                 "docx",
                 "diff",
@@ -340,7 +342,21 @@ fn a_producer_copy_differs_from_its_source_only_by_what_that_producer_changes() 
                 })
                 .collect::<Vec<_>>();
             assert_snapshot(&format!("producer-diff/{producer}-{family}"), &rows);
+            read.push(format!("{producer}-{family}.txt"));
         }
+    }
+    if every_copy() {
+        // No snapshot is left behind by a copy that went.
+        let mut kept = fs::read_dir(snapshot_path("producer-diff/x").parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        kept.sort();
+        read.sort();
+        assert_eq!(
+            kept, read,
+            "every producer-diff snapshot belongs to a corpus copy"
+        );
     }
 }
 
@@ -387,7 +403,8 @@ fn a_comment_added_to_a_copy_is_the_one_difference() {
 }
 
 // Known failure #356: diff matches comments by their order in comments.xml,
-// which Google Docs rewrites. When it passes, drop `should_panic` and update
+// which Word, Google Docs and LibreOffice all rewrite (see the producer-diff
+// snapshots of the contract). When it passes, drop `should_panic` and update
 // the producer-diff snapshots of the contract.
 #[test]
 #[should_panic(expected = "only the resolved comment Google drops differs")]

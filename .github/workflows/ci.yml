@@ -184,6 +184,8 @@ jobs:
       # The scaling job stays sequential: its timings need a quiet runner.
       - name: Python tests
         shell: bash
+        env:
+          OXOFFICE_WORKFLOWS: ${{ github.event_name != 'pull_request' && 'full' || '' }}
         run: |
           if [ -d crates/oxoffice-py/tests ]; then python -m pytest crates/oxoffice-py/tests -q -n auto; else echo "no Python tests yet"; fi
 
