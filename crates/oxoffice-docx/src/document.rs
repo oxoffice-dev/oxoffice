@@ -40620,8 +40620,9 @@ impl Document {
     /// Whether the first level of the given numbering instance renders as
     /// bullets (true) or numbers (false), with the replacement level the
     /// instance sets in place of its definition's and a missing format read
-    /// as decimal, as layout draws it. None if the id or its first level is
-    /// unknown, or the format is not a standard one.
+    /// as decimal, as layout draws it. A `none` level, which draws no marker,
+    /// reads as false. None if the id or its first level is unknown, or the
+    /// format is not a standard one.
     pub fn numbering_is_bullet(&self, num_id: u32) -> Option<bool> {
         match self.effective_numbering_level(num_id, 0)?.num_fmt.as_ref() {
             Some(ST_NumberFormat::Bullet) => Some(true),
