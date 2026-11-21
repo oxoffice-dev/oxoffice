@@ -3,9 +3,9 @@
 
 use oxoffice_docx::{
     CaptionOptions, ContentLocation, CrossReferenceOptions, Document, Field, FieldDateTime,
-    FieldEvaluationContext, FieldKind, FieldOutcome, ParagraphItemRef, RunItemRef, RunPosition,
-    RunRange, SequenceOptions, StoryId, StoryItemKind, StoryKind, StoryRangeKind, StoryRunPosition,
-    StoryRunRange, TableOfFiguresOptions, TocRebuildReport,
+    FieldEvaluationContext, FieldKind, FieldOutcome, HdrFtrType, ParagraphItemRef, RunItemRef,
+    RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind, StoryKind, StoryRangeKind,
+    StoryRunPosition, StoryRunRange, TableOfFiguresOptions, TocRebuildReport,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -113,6 +113,76 @@ fn no_context() -> FieldEvaluationContext {
 }
 
 // ---- Fields ----
+
+#[test]
+fn fields_update_in_libreoffice_files_that_keep_an_unused_even_page_header() {
+    // LibreOffice writes even page headers and footers with even and odd
+    // pages off: no section shows them, and their fields update without a
+    // page of their own.
+    for name in [
+        "libreoffice/report.docx",
+        "libreoffice/contract.docx",
+        "libreoffice/letter.docx",
+        "libreoffice/cv.docx",
+        "libreoffice/form.docx",
+        "libreoffice/minutes.docx",
+        "libreoffice/manual.docx",
+        "libreoffice/newsletter.docx",
+        "libreoffice/long-report.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        let before = texts(&doc);
+        doc.update_fields(&no_context())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc).len(), before.len(), "{name}");
+    }
+}
+
+#[test]
+fn fields_in_an_even_page_header_no_section_shows_merge_and_keep_their_page_caches() {
+    // An even page header with even and odd pages off, as LibreOffice
+    // writes it: the merge fills its MERGEFIELD, and the SEQ and PAGE fields,
+    // which need a page, keep their results.
+    let mut doc = doc_with(&["Dear "]);
+    doc.paragraph_mut(0)
+        .unwrap()
+        .add_run("")
+        .add_field("MERGEFIELD Name", "«Name»")
+        .unwrap();
+    doc.set_header("Default");
+    doc.set_raw_header_with_images(
+        concat!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p>"#,
+            r#"<w:fldSimple w:instr=" MERGEFIELD Name "><w:r><w:t>«Name»</w:t></w:r></w:fldSimple>"#,
+            r#"<w:fldSimple w:instr=" SEQ Figure "><w:r><w:t>7</w:t></w:r></w:fldSimple>"#,
+            r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>9</w:t></w:r></w:fldSimple>"#,
+            r#"</w:p></w:hdr>"#,
+        )
+        .as_bytes()
+        .to_vec(),
+        &[],
+        HdrFtrType::Even,
+    );
+    let record = [("Name".to_owned(), "Zoé".to_owned())]
+        .into_iter()
+        .collect();
+    let mut outputs = doc.mail_merge(&[record]).expect("the merge passes");
+    let merged = reopen(&mut outputs[0]);
+    assert_eq!(texts(&merged), ["Dear Zoé"]);
+    let even = merged
+        .part_names()
+        .unwrap()
+        .into_iter()
+        .map(|name| merged.part_xml(name.trim_start_matches('/')).unwrap())
+        .find(|xml| xml.contains("SEQ Figure"))
+        .expect("the even page header is kept");
+    assert!(even.contains("Zoé"), "the merge fills it: {even}");
+    assert!(
+        even.contains("<w:t>7</w:t>") && even.contains("<w:t>9</w:t>"),
+        "SEQ and PAGE keep their results: {even}"
+    );
+}
 
 #[test]
 fn a_simple_field_keeps_its_instruction_and_result_after_a_save() {

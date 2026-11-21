@@ -108,10 +108,32 @@ impl Document {
             owners.sort_by_key(|(_, nodes)| nodes.first().map(|id| id.get()));
             evaluator.sequence_nodes =
                 if matches!(kind, PackageStoryKind::Header | PackageStoryKind::Footer) {
-                    owners
-                        .first()
-                        .map(|(_, nodes)| nodes.iter().copied().map(Some).collect())
-                        .unwrap_or_default()
+                    // A header or footer no section shows, such as the even
+                    // page header LibreOffice keeps with even and odd pages
+                    // off, is not laid out: its fields evaluate without a
+                    // physical identity, as comments do. One the layout
+                    // registers keeps the strict paragraph count.
+                    let laid_out = input.story_part_names.iter().any(|(story, part)| {
+                        part == &part_name
+                            && matches!(
+                                (story, kind),
+                                (
+                                    oxoffice_docx_layout::WordStory::Header { .. },
+                                    PackageStoryKind::Header
+                                ) | (
+                                    oxoffice_docx_layout::WordStory::Footer { .. },
+                                    PackageStoryKind::Footer
+                                )
+                            )
+                    });
+                    if laid_out {
+                        owners
+                            .first()
+                            .map(|(_, nodes)| nodes.iter().copied().map(Some).collect())
+                            .unwrap_or_default()
+                    } else {
+                        vec![None; paragraphs.len()]
+                    }
                 } else {
                     // Each note owner is physically distinct, unlike relationship aliases to furniture.
                     owners
