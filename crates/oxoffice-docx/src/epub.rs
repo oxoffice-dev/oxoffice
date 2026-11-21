@@ -982,13 +982,23 @@ impl<'a> EpubWriter<'a> {
                         )?;
                     }
                 }
-                if level.ppr.is_some() || level.ppr_raw.is_some() {
+                if level
+                    .ppr
+                    .as_ref()
+                    .is_some_and(|properties| !properties.carries_nothing())
+                    || level.ppr_raw.is_some()
+                {
                     self.diagnose(
                         format!("{path}/properties/numbering/paragraph-style"),
                         "list-level paragraph styling was dropped during EPUB export".to_owned(),
                     )?;
                 }
-                if level.rpr.is_some() || level.rpr_raw.is_some() {
+                if level
+                    .rpr
+                    .as_ref()
+                    .is_some_and(|properties| !properties.carries_nothing())
+                    || level.rpr_raw.is_some()
+                {
                     self.diagnose(
                         format!("{path}/properties/numbering/marker-style"),
                         "list marker run styling was dropped during EPUB export".to_owned(),
@@ -1070,7 +1080,10 @@ impl<'a> EpubWriter<'a> {
                     "paragraph tab stops were dropped during EPUB export",
                 ),
                 (
-                    properties.rpr.is_some(),
+                    properties
+                        .rpr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing()),
                     "mark-properties",
                     "paragraph mark properties were dropped during EPUB export",
                 ),
@@ -1726,7 +1739,10 @@ fn style_has_unprojected_visuals(style: &CT_Style) -> bool {
             })
     });
     style.ppr != projected_ppr
-        || style.rpr.is_some()
+        || style
+            .rpr
+            .as_ref()
+            .is_some_and(|properties| !properties.carries_nothing())
         || style.based_on.is_some()
         || style.table_properties.is_some()
         || style.table_properties_original.is_some()
@@ -2563,7 +2579,10 @@ fn render_paragraph_projection(paragraph: &CT_P) -> CT_P {
             .iter()
             .map(|hyperlink| HyperlinkSpan {
                 rel_id: hyperlink.rel_id.clone(),
-                anchor: hyperlink.anchor.clone(),
+                // The bookmarks are not projected and a chapter split would
+                // part a link from its target: the anchor is dropped, as the
+                // scan reports, and the run stays plain text.
+                anchor: None,
                 tooltip: hyperlink.tooltip.clone(),
                 doc_location: hyperlink.doc_location.clone(),
                 run_start: hyperlink.run_start,

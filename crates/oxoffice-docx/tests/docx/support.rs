@@ -161,3 +161,34 @@ pub fn doc_with_body(body: &str) -> Document {
     package.write_to(&mut out).expect("package writes");
     Document::from_bytes(&out.into_inner()).expect("document with this body opens")
 }
+
+/// Whether the workflow tests read every producer's copy (`main` and the
+/// nightly run, `OXOFFICE_WORKFLOWS=full`) or one copy each (pull requests).
+/// Read at run time, so that a build without the variable still compiles.
+pub fn every_copy() -> bool {
+    std::env::var("OXOFFICE_WORKFLOWS").is_ok_and(|value| value == "full")
+}
+
+/// The copies a workflow test reads: the first producer's on a pull request,
+/// every producer's with [`every_copy`].
+pub fn workflow_copies<'a>(producers: &[&'a str]) -> Vec<&'a str> {
+    if every_copy() {
+        producers.to_vec()
+    } else {
+        producers[..1].to_vec()
+    }
+}
+
+/// Every part of a package by its ZIP entry name, with its bytes.
+pub fn package_parts(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("package is a ZIP");
+    (0..zip.len())
+        .map(|index| {
+            let mut entry = zip.by_index(index).expect("ZIP entry reads");
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).expect("ZIP entry inflates");
+            (entry.name().expect("ZIP entry name").into_owned(), data)
+        })
+        .collect()
+}

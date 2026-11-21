@@ -11,7 +11,7 @@ use std::io::Cursor;
 use oxoffice_docx::{
     CommentDate, ContentLocation, Document, DocumentFragment, FragmentConflictPolicy, HdrFtrType,
     HeaderFooterKind, Length, ListLevel, RunItemRef, SectionBreak, StoryId, StoryItemKind,
-    StoryKind, StyleBuilder, TextCommentOptions, ValidationSeverity,
+    StoryKind, StyleBuilder, StyleType, TextCommentOptions, ValidationSeverity,
 };
 use oxoffice_docx_oxml::shared::{ST_PageOrientation, ST_SectionType};
 use oxoffice_opc::OpcPackage;
@@ -1937,14 +1937,6 @@ fn the_form_imported_into_itself_holds_both_copies_of_its_bookmarks() {
     );
 }
 
-/// The destination <- source pairs of report copies that append merges today.
-const REPORT_PAIRS_THAT_APPEND: [(&str, &str); 4] = [
-    ("libreoffice", "google"),
-    ("libreoffice", "authored"),
-    ("authored", "google"),
-    ("authored", "libreoffice"),
-];
-
 /// Appends one producer's report to another's: the body texts after a save,
 /// and the texts of both reports one after the other.
 fn append_report(destination: &str, source: &str) -> (Vec<String>, Vec<String>) {
@@ -1958,18 +1950,6 @@ fn append_report(destination: &str, source: &str) -> (Vec<String>, Vec<String>) 
 
 #[test]
 fn appending_a_report_saved_by_another_producer_keeps_both_texts() {
-    let results = map_in_parallel(&REPORT_PAIRS_THAT_APPEND, |(destination, source)| {
-        append_report(destination, source)
-    });
-    for (pair, result) in REPORT_PAIRS_THAT_APPEND.iter().zip(results) {
-        let (found, expected) =
-            result.unwrap_or_else(|| panic!("{} <- {}: append panicked", pair.0, pair.1));
-        assert_eq!(found, expected, "{} <- {}", pair.0, pair.1);
-    }
-}
-
-#[test]
-fn appending_any_other_pair_of_reports_keeps_both_texts() {
     let producers = ["word", "google", "libreoffice", "authored"];
     let pairs: Vec<_> = producers
         .iter()
@@ -1979,44 +1959,386 @@ fn appending_any_other_pair_of_reports_keeps_both_texts() {
                 .filter(move |source| *source != destination)
                 .map(move |source| (*destination, *source))
         })
-        .filter(|pair| !REPORT_PAIRS_THAT_APPEND.contains(pair))
         .collect();
-    assert_eq!(pairs.len(), 8);
+    assert_eq!(pairs.len(), 12);
     let results = map_in_parallel(&pairs, |(destination, source)| {
         append_report(destination, source)
     });
-    let failed: Vec<_> = pairs
-        .iter()
-        .zip(&results)
-        .filter(|(_, result)| !matches!(result, Some((found, expected)) if found == expected))
-        .map(|(pair, _)| format!("{} <- {}", pair.0, pair.1))
-        .collect();
-    assert!(
-        failed.is_empty(),
-        "append fails for these destination <- source pairs: {failed:?}"
-    );
+    for (pair, result) in pairs.iter().zip(results) {
+        let (found, expected) =
+            result.unwrap_or_else(|| panic!("{} <- {}: append panicked", pair.0, pair.1));
+        assert_eq!(found, expected, "{} <- {}", pair.0, pair.1);
+    }
 }
 
 #[test]
 fn a_localized_default_style_takes_the_destination_s_default() {
-    // Word's French file names the default character and table styles
-    // Policepardfaut and TableauNormal; a type keeps one default.
+    // Word's French file names the default character, table and numbering
+    // styles Policepardfaut, TableauNormal and Aucuneliste; a type keeps one
+    // default. The authored report has the same defaults under the English
+    // ids and no style graph defect of its own.
     let source = corpus_doc("word/report.docx");
-    assert!(source.style("Policepardfaut").is_some());
-    let mut doc = corpus_doc("libreoffice/report.docx");
-    let graph_before = doc
-        .validate_style_graph()
-        .map_err(|error| error.to_string());
-    doc.append(&source);
+    for id in ["Policepardfaut", "TableauNormal", "Aucuneliste"] {
+        assert!(source.style(id).is_some(), "{id}");
+    }
+    let policies = [
+        ("append", None),
+        (
+            "reuse_equivalent",
+            Some(FragmentConflictPolicy::reuse_equivalent()),
+        ),
+        ("rename_all", Some(FragmentConflictPolicy::rename_all())),
+    ];
+    for (name, policy) in policies {
+        let mut doc = corpus_doc("authored/report.docx");
+        assert_eq!(
+            doc.validate_style_graph().map_err(|e| e.to_string()),
+            Ok(())
+        );
+        match policy {
+            None => doc.append(&source),
+            Some(policy) => import_at_end(&mut doc, &source, policy).unwrap(),
+        }
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.validate_style_graph().map_err(|e| e.to_string()),
+            Ok(()),
+            "{name}: the import adds no style graph defect"
+        );
+        for id in ["Policepardfaut", "TableauNormal", "Aucuneliste"] {
+            assert!(doc.style(id).is_none(), "{name}: {id} maps to the default");
+        }
+    }
+    // LibreOffice writes the same defaults a little differently (an empty
+    // run properties element, no table indent): they still map.
+    for policy in [
+        FragmentConflictPolicy::reuse_equivalent(),
+        FragmentConflictPolicy::rename_all(),
+    ] {
+        let mut doc = corpus_doc("libreoffice/report.docx");
+        import_at_end(&mut doc, &source, policy).unwrap();
+        let doc = reopen(&mut doc);
+        for id in ["Policepardfaut", "TableauNormal", "Aucuneliste"] {
+            assert!(
+                doc.style(id).is_none(),
+                "{policy:?}: {id} maps to the default"
+            );
+        }
+    }
+}
+
+/// A document whose default paragraph style has the id `default` (Word in
+/// German writes `Standard`, named "Normal"), red when `red`, saved in the
+/// editing session `rsid` if given, whose styles
+/// part also holds these raw `w:style` elements, and whose body holds this
+/// raw XML.
+fn with_paragraph_default(
+    default: &str,
+    red: bool,
+    rsid: Option<&str>,
+    styles: &str,
+    body_xml: &str,
+) -> Document {
+    let bytes = doc_with_body(body_xml).to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec())
+        .expect("styles are UTF-8");
+    let name = r#"<w:name w:val="Normal"/>"#;
+    let xml = xml
+        .replace(r#"w:val="Normal"/>"#, &format!(r#"w:val="{default}"/>"#))
+        .replace(&format!(r#"<w:name w:val="{default}"/>"#), name)
+        .replace(
+            r#"w:styleId="Normal""#,
+            &format!(r#"w:styleId="{default}""#),
+        )
+        .replacen(
+            name,
+            &format!(
+                "{name}{}{}",
+                rsid.map(|rsid| format!(r#"<w:rsid w:val="{rsid}"/>"#))
+                    .unwrap_or_default(),
+                if red {
+                    r#"<w:rPr><w:color w:val="C00000"/></w:rPr>"#
+                } else {
+                    ""
+                }
+            ),
+            1,
+        )
+        .replace("</w:styles>", &format!("{styles}</w:styles>"));
+    package.set_part("/word/styles.xml", xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    let doc = Document::from_bytes(&out.into_inner()).expect("document opens");
+    assert_eq!(paragraph_defaults(&doc), [default]);
+    doc
+}
+
+/// The ids of the default paragraph styles.
+fn paragraph_defaults(doc: &Document) -> Vec<String> {
+    doc.styles()
+        .into_iter()
+        .filter(|style| style.style_type() == StyleType::Paragraph && style.is_default())
+        .map(|style| style.style_id().to_owned())
+        .collect()
+}
+
+/// A paragraph in style `style` holding `text`, as raw body XML.
+fn styled_paragraph(style: &str, text: &str) -> String {
+    format!(r#"<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#)
+}
+
+/// The style of the body paragraph holding `text`.
+fn style_of_text(doc: &Document, text: &str) -> Option<String> {
+    (0..doc.paragraph_count())
+        .map(|index| doc.paragraph(index).expect("paragraph exists"))
+        .find(|paragraph| paragraph.text() == text)
+        .unwrap_or_else(|| panic!("a paragraph holds {text:?}"))
+        .style_id()
+        .map(str::to_owned)
+}
+
+const RED_STANDARD: &str = r#"<w:style w:type="paragraph" w:styleId="Standard"><w:name w:val="Standard"/><w:rPr><w:color w:val="C00000"/></w:rPr></w:style>"#;
+
+#[test]
+fn a_default_mapped_to_a_destination_style_is_not_renamed_with_the_source_style_of_that_id() {
+    // The German destination's default is Standard; the source's default
+    // Normal is the same style under another id, and the source has its own
+    // red Standard, which is renamed. The default's text lands in Standard,
+    // the red text in the renamed copy.
+    let body = format!(
+        "{}{}",
+        styled_paragraph("Normal", "default text"),
+        styled_paragraph("Standard", "red text")
+    );
+    let source = doc_with_styles(RED_STANDARD, &body);
+    let mut doc = with_paragraph_default(
+        "Standard",
+        false,
+        None,
+        "",
+        &styled_paragraph("Standard", "dest"),
+    );
+    import_at_end(
+        &mut doc,
+        &source,
+        FragmentConflictPolicy::reuse_equivalent(),
+    )
+    .unwrap();
     let doc = reopen(&mut doc);
     assert_eq!(
-        doc.validate_style_graph()
-            .map_err(|error| error.to_string()),
-        graph_before,
-        "the append adds no style graph defect"
+        style_of_text(&doc, "default text").as_deref(),
+        Some("Standard")
     );
-    assert!(doc.style("Policepardfaut").is_none());
-    assert!(doc.style("TableauNormal").is_none());
+    let red = style_of_text(&doc, "red text").expect("the red text has a style");
+    assert_ne!(red, "Standard");
+    assert_eq!(banner_color(&doc, &red).as_deref(), Some("C00000"));
+    assert_eq!(banner_color(&doc, "Standard"), None);
+}
+
+/// The style of the paragraph holding `text` in `part` of the saved `doc`.
+fn part_paragraph_style(doc: &mut Document, part: &str, text: &str) -> Option<String> {
+    let package = OpcPackage::from_reader(Cursor::new(saved(doc))).expect("package opens");
+    let xml =
+        String::from_utf8_lossy(package.get_part(part).expect("the part exists")).into_owned();
+    let at = xml
+        .find(text)
+        .unwrap_or_else(|| panic!("{part} holds {text:?}"));
+    let paragraph = xml[..at].rfind("<w:p>").max(xml[..at].rfind("<w:p "))?;
+    word_value(&xml[paragraph..at], "pStyle")
+}
+
+#[test]
+fn notes_and_comments_take_the_style_renames_in_one_pass_too() {
+    // As in the body: the source default Normal maps to the destination's
+    // Standard, and the source's own red Standard is renamed.
+    let mut source = with_notes_and_comments("src");
+    let mut package = OpcPackage::from_reader(Cursor::new(saved(&mut source))).unwrap();
+    for (part, from, to) in [
+        (
+            "/word/styles.xml",
+            "</w:styles>".to_owned(),
+            format!("{RED_STANDARD}</w:styles>"),
+        ),
+        (
+            "/word/comments.xml",
+            r#"<w:pStyle w:val="CommentText"/>"#.to_owned(),
+            r#"<w:pStyle w:val="Normal"/>"#.to_owned(),
+        ),
+    ] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        assert!(xml.contains(&from), "{part}");
+        let mut xml = xml.replacen(&from, &to, 1);
+        if part == "/word/comments.xml" {
+            // The answer uses the source's own Standard, so it is imported.
+            xml = xml.replacen(&from, r#"<w:pStyle w:val="Standard"/>"#, 1);
+        }
+        package.set_part(part, xml.into_bytes());
+    }
+    // The note paragraphs name the source's default.
+    for (part, text) in [
+        ("/word/footnotes.xml", "src footnote"),
+        ("/word/endnotes.xml", "src endnote"),
+    ] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        let at = xml
+            .find(text)
+            .unwrap_or_else(|| panic!("{part} holds {text:?}"));
+        let paragraph = xml[..at].rfind("<w:p>").expect("a plain paragraph start") + "<w:p>".len();
+        let xml = format!(
+            r#"{}<w:pPr><w:pStyle w:val="Normal"/></w:pPr>{}"#,
+            &xml[..paragraph],
+            &xml[paragraph..]
+        );
+        package.set_part(part, xml.into_bytes());
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let source = Document::from_bytes(&out.into_inner()).unwrap();
+    let mut doc = with_paragraph_default(
+        "Standard",
+        false,
+        None,
+        "",
+        &styled_paragraph("Standard", "dest"),
+    );
+    import_at_end(
+        &mut doc,
+        &source,
+        FragmentConflictPolicy::reuse_equivalent(),
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    for (part, text) in [
+        ("/word/footnotes.xml", "src footnote"),
+        ("/word/endnotes.xml", "src endnote"),
+        ("/word/comments.xml", "src question"),
+    ] {
+        assert_eq!(
+            part_paragraph_style(&mut doc, part, text).as_deref(),
+            Some("Standard"),
+            "{part}"
+        );
+    }
+    let red = part_paragraph_style(&mut doc, "/word/comments.xml", "src answer")
+        .expect("the answer has a style");
+    assert_ne!(red, "Standard");
+    assert_eq!(banner_color(&doc, &red).as_deref(), Some("C00000"));
+}
+
+#[test]
+fn a_style_based_on_a_localized_default_equals_the_same_style_based_on_the_destination_s() {
+    let pair = |base: &str| {
+        format!(
+            r#"<w:style w:type="character" w:default="1" w:styleId="{base}"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Big"><w:name w:val="Big"/><w:link w:val="BigChar"/><w:rPr><w:sz w:val="40"/></w:rPr></w:style><w:style w:type="character" w:customStyle="1" w:styleId="BigChar"><w:name w:val="Big Char"/><w:basedOn w:val="{base}"/><w:link w:val="Big"/><w:rPr><w:sz w:val="40"/></w:rPr></w:style>"#
+        )
+    };
+    let source = doc_with_styles(
+        &pair("Policepardfaut"),
+        &styled_paragraph("Big", "imported"),
+    );
+    for policy in [
+        FragmentConflictPolicy::reuse_equivalent(),
+        FragmentConflictPolicy::for_insert_document(Some(
+            FragmentConflictPolicy::reuse_equivalent(),
+        )),
+    ] {
+        let mut doc = doc_with_styles(
+            &pair("DefaultParagraphFont"),
+            &styled_paragraph("Big", "dest"),
+        );
+        import_at_end(&mut doc, &source, policy).unwrap();
+        let doc = reopen(&mut doc);
+        assert_eq!(style_of_text(&doc, "imported").as_deref(), Some("Big"));
+        for id in ["BigMerge1", "BigCharMerge1", "Policepardfaut"] {
+            assert!(doc.style(id).is_none(), "{id}");
+        }
+    }
+}
+
+#[test]
+fn an_equal_default_saved_in_another_editing_session_is_the_same_style() {
+    // Word writes the session that last saved a style (w:rsid): an equal
+    // default from another file maps, under the destination's id or its own.
+    for source_default in ["Normal", "Standard"] {
+        let source = with_paragraph_default(
+            source_default,
+            false,
+            Some("00AAAAAA"),
+            "",
+            &styled_paragraph(source_default, "imported"),
+        );
+        for policy in [
+            FragmentConflictPolicy::reuse_equivalent(),
+            FragmentConflictPolicy::rename_all(),
+        ] {
+            let mut doc = with_paragraph_default(
+                "Normal",
+                false,
+                Some("00BBBBBB"),
+                "",
+                &styled_paragraph("Normal", "dest"),
+            );
+            import_at_end(&mut doc, &source, policy).unwrap();
+            let doc = reopen(&mut doc);
+            let case = format!("{source_default}, {policy:?}");
+            assert_eq!(
+                style_of_text(&doc, "imported").as_deref(),
+                Some("Normal"),
+                "{case}"
+            );
+            assert!(doc.style("Standard").is_none(), "{case}");
+            assert!(doc.style("NormalMerge1").is_none(), "{case}");
+        }
+    }
+}
+
+#[test]
+fn a_different_default_keeps_its_look_whatever_the_language_of_its_id() {
+    // A red default paragraph style, under the English id Normal or the
+    // German Standard, imported into an English document: either way the
+    // imported text keeps red, the destination's Normal stays its default
+    // and the document keeps one paragraph default.
+    for (source_default, policy) in [
+        ("Normal", FragmentConflictPolicy::reuse_equivalent()),
+        ("Standard", FragmentConflictPolicy::reuse_equivalent()),
+        ("Normal", FragmentConflictPolicy::rename_all()),
+        ("Standard", FragmentConflictPolicy::rename_all()),
+    ] {
+        let source = with_paragraph_default(
+            source_default,
+            true,
+            None,
+            "",
+            &format!(
+                "{}<w:p><w:r><w:t>plain</w:t></w:r></w:p>",
+                styled_paragraph(source_default, "imported")
+            ),
+        );
+        assert!(
+            banner_color(&source, source_default).is_some(),
+            "the default is red"
+        );
+        let mut doc = doc_with(&["dest"]);
+        let mut doc = reopen(&mut doc);
+        import_at_end(&mut doc, &source, policy).unwrap();
+        let doc = reopen(&mut doc);
+        let case = format!("{source_default}, {policy:?}");
+        let imported = style_of_text(&doc, "imported").expect("the text has a style");
+        assert_ne!(imported, "Normal", "{case}");
+        assert_eq!(
+            banner_color(&doc, &imported).as_deref(),
+            Some("C00000"),
+            "{case}"
+        );
+        assert_eq!(paragraph_defaults(&doc), ["Normal"], "{case}");
+        assert_eq!(
+            style_of_text(&doc, "plain"),
+            None,
+            "{case}: text that names no style takes the destination's default"
+        );
+        assert_eq!(banner_color(&doc, "Normal"), None, "{case}");
+    }
 }
 
 #[test]
@@ -2235,4 +2557,34 @@ fn a_link_to_another_file_and_a_nested_field_keep_their_places_on_rename() {
         .unwrap();
     assert!(username < closing, "{ask}");
     let _ = doc.to_bytes().unwrap();
+}
+
+#[test]
+fn an_inserted_reference_deleted_in_word_follows_its_renamed_bookmark() {
+    // The source's REF to Mark was deleted in Word: its code is in
+    // w:delInstrText, and it follows the rename as the standing one does.
+    let mut source = doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+        r#"<w:p><w:del w:id="3" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:delInstrText xml:space="preserve"> REF Mark \h </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:r><w:delText>src marked</w:delText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#,
+    ));
+    let source = reopen(&mut source);
+    let mut doc = with_identities("dst");
+    let end = doc.content_count();
+    doc.insert_document(end, &source);
+    let renamed = bookmark_list(&reopen(&mut doc))
+        .into_iter()
+        .map(|(name, _)| name)
+        .find(|name| name != "Mark")
+        .expect("the inserted bookmark is renamed");
+    let package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    assert!(
+        xml.contains(&format!(
+            r#"<w:delInstrText xml:space="preserve"> REF {renamed} \h </w:delInstrText>"#
+        )),
+        "{xml}"
+    );
 }

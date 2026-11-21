@@ -2071,3 +2071,139 @@ fn a_document_with_a_vba_project_is_refused_under_a_macro_free_extension() {
     assert_eq!(main_part_content_type(&converted), MAIN_DOCUMENT_TYPE);
     assert!(carries_vba(&converted));
 }
+
+#[test]
+fn a_loop_over_a_noted_paragraph_leaves_only_the_notes_of_its_copies() {
+    let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
+    let at = doc.paragraph_story_location(1).unwrap().unwrap();
+    let original = doc.create_footnote(&at, "Note {{ who }}").unwrap();
+    doc.add_paragraph("{% endfor %}");
+    doc.add_paragraph("Kept");
+    let at = doc.paragraph_story_location(3).unwrap().unwrap();
+    let kept = doc.create_footnote(&at, "Kept note").unwrap();
+    doc.render_template(&json!({ "xs": ["a", "b", "c"], "who": "Ada" }))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let notes = doc.footnotes();
+    assert_eq!(notes.len(), 4, "{notes:?}");
+    assert!(notes.iter().all(|(id, _)| *id != original), "{notes:?}");
+    assert!(notes.iter().any(|(id, _)| *id == kept));
+    assert_eq!(
+        notes.iter().filter(|(_, text)| text == " Note Ada").count(),
+        3,
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn a_false_condition_takes_the_notes_of_the_paragraphs_it_drops() {
+    let mut doc = doc_with(&["Kept", "{% if show %}", "Dropped", "{% endif %}"]);
+    let at = doc.paragraph_story_location(0).unwrap().unwrap();
+    let kept = doc.create_footnote(&at, "Kept note").unwrap();
+    let at = doc.paragraph_story_location(2).unwrap().unwrap();
+    doc.create_footnote(&at, "Dropped note").unwrap();
+    doc.render_template(&json!({ "show": false })).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert_eq!(doc.footnotes(), [(kept, " Kept note".to_owned())]);
+}
+
+#[test]
+fn nested_loops_over_a_noted_paragraph_leave_only_the_notes_of_the_last_copies() {
+    let mut doc = doc_with(&["{% for g in gs %}", "{% for x in g %}", "Item {{ x }}"]);
+    let at = doc.paragraph_story_location(2).unwrap().unwrap();
+    let original = doc.create_footnote(&at, "Note {{ who }}").unwrap();
+    doc.add_paragraph("{% endfor %}");
+    doc.add_paragraph("{% endfor %}");
+    // Opened from bytes, as a template file is.
+    let mut doc = reopen(&mut doc);
+    doc.render_template(&json!({ "gs": [["a", "b"], ["c"]], "who": "Ada" }))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let notes = doc.footnotes();
+    // One note per item, each referenced; the original and the outer
+    // loop's intermediate copies are gone.
+    assert_eq!(notes.len(), 3, "{notes:?}");
+    assert!(
+        notes
+            .iter()
+            .all(|(id, text)| *id != original && text == " Note Ada")
+    );
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    for (id, _) in &notes {
+        assert!(xml.contains(&format!(r#"<w:footnoteReference w:id="{id}"/>"#)));
+    }
+}
+
+#[test]
+fn a_loop_over_a_paragraph_with_an_endnote_leaves_only_the_endnotes_of_its_copies() {
+    let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
+    let at = doc.paragraph_story_location(1).unwrap().unwrap();
+    let original = doc.create_endnote(&at, "End {{ who }}").unwrap();
+    doc.add_paragraph("{% endfor %}");
+    let mut doc = reopen(&mut doc);
+    doc.render_template(&json!({ "xs": ["a", "b"], "who": "Ada" }))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/endnotes.xml").unwrap();
+    assert!(!xml.contains(&format!(r#"w:id="{original}""#)), "{xml}");
+    assert_eq!(
+        xml.matches("<w:endnote ").count() - 2,
+        2,
+        "two endnotes and the separators"
+    );
+}
+
+#[test]
+fn a_loop_keeps_the_endnotes_its_copied_footnotes_reference() {
+    // A footnote holding an endnote mark, as a converted file may hold it.
+    let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
+    let at = doc.paragraph_story_location(1).unwrap().unwrap();
+    doc.create_footnote(&at, "Foot").unwrap();
+    let at = doc.paragraph_story_location(1).unwrap().unwrap();
+    doc.create_endnote(&at, "End").unwrap();
+    doc.add_paragraph("{% endfor %}");
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    // Move the endnote mark run from the body into the footnote.
+    let mark = main.find("<w:endnoteReference").unwrap();
+    let start = main[..mark]
+        .rfind("<w:r>")
+        .max(main[..mark].rfind("<w:r "))
+        .unwrap();
+    let end = mark + main[mark..].find("</w:r>").unwrap() + "</w:r>".len();
+    let run = main[start..end].to_owned();
+    package.set_part(
+        "/word/document.xml",
+        format!("{}{}", &main[..start], &main[end..]).into_bytes(),
+    );
+    let notes =
+        String::from_utf8(package.get_part("/word/footnotes.xml").unwrap().to_vec()).unwrap();
+    let text = notes.find(">Foot</w:t>").unwrap();
+    let close = text + notes[text..].find("</w:r>").unwrap() + "</w:r>".len();
+    package.set_part(
+        "/word/footnotes.xml",
+        format!("{}{run}{}", &notes[..close], &notes[close..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.render_template(&json!({ "xs": ["a", "b"] })).unwrap();
+    let doc = reopen(&mut doc);
+    let footnotes = doc.part_xml("word/footnotes.xml").unwrap();
+    let endnotes = doc.part_xml("word/endnotes.xml").unwrap();
+    let referenced = footnotes.matches("<w:endnoteReference").count();
+    assert_eq!(referenced, 2, "{footnotes}");
+    for at in footnotes
+        .match_indices(r#"<w:endnoteReference w:id=""#)
+        .map(|(at, _)| at)
+    {
+        let id = &footnotes[at + r#"<w:endnoteReference w:id=""#.len()..];
+        let id = &id[..id.find('"').unwrap()];
+        assert!(
+            endnotes.contains(&format!(r#"<w:endnote w:id="{id}""#)),
+            "endnote {id}: {endnotes}"
+        );
+    }
+}

@@ -23,7 +23,6 @@ const MATH_TEXT_X_SCALE: f64 = 1.1;
 const NARY_OPERATOR_X_SCALE: f64 = 1.89;
 const NARY_UPPER_GAP_EM: f64 = 0.482;
 const NARY_LOWER_GAP_EM: f64 = 0.3;
-const DEFAULT_DISPLAY_PRE_SPACING: f64 = 8.36;
 
 #[derive(Debug, Clone, Copy)]
 struct MathLayoutStyle {
@@ -202,12 +201,6 @@ pub(crate) fn layout_officemath(
             let intra_spacing = math_properties
                 .and_then(|properties| properties.intra_spacing)
                 .map_or(0.0, twips_to_points);
-            let pre_spacing = math_properties
-                .and_then(|properties| properties.pre_spacing)
-                .map_or(DEFAULT_DISPLAY_PRE_SPACING, twips_to_points);
-            let post_spacing = math_properties
-                .and_then(|properties| properties.post_spacing)
-                .map_or(0.0, twips_to_points);
             let content_width = (available_width - left_margin - right_margin).max(0.0);
             let x = match value
                 .properties
@@ -229,9 +222,12 @@ pub(crate) fn layout_officemath(
                     terminal_italic_advance: 0.0,
                     top_padding: 0.0,
                     width,
-                    ascent: measured.ascent + pre_spacing,
-                    descent: measured.descent + post_spacing,
-                    group: group(vec![translated(measured.group, x, pre_spacing)]),
+                    // Word adds no space above or below a display equation:
+                    // its line is as tall as the equation, and m:preSp and
+                    // m:postSp change nothing, with m:dispDef on or off.
+                    ascent: measured.ascent,
+                    descent: measured.descent,
+                    group: group(vec![translated(measured.group, x, 0.0)]),
                 },
                 true,
             ))

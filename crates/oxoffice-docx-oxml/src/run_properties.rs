@@ -632,6 +632,12 @@ impl RunMeasurement {
 }
 
 impl CT_RPr {
+    /// Whether no run property is set: an empty `<w:rPr/>`, as LibreOffice
+    /// writes on paragraph marks, carries no formatting.
+    pub fn carries_nothing(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// Resolve qualified solid text fill retained as opaque source.
     /// Other extension representations retain their source without being guessed.
     pub fn solid_text_fill(&self) -> Option<(String, f64)> {

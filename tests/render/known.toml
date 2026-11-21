@@ -18,8 +18,20 @@ issue = 227
 [[known]]
 file = "authored/thesis.docx"
 check = "overlap"
-pages = [26]
+pages = [25]
 issue = 156
+
+[[known]]
+file = "authored/thesis.docx"
+check = "off-page"
+pages = [25]
+issue = 404
+
+[[known]]
+file = "word/thesis.docx"
+check = "off-page"
+pages = [25]
+issue = 404
 
 [[known]]
 file = "libreoffice/thesis.docx"

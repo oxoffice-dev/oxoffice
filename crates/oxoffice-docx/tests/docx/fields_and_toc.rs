@@ -1674,31 +1674,28 @@ fn a_styleref_to_a_heading_holding_a_legacy_checkbox_reads_its_text_without_the_
 #[test]
 fn a_legacy_checkbox_in_a_tracked_deletion_draws_its_box_in_the_tracked_view() {
     // The checkbox stores an X, which Word does not draw: it draws the box of
-    // the state. Its field code is in plain runs, so the model reads a field.
-    let deleted = r#"<w:del w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
-    let doc = doc_with_body(&format!(
-        r#"<w:p>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
-    ));
-    let options = RenderOptions::default().with_revision_view(RevisionView::Tracked);
-    let result = doc.layout_with_options(options).unwrap();
-    let mut texts = String::new();
-    for page in &result.layout.pages {
-        oxoffice_layout::walk(&page.elements, &mut |element, _| {
-            if let oxoffice_layout::PositionedElement::Text(run) = element {
-                texts.push_str(&run.text);
-            }
-        });
+    // the state. Its field code and result in plain runs, then as Word saves
+    // a deletion, in w:delInstrText and w:delText.
+    let plain = r#"<w:del w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
+    let word = plain
+        .replace("w:instrText", "w:delInstrText")
+        .replace("<w:t>X</w:t>", "<w:delText>X</w:delText>");
+    for deleted in [plain, word.as_str()] {
+        let doc = doc_with_body(&format!(
+            r#"<w:p>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
+        ));
+        let texts = drawn_text_in(&doc, RevisionView::Tracked);
+        assert!(
+            texts.contains('\u{2612}'),
+            "the deleted box draws: {texts:?} for {deleted}"
+        );
+        assert!(!texts.contains('X'), "not its stored X: {texts:?}");
+        let accepted: String = drawn_runs(&doc)
+            .into_iter()
+            .map(|(text, _, _)| text)
+            .collect();
+        assert_eq!(accepted, " kept", "the accepted view draws no box");
     }
-    assert!(
-        texts.contains('\u{2612}'),
-        "the deleted box draws: {texts:?}"
-    );
-    assert!(!texts.contains('X'), "not its stored X: {texts:?}");
-    let accepted: String = drawn_runs(&doc)
-        .into_iter()
-        .map(|(text, _, _)| text)
-        .collect();
-    assert_eq!(accepted, " kept", "the accepted view draws no box");
 }
 
 /// A legacy drop-down as Word saves it: `w:ffData` with its entries and the
@@ -1806,4 +1803,171 @@ fn a_locked_legacy_checkbox_draws_its_box() {
         runs.iter().any(|(text, _, _)| text == "\u{2612}"),
         "a locked checkbox still draws its box"
     );
+}
+
+/// A PAGE field deleted in Word, as Word saves the deletion: its code in
+/// `w:delInstrText`, its result in `w:delText`.
+const WORD_DELETED_PAGE: &str = r#"<w:del w:id="7" w:author="Ada" w:date="2026-01-01T00:00:00Z"><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="begin"/></w:r><w:r w:rsidDel="00A1B2C3"><w:delInstrText xml:space="preserve"> PAGE </w:delInstrText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="separate"/></w:r><w:r w:rsidDel="00A1B2C3"><w:delText>3</w:delText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
+
+/// The text drawn on the pages in this revision view.
+fn drawn_text_in(doc: &Document, view: RevisionView) -> String {
+    let options = RenderOptions::default().with_revision_view(view);
+    let result = doc.layout_with_options(options).unwrap();
+    let mut text = String::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                text.push_str(&run.text);
+            }
+        });
+    }
+    text
+}
+
+/// The main document part of a saved package.
+fn main_part_xml(bytes: &[u8]) -> String {
+    let package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes.to_vec())).unwrap();
+    let part = package.main_document_part().unwrap();
+    String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap()
+}
+
+#[test]
+fn a_deleted_field_draws_its_stored_result_in_the_tracked_view_only() {
+    // Word's shape, and the same deletion with its code in w:instrText.
+    for deleted in [
+        WORD_DELETED_PAGE.to_owned(),
+        WORD_DELETED_PAGE.replace("w:delInstrText", "w:instrText"),
+    ] {
+        let doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
+        ));
+        assert_eq!(
+            drawn_text_in(&doc, RevisionView::Tracked),
+            "Page 3 kept",
+            "the stored result, not the field code nor a page number: {deleted}"
+        );
+        assert_eq!(drawn_text_in(&doc, RevisionView::Accepted), "Page  kept");
+    }
+}
+
+#[test]
+fn a_field_deleted_in_word_keeps_its_deleted_code_through_saves_and_updates() {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p>{WORD_DELETED_PAGE}<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Name»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    ));
+    let context = merge_context(&[("Name", "Ada")]);
+    // The deleted field is not a live field: only the merge field evaluates.
+    assert_eq!(doc.evaluate_fields(&context).unwrap().len(), 1);
+    let updated = doc.to_bytes_with_field_updates(&context).unwrap();
+    for bytes in [doc.to_bytes().unwrap(), updated.clone()] {
+        let xml = main_part_xml(&bytes);
+        assert!(xml.contains(WORD_DELETED_PAGE), "{xml}");
+    }
+    assert_eq!(texts(&Document::from_bytes(&updated).unwrap()), ["Ada"]);
+}
+
+#[test]
+fn a_field_deleted_in_word_is_the_same_story_item_as_its_code_in_instruction_text() {
+    let items = |deleted: &str| {
+        let doc = doc_with_body(&format!("<w:p>{deleted}</w:p>"));
+        doc.story_items(&story(&doc, StoryKind::Body))
+            .unwrap()
+            .into_iter()
+            .map(|item| (item.kind(), item.text().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    let word = items(WORD_DELETED_PAGE);
+    assert!(
+        word.iter().any(|(kind, _)| *kind == StoryItemKind::Field),
+        "{word:?}"
+    );
+    assert_eq!(
+        word,
+        items(&WORD_DELETED_PAGE.replace("w:delInstrText", "w:instrText"))
+    );
+}
+
+#[test]
+fn a_caption_retyped_with_tracked_changes_keeps_its_tables_rebuildable() {
+    // Word saves a retyped caption as the old one deleted, its SEQ code in
+    // w:delInstrText, and the new one inserted.
+    let field = |code: &str, text: &str, result: &str| {
+        format!(
+            r#"<w:r><w:{text}>Figure </w:{text}></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:{code} xml:space="preserve"> SEQ Figure \* ARABIC </w:{code}></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:{text}>{result}</w:{text}></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr><w:del w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z">{}</w:del><w:ins w:id="2" w:author="Ana" w:date="2026-01-01T00:00:00Z">{}</w:ins><w:r><w:t xml:space="preserve">: Sales</w:t></w:r></w:p>"#,
+        field("delInstrText", "delText", "1"),
+        field("instrText", "t", "1"),
+    ));
+    doc.rebuild_generated_tables().unwrap();
+}
+
+#[test]
+fn a_standing_field_whose_result_holds_deleted_text_draws_only_its_display() {
+    // A field outside any deletion with a stray w:delText in its result, as
+    // tools that reject changes naively leave it.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>new</w:t></w:r><w:r><w:delText>old</w:delText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    assert_eq!(drawn_text_in(&doc, RevisionView::Accepted), "new");
+}
+
+#[test]
+fn a_standing_field_whose_code_was_deleted_is_no_story_item() {
+    // Its markers stand, its whole code was deleted with tracking on.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:del w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delInstrText xml:space="preserve"> PAGE </w:delInstrText></w:r></w:del><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let kinds: Vec<_> = doc
+        .story_items(&story(&doc, StoryKind::Body))
+        .unwrap()
+        .into_iter()
+        .map(|item| item.kind())
+        .collect();
+    assert!(!kinds.contains(&StoryItemKind::Field), "{kinds:?}");
+}
+
+#[test]
+fn a_heading_holding_a_field_deleted_in_word_keeps_its_result_in_tracked_navigation_text() {
+    // STYLEREF reads the heading's navigation text, the deleted result
+    // included in the tracked view, as the page draws it.
+    let deleted =
+        WORD_DELETED_PAGE.replace("<w:delText>3</w:delText>", "<w:delText>Q3</w:delText>");
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Results </w:t></w:r>{deleted}</w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> STYLEREF "Heading 1" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    ));
+    assert_eq!(
+        drawn_text_in(&doc, RevisionView::Tracked),
+        "Results Q3Results Q3"
+    );
+}
+
+#[test]
+fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
+    // Word records a whole deleted heading as its runs in w:del and its
+    // paragraph mark in w:pPr/w:rPr/w:del; a heading whose mark alone is
+    // deleted joins the next paragraph, whose entry it opens.
+    let toc = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:r><w:t>stale</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let deleted_mark =
+        r#"<w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"{toc}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Kept</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:del w:id="8" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:r><w:t xml:space="preserve">twice </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>tail</w:t></w:r></w:p>"#
+    ));
+    let revisions = doc.revisions().len();
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!(report.entry_count, 3, "{report:?}");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..4],
+        ["Kept\t1", "Next\t1", "Joined twice tail\t1"]
+    );
+    assert_eq!(
+        doc.paragraph(3).unwrap().style_id(),
+        Some("TOC2"),
+        "the joined entry takes the level of the paragraph it joins"
+    );
+    assert_eq!(doc.revisions().len(), revisions, "the revisions stay");
 }

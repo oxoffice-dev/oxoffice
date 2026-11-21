@@ -108,6 +108,10 @@ pub enum InlineItem {
         /// Distance from the group top to its text baseline. `None` keeps the
         /// established top-aligned drawing behavior.
         baseline: Option<f64>,
+        /// An equation: its extent sets the line's ascent and descent, but
+        /// proportional line spacing scales the text of the line, not the
+        /// equation.
+        math: bool,
         group: GroupElement,
     },
     /// An informative drawing carried to a semantic output container.
@@ -226,6 +230,8 @@ pub enum LineItem {
         height: f64,
         /// Distance from the group top to its text baseline.
         baseline: Option<f64>,
+        /// An equation, as on [`InlineItem::Group`].
+        math: bool,
         group: GroupElement,
     },
     /// An informative drawing carried to a semantic output container.
@@ -2172,11 +2178,13 @@ fn inline_to_line_item(item: &InlineItem) -> LineItem {
             width,
             height,
             baseline,
+            math,
             group,
         } => LineItem::Group {
             width: *width,
             height: *height,
             baseline: normalized_group_baseline(*height, *baseline),
+            math: *math,
             group: group.clone(),
         },
         InlineItem::Figure {
