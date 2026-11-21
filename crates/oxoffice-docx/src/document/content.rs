@@ -332,12 +332,19 @@ impl Document {
     /// Insert a paragraph at the given body index.
     ///
     /// Returns a mutable `Paragraph` for further configuration.
+    ///
+    /// A bookmark start written between blocks belongs to the block after
+    /// it (Google Docs writes a heading's bookmark so): an insertion before
+    /// that block goes before its leading bookmark starts, so the bookmark
+    /// still wraps that block alone. The new block then sits at the index of
+    /// the first of those starts, before `index`.
     /// # Panics
     ///
     /// Panics if `index > content_count()`. (Unlike [`Self::insert_document`]
     /// and [`Self::insert_toc`], which clamp an out-of-range index to the end.)
     pub fn insert_paragraph(&mut self, index: usize, text: &str) -> Paragraph<'_> {
         self.invalidate_layout();
+        let index = self.block_insertion_index(index);
         self.document
             .body
             .insert_paragraph(index, Self::detached_text_paragraph(text));
@@ -350,6 +357,12 @@ impl Document {
     /// Insert a table at the given body index.
     ///
     /// Returns a mutable `Table` for further configuration.
+    ///
+    /// A bookmark start written between blocks belongs to the block after
+    /// it (Google Docs writes a heading's bookmark so): an insertion before
+    /// that block goes before its leading bookmark starts, so the bookmark
+    /// still wraps that block alone. The new block then sits at the index of
+    /// the first of those starts, before `index`.
     /// A `cols` of 0 produces a table with no columns rather than panicking.
     ///
     /// # Panics
@@ -358,6 +371,7 @@ impl Document {
     /// and [`Self::insert_toc`], which clamp an out-of-range index to the end.)
     pub fn insert_table(&mut self, index: usize, rows: usize, cols: usize) -> Table<'_> {
         self.invalidate_layout();
+        let index = self.block_insertion_index(index);
         self.document
             .body
             .insert_table(index, Self::detached_table(rows, cols));
@@ -854,19 +868,28 @@ impl Document {
     /// Remove a direct body child and its wholly owned comment threads, and
     /// the footnotes and endnotes nothing else references after it goes.
     /// Partial comment cuts and unprovable companion ownership fail atomically.
+    ///
+    /// The bookmark starts written just before the child whose bookmark ends
+    /// inside it go too; one that ends further on stays. Each start that goes
+    /// moves the later body items back by one more index.
     pub fn try_remove_content(&mut self, index: usize) -> Result<bool> {
         if index >= self.document.body.content.len() {
             return Ok(false);
         }
+        // A plain paragraph holds no bookmark end, so no leading start goes.
         if self.plain_direct_paragraph(index) || self.plain_removable_paragraph(index) {
             self.document.body.remove(index);
             self.invalidate_layout();
             return Ok(true);
         }
+        let starts = self.owned_leading_bookmark_starts(index, index..index + 1)?;
         let mut candidate = self.clone_for_staging();
         let before = candidate.document.to_xml()?;
         let referenced_before = xml_attribute_values(&before)?;
         candidate.document.body.remove(index);
+        for start in starts.into_iter().rev() {
+            candidate.document.body.remove(start);
+        }
         let after = candidate.document.to_xml()?;
         let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
@@ -1011,9 +1034,12 @@ impl Document {
 
     /// Remove the half-open direct body range `[start, end)`.
     ///
-    /// The footnotes and endnotes nothing else references afterwards go too.
-    /// An empty range removes nothing and returns 0. A reversed or
-    /// out-of-bounds range returns an error and leaves the document unchanged.
+    /// The footnotes and endnotes nothing else references afterwards go too,
+    /// and so do the bookmark starts written just before `start` whose
+    /// bookmark ends inside the range. Returns the number of body items
+    /// removed, those starts included. An empty range removes nothing and
+    /// returns 0. A reversed or out-of-bounds range returns an error and
+    /// leaves the document unchanged.
     /// The call does not walk into tables.
     pub fn remove_content_range(&mut self, start: usize, end: usize) -> Result<usize> {
         let len = self.document.body.content.len();
@@ -1031,11 +1057,16 @@ impl Document {
             self.invalidate_layout();
             return Ok(end - start);
         }
+        let starts = self.owned_leading_bookmark_starts(start, start..end)?;
+        let leading = starts.len();
         let mut candidate = self.clone_for_staging();
         let before = candidate.document.to_xml()?;
         let referenced_before = xml_attribute_values(&before)?;
         for index in (start..end).rev() {
             candidate.document.body.remove(index);
+        }
+        for start in starts.into_iter().rev() {
+            candidate.document.body.remove(start);
         }
         let after = candidate.document.to_xml()?;
         let referenced_after = xml_attribute_values(&after)?;
@@ -1045,7 +1076,7 @@ impl Document {
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
-        Ok(end - start)
+        Ok(end - start + leading)
     }
 }
 

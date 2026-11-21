@@ -369,6 +369,13 @@ impl Document {
     }
 
     /// Insert one owned fragment at a checked direct-child boundary.
+    ///
+    /// A location at a block inserts before the bookmark starts written just
+    /// before it, which belong to that block (Google Docs writes a heading's
+    /// bookmark so); a location at such a bookmark start inserts right there.
+    /// The other insertions at a location ([`Self::insert_html_fragment`],
+    /// [`Self::clone_content`], [`Self::move_content`],
+    /// [`Self::import_fragment`]) place their content the same way.
     pub fn insert_content(
         &mut self,
         destination: &ContentLocation,
@@ -379,7 +386,7 @@ impl Document {
         let (source, owner) = candidate.story_source_and_owner(&destination.story)?;
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
-        let (boundary, _, _) = validated_content_boundary(&source_xml, &owner, destination)?;
+        let (boundary, _, _) = validated_insertion_boundary(&source_xml, &owner, destination)?;
         reject_section_owning_content_fragment(&fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
@@ -430,7 +437,7 @@ impl Document {
         let part_name = source.part_name.clone();
         let mut source_xml = source.xml.into_owned();
         let (boundary, direct_index, _) =
-            validated_content_boundary(&source_xml, &owner, destination)?;
+            validated_insertion_boundary(&source_xml, &owner, destination)?;
         let modeled_cell_route = (destination.story.kind == StoryKind::TableCell
             && part_name == candidate.doc_part_name)
             .then(|| modeled_main_cell_route(&source_xml, &owner))
@@ -518,7 +525,7 @@ impl Document {
         let part_name = source.part_name.clone();
         let mut source_xml = source.xml.into_owned();
         let (mut owner, mut boundary, _, _) =
-            fragment_content_boundary(&source_xml, &owner, destination)?;
+            fragment_insertion_boundary(&source_xml, &owner, destination)?;
         if fragment.include_final_section_properties
             && (destination.story.kind != StoryKind::Body
                 || (!destination.is_end && destination.index_path.len() != 1))
@@ -546,7 +553,7 @@ impl Document {
                 candidate.fragment_story_source_owner_and_owners(&destination.story)?;
             source_xml = updated_source.xml.into_owned();
             let (updated_owner, updated_boundary, _, _) =
-                fragment_content_boundary(&source_xml, &updated_owner, destination)?;
+                fragment_insertion_boundary(&source_xml, &updated_owner, destination)?;
             owner = updated_owner;
             boundary = updated_boundary;
         }
@@ -558,6 +565,10 @@ impl Document {
     }
 
     /// Remove one checked direct child and return it as an owned fragment.
+    ///
+    /// The bookmark starts written just before the child whose bookmark ends
+    /// inside it go too, and are not part of the fragment: the fragment keeps
+    /// the bookmark's end without its start.
     ///
     /// A picture the removal leaves unreferenced stays in the package until
     /// the next write or signature, which drops it if nothing names it then:
@@ -598,8 +609,28 @@ impl Document {
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &location.story, &fragment)?;
         fragment.relationships = referenced_relationships(&candidate, &location.story, &fragment)?;
+        // The bookmark starts that lead the item and end inside it go too.
+        let direct_items = direct_story_content_items(&source_xml, &owner)?;
+        let mut removed = match direct_items
+            .iter()
+            .position(|direct| direct.full == item.full)
+        {
+            Some(index) => owned_leading_bookmark_start_items(
+                &source_xml,
+                &direct_items,
+                index,
+                index..index + 1,
+            )?
+            .into_iter()
+            .map(|start| direct_items[start].full.clone())
+            .collect(),
+            None => Vec::new(),
+        };
+        removed.push(item.full);
         let mut updated = source_xml;
-        updated.drain(item.full);
+        for range in removed.into_iter().rev() {
+            updated.drain(range);
+        }
         // The fragment's pictures go at the next write if nothing names them
         // then (it may be inserted again before).
         let images: Vec<&str> = fragment
@@ -659,7 +690,7 @@ impl Document {
         let destination_part_name = destination_source.part_name.clone();
         let destination_xml = destination_source.xml.into_owned();
         let (boundary, _, _) =
-            validated_content_boundary(&destination_xml, &destination_owner, destination)?;
+            validated_insertion_boundary(&destination_xml, &destination_owner, destination)?;
         fragment.xml = freshen_content_fragment_identities(&mut candidate, &fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
@@ -672,6 +703,10 @@ impl Document {
     }
 
     /// Move one checked direct child within its current story owner.
+    ///
+    /// The bookmark starts written just before the child whose bookmark ends
+    /// inside it move with it; one that ends further on stays. A destination
+    /// at the child, at its leading starts or just after it moves nothing.
     pub fn move_content(
         &mut self,
         source_location: &ContentLocation,
@@ -688,7 +723,7 @@ impl Document {
             candidate.story_source_and_owner(&destination.story)?;
         let destination_xml = destination_source.xml.into_owned();
         let (boundary, destination_index, _) =
-            validated_content_boundary(&destination_xml, &destination_owner, destination)?;
+            validated_insertion_boundary(&destination_xml, &destination_owner, destination)?;
         if source_location.story != destination.story {
             return Err(Error::Other(
                 "content can move only within one unchanged story owner".to_owned(),
@@ -710,20 +745,40 @@ impl Document {
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &destination.story, &fragment)?;
-        if destination_index == source_index || destination_index == source_index + 1 {
+        // The item moves with the bookmark starts that lead it and end
+        // inside it; a destination at the item or just after it changes
+        // nothing.
+        let leading_first = leading_bookmark_start_item(&source_xml, &direct_items, source_index)?;
+        if (leading_first..=source_index + 1).contains(&destination_index) {
             return Ok(());
         }
-        let removed_len = source_item.full.len();
+        let mut removed = owned_leading_bookmark_start_items(
+            &source_xml,
+            &direct_items,
+            source_index,
+            source_index..source_index + 1,
+        )?
+        .into_iter()
+        .map(|start| direct_items[start].full.clone())
+        .collect::<Vec<_>>();
+        removed.push(source_item.full);
+        let mut moved = Vec::new();
+        for range in &removed {
+            moved.extend_from_slice(&source_xml[range.clone()]);
+        }
+        let removed_before = removed
+            .iter()
+            .filter(|range| range.end <= boundary)
+            .map(|range| range.len())
+            .sum::<usize>();
+        let adjusted_boundary = boundary.checked_sub(removed_before).ok_or_else(|| {
+            Error::Other("content move destination underflowed after removal".to_owned())
+        })?;
         let mut updated = source_xml;
-        updated.drain(source_item.full);
-        let adjusted_boundary = if source_index < destination_index {
-            boundary.checked_sub(removed_len).ok_or_else(|| {
-                Error::Other("content move destination underflowed after removal".to_owned())
-            })?
-        } else {
-            boundary
-        };
-        updated.splice(adjusted_boundary..adjusted_boundary, fragment.xml);
+        for range in removed.into_iter().rev() {
+            updated.drain(range);
+        }
+        updated.splice(adjusted_boundary..adjusted_boundary, moved);
         set_story_source_xml(&mut candidate, &part_name, updated)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);

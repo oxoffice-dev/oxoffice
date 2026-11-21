@@ -178,6 +178,8 @@ impl Document {
     /// what it depends on, as [`Self::append`] does.
     ///
     /// An `index` past the end is clamped to the end rather than panicking.
+    /// The content goes before the bookmark starts that lead the block at
+    /// `index`, as with [`Self::insert_paragraph`].
     pub fn insert_document(&mut self, index: usize, other: &Document) {
         self.import_document_at(Some(index), other)
             .expect("document insertion preflight failed");

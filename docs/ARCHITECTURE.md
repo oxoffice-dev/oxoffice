@@ -108,6 +108,11 @@ CLI where it makes sense and Python everywhere.
   rest.
 - **Child order is part of the contract.** OOXML schemas use `xsd:sequence`.
   A wrong order makes PowerPoint refuse the file and Word "repair" it.
+- **A bookmark start between blocks belongs to the block after it**, as
+  Google Docs writes a heading's bookmark. Reading (bookmarks, contents
+  rebuilds) and block operations agree: an insertion before a block goes
+  before its leading starts, and a block that moves or goes takes the
+  leading starts whose bookmark ends inside it.
 - `thiserror` for errors, never `anyhow`.
 - Edition 2024, MSRV and toolchain pinned in `rust-toolchain.toml`.
 
