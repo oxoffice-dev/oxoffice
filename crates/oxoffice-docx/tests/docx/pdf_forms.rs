@@ -1763,19 +1763,12 @@ fn an_empty_control_after_a_tracked_insertion_in_a_container_takes_the_later_nam
 }
 
 #[test]
-fn a_control_without_a_run_follows_a_legacy_field_before_it() {
-    let first = legacy(
-        0,
-        "F",
-        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
-        "FORMTEXT",
-        Some("one"),
+fn an_empty_control_before_a_drawn_one_takes_the_first_name() {
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:t xml:space="preserve">Label </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="F"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt><w:sdt><w:sdtPr><w:tag w:val="F"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>x</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
-    let doc = doc_with_body(&format!(
-        r#"<w:p>{first}<w:sdt><w:sdtPr><w:tag w:val="F"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt></w:p>"#
-    ));
     let named = names_and_values(&doc);
-    assert_eq!(named[0], ("F".to_owned(), "one".to_owned()), "{named:?}");
+    assert_eq!(named[1], ("F_2".to_owned(), "x".to_owned()), "{named:?}");
 }
 
 #[test]
