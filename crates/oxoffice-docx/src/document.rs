@@ -76,7 +76,11 @@ pub use checked_replacement::{
 pub use story_paragraphs::StoryParagraph;
 
 /// Options that select a native document render projection.
+///
+/// Built from [`Default`] and set field by field, so that new options break
+/// no caller.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RenderOptions {
     /// The tracked-revision view to render.
     pub revision_view: oxoffice_docx_layout::RevisionView,
@@ -88,7 +92,43 @@ pub struct RenderOptions {
     /// `true` is the explicit system opt-in, and a build without the
     /// `system-fonts` feature refuses it. Deterministic helpers ignore it.
     pub use_system_fonts: bool,
+    /// Export the content controls of the main body as fillable PDF form
+    /// fields. A control tagged `signature` or `signature:<name>` becomes an
+    /// empty signature field. Image rendering draws the controls as usual,
+    /// and the tracked view refuses this option.
+    pub fillable_forms: bool,
 }
+
+impl RenderOptions {
+    /// These options with `revision_view` set.
+    pub const fn with_revision_view(mut self, view: oxoffice_docx_layout::RevisionView) -> Self {
+        self.revision_view = view;
+        self
+    }
+
+    /// These options with `revision_style` set.
+    pub const fn with_revision_style(mut self, style: oxoffice_docx_layout::RevisionStyle) -> Self {
+        self.revision_style = style;
+        self
+    }
+
+    /// These options with `use_system_fonts` set.
+    pub const fn with_system_fonts(mut self, use_system_fonts: bool) -> Self {
+        self.use_system_fonts = use_system_fonts;
+        self
+    }
+
+    /// These options with `fillable_forms` set.
+    pub const fn with_fillable_forms(mut self, fillable_forms: bool) -> Self {
+        self.fillable_forms = fillable_forms;
+        self
+    }
+}
+
+/// Why the tracked view refuses fillable forms: a field value would mix
+/// inserted and deleted text.
+const FILLABLE_FORMS_NEED_ACCEPTED_VIEW: &str =
+    "fillable forms need the accepted revision view, not the tracked one";
 
 /// The refusal for an explicit system-font request on a feature-off build.
 const SYSTEM_FONTS_UNAVAILABLE: &str =
@@ -27711,7 +27751,15 @@ impl Document {
                 "revision style applies only with tracked view".to_owned(),
             ));
         }
-        if options.revision_view == oxoffice_docx_layout::RevisionView::Accepted {
+        if options.fillable_forms
+            && options.revision_view == oxoffice_docx_layout::RevisionView::Tracked
+        {
+            return Err(Error::Other(FILLABLE_FORMS_NEED_ACCEPTED_VIEW.to_owned()));
+        }
+        // The cached layouts carry no form fields.
+        if options.revision_view == oxoffice_docx_layout::RevisionView::Accepted
+            && !options.fillable_forms
+        {
             return if deterministic {
                 self.cached_deterministic_layout()
             } else {
@@ -27722,6 +27770,7 @@ impl Document {
         let mut input = self.build_layout_input()?;
         input.revision_view = options.revision_view;
         input.revision_style = options.revision_style;
+        input.form_fields = options.fillable_forms;
         #[cfg(test)]
         record_layout_invocation();
         let mut layout = if deterministic {
@@ -51070,9 +51119,15 @@ impl Document {
                 "revision style applies only with tracked view".to_owned(),
             ));
         }
+        if options.fillable_forms
+            && options.revision_view == oxoffice_docx_layout::RevisionView::Tracked
+        {
+            return Err(Error::Other(FILLABLE_FORMS_NEED_ACCEPTED_VIEW.to_owned()));
+        }
         let mut input = self.build_layout_input()?;
         input.revision_view = options.revision_view;
         input.revision_style = options.revision_style;
+        input.form_fields = options.fillable_forms;
         input.fonts.extend(font_files.iter().map(|(family, data)| {
             oxoffice_docx_layout::FontFile {
                 family: (*family).to_owned(),
@@ -51113,6 +51168,20 @@ impl Document {
     /// Render the document to the selected archival PDF profile using bundled fonts.
     pub fn to_pdfa_deterministic(&self, profile: oxoffice_pdf::PdfConformance) -> Result<Vec<u8>> {
         let layout = self.layout_for_options(RenderOptions::default(), true)?;
+        Ok(oxoffice_pdf::render_to_pdf_with_options(
+            &layout.layout,
+            oxoffice_pdf::PdfOptions::new(profile),
+        )?)
+    }
+
+    /// Encode a deterministic archival PDF with these render options, such
+    /// as fillable form fields.
+    pub fn to_pdfa_deterministic_with_options(
+        &self,
+        profile: oxoffice_pdf::PdfConformance,
+        options: RenderOptions,
+    ) -> Result<Vec<u8>> {
+        let layout = self.layout_for_options(options, true)?;
         Ok(oxoffice_pdf::render_to_pdf_with_options(
             &layout.layout,
             oxoffice_pdf::PdfOptions::new(profile),
@@ -52105,6 +52174,8 @@ impl Document {
         }
 
         let mut input = LayoutInput {
+            form_fields: false,
+            form_paragraphs: None,
             sequence_snapshot: None,
             revision_view: oxoffice_docx_layout::RevisionView::Accepted,
             revision_style: oxoffice_docx_layout::RevisionStyle::Plain,

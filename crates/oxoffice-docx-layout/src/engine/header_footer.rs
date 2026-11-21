@@ -380,6 +380,7 @@ fn layout_header_footer_variant_uncached(
                     source,
                     sources.and_then(|registry| registry.id(&story, &path)),
                     None,
+                    None,
                 )?;
                 if !cache_source && let Some(registry) = sources {
                     registry.bind_text_boxes(&mut block, &mut paint, source)?;

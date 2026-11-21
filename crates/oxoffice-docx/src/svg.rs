@@ -265,7 +265,11 @@ impl<'a> SvgState<'a> {
                 PositionedElement::Group(group) => {
                     self.emit_group(group, &element_path, output, accumulated)
                 }
-                PositionedElement::MarkedContent { children, .. } => {
+                PositionedElement::MarkedContent { children, .. }
+                | PositionedElement::FormField(oxoffice_layout::FormFieldFragment {
+                    children,
+                    ..
+                }) => {
                     output.push_str("<g>");
                     self.emit_elements(
                         children,
@@ -837,9 +841,10 @@ fn collect_used_fonts(
                 }
             }
             PositionedElement::Group(group) => collect_used_fonts(&group.children, seen, ordered),
-            PositionedElement::MarkedContent { children, .. } => {
-                collect_used_fonts(children, seen, ordered)
-            }
+            PositionedElement::MarkedContent { children, .. }
+            | PositionedElement::FormField(oxoffice_layout::FormFieldFragment {
+                children, ..
+            }) => collect_used_fonts(children, seen, ordered),
             _ => {}
         }
     }
@@ -1223,7 +1228,10 @@ fn element_bounds(element: &PositionedElement, fonts: &[FontData]) -> Result<Opt
         })),
         PositionedElement::Group(group) => Ok(group_effect_bounds(group, fonts)?
             .map(|bounds| group.transform.transform_rect_bbox(bounds))),
-        PositionedElement::MarkedContent { children, .. } => elements_bounds(children, fonts),
+        PositionedElement::MarkedContent { children, .. }
+        | PositionedElement::FormField(oxoffice_layout::FormFieldFragment { children, .. }) => {
+            elements_bounds(children, fonts)
+        }
         PositionedElement::LinkAnnotation { .. }
         | PositionedElement::Text(_)
         | PositionedElement::MultilingualText(_) => Ok(None),

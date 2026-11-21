@@ -4415,10 +4415,13 @@ mod form_facts_tests {
         );
         assert_eq!(main.lock, SdtLock::ContentLocked);
         assert!(main.showing_placeholder);
-        // A value from another namespace is not Word's.
-        let foreign =
-            facts(r#"<w:lock xmlns:x="urn:example" x:val="contentLocked" w:val="unlocked"/>"#);
-        assert_eq!(foreign.lock, SdtLock::Unlocked);
+        // A value from another namespace is not Word's, before or after it.
+        for lock in [
+            r#"<w:lock xmlns:x="urn:example" x:val="contentLocked" w:val="sdtLocked"/>"#,
+            r#"<w:lock xmlns:x="urn:example" w:val="sdtLocked" x:val="contentLocked"/>"#,
+        ] {
+            assert_eq!(facts(lock).lock, SdtLock::SdtLocked, "{lock}");
+        }
     }
 
     #[test]

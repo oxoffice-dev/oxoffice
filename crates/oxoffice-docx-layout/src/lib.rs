@@ -5,6 +5,7 @@
 pub mod block;
 mod convert;
 pub mod engine;
+mod forms;
 pub mod input;
 mod math;
 pub mod notes;

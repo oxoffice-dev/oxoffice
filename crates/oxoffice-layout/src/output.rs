@@ -469,6 +469,26 @@ pub struct FormFieldFragment {
     pub children: Vec<PositionedElement>,
     /// For a check box, the drawing of the other state. Text only.
     pub alternate: Vec<PositionedElement>,
+    /// Producer bookkeeping while the layout is built: the marker a
+    /// fragment without children still is. A finished layout leaves it
+    /// `None`, and the PDF writer never sees one.
+    #[doc(hidden)]
+    pub mark: Option<FormMarker>,
+}
+
+/// Where a paginator drew a marked line item, before the producer gathers
+/// what it drew into a fragment. Producer bookkeeping, not layout output.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FormMarker {
+    pub mark: crate::line::FormMark,
+    /// The widget's rectangle when the line draws this field only: its
+    /// whole text band, so there is room to type. `None` keeps the
+    /// fragment's own rectangle, the item's box.
+    pub band: Option<Rect>,
+    /// The left edge of the column the item drew in: a field drawn in two
+    /// columns stays static.
+    pub track: f64,
 }
 
 /// One path with optional fill and stroke paints.

@@ -81,6 +81,7 @@ use multilingual::{
     needs_word_multilingual_layout, shape_word_multilingual_items, word_character_advance_pt,
     word_text_direction,
 };
+pub(crate) use revisions::accepted_runs;
 use revisions::{
     accepted_paragraph_is_blank, change_bar_color, prepared_semantic_layout_input,
     project_paragraph_runs, projected_content_char_starts, projected_paragraph_text,
@@ -186,6 +187,8 @@ struct ProjectedRun<'a> {
     /// The innermost insertion, deletion or move that marks the run in the
     /// tracked view.
     revision: Option<RevisionKind>,
+    /// The innermost inline content control around the run.
+    control: Option<&'a CT_Sdt>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -261,7 +264,7 @@ fn join_accepted_layout_paragraphs(prefix: CT_P, paragraph: &CT_P) -> Result<CT_
 /// A paragraph's `w:sectPr` ends its section, so it applies to that paragraph
 /// and to every item since the previous break. The body `w:sectPr` applies to
 /// the items after the last paragraph break (ECMA-376 17.6.17 and 17.6.18).
-fn main_story_item_sections<'a>(
+pub(crate) fn main_story_item_sections<'a>(
     items: &[MainStoryLayoutItem<'a>],
     final_section: &'a CT_SectPr,
 ) -> Vec<&'a CT_SectPr> {
@@ -399,6 +402,7 @@ struct ReusableEngineContext {
     /// builds keep many copies of `Document` on deep stacks.
     core_properties: Option<Box<oxoffice_docx_oxml::core_properties::CoreProperties>>,
     hyperlink_urls: HashMap<String, String>,
+    form_fields: bool,
     footnotes: Option<oxoffice_docx_oxml::footnotes::CT_Footnotes>,
     endnotes: Option<oxoffice_docx_oxml::footnotes::CT_Footnotes>,
     theme: Option<oxoffice_docx_oxml::theme::Theme>,
@@ -454,6 +458,7 @@ impl ReusableEngineContext {
             chart_color_map: input.chart_color_map.clone(),
             core_properties: input.core_properties.clone().map(Box::new),
             hyperlink_urls: input.hyperlink_urls.clone(),
+            form_fields: input.form_fields,
             footnotes: input.footnotes.clone(),
             endnotes: input.endnotes.clone(),
             theme: input.theme.clone(),
@@ -568,6 +573,7 @@ impl ReusableEngineContext {
             && self.chart_color_map == input.chart_color_map
             && self.core_properties.as_deref() == input.core_properties.as_ref()
             && self.hyperlink_urls == input.hyperlink_urls
+            && self.form_fields == input.form_fields
             && self.theme == input.theme
             && self.caller_font_aliases == caller_font_aliases
             && self.background_xml == input.document.background_xml

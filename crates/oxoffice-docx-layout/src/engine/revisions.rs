@@ -55,6 +55,7 @@ pub(super) fn project_paragraph_runs(para: &CT_P, view: RevisionView) -> Vec<Pro
         }
         if let Some(run) = para.runs.get(boundary) {
             projected.push(ProjectedRun {
+                control: None,
                 run,
                 boundary,
                 raw_order: RawOrder::AfterRaw,
@@ -76,6 +77,15 @@ pub(super) fn project_paragraph_runs(para: &CT_P, view: RevisionView) -> Vec<Pro
 /// A bookmark start keeps the paragraph, because a PAGEREF or REF field
 /// reads the page, number and text of the paragraph that holds it, and
 /// moving it onto the next paragraph, as accepting does, is not modeled.
+/// The runs a paragraph draws in the accepted view, in order, each with the
+/// innermost inline content control around it.
+pub(crate) fn accepted_runs(para: &CT_P) -> Vec<(&CT_R, Option<&CT_Sdt>)> {
+    project_paragraph_runs(para, RevisionView::Accepted)
+        .into_iter()
+        .map(|projected| (projected.run, projected.control))
+        .collect()
+}
+
 pub(super) fn accepted_paragraph_is_blank(para: &CT_P) -> bool {
     para.accepted_text().is_empty()
         && para.equations.is_empty()
@@ -135,6 +145,7 @@ fn project_control_runs<'a>(
     raw_order: RawOrder,
     projected: &mut Vec<ProjectedRun<'a>>,
 ) {
+    let first = projected.len();
     for content_boundary in 0..=control.content.len() {
         for (_, revision) in control
             .revisions()
@@ -148,6 +159,7 @@ fn project_control_runs<'a>(
         if let Some(content) = control.content.get(content_boundary) {
             match content {
                 SdtContent::Run(run) => projected.push(ProjectedRun {
+                    control: None,
                     run,
                     boundary,
                     raw_order,
@@ -175,6 +187,10 @@ fn project_control_runs<'a>(
                 SdtContent::RawXml(_) => {}
             }
         }
+    }
+    // Runs of a nested control already name that innermost control.
+    for run in &mut projected[first..] {
+        run.control.get_or_insert(control);
     }
 }
 
@@ -337,6 +353,7 @@ fn project_revision_runs<'a>(
         }
         if let Some(run) = runs.get(run_boundary) {
             projected.push(ProjectedRun {
+                control: None,
                 run,
                 boundary,
                 raw_order,

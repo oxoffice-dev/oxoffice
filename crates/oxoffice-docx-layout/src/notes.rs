@@ -230,6 +230,7 @@ impl NoteRegistry {
                                             source,
                                             source,
                                             None,
+                                            None,
                                         )?;
                                     if let Some(registry) = sources {
                                         registry.bind_text_boxes(&mut block, &mut paint, source)?;
@@ -477,6 +478,7 @@ fn shape_marker(text: &str, fm: &mut FontManager) -> Result<Option<TextSegment>>
     let metrics = fm.metrics(font_id, size)?;
 
     Ok(Some(TextSegment {
+        form_mark: None,
         text,
         direction: oxoffice_layout::TextDirection::Auto,
         source: None,

@@ -198,6 +198,7 @@ pub(crate) fn layout_paragraph_with_grid(
         None,
         doc_grid,
         false,
+        None,
     )
     .map(|(block, _)| block)
 }
@@ -230,6 +231,7 @@ pub(crate) fn layout_paragraph_with_source(
         None,
         None,
         false,
+        None,
     )
     .map(|(block, _)| block)
 }
@@ -247,6 +249,7 @@ pub(crate) fn layout_paragraph_with_source_and_direction(
     source_node: Option<SourceNodeId>,
     navigation_node: Option<SourceNodeId>,
     doc_grid: Option<&CT_DocGrid>,
+    form: Option<crate::forms::FormParagraph>,
 ) -> Result<(ParagraphBlock, TextDirection, WordParagraphPaint)> {
     let mut direction = TextDirection::Auto;
     let (block, paint) = layout_paragraph_with_source_and_table(
@@ -266,6 +269,7 @@ pub(crate) fn layout_paragraph_with_source_and_direction(
         Some(&mut direction),
         doc_grid,
         false,
+        form,
     )?;
     Ok((block, direction, paint))
 }
@@ -285,6 +289,7 @@ pub(crate) fn layout_paragraph_with_source_in_table(
     table_run_properties: Option<&oxoffice_docx_oxml::properties::CT_RPr>,
     cell_shading: Option<Color>,
     doc_grid: Option<&CT_DocGrid>,
+    form: Option<crate::forms::FormParagraph>,
 ) -> Result<(ParagraphBlock, TextDirection, WordParagraphPaint)> {
     let mut direction = TextDirection::Auto;
     let (block, paint) = layout_paragraph_with_source_and_table(
@@ -304,6 +309,7 @@ pub(crate) fn layout_paragraph_with_source_in_table(
         Some(&mut direction),
         doc_grid,
         true,
+        form,
     )?;
     Ok((block, direction, paint))
 }
@@ -326,6 +332,9 @@ fn layout_paragraph_with_source_and_table(
     reflow_direction_out: Option<&mut TextDirection>,
     doc_grid: Option<&CT_DocGrid>,
     in_table_cell: bool,
+    // The main-story paragraph this is, from a caller that knows: other
+    // stories, text boxes and cached copies draw no form marks.
+    form: Option<crate::forms::FormParagraph>,
 ) -> Result<(ParagraphBlock, WordParagraphPaint)> {
     // Resolve paragraph properties
     let para_style_id = para.properties.as_ref().and_then(|p| p.style_id.as_deref());
@@ -559,6 +568,7 @@ fn layout_paragraph_with_source_and_table(
                         },
                     );
                     inline_items.push(InlineItem::Marker(TextSegment {
+                        form_mark: None,
                         text: display_text,
                         direction: TextDirection::Auto,
                         source: None,
@@ -607,6 +617,7 @@ fn layout_paragraph_with_source_and_table(
                                 .is_some_and(|threshold| threshold.to_pt() <= marker_font_size),
                         )?;
                         inline_items.push(InlineItem::Text(TextSegment {
+                            form_mark: None,
                             text: " ".to_owned(),
                             direction: TextDirection::Auto,
                             source: None,
@@ -832,6 +843,14 @@ fn layout_paragraph_with_source_and_table(
             expanded.push((index, projected, start, false, true, None, None, None));
         }
     }
+    // Only a main-story paragraph draws form marks, named after its own
+    // source node: a cached, header, note or text-box layout passes none.
+    let form_paragraph = form.filter(|_| input.form_fields);
+    let inline_controls = form_paragraph
+        .filter(|_| !para.content_controls.is_empty() || !para.revisions.is_empty())
+        .map(|_| crate::forms::InlineControls::new(para));
+    // A paragraph inside a block control field: all it draws is the field's.
+    let form_block = form_paragraph.is_some_and(|paragraph| paragraph.block);
     for (
         projected_index,
         projected,
@@ -856,6 +875,16 @@ fn layout_paragraph_with_source_and_table(
             )?;
         }
 
+        let current_form_mark = inline_controls
+            .as_ref()
+            .zip(projected.control)
+            .and_then(|(controls, control)| controls.mark_of(control))
+            .or(form_block.then_some(crate::forms::BLOCK_FIELD))
+            .zip(form_paragraph)
+            .map(|(field, paragraph)| oxoffice_layout::FormMark {
+                node: paragraph.node,
+                field,
+            });
         let current_hyperlink_url = projected
             .ordinary_run_index
             .and_then(|run_index| run_hyperlink_url.get(&run_index).cloned())
@@ -1086,6 +1115,7 @@ fn layout_paragraph_with_source_and_table(
                     )?;
                     let marker_metrics = fm.metrics(marker_font, size)?;
                     inline_items.push(InlineItem::Text(TextSegment {
+                        form_mark: current_form_mark,
                         text,
                         direction: TextDirection::Auto,
                         source: None,
@@ -1237,6 +1267,7 @@ fn layout_paragraph_with_source_and_table(
                     }
 
                     let segment = TextSegment {
+                        form_mark: current_form_mark,
                         text,
                         direction: TextDirection::Auto,
                         source,
@@ -1330,6 +1361,7 @@ fn layout_paragraph_with_source_and_table(
                         } else {
                             media.record_picture_draw_owner(&inline.embed_id);
                             InlineItem::Image {
+                                form_mark: current_form_mark,
                                 width,
                                 height,
                                 media_id: media.id_for_relationship_with_diagnostic(
@@ -1556,6 +1588,7 @@ fn layout_paragraph_with_source_and_table(
                                     },
                                 );
                                 inline_items.push(InlineItem::Text(TextSegment {
+                                    form_mark: current_form_mark,
                                     text,
                                     direction: word_text_direction(segment_rpr.rtl),
                                     source: None,
@@ -1628,6 +1661,7 @@ fn layout_paragraph_with_source_and_table(
                     let revision_marker = input.revision_view == RevisionView::Tracked
                         && projected.ordinary_run_index.is_none();
                     inline_items.push(InlineItem::Text(TextSegment {
+                        form_mark: None,
                         text: marker,
                         direction: TextDirection::Auto,
                         source: None,
@@ -1716,6 +1750,7 @@ fn layout_paragraph_with_source_and_table(
                         },
                     );
                     inline_items.push(InlineItem::Text(TextSegment {
+                        form_mark: current_form_mark,
                         text,
                         direction: TextDirection::Auto,
                         source: None,
@@ -1758,6 +1793,7 @@ fn layout_paragraph_with_source_and_table(
                             style_resolver::word_kerning_enabled(&effective_rpr),
                         )?;
                         inline_items.push(InlineItem::Text(TextSegment {
+                            form_mark: current_form_mark,
                             text,
                             direction: TextDirection::Auto,
                             source: None,
@@ -1876,6 +1912,7 @@ fn layout_paragraph_with_source_and_table(
                 },
             );
             inline_items.push(InlineItem::Text(TextSegment {
+                form_mark: None,
                 text: String::new(),
                 direction: TextDirection::Auto,
                 source: source_node.map(|node| SourceSpan {
@@ -2226,6 +2263,7 @@ fn push_structural_field_marker(
         },
     );
     let segment = TextSegment {
+        form_mark: None,
         text: "\u{2060}".to_owned(),
         direction: TextDirection::Auto,
         source: source_node.map(|node| oxoffice_layout::SourceSpan {
