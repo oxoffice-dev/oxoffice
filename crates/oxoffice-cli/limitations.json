@@ -1,14 +1,5 @@
 [
   {
-    "id": "docx-compare-toc-bookmarks",
-    "format": "docx",
-    "area": "compare",
-    "title": "Comparison refuses two versions whose TOC heading bookmarks were renumbered",
-    "symptom": "compare refuses with \"duplicate bookmark id N in authored XML\" or \"cannot revise paragraph boundary structures\"",
-    "workaround": "remove the _Toc bookmarks from both copies, compare, then rebuild the table of contents on the result",
-    "issue": 3
-  },
-  {
     "id": "docx-compare-moved-footnote",
     "format": "docx",
     "area": "compare",

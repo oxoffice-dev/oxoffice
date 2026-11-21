@@ -304,6 +304,11 @@ enum Command {
     /// unchanged. Any other change to it fails with its location and creates
     /// no output. Section properties holding revisions must also remain
     /// unchanged in both inputs. Changing them fails without creating output.
+    ///
+    /// Bookmark ids, which Word renumbers on every save, and the `_Toc` names
+    /// a rebuilt table of contents gives its heading bookmarks are no change:
+    /// a body bookmark both files hold keeps the original's id and name, and
+    /// the links and page references of the edited file follow it.
     Compare {
         /// Original DOCX file
         original: PathBuf,

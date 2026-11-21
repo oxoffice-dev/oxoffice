@@ -892,11 +892,7 @@ fn a_paragraph_appended_after_a_final_table_is_compared() {
     assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
 }
 
-// Fails today: a heading whose _Toc bookmark was renamed, as Word renames them
-// when it rebuilds a table of contents, blocks the comparison. Known
-// limitation. Issue: #3
 #[test]
-#[should_panic(expected = "comparison cannot revise paragraph boundary structures")]
 fn renamed_toc_heading_bookmarks_do_not_block_the_comparison() {
     let heading = |toc: u32| {
         format!(
@@ -909,6 +905,234 @@ fn renamed_toc_heading_bookmarks_do_not_block_the_comparison() {
     let mut doc = redline(original, &edited);
     assert_eq!(texts(&accepted(&mut doc)), ["Intro", "New body."]);
     assert_eq!(texts(&rejected(&mut doc)), ["Intro", "Old body."]);
+}
+
+/// A table of contents as Word writes it, each entry a link to its heading's
+/// `_Toc` bookmark with a page reference field, then the headings, each
+/// followed by its text. Word renames the bookmarks when it rebuilds the
+/// table: here they are `_Toc{base + n}` for the n-th heading.
+fn report_with_toc(base: u32, sections: &[(&str, &str)]) -> Document {
+    let mut body = String::from(
+        r#"<w:p><w:r><w:t>Contents</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-1" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>"#,
+    );
+    for (n, (heading, _)) in sections.iter().enumerate() {
+        let name = format!("_Toc{}", base + n as u32);
+        body.push_str(&format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:hyperlink w:anchor="{name}"><w:r><w:t>{heading}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF {name} \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>"#
+        ));
+    }
+    body.push_str(r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#);
+    for (n, (heading, text)) in sections.iter().enumerate() {
+        let name = format!("_Toc{}", base + n as u32);
+        body.push_str(&format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="{n}" w:name="{name}"/><w:r><w:t>{heading}</w:t></w:r><w:bookmarkEnd w:id="{n}"/></w:p><w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        ));
+    }
+    doc_with_body(&body)
+}
+
+fn bookmark_names(doc: &Document) -> Vec<String> {
+    doc.bookmarks()
+        .iter()
+        .map(|bookmark| bookmark.name().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// Each link as (its text, the text of the bookmark it names, if any).
+fn link_targets(doc: &Document) -> Vec<(String, Option<String>)> {
+    let bookmarks = doc.bookmarks();
+    doc.links()
+        .into_iter()
+        .map(|link| {
+            let target = bookmarks
+                .iter()
+                .find(|bookmark| bookmark.name() == link.anchor.as_deref())
+                .map(|bookmark| bookmark.text().to_owned());
+            (link.text, target)
+        })
+        .collect()
+}
+
+fn assert_every_entry_links_its_heading(doc: &Document, headings: &[&str]) {
+    let targets = link_targets(doc);
+    assert_eq!(targets.len(), headings.len(), "{targets:?}");
+    for ((entry, target), heading) in targets.iter().zip(headings) {
+        assert!(entry.starts_with(heading), "{targets:?}");
+        assert_eq!(target.as_deref(), Some(*heading), "{targets:?}");
+    }
+}
+
+#[test]
+fn a_heading_added_before_a_rebuilt_toc_is_the_only_heading_change() {
+    let sections = [("Scope", "What we cover."), ("Method", "How we work.")];
+    let original = report_with_toc(1, &sections);
+    // The rebuild numbered the bookmarks from the new first heading, so
+    // Context holds the name and the id Scope held.
+    let edited = report_with_toc(
+        1,
+        &[
+            ("Context", "Why now."),
+            ("Scope", "What we cover."),
+            ("Method", "How we work, step by step."),
+        ],
+    );
+    let mut doc = redline(report_with_toc(1, &sections), &edited);
+
+    let inserted = revision_texts(&doc, RevisionKind::Insertion);
+    assert!(
+        inserted.iter().any(|text| text.contains("Context")),
+        "{inserted:?}"
+    );
+    let revised = revision_texts(&doc, RevisionKind::Deletion)
+        .into_iter()
+        .chain(inserted)
+        .collect::<Vec<_>>();
+    assert!(
+        !revised.iter().any(|text| text.contains("Scope")),
+        "an unchanged heading is not revised: {revised:?}"
+    );
+
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_every_entry_links_its_heading(&copy, &["Context", "Scope", "Method"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original));
+    assert_eq!(bookmark_names(&copy), bookmark_names(&original));
+    assert_every_entry_links_its_heading(&copy, &["Scope", "Method"]);
+}
+
+#[test]
+fn a_toc_rebuilt_under_new_bookmark_names_shows_only_the_text_changes() {
+    let original = report_with_toc(217_000_001, &[("Scope", "Old."), ("Method", "Steps.")]);
+    let edited = report_with_toc(
+        318_000_001,
+        &[("Scope and aims", "Old."), ("Method", "Steps.")],
+    );
+    let mut doc = redline(
+        report_with_toc(217_000_001, &[("Scope", "Old."), ("Method", "Steps.")]),
+        &edited,
+    );
+    // The entry and its heading, nothing else.
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        ["Scope", "Scope"]
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Insertion),
+        ["Scope and aims", "Scope and aims"]
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_every_entry_links_its_heading(&copy, &["Scope and aims", "Method"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original));
+    assert_eq!(bookmark_names(&copy), ["_Toc217000001", "_Toc217000002"]);
+}
+
+#[test]
+fn bookmark_ids_renumbered_by_a_save_are_no_change() {
+    let mark = |id: u32, name: &str, text: &str| {
+        format!(
+            r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>{text}</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
+        )
+    };
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    // Word numbers bookmarks in document order when it saves, so a bookmark
+    // added first moves the id of every bookmark after it.
+    let original = doc_with_body(&format!("{}{}", mark(0, "intro", "Intro"), body("Old.")));
+    let edited = doc_with_body(&format!(
+        "{}{}{}",
+        mark(0, "summary", "Summary"),
+        mark(1, "intro", "Intro"),
+        body("New.")
+    ));
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Insertion),
+        ["Summary", "New."]
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Summary", "Intro", "New."]);
+    assert_eq!(bookmark_names(&copy), ["summary", "intro"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Intro", "Old."]);
+    assert_eq!(bookmark_names(&copy), ["intro"]);
+}
+
+#[test]
+fn a_renamed_bookmark_of_the_author_keeps_its_name_on_each_side() {
+    let mark = |name: &str| {
+        format!(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#
+        )
+    };
+    let body = "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>";
+    let original = doc_with_body(&format!("{}{body}", mark("draft")));
+    let edited = doc_with_body(&format!("{}{body}", mark("final")));
+    // No tracked change renames a bookmark: its paragraph is replaced.
+    let mut doc = redline(original, &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["Intro"]);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Intro"]);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Intro", "Body."]);
+    assert_eq!(bookmark_names(&copy), ["final"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Intro", "Body."]);
+    assert_eq!(bookmark_names(&copy), ["draft"]);
+}
+
+#[test]
+fn a_toc_reference_split_across_runs_keeps_the_refusal() {
+    // The edited link names `_Toc2` in one instruction run, `_To` + `c2` in
+    // the other: renaming the bookmark would leave that half pointing at
+    // nothing, so the comparison refuses the pair instead.
+    let entry = |name: &str, split: bool| {
+        let instruction = if split {
+            format!(
+                r#"<w:r><w:instrText xml:space="preserve"> PAGEREF {}</w:instrText></w:r><w:r><w:instrText xml:space="preserve">{} \h </w:instrText></w:r>"#,
+                &name[..3],
+                &name[3..]
+            )
+        } else {
+            format!(
+                r#"<w:r><w:instrText xml:space="preserve"> PAGEREF {name} \h </w:instrText></w:r>"#
+            )
+        };
+        format!(
+            r#"<w:p><w:hyperlink w:anchor="{name}"><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r>{instruction}<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>"#
+        )
+    };
+    let heading = |name: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#
+        )
+    };
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let document = |name: &str, split: bool, text: &str| {
+        doc_with_body(&format!(
+            "{}{}{}",
+            entry(name, split),
+            heading(name),
+            body(text)
+        ))
+    };
+    let mut original = document("_Toc1", false, "Old.");
+    assert!(
+        original
+            .compare(&document("_Toc2", true, "New."), AUTHOR, DATE)
+            .is_err()
+    );
+    // The same pair with the reference in one run compares.
+    let mut doc = redline(
+        document("_Toc1", false, "Old."),
+        &document("_Toc2", false, "New."),
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Intro1", "Intro", "New."]);
+    assert_eq!(
+        link_targets(&copy),
+        [("Intro1".to_owned(), Some("Intro".to_owned()))]
+    );
 }
 
 // Fails today: the same footnote, its reference moved to another paragraph,
