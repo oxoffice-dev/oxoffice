@@ -232,7 +232,7 @@ fn pictures_added_to_word_and_google_files_save_the_ids_they_read() {
             .unwrap();
         let ids = picture_ids(&doc);
         for picture in existing.iter().chain([&added]) {
-            assert!(ids.contains(picture), "{name}: {:?} kept", &picture.1);
+            assert!(ids.contains(picture), "{name}: {:?} kept", picture.1);
         }
 
         assert_eq!(picture_ids(&saved(&doc)), ids, "{name}");
