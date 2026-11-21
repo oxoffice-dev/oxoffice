@@ -3476,6 +3476,48 @@ fn a_simple_field_paragraph_in_a_footnote_a_comment_or_a_cell_is_tracked_whole()
 }
 
 #[test]
+fn a_simple_field_paragraph_in_a_content_control_is_tracked_whole() {
+    // First and last paragraph of a block content control.
+    let control = |content: &str| {
+        doc_with_body(&format!(
+            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{}"#,
+            plain("After.")
+        ))
+    };
+    check_both_ways(
+        || control(&plain("Inside.")),
+        || control(&format!("{PAGE_LINE}{}", plain("Inside."))),
+        "document.xml",
+        [false, true],
+    );
+    check_both_ways(
+        || control(&plain("Inside.")),
+        || control(&format!("{}{PAGE_LINE}", plain("Inside."))),
+        "document.xml",
+        [false, true],
+    );
+}
+
+#[test]
+fn a_simple_field_the_reader_keeps_raw_keeps_a_refusal_when_its_paragraph_goes_whole() {
+    // A simple field with an empty instruction is kept as raw XML, with no
+    // complex form to take: the comparison refuses its paragraph and writes
+    // nothing, rather than leave its shell.
+    let raw = r#"<w:p><w:r><w:t>x</w:t></w:r><w:fldSimple w:instr=" "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#;
+    let after = plain("After.");
+    for (original, edited) in [
+        (after.clone(), format!("{raw}{after}")),
+        (format!("{raw}{after}"), after.clone()),
+    ] {
+        let mut doc = doc_with_body(&original);
+        doc.compare(&doc_with_body(&edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(doc.revisions().is_empty());
+        assert_eq!(texts(&reopen(&mut doc)), texts(&doc_with_body(&original)));
+    }
+}
+
+#[test]
 fn a_paired_paragraph_holding_a_simple_field_whose_boundaries_change_is_replaced() {
     // A hyperlink added around the text before the field: the pair is
     // written as a deleted and an inserted paragraph.
