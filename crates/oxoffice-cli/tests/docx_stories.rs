@@ -310,13 +310,17 @@ fn a_producer_copy_differs_from_its_source_only_by_what_that_producer_changes() 
     let mut read = Vec::new();
     for family in diffed_families() {
         // A family co-edited in Word and Google Docs reaches Google Docs
-        // through its Word copy (word-google/), not from its source.
-        let google = if corpus(&format!("google/{family}.docx")).exists() {
-            "google"
-        } else {
-            "word-google"
-        };
-        for producer in ["word", google, "libreoffice"] {
+        // through its Word copy (word-google/), the others from their
+        // source (google/); each has one of the two.
+        let google = ["google", "word-google"]
+            .into_iter()
+            .filter(|route| corpus(&format!("{route}/{family}.docx")).exists())
+            .collect::<Vec<_>>();
+        assert!(
+            !google.is_empty(),
+            "{family}: a google/ or word-google/ copy"
+        );
+        for producer in ["word"].into_iter().chain(google).chain(["libreoffice"]) {
             let copy = format!("{producer}/{family}.docx");
             assert!(
                 corpus(&copy).exists(),

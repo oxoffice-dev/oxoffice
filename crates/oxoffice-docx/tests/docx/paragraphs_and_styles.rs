@@ -1677,24 +1677,38 @@ fn paragraph_twips_measures_written_with_a_unit_open() {
     );
 }
 
+/// The id of the style a file names `name` (Word's names are the same
+/// in every language; Google Docs writes `normal` in lower case).
+fn style_named(doc: &Document, name: &str) -> Option<String> {
+    doc.styles()
+        .iter()
+        .find(|style| {
+            style
+                .name()
+                .is_some_and(|own| own.eq_ignore_ascii_case(name))
+        })
+        .map(|style| style.style_id().to_owned())
+}
+
 /// A house style on a co-edited record, its styles found by their names
-/// whatever ids the file gives them: a body font and size, a font and colour
-/// for the two heading levels, a shaded heading row on every table, and the
-/// unused third heading level removed (with its linked character style where
-/// the file has one).
+/// whatever ids the file gives them: a body font and size on the normal
+/// style, a font and colour for the two heading levels, a shaded heading row
+/// on every table, and the unused third heading level removed (with its
+/// linked character style where the file has one).
 fn apply_house_style(bytes: &[u8]) -> Vec<u8> {
     let mut doc = Document::from_bytes(bytes).unwrap();
     let id_of = |doc: &Document, name: &str| {
-        doc.styles()
-            .iter()
-            .find(|style| style.name() == Some(name))
-            .map(|style| style.style_id().to_owned())
+        style_named(doc, name).unwrap_or_else(|| panic!("a style named {name}"))
     };
-    doc.set_default_font_name_value(Some("Arial")).unwrap();
-    doc.set_default_font_size_value(Some(Length::pt(10.0)))
-        .unwrap();
+    let normal = id_of(&doc, "Normal");
+    doc.set_style(
+        StyleBuilder::paragraph(&normal, "Normal")
+            .font("Arial")
+            .size(10.0),
+    )
+    .unwrap();
     for name in ["heading 1", "heading 2"] {
-        let id = id_of(&doc, name).unwrap_or_else(|| panic!("a style named {name}"));
+        let id = id_of(&doc, name);
         doc.set_style(
             StyleBuilder::paragraph(&id, name)
                 .font("Arial")
@@ -1702,7 +1716,7 @@ fn apply_house_style(bytes: &[u8]) -> Vec<u8> {
         )
         .unwrap();
     }
-    if let Some(id) = id_of(&doc, "heading 3") {
+    if let Some(id) = style_named(&doc, "heading 3") {
         assert!(doc.remove_style(&id).unwrap(), "{id} is unused");
     }
     for index in 0..doc.tables().len() {
@@ -1753,6 +1767,29 @@ fn a_house_style_applied_twice_to_a_co_edited_record_changes_nothing_the_second_
             Document::from_bytes(&source).unwrap(),
             Document::from_bytes(&once).unwrap(),
         );
+        // The unused third heading level, and its linked character style
+        // where the file has one.
+        let removed = style_named(&before, "heading 3")
+            .map(|id| {
+                let linked = before.style(&id).unwrap().linked_style().map(str::to_owned);
+                std::iter::once(id).chain(linked).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(
+            !removed.is_empty(),
+            "{path}: a third heading level to remove"
+        );
+        for id in &removed {
+            assert!(after.style(id).is_none(), "{path}: {id} goes");
+            assert!(
+                after
+                    .styles()
+                    .iter()
+                    .all(|style| style.linked_style() != Some(id.as_str())
+                        && style.based_on() != Some(id.as_str())),
+                "{path}: nothing names {id}"
+            );
+        }
         let text = |doc: &Document| {
             (0..doc.paragraph_count())
                 .map(|index| {
@@ -1819,15 +1856,22 @@ fn a_house_style_applied_twice_to_a_co_edited_record_changes_nothing_the_second_
                 );
             }
         }
-        assert!(
-            after
-                .styles()
-                .iter()
-                .all(|style| style.name() != Some("heading 3")),
+        assert!(style_named(&after, "heading 3").is_none(), "{path}");
+        // A body paragraph reads the new font and size through the normal
+        // style.
+        let normal = style_named(&after, "Normal").unwrap();
+        let body = after.resolve_run_properties(Some(&normal), None);
+        assert_eq!(
+            (body.font_ascii.as_deref(), body.sz.map(|size| size.0)),
+            (Some("Arial"), Some(20)),
             "{path}"
         );
         for table in after.tables() {
             let row = table.row(0).unwrap();
+            assert!(
+                row.is_header(),
+                "{path}: the first row repeats as a heading row"
+            );
             assert!(
                 (0..row.cell_count())
                     .all(|cell| row.cell(cell).unwrap().shading_fill() == Some("DEEAF6")),
