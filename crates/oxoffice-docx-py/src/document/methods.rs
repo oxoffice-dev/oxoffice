@@ -257,9 +257,13 @@ impl PyDocument {
             .map_err(|error| docx_to_pyerr(py, error))
     }
 
+    /// The body as a complete HTML document: comments, notes, headers and footers are left out
+    /// (`oxoffice docx convert` appends them); equations are written as MathML.
     fn to_html(&self, py: Python<'_>) -> String {
         py.detach(|| self.inner.to_html())
     }
+    /// The body as Markdown: comments, notes, headers and footers are left out
+    /// (`oxoffice docx convert` appends them); equations are written as LaTeX.
     fn to_markdown(&self, py: Python<'_>) -> String {
         py.detach(|| self.inner.to_markdown())
     }

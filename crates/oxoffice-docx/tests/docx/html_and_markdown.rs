@@ -1353,6 +1353,69 @@ fn charts_export_as_data_tables_and_an_unreadable_chart_is_diagnosed() {
 // ---- Stories other than the body ----
 
 #[test]
+fn internal_links_reach_their_bookmark_in_both_exports() {
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,
+        r#"<w:bookmarkStart w:id="2" w:name="_GoBack"/><w:bookmarkEnd w:id="2"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="goal">"#,
+        r#"<w:r><w:t>the goal</w:t></w:r></w:hyperlink></w:p>"#,
+    )));
+    let html = doc.to_html_fragment();
+    assert!(html.contains(r##"<a id="goal"></a>Goal"##), "{html}");
+    assert!(
+        html.contains(r##"See <a href="#goal">the goal</a>"##),
+        "{html}"
+    );
+    // A bookmark no link targets gets no anchor.
+    assert!(!html.contains("_GoBack"), "{html}");
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.contains(r##"<a id="goal"></a>Goal"##),
+        "{markdown}"
+    );
+    assert!(markdown.contains("See [the goal](#goal)"), "{markdown}");
+    assert!(!markdown.contains("_GoBack"), "{markdown}");
+
+    // EPUB parts chapters and drops the anchor, as it reports: no dead link.
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        epub.diagnostics
+            .iter()
+            .any(|d| d.message == "internal hyperlink anchor was dropped during EPUB export"),
+        "{:?}",
+        epub.diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut text).ok();
+        assert!(!text.contains("href=\"#goal\""), "{text}");
+    }
+}
+
+#[test]
+fn a_header_row_holds_header_cells_in_html() {
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc>"#,
+        r#"<w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>Ann</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"</w:tbl><w:p/>"#,
+    )));
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<th>").count(), 2, "{html}");
+    assert!(html.contains("<th><p>Name</p>\n</th>"), "{html}");
+    assert!(html.contains("<td><p>Ann</p>\n</td>"), "{html}");
+    // An HTML reader marks the row as a header again.
+    let reread = Document::from_html(&doc.to_html()).unwrap().document;
+    assert!(reread.table(0).unwrap().row(0).unwrap().is_header());
+}
+
+#[test]
 fn the_exports_hold_the_body_only() {
     // The emitter converts "body content only"; the CLI convert route
     // appends the other stories itself.

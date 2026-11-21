@@ -10,7 +10,7 @@ use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, VMerge};
 use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
 use crate::css;
-use crate::sanitize::{escape_html, escape_html_attr, safe_url};
+use crate::sanitize::{escape_html, escape_html_attr};
 use crate::{
     Block, Counted, EquationWriter, HtmlInput, HtmlOptions, ImageData, ListCounter, ListItem,
     ListKind, body_blocks, cell_blocks,
@@ -27,7 +27,7 @@ pub(crate) fn emit_body(
     let styles = &input.styles;
     let numbering = input.numbering.as_ref();
     let images = &input.images;
-    let hyperlink_urls = &input.hyperlink_urls;
+    let hyperlink_urls = &crate::Links::new(&input.hyperlink_urls, body);
     let mut out = String::new();
     let mut counter = ListCounter::new(styles, numbering);
     // The open lists, outermost first; each holds its open item, in which
@@ -240,7 +240,7 @@ fn emit_paragraph(
     para: &CT_P,
     styles: &CT_Styles,
     images: &HashMap<String, ImageData>,
-    hyperlink_urls: &HashMap<String, String>,
+    hyperlink_urls: &crate::Links<'_>,
     options: &HtmlOptions,
     equations: &dyn EquationWriter,
 ) {
@@ -324,35 +324,28 @@ fn emit_paragraph_content(
     para: &CT_P,
     _styles: &CT_Styles,
     images: &HashMap<String, ImageData>,
-    hyperlink_urls: &HashMap<String, String>,
+    hyperlink_urls: &crate::Links<'_>,
     options: &HtmlOptions,
     equations: &dyn EquationWriter,
 ) {
+    // The bookmarks a link targets, read before the accepted view drops
+    // the markers.
+    let anchors = crate::bookmark_anchors(para, &hyperlink_urls.bookmarks);
     // The runs the text readers read, those of content controls, tracked
     // insertions, smart tags and custom XML included, deleted ones left out.
     let para = &para.accepted_view();
-
-    // Build a map of which runs are inside hyperlinks
-    let mut hyperlink_map: HashMap<usize, &str> = HashMap::new();
-    for hl in &para.hyperlinks {
-        // A target with an unsafe scheme yields no <a> at all, so the run text
-        // still renders but cannot become a script trigger.
-        if let Some(rel_id) = &hl.rel_id
-            && let Some(url) = hyperlink_urls
-                .get(rel_id)
-                .map(String::as_str)
-                .and_then(safe_url)
-        {
-            for i in hl.run_start..hl.run_end {
-                hyperlink_map.insert(i, url);
-            }
+    let hyperlink_map = crate::hyperlink_targets(para, hyperlink_urls);
+    let emit_anchors = |out: &mut String, boundary: usize| {
+        for (_, name) in anchors.iter().filter(|(at, _)| *at == boundary) {
+            out.push_str(&format!("<a id=\"{}\"></a>", escape_html_attr(name)));
         }
-    }
+    };
 
     let mut current_link: Option<&str> = None;
 
     for (run_idx, run) in para.runs.iter().enumerate() {
-        let in_link = hyperlink_map.get(&run_idx).copied();
+        let in_link = hyperlink_map.get(&run_idx).map(String::as_str);
+        emit_anchors(out, run_idx);
         // An equation between a link and what follows it is not in the link.
         if crate::equations_at(para, run_idx).next().is_some() {
             if current_link.is_some() && current_link != in_link {
@@ -387,6 +380,7 @@ fn emit_paragraph_content(
     if current_link.is_some() {
         out.push_str("</a>");
     }
+    emit_anchors(out, para.runs.len());
     emit_equations(out, para, para.runs.len(), equations);
 }
 
@@ -605,7 +599,7 @@ fn emit_table(
     tbl: &CT_Tbl,
     styles: &CT_Styles,
     images: &HashMap<String, ImageData>,
-    hyperlink_urls: &HashMap<String, String>,
+    hyperlink_urls: &crate::Links<'_>,
     options: &HtmlOptions,
     equations: &dyn EquationWriter,
 ) {
@@ -651,6 +645,17 @@ fn emit_table(
     let limit = grid_limit(tbl);
     for (row_idx, row) in rows.iter().enumerate() {
         out.push_str("<tr>\n");
+        // A row marked to repeat as a header holds header cells.
+        let cell_tag = if row
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.header)
+            == Some(true)
+        {
+            "th"
+        } else {
+            "td"
+        };
         let ranges = grid_ranges(row, limit);
         for (cell, &range) in row.cells().into_iter().zip(&ranges) {
             // Skip vmerge continue cells
@@ -713,10 +718,10 @@ fn emit_table(
             }
 
             if td_style.is_empty() {
-                out.push_str(&format!("<td{td_attrs}>"));
+                out.push_str(&format!("<{cell_tag}{td_attrs}>"));
             } else {
                 out.push_str(&format!(
-                    "<td{td_attrs} style=\"{}\">",
+                    "<{cell_tag}{td_attrs} style=\"{}\">",
                     escape_html_attr(&td_style)
                 ));
             }
@@ -740,7 +745,7 @@ fn emit_table(
                 }
             }
 
-            out.push_str("</td>\n");
+            out.push_str(&format!("</{cell_tag}>\n"));
         }
         out.push_str("</tr>\n");
     }

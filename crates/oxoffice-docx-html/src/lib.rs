@@ -418,6 +418,97 @@ fn numbering_turned_off_level(paragraph: &CT_P) -> Option<u32> {
         .and(properties.num_ilvl)
 }
 
+/// What the exports need to write links: the URL of each relationship, and
+/// the bookmarks a link of the body targets.
+pub(crate) struct Links<'a> {
+    pub(crate) urls: &'a HashMap<String, String>,
+    pub(crate) bookmarks: HashSet<String>,
+}
+
+impl<'a> Links<'a> {
+    pub(crate) fn new(urls: &'a HashMap<String, String>, body: &CT_Body) -> Self {
+        Self {
+            urls,
+            bookmarks: linked_bookmarks(body),
+        }
+    }
+}
+
+/// The link target of each run of a paragraph that a hyperlink holds: the
+/// relationship's URL (with its `w:anchor` as a fragment), or `#name` for a
+/// link to a bookmark of the document. A URL whose scheme is unsafe gives no
+/// link at all, so the text still renders but cannot run a script.
+fn hyperlink_targets(paragraph: &CT_P, links: &Links<'_>) -> HashMap<usize, String> {
+    let mut targets = HashMap::new();
+    for hyperlink in &paragraph.hyperlinks {
+        let fragment = hyperlink
+            .anchor
+            .as_deref()
+            .filter(|anchor| !anchor.is_empty())
+            .map(|anchor| format!("#{anchor}"));
+        let target = match hyperlink.rel_id.as_ref() {
+            Some(rel_id) => links
+                .urls
+                .get(rel_id)
+                .map(String::as_str)
+                .and_then(sanitize::safe_url)
+                .map(|url| match &fragment {
+                    Some(fragment) if !url.contains('#') => format!("{url}{fragment}"),
+                    _ => url.to_owned(),
+                }),
+            None => fragment,
+        };
+        if let Some(target) = target {
+            for run in hyperlink.run_start..hyperlink.run_end {
+                targets.insert(run, target.clone());
+            }
+        }
+    }
+    targets
+}
+
+/// The bookmarks of the body that a hyperlink of the body links to: the
+/// exports write an anchor for those only.
+fn linked_bookmarks(body: &CT_Body) -> HashSet<String> {
+    fn collect(blocks: Vec<Block<'_>>, names: &mut HashSet<String>) {
+        for block in blocks {
+            match block {
+                Block::Paragraph(paragraph, _) => names.extend(
+                    paragraph
+                        .hyperlinks
+                        .iter()
+                        .filter(|hyperlink| hyperlink.rel_id.is_none())
+                        .filter_map(|hyperlink| hyperlink.anchor.clone()),
+                ),
+                Block::Table(table) => {
+                    for cell in table.rows.iter().flat_map(|row| &row.cells) {
+                        collect(cell_blocks(cell), names);
+                    }
+                }
+            }
+        }
+    }
+    let mut names = HashSet::new();
+    collect(body_blocks(body, false), &mut names);
+    names
+}
+
+/// The bookmarks that start in a paragraph and that a link targets, each at
+/// its run boundary in the accepted view.
+fn bookmark_anchors(paragraph: &CT_P, linked: &HashSet<String>) -> Vec<(usize, String)> {
+    paragraph
+        .current_bookmark_projection()
+        .iter()
+        .filter(|marker| marker.is_start())
+        .filter_map(|marker| {
+            let name = marker.name()?;
+            linked
+                .contains(name)
+                .then(|| (marker.projected_run_index(), name.to_owned()))
+        })
+        .collect()
+}
+
 /// Whether the paragraph sets a numbering id itself, not through its style.
 fn has_own_numbering(paragraph: &CT_P) -> bool {
     paragraph

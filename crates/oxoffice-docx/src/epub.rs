@@ -2563,7 +2563,10 @@ fn render_paragraph_projection(paragraph: &CT_P) -> CT_P {
             .iter()
             .map(|hyperlink| HyperlinkSpan {
                 rel_id: hyperlink.rel_id.clone(),
-                anchor: hyperlink.anchor.clone(),
+                // The bookmarks are not projected and a chapter split would
+                // part a link from its target: the anchor is dropped, as the
+                // scan reports, and the run stays plain text.
+                anchor: None,
                 tooltip: hyperlink.tooltip.clone(),
                 doc_location: hyperlink.doc_location.clone(),
                 run_start: hyperlink.run_start,
