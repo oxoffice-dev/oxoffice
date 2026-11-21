@@ -996,6 +996,86 @@ pub fn paginate_sections(
     (all_pages, all_outlines)
 }
 
+/// Whether a line draws nothing: no text, no drawing, no break. An empty
+/// paragraph mark can be a multilingual segment, when the paragraph states a
+/// language or a script, as Word writes it.
+fn line_draws_nothing(line: &LayoutLine) -> bool {
+    line.forced_break_after.is_none()
+        && line.items.iter().all(|item| match item {
+            LineItem::Text(segment) | LineItem::Marker(segment) => segment.text.is_empty(),
+            LineItem::MultilingualText(segment) => segment.text().is_empty(),
+            _ => false,
+        })
+}
+
+/// Whether a paragraph draws nothing: empty lines, and no drawing, frame,
+/// shading or change bar of its own.
+fn paragraph_draws_nothing(paragraph: &ParagraphBlock) -> bool {
+    paragraph.anchored.is_empty()
+        && paragraph.borders.is_none()
+        && paragraph.shading.is_none()
+        && paragraph.change_bar.is_none()
+        && paragraph.lines.iter().all(line_draws_nothing)
+}
+
+/// The paragraph a shared block holds, if it holds one.
+fn shared_paragraph(block: &SharedLayoutBlock) -> Option<&ParagraphBlock> {
+    match block {
+        SharedLayoutBlock::Owned { block, .. } => match block.as_ref() {
+            LayoutBlock::Paragraph(paragraph) => Some(paragraph),
+            LayoutBlock::Table(_) => None,
+        },
+        SharedLayoutBlock::Paragraph { block, .. } => Some(block),
+        SharedLayoutBlock::Table { .. } => None,
+    }
+}
+
+/// A page break that ends the last paragraph drawing anything in a group of
+/// sections, followed only by paragraphs that draw nothing, would start the
+/// page the next section starts anyway. Word and LibreOffice give it no page
+/// of its own, so the break goes: the empty paragraphs after it, the one
+/// holding the section break among them, stay on the page it ends.
+fn absorb_page_break_before_section_break(blocks: &mut [SharedLayoutBlock]) {
+    let trailing_empty = blocks
+        .iter()
+        .rev()
+        .take_while(|block| shared_paragraph(block).is_some_and(paragraph_draws_nothing))
+        .count();
+    let Some(last) = blocks.len().checked_sub(trailing_empty + 1) else {
+        return;
+    };
+    let Some(paragraph) = shared_paragraph(&blocks[last]) else {
+        return;
+    };
+    if paragraph.borders.is_some() || paragraph.shading.is_some() || paragraph.change_bar.is_some()
+    {
+        return;
+    }
+    let Some(last_break) = paragraph
+        .lines
+        .iter()
+        .rposition(|line| line.forced_break_after.is_some())
+    else {
+        return;
+    };
+    if paragraph.lines[last_break].forced_break_after != Some(ForcedBreakKind::Page)
+        || !paragraph.lines[last_break + 1..]
+            .iter()
+            .all(line_draws_nothing)
+    {
+        return;
+    }
+    let paragraph = match &mut blocks[last] {
+        SharedLayoutBlock::Owned { block, .. } => match block.as_mut() {
+            LayoutBlock::Paragraph(paragraph) => paragraph,
+            LayoutBlock::Table(_) => return,
+        },
+        SharedLayoutBlock::Paragraph { block, .. } => Arc::make_mut(block),
+        SharedLayoutBlock::Table { .. } => return,
+    };
+    paragraph.lines[last_break].forced_break_after = None;
+}
+
 pub(crate) fn paginate_shared_sections(
     sections: &[SharedSection],
     fm: &FontManager,
@@ -1109,10 +1189,13 @@ pub(crate) fn paginate_shared_sections(
         {
             group_end += 1;
         }
-        let blocks = sections[section_index..group_end]
+        let mut blocks = sections[section_index..group_end]
             .iter()
             .flat_map(|section| section.blocks.iter().cloned())
             .collect::<Vec<_>>();
+        if group_end < sections.len() {
+            absorb_page_break_before_section_break(&mut blocks);
+        }
         let section_page_number = section
             .page_number_start
             .unwrap_or(next_section_page_number);

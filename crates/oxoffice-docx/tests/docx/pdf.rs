@@ -820,11 +820,9 @@ fn each_section_keeps_its_page_size_and_orientation() {
     }
 }
 
-// Fails today: a page break followed by a next-page section break leaves a
-// blank page; Word (Pages = 3 in the Word file) and LibreOffice print 3 pages.
-// Issue: #156
+// Word (Pages = 3 in the Word file) and LibreOffice print each report on 3
+// pages, though it ends its first section with a page break.
 #[test]
-#[should_panic(expected = "draws only its header and footer")]
 fn no_page_of_a_corpus_report_is_blank() {
     for producer in PRODUCERS {
         let pdf = pdf_of(&corpus_doc(&format!("{producer}/report.docx")));
@@ -836,6 +834,37 @@ fn no_page_of_a_corpus_report_is_blank() {
             );
         }
     }
+}
+
+#[test]
+fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First section</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2, "the section break starts the page");
+    assert_eq!(pdf.page_text(0), "First section");
+    assert_eq!(pdf.page_text(1), "Second section");
+
+    // Without a section break after it, the page break keeps its page.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First page</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>Second page</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    assert_eq!(pdf.page_text(1), "Second page");
+
+    // Text after the page break, in the same section, still goes to the next
+    // page, then the section break starts a third one.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>After the break</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 3);
+    assert_eq!(pdf.page_text(1), "After the break");
+    assert_eq!(pdf.page_text(2), "Next section");
 }
 
 // ---- Where text lands ----

@@ -1295,7 +1295,7 @@ fn rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings() {
             "3. Operations\t2",
             "3.1 Support\t2",
             "3.2 Next steps\t2",
-            "Appendix A. Regional detail\t4"
+            "Appendix A. Regional detail\t3"
         ]
     );
     let styles: Vec<_> = doc.paragraphs()[1..7]
