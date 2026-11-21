@@ -1921,19 +1921,233 @@ fn a_date_is_given_in_iso_form_and_shown_in_the_control_format() {
     }
 }
 
-// Fails today: the long date format Word offers ("d MMMM yyyy", the corpus
-// form's) is refused with "unsupported or missing date format". Issue: #149
-#[test]
-#[should_panic(expected = "a long date control takes a date")]
-fn a_date_control_in_words_long_format_takes_a_date() {
-    let mut doc = corpus_doc("authored/form.docx");
-    let result = doc.set_content_control_value_by_tag("date_of_incorporation", "2015-01-02");
-    assert!(
-        result.is_ok(),
-        "a long date control takes a date: {result:?}"
+/// `doc_with_control` with a date control in `format` and, when given, the
+/// language `lid`, written as Word writes them (`w:dateFormat`, `w:lid`):
+/// a format oxoffice refuses to author is still read from a file.
+fn date_control(tag: &str, format: &str, lid: Option<&str>) -> Document {
+    let mut doc = typed_control(
+        tag,
+        ContentControlTypePayload::Date {
+            format: "yyyy-MM-dd".to_owned(),
+        },
     );
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    let authored = r#"<w:dateFormat w:val="yyyy-MM-dd"/>"#;
+    assert_eq!(xml.matches(authored).count(), 1, "{xml}");
+    let lid = lid.map_or(String::new(), |lid| format!(r#"<w:lid w:val="{lid}"/>"#));
+    let xml = xml.replace(
+        authored,
+        &format!(r#"<w:dateFormat w:val="{format}"/>{lid}"#),
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("the date control opens")
+}
+
+/// Rules naming the two date controls of the corpus form.
+fn date_rules() -> [FormFieldRule; 2] {
+    [
+        prompt(target("date_of_incorporation"), true, "Pick a date"),
+        prompt(target("signature_date"), false, "Pick a date"),
+    ]
+}
+
+fn forms_protection() -> oxoffice_docx::DocumentProtection {
+    oxoffice_docx::DocumentProtection {
+        mode: oxoffice_docx::ProtectionMode::Forms,
+        enforcement: Some(true),
+        formatting: None,
+        provider_type: None,
+        algorithm_class: None,
+        algorithm_type: None,
+        algorithm_sid: None,
+        spin_count: None,
+        hash: None,
+        salt: None,
+    }
+}
+
+#[test]
+fn a_date_control_in_words_long_format_takes_a_date() {
+    for by_form in [false, true] {
+        let mut doc = corpus_doc("authored/form.docx");
+        assert!(
+            doc.validate_form(&date_rules()).unwrap().is_empty(),
+            "the corpus form's long dates are valid as Word saved them"
+        );
+        set_value(&mut doc, "date_of_incorporation", "2015-01-02", by_form);
+        let mut doc = reopen(&mut doc);
+        assert_eq!(
+            value(&doc, "date_of_incorporation"),
+            "2 January 2015",
+            "{}",
+            way(by_form)
+        );
+        assert!(doc.validate_form(&date_rules()).unwrap().is_empty());
+        doc.protect_form(&date_rules(), forms_protection())
+            .expect("a form with long dates can be protected");
+    }
+}
+
+#[test]
+fn a_date_is_shown_with_the_names_of_the_controls_language() {
+    // 2 January 2015 is a Friday.
+    for (format, lid, shown) in [
+        ("dddd d MMMM yyyy", Some("fr-FR"), "vendredi 2 janvier 2015"),
+        ("d MMMM yyyy", Some("fr-CA"), "2 janvier 2015"),
+        ("dd/MM/yyyy", Some("fr-FR"), "02/01/2015"),
+        (
+            "dddd, d. MMMM yyyy",
+            Some("de-DE"),
+            "Freitag, 2. Januar 2015",
+        ),
+        ("d. MMMM yyyy", Some("de-AT"), "2. Jänner 2015"),
+        (
+            "dddd, d' de 'MMMM' de 'yyyy",
+            Some("es-ES"),
+            "viernes, 2 de enero de 2015",
+        ),
+        (
+            "dddd, MMMM d, yyyy",
+            Some("en-US"),
+            "Friday, January 2, 2015",
+        ),
+        ("MMM. d, yy", None, "Jan. 2, 15"),
+        ("M/d/yyyy h:mm am/pm", Some("en-US"), "1/2/2015 12:00 AM"),
+        ("yyyy年M月d日", Some("ja-JP"), "2015年1月2日"),
+    ] {
+        for by_form in [false, true] {
+            let mut doc = date_control("due", format, lid);
+            set_value(&mut doc, "due", "2015-01-02", by_form);
+            let doc = reopen(&mut doc);
+            assert_eq!(
+                value(&doc, "due"),
+                shown,
+                "{format} {lid:?} {}",
+                way(by_form)
+            );
+            let rule = prompt(target("due"), true, "Pick a date");
+            assert!(
+                doc.validate_form(&[rule]).unwrap().is_empty(),
+                "{format} {lid:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_date_name_the_controls_language_has_no_table_for_is_refused() {
+    for (format, lid, named) in [
+        ("d MMMM yyyy", Some("ja-JP"), "ja-JP"),
+        ("d MMM yyyy", Some("fr-FR"), "fr-FR"),
+        ("dd/MM/yyyy Q", Some("en-GB"), "\"Q\""),
+    ] {
+        for by_form in [false, true] {
+            let mut doc = date_control("due", format, lid);
+            let before = doc.to_bytes().unwrap();
+            let result = if by_form {
+                doc.fill_form(
+                    &[prompt(target("due"), false, "")],
+                    &[assign(target("due"), text("2015-01-02"))],
+                )
+                .map(|_| ())
+            } else {
+                doc.set_content_control_value_by_tag("due", "2015-01-02")
+                    .map(|_| ())
+            };
+            let error = result.expect_err("the date cannot be shown");
+            assert!(
+                error.to_string().contains(named) && error.to_string().contains(format),
+                "{} {format}: {error}",
+                way(by_form)
+            );
+            assert_eq!(doc.to_bytes().unwrap(), before, "{format}");
+        }
+        let doc = date_control("due", format, lid);
+        let issues = doc
+            .validate_form(&[prompt(target("due"), false, "")])
+            .unwrap();
+        assert_eq!(issues.len(), 1, "{format}: {issues:?}");
+        assert_eq!(issues[0].message, "unsupported date metadata");
+    }
+}
+
+/// `doc` saved, with `from` replaced by `to` once in its main part.
+fn with_main_part_edit(doc: &mut Document, from: &str, to: &str) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    assert_eq!(xml.matches(from).count(), 1, "{from} in {xml}");
+    package.set_part(&part, xml.replace(from, to).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("the edited document opens")
+}
+
+#[test]
+fn a_time_typed_in_word_is_reported_as_unsupported_not_as_a_wrong_value() {
+    let mut doc = date_control("due", "M/d/yyyy h:mm am/pm", Some("en-US"));
+    set_value(&mut doc, "due", "2015-01-02", false);
+    let rule = prompt(target("due"), false, "");
+    assert!(
+        doc.validate_form(std::slice::from_ref(&rule))
+            .unwrap()
+            .is_empty()
+    );
+    // Word saves the time typed in the control, 3:05 PM.
+    let mut doc = with_main_part_edit(&mut doc, "2015-01-02T00:00:00Z", "2015-01-02T15:05:00Z");
+    let mut doc = with_main_part_edit(&mut doc, "1/2/2015 12:00 AM", "1/2/2015 3:05 PM");
+    let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].message, "unsupported date metadata");
+    // A date followed by anything but a time is a wrong value.
+    let doc = with_main_part_edit(&mut doc, "2015-01-02T15:05:00Z", "2015-01-02xyz");
+    let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+    assert_eq!(issues[0].message, "current form value is invalid");
+    // A date-only format with a time is a wrong value, as before.
+    let mut doc = date_control("due", "d MMMM yyyy", None);
+    set_value(&mut doc, "due", "2015-01-02", false);
+    let doc = with_main_part_edit(&mut doc, "2015-01-02T00:00:00Z", "2015-01-02T15:05:00Z");
+    let issues = doc.validate_form(&[rule]).unwrap();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].message, "current form value is invalid");
+}
+
+#[test]
+fn a_date_control_takes_any_format_word_can_show_and_refuses_others() {
+    let mut doc = doc_with_control("due");
+    let location = control_at(&doc, &body(&doc), "due");
+    for refused in ["Q yyyy", "d 'MMMM", ""] {
+        let error = doc
+            .set_content_control_type(
+                &location,
+                ContentControlTypePayload::Date {
+                    format: refused.to_owned(),
+                },
+            )
+            .expect_err("the format cannot be shown");
+        assert!(
+            error.to_string().contains("date format"),
+            "{refused:?}: {error}"
+        );
+    }
+    doc.set_content_control_type(
+        &location,
+        ContentControlTypePayload::Date {
+            format: "d MMMM yyyy".to_owned(),
+        },
+    )
+    .expect("a long date format is taken");
+    set_value(&mut doc, "due", "2026-12-25", false);
     let doc = reopen(&mut doc);
-    assert_eq!(value(&doc, "date_of_incorporation"), "2 January 2015");
+    assert_eq!(value(&doc, "due"), "25 December 2026");
 }
 
 #[test]

@@ -325,7 +325,8 @@ impl ControlScalar {
 }
 
 impl CT_SdtPr {
-    /// Resolve the bounded text, dropdown and Gregorian date value conventions.
+    /// Resolve the bounded text, dropdown and Gregorian date value conventions;
+    /// a date shows in its `w:dateFormat`, named in its `w:lid` language.
     pub fn prepare_text_value(&self, value: &str) -> Result<(String, String, Option<String>)> {
         oxoffice_core::xml::reject_non_xml_characters("content-control value", value)?;
         match self.control_type {
@@ -347,15 +348,16 @@ impl CT_SdtPr {
                         "unsupported date calendar".to_owned(),
                     ));
                 }
-                let display = match metadata(b"dateFormat")? {
-                    Some("yyyy-MM-dd") => value.to_owned(),
-                    Some("dd/MM/yyyy") => format!("{day:02}/{month:02}/{year:04}"),
-                    _ => {
-                        return Err(OxmlError::InvalidValue(
-                            "unsupported or missing date format".to_owned(),
-                        ));
-                    }
+                let Some(pattern) = metadata(b"dateFormat")? else {
+                    return Err(OxmlError::InvalidValue("missing date format".to_owned()));
                 };
+                let display = crate::date_format::format_word_date(
+                    pattern,
+                    metadata(b"lid")?,
+                    year,
+                    month,
+                    day,
+                )?;
                 let full_date = format!("{value}T00:00:00Z");
                 let bound = match metadata(b"storeMappedDataAs")? {
                     None | Some("text") => display.clone(),

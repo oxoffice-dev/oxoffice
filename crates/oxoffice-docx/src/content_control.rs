@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use oxoffice_docx_oxml::CT_RPr;
 use oxoffice_docx_oxml::content_control::{CT_DataBinding, CT_Sdt, SdtContent, SdtType};
+use oxoffice_docx_oxml::date_format::{check_word_date_format, word_date_format_shows_time};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
@@ -1852,11 +1853,22 @@ impl ContentControlAppearance {
 pub enum ContentControlTypePayload {
     RichText,
     PlainText,
-    Date { format: String },
+    /// A date control showing its date in the Word date pattern `format`
+    /// (`d MMMM yyyy`, `dd/MM/yyyy`, ...), with English names: the control is
+    /// written without a language.
+    Date {
+        format: String,
+    },
     CheckBox,
-    ComboBox { items: Vec<(String, String)> },
-    DropDownList { items: Vec<(String, String)> },
-    Picture { relationship_id: String },
+    ComboBox {
+        items: Vec<(String, String)>,
+    },
+    DropDownList {
+        items: Vec<(String, String)>,
+    },
+    Picture {
+        relationship_id: String,
+    },
     Group,
     RepeatingSection,
     RepeatingSectionItem,
@@ -3786,13 +3798,8 @@ fn word_paragraph_in_span(xml: &[u8], span: Range<usize>) -> Result<bool> {
 
 fn validate_type_payload(payload: &ContentControlTypePayload) -> Result<()> {
     match payload {
-        ContentControlTypePayload::Date { format } => {
-            if format != "yyyy-MM-dd" && format != "dd/MM/yyyy" {
-                return Err(Error::Other(
-                    "content control date format must be yyyy-MM-dd or dd/MM/yyyy".to_owned(),
-                ));
-            }
-        }
+        // The control is written without a language (`w:lid`): English names.
+        ContentControlTypePayload::Date { format } => check_word_date_format(format, None)?,
         ContentControlTypePayload::ComboBox { items }
         | ContentControlTypePayload::DropDownList { items } => validate_list_items(items)?,
         ContentControlTypePayload::Picture { relationship_id } => {
@@ -4533,6 +4540,7 @@ struct ListChoice {
 #[derive(Clone)]
 struct DateFacts {
     format: Option<String>,
+    language: Option<String>,
     store: Option<String>,
     calendar: Option<String>,
     full_date: Option<String>,
@@ -5011,6 +5019,7 @@ fn read_date(xml: &[u8], elems: &[XmlElem], date: &XmlElem) -> Result<DateFacts>
         .find(|attr| attr.word && attr.local == "fullDate")
         .map(|attr| attr.value.clone());
     let mut format = None;
+    let mut language = None;
     let mut store = None;
     let mut calendar = None;
     let mut duplicate = false;
@@ -5020,6 +5029,7 @@ fn read_date(xml: &[u8], elems: &[XmlElem], date: &XmlElem) -> Result<DateFacts>
         }
         let slot = match child.local.as_slice() {
             b"dateFormat" => &mut format,
+            b"lid" => &mut language,
             b"storeMappedDataAs" => &mut store,
             b"calendar" => &mut calendar,
             _ => continue,
@@ -5031,6 +5041,7 @@ fn read_date(xml: &[u8], elems: &[XmlElem], date: &XmlElem) -> Result<DateFacts>
     }
     Ok(DateFacts {
         format,
+        language,
         store,
         calendar,
         full_date,
@@ -5752,7 +5763,19 @@ fn date_issue(control: &PhysicalControl) -> Option<&'static str> {
         return Some("current form value is invalid");
     };
     if !canonical_full_date(full_date) {
-        return Some("current form value is invalid");
+        // A time typed in Word into a control whose format shows one: the
+        // value is not wrong, oxoffice only writes dates.
+        let timed = full_date.as_bytes().get(10) == Some(&b'T')
+            && civil_date_text(&full_date[..10])
+            && facts
+                .format
+                .as_deref()
+                .is_some_and(word_date_format_shows_time);
+        return Some(if timed {
+            "unsupported date metadata"
+        } else {
+            "current form value is invalid"
+        });
     }
     let Ok((display, bound, prepared)) = prepare_control_text(control, &full_date[..10]) else {
         return Some("current form value is invalid");
@@ -5772,11 +5795,21 @@ fn date_metadata_unsupported(control: &PhysicalControl) -> bool {
     };
     facts.duplicate
         || !matches!(facts.calendar.as_deref(), None | Some("gregorian"))
-        || !matches!(facts.format.as_deref(), Some("yyyy-MM-dd" | "dd/MM/yyyy"))
+        || date_format_issue(facts).is_some()
         || !matches!(
             facts.store.as_deref(),
             None | Some("text" | "date" | "dateTime")
         )
+}
+
+/// Why the control's date format cannot be shown, if it cannot.
+fn date_format_issue(facts: &DateFacts) -> Option<String> {
+    let Some(format) = facts.format.as_deref() else {
+        return Some("missing date format".to_owned());
+    };
+    check_word_date_format(format, facts.language.as_deref())
+        .err()
+        .map(|error| error.to_string())
 }
 
 fn canonical_full_date(value: &str) -> bool {
@@ -5876,12 +5909,18 @@ fn date_shell(control: &PhysicalControl) -> Result<String> {
         .date
         .as_ref()
         .ok_or_else(|| form_fault("unsupported date metadata"))?;
+    if let Some(issue) = date_format_issue(facts) {
+        return Err(Error::Other(issue));
+    }
     if date_metadata_unsupported(control) {
         return Err(form_fault("unsupported date metadata"));
     }
     let mut children = String::new();
     if let Some(format) = &facts.format {
         children.push_str(&prefixed_val("w", "dateFormat", format));
+    }
+    if let Some(language) = &facts.language {
+        children.push_str(&prefixed_val("w", "lid", language));
     }
     if let Some(store) = &facts.store {
         children.push_str(&prefixed_val("w", "storeMappedDataAs", store));

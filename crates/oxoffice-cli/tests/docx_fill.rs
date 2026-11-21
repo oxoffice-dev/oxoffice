@@ -113,3 +113,21 @@ fn fill_by_tag_and_by_values_reaches_a_control_in_a_header() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn fill_shows_a_date_in_the_long_format_of_the_control() {
+    let dir = scratch("long-date");
+    let form =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/files/word/form.docx");
+    let filled = dir.join("filled.docx");
+    fill(
+        &form,
+        &["--tag", "date_of_incorporation=2015-01-02"],
+        &filled,
+    );
+    let doc = Document::open(&filled).expect("the filled form opens");
+    let controls = doc.content_controls_by_tag("date_of_incorporation");
+    assert_eq!(controls.len(), 1);
+    assert_eq!(controls[0].text(), "2 January 2015");
+    let _ = fs::remove_dir_all(&dir);
+}

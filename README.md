@@ -126,7 +126,7 @@ refused at open when one of its parts holds a control character.
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
 | Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; writing your own edits as tracked changes is on the [roadmap](ROADMAP.md) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
-| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect in every story, export to fillable PDF fields; a date control in Word's long format cannot be set yet |
+| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect in every story, export to fillable PDF fields; a date control shows month and day names in English, French, German, Spanish, Italian, Portuguese and Dutch, numeric dates in any language |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
