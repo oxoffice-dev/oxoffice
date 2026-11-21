@@ -1,7 +1,9 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{
+    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+};
 use oxoffice_core::units::Emu;
 use oxoffice_core::xml::{
     escape_attribute_value, push_escaped_attribute, reject_non_xml_characters,
@@ -2252,7 +2254,7 @@ fn parse_section(xml: &[u8], inherited: &NamespaceBindings) -> Result<Section> {
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
-            | Event::DocType(_)) => raw_children.push(boundary, capture_misc_event(event)?),
+            | Event::DocType(_)) => raw_children.push(boundary, capture_event(event)?),
             _ => {}
         }
         buffer.clear();
@@ -2344,7 +2346,7 @@ fn parse_section_slide_ids(
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
-            | Event::DocType(_)) => raw_children.push(ids.len(), capture_misc_event(event)?),
+            | Event::DocType(_)) => raw_children.push(ids.len(), capture_event(event)?),
             _ => {}
         }
         buffer.clear();
@@ -2396,7 +2398,7 @@ fn parse_section_slide_id_sidecar(
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
-            | Event::DocType(_)) => raw_children.extend_from_slice(&capture_misc_event(event)?),
+            | Event::DocType(_)) => raw_children.extend_from_slice(&capture_event(event)?),
             _ => {}
         }
         buffer.clear();
@@ -2961,12 +2963,6 @@ fn write_start_with_raw<W: Write>(
     Ok(())
 }
 
-fn capture_misc_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(event.into_owned())?;
-    Ok(writer.into_inner())
-}
-
 fn validate_sections(sections: &[Section], slides: &[CT_SlideId]) -> Result<()> {
     let known = slides
         .iter()
@@ -3471,22 +3467,6 @@ fn parse_u32(element: &str, attribute: &str, value: &str) -> Result<u32> {
     value
         .parse::<u32>()
         .map_err(|_| invalid_value(format!("{element} has malformed @{attribute}: {value}")))
-}
-
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child)?;
-    }
-    Ok(())
 }
 
 fn root_schema_boundary(name: &[u8]) -> Option<usize> {

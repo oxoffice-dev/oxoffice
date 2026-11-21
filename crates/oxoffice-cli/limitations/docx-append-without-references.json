@@ -1,9 +1,0 @@
-{
-  "id": "docx-append-without-references",
-  "format": "docx",
-  "area": "merge",
-  "title": "Appending or inserting a document in Rust loses its pictures, links, notes and comments",
-  "symptom": "Rust append, append_with_break and insert_document copy the body without what it points to: pictures and links lose their target (or take the destination's when their relationship id exists there), notes and comments are dropped, and the bookmark and control ids of append and append_with_break collide",
-  "workaround": "Rust: import_fragment with a DocumentFragment of the source body and FragmentConflictPolicy::for_insert_document(None), which also restarts lists as append does; Python insert_document already takes that path",
-  "issue": 192
-}

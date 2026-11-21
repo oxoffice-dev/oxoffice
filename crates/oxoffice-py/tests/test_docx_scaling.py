@@ -709,6 +709,7 @@ READS = {"Document.verify_signatures", "Document.chart_legend", "Document.text",
          "ParagraphFormat.border", "Table.cell", "Table.border", "Cell.border", "CustomProperties.items",
          "CustomProperties.get", "FragmentConflictPolicy.with_style_reuse",
          "FragmentConflictPolicy.with_numbering_reuse", "FragmentConflictPolicy.with_related_part_reuse",
+         "FragmentConflictPolicy.with_destination_formatting",
          "Document.validate_form", "Document.mail_merge_package", "Document.prepare_mail_merge_data"}
 
 
