@@ -185,6 +185,41 @@ fn fields_in_an_even_page_header_no_section_shows_merge_and_keep_their_page_cach
     );
 }
 
+// LibreOffice writes `<w:rPr></w:rPr>` on every run of a field: the field
+// reads its instruction and result as with `<w:rPr/>` or no properties, its
+// result in the run of its end too, or with the whole field in one run.
+#[test]
+fn a_field_whose_runs_have_empty_properties_reads_its_result() {
+    let spread = concat!(
+        r#"<w:p><w:r>{p}<w:fldChar w:fldCharType="begin"></w:fldChar></w:r>"#,
+        r#"<w:r>{p}<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#,
+        r#"<w:r>{p}<w:fldChar w:fldCharType="separate"></w:fldChar></w:r>"#,
+        r#"<w:r>{p}<w:t>12</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let single = concat!(
+        r#"<w:p><w:r>{p}<w:fldChar w:fldCharType="begin"/><w:instrText xml:space="preserve"> PAGE </w:instrText>"#,
+        r#"<w:fldChar w:fldCharType="separate"/><w:t>12</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    for body in [spread, single] {
+        for properties in [
+            "",
+            "<w:rPr/>",
+            "<w:rPr></w:rPr>",
+            "<w:rPr><w:rFonts/></w:rPr>",
+        ] {
+            let mut doc = doc_with_body(&body.replace("{p}", properties));
+            let expected = vec![(FieldKind::Complex, "PAGE".to_owned(), "12".to_owned())];
+            assert_eq!(field_list(&doc), expected, "{properties} in {body}");
+            doc.add_paragraph("Added");
+            assert_eq!(
+                field_list(&reopen(&mut doc)),
+                expected,
+                "{properties} in {body}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_simple_field_keeps_its_instruction_and_result_after_a_save() {
     let mut doc = Document::new();
@@ -338,22 +373,105 @@ fn a_field_added_to_a_hyperlink_reads_in_the_link_text() {
     assert_eq!(texts(&doc), ["See page 2", "2"]);
 }
 
-// Fails today: a w:fldSimple inside w:hyperlink is kept raw at the next open, so its result drops out of every text reader. Issue: #146
 #[test]
-#[should_panic(expected = "the link keeps the field result after a reopen")]
 fn a_simple_field_inside_a_hyperlink_reads_after_a_reopen() {
     let mut doc = Document::new();
     doc.add_paragraph("")
         .add_internal_hyperlink("See page ", "total", None)
         .add_field("PAGEREF total", "2")
         .unwrap();
+    doc.add_paragraph("")
+        .add_internal_hyperlink("", "total", None)
+        .add_field("PAGEREF total", "2")
+        .unwrap();
     let doc = reopen(&mut doc);
     assert_eq!(
         texts(&doc),
-        ["See page 2"],
+        ["See page 2", "2"],
         "the link keeps the field result after a reopen"
     );
     assert_eq!(link_text(&doc, 0), "See page 2");
+    assert_eq!(link_text(&doc, 1), "2", "alone in the link run");
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_in_a_file_reads_and_saves_as_written() {
+    // As a file writes it: a w:fldSimple with its result, and an empty one.
+    let body = r#"<w:p><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGEREF total "><w:r><w:t>2</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> of </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "/></w:hyperlink></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        assert_eq!(texts(doc), ["See page 2 of "]);
+        assert_eq!(link_text(doc, 0), "See page 2 of ");
+        let mut fields = Vec::new();
+        for run in doc.paragraph(0).unwrap().runs() {
+            for item in run.items() {
+                if let RunItemRef::Field(field) = item {
+                    fields.push((field.kind(), field.instruction().trim().to_owned()));
+                }
+            }
+        }
+        assert_eq!(
+            fields,
+            [
+                (FieldKind::Simple, "PAGEREF total".to_owned()),
+                (FieldKind::Simple, "NUMPAGES".to_owned())
+            ]
+        );
+    }
+    // An edit in the paragraph writes the link again, its fields in place.
+    doc.paragraph_mut(0).unwrap().add_run(" tail");
+    let package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let link = &xml[xml.find("<w:hyperlink").unwrap()..xml.find("</w:hyperlink>").unwrap()];
+    let pageref = link
+        .find("PAGEREF total")
+        .expect("the PAGEREF stays in the link");
+    let numpages = link
+        .find("NUMPAGES")
+        .expect("the NUMPAGES stays in the link");
+    assert!(pageref < numpages, "{link}");
+    assert_eq!(texts(&reopen(&mut doc)), ["See page 2 of  tail"]);
+
+    // The story items read the field result, and a comparison of the file
+    // with its own copy runs.
+    let doc = doc_with_body(body);
+    let items: Vec<_> = doc
+        .story_items(&story(&doc, StoryKind::Body))
+        .unwrap()
+        .into_iter()
+        .filter_map(|item| item.text().unwrap())
+        .collect();
+    // As for a simple field directly in a paragraph: the paragraph, then
+    // the field with its result.
+    assert_eq!(items, ["See page 2 of ", "2"]);
+    let mut compared = doc_with_body(body);
+    compared
+        .compare(&doc_with_body(body), "Ana", "2026-01-01T00:00:00Z")
+        .unwrap();
+    assert_eq!(texts(&compared), ["See page 2 of "]);
+    // A comparison with an edit in the link's text maps the link's runs,
+    // its fields included.
+    let mut compared = doc_with_body(body);
+    compared
+        .compare(
+            &doc_with_body(&body.replace(" of </w:t>", " out of </w:t>")),
+            "Ana",
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+    assert_eq!(texts(&compared), ["See page 2 out of "]);
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_inside_an_insertion_reads_in_the_accepted_text() {
+    let doc = doc_with_body(
+        r#"<w:p><w:ins w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>2</w:t></w:r></w:fldSimple></w:hyperlink></w:ins></w:p>"#,
+    );
+    assert_eq!(texts(&doc), ["See page 2"]);
 }
 
 #[test]
@@ -2097,6 +2215,82 @@ fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
         "the joined entry takes the level of the paragraph it joins"
     );
     assert_eq!(doc.revisions().len(), revisions, "the revisions stay");
+}
+
+#[test]
+fn story_ranges_read_bookmarks_that_start_or_end_between_paragraphs() {
+    // A start between blocks goes to the next paragraph's first run, an end
+    // to the previous paragraph's end, a collapsed pair to the next
+    // paragraph.
+    let mut doc = doc_with_body(&format!(
+        r#"{GOOGLE_HEADING}<w:p><w:bookmarkStart w:id="5" w:name="Tail"/><w:r><w:t>Body</w:t></w:r></w:p><w:bookmarkEnd w:id="5"/><w:bookmarkStart w:id="6" w:name="Both"/><w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p><w:bookmarkEnd w:id="6"/><w:bookmarkStart w:id="7" w:name="Empty"/><w:bookmarkEnd w:id="7"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#
+    ));
+    let at = |doc: &Document, paragraph: usize| {
+        doc.paragraph_story_location(paragraph).unwrap().unwrap()
+    };
+    let ranges = doc.story_ranges().unwrap();
+    let found: Vec<_> = ranges
+        .iter()
+        .filter_map(|range| match range.kind() {
+            StoryRangeKind::Bookmark { name, .. } => Some((
+                name.clone(),
+                range.range().start.location.clone(),
+                range.range().start.run_index,
+                range.range().end.location.clone(),
+                range.range().end.run_index,
+            )),
+            _ => None,
+        })
+        .collect();
+    let expected = [
+        ("_Toc217000001", 0, 0, 0, 1),
+        ("Tail", 1, 0, 1, 1),
+        ("Both", 2, 0, 3, 1),
+        ("Empty", 4, 0, 4, 0),
+    ]
+    .map(|(name, start, start_run, end, end_run)| {
+        (
+            name.to_owned(),
+            at(&doc, start),
+            start_run,
+            at(&doc, end),
+            end_run,
+        )
+    });
+    assert_eq!(found, expected);
+    // Moving or removing a range with a marker between blocks is refused,
+    // and the document stays as it was.
+    let before = doc.to_bytes().unwrap();
+    let empty = ranges
+        .iter()
+        .find(|range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "Empty"))
+        .unwrap();
+    let refused = doc.remove_story_range(empty).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    // One marker between blocks is enough, through every path.
+    let tail = ranges
+        .iter()
+        .find(
+            |range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "Tail"),
+        )
+        .unwrap();
+    let refused = doc.remove_story_range(tail).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    let refused = doc.remove_story_bookmark(7).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    // Google- and Word-saved files with heading and collapsed bookmarks
+    // between blocks.
+    for name in [
+        "google/thesis.docx",
+        "google/form.docx",
+        "google/manual.docx",
+        "word/form.docx",
+    ] {
+        corpus_doc(name)
+            .story_ranges()
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
 }
 
 /// What a tool does after each edit pass on a long document: rebuild the

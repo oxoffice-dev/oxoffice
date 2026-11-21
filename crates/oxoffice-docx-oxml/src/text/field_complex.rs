@@ -90,7 +90,17 @@ fn complex_field_events(
         };
         let prefixes = word_prefixes_at(&root, &run_prefixes)?;
         let name = root.name();
-        let properties = !empty && is_word_element(name.as_ref(), b"rPr", &prefixes);
+        // The run reader keeps one child slot for properties it models and
+        // skips any other `w:rPr`, self-closing or written empty.
+        let property_element = is_word_element(name.as_ref(), b"rPr", &prefixes);
+        let properties = property_element && !empty && run.properties.is_some();
+        if property_element && !properties {
+            if !empty {
+                reader.read_to_end_into(root.name(), &mut Vec::new())?;
+            }
+            note_mark_empty = false;
+            continue;
+        }
         let text = !empty && is_word_element(name.as_ref(), b"t", &prefixes);
         let modeled = properties
             || text

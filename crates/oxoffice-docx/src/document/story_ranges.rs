@@ -634,6 +634,13 @@ impl Document {
         move_comment_reference: bool,
     ) -> Result<(String, Vec<u8>, Vec<Range<usize>>)> {
         use crate::comments::StoryRangeKind;
+        // A marker between blocks has no paragraph ordinal (#340).
+        if entry.start_ordinal == usize::MAX || entry.end_ordinal == usize::MAX {
+            return Err(Error::Other(
+                "a range whose marker sits between paragraphs cannot be moved or removed yet"
+                    .into(),
+            ));
+        }
         let (source, owner) = self.story_source_and_owner(entry.range().start.location.story())?;
         let part_name = source.part_name.clone();
         let xml = source.xml.as_ref();
@@ -1385,6 +1392,22 @@ impl Document {
     ) -> Result<Vec<(usize, usize, Range<usize>, ContentLocation, Vec<u8>)>> {
         let (_sources, paragraphs) = self.story_range_paragraph_sources()?;
         Ok(paragraphs)
+    }
+
+    /// The same paragraphs with the XML of each story source, which also
+    /// holds the markup between them.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn story_range_located_paragraphs_with_sources(
+        &self,
+    ) -> Result<(
+        Vec<Cow<'_, [u8]>>,
+        Vec<(usize, usize, Range<usize>, ContentLocation, Vec<u8>)>,
+    )> {
+        let (sources, paragraphs) = self.story_range_paragraph_sources()?;
+        Ok((
+            sources.into_iter().map(|source| source.xml).collect(),
+            paragraphs,
+        ))
     }
 
     /// List every checked range paragraph in story order, with the index of
