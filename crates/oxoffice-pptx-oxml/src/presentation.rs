@@ -1557,11 +1557,18 @@ impl CT_Presentation {
         }
     }
 
-    /// Replaces only the slide dimensions, preserving size kind and raw data.
+    /// Replaces the slide dimensions, preserving raw data. New dimensions
+    /// drop the size kind, which named the old ones; the same ones keep it.
     pub fn set_slide_size(&mut self, cx: Emu, cy: Emu) -> Result<()> {
         validate_dimension("sldSz", "cx", cx)?;
         validate_dimension("sldSz", "cy", cy)?;
         if let Some(size) = &mut self.slide_size {
+            // A size type (screen16x9, A4...) names fixed dimensions: once
+            // they change it no longer holds, and an absent type reads as
+            // custom.
+            if (size.cx, size.cy) != (cx, cy) {
+                size.kind = None;
+            }
             size.cx = cx;
             size.cy = cy;
         } else {
