@@ -209,9 +209,11 @@ entry and closes the issue.
   (or `tmp_path_factory`). The scaling job stays sequential: its timings
   need a quiet runner.
 - On macOS the build job sets `MACOSX_DEPLOYMENT_TARGET=11.0`, the value
-  maturin builds the wheel with, so that `cargo test` shares the units both
-  builds have in common. The workspace crates still compile twice: `cargo
-  test --workspace` gives them other features than the wheel build.
+  maturin builds the wheel with, meant to let `cargo test` share the units
+  both builds have in common. On a warm run it did not: the workspace
+  crates still compile twice (their features differ, and on macOS
+  something not found yet), see
+  [the spec's outcome](../specs/2026-11-21-faster-build-job.md#outcome).
 - Dependabot opens the monthly updates. Review them like any change: the
   maintainer, or the agent that merges them, answers the review's findings.
 

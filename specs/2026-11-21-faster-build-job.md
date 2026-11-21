@@ -71,24 +71,39 @@ the wheel's tag, and that no cache is saved.
 
 ## Outcome
 
-Shipped in #216. Its own run (one run, warm cache), against the medians of
-the Context:
+Shipped in #216. Its own run (44888491973), beside the medians of the
+profile this spec started from (32 pull request runs before 08:21 UTC;
+the Linux, Windows and upload figures come from that profile too) and
+beside #207's run (44887139694), 16 minutes earlier with the old
+configuration and the same exact cache keys. One run each, and runner speed
+varies a lot between runs.
 
-| Build and test | before | #216 |
-| --- | --- | --- |
-| macOS job | 15.3 min | 9.7 min |
-| macOS Python tests | 8.6 min | 3.0 min |
-| macOS Rust tests | 3.7 min | 4.3 min, compile 85 s as before |
-| macOS cache upload | 0.33 min | none |
-| Linux job | 13.3 min | 11.1 min |
-| Windows job | 14.8 min | 10.0 min |
+| Build and test | profile median | #207, old | #216, new |
+| --- | --- | --- | --- |
+| macOS job | 15.3 min | 16.6 min | 9.7 min |
+| macOS Python tests | 8.6 min | 8.6 min | 3.0 min |
+| macOS Rust tests | 3.7 min | 5.2 min | 4.3 min |
+| Linux job | 13.3 min | 10.5 min | 11.1 min |
+| Windows job | 14.8 min | 11.5 min | 10.0 min |
 
-The same 333 Python tests passed (2 skipped) and 930 Rust tests; the wheel
-kept its `macosx_11_0_arm64` tag. The deployment target saved nothing on
-that warm run: the Rust tests step still compiled the 20 workspace crates,
-whose features differ, so the expected crate less was not seen; what it
-gives a cold run is not measured. Aligning the features stays the next
-lever for the Rust tests step.
+- The parallel Python tests are the gain: the same 333 tests passed (2
+  skipped), in about a third of the time on macOS and Windows. Linux varied
+  with its runner (#216's ran `docx/main` in 158 s, #207's in 92 s, on the
+  same cache).
+- No cache was saved (`save-if: false`). Both runs restored an exact key,
+  where the old configuration did not upload either; the 0.33 minutes of
+  the profile were runs that restored by the restore key.
+- 930 Rust tests passed; the wheel kept its `macosx_11_0_arm64` tag.
+- The deployment target did not do what it was for. The Rust tests step
+  compiled 85 seconds, as on #207: the 20 workspace crates again, including
+  `oxoffice-media`, which has no dependency and no feature, so on macOS
+  something other than features and this variable keeps the two builds
+  apart, not found yet. It also compiled `ring`, which no warm macOS run had
+  compiled before: its build script likely tracks the variable, and the
+  cache `main` saved holds a `ring` built without it; `main` saves again only
+  when the key changes. Aligning the features remains a lever for the
+  crates that have features; for macOS, the cause above comes first. The
+  variable is cheap to drop if a cold run shows no gain either.
 
 ## Links
 
