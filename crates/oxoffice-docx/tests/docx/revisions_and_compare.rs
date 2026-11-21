@@ -1589,15 +1589,118 @@ fn a_toc_bookmark_named_in_another_story_keeps_its_name() {
     assert_eq!(bookmark_names(&accepted(&mut doc)), ["_Toc1"]);
 }
 
-// Fails today: the same footnote, its reference moved to another paragraph,
-// is refused. Known limitation. Issue: #4
 #[test]
-#[should_panic(expected = "its reference moved to another site")]
 fn a_footnote_reference_moved_to_another_paragraph_is_compared() {
     let original = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
     let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
     let mut doc = redline(original, &edited);
+    // As Word shows it: the note is deleted with its old reference and
+    // inserted again with the new one.
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        [" ", "Source"]
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Insertion),
+        [" ", "Source"]
+    );
     let copy = accepted(&mut doc);
     assert_eq!(texts(&copy), ["Claim one.", "Claim two."]);
     assert_eq!(copy.footnotes().len(), 1);
+    assert_eq!(noted_texts(&copy), ["Claim one.", "Claim two.[Source]"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(copy.footnotes().len(), 1);
+    assert_eq!(noted_texts(&copy), ["Claim one.[Source]", "Claim two."]);
+}
+
+/// Each body paragraph's text with its footnote references shown as
+/// `[note text]`, whatever their ids.
+fn noted_texts(doc: &Document) -> Vec<String> {
+    let notes = doc.footnotes().into_iter().collect::<HashMap<_, _>>();
+    doc.paragraphs()
+        .iter()
+        .map(|paragraph| {
+            let mut text = String::new();
+            for run in paragraph.runs() {
+                for item in run.items() {
+                    match item {
+                        RunItemRef::Text(part) => text.push_str(part),
+                        RunItemRef::FootnoteReference(id) => {
+                            let note = notes.get(&id).map_or("?", |note| note.trim());
+                            text.push_str(&format!("[{note}]"));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            text
+        })
+        .collect()
+}
+
+#[test]
+fn swapped_footnote_references_are_compared() {
+    // Both versions hold the same two notes, each referenced from the
+    // other paragraph.
+    let document = |swapped: bool| {
+        let mut doc = Document::new();
+        let first = doc.add_footnote("First");
+        let second = doc.add_footnote("Second");
+        let (a, b) = if swapped {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        doc.add_paragraph("A.").add_footnote_ref(a);
+        doc.add_paragraph("B.").add_footnote_ref(b);
+        doc
+    };
+    let mut doc = redline(document(false), &document(true));
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[Second]", "B.[First]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[First]", "B.[Second]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+}
+
+#[test]
+fn a_moved_footnote_whose_text_changed_is_compared() {
+    let original = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source, p. 4"))]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Claim one.", "Claim two.[Source, p. 4]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["Claim one.[Source]", "Claim two."]
+    );
+}
+
+#[test]
+fn a_footnote_reference_moved_within_its_paragraph_is_compared() {
+    let document = |at_end: bool| {
+        let mut doc = Document::new();
+        let id = doc.add_footnote("Source");
+        let mut paragraph = doc.add_paragraph("Claim");
+        if !at_end {
+            paragraph.add_footnote_ref(id);
+        }
+        paragraph.add_run(" and more.");
+        if at_end {
+            paragraph.add_footnote_ref(id);
+        }
+        doc
+    };
+    let mut doc = redline(document(false), &document(true));
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Claim and more.[Source]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["Claim[Source] and more."]
+    );
 }

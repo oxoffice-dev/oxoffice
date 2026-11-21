@@ -58,3 +58,4 @@ dependency bumps and documentation.
 | 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
 | 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | accepted |
 | 2026-11-21 | [Comparison: bookmark ids and generated TOC names are no change](2026-11-21-comparison-bookmark-identities.md) | shipped |
+| 2026-11-21 | [Comparison: a footnote whose reference moved](2026-11-21-comparison-moved-footnotes.md) | shipped |
