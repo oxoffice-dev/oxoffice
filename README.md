@@ -139,7 +139,7 @@ grows, and a deck refused at open when one of its parts holds a control characte
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a removed slide leaves its charts and legacy comments in the file, and sections do not follow added, imported or moved slides yet |
+| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a removed slide leaves its charts, embedded workbooks and legacy comments in the file, and sections do not follow added, duplicated, imported or moved slides yet |
 | Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
 | Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
 | Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
