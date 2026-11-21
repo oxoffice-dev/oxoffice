@@ -18893,7 +18893,7 @@ fn materialize_imported_notes_text(
                     ) + 1;
                     if let Some(inherited) = effective
                         .level(level)
-                        .or(effective.default_paragraph_properties.as_ref())
+                        .or(effective.default_paragraph_properties.as_deref())
                     {
                         let local = paragraph.properties.clone().unwrap_or_default();
                         paragraph.properties = Some(
