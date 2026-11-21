@@ -340,9 +340,6 @@ impl CT_BorderEdge {
             Cow::Borrowed("w")
         };
         self.write_guarded_attrs(&mut root, &prefix, !source)?;
-        #[cfg(test)]
-        crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS
-            .set(crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS.get() + 1);
         root.write(writer, true)
     }
 }

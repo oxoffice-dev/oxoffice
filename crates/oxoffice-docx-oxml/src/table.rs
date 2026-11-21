@@ -3387,8 +3387,6 @@ impl CT_Tbl {
         controls: &mut crate::document::ControlSourceCursor<'_>,
         mut maps: Option<&mut crate::text::WordBlockSourceMaps>,
     ) -> Result<Self> {
-        #[cfg(test)]
-        CHECKED_TABLE_READS.with(|count| count.set(count.get() + 1));
         crate::text::validate_word_owner_fragment(xml, b"tbl", true)?;
         let mut reader = Reader::from_reader(xml);
         loop {
@@ -3981,9 +3979,4 @@ pub(crate) fn source_value_is_modeled(
         }
     }
     true
-}
-
-#[cfg(test)]
-thread_local! {
-    pub(crate) static CHECKED_TABLE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

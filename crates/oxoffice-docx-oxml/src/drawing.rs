@@ -11,11 +11,6 @@ use crate::numbering::namespace_bindings;
 use crate::raw_xml::capture_element;
 use crate::units::Emu;
 
-#[cfg(test)]
-thread_local! {
-    pub(crate) static FX211_DRAWING_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// Namespaces used in drawing markup.
 pub mod drawing_ns {
     pub const WP: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -2390,8 +2385,6 @@ impl CT_Drawing {
         cursor: Option<&crate::document::ControlSourceCursor<'_>>,
         read_output: Option<&mut DrawingSourceMaps>,
     ) -> Result<Self> {
-        #[cfg(test)]
-        FX211_DRAWING_READS.with(|reads| reads.set(reads.get() + 1));
         let mut bindings = namespace_bindings(prefixes);
         // Fragment callers can supply implicit canonical Word semantics.
         // An explicit foreign rebinding removes that canonical prefix and

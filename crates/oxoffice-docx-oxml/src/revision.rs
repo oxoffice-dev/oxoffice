@@ -39,8 +39,6 @@ impl RevisionSourceFacts {
     }
 
     fn charge(&mut self, nodes: usize, bytes: usize) -> crate::Result<()> {
-        #[cfg(test)]
-        let (node_increment, byte_increment) = (nodes, bytes);
         let nodes = self.copy_nodes.checked_add(nodes).ok_or_else(|| {
             crate::OxmlError::InvalidValue("secondary source-copy visit overflow".into())
         })?;
@@ -54,21 +52,6 @@ impl RevisionSourceFacts {
         }
         self.copy_nodes = nodes;
         self.copy_bytes = bytes;
-        #[cfg(test)]
-        {
-            ORDERED_DIAGNOSTIC_SECONDARY_COPY_NODES.set(
-                ORDERED_DIAGNOSTIC_SECONDARY_COPY_NODES
-                    .get()
-                    .checked_add(node_increment)
-                    .expect("secondary copy counter overflow"),
-            );
-            ORDERED_DIAGNOSTIC_SECONDARY_CHARGED_SOURCE_BYTES.set(
-                ORDERED_DIAGNOSTIC_SECONDARY_CHARGED_SOURCE_BYTES
-                    .get()
-                    .checked_add(byte_increment)
-                    .expect("secondary copy counter overflow"),
-            );
-        }
         Ok(())
     }
 
@@ -190,15 +173,6 @@ impl RevisionSourceFacts {
             None,
         )?;
         self.charge(nodes, visible_raw_bytes.max(copy_bound.1))?;
-        #[cfg(test)]
-        {
-            ORDERED_DIAGNOSTIC_SECONDARY_VISIBLE_RAW_BYTES.set(
-                ORDERED_DIAGNOSTIC_SECONDARY_VISIBLE_RAW_BYTES
-                    .get()
-                    .checked_add(visible_raw_bytes)
-                    .expect("secondary visible raw byte overflow"),
-            );
-        }
         let mut legacy = revision.clone();
         legacy.require_author = true;
         self.revisions.push((self.runs.len(), legacy));
@@ -394,15 +368,6 @@ impl PartialEq for CT_Revision {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    pub(crate) static ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_REVISION_PARSE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_SECONDARY_COPY_NODES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_SECONDARY_CHARGED_SOURCE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_SECONDARY_VISIBLE_RAW_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// The actual root decoder, shared by construction and contextual source actions.
 pub(crate) struct RevisionHeader {
     pub(crate) kind: RevisionKind,
@@ -526,21 +491,6 @@ impl CT_Revision {
         input: Option<&crate::document::WordFieldInput>,
         output: Option<&mut crate::text::WordBlockSourceMaps>,
     ) -> crate::Result<Self> {
-        #[cfg(test)]
-        {
-            ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS.set(
-                ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS
-                    .get()
-                    .checked_add(1)
-                    .expect("constructor counter overflow"),
-            );
-            ORDERED_DIAGNOSTIC_REVISION_PARSE_BYTES.set(
-                ORDERED_DIAGNOSTIC_REVISION_PARSE_BYTES
-                    .get()
-                    .checked_add(raw_xml.len())
-                    .expect("constructor counter overflow"),
-            );
-        }
         validate_revision_nesting_depth(&raw_xml, word_prefixes)?;
         let mut reader = Reader::from_reader(raw_xml.as_slice());
         reader.config_mut().trim_text(false);

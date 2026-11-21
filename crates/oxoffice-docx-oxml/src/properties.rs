@@ -260,9 +260,6 @@ impl CT_Shd {
                 std::str::from_utf8(&encoded)?,
             )?;
         }
-        #[cfg(test)]
-        crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS
-            .set(crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS.get() + 1);
         e.write(writer, true)?;
         Ok(())
     }
@@ -579,11 +576,6 @@ fn write_toggle_core<W: std::io::Write>(
     word_prefix: &str,
     value: bool,
 ) -> Result<()> {
-    #[cfg(test)]
-    if start.local_name().as_ref() == b"b" {
-        crate::text::WORD_BOLD_EVENT_MATERIALIZATIONS
-            .set(crate::text::WORD_BOLD_EVENT_MATERIALIZATIONS.get() + 1);
-    }
     if value {
         writer.write_event(Event::Empty(start))?;
     } else {
