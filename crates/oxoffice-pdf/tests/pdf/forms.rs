@@ -5,7 +5,7 @@ use oxoffice_layout::{
     FormFieldId, FormFieldKind, GroupElement, LayoutResult, Point, PositionedElement, Rect,
     StructureId, StructureNode, StructureRole, Transform,
 };
-use oxoffice_pdf::render_to_pdf_checked;
+use oxoffice_pdf::{PdfConformance, PdfOptions, render_to_pdf_checked, render_to_pdf_with_options};
 
 use crate::support::{PAGE_HEIGHT, Pdf, contains, layout, rect, run, text, text_origins};
 
@@ -644,4 +644,209 @@ fn a_tagged_fragment_drawn_on_the_page_is_an_artifact() {
     let later = read.page_content(1);
     assert_eq!(read.drawn_text(&later), "later");
     assert!(contains(&later, b"/Artifact BMC"));
+}
+
+fn structure_id(value: u32) -> StructureId {
+    StructureId::new(value).unwrap()
+}
+
+/// A document element holding one paragraph element.
+fn tagged(mut layout: LayoutResult) -> LayoutResult {
+    layout.structure = Some(DocumentStructure {
+        root: structure_id(1),
+        nodes: vec![
+            StructureNode {
+                id: structure_id(1),
+                role: StructureRole::Document,
+                children: vec![structure_id(2)],
+                alternate_text: None,
+            },
+            StructureNode {
+                id: structure_id(2),
+                role: StructureRole::Paragraph,
+                children: Vec::new(),
+                alternate_text: None,
+            },
+        ],
+    });
+    layout
+}
+
+fn paragraph(children: Vec<PositionedElement>) -> PositionedElement {
+    PositionedElement::MarkedContent {
+        structure: Some(structure_id(2)),
+        children,
+    }
+}
+
+/// The structure element `element` refers to, by its `/S` role.
+fn role(read: &Pdf, element: &lopdf::Object) -> Vec<u8> {
+    read.resolve(element)
+        .as_dict()
+        .unwrap()
+        .get(b"S")
+        .unwrap()
+        .as_name()
+        .unwrap()
+        .to_vec()
+}
+
+/// The paragraph element's kids: `MCR` for marked content, else the role.
+fn paragraph_kids(read: &Pdf) -> Vec<String> {
+    let root = read.dict(read.catalog(), b"StructTreeRoot");
+    let document = read.resolve(root.get(b"K").unwrap()).as_dict().unwrap();
+    let paragraph = read
+        .resolve(&document.get(b"K").unwrap().as_array().unwrap()[0])
+        .as_dict()
+        .unwrap();
+    let kids = match read.resolve(paragraph.get(b"K").unwrap()) {
+        lopdf::Object::Array(kids) => kids.clone(),
+        other => vec![other.clone()],
+    };
+    kids.iter()
+        .map(|kid| match read.resolve(kid) {
+            lopdf::Object::Dictionary(dict) if dict.get(b"MCID").is_ok() => "MCR".to_owned(),
+            lopdf::Object::Integer(_) => "MCR".to_owned(),
+            _ => String::from_utf8(role(read, kid)).unwrap(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_tagged_widget_sits_in_a_form_element_of_its_paragraph() {
+    let layout = tagged(with_fields(
+        layout(vec![vec![paragraph(vec![
+            label(),
+            fragment(0, line(110.0, 100.0, 200.0), "Jane"),
+        ])]]),
+        vec![field("name", text_kind("Jane"))],
+    ));
+    let read = pdf(&layout);
+    assert_eq!(paragraph_kids(&read), ["MCR", "Form"]);
+
+    let widget_id = read.page_widgets(0)[0];
+    let widget = read.doc.get_object(widget_id).unwrap().as_dict().unwrap();
+    let key = widget.get(b"StructParent").unwrap().as_i64().unwrap();
+    assert_eq!(key, 1, "keys after the one page's");
+
+    let root = read.dict(read.catalog(), b"StructTreeRoot");
+    assert_eq!(root.get(b"ParentTreeNextKey").unwrap().as_i64().unwrap(), 2);
+    let nums = read
+        .dict(root, b"ParentTree")
+        .get(b"Nums")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone();
+    let form_ref = nums[3].as_reference().unwrap();
+    assert_eq!(nums[2].as_i64().unwrap(), key);
+    let form = read.doc.get_object(form_ref).unwrap().as_dict().unwrap();
+    assert_eq!(form.get(b"S").unwrap().as_name().unwrap(), b"Form");
+    let objr = match read.resolve(form.get(b"K").unwrap()) {
+        lopdf::Object::Array(kids) => {
+            assert_eq!(kids.len(), 1);
+            read.resolve(&kids[0]).as_dict().unwrap()
+        }
+        other => other.as_dict().unwrap(),
+    };
+    assert_eq!(objr.get(b"Type").unwrap().as_name().unwrap(), b"OBJR");
+    assert_eq!(objr.get(b"Obj").unwrap().as_reference().unwrap(), widget_id);
+    assert_eq!(
+        objr.get(b"Pg").unwrap().as_reference().unwrap(),
+        read.page_ids()[0]
+    );
+
+    let page = read
+        .doc
+        .get_object(read.page_ids()[0])
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    assert_eq!(page.get(b"Tabs").unwrap().as_name().unwrap(), b"S");
+}
+
+#[test]
+fn a_form_element_takes_its_place_among_the_paragraph_reading_order() {
+    let layout = tagged(with_fields(
+        layout(vec![vec![
+            paragraph(vec![label()]),
+            paragraph(vec![fragment(0, line(110.0, 100.0, 200.0), "Jane")]),
+            paragraph(vec![run("after", Point { x: 72.0, y: 140.0 }, 11.0)]),
+        ]]),
+        vec![field("name", text_kind("Jane"))],
+    ));
+    assert_eq!(paragraph_kids(&pdf(&layout)), ["MCR", "Form", "MCR"]);
+}
+
+#[test]
+fn a_fragment_outside_marked_content_is_tagged_under_the_document() {
+    let layout = tagged(with_fields(
+        layout(vec![vec![
+            paragraph(vec![label()]),
+            fragment(0, line(110.0, 100.0, 200.0), "Jane"),
+        ]]),
+        vec![field("name", text_kind("Jane"))],
+    ));
+    let read = pdf(&layout);
+    let root = read.dict(read.catalog(), b"StructTreeRoot");
+    let document = read.resolve(root.get(b"K").unwrap()).as_dict().unwrap();
+    let roles: Vec<Vec<u8>> = document
+        .get(b"K")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|kid| role(&read, kid))
+        .collect();
+    assert_eq!(roles, [b"P".to_vec(), b"Form".to_vec()]);
+}
+
+#[test]
+fn a_tagged_field_without_tooltip_is_described_by_its_name() {
+    let fields = vec![field("name", text_kind("Jane"))];
+    let elements = vec![paragraph(vec![fragment(
+        0,
+        line(110.0, 100.0, 200.0),
+        "Jane",
+    )])];
+    let tagged_read = pdf(&tagged(with_fields(
+        layout(vec![elements.clone()]),
+        fields.clone(),
+    )));
+    assert_eq!(text(tagged_read.field("name").get(b"TU").unwrap()), "name");
+    let plain_read = pdf(&with_fields(layout(vec![elements]), fields));
+    let plain = plain_read.field("name");
+    assert!(plain.get(b"TU").is_err());
+    assert!(plain.get(b"StructParent").is_err());
+    let page = plain_read
+        .doc
+        .get_object(plain_read.page_ids()[0])
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    assert!(page.get(b"Tabs").is_err(), "no tab order without structure");
+}
+
+#[test]
+fn pdf_a_output_accepts_form_fields() {
+    let layout = tagged(with_fields(
+        layout(vec![vec![paragraph(vec![
+            label(),
+            fragment(0, line(110.0, 100.0, 200.0), "Jane"),
+        ])]]),
+        vec![field("name", text_kind("Jane"))],
+    ));
+    for profile in [PdfConformance::PdfA2b, PdfConformance::PdfA3b] {
+        let bytes = render_to_pdf_with_options(&layout, PdfOptions::new(profile)).unwrap();
+        let read = Pdf::read(&bytes);
+        let field = read.field("name");
+        assert_eq!(field.get(b"F").unwrap().as_i64().unwrap(), 4);
+        assert_eq!(read.dict(field, b"AP").len(), 1);
+        assert!(
+            read.dict(read.catalog(), b"AcroForm")
+                .get(b"NeedAppearances")
+                .is_err()
+        );
+        assert_eq!(read.drawn_text(&read.appearance(field, None)), "Jane");
+    }
 }

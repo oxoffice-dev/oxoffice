@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use oxoffice_layout::{
-    DocumentStructure, PageFrame, PositionedElement, StructureId, StructureRole,
+    DocumentStructure, FormFieldId, PageFrame, PositionedElement, StructureId, StructureRole,
 };
 use pdf_writer::types::{StructRole, TableHeaderScope};
 use pdf_writer::{Finish, Name, Pdf, Ref, TextStr};
@@ -20,6 +20,34 @@ enum StructureKid {
     MarkedContent(MarkOccurrence),
 }
 
+/// Where a form field fragment sits among a page's marked content.
+#[derive(Debug, Clone, Copy)]
+struct FragmentMark {
+    field: FormFieldId,
+    page_index: usize,
+    /// Marked content sequences the page opens before the fragment.
+    mcid_before: i32,
+    /// The structure element of the marked content around the fragment.
+    parent: Option<StructureId>,
+}
+
+/// A form field widget to tag: its `/Form` element and its parent tree key.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TaggedWidget {
+    pub(crate) field: FormFieldId,
+    pub(crate) page_index: usize,
+    pub(crate) widget: Ref,
+    pub(crate) element: Ref,
+    pub(crate) key: i32,
+}
+
+/// A widget's `/Form` element placed under its parent element.
+#[derive(Debug, Clone, Copy)]
+struct FormKid {
+    order: (usize, i32),
+    element: Ref,
+}
+
 pub(crate) struct PreparedStructure<'a> {
     structure: &'a DocumentStructure,
     pub(crate) root_ref: Ref,
@@ -27,6 +55,7 @@ pub(crate) struct PreparedStructure<'a> {
     list_body_refs: BTreeMap<StructureId, Ref>,
     page_parent_refs: Vec<Ref>,
     occurrences: BTreeMap<StructureId, Vec<MarkOccurrence>>,
+    fragments: Vec<FragmentMark>,
 }
 
 impl<'a> PreparedStructure<'a> {
@@ -52,9 +81,15 @@ impl<'a> PreparedStructure<'a> {
             .collect();
         let page_parent_refs = pages.iter().map(|_| alloc()).collect();
         let mut occurrences = BTreeMap::new();
+        let mut fragments = Vec::new();
         for (page_index, page) in pages.iter().enumerate() {
-            let mut mcid = 0;
-            collect_marks(&page.elements, page_index, &mut mcid, &mut occurrences);
+            let mut marks = Marks {
+                page_index,
+                next_mcid: 0,
+                occurrences: &mut occurrences,
+                fragments: &mut fragments,
+            };
+            marks.collect(&page.elements, None);
         }
         Some(Self {
             structure,
@@ -63,6 +98,7 @@ impl<'a> PreparedStructure<'a> {
             list_body_refs,
             page_parent_refs,
             occurrences,
+            fragments,
         })
     }
 
@@ -74,10 +110,36 @@ impl<'a> PreparedStructure<'a> {
         self.structure.node(id).map(|node| role_name(node.role))
     }
 
-    pub(crate) fn write(&self, pdf: &mut Pdf, page_ids: &[Ref]) {
+    /// Each widget's `/Form` element goes under the element of the marked
+    /// content around its field's first fragment on the widget's page, else
+    /// under the document element, ordered by where the fragment sits.
+    fn form_kids(&self, widgets: &[TaggedWidget]) -> BTreeMap<StructureId, Vec<FormKid>> {
+        let mut kids: BTreeMap<StructureId, Vec<FormKid>> = BTreeMap::new();
+        for widget in widgets {
+            let mark = self
+                .fragments
+                .iter()
+                .find(|mark| mark.field == widget.field && mark.page_index == widget.page_index);
+            let parent = mark
+                .and_then(|mark| mark.parent)
+                .filter(|parent| self.node_refs.contains_key(parent))
+                .unwrap_or(self.structure.root);
+            let order = mark.map_or((widget.page_index, i32::MAX), |mark| {
+                (mark.page_index, mark.mcid_before)
+            });
+            kids.entry(parent).or_default().push(FormKid {
+                order,
+                element: widget.element,
+            });
+        }
+        kids
+    }
+
+    pub(crate) fn write(&self, pdf: &mut Pdf, page_ids: &[Ref], widgets: &[TaggedWidget]) {
         let Some(document_ref) = self.node_ref(self.structure.root) else {
             return;
         };
+        let form_kids = self.form_kids(widgets);
 
         {
             let mut root = pdf.indirect(self.root_ref).dict();
@@ -85,13 +147,17 @@ impl<'a> PreparedStructure<'a> {
             root.pair(Name(b"K"), document_ref);
             root.pair(
                 Name(b"ParentTreeNextKey"),
-                self.page_parent_refs.len() as i32,
+                (self.page_parent_refs.len() + widgets.len()) as i32,
             );
             let mut parent_tree = root.insert(Name(b"ParentTree")).dict();
             let mut nums = parent_tree.insert(Name(b"Nums")).array();
             for (page_index, parent_ref) in self.page_parent_refs.iter().enumerate() {
                 nums.item(page_index as i32);
                 nums.item(*parent_ref);
+            }
+            for widget in widgets {
+                nums.item(widget.key);
+                nums.item(widget.element);
             }
             nums.finish();
             parent_tree.finish();
@@ -122,14 +188,18 @@ impl<'a> PreparedStructure<'a> {
                 attributes.finish();
             }
             let marks = self.occurrences.get(&node.id);
-            if !node.children.is_empty() || marks.is_some_and(|marks| !marks.is_empty()) {
+            let forms = form_kids.get(&node.id).map_or(&[][..], Vec::as_slice);
+            if !node.children.is_empty()
+                || marks.is_some_and(|marks| !marks.is_empty())
+                || !forms.is_empty()
+            {
                 let mut children = element.children();
                 if node.role == StructureRole::ListItem {
                     if let Some(body_ref) = self.list_body_refs.get(&node.id) {
                         children.struct_element(*body_ref);
                     }
                 } else {
-                    for kid in self.ordered_kids(node.id) {
+                    for kid in self.ordered_kids(node.id, forms) {
                         match kid {
                             StructureKid::Element(reference) => {
                                 children.struct_element(reference);
@@ -165,17 +235,45 @@ impl<'a> PreparedStructure<'a> {
                 let mut body = pdf.struct_element(*body_ref);
                 body.kind(StructRole::LBody);
                 body.parent(node_ref);
-                if !node.children.is_empty() {
+                if !node.children.is_empty() || !forms.is_empty() {
                     let mut children = body.children();
                     for child in &node.children {
                         if let Some(child_ref) = self.node_ref(*child) {
                             children.struct_element(child_ref);
                         }
                     }
+                    for form in forms {
+                        children.struct_element(form.element);
+                    }
                     children.finish();
                 }
                 body.finish();
             }
+        }
+
+        for widget in widgets {
+            let parent = form_kids
+                .iter()
+                .find(|(_, kids)| kids.iter().any(|kid| kid.element == widget.element))
+                .map(|(parent, _)| *parent)
+                .unwrap_or(self.structure.root);
+            let parent_ref = self
+                .list_body_refs
+                .get(&parent)
+                .copied()
+                .or_else(|| self.node_ref(parent))
+                .unwrap_or(document_ref);
+            let mut element = pdf.struct_element(widget.element);
+            element.kind(StructRole::Form);
+            element.parent(parent_ref);
+            if let Some(page_ref) = page_ids.get(widget.page_index).copied() {
+                element
+                    .children()
+                    .object_ref()
+                    .object(widget.widget)
+                    .page(page_ref);
+            }
+            element.finish();
         }
 
         for (page_index, parent_ref) in self.page_parent_refs.iter().enumerate() {
@@ -196,14 +294,15 @@ impl<'a> PreparedStructure<'a> {
         }
     }
 
-    fn ordered_kids(&self, id: StructureId) -> Vec<StructureKid> {
+    fn ordered_kids(&self, id: StructureId, forms: &[FormKid]) -> Vec<StructureKid> {
         let Some(node) = self.structure.node(id) else {
             return Vec::new();
         };
-        if self
-            .occurrences
-            .get(&id)
-            .is_none_or(|marks| marks.is_empty())
+        if forms.is_empty()
+            && self
+                .occurrences
+                .get(&id)
+                .is_none_or(|marks| marks.is_empty())
         {
             return node
                 .children
@@ -211,18 +310,23 @@ impl<'a> PreparedStructure<'a> {
                 .filter_map(|child| self.node_ref(*child).map(StructureKid::Element))
                 .collect();
         }
+        // A form element sorts before the marked content its fragment
+        // precedes, so the stable index of every other kid starts after them.
         let mut kids = Vec::new();
+        for (index, form) in forms.iter().enumerate() {
+            kids.push((form.order, index, StructureKid::Element(form.element)));
+        }
         for (index, child) in node.children.iter().enumerate() {
             if let Some(reference) = self.node_ref(*child) {
                 kids.push((
                     self.first_occurrence(*child)
                         .unwrap_or((usize::MAX, i32::MAX)),
-                    index,
+                    forms.len() + index,
                     StructureKid::Element(reference),
                 ));
             }
         }
-        let mark_offset = node.children.len();
+        let mark_offset = forms.len() + node.children.len();
         for (index, mark) in self
             .occurrences
             .get(&id)
@@ -327,30 +431,48 @@ fn marked_ids_exist(elements: &[PositionedElement], structure: &DocumentStructur
     })
 }
 
-fn collect_marks(
-    elements: &[PositionedElement],
+/// One page's marked content numbering, in the order the writer emits it.
+struct Marks<'m> {
     page_index: usize,
-    next_mcid: &mut i32,
-    occurrences: &mut BTreeMap<StructureId, Vec<MarkOccurrence>>,
-) {
-    for element in elements {
-        match element {
-            PositionedElement::MarkedContent {
-                structure: Some(id),
-                children,
-            } if has_content_stream_output(children) => {
-                occurrences.entry(*id).or_default().push(MarkOccurrence {
-                    page_index,
-                    mcid: *next_mcid,
-                });
-                *next_mcid += 1;
-                collect_marks(children, page_index, next_mcid, occurrences);
+    next_mcid: i32,
+    occurrences: &'m mut BTreeMap<StructureId, Vec<MarkOccurrence>>,
+    fragments: &'m mut Vec<FragmentMark>,
+}
+
+impl Marks<'_> {
+    fn collect(&mut self, elements: &[PositionedElement], parent: Option<StructureId>) {
+        for element in elements {
+            match element {
+                PositionedElement::MarkedContent {
+                    structure: Some(id),
+                    children,
+                } if has_content_stream_output(children) => {
+                    self.occurrences
+                        .entry(*id)
+                        .or_default()
+                        .push(MarkOccurrence {
+                            page_index: self.page_index,
+                            mcid: self.next_mcid,
+                        });
+                    self.next_mcid += 1;
+                    self.collect(children, Some(*id));
+                }
+                PositionedElement::MarkedContent {
+                    structure,
+                    children,
+                } => self.collect(children, structure.or(parent)),
+                PositionedElement::Group(oxoffice_layout::GroupElement { children, .. }) => {
+                    self.collect(children, parent);
+                }
+                // Its children are drawn without marks, so they number nothing.
+                PositionedElement::FormField(fragment) => self.fragments.push(FragmentMark {
+                    field: fragment.field,
+                    page_index: self.page_index,
+                    mcid_before: self.next_mcid,
+                    parent,
+                }),
+                _ => {}
             }
-            PositionedElement::MarkedContent { children, .. }
-            | PositionedElement::Group(oxoffice_layout::GroupElement { children, .. }) => {
-                collect_marks(children, page_index, next_mcid, occurrences);
-            }
-            _ => {}
         }
     }
 }
