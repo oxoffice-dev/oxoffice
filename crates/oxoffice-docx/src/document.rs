@@ -68,7 +68,11 @@ use crate::run::{FieldDisplaySegmentRef, RunRef};
 use crate::style::{self, Style, StyleBuilder};
 use crate::table::{Table, TableRef, row_cell_ranges, validate_table_topology};
 
+mod checked_replacement;
 mod story_paragraphs;
+pub use checked_replacement::{
+    ReplaceOptions, ReplacementRefusal, UncheckedReplacement, UnreachedReplacement,
+};
 pub use story_paragraphs::StoryParagraph;
 
 /// Options that select a native document render projection.
@@ -49155,10 +49159,11 @@ impl Document {
     /// a value is never searched by another pair, so `{"left": "right",
     /// "right": "left"}` swaps the two words. Where two placeholders overlap,
     /// the longer one (in characters) wins, then the one that sorts first,
-    /// whatever the order of the map. [`Self::try_replace_all_expected`]
-    /// applies ordered pairs one after another instead, as Python
-    /// `Document.replace_all` and the CLI's `replace --map` do: their pairs
-    /// come in a list, so a later pair sees what an earlier one wrote.
+    /// whatever the order of the map. [`Self::try_replace_all_expected`] and
+    /// [`Self::try_replace_all_checked`] apply ordered pairs one after another
+    /// instead, as Python `Document.replace_all` and the CLI's `replace --map`
+    /// do through the checked one: their pairs come in a list, so a later pair
+    /// sees what an earlier one wrote.
     ///
     /// Cheaper than calling [`Self::replace_text`] per entry: the document is
     /// serialised and re-parsed once per pass for the whole batch rather than

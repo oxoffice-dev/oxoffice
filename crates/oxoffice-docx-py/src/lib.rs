@@ -110,6 +110,65 @@ pub(crate) fn replacement_count_to_pyerr(
     }
 }
 
+/// A checked replacement batch that was refused: a count the caller did not
+/// expect, a text left out of its replacement's reach, which raises
+/// `UnreachedTextError` with the paragraphs that still hold it, or a
+/// document whose stories the check cannot read, which raises it with no
+/// count (`left` is `None`).
+pub(crate) fn replacement_refusal_to_pyerr(
+    py: Python<'_>,
+    refusal: oxoffice_docx::ReplacementRefusal,
+    batch: bool,
+) -> PyErr {
+    let unreached = match refusal {
+        oxoffice_docx::ReplacementRefusal::Count(mismatch) => {
+            return replacement_count_to_pyerr(py, &mismatch, batch);
+        }
+        oxoffice_docx::ReplacementRefusal::Unreached(unreached) => unreached,
+        oxoffice_docx::ReplacementRefusal::Unchecked(unchecked) => {
+            let message =
+                format!("{unchecked}; pass allow_unreached=True to replace without the check");
+            return match public_exception_type(py, "UnreachedTextError") {
+                Ok(class) => PyErr::from_type(
+                    class,
+                    (
+                        message,
+                        unchecked.index,
+                        unchecked.placeholder,
+                        py.None(),
+                        pyo3::types::PyTuple::empty(py).unbind(),
+                    ),
+                ),
+                Err(_) => PyRuntimeError::new_err(message),
+            };
+        }
+    };
+    let message = format!("{unreached}; pass allow_unreached=True once handled");
+    let paragraphs = unreached
+        .paragraphs
+        .into_iter()
+        .map(|paragraph| Py::new(py, document::PyStoryParagraph::unbound(paragraph)))
+        .collect::<PyResult<Vec<_>>>()
+        .and_then(|paragraphs| pyo3::types::PyTuple::new(py, paragraphs));
+    let paragraphs = match paragraphs {
+        Ok(paragraphs) => paragraphs,
+        Err(error) => return error,
+    };
+    match public_exception_type(py, "UnreachedTextError") {
+        Ok(class) => PyErr::from_type(
+            class,
+            (
+                message,
+                unreached.index,
+                unreached.placeholder,
+                unreached.left,
+                paragraphs.unbind(),
+            ),
+        ),
+        Err(_) => PyRuntimeError::new_err(message),
+    }
+}
+
 pub(crate) fn stale_to_pyerr(py: Python<'_>, error: StaleElementError) -> PyErr {
     public_error(py, "StaleElementError", error.to_string())
 }

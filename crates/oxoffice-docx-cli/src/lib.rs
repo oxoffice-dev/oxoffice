@@ -218,7 +218,12 @@ enum Command {
     /// Replace placeholders in a DOCX file
     ///
     /// Give one pair with -p and -v, or many with --map. Nothing is written
-    /// unless every pair with an expected count replaced exactly that count.
+    /// unless every pair with an expected count replaced exactly that count,
+    /// and, without --regex or --allow-unreached, unless no placeholder is
+    /// left after its replacement, out of its reach. A tab reads as a tab
+    /// character and a break as a line feed, as `text` prints them: a
+    /// placeholder holding one matches it, a value holding one writes it (in
+    /// --map JSON, "\t" and "\n").
     Replace {
         /// Path to the DOCX file
         file: PathBuf,
@@ -247,6 +252,10 @@ enum Command {
         /// Require exactly this many replacements before publishing output
         #[arg(long, conflicts_with = "map")]
         expect: Option<usize>,
+        /// Publish even when a placeholder is still in the document after its
+        /// replacement, out of its reach
+        #[arg(long, conflicts_with = "regex")]
+        allow_unreached: bool,
         /// Output the count of each pair as JSON
         #[arg(long)]
         json: bool,
@@ -894,6 +903,7 @@ pub fn run(cli: Cli) {
             regex,
             output,
             expect,
+            allow_unreached,
             json,
         } => commands::replace(
             &file,
@@ -902,6 +912,7 @@ pub fn run(cli: Cli) {
                 map: map.as_deref(),
                 expect,
                 regex,
+                allow_unreached,
             },
             &output,
             json,
