@@ -68,7 +68,7 @@ impl Presentation {
         self.validate().iter().all(|issue| {
             // Finite XML diagnostics remain report-only at ordinary save.
             // Checked replacement owns raw/staged source admission separately.
-            if matches!(issue, ValidationIssue::InvalidXmlChild { .. }) {
+            if issue.is_report_only() {
                 return true;
             }
             let ValidationIssue::DuplicateShapeId { slide, .. } = issue else {

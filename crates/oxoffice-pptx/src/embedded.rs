@@ -13,7 +13,7 @@ use quick_xml::name::{Namespace, ResolveResult};
 use quick_xml::reader::NsReader;
 use sha2::{Digest, Sha256};
 
-use crate::{Error, Presentation, Result, ValidationIssue};
+use crate::{Error, Presentation, Result};
 
 const P_NS: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const STRICT_P_NS: &str = "http://purl.oclc.org/ooxml/presentationml/main";
@@ -534,7 +534,7 @@ impl Presentation {
         let issues = reopened
             .validate()
             .into_iter()
-            .filter(|issue| !matches!(issue, ValidationIssue::InvalidXmlChild { .. }))
+            .filter(|issue| !issue.is_report_only())
             .collect::<Vec<_>>();
         if !issues.is_empty() {
             return Err(invalid(

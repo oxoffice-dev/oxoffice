@@ -40,3 +40,33 @@ def test_a_duplicated_slide_carries_its_comments_under_fresh_ids(tmp_path):
     assert copied.comments[0].status == "resolved"
     assert original.comments[0].status is None
     assert len(reopened.comment_authors) == 1
+
+
+def test_validate_names_a_notes_slide_two_slides_share(tmp_path):
+    import re
+    import zipfile
+
+    prs = oxpptx.Presentation(CORPUS / "powerpoint" / "deck.pptx")
+    prs.slides[0].notes_text = "Shared notes"
+    path = tmp_path / "notes.pptx"
+    prs.save(path)
+
+    # Relate the third slide, which has no notes of its own, to the first slide's notes.
+    shared = tmp_path / "shared.pptx"
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(shared, "w") as target:
+        first = source.read("ppt/slides/_rels/slide1.xml.rels").decode()
+        notes = re.search(r'Type="[^"]*/notesSlide" Target="([^"]+)"|Target="([^"]+)" Type="[^"]*/notesSlide"', first)
+        notes_target = notes.group(1) or notes.group(2)
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "ppt/slides/_rels/slide3.xml.rels":
+                data = data.decode().replace(
+                    "</Relationships>",
+                    '<Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                    f'relationships/notesSlide" Target="{notes_target}"/></Relationships>',
+                ).encode()
+            target.writestr(item, data)
+
+    issues = oxpptx.Presentation(shared).validate()
+    assert [issue.kind for issue in issues if issue.kind == "shared_slide_part"] == ["shared_slide_part"]
+    assert "slides 1, 3" in next(issue.message for issue in issues if issue.kind == "shared_slide_part")
