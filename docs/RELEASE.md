@@ -4,7 +4,11 @@ One manual workflow, no manual tags, no hand-edited changelog.
 
 ## Cutting a release
 
-1. Make sure `main` is green.
+1. Make sure `main` is green, and that a run timing every scaling call on
+   macOS and Windows is green on the commit you release: the last nightly run
+   (`gh run list -w CI -e schedule -L 1 --json headSha,conclusion`) if it ran
+   on that commit, otherwise `gh workflow run ci.yml --ref main` and wait for
+   it.
 2. Run a dry run first: Actions, **Release**, **Run workflow**, the version,
    **dry_run** ticked. Every job builds the commit `main` points at when the
    run's first job starts, even if `main` moves meanwhile (the smoke check

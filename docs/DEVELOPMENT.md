@@ -158,15 +158,24 @@ entry and closes the issue.
   draft builds and tests on Linux, macOS and Windows and times the QUICK
   scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
   A draft, or one whose base is another branch, runs lint, WebAssembly and
-  the Linux build only. `main` and `workflow_dispatch` run everything on the
+  the Linux build only. A push to `main` builds and tests on the three
+  platforms and times every scaling call on Linux. The nightly run (02:23 UTC)
+  and `workflow_dispatch` run every job, every scaling call included, on the
   three platforms.
+- **A red nightly run is a red `main`.** Look at it with
+  `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
+  (or fixes it) the same day; a release waits for a green nightly run (see
+  [RELEASE.md](RELEASE.md)). To find the commit, run `workflow_dispatch` on a
+  branch at each candidate commit.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
   pull request when its base merges or the author changes it by hand. Before
   merging, check the three platforms ran (loop step 6); if not, push a new
   commit, or close and reopen the pull request.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
-  pull requests into `main`, every call on the three platforms on `main`.
+  pull requests into `main`, every call on Linux on each push to `main`, and
+  every call on the three platforms in the nightly run (02:23 UTC) or on
+  `workflow_dispatch`. A platform-only growth shows in the nightly run.
 - The `skill-examples` job runs the examples of
   [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) on
   `main` only, against the Linux wheel of `build`

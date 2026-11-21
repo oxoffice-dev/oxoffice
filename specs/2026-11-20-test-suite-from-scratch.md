@@ -105,7 +105,8 @@ a manifest: producer and version, features it carries, licence, size.
   push to `main` against the wheel and the CLI just built. Not on pull
   requests.
 - No nightly job. `main` runs the full set. A nightly job comes only if
-  `main` gets too long.
+  `main` gets too long. (It came on 2026-11-21 for scaling on macOS and
+  Windows: [nightly scaling](2026-11-21-nightly-scaling-on-macos-and-windows.md).)
 
 ## Outcome
 
