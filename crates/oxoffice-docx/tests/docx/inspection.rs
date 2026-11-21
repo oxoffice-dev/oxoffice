@@ -2082,3 +2082,35 @@ fn a_full_page_background_picture_is_decorative_and_needs_no_alt_text() {
     assert_eq!(pictures[0].description, None);
     assert_eq!(doc.audit_accessibility(), []);
 }
+
+#[test]
+fn only_the_first_branch_of_an_alternate_content_is_checked_for_numbering() {
+    let alternate = |choice: &str, fallback: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">"#,
+                r#"<mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback>"#,
+                r#"</mc:AlternateContent></w:r></w:p>"#
+            ),
+            choice, fallback
+        )
+    };
+    let boxed = |num_id: u32| {
+        format!(
+            "<w:pict><w:txbxContent>{}</w:txbxContent></w:pict>",
+            numbered("boxed", num_id, 0)
+        )
+    };
+    let warnings = numbering_warnings(&doc_with_one_level_numbering(&alternate(
+        &boxed(42),
+        &boxed(43),
+    )));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("instance 42"), "{warnings:?}");
+    // An empty Choice is the branch Word shows: the Fallback is not read.
+    let body = alternate("", &boxed(43)).replace(
+        r#"<mc:Choice Requires="wps"></mc:Choice>"#,
+        r#"<mc:Choice Requires="wps"/>"#,
+    );
+    assert!(numbering_warnings(&doc_with_one_level_numbering(&body)).is_empty());
+}

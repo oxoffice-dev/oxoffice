@@ -1243,6 +1243,17 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
                     ResolveResult::Bound(value)
                         if value.as_ref() == WORD_NAMESPACE.as_bytes()
                 );
+                // An empty branch is the branch read: what follows is not.
+                if matches!(
+                    namespace,
+                    ResolveResult::Bound(value)
+                        if value.as_ref() == oxoffice_docx_oxml::namespace::MC_NS.as_bytes()
+                ) && matches!(element.local_name().as_ref(), b"Choice" | b"Fallback")
+                    && let Some((at, read)) = alternates.last_mut()
+                    && *at + 1 == depth
+                {
+                    *read = true;
+                }
                 let local_name = element.local_name();
                 if is_word && local_name.as_ref() == b"p" {
                     result.push(CT_PPr::default());
