@@ -4071,3 +4071,43 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
+
+/// The year, month and day of `days` since 1970-01-01, the inverse of
+/// [`days_from_civil`].
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    (year_of_era + era * 400 + i64::from(month <= 2), month, day)
+}
+
+/// The current time as an RFC 3339 UTC timestamp to the second, the form
+/// Word writes in `w:date`.
+pub(crate) fn rfc3339_now() -> Result<String> {
+    // `SystemTime::now` panics where there is no clock, as in a browser.
+    if cfg!(all(target_arch = "wasm32", target_os = "unknown")) {
+        return Err(Error::Other(
+            "the current time is not available on this platform: pass a date, or none".to_owned(),
+        ));
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| Error::Other(format!("the system clock is before 1970: {error}")))?
+        .as_secs();
+    let days = i64::try_from(seconds / 86_400)
+        .map_err(|error| Error::Other(format!("the system clock is out of range: {error}")))?;
+    let (year, month, day) = civil_from_days(days);
+    let second_of_day = seconds % 86_400;
+    Ok(format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        second_of_day / 3_600,
+        second_of_day % 3_600 / 60,
+        second_of_day % 60
+    ))
+}

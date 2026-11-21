@@ -100,6 +100,38 @@ pub struct RunRange {
     pub end: RunPosition,
 }
 
+/// The date a new comment or reply carries in `w:date`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CommentDate<'a> {
+    /// The current time, in UTC to the second. Word itself writes its local
+    /// time to the minute here, and the UTC time as `w16cex:dateUtc` in the
+    /// extensible comments part (`commentsExtensible.xml`), which oxoffice
+    /// does not write. Refused where the platform has no clock, such
+    /// as WebAssembly in a browser: pass a date or [`CommentDate::Undated`].
+    #[default]
+    Now,
+    /// This RFC 3339 timestamp.
+    At(&'a str),
+    /// No date, as Word leaves comments once its Document Inspector removes
+    /// personal information.
+    Undated,
+}
+
+impl CommentDate<'_> {
+    /// The timestamp to write, or `None` for an undated comment. A timestamp
+    /// that is not RFC 3339 is refused.
+    fn resolve(self) -> Result<Option<String>> {
+        match self {
+            Self::Now => crate::revision::rfc3339_now().map(Some),
+            Self::At(value) => {
+                validate_comment_date(Some(value))?;
+                Ok(Some(value.to_owned()))
+            }
+            Self::Undated => Ok(None),
+        }
+    }
+}
+
 /// A stable insertion point between runs in a checked story paragraph.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StoryRunPosition {
@@ -1553,7 +1585,8 @@ impl Document {
     /// range markers are placed as [`Self::add_bookmark`] places its markers.
     /// The reference run follows the end marker. A range that cannot be
     /// anchored exactly is an error and leaves the document unchanged. Each
-    /// line of `text` becomes one paragraph of the comment.
+    /// line of `text` becomes one paragraph of the comment, dated now as
+    /// [`CommentDate::Now`] dates it.
     pub fn add_comment(
         &mut self,
         range: RunRange,
@@ -1561,23 +1594,23 @@ impl Document {
         initials: Option<&str>,
         text: &str,
     ) -> Result<i32> {
-        self.add_comment_with_date(range, author, initials, text, None)
+        self.add_comment_with_date(range, author, initials, text, CommentDate::Now)
     }
 
-    /// Add a dated comment over a half-open range of body paragraph runs.
-    ///
-    /// `date`, when present, must be an RFC 3339 timestamp. No date is the
-    /// deterministic default used by [`Document::add_comment`]. Each line of
-    /// `text` becomes one paragraph of the comment.
+    /// Add a comment over a half-open range of body paragraph runs, dated as
+    /// `date` says: now, at an RFC 3339 timestamp, or not at all. Each line
+    /// of `text` becomes one paragraph of the comment.
     pub fn add_comment_with_date(
         &mut self,
         range: RunRange,
         author: &str,
         initials: Option<&str>,
         text: &str,
-        date: Option<&str>,
+        date: CommentDate<'_>,
     ) -> Result<i32> {
         reject_non_xml_comment(author, initials, text)?;
+        let date = date.resolve()?;
+        let date = date.as_deref();
         let mut candidate = self.clone_for_staging();
         let id = candidate.add_comment_staged(range, author, initials, text, date)?;
         candidate.flush_dirty_related_story_models()?;
@@ -1591,15 +1624,18 @@ impl Document {
     /// control with the two-segment path that
     /// [`Document::paragraph_story_location`] returns. Run indexes count the
     /// runs that `Paragraph::runs` lists, as in [`Document::add_comment`].
-    /// Each line of `text` becomes one paragraph of the comment.
+    /// Each line of `text` becomes one paragraph of the comment, dated as
+    /// `date` says.
     pub fn add_story_comment_with_date(
         &mut self,
         range: StoryRunRange,
         author: &str,
         initials: Option<&str>,
         text: &str,
-        date: Option<&str>,
+        date: CommentDate<'_>,
     ) -> Result<i32> {
+        let date = date.resolve()?;
+        let date = date.as_deref();
         let mut candidate = self.clone_for_staging();
         let id = candidate.add_story_comment_staged(range, author, initials, text, date)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -1617,7 +1653,7 @@ impl Document {
     }
 
     /// Add a comment over a checked body, table-cell, header, footer, or note run range, as
-    /// [`Self::add_story_comment_with_date`] does without a date.
+    /// [`Self::add_story_comment_with_date`] does, dated now.
     pub fn add_story_comment(
         &mut self,
         range: StoryRunRange,
@@ -1625,7 +1661,7 @@ impl Document {
         initials: Option<&str>,
         text: &str,
     ) -> Result<i32> {
-        self.add_story_comment_with_date(range, author, initials, text, None)
+        self.add_story_comment_with_date(range, author, initials, text, CommentDate::Now)
     }
 
     fn add_story_comment_staged(
@@ -1761,8 +1797,8 @@ impl Document {
     /// text that [`Document::split_run`] offsets count, so tabs and breaks
     /// have no width. The runs at both ends of the match are split and the
     /// comment is anchored on the runs between the splits as
-    /// [`Self::add_comment`] anchors a run range. `date`, when present, must
-    /// be an RFC 3339 timestamp. A missing occurrence or a match that cannot
+    /// [`Self::add_comment`] anchors a run range, dated as `date` says. A
+    /// missing occurrence or a match that cannot
     /// be anchored exactly is an error and leaves the document unchanged. A
     /// match is not exact when its range would also show text that the
     /// literal text leaves out, such as the result of a field between two of
@@ -1774,9 +1810,11 @@ impl Document {
         author: &str,
         initials: Option<&str>,
         text: &str,
-        date: Option<&str>,
+        date: CommentDate<'_>,
     ) -> Result<i32> {
         reject_non_xml_comment(author, initials, text)?;
+        let date = date.resolve()?;
+        let date = date.as_deref();
         let mut candidate = self.clone_for_staging();
         let id = candidate
             .add_comment_on_text_staged(anchor, occurrence, author, initials, text, date)?;
@@ -2012,27 +2050,25 @@ impl Document {
         Ok(())
     }
 
-    /// Add a reply linked to the selected comment's last paragraph. Each line
-    /// of `text` becomes one paragraph of the reply.
+    /// Add a reply linked to the selected comment's last paragraph, dated
+    /// now. Each line of `text` becomes one paragraph of the reply.
     pub fn reply_to(&mut self, parent_id: i32, author: &str, text: &str) -> Result<i32> {
-        self.reply_to_with_initials(parent_id, author, None, text, None)
+        self.reply_to_with_initials(parent_id, author, None, text, CommentDate::Now)
     }
 
-    /// Add a dated reply linked to the selected comment's last paragraph.
-    ///
-    /// `date`, when present, must be an RFC 3339 timestamp. Each line of
-    /// `text` becomes one paragraph of the reply.
+    /// Add a reply linked to the selected comment's last paragraph, dated as
+    /// `date` says. Each line of `text` becomes one paragraph of the reply.
     pub fn reply_to_with_date(
         &mut self,
         parent_id: i32,
         author: &str,
         text: &str,
-        date: Option<&str>,
+        date: CommentDate<'_>,
     ) -> Result<i32> {
         self.reply_to_with_initials(parent_id, author, None, text, date)
     }
 
-    /// Add a reply with optional author initials and timestamp.
+    /// Add a reply with optional author initials, dated as `date` says.
     ///
     /// The reply has its own crossing range around the selected parent's text
     /// and reference. A parent without a projectable range/reference refuses.
@@ -2042,9 +2078,11 @@ impl Document {
         author: &str,
         initials: Option<&str>,
         text: &str,
-        date: Option<&str>,
+        date: CommentDate<'_>,
     ) -> Result<i32> {
         reject_non_xml_comment(author, initials, text)?;
+        let date = date.resolve()?;
+        let date = date.as_deref();
         let mut candidate = self.clone_for_staging();
         let id = candidate.reply_to_staged(parent_id, author, initials, text, date)?;
         candidate.flush_dirty_related_story_models()?;

@@ -1483,6 +1483,7 @@ class Document:
         text: str,
         initials: str | None = None,
         date: str | None = None,
+        undated: bool = False,
     ) -> int: ...
     def add_comment_on_text(
         self,
@@ -1493,6 +1494,7 @@ class Document:
         occurrence: int = 0,
         initials: str | None = None,
         date: str | None = None,
+        undated: bool = False,
     ) -> int: ...
     def move_comment(self, id: int, range: StoryRunRange) -> None:
         """Move an existing root thread to a checked current story range.
@@ -1512,7 +1514,14 @@ class Document:
         """
         ...
     def reply_to(
-        self, parent_id: int, *, author: str, text: str, date: str | None = None, initials: str | None = None
+        self,
+        parent_id: int,
+        *,
+        author: str,
+        text: str,
+        date: str | None = None,
+        initials: str | None = None,
+        undated: bool = False,
     ) -> int: ...
     def resolve_comment(self, id: int, *, resolved: bool = True) -> bool: ...
     def remove_comment(self, id: int) -> bool: ...

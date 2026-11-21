@@ -207,6 +207,26 @@ One pull request per row group, each with tests on the corpus:
 - PowerPoint: the helper only checked counts, which
   `Presentation::try_replace_all_expected` and `pptx replace --map --expect`
   already do; nothing new there.
+- **3a. Comment dates**: `occurrence` and the anchor check of
+  `add_comment_on_text` were already there; the default date moves first,
+  for every comment and reply, as decided for the night by the
+  orchestration session: a comment or a reply created without a date is
+  dated now, in UTC to the second, in the three layers (Word writes its
+  local time to the minute in `w:date` and the UTC time in
+  `w16cex:dateUtc`, which oxoffice does not write: a follow-up). The
+  date is `CommentDate::{Now (default), At(&str), Undated}` in
+  `add_comment_with_date`, `add_story_comment_with_date`,
+  `add_comment_on_text`, `reply_to_with_date` and `reply_to_with_initials`;
+  `add_comment`, `add_story_comment` and `reply_to` date now. `Undated`
+  keeps a way to write none, as Word's Document Inspector leaves comments
+  once it removes personal information. Python: `date=None` is now,
+  `undated=True` writes none, both together raise `ValueError`. CLI
+  `comment add` and `comment reply`: no flag is now, `--date`, `--undated`
+  (conflicts with `--date`). A breaking change for Rust signatures and for
+  0.1.0 behaviour (comments used to be undated). The comparison replays an
+  edited reply with its own date, or none when it had none, never now. The
+  facade reads the clock in one place, `revision::rfc3339_now`; tests pass
+  explicit dates where they compare bytes.
 
 ## Links
 

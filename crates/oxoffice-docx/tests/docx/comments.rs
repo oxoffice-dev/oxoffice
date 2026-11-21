@@ -8,8 +8,8 @@ use std::path::Path;
 
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
-    CommentRef, ContentLocation, Document, RunItemRef, RunPosition, RunRange, StoryKind,
-    StoryRunPosition, StoryRunRange, StyleType,
+    CommentDate, CommentRef, ContentLocation, Document, RunItemRef, RunPosition, RunRange,
+    StoryKind, StoryRunPosition, StoryRunRange, StyleType,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -166,11 +166,18 @@ fn author_initials_and_date_read_back_as_given() {
             "Ada Lovelace",
             Some("AL"),
             "Which one?",
-            Some("2026-11-20T10:00:00Z"),
+            CommentDate::At("2026-11-20T10:00:00Z"),
         )
         .unwrap();
     let bare = doc
-        .add_comment_on_text("world", 0, "", None, "No initials, no date", None)
+        .add_comment_on_text(
+            "world",
+            0,
+            "",
+            None,
+            "No initials, no date",
+            CommentDate::Undated,
+        )
         .unwrap();
 
     let doc = reopen(&mut doc);
@@ -194,7 +201,7 @@ fn a_comment_on_text_after_a_tab_leaves_the_tab_out_of_its_range() {
     let mut doc =
         doc_with_body(r#"<w:p><w:r><w:t>Name:</w:t><w:tab/><w:t>John Smith</w:t></w:r></w:p>"#);
     let id = doc
-        .add_comment_on_text("John Smith", 0, "Ada", None, "Who?", None)
+        .add_comment_on_text("John Smith", 0, "Ada", None, "Who?", CommentDate::Undated)
         .unwrap();
 
     let doc = reopen(&mut doc);
@@ -215,7 +222,7 @@ fn each_line_of_a_comment_becomes_one_of_its_paragraphs() {
             "Ada",
             None,
             "  padded\tline  \r\nsecond\n\nfourth",
-            None,
+            CommentDate::Undated,
         )
         .unwrap();
 
@@ -236,7 +243,7 @@ fn commenting_text_splits_the_runs_and_keeps_their_format() {
     paragraph.add_run("lo wor");
     paragraph.add_run("ld").set_italic(true);
     let id = doc
-        .add_comment_on_text("llo wo", 0, "Ada", None, "Split me", None)
+        .add_comment_on_text("llo wo", 0, "Ada", None, "Split me", CommentDate::Undated)
         .unwrap();
 
     let doc = reopen(&mut doc);
@@ -273,8 +280,15 @@ fn occurrences_are_counted_in_document_order_through_tables() {
 
     let ids: Vec<i32> = (0..4)
         .map(|occurrence| {
-            doc.add_comment_on_text("word", occurrence, "Ada", None, "Here", None)
-                .unwrap()
+            doc.add_comment_on_text(
+                "word",
+                occurrence,
+                "Ada",
+                None,
+                "Here",
+                CommentDate::Undated,
+            )
+            .unwrap()
         })
         .collect();
 
@@ -308,13 +322,13 @@ fn a_missing_occurrence_is_refused_and_says_how_many_there_are() {
     let before = doc.to_bytes().unwrap();
 
     let error = doc
-        .add_comment_on_text("text", 2, "Ada", None, "Third?", None)
+        .add_comment_on_text("text", 2, "Ada", None, "Third?", CommentDate::Undated)
         .unwrap_err()
         .to_string();
     assert!(error.contains("it occurs 2 times"), "{error}");
     // Matches do not overlap: "aaa" holds "aa" once.
     let error = doc
-        .add_comment_on_text("aa", 1, "Ada", None, "Second?", None)
+        .add_comment_on_text("aa", 1, "Ada", None, "Second?", CommentDate::Undated)
         .unwrap_err()
         .to_string();
     assert!(error.contains("it occurs 1 time "), "{error}");
@@ -330,17 +344,24 @@ fn anchors_the_main_story_search_cannot_find_are_refused() {
     let before = doc.to_bytes().unwrap();
 
     let empty = doc
-        .add_comment_on_text("", 0, "Ada", None, "Nothing", None)
+        .add_comment_on_text("", 0, "Ada", None, "Nothing", CommentDate::Undated)
         .unwrap_err();
     assert!(empty.to_string().contains("must not be empty"), "{empty}");
     // One match never spans two paragraphs.
     assert!(
-        doc.add_comment_on_text("one start", 0, "Ada", None, "Across", None)
+        doc.add_comment_on_text("one start", 0, "Ada", None, "Across", CommentDate::Undated)
             .is_err()
     );
     // Headers, footers and notes are not searched: comment them by range.
     let header = doc
-        .add_comment_on_text("Header", 0, "Ada", None, "In the header", None)
+        .add_comment_on_text(
+            "Header",
+            0,
+            "Ada",
+            None,
+            "In the header",
+            CommentDate::Undated,
+        )
         .unwrap_err();
     assert!(header.to_string().contains("in the main story"), "{header}");
     assert_eq!(doc.to_bytes().unwrap(), before);
@@ -365,7 +386,7 @@ fn a_run_range_comment_covers_exactly_its_runs() {
             "Ben",
             Some("BN"),
             "To the end",
-            Some("2026-11-20T10:00:00Z"),
+            CommentDate::At("2026-11-20T10:00:00Z"),
         )
         .unwrap();
     let point = doc
@@ -423,7 +444,7 @@ fn unicode_rtl_cjk_markup_and_long_texts_survive_a_save() {
     let ids: Vec<i32> = cases
         .iter()
         .map(|(anchor, author, initials, text)| {
-            doc.add_comment_on_text(anchor, 0, author, *initials, text, None)
+            doc.add_comment_on_text(anchor, 0, author, *initials, text, CommentDate::Undated)
                 .unwrap()
         })
         .collect();
@@ -443,12 +464,12 @@ fn unicode_rtl_cjk_markup_and_long_texts_survive_a_save() {
 fn characters_xml_cannot_carry_are_refused() {
     let mut doc = doc_with(&["text"]);
     let error = doc
-        .add_comment_on_text("text", 0, "Ada", None, "bell\u{7}", None)
+        .add_comment_on_text("text", 0, "Ada", None, "bell\u{7}", CommentDate::Undated)
         .unwrap_err()
         .to_string();
     assert!(error.contains("U+0007"), "{error}");
     assert!(
-        doc.add_comment_on_text("text", 0, "Ada\u{1}", None, "Fine", None)
+        doc.add_comment_on_text("text", 0, "Ada\u{1}", None, "Fine", CommentDate::Undated)
             .is_err()
     );
     assert!(doc.comments().is_empty());
@@ -459,7 +480,7 @@ fn a_date_is_kept_as_written_and_a_date_that_is_not_rfc_3339_is_refused() {
     let mut doc = doc_with(&["text"]);
     for date in ["2026-02-30", "yesterday", "2026-11-20 10:00"] {
         let error = doc
-            .add_comment_on_text("text", 0, "Ada", None, "Dated", Some(date))
+            .add_comment_on_text("text", 0, "Ada", None, "Dated", CommentDate::At(date))
             .unwrap_err()
             .to_string();
         assert!(error.contains("invalid RFC 3339"), "{date}: {error}");
@@ -471,11 +492,16 @@ fn a_date_is_kept_as_written_and_a_date_that_is_not_rfc_3339_is_refused() {
             "Ada",
             None,
             "Dated",
-            Some("2026-09-16T11:00:00+01:00"),
+            CommentDate::At("2026-09-16T11:00:00+01:00"),
         )
         .unwrap();
     let reply = doc
-        .reply_to_with_date(id, "Ben", "Later", Some("2026-09-16T12:30:15.250Z"))
+        .reply_to_with_date(
+            id,
+            "Ben",
+            "Later",
+            CommentDate::At("2026-09-16T12:30:15.250Z"),
+        )
         .unwrap();
 
     let doc = reopen(&mut doc);
@@ -490,10 +516,24 @@ fn a_date_is_kept_as_written_and_a_date_that_is_not_rfc_3339_is_refused() {
 fn comments_get_distinct_ids_and_are_listed_in_the_order_they_were_added() {
     let mut doc = doc_with(&["First paragraph", "Second paragraph"]);
     let second = doc
-        .add_comment_on_text("Second", 0, "Ada", None, "On the second", None)
+        .add_comment_on_text(
+            "Second",
+            0,
+            "Ada",
+            None,
+            "On the second",
+            CommentDate::Undated,
+        )
         .unwrap();
     let first = doc
-        .add_comment_on_text("First", 0, "Ben", None, "On the first", None)
+        .add_comment_on_text(
+            "First",
+            0,
+            "Ben",
+            None,
+            "On the first",
+            CommentDate::Undated,
+        )
         .unwrap();
     let reply = doc.reply_to(second, "Cy", "Reply").unwrap();
 
@@ -522,7 +562,14 @@ fn the_comment_parts_come_with_the_first_comment_and_go_with_the_last() {
     assert!(!has_part(&doc, "/word/comments.xml"));
 
     let id = doc
-        .add_comment_on_text("review", 0, "Ada", None, "Please review", None)
+        .add_comment_on_text(
+            "review",
+            0,
+            "Ada",
+            None,
+            "Please review",
+            CommentDate::Undated,
+        )
         .unwrap();
     assert!(has_part(&doc, "/word/comments.xml"));
     assert!(has_part(&doc, "/word/commentsExtended.xml"));
@@ -554,7 +601,14 @@ fn the_comment_parts_come_with_the_first_comment_and_go_with_the_last() {
 fn a_reply_is_linked_to_its_parent_and_covers_the_same_text() {
     let mut doc = doc_with(&["The deadline is thirty days."]);
     let root = doc
-        .add_comment_on_text("thirty days", 0, "Ada", Some("AL"), "Too short?", None)
+        .add_comment_on_text(
+            "thirty days",
+            0,
+            "Ada",
+            Some("AL"),
+            "Too short?",
+            CommentDate::Undated,
+        )
         .unwrap();
     let reply = doc
         .reply_to_with_initials(
@@ -562,7 +616,7 @@ fn a_reply_is_linked_to_its_parent_and_covers_the_same_text() {
             "Ben",
             Some("BN"),
             "Agreed.\nMake it sixty.",
-            Some("2026-11-21T09:30:00Z"),
+            CommentDate::At("2026-11-21T09:30:00Z"),
         )
         .unwrap();
 
@@ -582,7 +636,7 @@ fn a_reply_is_linked_to_its_parent_and_covers_the_same_text() {
 fn a_thread_keeps_every_reply_under_its_own_parent() {
     let mut doc = doc_with(&["Hello brave world"]);
     let root = doc
-        .add_comment_on_text("brave", 0, "Ada", None, "root", None)
+        .add_comment_on_text("brave", 0, "Ada", None, "root", CommentDate::Undated)
         .unwrap();
     let first = doc.reply_to(root, "Ben", "first reply").unwrap();
     let second = doc.reply_to(root, "Cy", "second reply").unwrap();
@@ -608,7 +662,7 @@ fn a_thread_keeps_every_reply_under_its_own_parent() {
 #[test]
 fn unknown_comment_ids_are_refused_or_reported_without_a_change() {
     let mut doc = doc_with(&["text"]);
-    doc.add_comment_on_text("text", 0, "Ada", None, "Known", None)
+    doc.add_comment_on_text("text", 0, "Ada", None, "Known", CommentDate::Undated)
         .unwrap();
     let before = doc.to_bytes().unwrap();
 
@@ -626,7 +680,14 @@ fn unknown_comment_ids_are_refused_or_reported_without_a_change() {
 fn resolving_a_thread_marks_it_done_and_reopening_it_clears_the_mark() {
     let mut doc = doc_with(&["Hello brave world"]);
     let root = doc
-        .add_comment_on_text("brave", 0, "Ada", None, "Please review", None)
+        .add_comment_on_text(
+            "brave",
+            0,
+            "Ada",
+            None,
+            "Please review",
+            CommentDate::Undated,
+        )
         .unwrap();
     doc.reply_to(root, "Ben", "Done").unwrap();
 
@@ -644,7 +705,7 @@ fn resolving_a_thread_marks_it_done_and_reopening_it_clears_the_mark() {
 fn resolving_a_reply_resolves_its_thread() {
     let mut doc = doc_with(&["Hello brave world"]);
     let root = doc
-        .add_comment_on_text("brave", 0, "Ada", None, "root", None)
+        .add_comment_on_text("brave", 0, "Ada", None, "root", CommentDate::Undated)
         .unwrap();
     let reply = doc.reply_to(root, "Ben", "reply").unwrap();
 
@@ -657,7 +718,14 @@ fn resolving_a_reply_resolves_its_thread() {
 fn a_comment_or_reply_text_is_edited_through_its_story_paragraphs() {
     let mut doc = doc_with(&["Hello brave world"]);
     let root = doc
-        .add_comment_on_text("brave", 0, "Ada", None, "first line\nsecond line", None)
+        .add_comment_on_text(
+            "brave",
+            0,
+            "Ada",
+            None,
+            "first line\nsecond line",
+            CommentDate::Undated,
+        )
         .unwrap();
     let reply = doc.reply_to(root, "Ben", "reply").unwrap();
 
@@ -710,7 +778,7 @@ fn removing_a_comment_keeps_the_text_it_covered() {
 fn removing_a_comment_removes_the_replies_under_it() {
     let mut doc = doc_with(&["Hello brave world"]);
     let root = doc
-        .add_comment_on_text("brave", 0, "Ada", None, "root", None)
+        .add_comment_on_text("brave", 0, "Ada", None, "root", CommentDate::Undated)
         .unwrap();
     let first = doc.reply_to(root, "Ben", "first reply").unwrap();
     let second = doc.reply_to(root, "Cy", "second reply").unwrap();
@@ -733,7 +801,14 @@ fn removing_a_comment_removes_the_replies_under_it() {
 fn deleting_commented_content_takes_whole_threads_and_refuses_half_ones() {
     let mut doc = doc_with(&["keep", "commented", "first", "second"]);
     let whole = doc
-        .add_comment_on_text("commented", 0, "Ada", None, "Whole paragraph", None)
+        .add_comment_on_text(
+            "commented",
+            0,
+            "Ada",
+            None,
+            "Whole paragraph",
+            CommentDate::Undated,
+        )
         .unwrap();
     doc.reply_to(whole, "Ben", "Reply").unwrap();
     let span = doc
@@ -763,7 +838,7 @@ fn deleting_commented_content_takes_whole_threads_and_refuses_half_ones() {
 fn moving_a_comment_to_other_text_brings_its_replies() {
     let mut doc = doc_with(&["alpha beta", "gamma delta"]);
     let root = doc
-        .add_comment_on_text("beta", 0, "Ada", None, "root", None)
+        .add_comment_on_text("beta", 0, "Ada", None, "root", CommentDate::Undated)
         .unwrap();
     let reply = doc.reply_to(root, "Ben", "reply").unwrap();
 
@@ -787,7 +862,7 @@ fn moving_a_comment_to_other_text_brings_its_replies() {
 fn editing_the_commented_text_keeps_the_comment_on_it() {
     let mut doc = doc_with(&["Hello brave world", "Other"]);
     let id = doc
-        .add_comment_on_text("brave", 0, "Ada", None, "Which one?", None)
+        .add_comment_on_text("brave", 0, "Ada", None, "Which one?", CommentDate::Undated)
         .unwrap();
 
     assert_eq!(doc.try_replace_text("brave", "bold").unwrap(), 1);
@@ -814,7 +889,14 @@ fn editing_the_commented_text_keeps_the_comment_on_it() {
 fn a_comment_in_a_table_cell_reads_back_its_cell_and_goes_with_its_row() {
     let mut doc = table_doc();
     let south = doc
-        .add_comment_on_text("south", 0, "Ada", None, "On text in a cell", None)
+        .add_comment_on_text(
+            "south",
+            0,
+            "Ada",
+            None,
+            "On text in a cell",
+            CommentDate::Undated,
+        )
         .unwrap();
     // The fourth cell, west, commented by range over its one run.
     let west_cell = story_paragraph(&doc, StoryKind::TableCell, 3);
@@ -845,7 +927,7 @@ fn a_comment_in_a_header_holds_a_whole_thread() {
             "Ada",
             Some("AL"),
             "On the header",
-            Some("2026-11-20T10:00:00Z"),
+            CommentDate::At("2026-11-20T10:00:00Z"),
         )
         .unwrap();
     let reply = doc.reply_to(root, "Ben", "Reply").unwrap();
@@ -883,7 +965,7 @@ fn a_commented_document_saves_the_same_bytes_every_time() {
             "Ada",
             Some("AL"),
             "Which one?",
-            Some("2026-11-20T10:00:00Z"),
+            CommentDate::At("2026-11-20T10:00:00Z"),
         )
         .unwrap();
     doc.reply_to(root, "Ben", "This one").unwrap();
@@ -956,7 +1038,7 @@ fn the_corpus_comment_of_every_producer_takes_a_reply_and_a_resolution() {
                 "Ben",
                 Some("BN"),
                 "Finance agreed.",
-                Some("2026-11-21T09:00:00Z"),
+                CommentDate::At("2026-11-21T09:00:00Z"),
             )
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(doc.resolve_comment(0, true).unwrap(), "{name}");
@@ -1030,7 +1112,14 @@ fn commenting_across_producer_runs_keeps_their_format_and_the_existing_comment()
         let mut doc = corpus_doc(name);
         // "6 h 40" and "3 h 15" are bold runs between plain ones.
         let id = doc
-            .add_comment_on_text("from 6 h 40 to 3", 0, "Ada", Some("AL"), "Check", None)
+            .add_comment_on_text(
+                "from 6 h 40 to 3",
+                0,
+                "Ada",
+                Some("AL"),
+                "Check",
+                CommentDate::Undated,
+            )
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_ne!(id, 0, "{name}");
 
@@ -1104,8 +1193,15 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
     let before = names(&doc);
     assert!(before.contains(&("Commentaire".to_owned(), Some("annotation text".to_owned()))));
 
-    doc.add_comment_on_text("January", 0, "Ada", None, "Check the date", None)
-        .unwrap();
+    doc.add_comment_on_text(
+        "January",
+        0,
+        "Ada",
+        None,
+        "Check the date",
+        CommentDate::Undated,
+    )
+    .unwrap();
     let doc = reopen(&mut doc);
     let added: Vec<_> = names(&doc)
         .into_iter()
@@ -1146,8 +1242,15 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
 #[should_panic(expected = "is Word's built-in")]
 fn the_comment_styles_a_new_document_gets_are_words_built_in_ones() {
     let mut doc = doc_with(&["review this"]);
-    doc.add_comment_on_text("review", 0, "Ada", None, "Please review", None)
-        .unwrap();
+    doc.add_comment_on_text(
+        "review",
+        0,
+        "Ada",
+        None,
+        "Please review",
+        CommentDate::Undated,
+    )
+    .unwrap();
     let doc = reopen(&mut doc);
     let name = |id: &str| {
         doc.style(id)

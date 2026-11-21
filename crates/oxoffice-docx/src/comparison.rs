@@ -955,7 +955,10 @@ fn crossing_reply_additions(
             author,
             comment.initials(),
             &comment.text(),
-            comment.date(),
+            // Replay the edited reply's own date, or none when it had none.
+            comment
+                .date()
+                .map_or(crate::CommentDate::Undated, crate::CommentDate::At),
         ) {
             Ok(id) => id,
             Err(_) => return Ok(None),
