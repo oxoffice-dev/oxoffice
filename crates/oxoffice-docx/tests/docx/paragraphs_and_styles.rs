@@ -527,9 +527,29 @@ fn headings_and_the_outline_follow_the_heading_styles() {
     assert!(outline[1].children.is_empty());
 }
 
-// Fails today: headings() only knows the English style IDs, so a French Word file (Titre1, Titre2) has none. Issue: #27
 #[test]
-#[should_panic(expected = "every heading of the Word report is found")]
+fn headings_and_the_outline_are_found_in_every_corpus_report() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+        "authored/report.docx",
+    ] {
+        let doc = corpus_doc(name);
+        assert_eq!(doc.headings(), report_headings(), "{name}");
+        let roots = doc.document_outline();
+        assert_eq!(
+            roots.len(),
+            report_headings()
+                .iter()
+                .filter(|(level, _)| *level == 1)
+                .count(),
+            "{name}: one outline root per heading 1"
+        );
+    }
+}
+
+#[test]
 fn headings_are_found_in_the_word_and_google_reports_alike() {
     assert_eq!(
         corpus_doc("google/report.docx").headings(),

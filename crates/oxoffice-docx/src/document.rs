@@ -33788,7 +33788,7 @@ impl Document {
             style = value.based_on.as_deref();
         }
         if !level.is_some_and(|level| level < 9)
-            && Self::detect_heading_level_for_toc(&paragraph).is_none()
+            && self.detect_heading_level_for_toc(&paragraph).is_none()
         {
             return Err(Error::Other(
                 "heading target is not an outline heading".into(),
@@ -48216,7 +48216,8 @@ impl Document {
 
     /// Insert a Table of Contents at the given body content index.
     ///
-    /// Scans the document for heading paragraphs (Heading1..HeadingN where N <= max_level),
+    /// Scans the document for heading paragraphs (styles named `heading 1`
+    /// to `heading N`, whatever their localised id, where N <= max_level),
     /// inserts bookmark markers at each heading, and generates TOC entry paragraphs
     /// with internal hyperlinks and dot-leader tab stops.
     ///
@@ -48276,7 +48277,7 @@ impl Document {
 
         for (idx, content) in self.document.body.content.iter().enumerate() {
             if let BodyContent::Paragraph(p) = content
-                && let Some(level) = Self::detect_heading_level_for_toc(p)
+                && let Some(level) = self.detect_heading_level_for_toc(p)
                 && level <= max_level
             {
                 let text = p.text();
@@ -48472,12 +48473,27 @@ impl Document {
         }
     }
 
-    /// Detect heading level from a paragraph's style ID.
-    fn detect_heading_level_for_toc(para: &CT_P) -> Option<u32> {
+    /// The heading level of a paragraph, from its style: the built-in name
+    /// `heading N`, which Word keeps whatever language it saves in (the id is
+    /// localised, `Titre1` in French), else an id `HeadingN`.
+    fn detect_heading_level_for_toc(&self, para: &CT_P) -> Option<u32> {
         let ppr = para.properties.as_ref()?;
         let style_id = ppr.style_id.as_deref()?;
-        let rest = style_id.strip_prefix("Heading")?;
-        rest.parse::<u32>().ok().filter(|n| (1..=9).contains(n))
+        let level = |rest: &str| {
+            rest.trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (1..=9).contains(n))
+        };
+        let by_name = self
+            .styles
+            .get_by_id(style_id)
+            .and_then(|style| style.name.as_deref())
+            .and_then(|name| {
+                let lowered = name.to_ascii_lowercase();
+                lowered.strip_prefix("heading ").and_then(level)
+            });
+        by_name.or_else(|| style_id.strip_prefix("Heading").and_then(level))
     }
 
     // ---- Placeholder replacement ----
@@ -52142,13 +52158,15 @@ impl Document {
 
     /// Get all headings in the document as (level, text) pairs.
     ///
-    /// Detects heading paragraphs by their style ID (e.g. "Heading1", "Heading2")
-    /// among the body paragraphs, including those that body-level content
+    /// Detects heading paragraphs by their style's built-in name (`heading
+    /// 1`, `heading 2`...), which Word keeps when it saves in another language
+    /// and localises the id, else by an id `Heading1`, `Heading2`..., among the
+    /// body paragraphs, including those that body-level content
     /// controls wrap. Table cells are not searched.
     pub fn headings(&self) -> Vec<(u32, String)> {
         let mut result = Vec::new();
         for p in block_paragraphs(&self.document.body.content) {
-            if let Some(level) = Self::detect_heading_level_for_toc(p) {
+            if let Some(level) = self.detect_heading_level_for_toc(p) {
                 result.push((level, p.text()));
             }
         }
