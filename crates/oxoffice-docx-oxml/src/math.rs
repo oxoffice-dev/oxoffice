@@ -56,6 +56,7 @@ impl CT_OMath {
         require_safe_fixed_math_prefix(xml, inherited)?;
         let mut parsed = parse_element(xml, inherited)?;
         require_root(xml, &parsed.bindings, b"oMath")?;
+        keep_used_root_bindings(&mut parsed.preservation, xml, inherited)?;
         let mut expressions = Vec::new();
         for child in parsed.children {
             if let Some(expression) = MathExpression::from_raw(&child, &parsed.bindings)? {
@@ -137,6 +138,7 @@ impl CT_OMathPara {
         }
         let mut parsed = parse_element(xml, inherited)?;
         require_root(xml, &parsed.bindings, b"oMathPara")?;
+        keep_used_root_bindings(&mut parsed.preservation, xml, inherited)?;
         let mut properties = MathParagraphProperties::default();
         let mut equations = Vec::new();
         let mut modeled = 0usize;
@@ -2854,6 +2856,20 @@ fn write_raw_slot<W: Write>(
     {
         writer.get_mut().write_all(raw)?;
     }
+    Ok(())
+}
+
+/// An equation root carries the bindings of its read scope so that it stays
+/// well formed wherever it is written. Keep only those its subtree names: a
+/// root written with every binding of its source scope would carry the
+/// whole document root (or a reader's private wrapper prefix) into each
+/// saved or compared copy.
+fn keep_used_root_bindings(
+    preservation: &mut Preservation,
+    xml: &[u8],
+    inherited: &[(String, String)],
+) -> Result<()> {
+    preservation.inherited_bindings = crate::text::external_bindings_used_by_raw(xml, inherited)?;
     Ok(())
 }
 

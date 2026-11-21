@@ -22,11 +22,7 @@ pub(super) fn body_signature(content: &BodyContent) -> String {
 
 fn paragraph_signature(paragraph: &CT_P) -> String {
     let numbering = paragraph_numbering(paragraph);
-    let extra_xml = paragraph
-        .extra_xml
-        .iter()
-        .filter(|(position, raw)| !CT_P::raw_is_root_attributes(*position, raw))
-        .collect::<Vec<_>>();
+    let extra_xml = paragraph_raw_children(paragraph);
     format!(
         "{numbering:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
         paragraph.runs.iter().map(run_signature).collect::<Vec<_>>(),
@@ -690,9 +686,52 @@ fn push_boundary_tokens(
             }
         }
         if let Some(raw) = extras.get(raw_index) {
-            tokens.push(ParagraphToken::Boundary(format!("raw:{raw:?}")));
+            tokens.push(ParagraphToken::Boundary(format!(
+                "raw:{:?}",
+                raw_child_identity(paragraph, boundary, raw_index, raw)
+            )));
         }
     }
+}
+
+/// The raw children of `paragraph` with their run boundaries, each as
+/// [`raw_child_identity`] reads it; the record of its root attributes is not
+/// one.
+pub(super) fn paragraph_raw_children(paragraph: &CT_P) -> Vec<(usize, std::borrow::Cow<'_, [u8]>)> {
+    let mut slots = HashMap::<usize, usize>::new();
+    paragraph
+        .extra_xml
+        .iter()
+        .filter(|(position, raw)| !CT_P::raw_is_root_attributes(*position, raw))
+        .map(|(position, raw)| {
+            let slot = slots.entry(*position).or_default();
+            let identity = raw_child_identity(paragraph, *position, *slot, raw);
+            *slot += 1;
+            (*position, identity)
+        })
+        .collect()
+}
+
+/// The raw child of `paragraph` at `slot` among those at run boundary
+/// `position`, as the comparison reads it. An equation reads as its model
+/// writes it, in the form of
+/// [`canonical_raw_child`](super::source_scopes::canonical_raw_child): the
+/// same equation a save wrote again, with the root's namespaces declared on
+/// it or a default its source left out (a fraction's bar), reads the same.
+/// Any other raw child reads as its bytes.
+pub(super) fn raw_child_identity<'a>(
+    paragraph: &CT_P,
+    position: usize,
+    slot: usize,
+    raw: &'a [u8],
+) -> std::borrow::Cow<'a, [u8]> {
+    paragraph
+        .equations
+        .iter()
+        .find(|(at, equation_slot, _)| *at == position && *equation_slot == slot)
+        .and_then(|(_, _, equation)| equation.to_xml().ok())
+        .and_then(|xml| super::source_scopes::canonical_raw_child(&xml).ok())
+        .map_or(std::borrow::Cow::Borrowed(raw), std::borrow::Cow::Owned)
 }
 
 pub(super) fn run_signature_with_options(run: &CT_R, options: &ComparisonOptions) -> String {

@@ -2018,6 +2018,216 @@ fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     assert_eq!(texts(&rejected(&mut doc)), ["after"]);
 }
 
+// Google Docs declares a default namespace on its root that nothing uses,
+// and a save leaves it out: a field the edit did not touch is unchanged.
+#[test]
+fn a_field_is_no_change_once_a_save_drops_an_unused_root_declaration() {
+    let body = concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let google_root = || {
+        let bytes = doc_with_body(body).to_bytes().expect("document saves");
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("opens");
+        let part = package.main_document_part().expect("main part");
+        let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+            .expect("UTF-8")
+            .replacen(
+                "<w:document ",
+                r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+                1,
+            );
+        package.set_part(&part, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("package writes");
+        Document::from_bytes(&out.into_inner()).expect("document opens")
+    };
+    let mut edited = google_root();
+    edited.add_paragraph("Added");
+    let mut edited = reopen(&mut edited);
+    assert!(
+        !main_xml(&mut edited).contains("documenttasks"),
+        "the save keeps the unused declaration: this test no longer tests the comparison"
+    );
+    let mut doc = redline(google_root(), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Added"]);
+    assert!(
+        !kinds(&doc).contains(&RevisionKind::Deletion),
+        "{:?}",
+        kinds(&doc)
+    );
+    assert_eq!(texts(&rejected(&mut doc)), ["Page 1"]);
+}
+
+// ---- Equations ----
+
+const MATH_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
+/// A paragraph, then a display equation holding `x` (or the text given).
+fn equation_body(text: &str, declarations: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:p><m:oMathPara xmlns:m="{MATH_NS}"{declarations}><m:oMath><m:r><w:rPr><w:i/></w:rPr><m:t>{text}</m:t></m:r></m:oMath></m:oMathPara></w:p>"#
+    )
+}
+
+/// The main story as saved.
+fn main_xml(doc: &mut Document) -> String {
+    let bytes = doc.to_bytes().expect("document saves");
+    String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
+        .expect("main part is UTF-8")
+}
+
+/// The text of every `m:t` of the main story, in order.
+fn math_texts(doc: &mut Document) -> Vec<String> {
+    main_xml(doc)
+        .split("<m:t")
+        .skip(1)
+        .filter(|rest| rest.starts_with(['>', ' ']))
+        .map(|rest| {
+            let content = &rest[rest.find('>').map_or(rest.len(), |end| end + 1)..];
+            content
+                .split("</m:t>")
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+// After any edit, a save writes a kept equation again from its model; the
+// comparison reads it as the same equation the original holds.
+#[test]
+fn an_unchanged_equation_is_no_change_once_the_edited_copy_was_saved() {
+    let body = equation_body("x", "");
+    let mut edited = doc_with_body(&body);
+    edited.add_paragraph("Added");
+    let edited = reopen(&mut edited);
+    let mut doc = redline(doc_with_body(&body), &edited);
+    assert!(
+        kinds(&doc)
+            .iter()
+            .all(|kind| *kind == RevisionKind::Insertion),
+        "only the added paragraph is a change: {:?}",
+        kinds(&doc)
+    );
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Added"]);
+    assert_eq!(texts(&accepted(&mut doc)), ["Before", "", "Added"]);
+    assert_eq!(math_texts(&mut rejected(&mut doc)), ["x"]);
+}
+
+// Word, Google and LibreOffice declare their namespaces once, on the root; a
+// copy whose equation declares them again holds the same equation.
+#[test]
+fn an_equation_that_declares_the_root_namespaces_again_is_no_change() {
+    let again = concat!(
+        r#" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+        r#" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+        r#" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#,
+    );
+    let mut edited = doc_with_body(&equation_body("x", again));
+    edited.add_paragraph("Added");
+    let mut doc = redline(doc_with_body(&equation_body("x", "")), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Added"]);
+    assert!(
+        !kinds(&doc).contains(&RevisionKind::Deletion),
+        "the equation is not deleted and inserted again: {:?}",
+        kinds(&doc)
+    );
+    assert_eq!(math_texts(&mut accepted(&mut doc)), ["x"]);
+}
+
+// An equation that changes is deleted and inserted with its paragraph, and
+// the redline names no namespace of the comparison's own.
+#[test]
+fn a_changed_equation_resolves_to_either_version() {
+    let mut doc = redline(
+        doc_with_body(&equation_body("x", "")),
+        &doc_with_body(&equation_body("y", "")),
+    );
+    assert!(kinds(&doc).contains(&RevisionKind::Deletion));
+    assert!(kinds(&doc).contains(&RevisionKind::Insertion));
+    let xml = main_xml(&mut doc);
+    assert!(
+        !xml.contains("rdocxcmp"),
+        "a private namespace leaked: {xml}"
+    );
+    assert_eq!(math_texts(&mut accepted(&mut doc)), ["y"]);
+    assert_eq!(math_texts(&mut rejected(&mut doc)), ["x"]);
+}
+
+// A word changed beside an inline equation is a word changed: the equation,
+// written again by the save, stays where it is.
+#[test]
+fn a_word_changed_beside_an_inline_equation_is_revised_in_place() {
+    let body = |word: &str| {
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Let </w:t></w:r><m:oMath xmlns:m="{MATH_NS}"><m:r><w:rPr><w:i/></w:rPr><m:t>x</m:t></m:r></m:oMath><w:r><w:t xml:space="preserve"> be {word}.</w:t></w:r></w:p>"#
+        )
+    };
+    for granularity in [
+        ComparisonGranularity::Run,
+        ComparisonGranularity::Word,
+        ComparisonGranularity::Character,
+    ] {
+        let mut edited = doc_with_body(&body("small"));
+        edited.add_paragraph("Added");
+        let mut edited = reopen(&mut edited);
+        assert!(edited.replace_all(&HashMap::from([("small", "large")])) == 1);
+        let edited = reopen(&mut edited);
+        let mut doc = doc_with_body(&body("small"));
+        let options = ComparisonOptions {
+            granularity,
+            ..ComparisonOptions::default()
+        };
+        let diagnostics = doc
+            .compare_with_options(&edited, AUTHOR, DATE, &options)
+            .expect("comparison");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut doc = reopen(&mut doc);
+        let deleted = revision_texts(&doc, RevisionKind::Deletion);
+        assert!(
+            deleted.iter().all(|text| !text.contains("Let")),
+            "{granularity:?}: the paragraph is not deleted whole: {deleted:?}"
+        );
+        assert_eq!(math_texts(&mut accepted(&mut doc)), ["x"]);
+        assert_eq!(texts(&accepted(&mut doc)), ["Let  be large.", "Added"]);
+        assert_eq!(texts(&rejected(&mut doc)), ["Let  be small."]);
+    }
+}
+
+// Google writes equations with every default spelled out, LibreOffice
+// leaves defaults out and holds an equation and an endnote reference in one
+// paragraph: neither is deleted and inserted again.
+#[test]
+fn a_paper_with_equations_compares_with_an_edited_copy() {
+    for name in ["google/paper.docx", "libreoffice/paper.docx"] {
+        let original = texts(&corpus_doc(name));
+        let equations = math_texts(&mut corpus_doc(name));
+        assert!(equations.len() > 11, "{name}: {equations:?}");
+        let mut edited = corpus_doc(name);
+        edited.add_paragraph("A closing remark.");
+        let edited = reopen(&mut edited);
+        let mut doc = redline(corpus_doc(name), &edited);
+        assert!(
+            !kinds(&doc).contains(&RevisionKind::Deletion),
+            "{name}: no paragraph is deleted and inserted again: {:?}",
+            kinds(&doc)
+        );
+        let mut expected = original.clone();
+        expected.push("A closing remark.".to_owned());
+        let mut accepted = accepted(&mut doc);
+        assert_eq!(texts(&accepted), expected, "{name}");
+        assert_eq!(math_texts(&mut accepted), equations, "{name}");
+        let mut rejected = rejected(&mut doc);
+        assert_eq!(texts(&rejected), original, "{name}");
+        assert_eq!(math_texts(&mut rejected), equations, "{name}");
+    }
+}
+
 // ---- Bookmarks, tables of contents and notes ----
 
 #[test]
