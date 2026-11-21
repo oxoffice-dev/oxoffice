@@ -43,11 +43,9 @@ impl Document {
             .max()
             .unwrap_or(1)
             + 1;
-        if candidate.style("FootnoteReference").is_none() {
-            candidate
-                .add_style(note_reference_style(StoryKind::Footnote))
-                .expect("an in-memory document can publish its note style");
-        }
+        let mark_style = candidate
+            .note_reference_style_id(StoryKind::Footnote)
+            .expect("an in-memory document can publish its note style");
         let specials = missing_note_specials(
             &candidate.footnotes,
             candidate
@@ -62,7 +60,7 @@ impl Document {
         let mut p = CT_P::new();
         let mut marker = CT_R::new("");
         marker.properties = Some(CT_RPr {
-            style_id: Some("FootnoteReference".into()),
+            style_id: Some(mark_style.clone()),
             ..Default::default()
         });
         marker.content.clear();
@@ -117,9 +115,7 @@ impl Document {
             ));
         }
         let mut candidate = self.clone_for_staging();
-        if candidate.style("FootnoteReference").is_none() {
-            candidate.add_style(note_reference_style(StoryKind::Footnote))?;
-        }
+        let mark_style = candidate.note_reference_style_id(StoryKind::Footnote)?;
         candidate
             .read_story_paragraph(&position.location, |paragraph| paragraph.run_count())?
             .checked_sub(position.run_index)
@@ -152,7 +148,7 @@ impl Document {
         let mut paragraph = CT_P::new();
         let mut note_marker = CT_R::new("");
         note_marker.properties = Some(CT_RPr {
-            style_id: Some("FootnoteReference".into()),
+            style_id: Some(mark_style.clone()),
             ..Default::default()
         });
         note_marker.content.clear();
@@ -175,7 +171,7 @@ impl Document {
         candidate.invalidate_layout();
         let mut run = CT_R::new("");
         run.properties = Some(CT_RPr {
-            style_id: Some("FootnoteReference".into()),
+            style_id: Some(mark_style.clone()),
             ..Default::default()
         });
         run.content = vec![RunContent::FootnoteRef {
@@ -218,9 +214,7 @@ impl Document {
             ));
         }
         let mut candidate = self.clone_for_staging();
-        if candidate.style("EndnoteReference").is_none() {
-            candidate.add_style(note_reference_style(StoryKind::Endnote))?;
-        }
+        let mark_style = candidate.note_reference_style_id(StoryKind::Endnote)?;
         candidate
             .read_story_paragraph(&position.location, |paragraph| paragraph.run_count())?
             .checked_sub(position.run_index)
@@ -254,7 +248,7 @@ impl Document {
         let mut paragraph = CT_P::new();
         let mut note_marker = CT_R::new("");
         note_marker.properties = Some(CT_RPr {
-            style_id: Some("EndnoteReference".into()),
+            style_id: Some(mark_style.clone()),
             ..Default::default()
         });
         note_marker.content.clear();
@@ -279,7 +273,7 @@ impl Document {
         candidate.invalidate_layout();
         let mut run = CT_R::new("");
         run.properties = Some(CT_RPr {
-            style_id: Some("EndnoteReference".into()),
+            style_id: Some(mark_style.clone()),
             ..Default::default()
         });
         run.content = vec![RunContent::EndnoteRef {
@@ -1322,5 +1316,23 @@ impl Document {
             })?;
         self.footnotes_part_name = Some(part_name);
         Ok(())
+    }
+}
+
+impl Document {
+    /// The id of the mark style of a note reference: the document's own,
+    /// found by id or by its built-in name (a localized Word file names it
+    /// otherwise), else the style created here, as Word defines it.
+    fn note_reference_style_id(&mut self, kind: StoryKind) -> Result<String> {
+        let (id, name) = if kind == StoryKind::Endnote {
+            ("EndnoteReference", "endnote reference")
+        } else {
+            ("FootnoteReference", "footnote reference")
+        };
+        if let Some(found) = built_in_character_style_id(&self.styles, id, name) {
+            return Ok(found);
+        }
+        self.add_style(note_reference_style(kind, &self.styles))?;
+        Ok(id.to_owned())
     }
 }

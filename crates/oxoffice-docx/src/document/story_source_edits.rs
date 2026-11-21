@@ -349,17 +349,61 @@ pub(super) fn owners_reference_styles(
     }
 }
 
-/// The superscript mark style of a footnote or an endnote reference.
-pub(super) fn note_reference_style(kind: StoryKind) -> StyleBuilder {
+/// The superscript mark style of a footnote or an endnote reference, as
+/// Word defines it: based on the default paragraph font when the document
+/// has one, priority 99, hidden until used.
+pub(super) fn note_reference_style(kind: StoryKind, styles: &CT_Styles) -> StyleBuilder {
     let (id, name) = if kind == StoryKind::Endnote {
         ("EndnoteReference", "endnote reference")
     } else {
         ("FootnoteReference", "footnote reference")
     };
-    StyleBuilder::character(id, name).run_properties(CT_RPr {
-        vert_align: Some("superscript".into()),
-        ..Default::default()
-    })
+    let builder = StyleBuilder::character(id, name)
+        .priority(99)
+        .semi_hidden(true)
+        .unhide_when_used(true)
+        .run_properties(CT_RPr {
+            vert_align: Some("superscript".into()),
+            ..Default::default()
+        });
+    match default_character_style_id(styles) {
+        Some(base) => builder.based_on(&base),
+        None => builder,
+    }
+}
+
+/// The document's default character font style, by its default flag.
+fn default_character_style_id(styles: &CT_Styles) -> Option<String> {
+    styles
+        .styles
+        .iter()
+        .find(|style| style.style_type == StyleType::Character && style.is_default)
+        .map(|style| style.style_id.clone())
+}
+
+/// The id of a built-in character style: its own id when the document
+/// defines it, else the id of a character style carrying its built-in name
+/// (a localized Word file names `FootnoteReference` `Appelnotedebasdep`),
+/// else `None`.
+pub(super) fn built_in_character_style_id(
+    styles: &CT_Styles,
+    id: &str,
+    name: &str,
+) -> Option<String> {
+    if styles.get_by_id(id).is_some() {
+        return Some(id.to_owned());
+    }
+    styles
+        .styles
+        .iter()
+        .find(|style| {
+            style.style_type == StyleType::Character
+                && style
+                    .name
+                    .as_deref()
+                    .is_some_and(|known| known.eq_ignore_ascii_case(name))
+        })
+        .map(|style| style.style_id.clone())
 }
 
 pub(super) fn serialized_note_fragment(

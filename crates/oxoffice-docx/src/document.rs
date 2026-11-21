@@ -291,7 +291,7 @@ use story_scopes::{
 pub(crate) use story_scopes::{story_namespace_ancestors_at, story_namespace_scope_at};
 pub(crate) use story_source_edits::set_story_source_xml;
 use story_source_edits::{
-    append_story_fragments_to_root, append_story_sources_to_root,
+    append_story_fragments_to_root, append_story_sources_to_root, built_in_character_style_id,
     decoded_story_namespace_declaration, missing_note_specials, note_reference_style,
     owners_reference_styles, remove_note_references, serialized_footnote_fragment,
     serialized_note_fragment, serialized_note_fragment_in, set_story_source_xml_in,
