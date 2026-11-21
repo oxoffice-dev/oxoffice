@@ -36,9 +36,17 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 9. **An independent review before every merge**, posted on the pull request;
    every finding answered first (fixed, or why it is not a defect; a major
    is fixed unless the maintainer waives it). At most two reviews: one
-   full, one delta after a major fix; minors are proved or followed up,
-   not re-reviewed. See
+   full, one delta after a major fix. A minor is fixed in the pull request
+   when the fix is cheap, with its proof (a test that fails without it, or
+   a mutation check), and not re-reviewed; a follow-up issue only for a
+   real defect the pull request cannot carry, at most one per pull request,
+   grouping its findings. See
    [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#independent-review).
+10. **Issues and fixes: finish what you start.** Fix the class, not the
+    instance; a pull request closes its issue, and what it leaves stays
+    in that issue; one root cause, one issue. Every issue has a severity
+    (`S1`-`S4`), an area and a "Seen with" line. See
+    [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#issues-and-fixes).
 
 ## Commands
 
@@ -46,7 +54,7 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 cargo check -p <crate> --all-targets
 cargo test -p <crate>
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo check --workspace --all-targets --all-features --profile scaling
+cargo clippy --workspace --all-targets --all-features --profile scaling -- -D warnings
 cargo fmt --all
 cargo build -p oxoffice-cli
 maturin develop -m crates/oxoffice-py/Cargo.toml

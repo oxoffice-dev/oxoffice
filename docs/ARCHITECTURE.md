@@ -6,7 +6,7 @@ the code is organised today. Decisions and their history live in `specs/`.
 
 ## Crates
 
-One workspace, three families.
+One workspace, three families, and one crate of test support.
 
 ```
 crates/
@@ -23,7 +23,8 @@ crates/
   oxoffice-chart         ChartML model and renderer, for Word and PowerPoint
   oxoffice-sml           minimal SpreadsheetML writer for chart workbooks
   oxoffice-cli-support   shared CLI pieces: ranges, JSON output, paths
-  oxoffice-py-support    shared PyO3 pieces: errors, lengths, colours
+  oxoffice-py-support    shared PyO3 pieces: errors, indexes, lengths, colours, core property
+                         dates, caller fonts
 
   # WordprocessingML
   oxoffice-docx-oxml     the w: types and OfficeMath
@@ -51,6 +52,10 @@ crates/
   # Entry points
   oxoffice-cli           the `oxoffice` binary
   oxoffice-py            the `oxoffice` Python extension and package
+
+  # Test support (dev-dependency only, never published)
+  oxoffice-render-test   the render tests' shared pieces: a PDF read back,
+                         page hashes, baseline files and the checks
 ```
 
 ## The dependency rule

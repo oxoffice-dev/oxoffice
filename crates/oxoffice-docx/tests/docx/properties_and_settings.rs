@@ -66,6 +66,29 @@ fn has_part(doc: &Document, part: &str) -> bool {
     doc.part_xml(part).is_ok()
 }
 
+/// `[Content_Types].xml` as the document saves now, read from the ZIP.
+fn saved_content_types(doc: &mut Document) -> String {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("saved document is a ZIP");
+    let mut entry = zip
+        .by_name("[Content_Types].xml")
+        .expect("content types are saved");
+    let mut xml = String::new();
+    entry
+        .read_to_string(&mut xml)
+        .expect("content types are UTF-8");
+    xml
+}
+
+/// Whether the content types declare an `Override` for this part, its name
+/// compared as OPC compares part names, whatever its case.
+fn has_override(content_types: &str, part: &str) -> bool {
+    content_types.to_ascii_lowercase().contains(&format!(
+        r#"<override partname="{}""#,
+        part.to_ascii_lowercase()
+    ))
+}
+
 /// How many elements of this qualified name the XML holds, `w:zoom` matching
 /// `<w:zoom/>` and `<w:zoom w:percent="90"/>` but not `<w:zoomed/>`.
 fn occurrences(xml: &str, element: &str) -> usize {
@@ -193,6 +216,55 @@ fn title_author_subject_and_keywords_survive_a_save() {
 }
 
 #[test]
+fn a_carriage_return_in_a_property_survives_a_save() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_title("first\rsecond");
+    let mut app = doc.application_properties().cloned().unwrap_or_default();
+    app.company = Some("Contoso\rFils".to_owned());
+    doc.set_application_properties(app).unwrap();
+    doc.set_custom_property(custom(
+        "Note",
+        2,
+        CustomPropertyValue::Lpwstr("a\r\nb".to_owned()),
+    ))
+    .unwrap();
+    doc.set_custom_property(custom(
+        "Tab\tname",
+        3,
+        CustomPropertyValue::Lpwstr("x".to_owned()),
+    ))
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.title(), Some("first\rsecond"));
+    assert_eq!(
+        doc.application_properties().unwrap().company.as_deref(),
+        Some("Contoso\rFils")
+    );
+    assert_eq!(
+        doc.custom_property("Note").map(|property| &property.value),
+        Some(&CustomPropertyValue::Lpwstr("a\r\nb".to_owned()))
+    );
+    // A name is an attribute: its tab is written as a reference too.
+    assert!(
+        doc.custom_property("Tab\tname").is_some(),
+        "{:?}",
+        custom_names(&doc)
+    );
+    // Written as a reference, which XML end-of-line handling keeps.
+    for part in [
+        "docProps/core.xml",
+        "docProps/app.xml",
+        "docProps/custom.xml",
+    ] {
+        let xml = doc.part_xml(part).unwrap();
+        assert!(
+            xml.contains("&#13;") && !xml.contains('\r'),
+            "{part}: {xml}"
+        );
+    }
+}
+
+#[test]
 fn every_core_property_round_trips_through_the_complete_model() {
     let mut doc = Document::new();
     let core = CoreProperties {
@@ -255,12 +327,21 @@ fn setting_one_core_property_keeps_the_others_word_wrote() {
 fn removing_the_core_properties_drops_the_part_and_a_title_brings_it_back() {
     let mut doc = doc_with(&["Body"]);
     doc.set_title("Draft");
+    assert!(has_override(
+        &saved_content_types(&mut doc),
+        "/docProps/core.xml"
+    ));
     let removed = doc.remove_core_properties().unwrap();
     assert_eq!(
         removed.and_then(|core| core.title).as_deref(),
         Some("Draft")
     );
     assert_eq!(doc.remove_core_properties().unwrap(), None);
+    let content_types = saved_content_types(&mut doc);
+    assert!(
+        !has_override(&content_types, "/docProps/core.xml"),
+        "{content_types}"
+    );
 
     let mut doc = reopen(&mut doc);
     assert_eq!(doc.core_properties(), None);
@@ -321,9 +402,18 @@ fn application_properties_survive_a_save_and_are_removed() {
     doc.set_application_properties(app.clone()).unwrap();
     let mut doc = reopen(&mut doc);
     assert_eq!(doc.application_properties(), Some(&app));
+    assert!(has_override(
+        &saved_content_types(&mut doc),
+        "/docProps/app.xml"
+    ));
 
     let removed = doc.remove_application_properties().unwrap();
     assert_eq!(removed.as_ref(), Some(&app));
+    let content_types = saved_content_types(&mut doc);
+    assert!(
+        !has_override(&content_types, "/docProps/app.xml"),
+        "{content_types}"
+    );
     let doc = reopen(&mut doc);
     assert_eq!(doc.application_properties(), None);
     assert!(!has_part(&doc, "docProps/app.xml"));
@@ -491,11 +581,20 @@ fn custom_properties_are_removed_one_by_one_or_all_at_once() {
     assert_eq!(doc.remove_custom_property("Beta").unwrap(), None);
     let mut doc = reopen(&mut doc);
     assert_eq!(custom_names(&doc), ["Alpha", "Gamma"]);
+    assert!(has_override(
+        &saved_content_types(&mut doc),
+        "/docProps/custom.xml"
+    ));
 
     let all = doc.remove_custom_properties().unwrap().expect("two left");
     assert_eq!(
         all.iter().map(|p| p.name.as_deref()).collect::<Vec<_>>(),
         [Some("Alpha"), Some("Gamma")]
+    );
+    let content_types = saved_content_types(&mut doc);
+    assert!(
+        !has_override(&content_types, "/docProps/custom.xml"),
+        "{content_types}"
     );
     let doc = reopen(&mut doc);
     assert!(doc.custom_properties().is_empty());
@@ -1349,6 +1448,10 @@ fn web_settings_round_trip_in_a_part_made_for_them_and_dropped_with_them() {
     assert_eq!(read.web_pixels_per_inch(), Some(120));
     assert_eq!(read.web_target_screen_size(), Some("1024x768"));
     assert!(read.web_settings_diagnostics().is_empty());
+    assert!(has_override(
+        &saved_content_types(&mut doc),
+        "/word/webSettings.xml"
+    ));
 
     // Removed in the session that made the part: the part goes with the
     // last one.
@@ -1366,6 +1469,11 @@ fn web_settings_round_trip_in_a_part_made_for_them_and_dropped_with_them() {
     assert_eq!(
         doc.remove_web_target_screen_size().unwrap().as_deref(),
         Some("1024x768")
+    );
+    let content_types = saved_content_types(&mut doc);
+    assert!(
+        !has_override(&content_types, "/word/webSettings.xml"),
+        "{content_types}"
     );
     let doc = reopen(&mut doc);
     assert!(!has_part(&doc, "word/webSettings.xml"));
@@ -1538,6 +1646,68 @@ fn a_duplicated_or_malformed_setting_is_reported_and_a_set_replaces_it() {
 }
 
 #[test]
+fn a_duplicated_or_malformed_web_setting_is_reported_and_a_set_replaces_it() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_web_allow_png(true).unwrap();
+    let mut doc = with_part(
+        doc,
+        "/word/webSettings.xml",
+        concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            r#"<w:encoding w:val="utf-8"/><w:encoding w:val="windows-1252"/>"#,
+            r#"<w:allowPNG/>"#,
+            r#"<w:pixelsPerInch w:val="wide"/>"#,
+            r#"<w:targetScreenSz w:val="1024x768"/>"#,
+            r#"</w:webSettings>"#,
+        ),
+    );
+    // No single occurrence is the value: none is read.
+    assert_eq!(doc.web_encoding(), None);
+    assert_eq!(doc.web_pixels_per_inch(), None);
+    assert_eq!(doc.web_allow_png(), Some(true));
+    assert_eq!(doc.web_target_screen_size(), Some("1024x768"));
+    assert_eq!(
+        doc.web_settings_diagnostics(),
+        [
+            SettingsDiagnostic {
+                path: vec!["encoding"],
+                occurrences: 2,
+                reason: SettingsDiagnosticReason::Duplicated,
+            },
+            SettingsDiagnostic {
+                path: vec!["pixelsPerInch"],
+                occurrences: 1,
+                reason: SettingsDiagnosticReason::Malformed,
+            },
+        ]
+    );
+    // Removing one would pick an occurrence: it is refused.
+    let before = doc.to_bytes().unwrap();
+    let error = doc.remove_web_encoding().unwrap_err().to_string();
+    assert!(
+        error.contains("ambiguous or malformed w:encoding"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+
+    doc.set_web_encoding("utf-8").unwrap();
+    doc.set_web_pixels_per_inch(96).unwrap();
+    assert!(doc.web_settings_diagnostics().is_empty());
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.web_encoding(), Some("utf-8"));
+    assert_eq!(doc.web_pixels_per_inch(), Some(96));
+    assert_eq!(doc.web_allow_png(), Some(true));
+    assert_eq!(doc.web_target_screen_size(), Some("1024x768"));
+    assert!(doc.web_settings_diagnostics().is_empty());
+    let xml = web_settings(&doc);
+    assert_eq!(occurrences(&xml, "w:encoding"), 1, "{xml}");
+    assert_eq!(occurrences(&xml, "w:pixelsPerInch"), 1, "{xml}");
+    assert!(!xml.contains("windows-1252"), "{xml}");
+    assert!(!xml.contains("wide"), "{xml}");
+}
+
+#[test]
 fn a_settings_part_made_for_one_setting_goes_with_it() {
     // The minimal profile writes no settings part.
     let mut doc =
@@ -1549,6 +1719,10 @@ fn a_settings_part_made_for_one_setting_goes_with_it() {
     doc.set_document_variable("Stage", "draft").unwrap();
     let read = reopen(&mut doc);
     assert_eq!(read.document_variable("Stage"), Some("draft"));
+    assert!(has_override(
+        &saved_content_types(&mut doc),
+        "/word/settings.xml"
+    ));
     assert!(
         read.part_xml("word/_rels/document.xml.rels")
             .unwrap()
@@ -1559,6 +1733,11 @@ fn a_settings_part_made_for_one_setting_goes_with_it() {
     assert_eq!(
         doc.remove_document_variable("Stage").unwrap().as_deref(),
         Some("draft")
+    );
+    let content_types = saved_content_types(&mut doc);
+    assert!(
+        !has_override(&content_types, "/word/settings.xml"),
+        "{content_types}"
     );
     let doc = reopen(&mut doc);
     assert!(!has_part(&doc, "word/settings.xml"));
@@ -1781,11 +1960,7 @@ fn a_google_file_gains_properties_and_settings_and_keeps_its_own() {
     );
 }
 
-// Fails today: the property setters (custom, application, core) take a character
-// XML cannot carry, then every save of the document fails with
-// InvalidXmlCharacter; document variables refuse it already. Issue: #181
 #[test]
-#[should_panic(expected = "accepted a character XML cannot carry")]
 fn a_value_xml_cannot_carry_is_refused_and_the_document_still_saves() {
     type Attempt = fn(&mut Document) -> Result<()>;
     let attempts: [(&str, Attempt); 4] = [

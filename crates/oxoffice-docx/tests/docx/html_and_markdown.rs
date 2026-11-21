@@ -11,7 +11,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use oxoffice_docx::paragraph::ParagraphRef;
 use oxoffice_docx::run::RunRef;
 use oxoffice_docx::{
-    BreakKind, ChartData, ChartKind, Document, HtmlImageResource, Length, PictureOptions, StoryKind,
+    BreakKind, CT_PPr, ChartData, ChartKind, Document, HtmlImageResource, Length, PictureOptions,
+    StoryKind, StyleBuilder,
 };
 use oxoffice_docx_oxml::table::VMerge;
 use oxoffice_opc::OpcPackage;
@@ -307,10 +308,7 @@ fn headings_export_at_the_level_their_style_or_outline_level_gives() {
     assert_eq!(read_markdown(&doc.to_markdown()), expected);
 }
 
-// Fails today: Markdown writes a paragraph at outline level 9 (body text), such
-// as Word's TOC Heading, as a level-6 heading. Issue: #261
 #[test]
-#[should_panic(expected = "a body-text paragraph is written as a Markdown heading")]
 fn a_paragraph_at_the_body_text_outline_level_is_not_a_markdown_heading() {
     // The French Word report names its TOC Heading style, outline level 9,
     // "En-ttedetabledesmatires".
@@ -418,10 +416,7 @@ fn inline_formats_become_html_elements_and_markdown_spells_bold_italic_and_strik
     );
 }
 
-// Fails today: a run with w:u w:val="none" is written inside <u>, so every
-// Google Docs list item is underlined in HTML. Issue: #260
 #[test]
-#[should_panic(expected = "is underlined in HTML although its underline is off")]
 fn text_whose_underline_is_turned_off_is_not_underlined_in_html() {
     let mut doc = Document::new();
     doc.add_paragraph("").add_run("plain").underline(false);
@@ -493,9 +488,7 @@ fn markdown_escapes_specials_so_a_commonmark_reader_reads_back_the_text() {
     assert_eq!(read_markdown(&markdown), expected, "{markdown}");
 }
 
-// Fails today: Markdown writes `&copy;` as it is, so a reader shows ©. Issue: #259
 #[test]
-#[should_panic(expected = "reads an entity reference written as text as another character")]
 fn markdown_escapes_an_entity_reference_written_as_text() {
     let line = "&copy; 2026, &#42; and &amp;";
     let doc = reopen(&mut doc_with(&[line]));
@@ -506,12 +499,13 @@ fn markdown_escapes_an_entity_reference_written_as_text() {
         "a CommonMark reader reads an entity reference written as text as another character: \
          {markdown:?}"
     );
+    // An `&` that starts no reference is left as it is, at the end of a
+    // paragraph too.
+    let plain = reopen(&mut doc_with(&["R&D & sales", "Head of R&D"])).to_markdown();
+    assert_eq!(plain.trim_end(), "R&D & sales\n\nHead of R&D");
 }
 
-// Fails today: a paragraph that starts with a tab or four spaces is written
-// as it is, so a reader takes it for an indented code block. Issue: #259
 #[test]
-#[should_panic(expected = "a paragraph that starts with a tab is read as a code block")]
 fn a_paragraph_starting_with_a_tab_stays_a_paragraph_in_markdown() {
     let doc = reopen(&mut doc_with(&[
         "\tIndented by a tab",
@@ -536,6 +530,163 @@ fn a_paragraph_starting_with_a_tab_stays_a_paragraph_in_markdown() {
             "Plain"
         ],
         "a paragraph that starts with a tab is read as a code block: {read:?}"
+    );
+}
+
+#[test]
+fn markdown_escapes_a_character_reference_in_split_runs_alt_text_and_links() {
+    // Word splits runs around a word it flags: "&", "nbsp" and ";" in runs
+    // of their own still make a reference once written one after another.
+    let doc = reopen(&mut doc_with_body(
+        r#"<w:p><w:r><w:t>&amp;</w:t></w:r><w:r><w:t>nbsp</w:t></w:r><w:r><w:t>;</w:t></w:r></w:p>"#,
+    ));
+    assert_eq!(
+        read_markdown(&doc.to_markdown()),
+        [Read::Paragraph("&nbsp;".to_owned())]
+    );
+
+    let mut doc = Document::new();
+    let link = doc.add_hyperlink_relationship("https://example.com/?a=1&amp;b=2");
+    doc.add_paragraph("See ")
+        .add_hyperlink("&copy; terms", &link);
+    let body = body_story(&doc);
+    doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("&copy; logo")))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let targets = markdown_targets(&doc.to_markdown());
+    assert_eq!(
+        targets[0],
+        (
+            false,
+            "&copy; terms".to_owned(),
+            "https://example.com/?a=1&amp;b=2".to_owned()
+        )
+    );
+    assert_eq!(targets[1].1, "&copy; logo");
+}
+
+#[test]
+fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
+    let mut doc = Document::new();
+    {
+        let mut paragraph = doc.add_paragraph("");
+        let mut run = paragraph.add_run("a");
+        run.add_break(BreakKind::Line);
+        run.add_break(BreakKind::Line);
+        run.add_text("b");
+    }
+    let doc = reopen(&mut doc);
+    let read = read_markdown(&doc.to_markdown());
+    assert_eq!(read, [Read::Paragraph("a\n\nb".to_owned())]);
+}
+
+#[test]
+fn a_body_text_paragraph_takes_no_numbering_from_its_style_in_markdown() {
+    // The French Word thesis numbers its headings through Titre1, on which
+    // its TOC Heading style, outline level 9, is based.
+    let mut doc = corpus_doc("word/thesis.docx");
+    doc.insert_paragraph(0, "Contents")
+        .style("En-ttedetabledesmatires");
+    let doc = reopen(&mut doc);
+    let html = doc.to_html_fragment();
+    assert!(html.starts_with("<p>Contents</p>\n"), "{html:.80}");
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        read_markdown(&markdown)[0],
+        Read::Paragraph("Contents".to_owned()),
+        "{:?}",
+        markdown.lines().next()
+    );
+}
+
+#[test]
+fn a_described_picture_has_one_alt_attribute_in_epub() {
+    let mut doc = Document::new();
+    let body = body_story(&doc);
+    doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("A red dot")))
+        .unwrap();
+    let body = body_story(&doc);
+    doc.add_picture_with_options(&body, PNG, "plain.png", picture_options(Some("")))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let epub = doc.to_epub_bytes().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
+    let mut images = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+        let mut xhtml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xhtml).unwrap();
+        images.extend(xhtml.match_indices("<img").map(|(at, _)| {
+            let end = xhtml[at..].find('>').unwrap() + at;
+            xhtml[at..=end].to_owned()
+        }));
+    }
+    assert_eq!(images.len(), 2, "{images:?}");
+    for (image, alt) in images.iter().zip(["alt=\"A red dot\"", "alt=\"\""]) {
+        assert_eq!(image.matches(" alt=").count(), 1, "{image}");
+        assert!(image.contains(alt), "{image}");
+        assert!(image.ends_with(" style=\"max-width:100%\"/>"), "{image}");
+    }
+}
+
+#[test]
+fn a_paragraph_right_to_left_through_its_style_chain_keeps_its_direction_in_html() {
+    let mut doc = Document::new();
+    let right_to_left = CT_PPr {
+        bidi: Some(true),
+        ..CT_PPr::default()
+    };
+    doc.add_style(StyleBuilder::paragraph("Arabic", "Arabic").paragraph_properties(right_to_left))
+        .unwrap();
+    doc.add_style(StyleBuilder::paragraph("ArabicQuote", "Arabic quote").based_on("Arabic"))
+        .unwrap();
+    doc.add_paragraph("نص").style("ArabicQuote");
+    // A direct `w:bidi w:val="0"` wins over the style.
+    doc.add_paragraph("text")
+        .style("Arabic")
+        .right_to_left(false);
+    let doc = reopen(&mut doc);
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
+    assert!(html.contains("<p>text</p>"), "{html}");
+
+    // A paragraph without a style follows the default paragraph style.
+    let mut doc = Document::new();
+    doc.add_paragraph("نص");
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let start = styles
+        .find("w:styleId=\"Normal\"")
+        .expect("the template has Normal");
+    let end = styles[start..].find("</w:style>").unwrap() + start;
+    let normal = &styles[start..end];
+    let edited = match normal.find("<w:rPr>") {
+        Some(at) => format!("{}<w:pPr><w:bidi/></w:pPr>{}", &normal[..at], &normal[at..]),
+        None => format!("{normal}<w:pPr><w:bidi/></w:pPr>"),
+    };
+    assert!(!normal.contains("<w:pPr>"), "{normal}");
+    package.set_part(
+        "/word/styles.xml",
+        format!("{}{edited}{}", &styles[..start], &styles[end..]).into_bytes(),
+    );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
+
+    // `start` follows the direction rather than meaning left.
+    let doc = reopen(&mut doc_with_body(
+        r#"<w:p><w:pPr><w:bidi/><w:jc w:val="start"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+    ));
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains("<p dir=\"rtl\" style=\"text-align:start\">x</p>"),
+        "{html}"
     );
 }
 
@@ -624,9 +775,9 @@ fn values_from_the_file_cannot_inject_markup_into_html_attributes() {
     assert_eq!(html_texts(&html, "p"), ["hostilesafe"]);
 
     // A single-quoted attribute hands a literal quote to the reader (and no
-    // other character the font check refuses). Exported before any save,
-    // which would write it as &quot; again.
-    let quoted = doc_with_body(concat!(
+    // other character the font check refuses); a save writes it as &quot;,
+    // which reads back as the same quote.
+    let mut quoted = doc_with_body(concat!(
         r#"<w:p><w:r><w:rPr><w:rFonts w:ascii='Arial" onmouseover="steal'/></w:rPr>"#,
         r#"<w:t>quoted</w:t></w:r></w:p>"#,
     ));
@@ -642,6 +793,12 @@ fn values_from_the_file_cannot_inject_markup_into_html_attributes() {
         }
     }
     assert_eq!(html_texts(&html, "p"), ["quoted"]);
+    let quoted = reopen(&mut quoted);
+    let paragraph = quoted.paragraph(0).unwrap();
+    assert_eq!(
+        run_with_text(&paragraph, "quoted").font_name(),
+        Some("Arial\" onmouseover=\"steal")
+    );
 }
 
 #[test]
@@ -821,10 +978,7 @@ fn pictures_are_embedded_as_data_uris_of_their_bytes() {
     );
 }
 
-// Fails today: the HTML <img> has no alt attribute, while Markdown writes the
-// alt text. Issue: #260
 #[test]
-#[should_panic(expected = "the picture's alt text is missing from the HTML")]
 fn a_pictures_alt_text_reaches_the_html() {
     let mut doc = Document::new();
     let body = body_story(&doc);
@@ -934,10 +1088,7 @@ fn merged_cells_become_spans_in_html_and_keep_their_text_in_markdown() {
     );
 }
 
-// Fails today: the row span is counted by cell index, not by grid column, so
-// a cell merged down beside a horizontal merge gets no rowspan. Issue: #258
 #[test]
-#[should_panic(expected = "a cell merged down beside a horizontal merge loses its row span")]
 fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
     let mut doc = Document::new();
     {
@@ -968,10 +1119,81 @@ fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
     );
 }
 
-// Fails today: GFM cannot span, and the cells after a merged one are written
-// in the next free column instead of their own. Issue: #258
+/// A table of three grid columns whose rows are `rows`, each a row's XML
+/// inside `w:tr`.
+fn three_column_table(rows: &[&str]) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}</w:tbl><w:p/>"#,
+        rows.iter()
+            .map(|row| format!("<w:tr>{row}</w:tr>"))
+            .collect::<String>()
+    )
+}
+
+/// A cell holding `text`, with `properties` inside its `w:tcPr`.
+fn table_cell(properties: &str, text: &str) -> String {
+    format!(r#"<w:tc><w:tcPr>{properties}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#)
+}
+
 #[test]
-#[should_panic(expected = "a cell after a horizontal merge moves to another column in Markdown")]
+fn markdown_places_cells_by_grid_column_and_aligns_columns_by_their_header() {
+    let header = format!(
+        "{}{}",
+        table_cell(r#"<w:gridSpan w:val="2"/>"#, "A")
+            .replace("<w:p>", r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr>"#),
+        table_cell("", "B").replace("<w:p>", r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr>"#)
+    );
+    let omitted = format!(
+        r#"<w:trPr><w:gridBefore w:val="1"/></w:trPr>{}{}"#,
+        table_cell("", "x"),
+        table_cell("", "y")
+    );
+    let doc = reopen(&mut doc_with_body(&three_column_table(&[
+        &header, &omitted,
+    ])));
+    let markdown = doc.to_markdown();
+    let read = read_markdown(&markdown);
+    let Read::Table(rows) = &read[0] else {
+        panic!("{read:?}")
+    };
+    assert_eq!(rows[0], ["A", "", "B"]);
+    assert_eq!(rows[1], ["", "x", "y"]);
+    assert_eq!(
+        markdown.lines().nth(1),
+        Some("| :---: | --- | ---: |"),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn a_huge_grid_span_from_the_file_stays_within_the_table_in_both_exports() {
+    // Two cells past the table's width, as a generator that sets gridSpan
+    // without removing the cells it covers writes them: both keep their text.
+    let row = format!(
+        "{}{}{}",
+        table_cell(r#"<w:gridSpan w:val="4000000000"/>"#, "wide"),
+        table_cell("", "after"),
+        table_cell("", "then")
+    );
+    let before = format!(
+        r#"<w:trPr><w:gridBefore w:val="4000000000"/></w:trPr>{}{}"#,
+        table_cell("", "late"),
+        table_cell("", "later")
+    );
+    let doc = reopen(&mut doc_with_body(&three_column_table(&[&row, &before])));
+    let markdown = doc.to_markdown();
+    assert!(markdown.len() < 1000, "{} bytes", markdown.len());
+    assert!(
+        ["wide", "after", "then", "late", "later"]
+            .iter()
+            .all(|text| markdown.contains(text)),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("after") && html.contains("late"), "{html}");
+}
+
+#[test]
 fn markdown_keeps_the_cells_after_a_horizontal_merge_in_their_columns() {
     let mut doc = Document::new();
     three_by_three(&mut doc)
@@ -1019,28 +1241,37 @@ fn markdown_tables_take_the_first_row_as_header_and_escape_cell_text() {
     assert_eq!(rows[2], ["*x*", "`y`"]);
 }
 
-// Fails today: Markdown writes "(nested table)" in place of a nested table and
-// reports nothing. Issue: #263
 #[test]
-#[should_panic(expected = "the nested table's text is missing from the Markdown")]
 fn markdown_keeps_the_text_of_a_nested_table() {
     let mut doc = Document::new();
     {
         let mut table = doc.add_table(1, 2);
         table.cell(0, 0).unwrap().set_text("Supported codes");
-        table
-            .cell(0, 1)
-            .unwrap()
-            .add_table(1, 1)
-            .cell(0, 0)
-            .unwrap()
-            .set_text("EAN-13");
+        let mut cell = table.cell(0, 1).unwrap();
+        let mut nested = cell.add_table(2, 2);
+        for (row, texts) in [["EAN-13", "13 digits"], ["UPC-A", "12 digits"]]
+            .iter()
+            .enumerate()
+        {
+            for (column, text) in texts.iter().enumerate() {
+                nested.cell(row, column).unwrap().set_text(text);
+            }
+        }
     }
     let doc = reopen(&mut doc);
-    assert_eq!(html_texts(&doc.to_html_fragment(), "td td"), ["EAN-13"]);
-    let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
-    assert!(
-        markdown.contains("EAN-13") || !diagnostics.is_empty(),
+    assert_eq!(
+        html_texts(&doc.to_html_fragment(), "td td"),
+        ["EAN-13", "13 digits", "UPC-A", "12 digits"]
+    );
+    // GFM has no nested tables: the nested table's rows go into the cell,
+    // each on a line of its own, its cells between pipes.
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        read_markdown(&markdown),
+        [Read::Table(vec![vec![
+            "Supported codes".to_owned(),
+            "EAN-13 | 13 digits<br>UPC-A | 12 digits".to_owned()
+        ]])],
         "the nested table's text is missing from the Markdown: {markdown}"
     );
 }
@@ -1297,10 +1528,7 @@ fn rtl_and_cjk_text_of_the_minutes_survives_both_exports() {
     }
 }
 
-// Fails today: HTML writes a w:bidi paragraph without dir="rtl", so a browser
-// lays it out left to right. Issue: #260
 #[test]
-#[should_panic(expected = "the right-to-left paragraph is written without its direction")]
 fn a_right_to_left_paragraph_keeps_its_direction_in_html() {
     let doc = corpus_doc("word/minutes.docx");
     let paragraph = doc

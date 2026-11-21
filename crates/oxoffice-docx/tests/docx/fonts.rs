@@ -4,7 +4,7 @@
 //! theme fonts and the theme font language, on new and corpus documents.
 
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use oxoffice_docx::{
     CT_RPr, Document, EmbeddedFont, EmbeddedFontKind, FontDefinition, FontEmbeddingLicense, Length,
@@ -89,6 +89,20 @@ fn font_names(doc: &Document) -> Vec<String> {
 fn saved_package(doc: &mut Document) -> OpcPackage {
     let bytes = doc.to_bytes().expect("document saves");
     OpcPackage::from_reader(Cursor::new(bytes)).expect("saved package opens")
+}
+
+/// `[Content_Types].xml` as the document saves now, read from the ZIP.
+fn saved_content_types(doc: &mut Document) -> String {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("saved document is a ZIP");
+    let mut entry = zip
+        .by_name("[Content_Types].xml")
+        .expect("content types are saved");
+    let mut xml = String::new();
+    entry
+        .read_to_string(&mut xml)
+        .expect("content types are UTF-8");
+    xml
 }
 
 /// The package of a corpus file, as its producer wrote it.
@@ -709,6 +723,232 @@ fn a_font_record_whose_kept_xml_names_a_relationship_is_still_refused() {
 }
 
 #[test]
+fn a_relationship_prefix_counts_only_where_it_is_in_scope() {
+    // (case, a record the guard refuses, the same record with the prefix out
+    // of scope where the relationship id is, which goes). The font table
+    // binds `r` to the relationships namespace.
+    let cases = [
+        (
+            "redeclared in a nested element",
+            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:wrap xmlns:x="urn:example:fonts"><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
+            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:wrap xmlns:x="urn:example:fonts" xmlns:r="urn:example:other"><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
+        ),
+        (
+            "bound on the record, redeclared in a nested element",
+            format!(
+                r#"<w:font w:name="Gelasio" xmlns:rel="{REL_NS}"><x:wrap xmlns:x="urn:example:fonts"><x:face rel:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+            ),
+            format!(
+                r#"<w:font w:name="Gelasio" xmlns:rel="{REL_NS}"><x:wrap xmlns:x="urn:example:fonts" xmlns:rel="urn:example:other"><x:face rel:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+            ),
+        ),
+        (
+            "unbound in a nested element",
+            r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
+            r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:r=""><x:face r:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#.to_owned(),
+        ),
+        (
+            "rebound in a sibling that has closed",
+            format!(
+                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:q="urn:example:other"><x:links xmlns:q="{REL_NS}"><x:face q:id="rId9"/></x:links></x:wrap><w:family w:val="roman"/></w:font>"#
+            ),
+            format!(
+                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts" xmlns:q="urn:example:other"><x:links xmlns:q="{REL_NS}"><x:note/></x:links><x:face q:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+            ),
+        ),
+        (
+            "bound only in a sibling that has closed",
+            format!(
+                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:links xmlns:q="{REL_NS}"><x:note q:id="rId9"/></x:links></x:wrap><w:family w:val="roman"/></w:font>"#
+            ),
+            format!(
+                r#"<w:font w:name="Gelasio"><x:wrap xmlns:x="urn:example:fonts"><x:links xmlns:q="{REL_NS}"><x:note/></x:links><x:face q:id="rId9"/></x:wrap><w:family w:val="roman"/></w:font>"#
+            ),
+        ),
+    ];
+    let courier = r#"<w:font w:name="Courier"><w:family w:val="modern"/></w:font>"#;
+    for (case, refused, removed) in cases {
+        let mut doc = doc_with_font_record(&format!("{refused}{courier}"));
+        let error = doc.remove_font("Gelasio").expect_err(case).to_string();
+        assert!(error.contains("names a relationship"), "{case}: {error}");
+
+        let mut doc = doc_with_font_record(&format!("{removed}{courier}"));
+        assert_eq!(
+            doc.remove_font("Gelasio")
+                .unwrap_or_else(|error| panic!("{case}: {error}")),
+            Some(FontDefinition::new("Gelasio").with_family("roman")),
+            "{case}"
+        );
+        let doc = reopen(&mut doc);
+        assert_eq!(font_names(&doc), ["Courier"], "{case}");
+        let xml = doc.part_xml(FONT_TABLE).expect("font table");
+        assert!(!xml.contains("urn:example:fonts"), "{case}: {xml}");
+    }
+}
+
+// Fails today: describing or embedding refuses an unmodelled font table, but
+// both removals answer that there is nothing to remove and keep the record.
+// Issue: #319
+#[test]
+#[should_panic(expected = "a removal from a font table it cannot read reported nothing to remove")]
+fn removing_from_a_font_table_that_cannot_be_read_is_refused() {
+    // The family before the charset is out of schema order: the table is
+    // kept as written and not modelled.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:family w:val="roman"/><w:charset w:val="00"/></w:font>"#,
+    );
+    let error = doc.try_fonts().unwrap_err().to_string();
+    assert!(error.contains("unmodeled"), "{error}");
+    let error = doc
+        .set_font(FontDefinition::new("Gelasio"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unmodeled font table"), "{error}");
+    let before = doc.to_bytes().expect("document saves");
+
+    let removals = [
+        doc.remove_font("Gelasio").map(|removed| removed.is_some()),
+        doc.remove_embedded_font("Gelasio", Regular)
+            .map(|removed| removed.is_some()),
+    ];
+    assert_eq!(doc.to_bytes().expect("document saves"), before);
+    assert!(
+        removals.iter().all(Result::is_err),
+        "a removal from a font table it cannot read reported nothing to remove: {removals:?}"
+    );
+}
+
+#[test]
+fn a_word_record_with_embedded_faces_goes_with_their_relationships_parts_and_content_types() {
+    // Word's "Embed fonts in the file": panose, charset, family, pitch and
+    // signature, then the faces, the regular one subsetted.
+    let records = format!(
+        concat!(
+            r#"<w:font w:name="Gelasio"><w:panose1 w:val="02020503060000020004"/><w:charset w:val="00"/>"#,
+            r#"<w:family w:val="roman"/><w:pitch w:val="variable"/>"#,
+            r#"<w:sig w:usb0="A00000FF" w:usb1="4000204B" w:usb2="00000000" w:usb3="00000000" w:csb0="00000193" w:csb1="00000000"/>"#,
+            r#"<w:embedRegular r:id="rId9" w:fontKey="{key}" w:subsetted="1"/>"#,
+            r#"<w:embedBold r:id="rId10" w:fontKey="{other}"/></w:font>"#,
+            r#"<w:font w:name="Courier"><w:panose1 w:val="02070409020205020404"/><w:charset w:val="00"/>"#,
+            r#"<w:family w:val="modern"/><w:pitch w:val="fixed"/>"#,
+            r#"<w:embedRegular r:id="rId11" w:fontKey="{key}"/></w:font>"#
+        ),
+        key = KEY,
+        other = OTHER_KEY
+    );
+    let obfuscated = |marker: &str, key: &str| xor_head(&tiny_font(marker), spec_xor_key(key));
+    let mut doc = doc_with_font_table(
+        &records,
+        &[
+            (
+                "rId9",
+                "fonts/font1.odttf",
+                OBFUSCATED_FONT_TYPE,
+                obfuscated("Gelasio regular", KEY),
+            ),
+            (
+                "rId10",
+                "fonts/font2.odttf",
+                OBFUSCATED_FONT_TYPE,
+                obfuscated("Gelasio bold", OTHER_KEY),
+            ),
+            (
+                "rId11",
+                "fonts/font3.odttf",
+                OBFUSCATED_FONT_TYPE,
+                obfuscated("Courier regular", KEY),
+            ),
+        ],
+    );
+    let gelasio = ["/word/fonts/font1.odttf", "/word/fonts/font2.odttf"];
+    let before = saved_package(&mut doc);
+    assert_eq!(font_parts(&before).len(), 3);
+    let content_types = saved_content_types(&mut doc);
+    for part in gelasio {
+        assert_eq!(
+            before.content_types.content_type_for(part),
+            Some(OBFUSCATED_FONT_TYPE),
+            "{part}"
+        );
+        assert!(
+            content_types.contains(&format!(r#"PartName="{part}""#)),
+            "{part}: {content_types}"
+        );
+    }
+    // Both faces are modelled, so the record names its relationships only
+    // through them.
+    let fonts = doc.try_fonts().unwrap();
+    assert_eq!(font(&fonts, "Gelasio").embedded_fonts.len(), 2);
+
+    let removed = doc
+        .remove_font("Gelasio")
+        .expect("a Word record with modelled faces can be removed")
+        .expect("Gelasio is listed");
+    assert_eq!(
+        (removed.family.as_deref(), removed.pitch.as_deref()),
+        (Some("roman"), Some("variable"))
+    );
+    let faces: Vec<_> = removed
+        .embedded_fonts
+        .iter()
+        .map(|face| {
+            (
+                face.kind,
+                face.data.clone(),
+                face.font_key.as_str(),
+                face.subsetted,
+            )
+        })
+        .collect();
+    assert_eq!(
+        faces,
+        [
+            (Regular, tiny_font("Gelasio regular"), KEY, true),
+            (Bold, tiny_font("Gelasio bold"), OTHER_KEY, false),
+        ]
+    );
+
+    let mut doc = reopen(&mut doc);
+    assert_eq!(font_names(&doc), ["Courier"]);
+    let fonts = doc.try_fonts().unwrap();
+    let courier = font(&fonts, "Courier");
+    assert_eq!(courier.embedded_fonts.len(), 1);
+    assert_eq!(courier.embedded_fonts[0].data, tiny_font("Courier regular"));
+    let xml = doc.part_xml(FONT_TABLE).expect("font table");
+    assert!(!xml.contains("02020503060000020004"), "{xml}");
+    assert!(!xml.contains("A00000FF"), "{xml}");
+    let package = saved_package(&mut doc);
+    assert_eq!(font_parts(&package), ["/word/fonts/font3.odttf"]);
+    let ids: Vec<_> = font_relationships(&package)
+        .into_iter()
+        .map(|relationship| relationship.id)
+        .collect();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        font_part_of(&font_relationships(&package)[0]),
+        "/word/fonts/font3.odttf"
+    );
+    let content_types = saved_content_types(&mut doc);
+    for part in gelasio {
+        assert_eq!(package.content_types.content_type_for(part), None, "{part}");
+        assert!(
+            !content_types.contains(&format!(r#"PartName="{part}""#)),
+            "{part}: {content_types}"
+        );
+    }
+    assert!(
+        content_types.contains(r#"PartName="/word/fonts/font3.odttf""#),
+        "{content_types}"
+    );
+    assert_eq!(
+        package
+            .content_types
+            .content_type_for("/word/fonts/font3.odttf"),
+        Some(OBFUSCATED_FONT_TYPE)
+    );
+}
+
+#[test]
 fn an_unknown_child_that_names_no_relationship_goes_with_its_record() {
     let mut doc = doc_with_font_record(
         r#"<w:font w:name="Gelasio"><w:panose1 w:val="02020503060000020004"/><x:note xmlns:x="urn:example:fonts" x:by="a producer"/><w:charset w:val="00"/><w:family w:val="roman"/></w:font><w:font w:name="Courier"><w:family w:val="modern"/></w:font>"#,
@@ -820,6 +1060,161 @@ fn clearing_a_field_that_holds_unmodelled_xml_is_refused() {
     let xml = reopen(&mut doc).part_xml(FONT_TABLE).expect("font table");
     assert!(xml.contains(r#"x:hint="serif""#), "{xml}");
     assert!(!xml.contains("w:pitch"), "{xml}");
+}
+
+#[test]
+fn setting_a_field_the_record_keeps_as_written_is_refused() {
+    // A field element without `w:val`, or with an element inside, reads as
+    // unset and stays as written; writing a second one would leave a font
+    // table the next open cannot read. (record, field set, that field.)
+    for (record, definition, field) in [
+        (
+            r#"<w:font w:name="Gelasio"><w:family w:val="roman"><x:ext xmlns:x="urn:example:fonts"/></w:family></w:font>"#,
+            FontDefinition::new("Gelasio").with_family("swiss"),
+            "family",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:family/></w:font>"#,
+            FontDefinition::new("Gelasio").with_family("swiss"),
+            "family",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:pitch><x:ext xmlns:x="urn:example:fonts"/></w:pitch></w:font>"#,
+            FontDefinition::new("Gelasio").with_pitch("fixed"),
+            "pitch",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:altName xmlns:x="urn:example:fonts" x:val="Georgia"/></w:font>"#,
+            FontDefinition::new("Gelasio").with_alternate_name("Georgia"),
+            "alternate name",
+        ),
+        (
+            r#"<w:font w:name="Gelasio"><w:pitch xmlns:x="urn:example:fonts" x:val="fixed"> </w:pitch></w:font>"#,
+            FontDefinition::new("Gelasio").with_pitch("fixed"),
+            "pitch",
+        ),
+    ] {
+        let mut doc = doc_with_font_record(record);
+        let before = doc.to_bytes().expect("document saves");
+        let error = doc.set_font(definition).expect_err(record).to_string();
+        assert!(
+            error.contains(&format!("cannot set the {field} of font Gelasio")),
+            "{record}: {error}"
+        );
+        assert_eq!(doc.to_bytes().expect("document saves"), before, "{record}");
+    }
+
+    // Another field is set beside the kept element, and the table still reads.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:family w:val="roman"><x:ext xmlns:x="urn:example:fonts"/></w:family></w:font>"#,
+    );
+    doc.set_font(FontDefinition::new("Gelasio").with_pitch("variable"))
+        .expect("the pitch can be set");
+    let mut reopened = reopen(&mut doc);
+    assert_eq!(
+        font(&reopened.fonts(), "Gelasio").pitch.as_deref(),
+        Some("variable")
+    );
+    let xml = reopened.part_xml(FONT_TABLE).expect("font table");
+    assert_eq!(xml.matches("<w:family").count(), 1, "{xml}");
+    reopened
+        .set_font(FontDefinition::new("Gelasio").with_pitch("fixed"))
+        .expect("the reopened table is still modelled");
+
+    // An unknown child where the family would go is not a kept family.
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:note xmlns:x="urn:example:fonts"/></w:font>"#,
+    );
+    doc.set_font(FontDefinition::new("Gelasio").with_family("swiss"))
+        .expect("the family can be set beside an unknown child");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        font(&doc.fonts(), "Gelasio").family.as_deref(),
+        Some("swiss")
+    );
+}
+
+#[test]
+fn embedding_a_face_beside_a_face_the_record_keeps_as_written_is_refused() {
+    let record = format!(
+        r#"<w:font w:name="Gelasio"><w:embedRegular r:id="rId9" w:fontKey="{KEY}"><x:note xmlns:x="urn:example:fonts"/></w:embedRegular></w:font>"#
+    );
+    let mut doc = doc_with_font_record(&record);
+    let before = doc.to_bytes().expect("document saves");
+    let error = doc
+        .embed_font("Gelasio", face(Regular, tiny_font("Gelasio regular")))
+        .expect_err("a second regular face")
+        .to_string();
+    assert!(
+        error.contains("cannot embed the embedRegular face of font Gelasio"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().expect("document saves"), before);
+
+    // A face of another kind goes in, and the table still reads.
+    doc.embed_font("Gelasio", face(Bold, tiny_font("Gelasio bold")))
+        .expect("a bold face");
+    let doc = reopen(&mut doc);
+    assert_eq!(font(&doc.fonts(), "Gelasio").embedded_fonts.len(), 1);
+}
+
+#[test]
+fn a_run_font_name_with_markup_characters_survives_a_save() {
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_run("x").font("A&B \"Q\" <C>");
+    let first_font = |doc: &Document| {
+        let paragraph = doc.paragraph(0).expect("the paragraph");
+        let run = paragraph.runs().next().expect("the run");
+        run.font_name().map(str::to_owned)
+    };
+    let doc = reopen(&mut doc);
+    assert_eq!(first_font(&doc).as_deref(), Some("A&B \"Q\" <C>"));
+
+    // A tab is kept, save after save: the reader does not normalize it away.
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_run("x").font("A\tB");
+    let mut doc = reopen(&mut doc);
+    doc.paragraph_mut(0)
+        .expect("the paragraph")
+        .run_mut(0)
+        .expect("the run")
+        .set_bold(true);
+    let doc = reopen(&mut doc);
+    assert_eq!(first_font(&doc).as_deref(), Some("A\tB"));
+
+    // A file names the font with entities; a foreign attribute stays as written.
+    let mut doc = doc_with(&[]);
+    doc = {
+        let bytes = doc.to_bytes().expect("document saves");
+        let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+        let xml =
+            String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+        let xml = xml.replacen(
+            "<w:body>",
+            r#"<w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="A&amp;B" xmlns:x="urn:example:fonts" x:note="1&amp;2"/></w:rPr><w:t>x</w:t></w:r></w:p>"#,
+            1,
+        );
+        package.set_part("/word/document.xml", xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("package writes");
+        Document::from_bytes(&out.into_inner()).expect("document opens")
+    };
+    assert_eq!(first_font(&doc).as_deref(), Some("A&B"));
+    // An edit of the run writes its properties again.
+    doc.paragraph_mut(0)
+        .expect("the paragraph")
+        .run_mut(0)
+        .expect("the run")
+        .set_bold(true);
+    let mut doc = reopen(&mut doc);
+    assert_eq!(first_font(&doc).as_deref(), Some("A&B"));
+    let xml = saved_package(&mut doc)
+        .get_part("/word/document.xml")
+        .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap())
+        .unwrap();
+    assert!(xml.contains(r#"w:ascii="A&amp;B""#), "{xml}");
+    assert!(xml.contains("<w:b/>"), "{xml}");
+    assert!(xml.contains(r#"x:note="1&amp;2""#), "{xml}");
 }
 
 // ---- Embedding faces ----

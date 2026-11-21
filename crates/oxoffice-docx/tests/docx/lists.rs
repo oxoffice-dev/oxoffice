@@ -1218,6 +1218,19 @@ fn exports_show_the_report_lists_of_every_producer() {
                 "{name}: Markdown shows {item:?}:\n{markdown}"
             );
         }
+        // RTF keeps them too, read back as lists.
+        let rtf = doc.to_rtf_bytes().unwrap();
+        let reread = Document::from_rtf_bytes(&rtf.bytes).unwrap().document;
+        let reread_markdown = reread.to_markdown();
+        for item in [
+            "- Subscription revenue reached 4.2 million euros, up from 3.7 million.",
+            "1. Hire two support engineers for the evening shift.",
+        ] {
+            assert!(
+                reread_markdown.lines().any(|line| line == item),
+                "{name}: RTF keeps {item:?}:\n{reread_markdown}"
+            );
+        }
         let html = doc.to_html_fragment();
         assert_eq!(
             html_list_of(&html, "Subscription revenue reached"),
@@ -1281,6 +1294,133 @@ fn exports_follow_a_style_numbered_through_its_based_on_chain_or_the_default_sty
 }
 
 #[test]
+fn rtf_export_numbers_lists_as_layout_does() {
+    let rtf_markers = |doc: &Document| {
+        let rtf = doc.to_rtf_bytes().unwrap();
+        markers(&Document::from_rtf_bytes(&rtf.bytes).unwrap().document)
+    };
+    // Through the style chain, as Word's List Bullet and List Number set it.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.add_style(StyleBuilder::paragraph("Steps", "Steps"))
+        .unwrap();
+    doc.link_style_to_numbering("Steps", id, 0).unwrap();
+    doc.add_style(StyleBuilder::paragraph("SubSteps", "Sub steps").based_on("Steps"))
+        .unwrap();
+    doc.add_paragraph("first step").style("Steps");
+    doc.add_paragraph("second step").style("SubSteps");
+    // A direct numId 0 takes the style's list off.
+    doc.add_paragraph("third step").style("Steps");
+    doc.add_paragraph("not a step").style("Steps");
+    doc.paragraph_mut(3).unwrap().set_numbering(0, 0);
+    assert_eq!(markers(&doc), ["1.", "2.", "3.", ""]);
+    assert_eq!(rtf_markers(&doc), ["1.", "2.", "3.", ""]);
+    let diagnostics = doc.to_rtf_bytes().unwrap().diagnostics;
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("without numbering id")),
+        "{diagnostics:?}"
+    );
+
+    // A paragraph with no pPr at all, numbered through the default style.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.link_style_to_numbering("Normal", id, 0).unwrap();
+    doc.add_paragraph("default style step");
+    assert_eq!(rtf_markers(&doc), ["1."]);
+
+    // The level an instance swaps in, and an instance's start override.
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet().level_text("–"))],
+        )
+        .unwrap();
+    let restarted = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).start(7)],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    add_items(&mut doc, restarted, &[0]);
+    let expected = markers(&doc);
+    assert_eq!(expected, ["–", "7."]);
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(rtf.contains(r"\levelstartat7"), "{rtf}");
+    assert_eq!(rtf_markers(&doc)[1], "7.", "{rtf}");
+    // The swapped-in level is a bullet (\levelnfc23), not the definition's
+    // number that starts at 3.
+    let first_list = &rtf[rtf.find(r"{\list").unwrap()..];
+    let first_list = &first_list[..first_list.find(r"\listid").unwrap()];
+    assert!(first_list.contains(r"\levelnfc23"), "{rtf}");
+    let swapped_marker = rtf_markers(&doc).remove(0);
+    assert!(
+        !swapped_marker.is_empty() && !swapped_marker.ends_with('.'),
+        "{swapped_marker:?}: {rtf}"
+    );
+}
+
+#[test]
+fn exports_keep_a_direct_level_on_the_list_of_its_style() {
+    // Word writes a sub-clause as its style's list with a direct w:ilvl and
+    // no w:numId: the level is not dropped.
+    let (mut doc, id) = single_list(&[ListLevel::decimal(), ListLevel::decimal()]);
+    doc.add_style(StyleBuilder::paragraph("Clauses", "Clauses"))
+        .unwrap();
+    doc.link_style_to_numbering("Clauses", id, 0).unwrap();
+    doc.add_paragraph("clause").style("Clauses");
+    doc.add_paragraph("sub clause").style("Clauses");
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let style = r#"<w:pStyle w:val="Clauses"/>"#;
+    let second = xml.rfind(style).expect("the sub clause's style");
+    let xml = format!(
+        "{}{style}<w:numPr><w:ilvl w:val=\"1\"/></w:numPr>{}",
+        &xml[..second],
+        &xml[second + style.len()..]
+    );
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let rtf = doc.to_rtf_bytes().unwrap();
+    let text = String::from_utf8(rtf.bytes.clone()).unwrap();
+    assert!(text.contains(r"\ilvl1"), "{text}");
+    let odt = doc.to_odt_bytes().unwrap();
+    let messages: Vec<&str> = rtf
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .chain(
+            odt.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str()),
+        )
+        .collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("without a numbering id")
+                || message.contains("without numbering id")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn rtf_reads_a_font_named_with_unicode_characters() {
+    // LibreOffice's "ＭＳ ゴシック" comes as \u characters between bytes.
+    let rtf = br"{\rtf1\ansi{\fonttbl{\f0 A\u-211?B\u-205? C;}}\f0 x\par}";
+    let doc = Document::from_rtf_bytes(rtf).unwrap().document;
+    assert_eq!(
+        doc.paragraph(0).unwrap().run(0).unwrap().font_name(),
+        Some("AＭBＳ C")
+    );
+}
+
+#[test]
 fn exports_leave_a_level_without_marker_out_of_lists() {
     let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
     add_items(&mut doc, id, &[0]);
@@ -1314,6 +1454,21 @@ fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
     let html = doc.to_html_fragment();
     assert_eq!(html.matches("<ol>").count(), 1, "{html}");
     assert!(html.contains("<li>item 1<p>item 2</p></li>"), "{html}");
+
+    // ODT writes the `none` level as a numbered level with no number, so
+    // LibreOffice draws nothing on the sub-paragraphs and keeps counting.
+    let odt = doc.to_odt_bytes().unwrap();
+    let messages: Vec<&str> = odt
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        !messages.iter().any(|message| message.contains("decimal")),
+        "a none level is not exported as a decimal level: {messages:?}"
+    );
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    assert_eq!(markers(&reread), ["1.", "", "2.", "", "3."]);
 }
 
 #[test]

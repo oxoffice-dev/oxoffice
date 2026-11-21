@@ -225,12 +225,14 @@ enum Command {
     /// Give one pair with -p and -v, or many with --map. Nothing is written
     /// unless every pair with an expected count replaced exactly that count,
     /// and, without --regex or --allow-unreached, unless no placeholder is
-    /// left after its replacement, out of its reach. A tab reads as a tab
-    /// character and a break as a line feed, as `text` prints them (in --map
-    /// JSON, write them "\t" and "\n"): a placeholder holding one matches it,
-    /// and a value holding one writes it. A carriage return or a Windows line
-    /// ending in a value writes one line break, and a page or column break
-    /// matched and written back becomes a line break.
+    /// left after its replacement, out of its reach. A tab or a positional tab
+    /// reads as a tab character, a non-breaking hyphen as "-" and a break as a
+    /// line feed, as `text` prints them (in --map JSON, write them "\t" and
+    /// "\n"): a placeholder holding one matches it, and a value holding one
+    /// writes it. A carriage return or a Windows line ending in a value writes
+    /// one line break; a page or column break matched and written back becomes
+    /// a line break, a positional tab an ordinary tab and a non-breaking hyphen
+    /// a plain one.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,

@@ -1,0 +1,36 @@
+name: Bug report
+description: Something oxoffice does wrong with a Word or PowerPoint file, from Rust, the CLI or Python.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the [open issues](https://github.com/oxoffice-dev/oxoffice/issues) first: the same defect, or one with the same cause, may be there already. Severity and area labels are set at triage.
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: The command or code you ran and what it did (output, error, the file it wrote). A small file that shows it helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: seen-with
+    attributes:
+      label: Seen with
+      description: Which program made the file (Word, PowerPoint, LibreOffice, Google Docs or Slides, oxoffice, another library) and what kind of file it is (a report with tracked changes, a deck from a template, a form...). Add `oxoffice --version` and your system (Windows, macOS, Linux).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What you expected instead, and what Word, PowerPoint or LibreOffice does with the same file if you know.
+    validations:
+      required: true
+  - type: input
+    id: same-cause
+    attributes:
+      label: Same cause as
+      description: "The number of an issue with the same root cause, if you know one (for example #123)."
+      placeholder: "#123"
+    validations:
+      required: false

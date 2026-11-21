@@ -2,6 +2,8 @@
 //! page and line numbering, break type), and the headers and footers each
 //! section shows: set, read, inherited, linked, unlinked and removed.
 
+use std::io::Cursor;
+
 use oxoffice_docx::{
     ContentFragment, ContentLocation, Document, HdrFtrType, HeaderFooterKind, Length, SectionBreak,
     SectionStory, StoryId, StoryItemKind, StoryKind, Twips,
@@ -10,6 +12,8 @@ use oxoffice_docx_oxml::document::{CT_LineNumber, ST_LineNumberRestart};
 use oxoffice_docx_oxml::shared::{ST_PageOrientation, ST_SectionType};
 use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_docx_oxml::text::CT_P;
+use oxoffice_opc::OpcPackage;
+use oxoffice_opc::relationship::rel_types;
 
 use crate::support::{corpus_doc, doc_with, reopen, texts};
 
@@ -619,23 +623,324 @@ fn inheriting_again_in_the_same_session_drops_the_copy() {
     assert_eq!(header_part_count(&doc), 1);
 }
 
-// Fails today: the copy a section stops using stays in the saved file as a
-// header part nothing references. Issue: #28
 #[test]
-#[should_panic(expected = "the copy leaves the file")]
 fn inheriting_again_drops_the_copy_from_the_file() {
+    // After a save and a reopen the copy is an imported part: it still goes
+    // once nothing uses it, with all it brought to the package.
     let mut doc = inherited_header_and_footer();
     let copy = doc
         .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
         .unwrap();
     rewrite_first_paragraph(&mut doc, &copy, "landscape pages");
+    // A link gives the copy a relationships part of its own.
+    let copy = header_story(&doc, 1).story().clone();
+    doc.add_hyperlink_to_story(&copy, "site", "https://example.com/landscape")
+        .unwrap();
     let mut doc = reopen(&mut doc);
+    let copy_part = format!("/{}", copy.part_name().trim_start_matches('/'));
+    let rels_part = {
+        let (folder, file) = copy_part.rsplit_once('/').unwrap();
+        format!("{folder}/_rels/{file}.rels")
+    };
+    let relationships = |doc: &Document| doc.part_xml("word/_rels/document.xml.rels").unwrap();
+    let content_types = |doc: &Document| doc.part_xml("[Content_Types].xml").unwrap();
+    let file = copy_part.rsplit('/').next().unwrap().to_owned();
+    assert!(doc.part_names().unwrap().contains(&copy_part));
+    assert!(doc.part_names().unwrap().contains(&rels_part));
+    assert!(relationships(&doc).contains(&file));
+    assert!(content_types(&doc).contains(&copy_part));
+
     doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
         .unwrap();
     let doc = reopen(&mut doc);
     assert!(header_story(&doc, 1).is_inherited());
     assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
     assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
+    let names = doc.part_names().unwrap();
+    assert!(!names.contains(&copy_part), "the part goes");
+    assert!(!names.contains(&rels_part), "its relationships part goes");
+    assert!(
+        !relationships(&doc).contains(&file),
+        "the relationship to it goes"
+    );
+    assert!(
+        !content_types(&doc).contains(&copy_part),
+        "its content type goes"
+    );
+    for name in names.iter().filter(|name| name.ends_with(".xml")) {
+        assert!(
+            !doc.part_xml(name).unwrap().contains("landscape pages"),
+            "the removed text is in no part: {name}"
+        );
+    }
+}
+
+/// The media parts the document would save.
+fn media_parts(doc: &Document) -> Vec<String> {
+    doc.part_names()
+        .expect("document saves")
+        .into_iter()
+        .filter(|name| name.starts_with("/word/media/"))
+        .collect()
+}
+
+#[test]
+fn inheriting_again_drops_the_pictures_only_the_copy_showed() {
+    // A logo or a signature in a dropped header must not travel with the file.
+    let mut doc = inherited_header_and_footer();
+    doc.unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let copy = header_story(&doc, 1).story().clone();
+    doc.add_picture_to_story(&copy, PNG, "logo.png", twips(567), twips(567))
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(media_parts(&doc).len(), 1, "the copy's picture is saved");
+
+    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
+    assert!(media_parts(&doc).is_empty(), "its picture goes with it");
+}
+
+#[test]
+fn inheriting_again_keeps_a_picture_the_body_also_shows() {
+    let mut doc = inherited_header_and_footer();
+    doc.add_picture(PNG, "logo.png", twips(567), twips(567));
+    doc.unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let copy = header_story(&doc, 1).story().clone();
+    doc.add_picture_to_story(&copy, PNG, "logo.png", twips(567), twips(567))
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let saved = media_parts(&doc);
+    assert_eq!(saved.len(), 2, "one picture for the body, one for the copy");
+
+    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let kept = media_parts(&doc);
+    assert_eq!(
+        kept.len(),
+        1,
+        "the body's picture stays: {saved:?} -> {kept:?}"
+    );
+    let body_relationships = doc.part_xml("word/_rels/document.xml.rels").unwrap();
+    let file = kept[0].rsplit('/').next().unwrap();
+    assert!(body_relationships.contains(file), "{body_relationships}");
+    assert_eq!(doc.pictures().unwrap().len(), 1);
+}
+
+#[test]
+fn inheriting_again_keeps_a_logo_the_first_section_still_shows() {
+    // Unlinking copies the header with its relationships to the same logo,
+    // so the logo has two users until the copy goes.
+    let mut doc = inherited_header_and_footer();
+    let original = header_story(&doc, 0).story().clone();
+    doc.add_picture_to_story(&original, PNG, "logo.png", twips(567), twips(567))
+        .unwrap();
+    doc.unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(header_part_count(&doc), 2);
+    let logo = media_parts(&doc);
+    assert_eq!(logo.len(), 1, "the copy shares the logo");
+
+    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
+    assert_eq!(media_parts(&doc), logo, "the first section's logo stays");
+    let header_part = header_story(&doc, 0).story().part_name().to_owned();
+    let (folder, file) = header_part
+        .trim_start_matches('/')
+        .rsplit_once('/')
+        .unwrap();
+    let header_relationships = doc
+        .part_xml(&format!("{folder}/_rels/{file}.rels"))
+        .unwrap();
+    let logo_file = logo[0].rsplit('/').next().unwrap();
+    assert!(
+        header_relationships.contains(logo_file),
+        "{header_relationships}"
+    );
+}
+
+#[test]
+fn inheriting_again_drops_what_only_the_copy_reached_through_another_part() {
+    // The copy relates to a data part (with a content type override), which
+    // relates to a picture. In the other files the main part's
+    // relationships, the package's, or the main part's under another
+    // spelling of the name also reach that picture, so it stays while the
+    // data part goes.
+    for keeper in [None, Some("main"), Some("package"), Some("spelling")] {
+        let body_also_shows_it = keeper.is_some();
+        let mut doc = inherited_header_and_footer();
+        let copy = doc
+            .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+            .unwrap();
+        let copy_part = format!("/{}", copy.part_name().trim_start_matches('/'));
+        let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+        package.set_part("/word/extra/data1.xml", b"<data/>".to_vec());
+        package
+            .content_types
+            .add_override("/word/extra/data1.xml", "application/xml");
+        package.set_part("/word/media/nested.png", PNG.to_vec());
+        package
+            .content_types
+            .add_override("/word/media/nested.png", "image/png");
+        package.get_or_create_part_rels(&copy_part).add_with_id(
+            "rIdData",
+            "http://schemas.example.com/relationships/data",
+            "extra/data1.xml",
+        );
+        package
+            .get_or_create_part_rels("/word/extra/data1.xml")
+            .add_with_id("rIdPicture", rel_types::IMAGE, "../media/nested.png");
+        let main = package.main_document_part().unwrap();
+        match keeper {
+            Some("main") => {
+                package.get_or_create_part_rels(&main).add_with_id(
+                    "rIdKept",
+                    rel_types::IMAGE,
+                    "media/nested.png",
+                );
+            }
+            Some("spelling") => {
+                package.get_or_create_part_rels(&main).add_with_id(
+                    "rIdKept",
+                    rel_types::IMAGE,
+                    "./media/Nested.PNG",
+                );
+            }
+            Some("package") => {
+                package.package_rels.add_with_id(
+                    "rIdKept",
+                    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail",
+                    "word/media/nested.png",
+                );
+            }
+            _ => {}
+        }
+        let mut bytes = Cursor::new(Vec::new());
+        package.write_to(&mut bytes).unwrap();
+        let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+        doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+            .unwrap();
+        let doc = reopen(&mut doc);
+        let names = doc.part_names().unwrap();
+        let content_types = doc.part_xml("[Content_Types].xml").unwrap();
+        assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
+        assert!(
+            !names.contains(&"/word/extra/data1.xml".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            !content_types.contains("/word/extra/data1.xml"),
+            "{content_types}"
+        );
+        assert_eq!(
+            names.contains(&"/word/media/nested.png".to_owned()),
+            body_also_shows_it,
+            "{keeper:?}: {names:?}"
+        );
+        assert_eq!(
+            content_types.contains("/word/media/nested.png"),
+            body_also_shows_it,
+            "{content_types}"
+        );
+    }
+}
+
+#[test]
+fn inheriting_again_drops_a_copy_that_an_unused_relationship_also_targets() {
+    // A producer can leave a second relationship to a header no section
+    // references; it must not keep the dropped copy and its text in the file.
+    let mut doc = inherited_header_and_footer();
+    let copy = doc
+        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    rewrite_first_paragraph(&mut doc, &copy, "landscape pages");
+    let target = copy
+        .part_name()
+        .trim_start_matches('/')
+        .trim_start_matches("word/")
+        .to_owned();
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    package
+        .get_or_create_part_rels(&main)
+        .add_with_id("rIdSpare", rel_types::HEADER, &target);
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
+    assert!(
+        !doc.part_xml("word/_rels/document.xml.rels")
+            .unwrap()
+            .contains("rIdSpare"),
+        "the unused relationship goes with it"
+    );
+    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
+}
+
+#[test]
+fn inheriting_again_keeps_a_header_another_section_still_shows() {
+    let mut doc = inherited_header_and_footer();
+    let shared = header_story(&doc, 0).story().clone();
+    doc.link_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default, &shared)
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert!(!header_story(&doc, 1).is_inherited());
+    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
+    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
+    assert_eq!(header_part_count(&doc), 1, "the shared header stays");
+}
+
+#[test]
+fn removing_the_first_section_of_a_reopened_file_keeps_its_header() {
+    // The references of the removed section pass to the next one.
+    let mut doc = inherited_header_and_footer();
+    let mut doc = reopen(&mut doc);
+    doc.remove_section(0).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.section_count(), 1);
+    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
+    assert_eq!(footer(&doc, 0).as_deref(), Some("shared footer"));
+    assert_eq!(header_part_count(&doc), 1);
+}
+
+#[test]
+fn inheriting_again_on_a_libreoffice_report_drops_only_the_copies_it_stops_using() {
+    // LibreOffice gives the second section its own copies; the first-page
+    // ones and those of the first section stay in use.
+    let mut doc = report("libreoffice");
+    for kind in [HeaderFooterKind::Header, HeaderFooterKind::Footer] {
+        doc.inherit_section_story(1, kind, HdrFtrType::Default)
+            .unwrap();
+    }
+    let doc = reopen(&mut doc);
+    let names = doc.part_names().unwrap();
+    for gone in ["/word/header4.xml", "/word/footer4.xml"] {
+        assert!(!names.iter().any(|name| name == gone), "{gone} goes");
+    }
+    for kind in ["header", "footer"] {
+        for number in [1, 2, 3, 5] {
+            let kept = format!("/word/{kind}{number}.xml");
+            assert!(names.contains(&kept), "{kept} stays");
+        }
+    }
+    assert_eq!(header(&doc, 1).as_deref(), Some(REPORT_HEADER));
+    assert_eq!(footer(&doc, 1).as_deref(), Some(REPORT_FOOTER));
+    assert!(header_story(&doc, 1).is_inherited());
 }
 
 #[test]

@@ -385,7 +385,7 @@ fn write_property(writer: &mut Writer<Vec<u8>>, property: &CustomProperty) -> Re
     let pid = property.pid.to_string();
     start.push_attribute(("pid", pid.as_str()));
     if let Some(name) = &property.name {
-        start.push_attribute(("name", name.as_str()));
+        crate::xml::push_escaped_attribute(&mut start, "name", name);
     }
     writer.write_event(Event::Start(start))?;
     write_value(writer, &property.value)?;
@@ -426,7 +426,9 @@ fn r8_text(value: f64) -> String {
 
 fn write_text(writer: &mut Writer<Vec<u8>>, tag: &str, value: &str) -> Result<()> {
     writer.write_event(Event::Start(BytesStart::new(tag)))?;
-    writer.write_event(Event::Text(BytesText::new(value)))?;
+    writer.write_event(Event::Text(BytesText::from_escaped(
+        crate::xml::escape_text(value),
+    )))?;
     writer.write_event(Event::End(BytesEnd::new(tag)))?;
     Ok(())
 }

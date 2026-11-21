@@ -17,9 +17,6 @@ mod signature;
 
 pub use content_types::{ContentType, ContentTypes};
 pub use error::OpcError;
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub use package::set_reread_zip_note;
 pub use package::{
     OpcPackage, PackagePart, PackageReadLimits, SaveOptions, is_same_file, write_atomic_file,
 };

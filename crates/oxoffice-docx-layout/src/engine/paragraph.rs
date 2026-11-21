@@ -138,7 +138,9 @@ fn computed_layout_field(
 
 /// The box a legacy checkbox draws from its state, as Word does whatever
 /// result it stores: ☒ when checked, ☐ when not.
-fn drawn_legacy_checkbox(field: &oxoffice_docx_oxml::text::Field) -> Option<&'static str> {
+pub(super) fn drawn_legacy_checkbox(
+    field: &oxoffice_docx_oxml::text::Field,
+) -> Option<&'static str> {
     let data = field.legacy_form.as_ref()?;
     let oxoffice_docx_oxml::text::LegacyFormFieldValue::Checked(checked) = data.value else {
         return None;

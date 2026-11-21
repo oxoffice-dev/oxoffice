@@ -4157,7 +4157,7 @@ fn qualify_constructor_failures(
                             let margin = matches!(parent.kind, K::TableMargins);
                             let table_scalar = if margin && qualified && attr_local.as_ref() == b"w"
                             {
-                                Some(crate::table::TableScalar::Measurement)
+                                Some(crate::table::TableScalar::MarginWidth)
                             } else {
                                 (table && qualified)
                                     .then(|| {

@@ -2,8 +2,8 @@
   "id": "docx-property-control-characters",
   "format": "docx",
   "area": "properties",
-  "title": "A control character in a document property makes every save fail",
-  "symptom": "the setters of core properties (title, author, subject, keywords, description, category...), application properties and custom properties succeed, then every save fails with InvalidXmlCharacter on docProps/core.xml, docProps/app.xml or docProps/custom.xml; the CLI meta set reports the error and writes nothing (document variables and the other settings strings refuse such a character when set)",
-  "workaround": "remove the characters XML 1.0 cannot carry (control characters other than tab, line feed and carriage return, U+FFFE, U+FFFF) before setting a value; to save again, set the value clean or remove it (Rust set_core_properties, set_application_properties or remove_application_properties, remove_custom_property; Python doc.core_properties.title = ..., doc.app_properties.company = None, del doc.custom_properties[name])",
+  "title": "The Rust one-field core property setters take a character XML cannot carry, and the next save fails",
+  "symptom": "Rust set_title, set_author, set_subject and set_keywords return nothing and accept a C0 control character (other than tab, line feed and carriage return), U+FFFE or U+FFFF; every later save then fails with the package writer's error, which names the part and the character (\"/docProps/core.xml holds U+0007 at line 3, column 15, a character XML 1.0 cannot carry\"). Rust set_core_properties, set_application_properties and set_custom_property, Python and the CLI refuse such a value at once, naming the property, and leave the document unchanged",
+  "workaround": "Rust: set the value through set_core_properties, which refuses it, or set it again without the character before saving",
   "issue": 181
 }

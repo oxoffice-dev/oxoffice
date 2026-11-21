@@ -9,7 +9,7 @@ use oxoffice_docx::{
 };
 use oxoffice_docx_oxml::shared::ST_Jc;
 
-use crate::support::{corpus_doc, doc_with, reopen, texts};
+use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
 
 /// The main body story of `doc`, as the story operations want it.
 fn body_story(doc: &Document) -> StoryId {
@@ -435,6 +435,103 @@ fn setting_a_hanging_indent_replaces_a_first_line_indent() {
 }
 
 #[test]
+fn a_negative_first_line_indent_is_written_as_a_hanging_indent() {
+    let mut doc = Document::new();
+    doc.add_paragraph("by the builder")
+        .first_line_indent(Length::pt(-9.0));
+    doc.add_paragraph("by the setter");
+    doc.paragraph_mut(1)
+        .unwrap()
+        .set_first_line_indent(Length::pt(-9.0));
+    let reopened = reopen(&mut doc);
+    for index in 0..2 {
+        let paragraph = reopened.paragraph(index).unwrap();
+        assert_eq!(twips(paragraph.first_line_indent()), Some(-180), "{index}");
+        assert_eq!(twips(paragraph.hanging_indent()), Some(180), "{index}");
+    }
+    // The schema allows no negative w:firstLine: Word means a hanging indent.
+    let xml = reopened.part_xml("word/document.xml").unwrap();
+    assert_eq!(xml.matches(r#"w:hanging="180""#).count(), 2, "{xml}");
+    assert!(!xml.contains("w:firstLine="), "{xml}");
+
+    // Nor a negative w:hanging: it is a first-line indent.
+    let mut doc = Document::new();
+    doc.add_paragraph("outdented")
+        .hanging_indent(Length::pt(-9.0));
+    let reopened = reopen(&mut doc);
+    assert_eq!(
+        twips(reopened.paragraph(0).unwrap().first_line_indent()),
+        Some(180)
+    );
+    let xml = reopened.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"w:firstLine="180""#) && !xml.contains("w:hanging="),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_paragraph_holding_both_indents_reads_and_exports_its_hanging_indent() {
+    // Word and layout ignore w:firstLine when w:hanging is there.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:ind w:left="720" w:firstLine="360" w:hanging="180"/></w:pPr>"#,
+        r#"<w:r><w:t>both</w:t></w:r></w:p>"#
+    ));
+    assert_eq!(
+        twips(doc.paragraph(0).unwrap().first_line_indent()),
+        Some(-180)
+    );
+
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(
+        rtf.contains(r"\fi-180") && !rtf.contains(r"\fi360"),
+        "{rtf}"
+    );
+
+    let odt = doc.to_odt_bytes().unwrap();
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    assert_eq!(
+        twips(reread.paragraph(0).unwrap().first_line_indent()),
+        Some(-180),
+        "ODT carries the hanging indent"
+    );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("text-indent:-9.0pt"), "{html}");
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters: String = zip_names(&epub.bytes)
+        .iter()
+        .filter(|name| name.ends_with(".xhtml") && !name.ends_with("nav.xhtml"))
+        .filter_map(|name| zip_entry(&epub.bytes, name))
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+        .collect();
+    assert!(chapters.contains("text-indent:-9.0pt"), "{chapters}");
+
+    // Layout too, even for a hanging indent of 0.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:ind w:left="720"/></w:pPr><w:r><w:t>plain</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:ind w:left="720" w:firstLine="360" w:hanging="180"/></w:pPr>"#,
+        r#"<w:r><w:t>hanging</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:ind w:left="720" w:firstLine="360" w:hanging="0"/></w:pPr>"#,
+        r#"<w:r><w:t>zero</w:t></w:r></w:p>"#
+    ));
+    let result = doc.layout().unwrap();
+    let mut starts = std::collections::HashMap::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                starts.entry(run.text.clone()).or_insert(run.origin.x);
+            }
+        });
+    }
+    let plain = starts["plain"];
+    assert!(
+        (starts["hanging"] - (plain - 9.0)).abs() < 0.01,
+        "{starts:?}"
+    );
+    assert!((starts["zero"] - plain).abs() < 0.01, "{starts:?}");
+}
+
+#[test]
 fn borders_and_shading_survive_a_save_and_can_be_removed() {
     let mut doc = Document::new();
     doc.add_paragraph("boxed")
@@ -680,6 +777,20 @@ fn zip_names(archive: &[u8]) -> Vec<String> {
         at += 46 + name_len + extra_len + comment_len;
     }
     names
+}
+
+#[test]
+fn epub_navigation_labels_keep_a_non_breaking_hyphen() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>"#,
+        r#"<w:r><w:t>Co</w:t><w:noBreakHyphen/><w:t>op members</w:t></w:r></w:p>"#,
+    ));
+    let epub = doc.to_epub_bytes().unwrap();
+    let nav = String::from_utf8(
+        zip_entry(&epub.bytes, "EPUB/nav.xhtml").expect("the EPUB holds a navigation document"),
+    )
+    .unwrap();
+    assert!(nav.contains("Co-op members"), "{nav}");
 }
 
 #[test]
@@ -1317,10 +1428,12 @@ fn a_paragraph_with_one_drawn_edge_among_nil_ones_has_borders() {
         r#"<w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:left w:val="none"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/></w:pBdr></w:pPr><w:r><w:t>underlined</w:t></w:r></w:p><w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>plain</w:t></w:r></w:p>"#,
     );
     assert!(doc.paragraph(0).unwrap().has_borders(), "one drawn edge");
+    assert_eq!(doc.paragraph(0).unwrap().border_count(), 1);
     assert!(
         !doc.paragraph(1).unwrap().has_borders(),
         "nil and none only"
     );
+    assert_eq!(doc.paragraph(1).unwrap().border_count(), 0);
 }
 
 #[test]
@@ -1341,4 +1454,5 @@ fn a_google_list_item_whose_edges_are_all_nil_has_no_borders() {
         assert_eq!(item.border(edge).map(|border| border.style()), Some("nil"));
     }
     assert!(!item.has_borders(), "a nil edge draws no border");
+    assert_eq!(item.border_count(), 0, "nor counts as one");
 }

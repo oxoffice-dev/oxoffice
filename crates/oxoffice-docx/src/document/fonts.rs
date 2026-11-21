@@ -375,6 +375,12 @@ impl Document {
                 {
                     return Ok(());
                 }
+                table.can_set_font_fields(
+                    &font.name,
+                    font.alternate_name.is_some(),
+                    font.family.is_some(),
+                    font.pitch.is_some(),
+                )?;
                 table.can_clear_font_fields(
                     &font.name,
                     record.alternate_name.is_some() && font.alternate_name.is_none(),
@@ -389,11 +395,12 @@ impl Document {
             .as_mut()
             .expect("font-table mutation candidate has a model")
             .set_font(font.name, font.alternate_name, font.family, font.pitch);
-        candidate
-            .font_table
-            .as_ref()
-            .expect("font-table mutation candidate has a model")
-            .to_xml()?;
+        font_table_reads_back(
+            candidate
+                .font_table
+                .as_ref()
+                .expect("font-table mutation candidate has a model"),
+        )?;
         candidate.font_table_dirty = true;
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
@@ -498,6 +505,7 @@ impl Document {
             .find(|font| font.name == font_name)
             .unwrap();
         let kind = FontFaceKind::from(embedded.kind);
+        table.can_embed_font(font_name, kind)?;
         let existing = font
             .embedded_fonts
             .iter()
@@ -616,11 +624,12 @@ impl Document {
         if !can_reuse_existing && let Some(existing) = &existing {
             candidate.remove_embedded_font_part(existing)?;
         }
-        candidate
-            .font_table
-            .as_ref()
-            .expect("font-table mutation candidate has a model")
-            .to_xml()?;
+        font_table_reads_back(
+            candidate
+                .font_table
+                .as_ref()
+                .expect("font-table mutation candidate has a model"),
+        )?;
         if candidate.settings_part_name.is_some() && candidate.settings.is_none() {
             return Err(Error::Other("cannot mutate unmodeled settings".to_owned()));
         }
@@ -949,4 +958,16 @@ fn has_consistent_sfnt_header(data: &[u8]) -> bool {
     search_range == expected_search_range
         && entry_selector == expected_selector
         && range_shift == expected_range_shift
+}
+
+/// Refuse an edit whose font table the next open could not read back: it
+/// would come back unmodelled, with every record out of reach.
+fn font_table_reads_back(table: &FontTable) -> Result<()> {
+    FontTable::from_xml(&table.to_xml()?)
+        .map(|_| ())
+        .map_err(|error| {
+            Error::Other(format!(
+                "the edited font table would not read back: {error}"
+            ))
+        })
 }

@@ -276,8 +276,14 @@ pub(super) fn import_fragment_content_with_state(
     } else {
         fragment.prepare_staged_package()?;
     }
+    // Both whole-document policies read the body from the model, which
+    // settles the namespaces the source scoped on its elements.
+    let from_model =
+        policy.preserves_source_effective_defaults() || policy.keeps_destination_formatting();
     if policy.preserves_source_effective_defaults() {
         prepare_fragment_body_effective_defaults(&mut fragment)?;
+    }
+    if from_model {
         fragment_xml = fragment.document.to_xml()?;
         fragment
             .package
@@ -324,7 +330,7 @@ pub(super) fn import_fragment_content_with_state(
             .content
             .push(BodyContent::Paragraph(Box::new(paragraph)));
     }
-    let model_xml = if policy.preserves_source_effective_defaults() {
+    let model_xml = if from_model {
         fragment_xml.clone()
     } else if let Some((evaluation, _)) = template.as_mut() {
         let mut writer = crate::document::TemplateMainWriter {
@@ -346,17 +352,9 @@ pub(super) fn import_fragment_content_with_state(
     } else {
         model_xml
     };
-    prune_document_fragment_dependencies(
-        &mut fragment,
-        &dependency_source,
-        !policy.native_body_only(),
-    )?;
+    prune_document_fragment_dependencies(&mut fragment, &dependency_source, true)?;
     let mut fragment_identity_values = body_identity_values(&fragment_xml)?;
-    for companion in if policy.native_body_only() {
-        Vec::new()
-    } else {
-        fragment_dependency_companions(&fragment, &dependency_source)?
-    } {
+    for companion in fragment_dependency_companions(&fragment, &dependency_source)? {
         for id in body_identity_values(&wrap_fragment_companion(&companion))?.comment_ids {
             if !fragment_identity_values.comment_ids.contains(&id) {
                 fragment_identity_values.comment_ids.push(id);
@@ -364,11 +362,7 @@ pub(super) fn import_fragment_content_with_state(
         }
     }
     validate_fragment_identity_ownership(&fragment_identity_values)?;
-    let companion_comment_ids = if policy.native_body_only() {
-        &[][..]
-    } else {
-        &fragment_identity_values.comment_ids[..]
-    };
+    let companion_comment_ids = &fragment_identity_values.comment_ids[..];
     if source_owned_numbering {
         document.source_owned_numbering_remap(&fragment)?;
     }
@@ -377,6 +371,7 @@ pub(super) fn import_fragment_content_with_state(
         &mut fragment,
         &mut fragment_xml,
         policy.reuse_styles(),
+        policy.keeps_destination_formatting(),
         policy.reuse_numbering(),
         source_owned_numbering,
         template.as_mut().map(|(evaluation, _)| {
@@ -406,11 +401,7 @@ pub(super) fn import_fragment_content_with_state(
     let mut part_map = BTreeMap::new();
     let mut imports = Vec::new();
     let mut external_imports = Vec::new();
-    for relationship_id in used_relationships
-        .iter()
-        .filter(|_| !policy.native_body_only())
-        .cloned()
-    {
+    for relationship_id in used_relationships.iter().cloned() {
         let relationship = source_rels.get_by_id(&relationship_id).ok_or_else(|| {
             Error::Other(format!(
                 "rich mail merge fragment relationship {relationship_id} is missing"
@@ -441,10 +432,7 @@ pub(super) fn import_fragment_content_with_state(
         ));
     }
     let mut binding_stores = Vec::new();
-    for store_item_id in fragment_store_item_ids(&dependency_xml)?
-        .into_iter()
-        .filter(|_| !policy.native_body_only())
-    {
+    for store_item_id in fragment_store_item_ids(&dependency_xml)? {
         let source_part = crate::content_control::resolve_custom_xml_part(
             &fragment.package,
             &fragment.doc_part_name,
@@ -473,10 +461,7 @@ pub(super) fn import_fragment_content_with_state(
         binding_stores.push((store_item_id, source_part));
     }
     if let Some(comment_xml) = Document::fragment_comment_dependency_xml(
-        fragment
-            .comments
-            .as_ref()
-            .filter(|_| !policy.native_body_only()),
+        fragment.comments.as_ref(),
         fragment.comments_extended.as_ref(),
         companion_comment_ids,
     )? {
@@ -532,11 +517,7 @@ pub(super) fn import_fragment_content_with_state(
     let mut note_copies: Vec<FragmentNoteCopy> = Vec::new();
     let mut note_relationship_imports = Vec::new();
     let mut note_external_imports = Vec::new();
-    let mut pending_notes = if policy.native_body_only() {
-        Vec::new()
-    } else {
-        fragment_note_references(&dependency_xml)?
-    };
+    let mut pending_notes = fragment_note_references(&dependency_xml)?;
     if let Some(comments) = fragment.comments.as_ref()
         && let Some(xml) = Document::fragment_comment_dependency_xml(
             Some(comments),
@@ -1100,10 +1081,7 @@ pub(super) fn import_fragment_content_with_state(
         identity_xml.extend_from_slice(&note.xml);
     }
     if let Some(comments) = Document::fragment_comment_dependency_xml(
-        fragment
-            .comments
-            .as_ref()
-            .filter(|_| !policy.native_body_only()),
+        fragment.comments.as_ref(),
         fragment.comments_extended.as_ref(),
         companion_comment_ids,
     )? {
@@ -1117,10 +1095,7 @@ pub(super) fn import_fragment_content_with_state(
         keep_free_names,
     )?;
     let patched_comments = Document::fragment_comment_dependency_xml(
-        fragment
-            .comments
-            .as_ref()
-            .filter(|_| !policy.native_body_only()),
+        fragment.comments.as_ref(),
         fragment.comments_extended.as_ref(),
         companion_comment_ids,
     )?
@@ -1134,15 +1109,11 @@ pub(super) fn import_fragment_content_with_state(
         )?)?)
     })
     .transpose()?;
-    let comment_ids = if policy.native_body_only() {
-        BTreeMap::new()
-    } else {
-        document.import_fragment_comments_staged(
-            patched_comments.as_ref().or(fragment.comments.as_ref()),
-            fragment.comments_extended.as_ref(),
-            companion_comment_ids,
-        )?
-    };
+    let comment_ids = document.import_fragment_comments_staged(
+        patched_comments.as_ref().or(fragment.comments.as_ref()),
+        fragment.comments_extended.as_ref(),
+        companion_comment_ids,
+    )?;
     if !comment_ids.is_empty() {
         let comment_remap = BodyIdentityRemap {
             comment_ids: comment_ids.clone(),
@@ -1651,6 +1622,7 @@ fn remap_fragment_style_collisions(
     fragment: &mut Document,
     fragment_xml: &mut Vec<u8>,
     reuse_equivalent: bool,
+    keep_destination_styles: bool,
     reuse_equivalent_numbering: bool,
     source_owned_numbering: bool,
     mut source: Option<(
@@ -1660,6 +1632,7 @@ fn remap_fragment_style_collisions(
     )>,
 ) -> Result<bool> {
     let mut replacements = BTreeMap::new();
+    let mut kept = HashSet::new();
     let mut used = destination
         .styles
         .styles
@@ -1669,8 +1642,22 @@ fn remap_fragment_style_collisions(
         .collect::<HashSet<_>>();
     for style in &fragment.styles.styles {
         let Some(existing) = destination.styles.get_by_id(&style.style_id) else {
+            // A default of its type under an id the destination lacks, such as
+            // Word's localized Policepardfaut or TableauNormal: the content
+            // takes the destination's default, as a type has one default.
+            if style.is_default
+                && let Some(default) = destination.styles.get_default(style.style_type)
+            {
+                replacements.insert(style.style_id.clone(), default.style_id.clone());
+            }
             continue;
         };
+        // The destination's definition wins: the content keeps the id. A
+        // style of another type under the id is renamed as usual.
+        if keep_destination_styles && existing.style_type == style.style_type {
+            kept.insert(style.style_id.clone());
+            continue;
+        }
         let source_num_id = style.ppr.as_ref().and_then(|properties| properties.num_id);
         let reusable_num_id = source_num_id
             .filter(|_| reuse_equivalent_numbering)
@@ -1708,15 +1695,72 @@ fn remap_fragment_style_collisions(
             })?;
         }
     }
+    // A renamed style linked to one that is reused would point at the
+    // destination's style, which links elsewhere: rename the pair together.
+    loop {
+        let mut partners = Vec::new();
+        for style in &fragment.styles.styles {
+            // A default mapped to the destination's own takes its links too.
+            let Some(partner) = style.linked_style.as_ref().filter(|_| {
+                replacements
+                    .get(&style.style_id)
+                    .is_some_and(|target| destination.styles.get_by_id(target).is_none())
+            }) else {
+                continue;
+            };
+            if !replacements.contains_key(partner)
+                && !kept.contains(partner)
+                && destination.styles.get_by_id(partner).is_some()
+                && !partners.contains(partner)
+            {
+                partners.push(partner.clone());
+            }
+        }
+        if partners.is_empty() {
+            break;
+        }
+        for partner in partners {
+            let mut ordinal = 1u64;
+            loop {
+                let candidate = format!("{partner}Merge{ordinal}");
+                if used.insert(candidate.clone()) {
+                    replacements.insert(partner.clone(), candidate);
+                    break;
+                }
+                ordinal = ordinal.checked_add(1).ok_or_else(|| {
+                    Error::Other("fragment style name space is exhausted".to_owned())
+                })?;
+            }
+        }
+    }
+    if !kept.is_empty() {
+        // An imported style linked to one the destination keeps would not be
+        // linked back, so it comes in unlinked.
+        for style in &mut std::sync::Arc::make_mut(&mut fragment.styles).styles {
+            if kept.contains(&style.style_id) {
+                continue;
+            }
+            let unreciprocated = style.linked_style.as_ref().is_some_and(|partner| {
+                kept.contains(partner)
+                    && destination
+                        .styles
+                        .get_by_id(partner)
+                        .and_then(|existing| existing.linked_style.as_deref())
+                        != Some(style.style_id.as_str())
+            });
+            if unreciprocated {
+                style.linked_style = None;
+            }
+        }
+    }
     if replacements.is_empty() {
         return Ok(false);
     }
     for style in &mut std::sync::Arc::make_mut(&mut fragment.styles).styles {
         if let Some(replacement) = replacements.get(&style.style_id) {
             style.style_id = replacement.clone();
-            // A renamed copy is not the destination default. The destination
-            // keeps its own default. A second default is still refused when
-            // the source default id does not collide and is not renamed.
+            // A renamed copy is not the destination default: the destination
+            // keeps its own, and a source default under another id maps to it.
             style.is_default = false;
         }
         if let Some(replacement) = style
@@ -3459,17 +3503,19 @@ pub(crate) fn freshen_content_fragment_identities(
 }
 
 fn validate_fragment_identity_ownership(values: &BodyIdentityValues) -> Result<()> {
-    let mut open_bookmarks = Vec::new();
+    // Each bookmark starts once and ends after its start. Ranges may cross,
+    // as Word writes a caption's _Ref and _Toc bookmarks.
+    let mut open_bookmarks = HashSet::new();
     let mut seen_bookmarks = HashSet::new();
     for (id, start) in &values.bookmark_events {
         if *start {
-            if !seen_bookmarks.insert(id.clone()) {
+            if !seen_bookmarks.insert(id.as_str()) {
                 return Err(Error::Other(
                     "document fragment bookmark ownership is incomplete or ambiguous".to_owned(),
                 ));
             }
-            open_bookmarks.push(id.as_str());
-        } else if open_bookmarks.pop() != Some(id.as_str()) {
+            open_bookmarks.insert(id.as_str());
+        } else if !open_bookmarks.remove(id.as_str()) {
             return Err(Error::Other(
                 "document fragment bookmark ownership is incomplete or ambiguous".to_owned(),
             ));

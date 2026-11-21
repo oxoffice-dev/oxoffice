@@ -6,6 +6,7 @@ keeps the list complete as the API grows.
 Each slide of the two decks holds 25 text boxes, 12 rectangles, a 4x4 table, a picture of about 1 MB that does not
 compress, and speaker notes: both the shapes and the bytes of the package grow fourfold."""
 import ast
+import datetime
 import io
 import itertools
 import time
@@ -531,7 +532,8 @@ TIMED = {
     "CustomProperties.delete": each(lambda prs, slide: ([prs.custom_properties.set(f"gone{k}", "v") for k in range(CALLS)],
                                                         lambda k: prs.custom_properties.delete(f"gone{k}"))[1]),
 }
-CORE = {"created": [f"2026-10-0{k + 1}T12:00:00Z" for k in range(CALLS)], "revision": [k + 2 for k in range(CALLS)]}
+CORE = {"created": [datetime.datetime(2026, 10, k + 1, 12, tzinfo=datetime.timezone.utc) for k in range(CALLS)],
+        "revision": [k + 2 for k in range(CALLS)]}
 CORE["modified"] = CORE["last_printed"] = CORE["created"]
 for name in ("author", "category", "comments", "content_status", "created", "identifier", "keywords", "language",
              "last_modified_by", "last_printed", "modified", "revision", "subject", "title", "version"):

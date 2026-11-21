@@ -237,7 +237,7 @@ impl Document {
             hdr_type,
             Some(relationship_id),
         )?;
-        candidate.prune_unreachable_authored_section_stories(&removed)?;
+        candidate.prune_unreachable_section_stories(&removed)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         let result = reopened
@@ -260,7 +260,7 @@ impl Document {
         candidate.flush_to_package()?;
         let removed =
             candidate.set_direct_section_story_reference(section_index, kind, hdr_type, None)?;
-        candidate.prune_unreachable_authored_section_stories(&removed)?;
+        candidate.prune_unreachable_section_stories(&removed)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -299,7 +299,7 @@ impl Document {
             hdr_type,
             Some(relationship_id),
         )?;
-        candidate.prune_unreachable_authored_section_stories(&removed)?;
+        candidate.prune_unreachable_section_stories(&removed)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         let result = reopened
@@ -455,7 +455,7 @@ impl Document {
             hdr_type,
             Some(relationship_id),
         )?;
-        self.prune_unreachable_authored_section_stories(&removed)?;
+        self.prune_unreachable_section_stories(&removed)?;
         self.story_id_for_header_footer_part(&part_name, kind)
     }
 
@@ -582,7 +582,7 @@ impl Document {
     pub fn remove_section(&mut self, index: usize) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         let removed_references = candidate.remove_section_in_place(index)?;
-        candidate.prune_unreachable_authored_section_stories(&removed_references)?;
+        candidate.prune_unreachable_section_stories(&removed_references)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -832,7 +832,7 @@ impl Document {
             .map(|(index, _)| index)
     }
 
-    fn prune_unreachable_authored_section_stories(&mut self, removed: &[HdrFtrRef]) -> Result<()> {
+    fn prune_unreachable_section_stories(&mut self, removed: &[HdrFtrRef]) -> Result<()> {
         let modeled_ids = self.main_story_relationship_ids();
         let mut active_ids = modeled_ids
             .iter()
@@ -840,8 +840,14 @@ impl Document {
             .collect::<HashSet<_>>();
         let opaque_ids = self.opaque_relationship_ids_from_serialized_story(&modeled_ids)?;
         active_ids.extend(opaque_ids.iter().map(String::as_str));
-        // Imported producer parts stay in the package. Retire only their qualified
-        // marker spans when no modeled, inherited or opaque physical use survives.
+        // A retired header or footer part goes, with its relationship, its
+        // .rels and its content type, once no modeled, inherited or opaque
+        // physical use survives, whether it was authored here or imported:
+        // Word drops such a part when it saves, and a dead copy can still hold
+        // text the user believes removed. The proof is the loop below: every
+        // relationship to the part, from any owner, must be shown unused. If a
+        // use survives, the part is left as it is; if a relationship from
+        // another part cannot be proved, the edit is refused.
         let retired_targets = removed
             .iter()
             .map(|reference| {
@@ -871,6 +877,7 @@ impl Document {
                 ))
             })
             .collect::<Result<HashSet<_>>>()?;
+        let mut unused_targets = HashSet::new();
         for target in retired_targets {
             let identity = part_name_identity(&target);
             let mut used = false;
@@ -902,11 +909,14 @@ impl Document {
                     }
                 }
             }
-            if !used && let Some(xml) = self.package.get_part(&target) {
-                let omitted = Self::omit_comment_markers(xml)?;
-                if omitted != xml {
-                    set_story_source_xml(self, &target, omitted)?;
+            if !used {
+                if let Some(xml) = self.package.get_part(&target) {
+                    let omitted = Self::omit_comment_markers(xml)?;
+                    if omitted != xml {
+                        set_story_source_xml(self, &target, omitted)?;
+                    }
                 }
+                unused_targets.insert(identity);
             }
         }
         let removable_ids = removed
@@ -920,7 +930,18 @@ impl Document {
             .into_iter()
             .flat_map(|relationships| &relationships.items)
             .filter(|relationship| {
-                removable_ids.contains(relationship.id.as_str())
+                // Any other main-part relationship to an unused part was just
+                // shown unused too, so it goes with the retired ones.
+                let unused_target = || {
+                    !active_ids.contains(relationship.id.as_str())
+                        && unused_targets.contains(&part_name_identity(
+                            &OpcPackage::resolve_rel_target(
+                                &self.doc_part_name,
+                                &relationship.target,
+                            ),
+                        ))
+                };
+                (removable_ids.contains(relationship.id.as_str()) || unused_target())
                     && relationship_is_internal(relationship)
                     && matches!(
                         relationship.rel_type.as_str(),
@@ -933,7 +954,10 @@ impl Document {
                     OpcPackage::resolve_rel_target(&self.doc_part_name, &relationship.target),
                 )
             })
-            .filter(|(_, target)| self.identifiers.authored_story_parts.contains(target))
+            .filter(|(_, target)| {
+                self.identifiers.authored_story_parts.contains(target)
+                    || unused_targets.contains(&part_name_identity(target))
+            })
             .collect::<Vec<_>>();
 
         for (relationship_id, target) in candidates {
@@ -957,14 +981,77 @@ impl Document {
             if still_referenced {
                 continue;
             }
+            let released = self
+                .package
+                .get_part_rels(&target)
+                .map(|relationships| relationships.items.clone())
+                .unwrap_or_default();
             self.clear_authored_story_relationships(&target);
             self.package.remove_part(&target);
             self.package.remove_part_rels(&target);
             self.package.content_types.remove_override(&target);
             self.identifiers.authored_story_parts.remove(&target);
             self.identifiers.retire_authored_part(&target);
+            self.remove_unreachable_targets(&target, released);
         }
         Ok(())
+    }
+
+    /// Remove what a dropped part pointed at once no relationship reaches it,
+    /// imported or not: a picture, and in turn what only it pointed at. The
+    /// proof is the dropped part's: no internal relationship from any owner,
+    /// the package included, still names the target.
+    fn remove_unreachable_targets(
+        &mut self,
+        owner: &str,
+        relationships: Vec<oxoffice_opc::relationship::Relationship>,
+    ) {
+        let mut pending = relationships
+            .into_iter()
+            .map(|relationship| (owner.to_owned(), relationship))
+            .collect::<Vec<_>>();
+        while let Some((owner, relationship)) = pending.pop() {
+            if !relationship_is_internal(&relationship) {
+                continue;
+            }
+            let target = OpcPackage::resolve_rel_target(&owner, &relationship.target);
+            if self.package.get_part(&target).is_none() {
+                continue;
+            }
+            let identity = part_name_identity(&target);
+            let reached = std::iter::once(("/", &self.package.package_rels))
+                .chain(
+                    self.package
+                        .part_rels
+                        .iter()
+                        .map(|(source, relationships)| (source.as_str(), relationships)),
+                )
+                .any(|(source, relationships)| {
+                    relationships.items.iter().any(|candidate| {
+                        relationship_is_internal(candidate)
+                            && part_name_identity(&OpcPackage::resolve_rel_target(
+                                source,
+                                &candidate.target,
+                            )) == identity
+                    })
+                });
+            if reached {
+                continue;
+            }
+            if let Some(relationships) = self.package.get_part_rels(&target) {
+                pending.extend(
+                    relationships
+                        .items
+                        .iter()
+                        .cloned()
+                        .map(|relationship| (target.clone(), relationship)),
+                );
+            }
+            self.package.remove_part(&target);
+            self.package.remove_part_rels(&target);
+            self.package.content_types.remove_override(&target);
+            self.identifiers.retire_authored_part(&target);
+        }
     }
 
     /// Get the section properties (page size, margins).

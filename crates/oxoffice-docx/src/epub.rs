@@ -1885,6 +1885,10 @@ fn projected_paragraph_text(paragraph: &CT_P) -> String {
                 // The same projection `CT_R::text` uses, so a heading label
                 // never disagrees with the run text it labels.
                 RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => text.push('\n'),
+                RunContent::SpecialCharacter(SpecialCharacter::NoBreakHyphen) => text.push('-'),
+                RunContent::SpecialCharacter(SpecialCharacter::PositionalTab { .. }) => {
+                    text.push('\t');
+                }
                 RunContent::SpecialCharacter(_)
                 | RunContent::Symbol { .. }
                 | RunContent::Drawing(_)
@@ -2571,6 +2575,7 @@ fn render_paragraph_properties(
         ind_left: source.ind_left,
         ind_right: source.ind_right,
         ind_first_line: source.ind_first_line,
+        ind_hanging: source.ind_hanging,
         outline_lvl: source.outline_lvl,
         shading: source
             .shading
@@ -3075,7 +3080,19 @@ fn replace_media_sources(
         )
         .map_err(|_| epub_error("failed to format EPUB image alternative text"))?;
         output.push_str(&item.href);
-        output.push_str(&tag[value_end..]);
+        // The HTML emitter writes a described picture's alt text right after
+        // `src`; EPUB has written its own before it.
+        let rest = &tag[value_end..];
+        match rest
+            .strip_prefix("\" alt=\"")
+            .and_then(|after| after.find('"').map(|end| &after[end + 1..]))
+        {
+            Some(after_alt) => {
+                output.push('"');
+                output.push_str(after_alt);
+            }
+            None => output.push_str(rest),
+        }
         remaining = &remaining[start + tag.len()..];
     }
     output.push_str(remaining);

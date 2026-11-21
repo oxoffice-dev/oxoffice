@@ -1,9 +1,0 @@
-{
-  "id": "docx-import-linked-styles",
-  "format": "docx",
-  "area": "merge",
-  "title": "Importing between documents refuses differing linked styles, and Word files in another language",
-  "symptom": "import_fragment (Rust, Python) and Python insert_document fail with \"invalid style graph: linked styles ... are not reciprocal\" when both documents define a linked style pair differently, and with \"style type ... has more than one default\" from a Word file saved in another language; Rust insert_document panics with these messages, and Rust append panics on a Word file in another language and when the destination's paragraph style has no link (Google Docs files)",
-  "workaround": "for differing linked styles, import with FragmentConflictPolicy::rename_all() or with_style_reuse(false) (Rust and Python); none for a localized Word file",
-  "issue": 195
-}

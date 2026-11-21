@@ -1802,3 +1802,74 @@ fn replacing_a_word_finds_the_same_matches_in_every_corpus_deck() {
         assert!(texts.iter().all(|text| !text.contains("Q3")), "{name}");
     }
 }
+
+#[test]
+fn a_tab_or_a_line_feed_in_a_run_hyperlink_tooltip_survives_a_save() {
+    let mut prs = text_box_deck("Read the report");
+    let id = shape_at(&prs, 0, 0).non_visual_id().unwrap();
+    prs.set_run_hyperlink(0, id, 0, 0, Some("https://example.com/"))
+        .unwrap();
+    let mut properties = shape_at(&prs, 0, 0)
+        .text_frame()
+        .unwrap()
+        .paragraph(0)
+        .unwrap()
+        .run(0)
+        .unwrap()
+        .properties()
+        .unwrap()
+        .clone();
+    properties.hyperlink_click.as_mut().unwrap().tooltip = Some("a\tb\nc".to_owned());
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .text_frame()
+        .unwrap()
+        .paragraph_mut(0)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_properties(properties);
+    let mut prs = reopen(&prs);
+    assert_eq!(run_tooltip(&prs).as_deref(), Some("a\tb\nc"));
+
+    // A hyperlink read from the file is written from its source XML.
+    let mut properties = shape_at(&prs, 0, 0)
+        .text_frame()
+        .unwrap()
+        .paragraph(0)
+        .unwrap()
+        .run(0)
+        .unwrap()
+        .properties()
+        .unwrap()
+        .clone();
+    properties.hyperlink_click.as_mut().unwrap().tooltip = Some("d\te\r\nf".to_owned());
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .text_frame()
+        .unwrap()
+        .paragraph_mut(0)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_properties(properties);
+    let prs = reopen(&prs);
+    assert_eq!(run_tooltip(&prs).as_deref(), Some("d\te\r\nf"));
+}
+
+/// The tooltip of the first run's click hyperlink.
+fn run_tooltip(prs: &Presentation) -> Option<String> {
+    shape_at(prs, 0, 0)
+        .text_frame()?
+        .paragraph(0)?
+        .run(0)?
+        .properties()?
+        .hyperlink_click
+        .as_ref()?
+        .tooltip
+        .clone()
+}

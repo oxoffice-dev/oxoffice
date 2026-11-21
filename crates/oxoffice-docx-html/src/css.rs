@@ -1,7 +1,7 @@
 //! CSS generation from OXML properties.
 
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
-use oxoffice_docx_oxml::shared::ST_Jc;
+use oxoffice_docx_oxml::shared::{ST_Jc, ST_Underline};
 
 use crate::sanitize::{font_family, hex_color};
 
@@ -34,9 +34,13 @@ pub(crate) fn paragraph_style(ppr: Option<&CT_PPr>) -> String {
     // Text alignment
     if let Some(jc) = &ppr.jc {
         let align = match jc {
-            ST_Jc::Left | ST_Jc::Start => "left",
+            // `start` and `end` follow the paragraph's direction, as its
+            // `dir` attribute gives it.
+            ST_Jc::Left => "left",
+            ST_Jc::Start => "start",
             ST_Jc::Center => "center",
-            ST_Jc::Right | ST_Jc::End => "right",
+            ST_Jc::Right => "right",
+            ST_Jc::End => "end",
             ST_Jc::Both | ST_Jc::Distribute => "justify",
         };
         styles.push(format!("text-align:{align}"));
@@ -67,7 +71,13 @@ pub(crate) fn paragraph_style(ppr: Option<&CT_PPr>) -> String {
             styles.push(format!("margin-right:{pt:.1}pt"));
         }
     }
-    if let Some(ind) = ppr.ind_first_line {
+    // Word ignores `w:firstLine` when `w:hanging` is there.
+    if let Some(ind) = ppr.ind_hanging {
+        let pt = ind.to_pt();
+        if pt > 0.0 {
+            styles.push(format!("text-indent:-{pt:.1}pt"));
+        }
+    } else if let Some(ind) = ppr.ind_first_line {
         let pt = ind.to_pt();
         if pt > 0.0 {
             styles.push(format!("text-indent:{pt:.1}pt"));
@@ -194,7 +204,11 @@ pub(crate) fn run_tags(rpr: Option<&CT_RPr>) -> RunTags {
     RunTags {
         bold: rpr.bold == Some(true),
         italic: rpr.italic == Some(true),
-        underline: rpr.underline.is_some(),
+        // `w:u w:val="none"` turns an underline off, as Google Docs writes it
+        // on every list item.
+        underline: rpr
+            .underline
+            .is_some_and(|underline| underline != ST_Underline::None),
         strike: rpr.strike == Some(true) || rpr.dstrike == Some(true),
         superscript: rpr.vert_align.as_deref() == Some("superscript"),
         subscript: rpr.vert_align.as_deref() == Some("subscript"),

@@ -146,3 +146,86 @@ fn text_json_gives_the_result_of_a_simple_field_in_its_run() {
         .collect::<Vec<_>>();
     assert_eq!(runs, ["Page ", "1"], "as Rust and Python read the runs");
 }
+
+#[test]
+fn a_header_table_reads_in_place_and_its_story_stays_one_json_entry() {
+    // The Word report with a letterhead: a line, a one-row table, a line.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(fs::read(report("word")).unwrap())).unwrap();
+    let header = package
+        .parts
+        .keys()
+        .find(|part| part.starts_with("/word/header"))
+        .expect("the report has a header")
+        .clone();
+    let line = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let cell = |text: &str| format!("<w:tc>{}</w:tc>", line(text));
+    package.set_part(
+        &header,
+        format!(
+            concat!(
+                r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+                r#"{}<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>"#,
+                "<w:tr>{}{}</w:tr></w:tbl>{}</w:hdr>"
+            ),
+            line("Letterhead"),
+            cell("Reference"),
+            cell("NW-2026-114"),
+            line("Confidential"),
+        )
+        .into_bytes(),
+    );
+    let path = std::env::temp_dir().join(format!(
+        "oxoffice-cli-header-table-{}.docx",
+        std::process::id()
+    ));
+    package.save(&path).unwrap();
+    let plain = docx(&["text"], &path);
+    let markdown_path = path.with_extension("md");
+    let converted = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+        .args(["docx", "convert"])
+        .arg(&path)
+        .args(["--to", "md", "-o"])
+        .arg(&markdown_path)
+        .output()
+        .expect("oxoffice runs");
+    let record = json(&docx(&["text", "--json"], &path));
+    let markdown = fs::read_to_string(&markdown_path).unwrap_or_default();
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(&markdown_path);
+    assert!(
+        converted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&converted.stderr)
+    );
+
+    // Plain text and Markdown read the table where it sits.
+    let in_order = |text: &str| {
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("{needle}: {text}"))
+        };
+        at("Letterhead") < at("Reference")
+            && at("Reference") < at("NW-2026-114")
+            && at("NW-2026-114") < at("Confidential")
+    };
+    let plain = String::from_utf8(plain.stdout).unwrap();
+    assert!(in_order(&plain), "{plain}");
+    assert!(in_order(&markdown), "{markdown}");
+
+    // JSON keeps one entry per story, its items in story order.
+    let headers: Vec<&Value> = record["stories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|story| story["part_name"] == header.as_str() && story["kind"] == "header")
+        .collect();
+    assert_eq!(headers.len(), 1, "{record}");
+    let texts: Vec<&str> = headers[0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, ["Letterhead", "Confidential"]);
+}

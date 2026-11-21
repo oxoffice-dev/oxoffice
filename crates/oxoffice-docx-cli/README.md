@@ -172,19 +172,21 @@ paragraphs inside content controls, table cells, and nested tables in document
 order.
 
 After the body, `text` prints every other story: text boxes, headers, footers,
-footnotes, endnotes, and comments, in the order of `Document::stories`. Each
-package part starts with a line that names the kind of its first story and the
-part, such as `--- header (/word/header1.xml) ---`. Each direct paragraph or
-block content control of its stories follows on one line, table cells
-included, with the accepted-view text of Python `StoryItem.text`. A part
-without any text, such as an empty header variant, is left out. A text box
-that Word writes twice, DrawingML in `mc:Choice` and a VML copy in
+footnotes, endnotes, and comments, part by part in the order of
+`Document::stories`. Each package part starts with a line that names the kind of
+its first story and the part, such as `--- header (/word/header1.xml) ---`. Each
+direct paragraph or block content control of its stories follows on one line in
+reading order (`Document::other_story_texts`): a table's cells where the table
+sits, a text box after the paragraph that anchors it, the cells of a table in a
+body text box included, with the accepted-view text of Python `StoryItem.text`.
+A part without any text, such as an empty header variant, is left out. A text
+box that Word writes twice, DrawingML in `mc:Choice` and a VML copy in
 `mc:Fallback`, is never read from the copy. When a story part cannot be read,
 such as a truncated header or a header relationship to a missing part, `text`
-and the Markdown and HTML conversions keep the body, print one warning on
-stderr that names the part when it can, list no other story, and exit
-successfully. `text --json` then states `main` scope. `validate` reports that
-part as an error.
+and the Markdown and HTML conversions keep the body, print one warning on stderr
+that names the part when it can, list no other story, and exit successfully.
+`text --json` then states `main` scope. `validate` reports that part as an
+error.
 
 `text --json` reports accepted-view paragraphs in source order. Each paragraph
 has a zero-based `body_index`, a typed zero-based path within that body item,
@@ -196,8 +198,8 @@ direct bold, italic, strike, underline, font, point size, colour, highlight,
 language, and character style values. The record has `all-supported-stories`
 scope, and its `stories` array lists the other stories as plain `text` does,
 one entry per story with its Python `Story.kind` name as `kind`, its
-`part_name`, its `owner_index`, and `items`. Each item is a direct paragraph or
-block content control with its story `index_path`, its `kind`, its direct
+`part_name`, its `owner_index`, and `items` in story order. Each item is a
+direct paragraph or block content control with its story `index_path`, its `kind`, its direct
 `style` (always `null` for a content control), and its `text`. When the styles
 cannot be read, `style` is `null` throughout and one warning goes to stderr.
 
@@ -301,13 +303,14 @@ remains in `not_compared` even when another story differs. Without
 exactly `N`. A mismatch exits unsuccessfully without creating or replacing the
 requested output.
 
-A tab reads as a tab character and a line, page or column break as a line
-feed, as `text` prints them: a placeholder holding one matches it, and a value
-holding one writes a `w:tab` or a line break (a carriage return or a Windows
-line ending writes one line break too, and a page or column break matched and
-written back becomes a line break). In a `--map` file write them `\t` and
-`\n`; on a shell command line, pass the characters themselves (`$'a\tb'` in
-bash).
+A tab or a positional tab reads as a tab character, a non-breaking hyphen as
+`-`, and a line, page or column break as a line feed, as `text` prints them: a
+placeholder holding one matches it, and a value holding one writes a `w:tab`,
+a plain hyphen or a line break (a carriage return or a Windows line ending
+writes one line break too; a page or column break matched and written back
+becomes a line break, a positional tab an ordinary tab, a non-breaking hyphen
+a plain one). In a `--map` file write them `\t` and `\n`; on a shell command
+line, pass the characters themselves (`$'a\tb'` in bash).
 
 A literal `replace`, one pair or a `--map`, also refuses a pair after which a
 paragraph that held the placeholder (outside the comments) does not read as its
