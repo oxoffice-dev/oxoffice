@@ -605,6 +605,9 @@ fn a_described_picture_has_one_alt_attribute_in_epub() {
     let body = body_story(&doc);
     doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("A red dot")))
         .unwrap();
+    let body = body_story(&doc);
+    doc.add_picture_with_options(&body, PNG, "plain.png", picture_options(Some("")))
+        .unwrap();
     let doc = reopen(&mut doc);
     let epub = doc.to_epub_bytes().unwrap();
     let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
@@ -622,9 +625,12 @@ fn a_described_picture_has_one_alt_attribute_in_epub() {
             xhtml[at..=end].to_owned()
         }));
     }
-    assert_eq!(images.len(), 1, "{images:?}");
-    assert_eq!(images[0].matches(" alt=").count(), 1, "{}", images[0]);
-    assert!(images[0].contains("alt=\"A red dot\""), "{}", images[0]);
+    assert_eq!(images.len(), 2, "{images:?}");
+    for (image, alt) in images.iter().zip(["alt=\"A red dot\"", "alt=\"\""]) {
+        assert_eq!(image.matches(" alt=").count(), 1, "{image}");
+        assert!(image.contains(alt), "{image}");
+        assert!(image.ends_with(" style=\"max-width:100%\"/>"), "{image}");
+    }
 }
 
 #[test]
@@ -639,7 +645,37 @@ fn a_paragraph_right_to_left_through_its_style_chain_keeps_its_direction_in_html
     doc.add_style(StyleBuilder::paragraph("ArabicQuote", "Arabic quote").based_on("Arabic"))
         .unwrap();
     doc.add_paragraph("نص").style("ArabicQuote");
+    // A direct `w:bidi w:val="0"` wins over the style.
+    doc.add_paragraph("text")
+        .style("Arabic")
+        .right_to_left(false);
     let doc = reopen(&mut doc);
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
+    assert!(html.contains("<p>text</p>"), "{html}");
+
+    // A paragraph without a style follows the default paragraph style.
+    let mut doc = Document::new();
+    doc.add_paragraph("نص");
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let start = styles
+        .find("w:styleId=\"Normal\"")
+        .expect("the template has Normal");
+    let end = styles[start..].find("</w:style>").unwrap() + start;
+    let normal = &styles[start..end];
+    let edited = match normal.find("<w:rPr>") {
+        Some(at) => format!("{}<w:pPr><w:bidi/></w:pPr>{}", &normal[..at], &normal[at..]),
+        None => format!("{normal}<w:pPr><w:bidi/></w:pPr>"),
+    };
+    assert!(!normal.contains("<w:pPr>"), "{normal}");
+    package.set_part(
+        "/word/styles.xml",
+        format!("{}{edited}{}", &styles[..start], &styles[end..]).into_bytes(),
+    );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
     let html = doc.to_html_fragment();
     assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
 
