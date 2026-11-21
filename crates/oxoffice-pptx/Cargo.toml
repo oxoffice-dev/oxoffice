@@ -55,6 +55,7 @@ tiff.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+jpeg-encoder = { workspace = true, features = ["std"] }
 miniz_oxide.workspace = true
 oxoffice-drawing.workspace = true
 oxoffice-layout.workspace = true
