@@ -1453,9 +1453,10 @@ fn layout_paragraph_with_source_and_table(
                         })
                     });
                     let stored_segments = field.effective_display_field_segments();
-                    // A legacy checkbox without formatted result runs takes the
-                    // formatting of the run that opens it.
-                    let checkbox_properties = (drawn_legacy_checkbox(field).is_some()
+                    // A legacy checkbox, or a drop-down that stores no result,
+                    // takes the formatting of the run that opens it when it has
+                    // no formatted result runs.
+                    let drawn_form_properties = (drawn_legacy_checkbox(field).is_some()
                         || drawn_legacy_dropdown(field).is_some())
                     .then(|| field.begin_run_properties())
                     .flatten();
@@ -1467,7 +1468,7 @@ fn layout_paragraph_with_source_and_table(
                         let stored_properties = stored_segments
                             .first()
                             .and_then(|(_, properties, _)| *properties)
-                            .or(checkbox_properties.as_ref());
+                            .or(drawn_form_properties.as_ref());
                         vec![(Cow::Borrowed(value), stored_properties, field)]
                     } else {
                         stored_segments
