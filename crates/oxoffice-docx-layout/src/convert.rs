@@ -77,6 +77,14 @@ pub(crate) fn underline(value: Option<ST_Underline>) -> Option<Underline> {
         ST_Underline::DotDash => Some(Underline::DotDash),
         ST_Underline::DotDotDash => Some(Underline::DotDotDash),
         ST_Underline::Wave => Some(Underline::Wave),
+        // Drawn with the nearest stroke the layout has; the weight is lost.
+        ST_Underline::DottedHeavy => Some(Underline::Dotted),
+        ST_Underline::DashedHeavy | ST_Underline::DashLong | ST_Underline::DashLongHeavy => {
+            Some(Underline::Dash)
+        }
+        ST_Underline::DashDotHeavy => Some(Underline::DotDash),
+        ST_Underline::DashDotDotHeavy => Some(Underline::DotDotDash),
+        ST_Underline::WavyHeavy | ST_Underline::WavyDouble => Some(Underline::Wave),
     })
 }
 

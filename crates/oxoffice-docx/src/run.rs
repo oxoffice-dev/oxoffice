@@ -435,6 +435,15 @@ fn underline_from_code(code: i32) -> Option<ST_Underline> {
         9 => Some(ST_Underline::DotDash),
         10 => Some(ST_Underline::DotDotDash),
         11 => Some(ST_Underline::Wave),
+        // Word's WdUnderline values for the heavy and long styles.
+        20 => Some(ST_Underline::DottedHeavy),
+        23 => Some(ST_Underline::DashedHeavy),
+        25 => Some(ST_Underline::DashDotHeavy),
+        26 => Some(ST_Underline::DashDotDotHeavy),
+        27 => Some(ST_Underline::WavyHeavy),
+        39 => Some(ST_Underline::DashLong),
+        43 => Some(ST_Underline::WavyDouble),
+        55 => Some(ST_Underline::DashLongHeavy),
         _ => None,
     }
 }
@@ -451,6 +460,14 @@ fn underline_to_code(value: ST_Underline) -> i32 {
         ST_Underline::DotDash => 9,
         ST_Underline::DotDotDash => 10,
         ST_Underline::Wave => 11,
+        ST_Underline::DottedHeavy => 20,
+        ST_Underline::DashedHeavy => 23,
+        ST_Underline::DashDotHeavy => 25,
+        ST_Underline::DashDotDotHeavy => 26,
+        ST_Underline::WavyHeavy => 27,
+        ST_Underline::DashLong => 39,
+        ST_Underline::WavyDouble => 43,
+        ST_Underline::DashLongHeavy => 55,
     }
 }
 

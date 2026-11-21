@@ -144,6 +144,14 @@ impl StyleFormatting {
                 9 => ST_Underline::DotDash,
                 10 => ST_Underline::DotDotDash,
                 11 => ST_Underline::Wave,
+                20 => ST_Underline::DottedHeavy,
+                23 => ST_Underline::DashedHeavy,
+                25 => ST_Underline::DashDotHeavy,
+                26 => ST_Underline::DashDotDotHeavy,
+                27 => ST_Underline::WavyHeavy,
+                39 => ST_Underline::DashLong,
+                43 => ST_Underline::WavyDouble,
+                55 => ST_Underline::DashLongHeavy,
                 _ => return Err(PyValueError::new_err("unsupported underline style")),
             });
         }
