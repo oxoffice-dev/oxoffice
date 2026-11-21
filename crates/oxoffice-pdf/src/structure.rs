@@ -41,6 +41,14 @@ pub(crate) struct TaggedWidget {
     pub(crate) key: i32,
 }
 
+/// Where each widget's `/Form` element goes: the kids of each parent, and
+/// each widget's parent by its parent tree key.
+#[derive(Default)]
+struct FormPlacement {
+    kids: BTreeMap<StructureId, Vec<FormKid>>,
+    parent: BTreeMap<i32, StructureId>,
+}
+
 /// A widget's `/Form` element placed under its parent element.
 #[derive(Debug, Clone, Copy)]
 struct FormKid {
@@ -113,13 +121,14 @@ impl<'a> PreparedStructure<'a> {
     /// Each widget's `/Form` element goes under the element of the marked
     /// content around its field's first fragment on the widget's page, else
     /// under the document element, ordered by where the fragment sits.
-    fn form_kids(&self, widgets: &[TaggedWidget]) -> BTreeMap<StructureId, Vec<FormKid>> {
-        let mut kids: BTreeMap<StructureId, Vec<FormKid>> = BTreeMap::new();
+    fn form_kids(&self, widgets: &[TaggedWidget]) -> FormPlacement {
+        let mut first: HashMap<(FormFieldId, usize), &FragmentMark> = HashMap::new();
+        for mark in &self.fragments {
+            first.entry((mark.field, mark.page_index)).or_insert(mark);
+        }
+        let mut placement = FormPlacement::default();
         for widget in widgets {
-            let mark = self
-                .fragments
-                .iter()
-                .find(|mark| mark.field == widget.field && mark.page_index == widget.page_index);
+            let mark = first.get(&(widget.field, widget.page_index)).copied();
             let parent = mark
                 .and_then(|mark| mark.parent)
                 .filter(|parent| self.node_refs.contains_key(parent))
@@ -127,19 +136,21 @@ impl<'a> PreparedStructure<'a> {
             let order = mark.map_or((widget.page_index, i32::MAX), |mark| {
                 (mark.page_index, mark.mcid_before)
             });
-            kids.entry(parent).or_default().push(FormKid {
+            placement.kids.entry(parent).or_default().push(FormKid {
                 order,
                 element: widget.element,
             });
+            placement.parent.insert(widget.key, parent);
         }
-        kids
+        placement
     }
 
     pub(crate) fn write(&self, pdf: &mut Pdf, page_ids: &[Ref], widgets: &[TaggedWidget]) {
         let Some(document_ref) = self.node_ref(self.structure.root) else {
             return;
         };
-        let form_kids = self.form_kids(widgets);
+        let placement = self.form_kids(widgets);
+        let form_kids = &placement.kids;
 
         {
             let mut root = pdf.indirect(self.root_ref).dict();
@@ -199,7 +210,7 @@ impl<'a> PreparedStructure<'a> {
                         children.struct_element(*body_ref);
                     }
                 } else {
-                    for kid in self.ordered_kids(node.id, forms) {
+                    for kid in self.ordered_kids(node.id, form_kids) {
                         match kid {
                             StructureKid::Element(reference) => {
                                 children.struct_element(reference);
@@ -252,10 +263,10 @@ impl<'a> PreparedStructure<'a> {
         }
 
         for widget in widgets {
-            let parent = form_kids
-                .iter()
-                .find(|(_, kids)| kids.iter().any(|kid| kid.element == widget.element))
-                .map(|(parent, _)| *parent)
+            let parent = placement
+                .parent
+                .get(&widget.key)
+                .copied()
                 .unwrap_or(self.structure.root);
             let parent_ref = self
                 .list_body_refs
@@ -294,10 +305,15 @@ impl<'a> PreparedStructure<'a> {
         }
     }
 
-    fn ordered_kids(&self, id: StructureId, forms: &[FormKid]) -> Vec<StructureKid> {
+    fn ordered_kids(
+        &self,
+        id: StructureId,
+        form_kids: &BTreeMap<StructureId, Vec<FormKid>>,
+    ) -> Vec<StructureKid> {
         let Some(node) = self.structure.node(id) else {
             return Vec::new();
         };
+        let forms = form_kids.get(&id).map_or(&[][..], Vec::as_slice);
         if forms.is_empty()
             && self
                 .occurrences
@@ -319,7 +335,7 @@ impl<'a> PreparedStructure<'a> {
         for (index, child) in node.children.iter().enumerate() {
             if let Some(reference) = self.node_ref(*child) {
                 kids.push((
-                    self.first_occurrence(*child)
+                    self.first_occurrence(*child, form_kids)
                         .unwrap_or((usize::MAX, i32::MAX)),
                     forms.len() + index,
                     StructureKid::Element(reference),
@@ -345,20 +361,29 @@ impl<'a> PreparedStructure<'a> {
         kids.into_iter().map(|(_, _, kid)| kid).collect()
     }
 
-    fn first_occurrence(&self, id: StructureId) -> Option<(usize, i32)> {
+    /// Where an element first shows: its first marked content, or the first
+    /// field it holds, whichever comes first, its descendants included.
+    fn first_occurrence(
+        &self,
+        id: StructureId,
+        form_kids: &BTreeMap<StructureId, Vec<FormKid>>,
+    ) -> Option<(usize, i32)> {
         let own = self
             .occurrences
             .get(&id)
             .and_then(|marks| marks.first())
             .map(|mark| (mark.page_index, mark.mcid));
+        let form = form_kids
+            .get(&id)
+            .and_then(|kids| kids.iter().map(|kid| kid.order).min());
         let child = self
             .structure
             .node(id)?
             .children
             .iter()
-            .filter_map(|child| self.first_occurrence(*child))
+            .filter_map(|child| self.first_occurrence(*child, form_kids))
             .min();
-        own.into_iter().chain(child).min()
+        own.into_iter().chain(form).chain(child).min()
     }
 }
 
