@@ -1879,16 +1879,66 @@ fn a_note_the_edited_version_does_not_reference_keeps_the_id_a_pair_would_take()
     let notes = |doc: &Document| {
         doc.footnotes()
             .into_iter()
-            .map(|(_, text)| text.trim().to_owned())
+            .map(|(id, text)| (id, text.trim().to_owned()))
             .collect::<Vec<_>>()
     };
+    let unreferenced = notes(&edited)[0].clone();
+    assert_eq!(unreferenced.1, "B");
     let mut doc = redline(original, &edited);
     let copy = accepted(&mut doc);
     assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
-    assert_eq!(notes(&copy), ["B", "A"]);
+    let after = notes(&copy);
+    assert_eq!(after[0], unreferenced);
+    assert_eq!(after[1].1, "A");
     let copy = rejected(&mut doc);
     assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
-    assert_eq!(notes(&copy), ["A"]);
+    assert_eq!(
+        notes(&copy)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>(),
+        ["A"]
+    );
+}
+
+#[test]
+fn a_note_the_original_does_not_reference_keeps_the_id_a_pair_would_leave() {
+    // The original holds a draft note it does not reference before the
+    // referenced one; the edited version, numbered by position, holds the
+    // referenced note under the draft's id. The draft is revised in place.
+    let original = {
+        let mut doc = Document::new();
+        doc.add_footnote("Draft");
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let edited = {
+        let mut doc = Document::new();
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let notes = |doc: &Document| {
+        doc.footnotes()
+            .into_iter()
+            .map(|(id, text)| (id, text.trim().to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let before = notes(&original);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(
+        notes(&copy)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>(),
+        ["A"]
+    );
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(notes(&copy), before);
 }
 
 #[test]

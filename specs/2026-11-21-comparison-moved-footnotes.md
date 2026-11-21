@@ -30,9 +30,10 @@ later reference move.
    as many). An unpaired note keeps its id, or takes a new one when a
    paired note takes it or when the original references a note under it
    too; a note one version does not reference keeps its id and is revised
-   in place. A pair that would take the id of a note the edited version
-   does not reference is dropped, so that note keeps its id. A note added
-   at the top is then the only note change.
+   in place. A pair is therefore dropped when it would take the id of a
+   note the edited version does not reference, or move an edited note away
+   from the id of a note the original does not reference. A note added at
+   the top is then the only note change.
 2. **A reference that really moved.** As Word shows it: the note is deleted
    with its old reference and inserted again with its new one. When the
    check finds such notes, the comparison starts again from the inputs, the
@@ -75,7 +76,8 @@ numbered by position, moved and edited, a note added before the others, a
 note added above with a moved reference, a moved note under a new id, a
 paragraph moved with its note, a note neither version references, a note
 only one version references, a note the edited version does not reference
-under the id a pair would take), and the limitation entry removed. Each further
+under the id a pair would take, a note the original does not reference
+under the id a pair would leave), and the limitation entry removed. Each further
 pass costs one more comparison, only for these pairs; the passes run in a
 loop that drops each pass's state, at most one per note.
 

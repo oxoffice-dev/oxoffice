@@ -6530,8 +6530,9 @@ fn moved_pending_references(
 /// An unpaired edited note keeps its id, so the comparison revises in place
 /// a note one version does not reference; it takes a new id only when a
 /// paired note takes its id or both versions reference a note under it. A
-/// pair that would take the id of a note the edited version does not
-/// reference is dropped. Notes in `renumbered`, moved to new ids by an
+/// pair is dropped when it would take the id of a note the edited version
+/// does not reference, or move an edited note away from the id of a note the
+/// original does not reference. Notes in `renumbered`, moved to new ids by an
 /// earlier pass, are left out of the pairing: pairing them back would undo
 /// the move and the passes would never end. Nothing changes when a note is
 /// referenced twice or outside the main story, when a reference sits in a
@@ -6606,14 +6607,21 @@ fn reconcile_footnote_ids(
     for (index, other) in strict_pairs(&text_of(&left), &text_of(&right)) {
         ids.insert(right[other].0, left[index].0);
     }
-    // A note the edited version does not reference keeps its id, so a pair
-    // that would take that id is dropped: its note keeps its own id.
-    let unreferenced = right_normal
-        .keys()
-        .filter(|id| !right_ids.contains(id))
-        .copied()
-        .collect::<HashSet<_>>();
-    ids.retain(|_, to| !unreferenced.contains(to));
+    // A note one version does not reference keeps its id and is revised in
+    // place, so a pair is dropped when it would take the id of such an
+    // edited note, or leave the id of such an original note to nothing.
+    let unreferenced = |normal: &BTreeMap<i32, &FootnoteOwner>, referenced: &[i32]| {
+        normal
+            .keys()
+            .filter(|id| !referenced.contains(id))
+            .copied()
+            .collect::<HashSet<_>>()
+    };
+    let (left_unreferenced, right_unreferenced) = (
+        unreferenced(&left_normal, &left_ids),
+        unreferenced(&right_normal, &right_ids),
+    );
+    ids.retain(|from, to| !right_unreferenced.contains(to) && !left_unreferenced.contains(from));
     let mut next = left_normal
         .keys()
         .chain(right_normal.keys())
