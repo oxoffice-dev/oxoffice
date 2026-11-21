@@ -10,11 +10,11 @@ use oxoffice_cli_support::{
     ensure_output_paths_available, json_envelope, parse_range,
 };
 use oxoffice_docx::{
-    BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, CoreProperties,
-    CustomProperty, CustomPropertyValue, Document, FieldDateTime, FieldEvaluationContext,
-    HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat, RasterOptions, RasterOutput,
-    RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId, StoryItemKind, StoryKind,
-    StoryRevision,
+    BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, ContentLocation,
+    CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
+    FieldEvaluationContext, HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat,
+    RasterOptions, RasterOutput, RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId,
+    StoryItemKind, StoryKind, StoryRevision,
 };
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
@@ -197,6 +197,19 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
         } else {
             "main"
         };
+        // The direct style of each paragraph of the other stories. Styles
+        // that cannot be read leave the text as it is, with a warning.
+        let styles = match stories.as_ref().map(|_| doc.story_paragraphs()) {
+            Some(Ok(paragraphs)) => paragraphs
+                .into_iter()
+                .map(|paragraph| (paragraph.location, paragraph.style))
+                .collect::<HashMap<_, _>>(),
+            Some(Err(error)) => {
+                eprintln!("Warning: styles of the other stories left out: {error}");
+                HashMap::new()
+            }
+            None => HashMap::new(),
+        };
         let stories = stories
             .unwrap_or_default()
             .iter()
@@ -205,7 +218,13 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
                     .items
                     .iter()
                     .map(|(index_path, kind, text)| {
-                        json!({ "index_path": index_path, "kind": kind, "text": text })
+                        let location = ContentLocation::new(
+                            story.story.clone(),
+                            StoryItemKind::Paragraph,
+                            index_path.clone(),
+                        );
+                        let style = styles.get(&location).cloned().flatten();
+                        json!({ "index_path": index_path, "kind": kind, "style": style, "text": text })
                     })
                     .collect::<Vec<_>>();
                 json!({
@@ -228,6 +247,40 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
             eprintln!("Warning: {}", diagnostic.message);
         }
         write!(io::stdout().lock(), "{}", report.text)?;
+    }
+    Ok(())
+}
+
+/// Count a literal text in every story of a DOCX file, by story kind.
+pub fn count(file: &Path, text: &str, json_output: bool) -> Result<()> {
+    let doc = Document::open(file)?;
+    let counts = doc.count_text(text)?;
+    let total = counts.iter().map(|(_, count)| count).sum::<usize>();
+    // What replacement searches: every story but the comments.
+    let outside_comments = counts
+        .iter()
+        .filter(|(kind, _)| *kind != StoryKind::Comment)
+        .map(|(_, count)| count)
+        .sum::<usize>();
+    if json_output {
+        let by_kind = counts
+            .iter()
+            .map(|(kind, count)| (story_kind_name(*kind).to_owned(), json!(count)))
+            .collect::<serde_json::Map<_, _>>();
+        print_json(json!({
+            "text": text,
+            "revision_view": "accepted",
+            "counts": by_kind,
+            "total": total,
+            "outside_comments": outside_comments,
+        }))?;
+    } else {
+        let mut stdout = io::stdout().lock();
+        for (kind, count) in &counts {
+            writeln!(stdout, "{}: {count}", story_kind_name(*kind))?;
+        }
+        writeln!(stdout, "total: {total}")?;
+        writeln!(stdout, "outside comments: {outside_comments}")?;
     }
     Ok(())
 }

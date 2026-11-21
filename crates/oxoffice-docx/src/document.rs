@@ -68,6 +68,9 @@ use crate::run::{FieldDisplaySegmentRef, RunRef};
 use crate::style::{self, Style, StyleBuilder};
 use crate::table::{Table, TableRef, row_cell_ranges, validate_table_topology};
 
+mod story_paragraphs;
+pub use story_paragraphs::StoryParagraph;
+
 /// Options that select a native document render projection.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderOptions {

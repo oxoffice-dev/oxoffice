@@ -10,6 +10,7 @@ mod paragraphs_and_styles;
 mod revisions_and_compare;
 mod save;
 mod sections_and_headers;
+mod story_paragraphs;
 mod support;
 mod tables;
 mod text_and_runs;

@@ -86,11 +86,11 @@ pub use document::{
     NumberingFormat, NumberingInstance, NumberingLevel, NumberingLevelOverride, OutlineNode,
     PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RenderOptions,
     ReplacementCountMismatch, Section, SectionRef, SectionStory, StoryError, StoryId,
-    StoryItemKind, StoryItemRef, StoryItemSnapshot, StoryKind, StoryText, StoryTextItem,
-    TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions,
-    UnsupportedXmlRef, ValidationFinding, ValidationReport, ValidationSeverity,
-    WordCreationProfile, WordPackageClass, derive_font_key, take_direct_fragment_bytes,
-    validate_document_bytes, validate_document_file,
+    StoryItemKind, StoryItemRef, StoryItemSnapshot, StoryKind, StoryParagraph, StoryText,
+    StoryTextItem, TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport,
+    TextWatermarkOptions, UnsupportedXmlRef, ValidationFinding, ValidationReport,
+    ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
+    take_direct_fragment_bytes, validate_document_bytes, validate_document_file,
 };
 pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,

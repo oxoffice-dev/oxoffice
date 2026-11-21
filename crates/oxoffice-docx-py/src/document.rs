@@ -1356,6 +1356,66 @@ impl PyStoryItem {
     }
 }
 
+/// One paragraph of a story, as `Document.story_paragraphs` reads it.
+#[pyclass(name = "StoryParagraph", frozen, eq, skip_from_py_object)]
+#[derive(Clone, PartialEq, Eq)]
+pub struct PyStoryParagraph {
+    kind: String,
+    story: PyStory,
+    index_path: Vec<usize>,
+    style: Option<String>,
+    text: String,
+}
+
+#[pymethods]
+impl PyStoryParagraph {
+    /// The story of the part: body, header, footer, footnote, endnote or
+    /// comment. A table cell or a text box takes the kind of the story around it.
+    #[getter]
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    #[getter]
+    fn part_name(&self) -> &str {
+        &self.story.part_name
+    }
+
+    /// The story that holds the paragraph: the part's story, a table cell or
+    /// a text box.
+    #[getter]
+    fn story(&self) -> PyStory {
+        self.story.clone()
+    }
+
+    #[getter]
+    fn index_path<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.index_path.iter().copied())
+    }
+
+    #[getter]
+    fn style(&self) -> Option<&str> {
+        self.style.as_deref()
+    }
+
+    #[getter]
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "StoryParagraph(kind={:?}, part_name={:?}, style={}, text={:?})",
+            self.kind,
+            self.story.part_name,
+            self.style
+                .as_ref()
+                .map_or_else(|| "None".to_owned(), |style| format!("{style:?}")),
+            self.text
+        )
+    }
+}
+
 #[pyclass(name = "StoryRunPosition", frozen, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq, Eq)]
 pub struct PyStoryRunPosition {
@@ -13650,21 +13710,24 @@ impl PyDocument {
     }
 }
 
+fn story_kind_name(kind: oxoffice_docx::StoryKind) -> &'static str {
+    match kind {
+        oxoffice_docx::StoryKind::Body => "body",
+        oxoffice_docx::StoryKind::TableCell => "table_cell",
+        oxoffice_docx::StoryKind::Header => "header",
+        oxoffice_docx::StoryKind::Footer => "footer",
+        oxoffice_docx::StoryKind::Footnote => "footnote",
+        oxoffice_docx::StoryKind::Endnote => "endnote",
+        oxoffice_docx::StoryKind::Comment => "comment",
+        oxoffice_docx::StoryKind::TextBox => "text_box",
+        _ => "unknown",
+    }
+}
+
 fn story_snapshot(story: &oxoffice_docx::StoryId) -> PyStory {
     PyStory {
         binding: None,
-        kind: match story.kind() {
-            oxoffice_docx::StoryKind::Body => "body",
-            oxoffice_docx::StoryKind::TableCell => "table_cell",
-            oxoffice_docx::StoryKind::Header => "header",
-            oxoffice_docx::StoryKind::Footer => "footer",
-            oxoffice_docx::StoryKind::Footnote => "footnote",
-            oxoffice_docx::StoryKind::Endnote => "endnote",
-            oxoffice_docx::StoryKind::Comment => "comment",
-            oxoffice_docx::StoryKind::TextBox => "text_box",
-            _ => "unknown",
-        }
-        .to_owned(),
+        kind: story_kind_name(story.kind()).to_owned(),
         part_name: story.part_name().to_owned(),
         owner_index: story.owner_index(),
     }
@@ -16971,6 +17034,41 @@ impl PyDocument {
             })
             .collect::<PyResult<Vec<_>>>()?;
         PyTuple::new(py, snapshots)
+    }
+
+    #[getter]
+    fn story_paragraphs<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        self.ensure_word_authority(py)?;
+        let paragraphs = py
+            .detach(|| self.inner.story_paragraphs())
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let snapshots = paragraphs
+            .into_iter()
+            .map(|paragraph| {
+                Ok(PyStoryParagraph {
+                    kind: story_kind_name(paragraph.kind).to_owned(),
+                    story: self.owned_story_snapshot(paragraph.location.story())?,
+                    index_path: paragraph.location.index_path().to_vec(),
+                    style: paragraph.style,
+                    text: paragraph.text,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, snapshots)
+    }
+
+    fn count_text<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyDict>> {
+        if text.is_empty() {
+            return Err(PyValueError::new_err("count_text needs a text to count"));
+        }
+        let counts = py
+            .detach(|| self.inner.count_text(text))
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let by_kind = PyDict::new(py);
+        for (kind, count) in counts {
+            by_kind.set_item(story_kind_name(kind), count)?;
+        }
+        Ok(by_kind)
     }
 
     #[getter]
