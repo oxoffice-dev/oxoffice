@@ -567,6 +567,24 @@ fn a_placeholder_that_inherits_its_place_moves_and_aligns_with_the_size_it_inher
     assert_eq!(shape.position(), Some((Emu(IN), Emu(2 * IN))));
     assert_eq!(shape.size(), Some((MASTER_TITLE.2, MASTER_TITLE.3)));
 
+    // A slide that holds a connector takes the route that re-glues it.
+    let mut prs = title_only_slide();
+    {
+        let mut slide = prs.slide_mut(0).unwrap();
+        slide
+            .add_connector(ConnectorType::Straight, Emu(0), Emu(0), Emu(IN), Emu(IN))
+            .unwrap();
+        slide
+            .shape_mut(title)
+            .unwrap()
+            .set_position(Emu(IN), Emu(2 * IN))
+            .unwrap();
+    }
+    let prs = reopen(&prs);
+    let shape = shape_at(&prs, 0, title);
+    assert_eq!(shape.position(), Some((Emu(IN), Emu(2 * IN))));
+    assert_eq!(shape.size(), Some((MASTER_TITLE.2, MASTER_TITLE.3)));
+
     let mut prs = title_only_slide();
     prs.shapes_mut_at(ShapeOwner::Slide(0), &[])
         .unwrap()
