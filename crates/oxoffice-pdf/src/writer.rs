@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use oxoffice_layout::{
-    Color, FillRule, FontId, FormFieldFragment, FormFieldId, GradientStop, LayoutResult, LineCap,
-    LineJoin, Paint, Path, PathCommand, PathElement, PositionedElement, Stroke, Transform, walk,
+    Color, FillRule, FontId, FormFieldFragment, FormFieldId, GradientStop, GroupElement,
+    LayoutResult, LineCap, LineJoin, Paint, Path, PathCommand, PathElement, PositionedElement,
+    Stroke, Transform, walk,
 };
 use pdf_writer::types::{
     ActionType, AnnotationFlags, AnnotationType, CidFontType, ColorSpaceOperand, FontFlags,
@@ -1228,11 +1229,11 @@ struct PageContentResources<'a> {
     forms: Option<&'a forms::FormPlan<'a>>,
 }
 
-fn build_page_content(
+fn build_page_content<'a>(
     page_idx: usize,
-    page: &oxoffice_layout::PageFrame,
-    resources: PageContentResources<'_>,
-    field_drawings: &mut BTreeMap<FormFieldId, forms::FieldDrawing>,
+    page: &'a oxoffice_layout::PageFrame,
+    resources: PageContentResources<'a>,
+    field_drawings: &'a mut BTreeMap<FormFieldId, forms::FieldDrawing>,
 ) -> Vec<u8> {
     let mut content = Content::new();
     let page_height = page.height as f32;
@@ -1253,6 +1254,8 @@ fn build_page_content(
         next_mcid: 0,
         forms: resources.forms,
         field_drawings,
+        groups: Vec::new(),
+        open_marks: 0,
     };
     emit_elements(
         &mut content,
@@ -1314,12 +1317,16 @@ struct EmitState<'a> {
     forms: Option<&'a forms::FormPlan<'a>>,
     /// What the page draws for each placed form field, kept out of the page.
     field_drawings: &'a mut BTreeMap<FormFieldId, forms::FieldDrawing>,
+    /// The groups around the element being drawn, outermost first.
+    groups: Vec<&'a GroupElement>,
+    /// Marked content sequences open around the element being drawn.
+    open_marks: usize,
 }
 
-fn emit_elements(
+fn emit_elements<'a>(
     content: &mut Content,
-    elements: &[PositionedElement],
-    state: &mut EmitState<'_>,
+    elements: &'a [PositionedElement],
+    state: &mut EmitState<'a>,
     accumulated_transform: Transform,
     inherited_actual_text: Option<&str>,
 ) {
@@ -1370,7 +1377,9 @@ fn emit_elements(
                     content.begin_marked_content(Name(b"Artifact"));
                 }
             }
+            state.open_marks += 1;
             emit_elements(content, children, state, accumulated_transform, actual_text);
+            state.open_marks -= 1;
             content.end_marked_content();
             continue;
         }
@@ -1564,23 +1573,8 @@ fn emit_elements(
             }
             PositionedElement::Group(group) => {
                 content.save_state();
-                content.transform([
-                    group.transform.a as f32,
-                    group.transform.b as f32,
-                    group.transform.c as f32,
-                    group.transform.d as f32,
-                    group.transform.e as f32,
-                    group.transform.f as f32,
-                ]);
-                if let Some(clip) = &group.clip {
-                    emit_path_geometry(content, clip);
-                    match clip.fill_rule {
-                        FillRule::NonZero => content.clip_nonzero(),
-                        FillRule::EvenOdd => content.clip_even_odd(),
-                    };
-                    content.end_path();
-                }
-                apply_alpha(content, group.opacity, state.alpha_states);
+                apply_group_state(content, group, state.alpha_states);
+                state.groups.push(group);
                 emit_elements(
                     content,
                     &group.children,
@@ -1588,6 +1582,7 @@ fn emit_elements(
                     group.transform.then(accumulated_transform),
                     actual_text,
                 );
+                state.groups.pop();
                 content.restore_state();
             }
             _ => {
@@ -1600,10 +1595,10 @@ fn emit_elements(
 /// Draw a form field fragment's children into its field's appearance, or as
 /// page content when the field has no widget on this page. Either way the
 /// children carry no structure marks: the structure does not count them.
-fn emit_form_field(
+fn emit_form_field<'a>(
     content: &mut Content,
-    fragment: &FormFieldFragment,
-    state: &mut EmitState<'_>,
+    fragment: &'a FormFieldFragment,
+    state: &mut EmitState<'a>,
     accumulated_transform: Transform,
     actual_text: Option<&str>,
 ) {
@@ -1612,13 +1607,23 @@ fn emit_form_field(
         .forms
         .and_then(|forms| forms.placed_on(fragment.field, state.page_idx));
     match placed {
-        None => emit_elements(
-            content,
-            &fragment.children,
-            state,
-            accumulated_transform,
-            actual_text,
-        ),
+        None => {
+            // Tagged content outside any marked sequence must be an artifact.
+            let artifact = structure.is_some() && state.open_marks == 0;
+            if artifact {
+                content.begin_marked_content(Name(b"Artifact"));
+            }
+            emit_elements(
+                content,
+                &fragment.children,
+                state,
+                accumulated_transform,
+                actual_text,
+            );
+            if artifact {
+                content.end_marked_content();
+            }
+        }
         Some(placed) => {
             let current = field_drawing(
                 &fragment.children,
@@ -1627,8 +1632,9 @@ fn emit_form_field(
                 actual_text,
             );
             let other = if placed.is_check_box() {
-                // The other state is drawn apart: it holds text only, and it
-                // must not move the leaf count that names the page's images.
+                // The other state holds text only, drawn apart so that it
+                // does not move the leaf count naming the page's images and
+                // gradients.
                 let no_images = HashMap::new();
                 let mut no_fields = BTreeMap::new();
                 let mut other_state = EmitState {
@@ -1644,13 +1650,21 @@ fn emit_form_field(
                     next_mcid: 0,
                     forms: None,
                     field_drawings: &mut no_fields,
+                    groups: state.groups.clone(),
+                    open_marks: 0,
                 };
-                field_drawing(
-                    &fragment.alternate,
-                    &mut other_state,
-                    accumulated_transform,
-                    actual_text,
-                )
+                let text: Vec<PositionedElement> = fragment
+                    .alternate
+                    .iter()
+                    .filter(|element| {
+                        matches!(
+                            element,
+                            PositionedElement::Text(_) | PositionedElement::MultilingualText(_)
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                field_drawing(&text, &mut other_state, accumulated_transform, actual_text)
             } else {
                 Vec::new()
             };
@@ -1662,17 +1676,20 @@ fn emit_form_field(
     state.structure = structure;
 }
 
-/// Children drawn in page coordinates, as an appearance stream draws them.
-fn field_drawing(
-    children: &[PositionedElement],
-    state: &mut EmitState<'_>,
+/// Children drawn in page coordinates under the groups around them, as an
+/// appearance stream draws them.
+fn field_drawing<'a>(
+    children: &'a [PositionedElement],
+    state: &mut EmitState<'a>,
     accumulated_transform: Transform,
     actual_text: Option<&str>,
 ) -> Vec<u8> {
     let mut drawing = Content::new();
     drawing.save_state();
     drawing.transform([1.0, 0.0, 0.0, -1.0, 0.0, state.page_height as f32]);
-    drawing.transform(transform_array(accumulated_transform));
+    for group in &state.groups {
+        apply_group_state(&mut drawing, group, state.alpha_states);
+    }
     emit_elements(
         &mut drawing,
         children,
@@ -1682,6 +1699,27 @@ fn field_drawing(
     );
     drawing.restore_state();
     drawing.finish().to_vec()
+}
+
+/// A group's transform, clip and opacity, as its children are drawn under.
+fn apply_group_state(content: &mut Content, group: &GroupElement, alpha_states: &AlphaStates) {
+    content.transform([
+        group.transform.a as f32,
+        group.transform.b as f32,
+        group.transform.c as f32,
+        group.transform.d as f32,
+        group.transform.e as f32,
+        group.transform.f as f32,
+    ]);
+    if let Some(clip) = &group.clip {
+        emit_path_geometry(content, clip);
+        match clip.fill_rule {
+            FillRule::NonZero => content.clip_nonzero(),
+            FillRule::EvenOdd => content.clip_even_odd(),
+        };
+        content.end_path();
+    }
+    apply_alpha(content, group.opacity, alpha_states);
 }
 
 fn apply_alpha(content: &mut Content, alpha: f64, states: &AlphaStates) {

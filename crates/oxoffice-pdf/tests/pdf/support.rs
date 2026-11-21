@@ -198,6 +198,96 @@ impl Pdf {
     }
 }
 
+impl Pdf {
+    /// The `/BBox` of a field's normal appearance, or of one state.
+    pub fn appearance_bbox(&self, field: &Dictionary, state: Option<&[u8]>) -> [f32; 4] {
+        let normal = self.dict(field, b"AP").get(b"N").unwrap();
+        let stream = match state {
+            None => self.resolve(normal),
+            Some(state) => {
+                self.resolve(self.resolve(normal).as_dict().unwrap().get(state).unwrap())
+            }
+        };
+        rect(stream.as_stream().unwrap().dict.get(b"BBox").unwrap())
+    }
+}
+
+/// Where each text object of a content stream starts drawing, in default
+/// user space: the `Tm` origin through the `cm` matrices around it.
+pub fn text_origins(content: &[u8]) -> Vec<(f64, f64)> {
+    type Matrix = [f64; 6];
+    fn then(first: Matrix, second: Matrix) -> Matrix {
+        [
+            first[0] * second[0] + first[1] * second[2],
+            first[0] * second[1] + first[1] * second[3],
+            first[2] * second[0] + first[3] * second[2],
+            first[2] * second[1] + first[3] * second[3],
+            first[4] * second[0] + first[5] * second[2] + second[4],
+            first[4] * second[1] + first[5] * second[3] + second[5],
+        ]
+    }
+    let mut ctm: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let mut stack = Vec::new();
+    let mut operands: Vec<f64> = Vec::new();
+    let mut origins = Vec::new();
+    let mut index = 0;
+    while index < content.len() {
+        let byte = content[index];
+        if byte == b'(' {
+            // Skip a literal string, nested parentheses and escapes included.
+            let mut depth = 0;
+            index += 1;
+            while index < content.len() {
+                match content[index] {
+                    b'\\' => index += 1,
+                    b'(' => depth += 1,
+                    b')' if depth == 0 => break,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+                index += 1;
+            }
+            index += 1;
+            continue;
+        }
+        if byte.is_ascii_whitespace() || matches!(byte, b'[' | b']' | b'<' | b'>' | b'/') {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < content.len()
+            && !content[index].is_ascii_whitespace()
+            && !matches!(content[index], b'[' | b']' | b'(' | b'<' | b'/')
+        {
+            index += 1;
+        }
+        let token = std::str::from_utf8(&content[start..index]).unwrap();
+        if let Ok(number) = token.parse::<f64>() {
+            operands.push(number);
+            continue;
+        }
+        match token {
+            "q" => stack.push(ctm),
+            "Q" => ctm = stack.pop().unwrap(),
+            "cm" => {
+                let m = &operands[operands.len() - 6..];
+                ctm = then([m[0], m[1], m[2], m[3], m[4], m[5]], ctm);
+            }
+            "Tm" => {
+                let m = &operands[operands.len() - 6..];
+                let (x, y) = (m[4], m[5]);
+                origins.push((
+                    ctm[0] * x + ctm[2] * y + ctm[4],
+                    ctm[1] * x + ctm[3] * y + ctm[5],
+                ));
+            }
+            _ => {}
+        }
+        operands.clear();
+    }
+    origins
+}
+
 /// Glyph to text pairs of a ToUnicode CMap's `bfchar` entries.
 fn to_unicode(cmap: &[u8]) -> std::collections::HashMap<u16, String> {
     let text = String::from_utf8_lossy(cmap);

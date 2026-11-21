@@ -1,12 +1,13 @@
 //! Form field fragments become AcroForm fields with appearance streams.
 
 use oxoffice_layout::{
-    ChoiceOption, Color, FieldAlignment, FormField, FormFieldFragment, FormFieldId, FormFieldKind,
-    GroupElement, LayoutResult, Point, PositionedElement, Rect, Transform,
+    ChoiceOption, Color, DocumentStructure, FieldAlignment, FormField, FormFieldFragment,
+    FormFieldId, FormFieldKind, GroupElement, LayoutResult, Point, PositionedElement, Rect,
+    StructureId, StructureNode, StructureRole, Transform,
 };
 use oxoffice_pdf::render_to_pdf_checked;
 
-use crate::support::{PAGE_HEIGHT, Pdf, contains, layout, rect, run, text};
+use crate::support::{PAGE_HEIGHT, Pdf, contains, layout, rect, run, text, text_origins};
 
 fn field(name: &str, kind: FormFieldKind) -> FormField {
     FormField {
@@ -498,4 +499,149 @@ fn form_output_is_identical_on_two_runs() {
         render_to_pdf_checked(&layout).unwrap(),
         render_to_pdf_checked(&layout).unwrap()
     );
+}
+
+/// Whether a point lies inside a PDF rectangle, a hundredth of a point aside.
+fn inside(point: (f64, f64), bbox: [f32; 4]) -> bool {
+    let [x0, y0, x1, y1] = bbox.map(f64::from);
+    (x0 - 0.01..=x1 + 0.01).contains(&point.0) && (y0 - 0.01..=y1 + 0.01).contains(&point.1)
+}
+
+fn close(a: (f64, f64), b: (f64, f64)) -> bool {
+    (a.0 - b.0).abs() < 0.01 && (a.1 - b.1).abs() < 0.01
+}
+
+#[test]
+fn an_appearance_draws_its_value_where_the_static_export_draws_it() {
+    let moved = PositionedElement::Group(GroupElement {
+        transform: Transform {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 100.0,
+            f: 50.0,
+        },
+        clip: None,
+        opacity: 1.0,
+        effects: Vec::new(),
+        children: vec![fragment(1, line(10.0, 220.0, 80.0), "Bob")],
+    });
+    let elements = vec![fragment(0, line(110.0, 100.0, 200.0), "Jane"), moved];
+    let with_field = with_fields(
+        layout(vec![elements.clone()]),
+        vec![
+            field("name", text_kind("Jane")),
+            field("other", text_kind("Bob")),
+        ],
+    );
+    let read = pdf(&with_field);
+    let static_read = pdf(&layout(vec![flattened(&elements)]));
+    let static_origins = text_origins(&static_read.page_content(0));
+    assert_eq!(static_origins.len(), 2);
+
+    for (name, static_origin) in ["name", "other"].into_iter().zip(static_origins) {
+        let field = read.field(name);
+        let bbox = read.appearance_bbox(field, None);
+        assert_eq!(
+            bbox,
+            rect(field.get(b"Rect").unwrap()),
+            "{name}: the box is the widget"
+        );
+        let origins = text_origins(&read.appearance(field, None));
+        assert_eq!(origins.len(), 1);
+        assert!(
+            close(origins[0], static_origin),
+            "{name}: {:?} vs {static_origin:?}",
+            origins[0]
+        );
+        assert!(inside(origins[0], bbox), "{name}: drawn inside its box");
+    }
+    assert!(close(
+        text_origins(&read.appearance(read.field("name"), None))[0],
+        (110.0, 680.0)
+    ));
+}
+
+#[test]
+fn an_appearance_keeps_the_clip_and_opacity_of_the_groups_around_it() {
+    let clipped = PositionedElement::Group(GroupElement {
+        transform: Transform::IDENTITY,
+        clip: Some(oxoffice_layout::Path::rect(Rect {
+            x: 100.0,
+            y: 90.0,
+            width: 60.0,
+            height: 30.0,
+        })),
+        opacity: 0.5,
+        effects: Vec::new(),
+        children: vec![fragment(0, line(110.0, 100.0, 200.0), "A long value")],
+    });
+    let layout = with_fields(
+        layout(vec![vec![clipped]]),
+        vec![field("name", text_kind("A long value"))],
+    );
+    let read = pdf(&layout);
+    let appearance = read.appearance(read.field("name"), None);
+    assert!(contains(&appearance, b"W\nn"), "clipped like the page");
+    assert!(contains(&appearance, b" gs"), "faded like the page");
+}
+
+#[test]
+fn a_check_box_draws_only_the_text_of_its_other_state() {
+    let check = PositionedElement::FormField(FormFieldFragment {
+        field: FormFieldId(0),
+        rect: line(72.0, 100.0, 12.0),
+        children: vec![run("X", Point { x: 72.0, y: 112.0 }, 11.0)],
+        alternate: vec![
+            PositionedElement::FilledRect {
+                rect: line(72.0, 100.0, 12.0),
+                color: Color::BLACK,
+            },
+            run("O", Point { x: 72.0, y: 112.0 }, 11.0),
+        ],
+    });
+    let layout = with_fields(
+        layout(vec![vec![check]]),
+        vec![field("agree", FormFieldKind::CheckBox { checked: true })],
+    );
+    let read = pdf(&layout);
+    let off = read.appearance(read.field("agree"), Some(b"Off"));
+    assert_eq!(read.drawn_text(&off), "O");
+    assert!(!contains(&off, b" re"), "no rectangle drawn");
+}
+
+#[test]
+fn a_tagged_fragment_drawn_on_the_page_is_an_artifact() {
+    let mut layout = with_fields(
+        layout(vec![
+            vec![fragment(0, line(72.0, 100.0, 200.0), "first")],
+            vec![PositionedElement::MarkedContent {
+                structure: Some(StructureId::new(2).unwrap()),
+                children: vec![fragment(0, line(72.0, 100.0, 200.0), "later")],
+            }],
+        ]),
+        vec![field("notes", text_kind("first later"))],
+    );
+    layout.structure = Some(DocumentStructure {
+        root: StructureId::new(1).unwrap(),
+        nodes: vec![
+            StructureNode {
+                id: StructureId::new(1).unwrap(),
+                role: StructureRole::Document,
+                children: vec![StructureId::new(2).unwrap()],
+                alternate_text: None,
+            },
+            StructureNode {
+                id: StructureId::new(2).unwrap(),
+                role: StructureRole::Paragraph,
+                children: Vec::new(),
+                alternate_text: None,
+            },
+        ],
+    });
+    let read = pdf(&layout);
+    let later = read.page_content(1);
+    assert_eq!(read.drawn_text(&later), "later");
+    assert!(contains(&later, b"/Artifact BMC"));
 }
