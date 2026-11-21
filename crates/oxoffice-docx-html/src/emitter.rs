@@ -345,6 +345,16 @@ fn emit_paragraph_content(
 
     for (run_idx, run) in para.runs.iter().enumerate() {
         let in_link = hyperlink_map.get(&run_idx).map(String::as_str);
+        // An anchor or an equation between a link and what follows it is not
+        // in the link.
+        if (anchors.iter().any(|(at, _)| *at == run_idx)
+            || crate::equations_at(para, run_idx).next().is_some())
+            && current_link.is_some()
+            && current_link != in_link
+        {
+            out.push_str("</a>");
+            current_link = None;
+        }
         emit_anchors(out, run_idx);
         // An equation between a link and what follows it is not in the link.
         if crate::equations_at(para, run_idx).next().is_some() {
@@ -666,7 +676,13 @@ fn emit_table(
             }
 
             let mut td_attrs = String::new();
-            let mut td_style = String::new();
+            // A header cell looks like the cell Word draws, not like a
+            // browser's bold, centred header.
+            let mut td_style = if cell_tag == "th" {
+                "font-weight:inherit;text-align:inherit;".to_owned()
+            } else {
+                String::new()
+            };
 
             if let Some(props) = &cell.properties {
                 // Column span

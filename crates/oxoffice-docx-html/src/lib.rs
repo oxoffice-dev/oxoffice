@@ -456,7 +456,13 @@ fn hyperlink_targets(paragraph: &CT_P, links: &Links<'_>) -> HashMap<usize, Stri
                     Some(fragment) if !url.contains('#') => format!("{url}{fragment}"),
                     _ => url.to_owned(),
                 }),
-            None => fragment,
+            // A link to a bookmark the exports write an anchor for.
+            None => fragment.filter(|_| {
+                hyperlink
+                    .anchor
+                    .as_ref()
+                    .is_some_and(|anchor| links.bookmarks.contains(anchor))
+            }),
         };
         if let Some(target) = target {
             for run in hyperlink.run_start..hyperlink.run_end {
@@ -467,30 +473,47 @@ fn hyperlink_targets(paragraph: &CT_P, links: &Links<'_>) -> HashMap<usize, Stri
     targets
 }
 
-/// The bookmarks of the body that a hyperlink of the body links to: the
-/// exports write an anchor for those only.
+/// The bookmarks of the body that a hyperlink of the body links to and that
+/// start in a paragraph the exports write: those get an anchor, and only
+/// links to those become links (a link to a missing bookmark stays text).
 fn linked_bookmarks(body: &CT_Body) -> HashSet<String> {
-    fn collect(blocks: Vec<Block<'_>>, names: &mut HashSet<String>) {
+    fn collect(
+        blocks: Vec<Block<'_>>,
+        linked: &mut HashSet<String>,
+        present: &mut HashSet<String>,
+    ) {
         for block in blocks {
             match block {
-                Block::Paragraph(paragraph, _) => names.extend(
-                    paragraph
-                        .hyperlinks
-                        .iter()
-                        .filter(|hyperlink| hyperlink.rel_id.is_none())
-                        .filter_map(|hyperlink| hyperlink.anchor.clone()),
-                ),
+                Block::Paragraph(paragraph, _) => {
+                    linked.extend(
+                        paragraph
+                            .hyperlinks
+                            .iter()
+                            .filter(|hyperlink| hyperlink.rel_id.is_none())
+                            .filter_map(|hyperlink| hyperlink.anchor.clone()),
+                    );
+                    present.extend(
+                        paragraph
+                            .current_bookmark_projection()
+                            .iter()
+                            .filter(|marker| marker.is_start())
+                            .filter_map(|marker| marker.name().map(str::to_owned)),
+                    );
+                }
                 Block::Table(table) => {
-                    for cell in table.rows.iter().flat_map(|row| &row.cells) {
-                        collect(cell_blocks(cell), names);
+                    for row in table.rows() {
+                        for cell in row.cells() {
+                            collect(cell_blocks(cell), linked, present);
+                        }
                     }
                 }
             }
         }
     }
-    let mut names = HashSet::new();
-    collect(body_blocks(body, false), &mut names);
-    names
+    let (mut linked, mut present) = (HashSet::new(), HashSet::new());
+    collect(body_blocks(body, false), &mut linked, &mut present);
+    linked.retain(|name| present.contains(name));
+    linked
 }
 
 /// The bookmarks that start in a paragraph and that a link targets, each at

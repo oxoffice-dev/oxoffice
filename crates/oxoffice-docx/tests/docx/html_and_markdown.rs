@@ -1398,6 +1398,65 @@ fn internal_links_reach_their_bookmark_in_both_exports() {
 }
 
 #[test]
+fn links_to_bookmarks_in_cells_after_links_and_missing_ones_read_right() {
+    let mut doc = doc_with_body(concat!(
+        // A bookmark right after an external link, and a link to a
+        // bookmark that does not exist.
+        r#"<w:p><w:hyperlink r:id="rIdSite"><w:r><w:t>site</w:t></w:r></w:hyperlink>"#,
+        r#"<w:bookmarkStart w:id="1" w:name="after"/><w:r><w:t>After</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:hyperlink w:anchor="after"><w:r><w:t>to after</w:t></w:r></w:hyperlink>"#,
+        r#"<w:hyperlink w:anchor="nowhere"><w:r><w:t xml:space="preserve"> lost</w:t></w:r></w:hyperlink></w:p>"#,
+        // A link and its bookmark in table cells.
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+        r#"<w:p><w:bookmarkStart w:id="2" w:name="cell"/><w:r><w:t>In cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
+        r#"<w:p><w:hyperlink w:anchor="cell"><w:r><w:t>to cell</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl>"#,
+        // An external link with an anchor keeps it as its fragment.
+        r#"<w:p><w:hyperlink r:id="rIdSite" w:anchor="part"><w:r><w:t>deep</w:t></w:r></w:hyperlink></w:p>"#,
+    ));
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let mut rels = package.get_part_rels(&part).cloned().unwrap_or_default();
+    rels.items.push(oxoffice_opc::relationship::Relationship {
+        id: "rIdSite".to_owned(),
+        rel_type: oxoffice_opc::relationship::rel_types::HYPERLINK.to_owned(),
+        target: "https://example.com/".to_owned(),
+        target_mode: Some("External".to_owned()),
+    });
+    package.set_part_rels(&part, rels);
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains(r##"<a href="https://example.com/">site</a><a id="after"></a>After"##),
+        "the anchor is not nested in the link: {html}"
+    );
+    assert!(
+        html.contains(r##"<a href="#after">to after</a>"##),
+        "{html}"
+    );
+    assert!(
+        !html.contains("#nowhere") && html.contains(" lost"),
+        "{html}"
+    );
+    assert!(html.contains(r##"<a id="cell"></a>In cell"##), "{html}");
+    assert!(html.contains(r##"<a href="#cell">to cell</a>"##), "{html}");
+    assert!(
+        html.contains(r##"<a href="https://example.com/#part">deep</a>"##),
+        "{html}"
+    );
+    let markdown = doc.to_markdown();
+    assert!(markdown.contains("[to after](#after)"), "{markdown}");
+    assert!(!markdown.contains("#nowhere"), "{markdown}");
+    assert!(
+        markdown.contains("[deep](https://example.com/#part)"),
+        "{markdown}"
+    );
+}
+
+#[test]
 fn a_header_row_holds_header_cells_in_html() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
@@ -1407,8 +1466,12 @@ fn a_header_row_holds_header_cells_in_html() {
         r#"</w:tbl><w:p/>"#,
     )));
     let html = doc.to_html_fragment();
-    assert_eq!(html.matches("<th>").count(), 2, "{html}");
-    assert!(html.contains("<th><p>Name</p>\n</th>"), "{html}");
+    assert_eq!(html.matches("<th ").count(), 2, "{html}");
+    // Drawn like the cell Word draws, not bold and centred.
+    assert!(
+        html.contains("<th style=\"font-weight:inherit;text-align:inherit;\"><p>Name</p>\n</th>"),
+        "{html}"
+    );
     assert!(html.contains("<td><p>Ann</p>\n</td>"), "{html}");
     // An HTML reader marks the row as a header again.
     let reread = Document::from_html(&doc.to_html()).unwrap().document;
