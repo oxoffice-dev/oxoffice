@@ -17186,8 +17186,9 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
             };
             let event = event.into_owned();
             if custom_mark_follows {
-                // The custom mark is the text or symbol that follows the
-                // reference in its run: it goes with the note.
+                // The custom mark is the text, deleted text or symbol that
+                // follows the reference in its run, as the run reader takes
+                // it: it goes with the note.
                 if let Event::Start(reference) = &event {
                     let name = reference.name().as_ref().to_vec();
                     reader
@@ -17207,7 +17208,11 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                     match next {
                         Event::Text(text) if text.iter().all(u8::is_ascii_whitespace) => {}
                         Event::Start(mark)
-                            if word_element(&namespace) && mark.local_name().as_ref() == b"t" =>
+                            if word_element(&namespace)
+                                && matches!(
+                                    mark.local_name().as_ref(),
+                                    b"t" | b"delText" | b"sym"
+                                ) =>
                         {
                             end = story_element_end(xml, offset)?;
                             let name = mark.name().as_ref().to_vec();
@@ -17220,7 +17225,10 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                         }
                         Event::Empty(mark)
                             if word_element(&namespace)
-                                && matches!(mark.local_name().as_ref(), b"t" | b"sym") =>
+                                && matches!(
+                                    mark.local_name().as_ref(),
+                                    b"t" | b"delText" | b"sym"
+                                ) =>
                         {
                             end = reader.buffer_position() as usize;
                             break;

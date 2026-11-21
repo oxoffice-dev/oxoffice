@@ -740,17 +740,129 @@ fn removing_a_custom_marked_note_removes_its_mark_from_the_body() {
     );
 }
 
+/// `doc` saved, its main part rewritten by `edit`, and opened again.
+fn with_main_part(doc: &mut Document, edit: impl FnOnce(&str) -> String) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    package.set_part(&main, edit(&xml).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The span of the run of `xml` that holds the footnote reference to `id`.
+fn reference_run(xml: &str, id: i32) -> std::ops::Range<usize> {
+    let reference = xml
+        .match_indices("<w:footnoteReference ")
+        .map(|(at, _)| at)
+        .find(|&at| xml[at..at + xml[at..].find('>').unwrap()].contains(&format!(r#"w:id="{id}""#)))
+        .expect("reference to the note");
+    let start = xml[..reference]
+        .rfind("<w:r>")
+        .max(xml[..reference].rfind("<w:r "))
+        .expect("run of the reference");
+    let end = reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len();
+    start..end
+}
+
 #[test]
 fn removing_a_note_keeps_the_text_after_its_reference() {
-    // Only a custom mark follows its reference into removal: the text of a
-    // numbered note's paragraph stays.
+    // Only a custom mark follows its reference into removal: text after a
+    // numbered note's reference, in the same run, stays.
     let mut doc = doc_with(&["Claim"]);
     let id = create_note(&mut doc, Footnote, 0, "Source");
-    doc.paragraph_mut(0).unwrap().add_run(" and more.");
+    let mut doc = with_main_part(&mut doc, |xml| {
+        let close = reference_run(xml, id).end - "</w:r>".len();
+        format!(
+            r#"{}<w:t xml:space="preserve"> and more.</w:t>{}"#,
+            &xml[..close],
+            &xml[close..]
+        )
+    });
+    assert_eq!(texts(&doc), ["Claim and more."]);
     doc.remove_footnote(id).unwrap();
     let doc = reopen(&mut doc);
     assert!(doc.footnotes().is_empty());
     assert_eq!(texts(&doc), ["Claim and more."]);
+}
+
+#[test]
+fn removing_a_custom_marked_note_in_a_deletion_removes_its_deleted_mark() {
+    // A tracked deletion holds the mark as deleted text; rejecting the
+    // deletion after the note is gone must not bring the mark back.
+    let mut doc = doc_with(&["Marked"]);
+    let dagger = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Dagger note", "\u{2020}")
+        .unwrap();
+    let mut doc = with_main_part(&mut doc, |xml| {
+        let run = reference_run(xml, dagger);
+        let deleted = xml[run.clone()]
+            .replace("<w:t>", "<w:delText>")
+            .replace("<w:t ", "<w:delText ")
+            .replace("</w:t>", "</w:delText>");
+        format!(
+            r#"{}<w:del w:id="90" w:author="Reviewer" w:date="2026-01-01T00:00:00Z">{deleted}</w:del>{}"#,
+            &xml[..run.start],
+            &xml[run.end..]
+        )
+    });
+    assert!(
+        doc.part_xml("word/document.xml")
+            .unwrap()
+            .contains("<w:delText")
+    );
+    doc.remove_footnote(dagger).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert!(doc.footnotes().is_empty());
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains('\u{2020}'), "{main}");
+    doc.reject_all().unwrap();
+    assert_eq!(texts(&reopen(&mut doc)), ["Marked"]);
+}
+
+#[test]
+fn removing_custom_marked_notes_of_one_run_removes_each_mark() {
+    // A symbol mark after `customMarkFollows="true"`, then a text mark after
+    // `"on"` and some whitespace, both in one run.
+    let mut doc = doc_with(&["Marked"]);
+    let first = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "First note", "*")
+        .unwrap();
+    let second = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Second note", "+")
+        .unwrap();
+    let mut doc = with_main_part(&mut doc, |xml| {
+        let (from, to) = (
+            reference_run(xml, first).start,
+            reference_run(xml, second).end,
+        );
+        format!(
+            concat!(
+                "{}<w:r>",
+                r#"<w:footnoteReference w:customMarkFollows="true" w:id="{}"/>"#,
+                r#"<w:sym w:font="Symbol" w:char="F0A7"/>"#,
+                r#"<w:footnoteReference w:customMarkFollows="on" w:id="{}"/> "#,
+                "<w:t>\u{2021}</w:t></w:r>{}"
+            ),
+            &xml[..from],
+            first,
+            second,
+            &xml[to..]
+        )
+    });
+    doc.remove_footnote(first).unwrap();
+    let mut doc = reopen(&mut doc);
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains("w:sym"), "{main}");
+    assert!(main.contains('\u{2021}'), "{main}");
+    assert_eq!(doc.footnotes().len(), 1);
+    doc.remove_footnote(second).unwrap();
+    let doc = reopen(&mut doc);
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains('\u{2021}'), "{main}");
+    assert!(doc.footnotes().is_empty());
+    assert_eq!(texts(&doc), ["Marked"]);
 }
 
 // Fails today: removing a paragraph keeps the footnotes it referenced, which
