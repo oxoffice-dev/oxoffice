@@ -18,13 +18,13 @@ issue = 227
 [[known]]
 file = "authored/thesis.docx"
 check = "overlap"
-pages = [25]
+pages = [26]
 issue = 156
 
 [[known]]
 file = "libreoffice/thesis.docx"
 check = "overlap"
-pages = [24]
+pages = [25]
 issue = 156
 
 [[known]]
@@ -172,3 +172,21 @@ file = "powerpoint/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
 issue = 157
+
+[[known]]
+file = "authored/thesis.docx"
+check = "empty-page"
+pages = [6]
+by_design = "the blank page that sends the odd-page first chapter to a right-hand page, as LibreOffice prints it"
+
+[[known]]
+file = "libreoffice/thesis.docx"
+check = "empty-page"
+pages = [6]
+by_design = "the blank page that sends the odd-page first chapter to a right-hand page, as LibreOffice prints it"
+
+[[known]]
+file = "word/thesis.docx"
+check = "empty-page"
+pages = [6]
+by_design = "the blank page that sends the odd-page first chapter to a right-hand page, as LibreOffice prints it"

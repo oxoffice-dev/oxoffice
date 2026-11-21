@@ -2732,3 +2732,97 @@ fn a_removed_picture_leaves_a_document_saved_as_a_template() {
         });
     assert_eq!(images, 0);
 }
+
+// ---- Linked pictures in a comparison ----
+
+/// `doc` with the External target of its linked picture changed to
+/// `target`, under the same relationship id, as Word's Change Source does.
+fn relinked(doc: &mut Document, target: &str) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let relationships = package.get_part_rels_mut("/word/document.xml").unwrap();
+    let linked = relationships
+        .items
+        .iter_mut()
+        .find(|relationship| relationship.target_mode.as_deref() == Some("External"))
+        .unwrap();
+    linked.target = target.to_owned();
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// `original` redlined into `edited`, saved and reopened.
+fn compared(mut original: Document, edited: &Document) -> Document {
+    let diagnostics = original
+        .compare(edited, "Reviewer", "2026-11-21T09:00:00Z")
+        .unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    reopen(&mut original)
+}
+
+/// The External addresses of the pictures of `doc`, saved with every
+/// revision accepted, or rejected.
+fn resolved_picture_addresses(doc: &mut Document, accept: bool) -> Vec<Option<String>> {
+    let mut copy = reopen(doc);
+    if accept {
+        copy.accept_all().unwrap();
+    } else {
+        copy.reject_all().unwrap();
+    }
+    reopen(&mut copy)
+        .pictures()
+        .unwrap()
+        .into_iter()
+        .map(|picture| picture.external_url)
+        .collect()
+}
+
+#[test]
+fn a_linked_picture_added_in_a_comparison_keeps_its_address() {
+    // The original holds hyperlinks, one under the relationship id of the
+    // linked picture of the edited version.
+    let edited = linked_picture_document();
+    let linked = edited.pictures().unwrap()[0].relationship_id.clone();
+    let mut original = Document::new();
+    let mut links = Vec::new();
+    while !links.contains(&linked) {
+        assert!(links.len() < 10, "{linked} is a hyperlink id: {links:?}");
+        links.push(
+            original.add_hyperlink_relationship(&format!("https://example.com/{}", links.len())),
+        );
+    }
+    let mut paragraph = original.add_paragraph("Logo ");
+    for (index, link) in links.iter().enumerate() {
+        paragraph.add_hyperlink(&format!("site {index} "), link);
+    }
+    let mut doc = compared(original, &edited);
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].external_url.as_deref(), Some(LINKED_IMAGE));
+    assert_eq!(
+        resolved_picture_addresses(&mut doc, true),
+        [Some(LINKED_IMAGE.to_owned())]
+    );
+    assert_eq!(resolved_picture_addresses(&mut doc, false), []);
+}
+
+#[test]
+fn a_relinked_picture_is_a_change_in_a_comparison() {
+    const MOVED_IMAGE: &str = "file:///C:/Images/new-logo.png";
+    let mut original = linked_picture_document();
+    let edited = relinked(&mut original, MOVED_IMAGE);
+    assert_eq!(
+        edited.pictures().unwrap()[0].external_url.as_deref(),
+        Some(MOVED_IMAGE)
+    );
+    let mut doc = compared(original, &edited);
+    assert!(!doc.revisions().is_empty(), "the new address is a change");
+    assert_eq!(
+        resolved_picture_addresses(&mut doc, true),
+        [Some(MOVED_IMAGE.to_owned())]
+    );
+    assert_eq!(
+        resolved_picture_addresses(&mut doc, false),
+        [Some(LINKED_IMAGE.to_owned())]
+    );
+}

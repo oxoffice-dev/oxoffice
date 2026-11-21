@@ -834,6 +834,148 @@ fn a_redline_of_two_word_saved_reports_rejects_to_the_original() {
 }
 
 #[test]
+fn a_redline_in_one_name_on_a_reviewed_contract_edited_by_oxoffice_is_compared() {
+    // The contract holds two reviewers' tracked changes. The edit saves the
+    // main part again, which writes some characters differently (an
+    // apostrophe as an entity) in paragraphs the edit does not touch.
+    let mut edited = corpus_doc("word/contract.docx");
+    let replaced = edited.replace_all(&HashMap::from([(
+        "thirty-six (36) months",
+        "forty-eight (48) months",
+    )]));
+    assert_eq!(replaced, 1);
+    let mut edited = reopen(&mut edited);
+    // The held paragraph is written another way, not changed.
+    assert!(main_part_xml(&mut edited).contains("days&apos; written"));
+    assert!(main_part_xml(&mut corpus_doc("word/contract.docx")).contains("days' written"));
+    let original = corpus_doc("word/contract.docx");
+    let earlier = original
+        .revisions()
+        .iter()
+        .map(|revision| (revision.kind(), revision.author().to_owned()))
+        .collect::<Vec<_>>();
+    assert!(!earlier.is_empty());
+    let mut doc = redline(original, &edited);
+    let mine = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.author() == AUTHOR)
+        .count();
+    assert!(
+        mine > 0,
+        "the replacement is tracked in the reviewer's name"
+    );
+    let others = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.author() != AUTHOR)
+        .map(|revision| (revision.kind(), revision.author().to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(others, earlier, "the other reviewers' revisions stay");
+    assert_eq!(texts(&accepted(&mut doc)), texts(&accepted(&mut edited)));
+    let mut original = corpus_doc("word/contract.docx");
+    assert_eq!(texts(&rejected(&mut doc)), texts(&rejected(&mut original)));
+}
+
+/// The reviewed contract with one more comment, on the first run of its
+/// body, added in its package so that every other byte stays as Word wrote
+/// it.
+fn contract_with_a_comment_on_its_first_run() -> Document {
+    let bytes = std::fs::read(crate::support::corpus_root().join("files/word/contract.docx"))
+        .expect("corpus file");
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let body = main.find("<w:body>").unwrap();
+    let start = body + main[body..].find("<w:r>").unwrap();
+    let end = start + main[start..].find("</w:r>").unwrap() + "</w:r>".len();
+    let main = format!(
+        "{}<w:commentRangeStart w:id=\"90\"/>{}<w:commentRangeEnd w:id=\"90\"/><w:r><w:commentReference w:id=\"90\"/></w:r>{}",
+        &main[..start],
+        &main[start..end],
+        &main[end..]
+    );
+    package.set_part("/word/document.xml", main.into_bytes());
+    let comments =
+        String::from_utf8(package.get_part("/word/comments.xml").unwrap().to_vec()).unwrap();
+    let close = comments.rfind("</w:comments>").unwrap();
+    let comments = format!(
+        "{}<w:comment w:id=\"90\" w:author=\"First reviewer\" w:date=\"2026-11-20T10:00:00Z\"><w:p><w:r><w:t>Check the parties.</w:t></w:r></w:p></w:comment>{}",
+        &comments[..close],
+        &comments[close..]
+    );
+    package.set_part("/word/comments.xml", comments.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_reply_added_on_a_reviewed_contract_is_compared() {
+    // The comparison replays the reply on a copy of the original, which
+    // saves the main part again: the paragraphs holding the reviewers'
+    // revisions are written another way, and stay the same.
+    let mut edited = contract_with_a_comment_on_its_first_run();
+    edited
+        .reply_to(90, "Second reviewer", "Agreed, it's fine.")
+        .unwrap();
+    let mut edited = reopen(&mut edited);
+    // The replay saves the main part as this copy was saved: the held
+    // paragraph is written another way, not changed.
+    assert!(main_part_xml(&mut edited).contains("days&apos; written"));
+    let mut original = contract_with_a_comment_on_its_first_run();
+    assert!(main_part_xml(&mut original).contains("days' written"));
+    let held = original.revisions().len();
+    let doc = redline(original, &edited);
+    assert_eq!(doc.revisions().len(), held, "the reply changes no revision");
+    assert_eq!(doc.comments().len(), edited.comments().len());
+}
+
+#[test]
+fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
+    // The reply's range goes in the paragraph that holds the reviewer's
+    // revision, which the comparison may not change.
+    let mut edited = corpus_doc("word/contract.docx");
+    let parent = edited.comments()[0].id();
+    edited
+        .reply_to(parent, "Second reviewer", "Agreed.")
+        .unwrap();
+    let edited = reopen(&mut edited);
+    let mut original = corpus_doc("word/contract.docx");
+    let error = original.compare(&edited, AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_held_paragraph_whose_blank_math_text_changed_keeps_the_refusal() {
+    // Blank text is content in a math run: the held paragraph changed, and
+    // the comparison may not replace it.
+    let body = |text: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z">"#,
+                r#"<w:r><w:t>Area </w:t></w:r></w:ins>"#,
+                r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">"#,
+                r#"<m:r><m:t xml:space="preserve">{}</m:t></m:r></m:oMath></w:p>"#,
+            ),
+            text
+        ))
+    };
+    let mut original = body(" ");
+    let error = original.compare(&body("  "), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_redline_of_two_google_saved_reports_rejects_to_the_original() {
     let mut doc = corpus_doc("google/report.docx");
     let text = doc.text();
@@ -1622,9 +1764,48 @@ fn rejecting_a_final_paragraph_inserted_with_the_table_before_it_ends_the_body_w
 }
 
 #[test]
+fn empty_border_containers_against_none_are_no_format_change() {
+    // The original saved by LibreOffice, with empty table and cell border
+    // containers, the edited copy saved by Word without them.
+    let table = |borders: &str, cell_borders: &str, text: &str| {
+        format!(
+            concat!(
+                r#"<w:tbl><w:tblPr>{}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+                r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{}</w:tcPr>"#,
+                r#"<w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+            ),
+            borders, cell_borders, text
+        )
+    };
+    for (original, edited) in [
+        (
+            table(
+                "<w:tblBorders></w:tblBorders>",
+                "<w:tcBorders></w:tcBorders>",
+                "cell",
+            ),
+            table("", "", "cell edited"),
+        ),
+        (
+            table("", "", "cell"),
+            table("<w:tblBorders/>", "<w:tcBorders/>", "cell edited"),
+        ),
+    ] {
+        let doc = redline(doc_with_body(&original), &doc_with_body(&edited));
+        assert!(
+            kinds(&doc)
+                .iter()
+                .all(|kind| matches!(kind, RevisionKind::Insertion | RevisionKind::Deletion)),
+            "no table or cell format change: {:?}",
+            kinds(&doc)
+        );
+    }
+}
+
+#[test]
 fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     // LibreOffice writes `<w:trPr></w:trPr>` and `<w:tcBorders></w:tcBorders>`;
-    // an edit through the model writes them back as nothing.
+    // the comparison reads them as no properties.
     let body = concat!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
         r#"<w:tr><w:trPr></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:tcBorders></w:tcBorders></w:tcPr>"#,
