@@ -179,6 +179,109 @@ pub fn equation_to_mathml(expression: &MathArgument) -> MathConversionResult<Str
     }
 }
 
+/// Whether the raw paragraph child `index` is one of the paragraph's typed
+/// equations, which are kept as raw children at their slot.
+pub(crate) fn raw_is_equation(paragraph: &oxoffice_docx_oxml::text::CT_P, index: usize) -> bool {
+    let run_index = paragraph.extra_xml[index].0;
+    let slot = paragraph.extra_xml[..index]
+        .iter()
+        .filter(|(at, _)| *at == run_index)
+        .count();
+    paragraph
+        .equations
+        .iter()
+        .any(|(at, equation_slot, _)| *at == run_index && *equation_slot == slot)
+}
+
+/// The equation writer of the HTML, Markdown and EPUB exports: MathML and
+/// LaTeX through [`equation_to_mathml`] and [`equation_to_latex`]. Every
+/// lossy conversion, and every equation it cannot write, is reported.
+#[derive(Default)]
+pub(crate) struct ExportEquations {
+    diagnostics: std::cell::RefCell<Vec<String>>,
+    /// The equations written so far, which numbers them in the messages.
+    count: std::cell::Cell<usize>,
+}
+
+impl ExportEquations {
+    /// The messages of the conversions so far, in order.
+    pub(crate) fn into_diagnostics(self) -> Vec<String> {
+        self.diagnostics.into_inner()
+    }
+
+    fn write(
+        &self,
+        equation: &oxoffice_docx_oxml::math::CT_OMath,
+        format: &str,
+        convert: fn(&MathArgument) -> MathConversionResult<String>,
+    ) -> Option<String> {
+        let number = self.count.get() + 1;
+        self.count.set(number);
+        let mut diagnostics = self.diagnostics.borrow_mut();
+        // What the reader keeps outside the typed expressions (m:func,
+        // m:groupChr, m:eqArr, a tracked change...) is not converted.
+        let mut container = equation.clone();
+        container.expressions.clear();
+        let unsupported = container.has_unsupported_content();
+        if equation.expressions.is_empty() {
+            diagnostics.push(format!(
+                "equation {number} left out of the {format}: none of its content is in the supported subset"
+            ));
+            return None;
+        }
+        let result = convert(&MathArgument::new(equation.expressions.clone()));
+        if result.value.is_empty() {
+            let reason = result
+                .diagnostics
+                .first()
+                .map_or("no content", |diagnostic| diagnostic.message.as_str());
+            diagnostics.push(format!(
+                "equation {number} left out of the {format}: {reason}"
+            ));
+            return None;
+        }
+        if unsupported {
+            diagnostics.push(format!(
+                "equation {number} written as {format} without its content outside the supported subset"
+            ));
+        }
+        for diagnostic in &result.diagnostics {
+            diagnostics.push(format!(
+                "equation {number} written as {format} at {}: {}",
+                diagnostic.path, diagnostic.message
+            ));
+        }
+        Some(result.value)
+    }
+}
+
+impl oxoffice_docx_html::EquationWriter for ExportEquations {
+    fn mathml(&self, equation: &oxoffice_docx_oxml::math::CT_OMath) -> Option<String> {
+        self.write(equation, "MathML", equation_to_mathml)
+    }
+
+    fn latex(&self, equation: &oxoffice_docx_oxml::math::CT_OMath) -> Option<String> {
+        self.write(equation, "LaTeX", equation_to_latex)
+    }
+
+    fn display(&self, display: &oxoffice_docx_oxml::math::CT_OMathPara) {
+        let mut wrapper = display.clone();
+        wrapper.equations.clear();
+        let number = self.count.get() + 1;
+        let mut diagnostics = self.diagnostics.borrow_mut();
+        if wrapper.has_unsupported_content() {
+            diagnostics.push(format!(
+                "display group of equation {number}: its content outside the supported subset was left out"
+            ));
+        }
+        if display.properties.justification.is_some() {
+            diagnostics.push(format!(
+                "display group of equation {number}: its justification was left out"
+            ));
+        }
+    }
+}
+
 /// Import the supported LaTeX subset into the normalized OfficeMath argument tree.
 pub fn equation_from_latex(input: &str) -> Result<MathConversionResult<MathArgument>> {
     if input.len() > MAX_INPUT_BYTES {

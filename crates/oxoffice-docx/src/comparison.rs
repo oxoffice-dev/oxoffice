@@ -387,11 +387,20 @@ fn refuse_changed_reply_held_owners(
             let left_owner = left_model.body.content.get(index);
             let right_owner = right_model.body.content.get(index);
             // The replay changes only the selected graph. Unrelated held
-            // owners must retain their actual typed content and residual.
+            // owners must retain their actual typed content and residual,
+            // or be the same tree that the replay's save writes another way.
             if left_owner
                 .zip(right_owner)
                 .is_some_and(|(left, right)| left == right)
                 && held_left.same_owner_source(index, &held_right, index)
+                || index < left_spans.len()
+                    && index < right_spans.len()
+                    && same_owner_tree(
+                        Some((left, &left_spans, left_bindings)),
+                        index,
+                        (right, &right_spans, right_bindings),
+                        index,
+                    )?
             {
                 continue;
             }
@@ -1546,9 +1555,13 @@ fn remap_equivalent_owner_relationships(
                         && relationship_payload(original, original_owner, left) == right_payload
                 })
         else {
-            if right.rel_type == rel_types::HYPERLINK {
+            // A linked picture's image relationship is an address, carried
+            // as a hyperlink's is.
+            if right.rel_type == rel_types::HYPERLINK
+                || !crate::document::relationship_is_internal(right)
+            {
                 unmatched_links.push(right.clone());
-            } else if crate::document::relationship_is_internal(right) {
+            } else {
                 let target = OpcPackage::resolve_rel_target(edited_owner, &right.target);
                 let bytes = edited.package.get_part(&target).ok_or_else(|| {
                     Error::Other(format!("comparison image target is missing: {target}"))
@@ -1581,7 +1594,7 @@ fn remap_equivalent_owner_relationships(
         .map(|relationship| relationship.id.clone())
         .chain(remap.values().cloned())
         .collect::<HashSet<_>>();
-    // The redline allocates a carried hyperlink's id the way the original's
+    // The redline allocates a carried address's id the way the original's
     // relationships do, which is the id staging keeps when it reopens it.
     let mut allocator = original_relationships.clone();
     let mut carried = Vec::with_capacity(unmatched_links.len() + unmatched_images.len());
@@ -3431,6 +3444,130 @@ fn story_skeleton(xml: &str, spans: &[Range<usize>]) -> String {
         skeleton.replace_range(span.clone(), "<owner/>");
     }
     skeleton
+}
+
+/// Whether owner `left` of the original and owner `right` of the edited
+/// source are one tree, as [`canonical_owner_tokens`] reads them.
+fn same_owner_tree(
+    original: Option<OriginalBodySource<'_>>,
+    left: usize,
+    edited: OriginalBodySource<'_>,
+    right: usize,
+) -> Result<bool> {
+    let Some((source, spans, bindings)) = original else {
+        return Ok(false);
+    };
+    let (edited_source, edited_spans, edited_bindings) = edited;
+    let left = source_fragment(&source[spans[left].clone()], bindings)?;
+    let right = source_fragment(&edited_source[edited_spans[right].clone()], edited_bindings)?;
+    Ok(canonical_owner_tokens(&left)? == canonical_owner_tokens(&right)?)
+}
+
+/// One owner's XML read so that two serializations of one tree compare
+/// equal, as [`canonical_owned_story`] reads a story, and further: character
+/// and entity references read as the characters they stand for, and
+/// adjacent text reads as one token. Blank text counts everywhere: it is
+/// content in Word's and math's text elements, and two writings that differ
+/// in it are not taken for one tree.
+fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
+    let scan_error = |error: &dyn std::fmt::Display| {
+        Error::Other(format!("comparison owner scan failed: {error}"))
+    };
+    let mut reader = NsReader::from_reader(xml.as_bytes());
+    reader.config_mut().trim_text(false);
+    let mut tokens = Vec::new();
+    let mut text = String::new();
+    let flush = |tokens: &mut Vec<String>, text: &mut String| {
+        if !text.is_empty() {
+            tokens.push(format!("text {:?}", std::mem::take(text)));
+        }
+    };
+    let mut buffer = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| scan_error(&error))?;
+        let (element, empty) = match event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => {
+                flush(&mut tokens, &mut text);
+                tokens.push("end".to_owned());
+                buffer.clear();
+                continue;
+            }
+            Event::Text(content) => {
+                text.push_str(
+                    &content
+                        .xml10_content()
+                        .map_err(|error| scan_error(&error))?,
+                );
+                buffer.clear();
+                continue;
+            }
+            Event::CData(content) => {
+                text.push_str(&content.decode().map_err(|error| scan_error(&error))?);
+                buffer.clear();
+                continue;
+            }
+            Event::GeneralRef(reference) => {
+                if let Some(character) = reference
+                    .resolve_char_ref()
+                    .map_err(|error| scan_error(&error))?
+                {
+                    text.push(character);
+                } else {
+                    let name = reference.decode().map_err(|error| scan_error(&error))?;
+                    let value = quick_xml::escape::resolve_predefined_entity(&name)
+                        .ok_or_else(|| scan_error(&format!("unknown entity &{name};")))?;
+                    text.push_str(value);
+                }
+                buffer.clear();
+                continue;
+            }
+            Event::Eof => break,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        flush(&mut tokens, &mut text);
+        let resolver = reader.resolver();
+        let (namespace, local) = resolver.resolve_element(element.name());
+        let mut attributes = Vec::new();
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(|error| scan_error(&error))?;
+            let key = attribute.key.as_ref();
+            if key == b"xmlns" || key.starts_with(b"xmlns:") {
+                continue;
+            }
+            let (attribute_namespace, attribute_local) = resolver.resolve_attribute(attribute.key);
+            if matches!(
+                attribute_namespace,
+                ResolveResult::Bound(Namespace(uri)) if uri == oxoffice_core::xml::MC_NS.as_bytes()
+            ) {
+                continue;
+            }
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())
+                .map_err(|error| scan_error(&error))?;
+            attributes.push(format!(
+                "{attribute_namespace:?} {:?} {value:?}",
+                String::from_utf8_lossy(attribute_local.as_ref())
+            ));
+        }
+        attributes.sort();
+        tokens.push(format!(
+            "start {namespace:?} {:?} {attributes:?}",
+            String::from_utf8_lossy(local.as_ref())
+        ));
+        if empty {
+            tokens.push("end".to_owned());
+        }
+        buffer.clear();
+    }
+    flush(&mut tokens, &mut text);
+    Ok(tokens)
 }
 
 /// An owned story read so that two serializations of one tree compare equal:
@@ -9141,6 +9278,17 @@ fn compare_body_impl(
                                 _ => false,
                             }
                         };
+                // A protected owner both versions hold as the same tree,
+                // written another way (a character as an entity, attributes
+                // or namespace declarations in another order, as a save
+                // writes them), is unchanged: the redline keeps the
+                // original's bytes.
+                let rewritten = protected
+                    && !equal
+                    && !metadata.leaf_capture
+                    && same_owner_tree(original_source, left, edited_source, right)?;
+                let equal = equal || rewritten;
+                let same_source = same_source || rewritten;
                 let needs_field_dispatch = equal
                     && !(protected && same_source)
                     && SourceMetadata::body(

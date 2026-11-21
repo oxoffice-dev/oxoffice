@@ -12,6 +12,7 @@ use oxoffice_docx_layout::style_resolver::{NumberingState, generate_marker};
 use oxoffice_docx_layout::table::effective_table_paragraph_properties;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document};
+use oxoffice_docx_oxml::math::{CT_OMath, CT_OMathPara, OfficeMath};
 use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_NumberFormat};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Tbl, CT_Tc, CellContent};
@@ -84,6 +85,35 @@ impl ChartTable {
     }
 }
 
+/// Writes the equations of an export. The OfficeMath converters live in the
+/// facade (`oxoffice-docx`), which supplies one; the functions that take no
+/// writer leave equations out.
+pub trait EquationWriter {
+    /// One equation as a Presentation MathML `<math>` element, or `None`
+    /// when it cannot be written.
+    fn mathml(&self, equation: &CT_OMath) -> Option<String>;
+    /// One equation as LaTeX, without delimiters, or `None` when it cannot
+    /// be written.
+    fn latex(&self, equation: &CT_OMath) -> Option<String>;
+    /// Called before the equations of a display group are written, so that
+    /// a writer can report what the group holds beyond them. Does nothing
+    /// by default.
+    fn display(&self, _display: &CT_OMathPara) {}
+}
+
+/// The writer of the functions that take none: every equation is left out.
+struct NoEquations;
+
+impl EquationWriter for NoEquations {
+    fn mathml(&self, _: &CT_OMath) -> Option<String> {
+        None
+    }
+
+    fn latex(&self, _: &CT_OMath) -> Option<String> {
+        None
+    }
+}
+
 /// Convert a DOCX document to a complete HTML document string.
 pub fn to_html_document(input: &HtmlInput, options: &HtmlOptions) -> String {
     to_html_document_with_charts(input, options, &HashMap::new())
@@ -95,7 +125,18 @@ pub fn to_html_document_with_charts(
     options: &HtmlOptions,
     charts: &HashMap<String, ChartTable>,
 ) -> String {
-    let body = to_html_fragment_with_charts(input, options, charts);
+    to_html_document_with_equations(input, options, charts, &NoEquations)
+}
+
+/// Convert a DOCX document with current chart tables to complete HTML, its
+/// equations written as MathML by `equations`.
+pub fn to_html_document_with_equations(
+    input: &HtmlInput,
+    options: &HtmlOptions,
+    charts: &HashMap<String, ChartTable>,
+    equations: &dyn EquationWriter,
+) -> String {
+    let body = to_html_fragment_with_equations(input, options, charts, equations);
     let css = css::generate_base_css();
     format!(
         "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<style>\n{css}\n</style>\n</head>\n<body>\n{body}\n</body>\n</html>"
@@ -113,15 +154,18 @@ pub fn to_html_fragment_with_charts(
     options: &HtmlOptions,
     charts: &HashMap<String, ChartTable>,
 ) -> String {
-    emitter::emit_body(
-        &input.document.body,
-        &input.styles,
-        input.numbering.as_ref(),
-        &input.images,
-        &input.hyperlink_urls,
-        options,
-        charts,
-    )
+    to_html_fragment_with_equations(input, options, charts, &NoEquations)
+}
+
+/// Convert body content with current chart tables to an HTML fragment, its
+/// equations written as MathML by `equations`.
+pub fn to_html_fragment_with_equations(
+    input: &HtmlInput,
+    options: &HtmlOptions,
+    charts: &HashMap<String, ChartTable>,
+    equations: &dyn EquationWriter,
+) -> String {
+    emitter::emit_body(input, options, charts, equations)
 }
 
 /// Convert a DOCX document to Markdown.
@@ -131,7 +175,28 @@ pub fn to_markdown(input: &HtmlInput) -> String {
 
 /// Convert body content with current chart tables to Markdown.
 pub fn to_markdown_with_charts(input: &HtmlInput, charts: &HashMap<String, ChartTable>) -> String {
-    markdown::emit_markdown(input, charts)
+    to_markdown_with_equations(input, charts, &NoEquations)
+}
+
+/// Convert body content with current chart tables to Markdown, its
+/// equations written as LaTeX by `equations`: `$...$` inline, `$$...$$` for
+/// a display equation.
+pub fn to_markdown_with_equations(
+    input: &HtmlInput,
+    charts: &HashMap<String, ChartTable>,
+    equations: &dyn EquationWriter,
+) -> String {
+    markdown::emit_markdown(input, charts, equations)
+}
+
+/// The equations of a paragraph at run boundary `boundary` (before run
+/// `boundary`, after the last run when it is the run count).
+fn equations_at(paragraph: &CT_P, boundary: usize) -> impl Iterator<Item = &OfficeMath> {
+    paragraph
+        .equations
+        .iter()
+        .filter(move |(at, _, _)| *at == boundary)
+        .map(|(_, _, equation)| equation)
 }
 
 /// The list level a paragraph shows, as layout resolves it. The numbering id
@@ -449,6 +514,12 @@ fn join_accepted_paragraphs(
     };
     let offset = prefix.runs.len();
     boundaries.extend(projected.into_iter().map(|at| offset + at));
+    for (at, _, _) in &mut result.equations {
+        *at += offset;
+    }
+    let mut equations = prefix.equations;
+    equations.extend(std::mem::take(&mut result.equations));
+    result.equations = equations;
     for hyperlink in &mut result.hyperlinks {
         hyperlink.run_start += offset;
         hyperlink.run_end += offset;

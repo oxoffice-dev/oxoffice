@@ -2606,19 +2606,56 @@ impl<'a> XmlTree<'a> {
             )
         } else {
             self.validate_selected_descendants(index, state)?;
+            // Comments whose reference goes with the removed text go whole.
+            let mut removed_references = HashSet::new();
+            let mut pending = self.elements[index].children.clone();
+            while let Some(descendant) = pending.pop() {
+                let node = &self.elements[descendant];
+                if node.word && node.local == "commentReference" {
+                    removed_references.extend(self.element_id(descendant));
+                }
+                pending.extend(node.children.iter().copied());
+            }
             let mut kept = Vec::new();
             for &child in &self.elements[index].children {
                 let node = &self.elements[child];
-                if state
-                    .custody_pairs
-                    .iter()
-                    .any(|pair| pair.start <= node.start && node.end <= pair.end)
+                // A comment range marker the removed text holds stays at the
+                // place the text collapses to, as Word keeps a comment on a
+                // tracked change it accepts or rejects, unless its reference
+                // goes too.
+                let range_marker = node.word
+                    && matches!(node.local.as_str(), "commentRangeStart" | "commentRangeEnd")
+                    && self
+                        .element_id(child)
+                        .is_none_or(|id| !removed_references.contains(&id));
+                if range_marker
+                    || state
+                        .custody_pairs
+                        .iter()
+                        .any(|pair| pair.start <= node.start && node.end <= pair.end)
                 {
                     kept.extend(self.render_with_namespaces(child, state, false, destination)?);
                 }
             }
             Ok(kept)
         }
+    }
+
+    /// The `id` attribute of an element's start tag.
+    fn element_id(&self, index: usize) -> Option<String> {
+        let element = &self.elements[index];
+        let mut reader =
+            quick_xml::Reader::from_reader(&self.source[element.start..element.open_end]);
+        let start = match reader.read_event().ok()? {
+            Event::Start(start) | Event::Empty(start) => start,
+            _ => return None,
+        };
+        start.attributes().flatten().find_map(|attribute| {
+            let key = attribute.key.as_ref();
+            (key.rsplit(|byte| *byte == b':').next() == Some(b"id".as_slice())
+                && !key.starts_with(b"xmlns"))
+            .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
+        })
     }
 
     fn render_ordinary(

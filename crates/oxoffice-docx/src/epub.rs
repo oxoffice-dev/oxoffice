@@ -165,12 +165,14 @@ impl<'a> EpubWriter<'a> {
             self.document.numbering.as_ref(),
         );
 
+        let equations = crate::math::ExportEquations::default();
         for item in &mut spine {
             let fragment = emit_spine_fragment(
                 &body,
                 &mut input,
                 &self.document.styles,
                 &media,
+                &equations,
                 &heading_anchors,
                 &list_values,
                 item.start,
@@ -181,6 +183,10 @@ impl<'a> EpubWriter<'a> {
             if item.xhtml.len() > MAX_EPUB_BYTES {
                 return Err(epub_error("generated XHTML exceeds the EPUB output limit"));
             }
+        }
+
+        for message in equations.into_diagnostics() {
+            self.diagnose("body/equation".to_owned(), message)?;
         }
 
         let nav_tree = build_nav_tree(&headings);
@@ -1143,7 +1149,8 @@ impl<'a> EpubWriter<'a> {
             }
         }
         for (extra_index, consumed) in consumed_raw.into_iter().enumerate() {
-            if consumed {
+            // An equation is written as MathML.
+            if consumed || crate::math::raw_is_equation(paragraph, extra_index) {
                 continue;
             }
             let raw_path = format!("{path}/xml[{extra_index}]");
@@ -2262,6 +2269,7 @@ fn emit_spine_fragment(
     input: &mut oxoffice_docx_html::HtmlInput,
     source_styles: &oxoffice_docx_oxml::styles::CT_Styles,
     media: &[MediaItem],
+    equations: &crate::math::ExportEquations,
     heading_anchors: &HashMap<usize, String>,
     list_values: &HashMap<usize, u32>,
     start: usize,
@@ -2286,6 +2294,7 @@ fn emit_spine_fragment(
                 input,
                 source_styles,
                 media,
+                equations,
                 heading_anchors,
                 list_values,
                 &mut index,
@@ -2296,8 +2305,15 @@ fn emit_spine_fragment(
             continue;
         }
         let anchor = heading_anchors.get(&index).map(String::as_str);
-        let fragment =
-            render_source_block(input, source_styles, &content[index], media, anchor, false)?;
+        let fragment = render_source_block(
+            input,
+            source_styles,
+            &content[index],
+            media,
+            equations,
+            anchor,
+            false,
+        )?;
         push_bounded_xhtml(&mut output, &fragment)?;
         index += 1;
     }
@@ -2311,6 +2327,7 @@ fn emit_list_level(
     input: &mut oxoffice_docx_html::HtmlInput,
     source_styles: &oxoffice_docx_oxml::styles::CT_Styles,
     media: &[MediaItem],
+    equations: &crate::math::ExportEquations,
     heading_anchors: &HashMap<usize, String>,
     list_values: &HashMap<usize, u32>,
     index: &mut usize,
@@ -2362,6 +2379,7 @@ fn emit_list_level(
                 input,
                 source_styles,
                 media,
+                equations,
                 heading_anchors,
                 list_values,
                 index,
@@ -2396,6 +2414,7 @@ fn emit_list_level(
             source_styles,
             &BodyContent::Paragraph(projected_paragraph),
             media,
+            equations,
             if preserve_heading { anchor } else { None },
             preserve_heading,
         )?;
@@ -2425,6 +2444,7 @@ fn render_source_block(
     source_styles: &oxoffice_docx_oxml::styles::CT_Styles,
     content: &BodyContent,
     media: &[MediaItem],
+    equations: &crate::math::ExportEquations,
     anchor: Option<&str>,
     suppress_numbering: bool,
 ) -> Result<String> {
@@ -2447,11 +2467,13 @@ fn render_source_block(
     }
     input.document.body.content = vec![content];
     input.document.body.sect_pr = None;
-    let fragment = oxoffice_docx_html::to_html_fragment(
+    let fragment = oxoffice_docx_html::to_html_fragment_with_equations(
         input,
         &oxoffice_docx_html::HtmlOptions {
             inline_images: true,
         },
+        &HashMap::new(),
+        equations,
     );
     let fragment = replace_media_sources(&fragment, input, media, &image_occurrences)?;
     let fragment = lift_page_breaks(&fragment)?;
@@ -2556,7 +2578,9 @@ fn render_paragraph_projection(paragraph: &CT_P) -> CT_P {
         extra_xml: Vec::new(),
         content_controls: Vec::new(),
         revisions: Vec::new(),
-        equations: Vec::new(),
+        // Equations stay at their run boundary in the accepted view; the
+        // HTML delegate writes them as MathML.
+        equations: view.equations.clone(),
         // The base runs are already projected above. The phonetic line is an
         // annotation with no EPUB spelling, so it is dropped rather than
         // doubling the base text.
@@ -3282,9 +3306,15 @@ fn package_document(
     );
     let mut spine_xml = String::new();
     for item in spine {
+        // EPUB 3 names each content document that holds MathML.
+        let properties = if item.xhtml.contains("<math") {
+            " properties=\"mathml\""
+        } else {
+            ""
+        };
         let _ = writeln!(
             manifest,
-            "<item id=\"{}\" href=\"{}\" media-type=\"application/xhtml+xml\"/>",
+            "<item id=\"{}\" href=\"{}\" media-type=\"application/xhtml+xml\"{properties}/>",
             escape_xml(&item.id),
             escape_xml(&item.href)
         );
