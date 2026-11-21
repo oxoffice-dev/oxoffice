@@ -2524,17 +2524,12 @@ fn a_redline_in_one_name_leaves_the_other_reviewers_alone() {
     redline_in_one_name("word/contract.docx");
 }
 
-// Known failure #366, left by its fix: on the Google and LibreOffice copies
-// the comparison still refuses the renewal clause, which holds another
-// reviewer's change. When one passes, drop its `should_panic`.
 #[test]
-#[should_panic(expected = "google/contract.docx: the redline of a reviewed contract is made")]
 fn a_redline_in_one_name_on_the_google_copy_leaves_the_other_reviewers_alone() {
     redline_in_one_name("google/contract.docx");
 }
 
 #[test]
-#[should_panic(expected = "libreoffice/contract.docx: the redline of a reviewed contract is made")]
 fn a_redline_in_one_name_on_the_libreoffice_copy_leaves_the_other_reviewers_alone() {
     redline_in_one_name("libreoffice/contract.docx");
 }

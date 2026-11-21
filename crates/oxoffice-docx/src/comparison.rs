@@ -92,8 +92,9 @@ use source_metadata::{
 };
 use source_scopes::{
     ParentScopes, canonical_owned_story, child_scopes, publication_parent_at,
-    publication_parents_at, root_inner_range, root_namespace_bindings, same_owner_tree,
-    source_child, source_children, source_fragment, story_skeleton,
+    publication_parents_at, root_inner_range, root_namespace_bindings, same_held_owner,
+    same_owner_tree, same_written_owner, source_child, source_children, source_fragment,
+    story_skeleton,
 };
 pub(crate) use stories::revision_story_parts;
 use stories::{

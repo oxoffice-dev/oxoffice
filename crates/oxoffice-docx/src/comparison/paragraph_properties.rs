@@ -372,7 +372,18 @@ pub(super) fn section_properties_xml(
     edited_modeled.change = None;
     clear_default_orientation(&mut original_modeled);
     clear_default_orientation(&mut edited_modeled);
-    if original_modeled == edited_modeled {
+    // The prefixes in scope where a page-number restart was read, which a
+    // save declares differently, are not the section's.
+    let read_context_free = |section: &oxoffice_docx_oxml::document::CT_SectPr| {
+        let mut section = section.clone();
+        if let Some(page_number) = &mut section.page_number {
+            page_number.reserved_insertion_prefixes.clear();
+        }
+        section
+    };
+    if original_modeled == edited_modeled
+        || read_context_free(&original_modeled) == read_context_free(&edited_modeled)
+    {
         return section_property_xml(original);
     }
     if original.extra_xml != edited.extra_xml {

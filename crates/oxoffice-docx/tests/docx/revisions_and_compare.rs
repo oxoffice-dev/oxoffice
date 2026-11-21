@@ -881,12 +881,24 @@ fn a_redline_in_one_name_on_a_reviewed_contract_edited_by_oxoffice_is_compared()
 /// body, added in its package so that every other byte stays as Word wrote
 /// it.
 fn contract_with_a_comment_on_its_first_run() -> Document {
-    let bytes = std::fs::read(crate::support::corpus_root().join("files/word/contract.docx"))
-        .expect("corpus file");
+    contract_copy_with_a_comment_on_its_first_run("word")
+}
+
+/// [`contract_with_a_comment_on_its_first_run`] on the copy of `producer`.
+fn contract_copy_with_a_comment_on_its_first_run(producer: &str) -> Document {
+    let bytes = std::fs::read(
+        crate::support::corpus_root().join(format!("files/{producer}/contract.docx")),
+    )
+    .expect("corpus file");
     let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
     let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
     let body = main.find("<w:body>").unwrap();
-    let start = body + main[body..].find("<w:r>").unwrap();
+    let start = body
+        + main[body..]
+            .match_indices("<w:r")
+            .find(|(at, _)| matches!(main.as_bytes()[body + at + 4], b'>' | b' '))
+            .unwrap()
+            .0;
     let end = start + main[start..].find("</w:r>").unwrap() + "</w:r>".len();
     let main = format!(
         "{}<w:commentRangeStart w:id=\"90\"/>{}<w:commentRangeEnd w:id=\"90\"/><w:r><w:commentReference w:id=\"90\"/></w:r>{}",
@@ -931,6 +943,68 @@ fn a_reply_added_on_a_reviewed_contract_is_compared() {
 }
 
 #[test]
+fn a_reply_added_on_the_google_and_libreoffice_contracts_is_compared() {
+    // The replay's save writes the copies' held paragraphs as an oxoffice
+    // save writes them, which the reply path reads as the compare path does.
+    for producer in ["google", "libreoffice"] {
+        let mut edited = contract_copy_with_a_comment_on_its_first_run(producer);
+        edited
+            .reply_to(90, "Second reviewer", "Agreed, it's fine.")
+            .unwrap();
+        let edited = reopen(&mut edited);
+        let original = contract_copy_with_a_comment_on_its_first_run(producer);
+        let held = original.revisions().len();
+        let doc = redline(original, &edited);
+        assert_eq!(doc.revisions().len(), held, "{producer}: no revision");
+        assert_eq!(doc.comments().len(), edited.comments().len(), "{producer}");
+    }
+}
+
+#[test]
+fn a_held_paragraph_whose_dropped_value_changed_keeps_the_refusal() {
+    // The reader reads both values of automatic spacing as off and the writer
+    // writes them alike, but the source says another thing: the held
+    // paragraph changed, and the comparison may not replace it.
+    let body = |value: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t>Term.</w:t></w:r></w:p>"#,
+                r#"<w:p><w:pPr><w:spacing w:beforeAutospacing="{}"/></w:pPr><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+                r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+            ),
+            value
+        ))
+    };
+    let mut original = body("on");
+    let error = original.compare(&body("0"), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+    // A value the reader drops by design: the residual keeps it.
+    let body = |properties: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t>Term.</w:t></w:r></w:p>"#,
+                r#"<w:p><w:pPr>{}</w:pPr><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+                r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+            ),
+            properties
+        ))
+    };
+    let mut original = body(r#"<w:jc w:val="bogus"/>"#);
+    let error = original.compare(&body(""), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
     // The reply's range goes in the paragraph that holds the reviewer's
     // revision, which the comparison may not change.
@@ -947,6 +1021,123 @@ fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
             .to_string()
             .contains("holds an existing tracked revision"),
         "{error}"
+    );
+}
+
+#[test]
+fn a_redline_in_one_name_on_the_google_and_libreoffice_contracts_edited_by_oxoffice_is_compared() {
+    // The same walk on the copies Google Docs and LibreOffice saved: the
+    // save also writes their held paragraphs' property values its own way
+    // and declares the part's namespaces differently.
+    for path in ["google/contract.docx", "libreoffice/contract.docx"] {
+        let mut edited = corpus_doc(path);
+        let replaced = edited.replace_all(&HashMap::from([(
+            "thirty-six (36) months",
+            "forty-eight (48) months",
+        )]));
+        assert_eq!(replaced, 1, "{path}");
+        let mut edited = reopen(&mut edited);
+        // The save wrote the part another way: Google's root default
+        // namespace is gone, and LibreOffice's empty run properties too.
+        let (before, after) = (
+            main_part_xml(&mut corpus_doc(path)),
+            main_part_xml(&mut edited),
+        );
+        let written = |xml: &str| {
+            (
+                xml.contains(
+                    r#"xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks""#,
+                ),
+                xml.matches("<w:rPr></w:rPr>").count(),
+            )
+        };
+        assert!(
+            written(&before).0 && !written(&after).0 || written(&before).1 > written(&after).1,
+            "{path}: the save rewrote the part"
+        );
+        let original = corpus_doc(path);
+        let earlier = original
+            .revisions()
+            .iter()
+            .map(|revision| (revision.kind(), revision.author().to_owned()))
+            .collect::<Vec<_>>();
+        assert!(!earlier.is_empty(), "{path}");
+        let mut doc = redline(original, &edited);
+        let others = doc
+            .revisions()
+            .iter()
+            .filter(|revision| revision.author() != AUTHOR)
+            .map(|revision| (revision.kind(), revision.author().to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            others, earlier,
+            "{path}: the other reviewers' revisions stay"
+        );
+        assert!(
+            doc.revisions()
+                .iter()
+                .any(|revision| revision.author() == AUTHOR),
+            "{path}: the replacement is tracked in the reviewer's name"
+        );
+        // Resolve this reviewer's revisions only: LibreOffice's own property
+        // revisions do not resolve today, whatever the comparison does.
+        let mut copy = reopen(&mut doc);
+        copy.accept_revisions_by_author(AUTHOR).unwrap();
+        assert_eq!(texts(&reopen(&mut copy)), texts(&edited), "{path}");
+        let mut copy = reopen(&mut doc);
+        copy.reject_revisions_by_author(AUTHOR).unwrap();
+        assert_eq!(
+            texts(&reopen(&mut copy)),
+            texts(&corpus_doc(path)),
+            "{path}"
+        );
+    }
+}
+
+/// `doc` with its term changed from thirty-six to forty-eight months,
+/// saved and opened again.
+fn with_term_changed(mut doc: Document) -> Document {
+    let replaced = doc.replace_all(&HashMap::from([("thirty-six", "forty-eight")]));
+    assert_eq!(replaced, 1);
+    reopen(&mut doc)
+}
+
+#[test]
+fn a_held_revision_under_a_part_namespace_a_save_drops_is_unchanged() {
+    // Google Docs declares a default namespace on the part's root, which the
+    // save does not write again; the earlier revision reads none of it.
+    let with_default_namespace = |doc: &mut Document| {
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+                .unwrap();
+        let main = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen(
+            "<w:document ",
+            r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+            1,
+        );
+        package.set_part(&main, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        Document::from_bytes(&out.into_inner()).unwrap()
+    };
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Term: thirty-six months.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+        r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let mut edited = with_term_changed(with_default_namespace(&mut doc_with_body(body)));
+    assert!(!main_part_xml(&mut edited).contains("documenttasks"));
+    let original = with_default_namespace(&mut doc_with_body(body));
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        texts(&accepted(&mut doc)),
+        ["Term: forty-eight months.", "Kept clause."]
+    );
+    assert_eq!(
+        texts(&rejected(&mut doc)),
+        ["Term: thirty-six months.", "Kept "]
     );
 }
 
