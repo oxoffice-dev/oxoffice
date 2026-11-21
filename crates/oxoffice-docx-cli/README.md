@@ -236,7 +236,9 @@ form fields of the body as fillable PDF form fields: text, check boxes, lists an
 current values. A control tagged `signature` or `signature:<name>` becomes an
 empty signature field. The flag needs `--to pdf` and the accepted view.
 `oxoffice limitations` lists the kinds of controls it leaves static, and a
-control of the body left static says why on standard error.
+control of the body that would be a field but is left static says why on
+standard error; a picture control without a signature tag or a group control
+is no field, and stays static without a message.
 
 `validate` exits unsuccessfully when a relationship of the main document points
 at a missing part, when a part has no declared content type, when an XML part

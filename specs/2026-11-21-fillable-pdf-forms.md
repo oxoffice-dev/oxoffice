@@ -380,7 +380,9 @@ pub struct FormFieldFragment {
   - It renders again with forms off, and the bounds of the fragments'
     children are blank. Those bounds, not the widget rectangles, which can
     cover neighbouring text.
-  - It renders once in print mode, and the values are there.
+  - Every widget has the Print flag and neither Hidden nor NoView: a
+    bitmap render in pdfium's print mode does not honour the Print flag,
+    so the flags are checked instead of a print-mode render.
   - After new values are filled and check boxes toggled, it renders once
     more: the old value's pixels are gone, and each box shows its other
     symbol.
