@@ -5765,8 +5765,8 @@ fn date_issue(control: &PhysicalControl) -> Option<&'static str> {
     if !canonical_full_date(full_date) {
         // A time typed in Word into a control whose format shows one: the
         // value is not wrong, oxoffice only writes dates.
-        let timed = full_date.len() > 10
-            && full_date.get(..10).is_some_and(civil_date_text)
+        let timed = full_date.as_bytes().get(10) == Some(&b'T')
+            && civil_date_text(&full_date[..10])
             && facts
                 .format
                 .as_deref()

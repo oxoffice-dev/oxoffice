@@ -2103,10 +2103,14 @@ fn a_time_typed_in_word_is_reported_as_unsupported_not_as_a_wrong_value() {
     );
     // Word saves the time typed in the control, 3:05 PM.
     let mut doc = with_main_part_edit(&mut doc, "2015-01-02T00:00:00Z", "2015-01-02T15:05:00Z");
-    let doc = with_main_part_edit(&mut doc, "1/2/2015 12:00 AM", "1/2/2015 3:05 PM");
+    let mut doc = with_main_part_edit(&mut doc, "1/2/2015 12:00 AM", "1/2/2015 3:05 PM");
     let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert_eq!(issues[0].message, "unsupported date metadata");
+    // A date followed by anything but a time is a wrong value.
+    let doc = with_main_part_edit(&mut doc, "2015-01-02T15:05:00Z", "2015-01-02xyz");
+    let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+    assert_eq!(issues[0].message, "current form value is invalid");
     // A date-only format with a time is a wrong value, as before.
     let mut doc = date_control("due", "d MMMM yyyy", None);
     set_value(&mut doc, "due", "2015-01-02", false);
