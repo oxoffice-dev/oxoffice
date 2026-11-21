@@ -1,7 +1,9 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{
+    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+};
 use oxoffice_drawing::color::ColorMap;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
@@ -444,28 +446,6 @@ fn write_root_start<W: Write>(
     root.push_attribute(("xmlns:r", R_NS));
     push_attributes(&mut root, attributes);
     writer.write_event(Event::Start(root))?;
-    Ok(())
-}
-
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &RawAttributes) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
-fn capture_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(event.into_owned())?;
-    Ok(writer.into_inner())
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child)?;
-    }
     Ok(())
 }
 
