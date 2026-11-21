@@ -292,6 +292,13 @@ pub fn capture_empty_element(e: &BytesStart) -> Result<Vec<u8>> {
     Ok(writer.into_inner())
 }
 
+/// Serialize one event on its own, as the raw bytes of an unmodelled child.
+pub fn capture_event(event: Event<'_>) -> Result<Vec<u8>> {
+    let mut writer = Writer::new(Vec::new());
+    writer.write_event(event.into_owned())?;
+    Ok(writer.into_inner())
+}
+
 /// Write already serialized XML fragments to `writer` verbatim, in order.
 pub fn emit_raw<'a, W: Write>(
     writer: &mut Writer<W>,

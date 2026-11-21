@@ -5,7 +5,7 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, push_attributes};
 use oxoffice_drawing::color::ColorChoice;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::text::CT_TextBody;
@@ -1644,12 +1644,6 @@ fn diagram_root(name: &str) -> BytesStart<'static> {
     start.push_attribute(("xmlns:a", A_NS));
     start.push_attribute(("xmlns:r", R_NS));
     start
-}
-
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &RawAttributes) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
 }
 
 fn push_unmodelled_attributes(

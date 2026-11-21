@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::table::CT_Table;
@@ -961,12 +961,6 @@ impl RawElementShell {
     }
 }
 
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &RawAttributes) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
 fn referenced_namespaces(
     xml: &[u8],
     inherited: &[(String, String)],
@@ -1124,16 +1118,6 @@ fn capture_non_element(event: Event<'_>) -> Result<Option<Vec<u8>>> {
     let mut writer = Writer::new(Vec::new());
     writer.write_event(event)?;
     Ok(Some(writer.into_inner()))
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child)?;
-    }
-    Ok(())
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T> {
