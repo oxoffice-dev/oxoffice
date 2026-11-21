@@ -1695,10 +1695,11 @@ fn remap_fragment_style_collisions(
     // A default of its type under an id the destination lacks, such as
     // Word's localized Policepardfaut or a German Standard, takes the
     // destination's default, as a type has one default. The character,
-    // table and numbering defaults carry no look of their own (Word writes
-    // them empty), so they always do. A paragraph default carries the
-    // document's look: it does when it keeps the destination's look or is
-    // that default under another id, and a different one keeps its look
+    // table and numbering defaults always do, as before: content that names
+    // none of them takes the destination's (a table without a style takes
+    // its cell margins). A paragraph default carries the document's look: it
+    // does when it keeps the destination's look or is that default under
+    // another id (from another editing session), and a different one keeps its look
     // under its own id, no longer a default, as a different default under
     // the destination's id is renamed. The result does not depend on the
     // language of the Word that wrote either file.
@@ -1714,7 +1715,7 @@ fn remap_fragment_style_collisions(
         under_destination_id.style_id = default.style_id.clone();
         if keep_destination_styles
             || style.style_type != StyleType::Paragraph
-            || *default == under_destination_id
+            || without_revision_session(default) == without_revision_session(&under_destination_id)
         {
             replacements.insert(style.style_id.clone(), default.style_id.clone());
         } else {
@@ -1762,7 +1763,8 @@ fn remap_fragment_style_collisions(
         // Compare the source-owned projection with only the selected numbering
         // reference remapped. Preservation snapshots and generated namespace
         // closures are not new style facts, while opaque XML remains exact.
-        let compared = with_mapped_defaults(style);
+        let compared = without_revision_session(&with_mapped_defaults(style));
+        let existing = &without_revision_session(existing);
         let styles_match = if *existing == compared {
             true
         } else if let Some(num_id) = reusable_num_id {
@@ -2020,6 +2022,18 @@ fn remap_fragment_style_collisions(
             .set_part(&numbering_part, numbering.to_xml()?);
     }
     Ok(true)
+}
+
+/// `style` without its `w:rsid`, the editing session Word last saved it in:
+/// two files with the same style from two sessions hold the same style.
+fn without_revision_session(
+    style: &oxoffice_docx_oxml::styles::CT_Style,
+) -> oxoffice_docx_oxml::styles::CT_Style {
+    let mut style = style.clone();
+    style
+        .extra_xml
+        .retain(|(rank, _)| *rank != oxoffice_docx_oxml::styles::STYLE_RSID_RANK);
+    style
 }
 
 fn patch_word_values(

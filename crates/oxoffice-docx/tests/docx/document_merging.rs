@@ -2028,10 +2028,17 @@ fn a_localized_default_style_takes_the_destination_s_default() {
 }
 
 /// A document whose default paragraph style has the id `default` (Word in
-/// German writes `Standard`, named "Normal"), red when `red`, whose styles
+/// German writes `Standard`, named "Normal"), red when `red`, saved in the
+/// editing session `rsid` if given, whose styles
 /// part also holds these raw `w:style` elements, and whose body holds this
 /// raw XML.
-fn with_paragraph_default(default: &str, red: bool, styles: &str, body_xml: &str) -> Document {
+fn with_paragraph_default(
+    default: &str,
+    red: bool,
+    rsid: Option<&str>,
+    styles: &str,
+    body_xml: &str,
+) -> Document {
     let bytes = doc_with_body(body_xml).to_bytes().expect("document saves");
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
     let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec())
@@ -2046,11 +2053,16 @@ fn with_paragraph_default(default: &str, red: bool, styles: &str, body_xml: &str
         )
         .replacen(
             name,
-            &if red {
-                format!(r#"{name}<w:rPr><w:color w:val="C00000"/></w:rPr>"#)
-            } else {
-                name.to_owned()
-            },
+            &format!(
+                "{name}{}{}",
+                rsid.map(|rsid| format!(r#"<w:rsid w:val="{rsid}"/>"#))
+                    .unwrap_or_default(),
+                if red {
+                    r#"<w:rPr><w:color w:val="C00000"/></w:rPr>"#
+                } else {
+                    ""
+                }
+            ),
             1,
         )
         .replace("</w:styles>", &format!("{styles}</w:styles>"));
@@ -2100,8 +2112,13 @@ fn a_default_mapped_to_a_destination_style_is_not_renamed_with_the_source_style_
         styled_paragraph("Standard", "red text")
     );
     let source = doc_with_styles(RED_STANDARD, &body);
-    let mut doc =
-        with_paragraph_default("Standard", false, "", &styled_paragraph("Standard", "dest"));
+    let mut doc = with_paragraph_default(
+        "Standard",
+        false,
+        None,
+        "",
+        &styled_paragraph("Standard", "dest"),
+    );
     import_at_end(
         &mut doc,
         &source,
@@ -2144,11 +2161,6 @@ fn notes_and_comments_take_the_style_renames_in_one_pass_too() {
             format!("{RED_STANDARD}</w:styles>"),
         ),
         (
-            "/word/footnotes.xml",
-            r#"<w:footnote w:id="2"><w:p>"#.to_owned(),
-            r#"<w:footnote w:id="2"><w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr>"#.to_owned(),
-        ),
-        (
             "/word/comments.xml",
             r#"<w:pStyle w:val="CommentText"/>"#.to_owned(),
             r#"<w:pStyle w:val="Normal"/>"#.to_owned(),
@@ -2163,11 +2175,33 @@ fn notes_and_comments_take_the_style_renames_in_one_pass_too() {
         }
         package.set_part(part, xml.into_bytes());
     }
+    // The note paragraphs name the source's default.
+    for (part, text) in [
+        ("/word/footnotes.xml", "src footnote"),
+        ("/word/endnotes.xml", "src endnote"),
+    ] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        let at = xml
+            .find(text)
+            .unwrap_or_else(|| panic!("{part} holds {text:?}"));
+        let paragraph = xml[..at].rfind("<w:p>").expect("a plain paragraph start") + "<w:p>".len();
+        let xml = format!(
+            r#"{}<w:pPr><w:pStyle w:val="Normal"/></w:pPr>{}"#,
+            &xml[..paragraph],
+            &xml[paragraph..]
+        );
+        package.set_part(part, xml.into_bytes());
+    }
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     let source = Document::from_bytes(&out.into_inner()).unwrap();
-    let mut doc =
-        with_paragraph_default("Standard", false, "", &styled_paragraph("Standard", "dest"));
+    let mut doc = with_paragraph_default(
+        "Standard",
+        false,
+        None,
+        "",
+        &styled_paragraph("Standard", "dest"),
+    );
     import_at_end(
         &mut doc,
         &source,
@@ -2177,6 +2211,7 @@ fn notes_and_comments_take_the_style_renames_in_one_pass_too() {
     let mut doc = reopen(&mut doc);
     for (part, text) in [
         ("/word/footnotes.xml", "src footnote"),
+        ("/word/endnotes.xml", "src endnote"),
         ("/word/comments.xml", "src question"),
     ] {
         assert_eq!(
@@ -2222,6 +2257,43 @@ fn a_style_based_on_a_localized_default_equals_the_same_style_based_on_the_desti
 }
 
 #[test]
+fn an_equal_default_saved_in_another_editing_session_is_the_same_style() {
+    // Word writes the session that last saved a style (w:rsid): an equal
+    // default from another file maps, under the destination's id or its own.
+    for source_default in ["Normal", "Standard"] {
+        let source = with_paragraph_default(
+            source_default,
+            false,
+            Some("00AAAAAA"),
+            "",
+            &styled_paragraph(source_default, "imported"),
+        );
+        for policy in [
+            FragmentConflictPolicy::reuse_equivalent(),
+            FragmentConflictPolicy::rename_all(),
+        ] {
+            let mut doc = with_paragraph_default(
+                "Normal",
+                false,
+                Some("00BBBBBB"),
+                "",
+                &styled_paragraph("Normal", "dest"),
+            );
+            import_at_end(&mut doc, &source, policy).unwrap();
+            let doc = reopen(&mut doc);
+            let case = format!("{source_default}, {policy:?}");
+            assert_eq!(
+                style_of_text(&doc, "imported").as_deref(),
+                Some("Normal"),
+                "{case}"
+            );
+            assert!(doc.style("Standard").is_none(), "{case}");
+            assert!(doc.style("NormalMerge1").is_none(), "{case}");
+        }
+    }
+}
+
+#[test]
 fn a_different_default_keeps_its_look_whatever_the_language_of_its_id() {
     // A red default paragraph style, under the English id Normal or the
     // German Standard, imported into an English document: either way the
@@ -2236,6 +2308,7 @@ fn a_different_default_keeps_its_look_whatever_the_language_of_its_id() {
         let source = with_paragraph_default(
             source_default,
             true,
+            None,
             "",
             &format!(
                 "{}<w:p><w:r><w:t>plain</w:t></w:r></w:p>",
