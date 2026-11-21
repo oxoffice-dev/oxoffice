@@ -1859,6 +1859,39 @@ fn a_note_neither_version_references_keeps_its_id() {
 }
 
 #[test]
+fn a_note_the_edited_version_does_not_reference_keeps_the_id_a_pair_would_take() {
+    // The edited version holds a note it does not reference under the id the
+    // original gives the referenced note; that note keeps its id and the
+    // referenced one is compared as moved to a new id.
+    let original = {
+        let mut doc = Document::new();
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let edited = {
+        let mut doc = Document::new();
+        doc.add_footnote("B");
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let notes = |doc: &Document| {
+        doc.footnotes()
+            .into_iter()
+            .map(|(_, text)| text.trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(notes(&copy), ["B", "A"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(notes(&copy), ["A"]);
+}
+
+#[test]
 fn a_note_only_the_edited_version_references_is_revised_in_place() {
     // The original holds a draft note it does not reference yet; the edited
     // version rewrites it and references it.
