@@ -72,15 +72,6 @@
     "issue": 28
   },
   {
-    "id": "docx-word-list-restart",
-    "format": "docx",
-    "area": "lists",
-    "title": "A numbered list cannot be restarted in a file saved by Word",
-    "symptom": "restarting fails with \"numbering restart cannot project unsupported override source\" (Rust try_add_numbered_list_item_with_restart and restart_numbering, Python add_numbered_list_item(restart=True) and restart_numbering)",
-    "workaround": "start a new list instead: a new numbering definition and instance on the new paragraphs (Rust add_list_definition; Python add_numbering_definition then add_numbering_instance and Paragraph.numbering)",
-    "issue": 29
-  },
-  {
     "id": "docx-removed-notes",
     "format": "docx",
     "area": "notes",
@@ -97,6 +88,15 @@
     "symptom": "compare fails with \"needs an adjacent paragraph for a final paragraph change\" when the edited version adds a paragraph after a table that ends the body",
     "workaround": "put a paragraph after the final table in both versions before comparing",
     "issue": 32
+  },
+  {
+    "id": "docx-restart-style-numbered-item",
+    "format": "docx",
+    "area": "lists",
+    "title": "A list item numbered through its style cannot be restarted",
+    "symptom": "restart_numbering fails with \"paragraph has no explicit numbering level\" on the List Number paragraphs of Word and python-docx files, whose numbering comes from the style",
+    "workaround": "Rust: give the paragraph its own numbering first (set_numbering with the num_id and level of effective_paragraph_properties), then restart; Python: start a new list (add_numbering_definition, add_numbering_instance, Paragraph.numbering)",
+    "issue": 82
   },
   {
     "id": "pptx-control-character-part",

@@ -42884,14 +42884,19 @@ impl Document {
                 "numbering restart requires a numbered non-bullet level".into(),
             ));
         }
-        let mut instance = self
-            .numbering_instance(id)
+        let source = self
+            .numbering
+            .as_ref()
+            .and_then(|numbering| numbering.nums.iter().find(|item| item.num_id == id))
             .ok_or_else(|| Error::Other("numbering instance is absent".into()))?;
-        if instance.has_unmodeled_properties {
+        if !restart_can_copy(source) {
             return Err(Error::Other(
                 "numbering restart cannot project unsupported override source".into(),
             ));
         }
+        let mut instance = self
+            .numbering_instance(id)
+            .expect("the instance was found above");
         if let Some(value) = instance
             .level_overrides
             .iter_mut()
@@ -53562,6 +53567,26 @@ fn numbering_level_has_unmodeled(level: &CT_Lvl) -> bool {
         || level.rpr_raw.is_some()
         || unprojected_paragraph_properties
         || matches!(level.num_fmt.as_ref(), Some(ST_NumberFormat::Other(_)))
+}
+
+/// Whether a restart can copy this instance into a new one: everything it
+/// holds is modelled, but namespace declarations and Word's
+/// `w16cid:durableId`, which names the source instance and which the copy
+/// must not take. The durable id is matched with the prefix Word writes, so
+/// an attribute of that name under another prefix is refused, not dropped.
+fn restart_can_copy(instance: &CT_Num) -> bool {
+    instance.extra_xml.is_empty()
+        && instance.extra_attributes.iter().all(|(name, _)| {
+            name == "xmlns" || name.starts_with("xmlns:") || name == "w16cid:durableId"
+        })
+        && !instance
+            .abstract_num_id_raw
+            .as_ref()
+            .is_some_and(|(_, raw, prefixes)| typed_numbering_leaf_has_unmodeled(raw, prefixes))
+        && !instance
+            .level_overrides
+            .iter()
+            .any(numbering_override_has_unmodeled)
 }
 
 fn numbering_override_has_unmodeled(value: &CT_NumLvl) -> bool {
