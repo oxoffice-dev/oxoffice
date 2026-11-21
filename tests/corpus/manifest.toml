@@ -24,13 +24,13 @@ features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink"
 path = "authored/deck.pptx"
 producer = "python-pptx 1.0.2"
 size = 37422
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box"]
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
 
 [[file]]
 path = "authored/form.docx"
 producer = "python-docx 1.2.0"
 size = 39360
-features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection", "rsid"]
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection", "rsid"]
 
 [[file]]
 path = "authored/letter.docx"
@@ -105,16 +105,100 @@ size = 55781
 features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
 
 [[file]]
+path = "google/contract.docx"
+producer = "Google Docs export"
+size = 17609
+features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "google/cv.docx"
+producer = "Google Docs export"
+size = 197606
+features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
 path = "google/deck.pptx"
 producer = "Google Slides export"
 size = 47502
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box"]
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+
+[[file]]
+path = "google/form.docx"
+producer = "Google Docs export"
+size = 9257
+features = ["headings", "title", "table", "header-footer", "bookmark", "rsid", "paraId"]
+
+[[file]]
+path = "google/letter.docx"
+producer = "Google Docs export"
+size = 15882
+features = ["picture", "header-footer", "title-page", "page-fields", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "google/long-deck.pptx"
+producer = "Google Slides export"
+size = 243129
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen", "long"]
+
+[[file]]
+path = "google/long-report.docx"
+producer = "Google Docs export"
+size = 285849
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "bookmark", "rsid", "paraId", "embedded-fonts", "long"]
+
+[[file]]
+path = "google/manual.docx"
+producer = "Google Docs export"
+size = 213561
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "picture", "header-footer", "sections", "columns", "page-fields", "bookmark", "hyperlink", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "google/minutes.docx"
+producer = "Google Docs export"
+size = 200450
+features = ["headings", "title", "bullet-list", "table", "header-footer", "bookmark", "rtl", "cjk", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "google/multilingual.pptx"
+producer = "Google Slides export"
+size = 58260
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "text-box", "rtl", "cjk", "widescreen"]
+
+[[file]]
+path = "google/newsletter.docx"
+producer = "Google Docs export"
+size = 15459
+features = ["headings", "picture", "floating-picture", "text-box", "shape", "header-footer", "sections", "columns", "bookmark", "rsid", "paraId"]
+
+[[file]]
+path = "google/paper.docx"
+producer = "Google Docs export"
+size = 14221
+features = ["headings", "table", "picture", "footnote", "sections", "columns", "bookmark", "equation", "rsid", "paraId"]
+
+[[file]]
+path = "google/pitch.pptx"
+producer = "Google Slides export"
+size = 112952
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "text-box", "transition", "widescreen"]
 
 [[file]]
 path = "google/report.docx"
 producer = "Google Docs export"
 size = 203806
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "bookmark", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "google/thesis.docx"
+producer = "Google Docs export"
+size = 221685
+features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "header-footer", "sections", "landscape", "title-page", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "google/training.pptx"
+producer = "Google Slides export"
+size = 72640
+features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
 
 [[file]]
 path = "libreoffice/contract.docx"
@@ -138,7 +222,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "pictu
 path = "libreoffice/form.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 23950
-features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection"]
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection"]
 
 [[file]]
 path = "libreoffice/letter.docx"
@@ -219,7 +303,91 @@ size = 44408
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
 
 [[file]]
+path = "powerpoint/long-deck.pptx"
+producer = "Microsoft PowerPoint for Mac 16.115"
+size = 177441
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen", "long"]
+
+[[file]]
+path = "powerpoint/multilingual.pptx"
+producer = "Microsoft PowerPoint for Mac 16.115"
+size = 50953
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "text-box", "rtl", "cjk", "widescreen"]
+
+[[file]]
+path = "powerpoint/pitch.pptx"
+producer = "Microsoft PowerPoint for Mac 16.115"
+size = 78831
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "text-box", "transition", "sections", "widescreen"]
+
+[[file]]
+path = "powerpoint/training.pptx"
+producer = "Microsoft PowerPoint for Mac 16.115"
+size = 60982
+features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
+
+[[file]]
+path = "word/contract.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 38122
+features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "word/cv.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 31725
+features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "word/form.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 31854
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection", "rsid", "paraId"]
+
+[[file]]
+path = "word/letter.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 36776
+features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "word/long-report.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 144605
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "rsid", "paraId", "long"]
+
+[[file]]
+path = "word/manual.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 47761
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "page-fields", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "word/minutes.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 33914
+features = ["headings", "title", "bullet-list", "table", "header-footer", "rtl", "cjk", "rsid", "paraId"]
+
+[[file]]
+path = "word/newsletter.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 37660
+features = ["headings", "picture", "floating-picture", "text-box", "shape", "header-footer", "sections", "columns", "rsid", "paraId"]
+
+[[file]]
+path = "word/paper.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 36249
+features = ["headings", "table", "picture", "endnote", "sections", "columns", "equation", "rsid", "paraId"]
+
+[[file]]
 path = "word/report.docx"
 producer = "Microsoft Word for Mac 16.115"
 size = 38827
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "rsid", "paraId"]
+
+[[file]]
+path = "word/thesis.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 56262
+features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid", "paraId"]

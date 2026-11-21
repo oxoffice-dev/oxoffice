@@ -246,10 +246,6 @@ pub(crate) struct XmlElement {
 struct SnapshotFacts {
     nodes: Vec<SnapshotNode>,
     fields: Vec<SnapshotField>,
-    #[cfg(test)]
-    preparation_visits: usize,
-    #[cfg(test)]
-    owner_visits: std::cell::Cell<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -1529,16 +1525,8 @@ impl<'a> XmlTree<'a> {
         let mut facts = SnapshotFacts {
             nodes: Vec::with_capacity(self.elements.len()),
             fields: Vec::new(),
-            #[cfg(test)]
-            preparation_visits: 0,
-            #[cfg(test)]
-            owner_visits: std::cell::Cell::new(0),
         };
         for (index, element) in self.elements.iter().enumerate() {
-            #[cfg(test)]
-            {
-                facts.preparation_visits += 1;
-            }
             let parent = element.parent.map(|parent| facts.nodes[parent]);
             let story = stories[index].unwrap_or(index);
             let mut node = SnapshotNode {
@@ -1608,10 +1596,6 @@ impl<'a> XmlTree<'a> {
         let mut undo = Vec::<(usize, Option<usize>)>::new();
         let mut branches = Vec::<(usize, usize)>::new();
         for (index, element) in self.elements.iter().enumerate() {
-            #[cfg(test)]
-            {
-                facts.preparation_visits += 1;
-            }
             while branches
                 .last()
                 .is_some_and(|(end, _)| *end <= element.start)
@@ -1798,10 +1782,6 @@ impl<'a> XmlTree<'a> {
         let mut local_fields = Vec::<SnapshotField>::new();
         let base = facts.fields.len();
         while let Some((index, exiting, table_depth)) = pending.pop() {
-            #[cfg(test)]
-            {
-                facts.owner_visits.set(facts.owner_visits.get() + 1);
-            }
             let element = &self.elements[index];
             let node = facts.nodes[index];
             if exiting {

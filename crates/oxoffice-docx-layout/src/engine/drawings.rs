@@ -235,6 +235,7 @@ pub(super) fn collect_anchored_drawings(
                                                 node,
                                                 node,
                                                 None,
+                                                None,
                                             )?;
                                         if let Some(sources) = &local_sources {
                                             sources
@@ -296,6 +297,7 @@ pub(super) fn collect_anchored_drawings(
                                     diagnostics,
                                     source_node.map(|_| CACHE_SOURCE_NODE),
                                     source_node.map(|_| CACHE_SOURCE_NODE),
+                                    None,
                                     None,
                                 )?;
                                 text.push(block);

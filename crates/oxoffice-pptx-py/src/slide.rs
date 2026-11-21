@@ -1570,8 +1570,8 @@ impl PySlideCollection {
         Ok(())
     }
 
-    /// Duplicates one slide of this presentation with its notes right after
-    /// the source, and returns the new slide.
+    /// Duplicates one slide of this presentation with its notes and modern
+    /// comments right after the source, and returns the new slide.
     fn duplicate(&self, py: Python<'_>, slide: &Bound<'_, PyAny>) -> PyResult<Py<PySlide>> {
         self.len(py)?;
         let slide = slide.extract::<PyRef<'_, PySlide>>()?;

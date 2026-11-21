@@ -538,6 +538,7 @@ fn field_replacement(
                 return Ok(output);
             }
             let segment = TextSegment {
+                form_mark: None,
                 text: value.to_owned(),
                 direction: run.direction,
                 source: run.source,
@@ -945,6 +946,23 @@ fn realigned_offset(changes: &[FieldWidthChange], x: f64, baseline: f64) -> Opti
     None
 }
 
+/// Moves a rectangle over tab-aligned text with that text, and widens it by
+/// the change of the fields it covers.
+fn realign_rect(rect: &mut oxoffice_layout::Rect, changes: &[FieldWidthChange]) {
+    let covers = |change: &&FieldWidthChange| {
+        rect.y <= change.baseline && change.baseline <= rect.y + rect.height
+    };
+    if let Some(offset) = changes
+        .iter()
+        .filter(covers)
+        .find_map(|change| realigned_offset(changes, rect.x, change.baseline))
+    {
+        let width_change = own_width_change(changes, rect.x, covers);
+        rect.width += width_change;
+        rect.x += offset;
+    }
+}
+
 pub(super) fn realign_tab_aligned_text(
     elements: &mut [PositionedElement],
     changes: &[FieldWidthChange],
@@ -980,18 +998,11 @@ pub(super) fn realign_tab_aligned_text(
                 }
             }
             PositionedElement::FilledRect { rect, .. }
-            | PositionedElement::LinkAnnotation { rect, .. } => {
-                let covers = |change: &&FieldWidthChange| {
-                    rect.y <= change.baseline && change.baseline <= rect.y + rect.height
-                };
-                if let Some(offset) = changes
-                    .iter()
-                    .filter(covers)
-                    .find_map(|change| realigned_offset(changes, rect.x, change.baseline))
-                {
-                    rect.width += own_width_change(changes, rect.x, covers);
-                    rect.x += offset;
-                }
+            | PositionedElement::LinkAnnotation { rect, .. } => realign_rect(rect, changes),
+            // A form marker moves with the text it stands over, as a link
+            // rectangle does.
+            PositionedElement::FormField(fragment) if fragment.mark.is_some() => {
+                realign_rect(&mut fragment.rect, changes)
             }
             PositionedElement::MarkedContent { children, .. } => {
                 realign_tab_aligned_text(children, changes)
@@ -1319,7 +1330,9 @@ pub(super) fn mark_remaining_artifacts(
     for index in 0..painted.len() {
         if matches!(
             &painted.elements()[index],
-            PositionedElement::MarkedContent { .. } | PositionedElement::LinkAnnotation { .. }
+            PositionedElement::MarkedContent { .. }
+                | PositionedElement::LinkAnnotation { .. }
+                | PositionedElement::FormField(_)
         ) {
             continue;
         }

@@ -359,7 +359,8 @@ pub struct FormFieldFragment {
   holds the control's drawing and stays inside the text area), and on the
   PDF read back with `lopdf`. They also check:
   - the flattening invariant;
-  - fields plus "no field" diagnostics account for every mapped control;
+  - fields plus "no field" diagnostics account for every mapped control of
+    the exported stories, one field or one diagnostic each;
   - the same `Document` laid out with the switch, then without, gives no
     fragment the second time, and with it again gives the same fields;
   - after an edit (a control inserted early in the body, a font change that
@@ -393,8 +394,9 @@ pub struct FormFieldFragment {
   
   veraPDF is downloaded at a pinned version and checked against its SHA-256.
 - **Corpus.** When the `form` family lands (Word, LibreOffice, Google), a
-  behaviour test exports every file. It checks one field per mapped control
-  the layout keeps on one page, the expected names and values, and no panic.
+  behaviour test exports every file. It checks one field or one "no field"
+  diagnostic per mapped control of the exported stories, the expected names
+  and values, and no panic.
 - **By hand, before the roadmap item is closed.** Fill and save in Acrobat
   Reader and Preview, and sign the signature field in Acrobat Reader. Only
   the user can do this.
@@ -456,6 +458,74 @@ Rust first, then the CLI and Python. Each pull request has its own check.
        `Default`, with no new surface.
    - Check: the Word layout and facade tests above, and byte identity with
      the switch off.
+   - As built:
+     - **Who marks.** Only a caller that knows a paragraph belongs to the
+       main story passes its form identity to paragraph layout: the body
+       by the paragraph's registry node, a table cell only under the
+       registry the inventory used and the document story. Headers, notes,
+       text boxes and cached copies draw no marks, so a sentinel or local
+       source node can never name a body field.
+     - **Markers, then a gathering pass.** The paginator leaves one
+       non-drawing marker per marked item, over the box that item drew,
+       like a link rectangle. A tab between two items of one control is
+       marked too, so its leader is the field's, and so is a picture drawn
+       as a figure. A line that draws one field only, with no list number,
+       drawing group (bare or described) or outside leader on it, gives the
+       widget its text band, from the line's own indent to its end. After
+       layout, a pass gathers into the fragment what belongs to a marker's
+       box: text that starts in it, unless its source names another
+       paragraph (field results, symbols and capitalised text carry no
+       source and still join, from anywhere), the very picture it stands
+       over, and other paint that lies wholly inside it. A paragraph or cell shading, a border, a list
+       number, a leader outside the control or a floating picture stays on
+       the page, and so does a floating text box's text that names its own
+       paragraph; its fills and its text without a source can still join. Markers move with the page when it is aligned vertically,
+       and with realigned tab-aligned text, as link rectangles do.
+     - **Why not wrap when drawing.** The paginator reorders elements for
+       bidi reflow and tracks them by position. About twenty element passes
+       (field substitution, artifacts, source rebinding, font passes) would
+       each need a container arm. An empty marker leaves all of them
+       unchanged. `FormFieldFragment::mark` (`#[doc(hidden)]`) carries the
+       marker until then, and the writer asserts that none reaches it.
+     - **What the tests hold.**
+       - Replacing every fragment by its children gives the static
+         drawing, element for element.
+       - Each field's fragments hold exactly its control's text. Labels,
+         neighbouring paragraphs, headers, text boxes and shading stay on
+         the page.
+       - Without the switch, the corpus renders byte-identical.
+     - **Values** come from the accepted-view projection the page draws:
+       tracked insertions in, deletions out, and a line feed inside a text
+       node reads as the space Word shows. A control inside a tracked
+       insertion or move is a field like any other, in document order
+       within its paragraph (inside a control, its own content comes
+       first). One inside a deletion has no field and never makes the
+       control around it a container; it says a tracked change deletes it,
+       unless a block field around it covers its paragraph.
+     - **Multiline** when the widget spans several lines. An inline control
+       that wraps beside other text says that text sits under its box.
+     - **Static, with a diagnostic:**
+       - a control split across pages or columns, a column told by the
+         left edge each marker records;
+       - a field that gathered nothing, unless it is a signature field,
+         empty by design over a picture that stays on the page or over
+         nothing;
+       - one in a rotated cell or a vertical section, sections read item
+         by item as layout reads them, and a block field with any
+         paragraph in a vertical section as a whole;
+       - one holding a floating picture;
+       - one whose properties do not decode;
+       - one that draws nothing, since empty controls have no anchor yet.
+     - **Containers and wrappers.** A block field may hold block-level
+       markers (bookmarks) and unmapped wrappers. Block controls nested in
+       a cell-level control are walked as table layout walks them.
+     - **Figures.** Pictures tagged as figures stay on the page under the
+       widget, so their structure element keeps its content.
+     - Legacy form fields move to their own pull request 5b.
+5b. **`feat(docx): legacy form fields as fillable pdf fields`.**
+   - Scope: `FORMTEXT`, `FORMCHECKBOX` and `FORMDROPDOWN` marked by their
+     field source and numbered with the content controls.
+   - Check: the Word layout tests on Word-shaped legacy fields.
 6. **`feat(cli,python): fillable pdf forms`.**
    - Scope:
      - the CLI flag, the Python keyword and stubs, the Python tests;

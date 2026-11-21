@@ -63,15 +63,6 @@
     "issue": 27
   },
   {
-    "id": "docx-inherited-headers",
-    "format": "docx",
-    "area": "headers",
-    "title": "Setting the document header or footer changes the last section only",
-    "symptom": "set_header() and set_footer() give the last section its own header or footer, so the earlier sections it inherited from keep the old one",
-    "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python document.section(i).header",
-    "issue": 28
-  },
-  {
     "id": "docx-removed-notes",
     "format": "docx",
     "area": "notes",
@@ -90,6 +81,87 @@
     "issue": 82
   },
   {
+    "id": "docx-content-control-values",
+    "format": "docx",
+    "area": "forms",
+    "title": "Content control values keep the prompt's style, and text() glues a block control's paragraphs",
+    "symptom": "a value set on a control showing its prompt stays greyed out in Word, a line feed shows as a space, extra paragraphs stay empty, a combo box refuses free text, and text() runs paragraphs together",
+    "workaround": "read a block control's paragraphs one by one with story_paragraphs: they are the entries whose location path is [i, 0], [i, 1]..., i being the control's index in story_items (index_path in Python)",
+    "issue": 147
+  },
+  {
+    "id": "docx-header-content-controls",
+    "format": "docx",
+    "area": "forms",
+    "title": "The tag setters do not reach content controls in headers",
+    "symptom": "set_content_control_value_by_tag returns 0 for a control in a header and content_controls() lists body controls only; `oxoffice docx fill` fails with \"no content control has tag\" (--tag) or \"requires exactly one target\" (--values)",
+    "workaround": "fill_form with a rule naming the tag (a content control tag target), which reaches every story (same name in Python); none through the CLI",
+    "issue": 148
+  },
+  {
+    "id": "docx-long-date-controls",
+    "format": "docx",
+    "area": "forms",
+    "title": "A date content control in Word's long date format cannot be set",
+    "symptom": "setting a control formatted d MMMM yyyy fails with \"unsupported or missing date format\", and protect_form refuses rules naming it",
+    "workaround": "give the control a yyyy-MM-dd or dd/MM/yyyy date format first (set_content_control_type, same name in Python), then set the value; none through the CLI",
+    "issue": 149
+  },
+  {
+    "id": "docx-pdf-pagination",
+    "format": "docx",
+    "area": "pdf",
+    "title": "PDF pages: a blank page before a section break, endnotes over a final table, outline entries on the wrong page",
+    "symptom": "a page break just before a next-page section break leaves a blank page; endnotes overlap a table that ends the document; an outline entry opens the page before a heading moved by keep with next",
+    "workaround": "remove the page break before a next-page section break; end the document with a paragraph after a final table; put a page break before such a heading",
+    "issue": 156
+  },
+  {
+    "id": "docx-pdf-rtl-cjk",
+    "format": "docx",
+    "area": "pdf",
+    "title": "PDF text: right-to-left paragraphs start at the left margin, CJK text is drawn as boxes by default",
+    "symptom": "a right-to-left paragraph is drawn against the left margin, and Chinese, Japanese and Korean glyphs are empty boxes with the default render options",
+    "workaround": "none for right-to-left paragraphs (an explicit right alignment would move them left in Word and LibreOffice); for CJK, pass a CJK font file (Rust to_pdf_with_fonts, or to_pdfa_with_fonts_deterministic for PDF/A; Python to_pdf(fonts=...) or font_dir=...; CLI convert --font-dir) or turn system fonts on (Rust to_pdf_with_options with use_system_fonts, Python to_pdf(system_fonts=True), CLI convert --system-fonts); none for PDF/A in Python and the CLI",
+    "issue": 157
+  },
+  {
+    "id": "docx-pdf-endnote-numbers",
+    "format": "docx",
+    "area": "pdf",
+    "title": "PDF endnotes are numbered 1, 2, 3 instead of i, ii, iii",
+    "symptom": "endnotes without a number format of their own are numbered in decimal in the PDF, where Word numbers them in lower roman",
+    "workaround": "set the endnote policy's number format to lower roman (set_note_policy, same name in Python) before converting; none through the CLI",
+    "issue": 158
+  },
+  {
+    "id": "docx-compare-endnotes",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses an endnote added, removed or moved, or a change it writes as a deletion and an insertion around an endnote",
+    "symptom": "compare refuses with \"endnotes story shell count changed\", \"identical related-story shells\" or \"its reference moved to another site\" (also when a table or paragraph holding an endnote is replaced whole), and with endnotes ignored \"ignored endnotes cannot supply the edited reference to endnote N\" when the edited version references an endnote the original does not hold",
+    "workaround": "make the endnote change on the accepted result after comparing, or compare that pair in Word",
+    "issue": 68
+  },
+  {
+    "id": "docx-counts-tracked-insertions",
+    "format": "docx",
+    "area": "text",
+    "title": "Word and character counts and the heading list leave out text inserted with tracked changes",
+    "symptom": "word_count and character_count (Rust, Python, CLI info) and headings / document_outline (Rust) read a paragraph's direct runs, so a document edited with tracking on counts fewer words than text() holds",
+    "workaround": "count the words of the accepted paragraph texts, and their characters paragraph by paragraph (text() adds a line feed after each paragraph and a tab between cells): Rust text(), Python the .text of doc.paragraphs and of table cell paragraphs, CLI paragraphs[].text of oxoffice docx text --json; read headings from numbered_document_outline (Rust)",
+    "issue": 184
+  },
+  {
+    "id": "docx-anchored-image-alt-text",
+    "format": "docx",
+    "area": "pictures",
+    "title": "A floating picture added by add_anchored_image gets the alt text \"Background\"",
+    "symptom": "Rust add_anchored_image writes descr=\"Background\" on every picture it adds, which Word shows and screen readers read aloud",
+    "workaround": "Rust: add the picture with add_picture_with_options, anchor set and the description wanted; Python add_picture and the CLI do not take this path",
+    "issue": 185
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",
@@ -97,24 +169,6 @@
     "symptom": "open fails with \"PackageError ... holds U+0001\" and `oxoffice pptx validate` exits 1, while PowerPoint opens the file",
     "workaround": "remove the character from that part's bytes, then open the file",
     "issue": 8
-  },
-  {
-    "id": "pptx-removed-slide-parts",
-    "format": "pptx",
-    "area": "slides",
-    "title": "Removing a slide leaves its charts, embedded workbooks and legacy comments in the file",
-    "symptom": "after removing a slide the saved deck still holds its chart parts, their workbooks with the data, and its legacy comment part with the reviewers' text",
-    "workaround": "remove each chart first (Rust remove_shape, Python shapes.remove), then the slide; none through the CLI, and none for legacy comments",
-    "issue": 38
-  },
-  {
-    "id": "pptx-duplicate-commented-slide",
-    "format": "pptx",
-    "area": "comments",
-    "title": "A slide with comments cannot be duplicated",
-    "symptom": "duplicating fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
-    "workaround": "import the slide into its own deck right after itself: Rust prs.import_slide(&prs.clone(), i, layout, Some(i + 1)), Python slides.import_slide(slide, index=i + 1), CLI oxoffice pptx slide import deck.pptx deck.pptx --slides N --at N+1 -o out.pptx",
-    "issue": 39
   },
   {
     "id": "pptx-import-source-notes",
@@ -138,9 +192,9 @@
     "id": "pptx-producer-tables",
     "format": "pptx",
     "area": "tables",
-    "title": "Tables merged by LibreOffice cannot be split, and Google tables cannot lose columns down to one",
-    "symptom": "split fails with \"merge origin does not have a valid continuation rectangle\"; remove_column fails with \"table frame size must remain positive\"",
-    "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame; to split, give the covered cells the origin's spans in the table XML (Rust replace_table_xml_at, Python table element replace_xml)",
+    "title": "Google tables cannot lose columns down to one",
+    "symptom": "remove_column fails with \"table frame size must remain positive\"",
+    "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame",
     "issue": 44
   }
 ]

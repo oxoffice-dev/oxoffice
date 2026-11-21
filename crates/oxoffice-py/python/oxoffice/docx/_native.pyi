@@ -1496,6 +1496,7 @@ class Document:
         author: str,
         text: str,
         occurrence: int = 0,
+        tables_only: bool = False,
         initials: str | None = None,
         date: str | None = None,
         undated: bool = False,

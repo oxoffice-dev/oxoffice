@@ -1616,6 +1616,10 @@ fn emit_form_field<'a>(
     accumulated_transform: Transform,
     actual_text: Option<&str>,
 ) {
+    debug_assert!(
+        fragment.mark.is_none(),
+        "a producer's form marker reached the writer"
+    );
     let structure = state.structure.take();
     let placed = state
         .forms

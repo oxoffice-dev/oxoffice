@@ -130,6 +130,25 @@ save refusal (#10), each in a binary of its own.
 - Not done here: Word, PowerPoint and Google copies of the new families. The
   machine that built them has neither Office nor an rclone remote; the scripts
   are ready and #62 holds the commands.
+- #62, done the next morning on a Mac with Office 16.115 and Google Docs and
+  Slides: 28 more files (10 docx by Word, 4 pptx by PowerPoint, 10 docx and 4
+  pptx by Google), 64 files and 4.6 MB in all. No repair dialog in Word or
+  PowerPoint. Every new file round-trips byte for byte with no known failure,
+  and the behaviour modules that read the corpus pass on them.
+- What the producers change, from the manifest and the files: Google turns
+  the form's content controls and legacy fields, and the letter's DATE and
+  MERGEFIELD fields, into plain text (the thesis TOC control survives), charts
+  into pictures and every endnote into a footnote; it drops the thesis's roman
+  page numbers, the contract's resolved comment and the deck sections; in
+  decks it blanks comment authors and resets comment dates to the export time.
+  Word for Mac keeps every authored feature but the contract's comment
+  threads: the replies come back as top-level comments (the sources declare
+  Word 2010 compatibility mode, a likely cause: #182).
+- Google embeds whole faces it licenses: Cambria Math (Monotype, licensed to
+  Google) in the paper and the thesis, 900 KB each. `produce.py` now drops
+  every embedded face whose licence is not the SIL Open Font License from
+  Google Docs exports (Slides exports embed none), with its relationship and
+  font-table entry; the OFL Noto faces stay.
 
 ### Learnings
 

@@ -418,11 +418,6 @@ pub enum BarcodeCaseStyle {
     Add,
 }
 
-#[cfg(test)]
-thread_local! {
-    static NAVIGATION_OWNER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 impl Document {
     pub(crate) fn navigation_exclusions_for_input(
         &self,
@@ -468,8 +463,6 @@ impl Document {
         let mut span_end = 0;
         for (paragraph_index, (paragraph, path)) in paragraphs.iter().zip(paths).enumerate() {
             while span_start < spans.len() {
-                #[cfg(test)]
-                NAVIGATION_OWNER_VISITS.set(NAVIGATION_OWNER_VISITS.get() + 1);
                 if spans[span_start].end_paragraph >= paragraph_index {
                     break;
                 }
@@ -477,8 +470,6 @@ impl Document {
             }
             span_end = span_end.max(span_start);
             while span_end < spans.len() {
-                #[cfg(test)]
-                NAVIGATION_OWNER_VISITS.set(NAVIGATION_OWNER_VISITS.get() + 1);
                 if spans[span_end].begin_paragraph > paragraph_index {
                     break;
                 }
@@ -501,8 +492,6 @@ impl Document {
                         },
                     };
                     let candidate = relevant.partition_point(|span| {
-                        #[cfg(test)]
-                        NAVIGATION_OWNER_VISITS.set(NAVIGATION_OWNER_VISITS.get() + 1);
                         TocOwnedPosition {
                             paragraph: span.end_paragraph,
                             run: span.result_end_position,

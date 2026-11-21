@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, capture_event, emit_raw};
 use oxoffice_core::xml::{push_escaped_attribute, reject_non_xml_characters};
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
@@ -1861,22 +1861,6 @@ fn write_start_with_raw<W: Write>(
     writer
         .get_mut()
         .write_all(if empty { b"/>" } else { b">" })?;
-    Ok(())
-}
-
-fn capture_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(event.into_owned())?;
-    Ok(writer.into_inner())
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child)?;
-    }
     Ok(())
 }
 

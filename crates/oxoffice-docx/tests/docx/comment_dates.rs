@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oxoffice_docx::{CommentDate, Document, RunPosition, RunRange};
+use oxoffice_docx::{CommentDate, Document, RunPosition, RunRange, TextCommentOptions};
 
 const PRODUCERS: [&str; 2] = ["word", "google"];
 const STAMP: &str = "2026-01-02T03:04:05Z";
@@ -102,11 +102,12 @@ fn comments_and_replies_created_without_a_date_are_dated_now() {
         let on_text = doc
             .add_comment_on_text(
                 "Summary",
-                0,
                 "Reviewer",
-                None,
                 "On a text",
-                CommentDate::Now,
+                TextCommentOptions {
+                    date: CommentDate::Now,
+                    ..Default::default()
+                },
             )
             .unwrap();
         let reply = doc.reply_to(ranged, "Author", "A reply").unwrap();
@@ -130,7 +131,15 @@ fn an_explicit_date_is_written_as_given() {
             .add_comment_with_date(summary_run(), "Reviewer", None, "c", CommentDate::At(STAMP))
             .unwrap();
         let on_text = doc
-            .add_comment_on_text("Summary", 0, "Reviewer", None, "c", CommentDate::At(STAMP))
+            .add_comment_on_text(
+                "Summary",
+                "Reviewer",
+                "c",
+                TextCommentOptions {
+                    date: CommentDate::At(STAMP),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         let reply = doc
             .reply_to_with_date(ranged, "Author", "r", CommentDate::At(STAMP))
@@ -149,7 +158,15 @@ fn an_undated_comment_or_reply_carries_no_date() {
             .add_comment_with_date(summary_run(), "Reviewer", None, "c", CommentDate::Undated)
             .unwrap();
         let on_text = doc
-            .add_comment_on_text("Summary", 0, "Reviewer", None, "c", CommentDate::Undated)
+            .add_comment_on_text(
+                "Summary",
+                "Reviewer",
+                "c",
+                TextCommentOptions {
+                    date: CommentDate::Undated,
+                    ..Default::default()
+                },
+            )
             .unwrap();
         let reply = doc
             .reply_to_with_initials(ranged, "Author", Some("A"), "r", CommentDate::Undated)
@@ -171,8 +188,16 @@ fn an_invalid_date_is_refused_and_changes_nothing() {
                     .is_err()
             );
             assert!(
-                doc.add_comment_on_text("Summary", 0, "R", None, "c", CommentDate::At(date))
-                    .is_err()
+                doc.add_comment_on_text(
+                    "Summary",
+                    "R",
+                    "c",
+                    TextCommentOptions {
+                        date: CommentDate::At(date),
+                        ..Default::default()
+                    }
+                )
+                .is_err()
             );
         }
         assert_eq!(doc.to_bytes().unwrap(), before, "{producer}");

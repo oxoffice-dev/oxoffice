@@ -1749,6 +1749,7 @@ fn layout_cell_content(
                         table_style_rpr,
                         cell_shading,
                         doc_grid,
+                        crate::forms::cell_form_paragraph(input, sources, story, source),
                     )?;
                 if let Some(registry) = sources {
                     registry.bind_text_boxes(&mut block, &mut paint, source)?;
@@ -1886,6 +1887,7 @@ fn layout_control_cell_content(
                         table_style_rpr,
                         cell_shading,
                         doc_grid,
+                        crate::forms::cell_form_paragraph(input, sources, story, source),
                     )?;
                 if let Some(registry) = sources {
                     registry.bind_text_boxes(&mut block, &mut paint, source)?;

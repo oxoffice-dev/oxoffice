@@ -46,16 +46,29 @@ or wants to merge it runs that review or asks for one.
   an unsafe CI change, a document that misstates how things work. Everything
   else is **minor**. The reviewer classifies, the author may contest, the
   maintainer decides.
-- **The author answers every finding** in the thread: fixed, with the commit,
-  or why it is not a defect. A major finding is fixed unless the maintainer
-  waives it.
-- **The review covers the merged head.** After the reviewed head, what
-  cannot change behaviour needs nothing more (a rebase without conflict, a
-  typo in prose); any change to code, tests, workflows or the meaning of a
-  document, fixes included, gets a review of the delta.
+- **The author answers every finding** in the thread: fixed, with the commit
+  (and its proof for a minor), a follow-up issue for a minor, or why it is
+  not a defect. A major finding is fixed unless the maintainer waives it.
+- **At most two reviews per pull request**: one full review, then at most
+  one delta review, after a major was fixed or after a change no finding
+  asked for that can change behaviour (new code, a conflict resolved by hand
+  in code, tests or workflows). A third review needs the maintainer's
+  agreement; beyond that budget the maintainer decides from the evidence
+  (mutation checks, `git range-diff`), without another round.
+- **Minors never trigger a review.** Fix one with a proof stated in the
+  answer (a test that fails without the fix, or a mutation check), or open a
+  follow-up issue, or say why it is not a defect. A minor that would need a
+  risky change goes to a follow-up issue, not into the pull request.
+- **A rebase or merge that only resolves a conflict in data**
+  (`limitations.json`, a generated page, the `GROWING` or test-module lists,
+  a moved context line) needs no review: `git range-diff` and the tests, and
+  one line in the thread saying so. A rebase without conflict needs nothing.
+- **A delta review judges the delta only**: defects the new commits bring,
+  or majors they fail to fix. No new finding on code the delta does not
+  touch.
 - **Light review**, still posted, for documentation (links, anchors, text
   agrees with the code and the other docs) and pure code moves (nothing but
-  location changed).
+  location changed). It counts as the full review.
 
 See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
@@ -145,15 +158,42 @@ entry and closes the issue.
   draft builds and tests on Linux, macOS and Windows and times the QUICK
   scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
   A draft, or one whose base is another branch, runs lint, WebAssembly and
-  the Linux build only. `main` and `workflow_dispatch` run everything on the
-  three platforms.
+  the Linux build only. A push to `main` builds, tests and times every
+  scaling call on Linux only: its pull request ran the three platforms. The
+  nightly run (02:23 UTC) and `workflow_dispatch` run every job, every
+  scaling call included, on the three platforms.
+- **Loop step 6 is the only macOS and Windows check before the nightly
+  run.** `main` requires no status check, so nothing stops a merge whose
+  macOS or Windows build is red or still queued; such a break shows in the
+  nightly run, up to a day later, under the merges that came after. Merge
+  only once `gh pr checks` shows the three platforms green.
+- **`main` keeps one run waiting.** A run of `main` in progress always
+  finishes; a newer push replaces the run that waits (concurrency group
+  `ci-main`), so a burst of merges builds the first commit and the last. A
+  failure first seen on `main` may come from a commit whose run was
+  replaced: find it like a red nightly run, below. Re-run only the newest
+  run of `main`: a re-run keeps its push event, joins `ci-main` and
+  replaces the waiting run of a newer commit. For an older commit, run
+  `workflow_dispatch` on a branch at that commit.
+- **A red nightly run is a red `main`.** Look at it with
+  `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
+  (or fixes it) the same day; a release waits for a green nightly run (see
+  [RELEASE.md](RELEASE.md)). To find the commit, run `workflow_dispatch` on a
+  branch at each candidate commit.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
   pull request when its base merges or the author changes it by hand. Before
   merging, check the three platforms ran (loop step 6); if not, push a new
   commit, or close and reopen the pull request.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
-  pull requests into `main`, every call on the three platforms on `main`.
+  pull requests into `main`, every call on Linux on each push to `main`, and
+  every call on the three platforms in the nightly run (02:23 UTC) or on
+  `workflow_dispatch`. A platform-only growth shows in the nightly run.
+- The `skill-examples` job runs the examples of
+  [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) on
+  `main` only, against the Linux wheel of `build`
+  ([tests/skills/README.md](../tests/skills/README.md)). A change that breaks
+  one updates the skills too.
 - Dependabot opens the monthly updates. Review them like any change: the
   maintainer, or the agent that merges them, answers the review's findings.
 

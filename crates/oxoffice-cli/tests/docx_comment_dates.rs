@@ -182,3 +182,74 @@ fn date_and_undated_together_are_a_usage_error() {
     assert!(!refused.status.success());
     assert!(!Path::new(&output).exists());
 }
+
+#[test]
+fn tables_only_anchors_on_a_match_in_a_table_cell() {
+    let scratch = Scratch::new("tables-only");
+    for producer in ["word", "google"] {
+        for (flags, story) in [(&[][..], "body"), (&["--tables-only"][..], "table_cell")] {
+            let output = scratch.path(&format!("{producer}-{story}.docx"));
+            let mut args = vec![
+                "docx",
+                "comment",
+                "add",
+                &report(producer),
+                "--anchor",
+                "Churn",
+                "--author",
+                "R",
+                "--text",
+                "c",
+                "--date",
+                STAMP,
+                "-o",
+                &output,
+                "--json",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+            args.extend(flags.iter().map(|flag| (*flag).to_owned()));
+            let record: Value = serde_json::from_slice(
+                &succeeded(oxoffice(
+                    &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                ))
+                .stdout,
+            )
+            .unwrap();
+            let id = record["comment_id"].as_i64().unwrap();
+            let comment = comments(&output)
+                .into_iter()
+                .find(|comment| comment["id"] == id)
+                .unwrap();
+            assert_eq!(
+                comment["anchor"]["start"]["story_kind"], story,
+                "{producer}"
+            );
+            assert_eq!(comment["anchor_text"], "Churn", "{producer}");
+        }
+    }
+    let output = scratch.path("range.docx");
+    let usage = oxoffice(&[
+        "docx",
+        "comment",
+        "add",
+        &report("word"),
+        "--start-paragraph",
+        "1",
+        "--start-run",
+        "0",
+        "--end-paragraph",
+        "1",
+        "--end-run",
+        "1",
+        "--tables-only",
+        "--author",
+        "R",
+        "--text",
+        "c",
+        "-o",
+        &output,
+    ]);
+    assert!(!usage.status.success(), "--tables-only needs --anchor");
+}

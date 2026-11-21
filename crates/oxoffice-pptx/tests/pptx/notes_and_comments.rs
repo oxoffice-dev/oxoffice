@@ -781,8 +781,6 @@ fn removing_a_commented_slide_removes_only_its_comments() {
     assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
 }
 
-// Duplicating a commented slide is refused today (a strict known failure in
-// slides_and_layouts); importing it from a clone is the workaround.
 #[test]
 fn a_commented_slide_can_be_copied_by_importing_it_from_a_clone() {
     let mut prs = reviewed_deck();
@@ -1051,10 +1049,7 @@ fn legacy_comments_are_kept_through_edits_and_a_save() {
     );
 }
 
-// Fails today: remove_slide drops the slide's notes and modern comments but
-// leaves its legacy comment part, text included, in the saved file. Issue: #38
 #[test]
-#[should_panic(expected = "the legacy comments of the removed slide are still in the file")]
 fn removing_a_slide_removes_its_legacy_comments() {
     let mut prs = deck_with_legacy_comments(2);
 
@@ -1136,4 +1131,210 @@ fn modern_comments_join_legacy_ones_on_every_editors_deck() {
             reopened.validate()
         );
     }
+}
+
+#[test]
+fn a_duplicated_slide_gets_its_own_copy_of_the_comments_on_every_editors_deck() {
+    for name in CORPUS_DECKS {
+        let mut prs = corpus_deck(name);
+        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
+            .unwrap();
+        prs.add_comment_author(author(GRACE, "Grace Hopper", Some("GH")))
+            .unwrap();
+        prs.add_comment(1, comment(&guid(1), GRACE, MONDAY, "Travels with the copy"))
+            .unwrap();
+        prs.reply_to_comment(1, &guid(1), reply(&guid(2), ADA, TUESDAY, "Noted"))
+            .unwrap();
+        prs.add_comment(1, comment(&guid(3), ADA, MONDAY, "Second thread"))
+            .unwrap();
+        let slides = slide_texts(&prs);
+
+        prs.duplicate_slide(1).unwrap();
+        let ids = |prs: &Presentation, slide: usize| -> Vec<String> {
+            prs.comments(slide)
+                .unwrap()
+                .iter()
+                .flat_map(|comment| {
+                    std::iter::once(comment.id.clone())
+                        .chain(comment.replies().iter().map(|reply| reply.id.clone()))
+                })
+                .collect()
+        };
+        let copy_ids = ids(&prs, 2);
+        prs.resolve_comment(2, &copy_ids[0]).unwrap();
+        prs.reply_to_comment(
+            2,
+            &copy_ids[0],
+            reply(&guid(9), GRACE, TUESDAY, "Only on the copy"),
+        )
+        .unwrap();
+
+        let reopened = reopen(&prs);
+        assert_eq!(slide_texts(&reopened)[2], slides[1], "{name}");
+        assert_eq!(ids(&reopened, 1), [guid(1), guid(2), guid(3)], "{name}");
+        let copy_ids = ids(&reopened, 2);
+        assert_eq!(copy_ids.len(), 4, "{name}");
+        for id in &copy_ids {
+            assert!(
+                !ids(&reopened, 1).contains(id),
+                "{name}: the copy reuses {id}"
+            );
+        }
+        let (original, copy) = (
+            &reopened.comments(1).unwrap(),
+            &reopened.comments(2).unwrap(),
+        );
+        assert_eq!(
+            comment_texts(&reopened, 2),
+            comment_texts(&reopened, 1),
+            "{name}"
+        );
+        assert_eq!(copy[0].author_id, GRACE, "{name}");
+        assert_eq!(copy[0].created, MONDAY, "{name}");
+        assert_eq!(
+            reply_texts(&copy[0]),
+            ["Noted", "Only on the copy"],
+            "{name}"
+        );
+        assert_eq!(copy[0].replies()[0].author_id, ADA, "{name}");
+        assert_eq!(reply_texts(&original[0]), ["Noted"], "{name}");
+        assert_eq!(copy[0].status.as_deref(), Some("resolved"), "{name}");
+        assert_eq!(original[0].status, None, "{name}");
+        assert_eq!(
+            reopened.comment_authors().len(),
+            2,
+            "{name}: authors are not doubled"
+        );
+        assert!(
+            reopened.validate().is_empty(),
+            "{name}: {:?}",
+            reopened.validate()
+        );
+    }
+}
+
+#[test]
+fn a_duplicated_comment_anchor_follows_the_copy_and_its_shapes() {
+    let body_of = |prs: &Presentation, slide: usize| {
+        prs.slide(slide)
+            .unwrap()
+            .shapes()
+            .find(|shape| {
+                shape
+                    .text()
+                    .is_some_and(|text| text.starts_with("Subscription"))
+            })
+            .and_then(|shape| shape.non_visual_id())
+            .expect("the Highlights body has an id")
+    };
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let body = body_of(&prs, 1);
+    prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
+        .unwrap();
+    prs.add_comment_at_shape(1, comment(&guid(1), ADA, MONDAY, "Whole list"), body, None)
+        .unwrap();
+    prs.add_comment_at_shape(
+        1,
+        comment(&guid(2), ADA, MONDAY, "Which plans?"),
+        body,
+        Some((0, 12)),
+    )
+    .unwrap();
+
+    prs.duplicate_slide(1).unwrap();
+
+    let reopened = reopen(&prs);
+    for (slide, shape) in [(1, body), (2, body_of(&reopened, 2))] {
+        let comments = reopened.comments(slide).unwrap();
+        let slide_id = format!(r#"sldId="{}""#, reopened.slide(slide).unwrap().id());
+        let on_shape = String::from_utf8_lossy(comments[0].anchor_xml()).into_owned();
+        assert!(on_shape.contains(&slide_id), "{on_shape}");
+        assert!(
+            on_shape.contains(&format!(r#"spMk id="{shape}""#)),
+            "{on_shape}"
+        );
+        let on_text = String::from_utf8_lossy(comments[1].anchor_xml()).into_owned();
+        assert!(on_text.contains(&slide_id), "{on_text}");
+        assert!(on_text.contains(r#"cp="0" len="12""#), "{on_text}");
+    }
+}
+
+#[test]
+fn a_duplicated_powerpoint_comment_keeps_its_position_and_reply() {
+    let mut prs =
+        Presentation::from_bytes(&powerpoint_comment_deck("2026-11-16T09:30:00.503Z")).unwrap();
+
+    prs.duplicate_slide(0).unwrap();
+
+    let reopened = reopen(&prs);
+    let (original, copy) = (
+        &reopened.comments(0).unwrap()[0],
+        &reopened.comments(1).unwrap()[0],
+    );
+    assert_ne!(copy.id, original.id);
+    assert_ne!(copy.replies()[0].id, original.replies()[0].id);
+    assert_eq!(copy.text(), "Needs a source for this figure.");
+    assert_eq!(reply_texts(copy), ["Done in v2."]);
+    assert_eq!(copy.author_id, original.author_id);
+    let anchor = String::from_utf8_lossy(copy.anchor_xml()).into_owned();
+    let copy_slide = format!(r#"sldId="{}""#, reopened.slide(1).unwrap().id());
+    assert!(anchor.contains(&copy_slide), "{anchor}");
+    let comment_parts = parts_under(&reopened, "ppt/comments/");
+    assert_eq!(comment_parts.len(), 2, "{comment_parts:?}");
+    let copied: Vec<_> = comment_parts
+        .iter()
+        .filter(|name| !name.contains("modernComment_100_4F1B2C3D"))
+        .collect();
+    let xml = part_xml(&reopened, &format!("/{}", copied[0]));
+    assert!(
+        xml.contains(r#"<p188:pos x="10668000" y="152400"/>"#),
+        "{xml}"
+    );
+    assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+}
+
+#[test]
+fn a_duplicated_comment_keeps_its_author_among_namesakes() {
+    const SMITH_2: &str = "{33333333-3333-3333-3333-333333333333}";
+    let mut prs = blank_deck(1);
+    prs.add_comment_author(author(GRACE, "J. Smith", Some("JS")))
+        .unwrap();
+    prs.add_comment_author(author(SMITH_2, "J. Smith", Some("JS")))
+        .unwrap();
+    prs.add_comment(
+        0,
+        comment(&guid(1), SMITH_2, MONDAY, "From the second J. Smith"),
+    )
+    .unwrap();
+    prs.reply_to_comment(0, &guid(1), reply(&guid(2), SMITH_2, TUESDAY, "Still me"))
+        .unwrap();
+
+    prs.duplicate_slide(0).unwrap();
+
+    let reopened = reopen(&prs);
+    let copy = &reopened.comments(1).unwrap()[0];
+    assert_eq!(copy.author_id, SMITH_2);
+    assert_eq!(copy.replies()[0].author_id, SMITH_2);
+    assert_eq!(reopened.comment_authors().len(), 2);
+}
+
+#[test]
+fn legacy_comments_shared_with_a_duplicate_stay_until_their_last_slide_goes() {
+    let mut prs = deck_with_legacy_comments(2);
+    prs.duplicate_slide(0).unwrap();
+
+    prs.remove_slide(0).unwrap();
+    let reopened = reopen(&prs);
+    let package = package_of(&reopened);
+    let owner = package
+        .get_part_rels("/ppt/slides/slide3.xml")
+        .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
+        .expect("the copy still points at the legacy comments");
+    assert_eq!(owner.target, "../comments/comment1.xml");
+    assert!(part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"));
+    assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+
+    prs.remove_slide(0).unwrap();
+    assert!(parts_under(&reopen(&prs), "ppt/comments/").is_empty());
+    assert!(part_xml(&reopen(&prs), "/ppt/commentAuthors.xml").contains("Grace Hopper"));
 }

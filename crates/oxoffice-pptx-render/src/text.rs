@@ -415,6 +415,7 @@ fn shape_run(
     }
 
     Ok(TextSegment {
+        form_mark: None,
         text: text.to_owned(),
         direction: oxoffice_layout::TextDirection::Auto,
         source: None,

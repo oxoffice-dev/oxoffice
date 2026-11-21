@@ -622,9 +622,7 @@ fn a_hidden_slide_stays_hidden_after_a_save_and_in_its_duplicate() {
     assert_eq!(hidden, [false, false, true, false, false]);
 }
 
-// Fails today: duplicate_slide refuses a slide with modern comments. Issue: #39
 #[test]
-#[should_panic(expected = "slides with modern comments require caller-supplied fresh comment ids")]
 fn a_slide_with_comments_can_be_duplicated() {
     let author = "{6E7B2A10-1111-4A5B-9C3D-000000000001}";
     let comment = "{6E7B2A10-2222-4A5B-9C3D-000000000002}";
@@ -1103,4 +1101,37 @@ fn layout_section_and_theme_names_keep_their_tabs_and_line_feeds() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn removing_a_slide_drops_a_tags_part_only_it_used() {
+    let prs = deck_with_titles(&["Kept", "Tagged"]);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    package.set_part(
+        "/ppt/tags/tag1.xml",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:tagLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:tag name="CLIENT" val="Contoso, internal only"/></p:tagLst>"#
+            .to_vec(),
+    );
+    package.content_types.add_override(
+        "/ppt/tags/tag1.xml",
+        "application/vnd.openxmlformats-officedocument.presentationml.tags+xml",
+    );
+    package
+        .get_or_create_part_rels("/ppt/slides/slide2.xml")
+        .add(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags",
+            "../tags/tag1.xml",
+        );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(count_parts(&prs, "ppt/tags/"), 1);
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(count_parts(&prs, "ppt/tags/"), 0);
+    assert_eq!(titles(&prs), ["Kept"]);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }

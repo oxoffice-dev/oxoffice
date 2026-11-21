@@ -4744,6 +4744,19 @@ fn translate_element_shallow(element: &mut PositionedElement, dx: f64, dy: f64) 
             rect.x += dx;
             rect.y += dy;
         }
+        // A marker moves with its band, which becomes the widget.
+        PositionedElement::FormField(fragment) => {
+            fragment.rect.x += dx;
+            fragment.rect.y += dy;
+            if let Some(band) = fragment
+                .mark
+                .as_mut()
+                .and_then(|marker| marker.band.as_mut())
+            {
+                band.x += dx;
+                band.y += dy;
+            }
+        }
         _ => {}
     }
 }
@@ -5806,6 +5819,76 @@ fn tab_aligned_fields(items: &[LineItem]) -> Vec<Option<TabAlignedField>> {
     fields
 }
 
+/// A form field marker: no drawing, only the box a marked item drew on its
+/// line. The engine's numbering pass gathers what lies wholly inside it
+/// into the field's fragment, whose widget takes `band` when there is one.
+fn form_marker(
+    mark: oxoffice_layout::FormMark,
+    rect: Rect,
+    band: Option<Rect>,
+    track: f64,
+) -> PositionedElement {
+    PositionedElement::FormField(oxoffice_layout::FormFieldFragment {
+        field: oxoffice_layout::FormFieldId(u32::MAX),
+        rect,
+        children: Vec::new(),
+        alternate: Vec::new(),
+        mark: Some(oxoffice_layout::FormMarker { mark, band, track }),
+    })
+}
+
+/// The form mark of a drawn segment or picture, `Some(None)` for one
+/// outside any field, `None` for an item that is neither.
+fn item_form_mark(item: &LineItem) -> Option<Option<oxoffice_layout::FormMark>> {
+    match item {
+        LineItem::Text(segment) if !segment.text.is_empty() => Some(segment.form_mark),
+        LineItem::MultilingualText(segment) if !segment.base().text.is_empty() => {
+            Some(segment.base().form_mark)
+        }
+        LineItem::Image { form_mark, .. } => Some(*form_mark),
+        LineItem::Figure { item, .. } => item_form_mark(item),
+        _ => None,
+    }
+}
+
+/// The field a tab sits inside: the one mark of the drawn items on both
+/// sides of it, so its leader belongs to the field.
+fn enclosed_tab_mark(items: &[LineItem], tab: usize) -> Option<oxoffice_layout::FormMark> {
+    let before = items[..tab].iter().rev().find_map(item_form_mark)??;
+    let after = items[tab + 1..].iter().find_map(item_form_mark)??;
+    (before == after).then_some(before)
+}
+
+/// The one form mark every drawn segment and picture of a line carries. A
+/// list number is outside any field, so its line has no sole mark.
+fn sole_form_mark(items: &[LineItem]) -> Option<oxoffice_layout::FormMark> {
+    let mut sole = None;
+    for (index, item) in items.iter().enumerate() {
+        // A list number, a drawing group or a leader outside the field
+        // draws on the line too: the widget keeps to the field's own boxes.
+        match item {
+            LineItem::Marker(_) | LineItem::Group { .. } => return None,
+            LineItem::Figure { item, .. } if !matches!(item.as_ref(), LineItem::Image { .. }) => {
+                return None;
+            }
+            LineItem::Tab {
+                leader: Some(_), ..
+            } if enclosed_tab_mark(items, index).is_none() => return None,
+            _ => {}
+        }
+        let Some(mark) = item_form_mark(item) else {
+            continue;
+        };
+        match (sole, mark) {
+            (_, None) => return None,
+            (None, Some(mark)) => sole = Some(mark),
+            (Some(known), Some(mark)) if known == mark => {}
+            _ => return None,
+        }
+    }
+    sole
+}
+
 fn render_paragraph_lines(
     lines: &[LayoutLine],
     para: ParagraphView<'_>,
@@ -5937,11 +6020,29 @@ fn render_paragraph_lines(
         let mut x = x_offset - hanging_left;
         let mut _accumulated_extra = 0.0;
         let tab_aligned = tab_aligned_fields(&line.items);
+        // Each marked item gets a marker over the box it drew, which is what
+        // its field gathers. A line that draws one form field only gives the
+        // widget its whole text band, from where this line starts (a first
+        // line's own indent) to its end, so there is room to type.
+        let line_band = sole_form_mark(&line.items).map(|_| Rect {
+            x: geometry.margin_left + line.indent_left - hanging_left,
+            y: geometry.margin_top + y,
+            width: line.available_width + hanging_left,
+            height: line.height,
+        });
+        let mark_item = |elements: &mut Vec<PositionedElement>,
+                         mark: Option<oxoffice_layout::FormMark>,
+                         rect: Rect| {
+            if let Some(mark) = mark {
+                elements.push(form_marker(mark, rect, line_band, geometry.margin_left));
+            }
+        };
 
         for (visual_item, item) in line.items.iter().enumerate() {
             match item {
                 LineItem::MultilingualText(segment) if !segment.uses_legacy_shaping() => {
                     let first = elements.len();
+                    let start = x;
                     x += push_multilingual_text(
                         &mut elements,
                         &mut policies,
@@ -5963,6 +6064,16 @@ fn render_paragraph_lines(
                             matches!(elements[*position], PositionedElement::MultilingualText(_))
                         })
                         .expect("rich text rendering emits its positioned text");
+                    mark_item(
+                        &mut elements,
+                        segment.base().form_mark,
+                        Rect {
+                            x: start,
+                            y: geometry.margin_top + y,
+                            width: x - start,
+                            height: line.height,
+                        },
+                    );
                     text_provenance.push(ReflowTextProvenance {
                         element_position,
                         visual_item,
@@ -6175,11 +6286,31 @@ fn render_paragraph_lines(
                             url: url.clone(),
                         });
                     }
+                    mark_item(
+                        &mut elements,
+                        seg.form_mark,
+                        Rect {
+                            x,
+                            y: geometry.margin_top + y,
+                            width: effective_width,
+                            height: line.height,
+                        },
+                    );
 
                     _accumulated_extra += segment_extra;
                     x += effective_width;
                 }
                 LineItem::Tab { width, leader, .. } => {
+                    mark_item(
+                        &mut elements,
+                        enclosed_tab_mark(&line.items, visual_item),
+                        Rect {
+                            x,
+                            y: geometry.margin_top + y,
+                            width: *width,
+                            height: line.height,
+                        },
+                    );
                     if let Some(leader_seg) = leader {
                         // Render the pre-shaped leader text
                         elements.push(PositionedElement::Text(GlyphRun {
@@ -6212,22 +6343,25 @@ fn render_paragraph_lines(
                     width,
                     height,
                     media_id,
+                    form_mark,
                 } => {
                     let image = media.get(media_id);
                     // An inline picture stands on the baseline, as in Word.
+                    let rect = Rect {
+                        x,
+                        y: baseline_y - height,
+                        width: *width,
+                        height: *height,
+                    };
                     let image = PositionedElement::Image {
-                        rect: Rect {
-                            x,
-                            y: baseline_y - height,
-                            width: *width,
-                            height: *height,
-                        },
+                        rect,
                         data: image.map_or_else(Vec::new, |image| image.data.clone()),
                         content_type: image
                             .map_or_else(String::new, |image| image.content_type.clone()),
                         media_id: *media_id,
                     };
                     elements.push(image);
+                    mark_item(&mut elements, *form_mark, rect);
                     x += width;
                 }
                 LineItem::Group {
@@ -6319,11 +6453,31 @@ fn render_paragraph_lines(
                 LineItem::Figure {
                     item, structure_id, ..
                 } => {
+                    // A picture with alternative text stays on the page under
+                    // its control's widget, so its figure keeps its content.
+                    let figure_mark = match item.as_ref() {
+                        LineItem::Image {
+                            width,
+                            height,
+                            form_mark: Some(mark),
+                            ..
+                        } => Some((
+                            *mark,
+                            Rect {
+                                x,
+                                y: baseline_y - height,
+                                width: *width,
+                                height: *height,
+                            },
+                        )),
+                        _ => None,
+                    };
                     let figure = match item.as_ref() {
                         LineItem::Image {
                             width,
                             height,
                             media_id,
+                            ..
                         } => {
                             let image = media.get(media_id);
                             PositionedElement::Image {
@@ -6370,6 +6524,9 @@ fn render_paragraph_lines(
                             PaintedElements::neutral(marked)?
                         },
                     )?;
+                    if let Some((mark, rect)) = figure_mark {
+                        mark_item(&mut elements, Some(mark), rect);
+                    }
                     x += item.width();
                 }
                 _ => x += item.width(),
@@ -6483,7 +6640,8 @@ fn render_paragraph_lines(
                     Some(structure_id)
                 }
                 PositionedElement::MarkedContent { .. }
-                | PositionedElement::LinkAnnotation { .. } => continue,
+                | PositionedElement::LinkAnnotation { .. }
+                | PositionedElement::FormField(_) => continue,
                 _ => None,
             };
             let detached =

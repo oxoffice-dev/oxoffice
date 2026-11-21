@@ -9178,8 +9178,8 @@ impl Presentation {
             invalid_shape_mutation("remove layout", "qualified master ownership is absent")
         })?;
         let mut candidate = self.clone();
-        let mut media = HashSet::new();
-        collect_media_targets(&candidate.package, &record.part_name, &mut media);
+        let mut candidates = HashSet::new();
+        collect_internal_targets(&candidate.package, &record.part_name, &mut candidates);
         let source_package = self.staged_package(true)?;
         let master_source = required_part(&source_package, &master_part)?;
         let edited_master = Arc::make_mut(&mut candidate.masters[master_index])
@@ -9210,7 +9210,7 @@ impl Presentation {
             .content_types
             .remove_override(&record.part_name);
         candidate.layouts.remove(index);
-        prune_unreachable_parts(&mut candidate.package, &media);
+        prune_unreachable_parts(&mut candidate.package, &candidates);
         candidate.media_store = candidate.media_store.rescan(&candidate.package);
         candidate.commit_owned_parts(None)?;
         *self = candidate;
@@ -10283,6 +10283,9 @@ impl Presentation {
     }
 
     /// Duplicates one slide immediately after its source.
+    ///
+    /// The copy has its own notes and its own modern comments, whose comment
+    /// and reply ids are fresh and whose anchors follow the copy.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10858,11 +10861,14 @@ impl Presentation {
                 message: error.to_string(),
             })?;
 
-        let mut media_candidates = HashSet::new();
-        self.release_slide_jumps_to(&record.part_name, &mut media_candidates)?;
-        collect_media_targets(&self.package, &record.part_name, &mut media_candidates);
+        // Every part the slide or its notes reach is a candidate: charts with
+        // their workbooks, legacy comments, embedded objects and media go
+        // unless another part still references them.
+        let mut candidates = HashSet::new();
+        self.release_slide_jumps_to(&record.part_name, &mut candidates)?;
+        collect_internal_targets(&self.package, &record.part_name, &mut candidates);
         if let Some(notes) = &record.notes {
-            collect_media_targets(&self.package, &notes.part_name, &mut media_candidates);
+            collect_internal_targets(&self.package, &notes.part_name, &mut candidates);
             self.package.remove_part(&notes.part_name);
             self.package.remove_part_rels(&notes.part_name);
             self.package.content_types.remove_override(&notes.part_name);
@@ -10886,7 +10892,7 @@ impl Presentation {
         }
         self.presentation.slide_ids.remove(index);
         self.slides.remove(index);
-        prune_unreachable_parts(&mut self.package, &media_candidates);
+        prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
         Ok(())
     }
@@ -10968,12 +10974,16 @@ impl Presentation {
         )
     }
 
-    /// Copies one slide record, with its notes, into this presentation.
+    /// Copies one slide record, with its notes and modern comments, into this
+    /// presentation.
     ///
     /// `import` is `None` for a copy whose relationship targets already live
-    /// in this package or are bounded by the caller's preflight. An import
-    /// also copies charts, embedded objects and comments, and maps or drops
-    /// slide jumps.
+    /// in this package or are bounded by the caller's preflight. Its modern
+    /// comments are then taken as this presentation's own, with its authors:
+    /// a duplicate is the only such copy that may carry any. An import
+    /// also copies charts and embedded objects, and maps or drops slide
+    /// jumps. Copied comments and replies take fresh ids wherever this
+    /// presentation already uses theirs.
     fn copy_slide_from_in_place(
         &mut self,
         source_package: &OpcPackage,
@@ -10983,13 +10993,6 @@ impl Presentation {
         layout_target: Option<&str>,
         mut import: Option<SlideImportContext<'_>>,
     ) -> Result<usize> {
-        if source.comments.is_some() && import.is_none() {
-            return Err(Error::InvalidPresentationMutation {
-                operation,
-                message: "slides with modern comments require caller-supplied fresh comment ids"
-                    .to_owned(),
-            });
-        }
         let slide_part = match &import {
             Some(import) => import.slide_part.to_owned(),
             None => MediaNamer::scan(
@@ -11125,18 +11128,14 @@ impl Presentation {
             None
         };
 
-        let comments_part = source
-            .comments
-            .as_ref()
-            .filter(|_| import.is_some())
-            .map(|_| {
-                MediaNamer::scan(
-                    "/ppt/comments",
-                    "comment",
-                    self.package.parts.keys().map(String::as_str),
-                )
-                .next_part_name("xml")
-            });
+        let comments_part = source.comments.as_ref().map(|_| {
+            MediaNamer::scan(
+                "/ppt/comments",
+                "comment",
+                self.package.parts.keys().map(String::as_str),
+            )
+            .next_part_name("xml")
+        });
         let slide_xml = if import.is_some() {
             required_part(source_package, &source.part_name)?.to_vec()
         } else {
@@ -11197,11 +11196,17 @@ impl Presentation {
             part_name: slide_part.clone(),
             message: error.to_string(),
         })?;
-        let comments = match (&import, &source.comments, comments_part) {
-            (Some(import), Some(source_comments), Some(part_name)) => {
+        let comments = match (&source.comments, comments_part) {
+            (Some(source_comments), Some(part_name)) => {
                 let mut comments = source_comments.comments.clone();
+                // Without an import the copy is a duplicate inside this
+                // presentation, so its authors are already this one's.
+                let source_authors = match &import {
+                    Some(import) => import.source.comment_authors.authors.clone(),
+                    None => self.comment_authors.authors.clone(),
+                };
                 let (ids, author_ids) =
-                    self.merge_imported_comment_identities(import.source, &comments)?;
+                    self.merge_imported_comment_identities(operation, &source_authors, &comments)?;
                 let malformed = |error: OxmlError| Error::MalformedPart {
                     part_name: source_comments.part_name.clone(),
                     message: error.to_string(),
@@ -12419,7 +12424,8 @@ impl Presentation {
     /// Merges modern authors and returns comment/reply and author ID maps.
     fn merge_imported_comment_identities(
         &mut self,
-        source: &Presentation,
+        operation: &'static str,
+        source_authors: &[CommentAuthor],
         comments: &CommentList,
     ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
         let mut used = self
@@ -12455,26 +12461,30 @@ impl Presentation {
         let mut author_ids = HashMap::new();
         let referenced = comments
             .referenced_author_ids()
-            .map_err(|error| invalid_presentation_mutation("import slide", error.to_string()))?;
+            .map_err(|error| invalid_presentation_mutation(operation, error.to_string()))?;
         for author_id in referenced {
             if author_ids.contains_key(&author_id) {
                 continue;
             }
-            let Some(author) = source
-                .comment_authors
-                .authors
-                .iter()
-                .find(|author| author.id == author_id)
-            else {
+            let Some(author) = source_authors.iter().find(|author| author.id == author_id) else {
                 return Err(invalid_presentation_mutation(
-                    "import slide",
+                    operation,
                     format!("modern comment author {author_id} is absent"),
                 ));
             };
-            if let Some(existing) = self.comment_authors.authors.iter().find(|existing| {
-                let mut identity = (**existing).clone();
-                identity.id.clone_from(&author.id);
-                &identity == author
+            // The same author, id included, comes first, so that two equal
+            // authors with different ids each keep their own.
+            let same = self
+                .comment_authors
+                .authors
+                .iter()
+                .find(|existing| *existing == author);
+            if let Some(existing) = same.or_else(|| {
+                self.comment_authors.authors.iter().find(|existing| {
+                    let mut identity = (**existing).clone();
+                    identity.id.clone_from(&author.id);
+                    &identity == author
+                })
             }) {
                 author_ids.insert(author_id.clone(), existing.id.clone());
                 continue;
@@ -20831,22 +20841,23 @@ fn related_internal_part(
     )))
 }
 
-fn collect_media_targets(package: &OpcPackage, source_part: &str, targets: &mut HashSet<String>) {
+/// Adds every internal target of `source_part` to `targets`, as candidates
+/// for [`prune_unreachable_parts`], which keeps those still referenced.
+fn collect_internal_targets(
+    package: &OpcPackage,
+    source_part: &str,
+    targets: &mut HashSet<String>,
+) {
     let Some(relationships) = package.get_part_rels(source_part) else {
         return;
     };
-    for relationship in &relationships.items {
-        if relationship_is_external(relationship) {
-            continue;
-        }
-        let target = OpcPackage::resolve_rel_target(source_part, &relationship.target);
-        if target
-            .get(.."/ppt/media/".len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("/ppt/media/"))
-        {
-            targets.insert(target);
-        }
-    }
+    targets.extend(
+        relationships
+            .items
+            .iter()
+            .filter(|relationship| !relationship_is_external(relationship))
+            .map(|relationship| OpcPackage::resolve_rel_target(source_part, &relationship.target)),
+    );
 }
 
 /// Removes candidate parts that no relationship reaches any longer.
@@ -25350,12 +25361,16 @@ impl<'a> TableCellRef<'a> {
         self.cell.horizontal_merge || self.cell.vertical_merge
     }
 
-    /// Returns the origin's vertical span, or one for an unmerged cell.
+    /// Returns the cell's own `rowSpan`: the merge height on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_height(&self) -> u32 {
         self.cell.row_span
     }
 
-    /// Returns the origin's horizontal span, or one for an unmerged cell.
+    /// Returns the cell's own `gridSpan`: the merge width on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_width(&self) -> u32 {
         self.cell.grid_span
     }
@@ -25523,12 +25538,16 @@ impl<'a> TableCellMut<'a> {
         self.cell_ref().is_spanned()
     }
 
-    /// Returns the origin's vertical span, or one for an unmerged cell.
+    /// Returns the cell's own `rowSpan`: the merge height on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_height(&self) -> u32 {
         self.cell_ref().span_height()
     }
 
-    /// Returns the origin's horizontal span, or one for an unmerged cell.
+    /// Returns the cell's own `gridSpan`: the merge width on a merge origin,
+    /// one on an unmerged cell, and on a covered cell what its producer wrote
+    /// (one, or its origin's).
     pub fn span_width(&self) -> u32 {
         self.cell_ref().span_width()
     }
@@ -25733,26 +25752,19 @@ fn split_cell(table: &mut CT_Table, row: usize, column: usize) -> std::result::R
     }
     let row_span = origin.row_span;
     let grid_span = origin.grid_span;
+    // The merge flags mark the covered cells. Their own spans are 1, or, in
+    // the top row and the left column, repeat the origin's: PowerPoint and
+    // python-pptx repeat them, LibreOffice writes 1.
     for current_row in row..=bottom {
         for current_column in column..=right {
             let cell = &table.rows[current_row].cells[current_column];
-            let expected = (
-                if current_row == row { row_span } else { 1 },
-                if current_column == column {
-                    grid_span
-                } else {
-                    1
-                },
-                current_column != column,
-                current_row != row,
-            );
-            if (
-                cell.row_span,
-                cell.grid_span,
-                cell.horizontal_merge,
-                cell.vertical_merge,
-            ) != expected
-            {
+            let flags = (cell.horizontal_merge, cell.vertical_merge)
+                == (current_column != column, current_row != row);
+            let row_span_ok =
+                cell.row_span == 1 || (current_row == row && cell.row_span == row_span);
+            let grid_span_ok =
+                cell.grid_span == 1 || (current_column == column && cell.grid_span == grid_span);
+            if !(flags && row_span_ok && grid_span_ok) {
                 return Err("merge origin does not have a valid continuation rectangle".to_owned());
             }
         }

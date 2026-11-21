@@ -26,9 +26,13 @@ occupied page for one zero-based direct body item. The result keeps an empty
 fragment slice for preserved body content that does not enter layout.
 
 The legal revision preset is a pre-1.0 Rust source compatibility change.
-`LayoutInput` and facade `RenderOptions` require `revision_style` in complete
-struct literals. `ParagraphBlock::change_bar: Option<Color>` replaces
-`has_visible_revision`. Public `NoteLayout::revision_ranges` now carries
+`LayoutInput` requires `revision_style` in complete struct literals, and
+fillable forms add `form_fields` and the result-local `form_paragraphs`
+(`None` from the caller). Facade
+`RenderOptions` is `#[non_exhaustive]`: start from `RenderOptions::default()`
+and use its `with_*` methods or field assignment.
+`ParagraphBlock::change_bar: Option<Color>` replaces `has_visible_revision`.
+Public `NoteLayout::revision_ranges` now carries
 `Vec<(Range<usize>, Color)>`, preserving the bar colour across note fragments.
 Use `RevisionStyle::Plain` for the existing default decoration policy.
 

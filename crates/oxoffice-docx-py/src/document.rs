@@ -1,26 +1,6 @@
-#[cfg(test)]
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
-
-#[cfg(test)]
-thread_local! {
-    static FX283_REFUSE_LOCAL_COMMIT: Cell<bool> = const { Cell::new(false) };
-    static FX260_WORD_VISITS: Cell<usize> = const { Cell::new(0) };
-}
-
-pub(crate) fn note_fx260_word(count: usize) {
-    #[cfg(test)]
-    FX260_WORD_VISITS.with(|cell| cell.set(cell.get().saturating_add(count)));
-    #[cfg(not(test))]
-    let _ = count;
-}
-
-#[cfg(test)]
-fn fx260_word_visits() -> usize {
-    FX260_WORD_VISITS.with(|cell| cell.get())
-}
 
 // Debug builds count the whole-body work that direct reads and body splices
 // avoid, outside the guards that check them against it, so that a test of
@@ -183,10 +163,6 @@ pub(crate) fn note_visited_owner_record() {
         WORD_VISITED_OWNER_RECORDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
-
-#[cfg(test)]
-static WORD_OPENED_BATCH_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(debug_assertions)]
 static WORD_PIECE_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -4646,7 +4622,7 @@ impl PyCoreProperties {
 // Only current physical owners are retained. A committed mutation supplies the
 // replacement inventory before any state is published.
 #[derive(Clone)]
-#[cfg_attr(any(test, debug_assertions), derive(Debug, PartialEq, Eq))]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq, Eq))]
 pub(crate) enum WordOwnerLocation {
     Paragraph(oxoffice_docx::ContentLocation),
     Run(
@@ -4665,7 +4641,7 @@ pub(crate) enum WordOwnerLocation {
 }
 
 #[derive(Clone, Default)]
-#[cfg_attr(any(test, debug_assertions), derive(Debug, PartialEq, Eq))]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq, Eq))]
 enum WordReadFacts {
     #[default]
     None,
@@ -4674,7 +4650,7 @@ enum WordReadFacts {
     Table(Vec<Vec<usize>>),
 }
 
-#[cfg_attr(any(test, debug_assertions), derive(Debug, PartialEq, Eq))]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq, Eq))]
 struct WordOwnerAddress {
     location: WordOwnerLocation,
     parent: Option<usize>,
@@ -4897,7 +4873,6 @@ impl WordOwnerIndexes {
         let mut body_tables = HashMap::new();
         for (index, owner) in owners.iter().enumerate() {
             note_splice_packet_work(counter);
-            note_fx260_word(1);
             note_visited_owner_record();
             indexes
                 .by_generation
@@ -4971,7 +4946,6 @@ impl WordOwnerIndexes {
             .iter()
             .copied()
             .find(|index| {
-                note_fx260_word(1);
                 note_visited_owner_record();
                 owners[*index].location.same_route(location)
             })
@@ -5032,16 +5006,12 @@ pub(crate) fn assert_indexed_route(
     native: impl FnOnce() -> oxoffice_docx::Result<oxoffice_docx::ContentLocation>,
     owner: &str,
 ) {
-    #[cfg(test)]
-    let visits = fx260_word_visits();
     let native = guarded(native).expect("an indexed route resolves in the document");
     assert_eq!(
         unfingerprinted_location(indexed),
         unfingerprinted_location(&native),
         "indexed {owner} route"
     );
-    #[cfg(test)]
-    FX260_WORD_VISITS.with(|cell| cell.set(visits));
 }
 
 #[cfg(debug_assertions)]
@@ -5854,8 +5824,6 @@ impl WordPieces {
             return (self.clone(), None);
         }
         let opened_paragraphs = if self.blocks.is_empty() {
-            #[cfg(test)]
-            WORD_OPENED_BATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             document
                 .opened_plain_body_paragraph_facts()
                 .ok()
@@ -6265,7 +6233,6 @@ fn word_owner_locations(
     document: &oxoffice_docx::Document,
     form_sources: Option<&mut FormSources>,
 ) -> oxoffice_docx::Result<Vec<WordOwnerAddress>> {
-    note_fx260_word(document.content_count().max(1));
     note_word_inventory_rebuild();
     let table_facts = word_table_read_facts(document);
     word_owner_addresses(
@@ -6808,7 +6775,6 @@ impl PyDocument {
                 }
             }
         }
-        note_fx260_word(1);
         let Some(story) = story.cloned() else {
             return Ok(None);
         };
@@ -6863,7 +6829,6 @@ impl PyDocument {
         let mut paragraph_ordinal = 0;
         let mut table_ordinal = 0;
         for (index, owner) in self.owners.iter().enumerate() {
-            note_fx260_word(1);
             note_visited_owner_record();
             let item = word_owner_body_item(&owner.location);
             let story = word_owner_story(&owner.location);
@@ -7044,7 +7009,6 @@ impl PyDocument {
         let mut cells = Vec::new();
         let mut referenced = std::collections::HashSet::new();
         for owner in &self.owners {
-            note_fx260_word(1);
             note_visited_owner_record();
             if let Some(story) = word_owner_story(&owner.location)
                 && story.part_name() == part
@@ -7165,7 +7129,6 @@ impl PyDocument {
             }
         }
         for next in plan.next_owners(current) {
-            note_fx260_word(1);
             match next {
                 NextWordOwner::Kept(_) if keep => {}
                 NextWordOwner::Kept(index) => {
@@ -7355,7 +7318,6 @@ impl PyDocument {
         // Kept owners take their next states, in inventory order, by move.
         let mut states = states.into_iter();
         for (index, owner) in self.owners.iter_mut().enumerate() {
-            note_fx260_word(1);
             note_visited_owner_record();
             let mut inserted_here = false;
             for span in &spans {
@@ -7486,8 +7448,6 @@ impl PyDocument {
     /// the rebuild's matcher keeps. Runs after the native edit.
     #[cfg(debug_assertions)]
     fn assert_body_append_matches(&self, plan: &BodySplicePlan, publication: &WordPublication) {
-        #[cfg(test)]
-        let visits = fx260_word_visits();
         let rebuilt = guarded(|| word_owner_locations(&self.inner, None))
             .expect("a spliced inventory has a rebuild");
         let mut expected = vec![None; self.owners.len() + plan.added()];
@@ -7501,8 +7461,6 @@ impl PyDocument {
             expected,
             "spliced Word owner matches"
         );
-        #[cfg(test)]
-        FX260_WORD_VISITS.with(|cell| cell.set(visits));
     }
 
     /// Under debug assertions, prove the inventory and its document indexes
@@ -7510,8 +7468,6 @@ impl PyDocument {
     /// aside, which local edits leave stale in the inventory too.
     #[cfg(debug_assertions)]
     fn assert_word_inventory_rebuilds(&self) {
-        #[cfg(test)]
-        let visits = fx260_word_visits();
         let address = |location: &WordOwnerLocation,
                        parent: Option<usize>,
                        body_slot: Option<usize>,
@@ -7594,8 +7550,6 @@ impl PyDocument {
             self.indexes.direct_body_paragraphs, indexes.direct_body_paragraphs,
             "spliced direct body paragraph index"
         );
-        #[cfg(test)]
-        FX260_WORD_VISITS.with(|cell| cell.set(visits));
     }
 }
 
@@ -8073,12 +8027,6 @@ fn same_inventory_route(
     mut after: usize,
 ) -> bool {
     loop {
-        #[cfg(test)]
-        FX237_ROUTE_WORK.set({
-            let mut work = FX237_ROUTE_WORK.get();
-            work[4] += 1;
-            work
-        });
         let record = &old[before];
         let address = &new[after];
         let b = &address.location;
@@ -8228,11 +8176,6 @@ fn word_route_key(
             ))
         }
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static FX237_ROUTE_WORK: std::cell::Cell<[usize; 8]> = const { std::cell::Cell::new([0; 8]) };
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -8472,12 +8415,6 @@ fn indexed_inventory_matches(
             }
         }
         for key in keys {
-            #[cfg(test)]
-            FX237_ROUTE_WORK.set({
-                let mut work = FX237_ROUTE_WORK.get();
-                work[6] += 1;
-                work
-            });
             index
                 .entry((owner.parent, class, key.clone()))
                 .or_default()
@@ -8486,19 +8423,7 @@ fn indexed_inventory_matches(
                 links.entry(key).or_default().push(before);
             }
         }
-        #[cfg(test)]
-        FX237_ROUTE_WORK.set({
-            let mut work = FX237_ROUTE_WORK.get();
-            work[0] += 1;
-            work
-        });
     }
-    #[cfg(test)]
-    FX237_ROUTE_WORK.set({
-        let mut work = FX237_ROUTE_WORK.get();
-        work[7] = index.values().map(Vec::len).max().unwrap_or(0);
-        work
-    });
     let mut matches = vec![None::<Vec<usize>>; new.len()];
     for target in 0..new.len() {
         let mut stack = vec![(target, false)];
@@ -8567,23 +8492,11 @@ fn indexed_inventory_matches(
                     matches!(new[parent].location, WordOwnerLocation::Cell { .. })
                 });
                 for parent in parents {
-                    #[cfg(test)]
-                    FX237_ROUTE_WORK.set({
-                        let mut work = FX237_ROUTE_WORK.get();
-                        work[5] += 1;
-                        work
-                    });
                     for class in 0..4 {
                         if let Some(key) = word_route_key(address, class, parent_cell)
                             && let Some(candidates) = index.get(&(parent, class, key))
                         {
                             for &before in candidates {
-                                #[cfg(test)]
-                                FX237_ROUTE_WORK.set({
-                                    let mut work = FX237_ROUTE_WORK.get();
-                                    work[2] += 1;
-                                    work
-                                });
                                 if same_inventory_route(old, before, new, after) {
                                     found.push(before);
                                 }
@@ -8594,13 +8507,6 @@ fn indexed_inventory_matches(
             }
             found.sort_unstable();
             found.dedup();
-            #[cfg(test)]
-            FX237_ROUTE_WORK.set({
-                let mut work = FX237_ROUTE_WORK.get();
-                work[1] += 1;
-                work[3] = work[3].max(found.len());
-                work
-            });
             matches[after] = Some(found);
         }
     }
@@ -10747,7 +10653,6 @@ impl PyDocument {
     }
 
     fn indexed_owner(&self, state: &RevisionState) -> Option<(usize, &WordOwner)> {
-        note_fx260_word(1);
         note_visited_owner_record();
         let index = *self.indexes.by_generation.get(&state.generation())?;
         let owner = self.owners.get(index)?;
@@ -10761,7 +10666,6 @@ impl PyDocument {
         location: &ParagraphLocation,
         prepared: Option<&PreparedWordRevision>,
     ) -> Option<oxoffice_docx::ContentLocation> {
-        note_fx260_word(1);
         let (owners, indexes) = prepared.map_or((&self.owners, &self.indexes), |prepared| {
             (&prepared.owners, &prepared.indexes)
         });
@@ -10900,7 +10804,6 @@ impl PyDocument {
         related: &Option<oxoffice_docx::ContentLocation>,
         prepared: Option<&PreparedWordRevision>,
     ) -> Option<oxoffice_docx::ContentLocation> {
-        note_fx260_word(1);
         let (owners, indexes) = prepared.map_or((&self.owners, &self.indexes), |prepared| {
             (&prepared.owners, &prepared.indexes)
         });
@@ -11286,11 +11189,9 @@ impl PyDocument {
         };
         let mut end = selected + 1;
         while end < self.owners.len() && self.owners[end].parent == Some(selected) {
-            note_fx260_word(1);
             end += 1;
         }
         for owner in &self.owners[end..] {
-            note_fx260_word(1);
             let independent_run = matches!(owner.location, WordOwnerLocation::Run(..))
                 && owner.parent.is_some_and(|parent| parent < selected);
             if !matches!(owner.location, WordOwnerLocation::Section(_)) && !independent_run {
@@ -11331,7 +11232,6 @@ impl PyDocument {
         let start = range.start;
         let end = range.end;
         for (offset, owner) in self.owners.drain(range).enumerate() {
-            note_fx260_word(1);
             self.indexes.by_generation.remove(&owner.owner.generation());
             let hash = owner.location.route_hash();
             let bucket = self
@@ -11354,7 +11254,6 @@ impl PyDocument {
         // Suffix sections and locally born runs of earlier paragraphs have no
         // direct-body route or parent index to shift. Earlier owners stay put.
         for (offset, owner) in self.owners[start..].iter().enumerate() {
-            note_fx260_word(1);
             for index in self
                 .indexes
                 .by_route
@@ -11494,7 +11393,6 @@ impl PyDocument {
         selected: usize,
         paragraph: &oxoffice_docx_oxml::CT_P,
     ) -> PyResult<PreparedPlainParagraphXml> {
-        note_fx260_word(1);
         let WordOwnerLocation::Paragraph(location) = &self.owners[selected].location else {
             return Err(PyValueError::new_err("local XML owner is not a paragraph"));
         };
@@ -11540,7 +11438,6 @@ impl PyDocument {
             retired.push(properties.clone());
         }
         for &index in &runs {
-            note_fx260_word(1);
             retired.extend(self.owners[index].states());
         }
         retired.push(
@@ -11610,7 +11507,6 @@ impl PyDocument {
             born += 1;
         }
         for index in runs {
-            note_fx260_word(1);
             let owner = &mut self.owners[index];
             self.indexes.by_generation.remove(&owner.owner.generation());
             owner.owner = states[born].clone();
@@ -12647,14 +12543,6 @@ impl PyDocument {
             .map(|revision| revision.born(born).expect("prepared snapshot"));
         let owners = word_owners_with_states(addresses, &states);
         if let Some(revision) = revision {
-            #[cfg(test)]
-            let revision = if FX283_REFUSE_LOCAL_COMMIT.get() {
-                RevisionCounter::new()
-                    .prepare_scopes(operation, &[], &[])
-                    .map_err(revision_to_pyerr)?
-            } else {
-                revision
-            };
             self.revisions
                 .commit_scopes(revision)
                 .map_err(revision_to_pyerr)?;
@@ -14289,10 +14177,7 @@ impl PyDocument {
                 .map(|font| (font.family.as_str(), font.data.as_slice()))
                 .collect::<Vec<_>>()
         });
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         py.detach(|| match refs.as_deref() {
             None if system_fonts => self
                 .inner
@@ -15542,10 +15427,7 @@ impl PyDocument {
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
     ) -> PyResult<Option<PySvgRenderResult>> {
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -17595,10 +17477,11 @@ impl PyDocument {
     }
 
     /// Comment on the `occurrence`-th match of `anchor`, counted from zero,
-    /// in the main story. Matching is case-sensitive, non-overlapping and
-    /// within one paragraph. A match whose range would also show other text,
-    /// such as a field result, raises.
-    #[pyo3(signature = (anchor, *, author, text, occurrence = 0, initials = None, date = None, undated = false))]
+    /// in the main story, or among the matches in table cells only with
+    /// `tables_only`. Matching is case-sensitive, non-overlapping and within
+    /// one paragraph. A match whose range would also show other text, such as
+    /// a field result, raises.
+    #[pyo3(signature = (anchor, *, author, text, occurrence = 0, tables_only = false, initials = None, date = None, undated = false))]
     #[allow(clippy::too_many_arguments)]
     fn add_comment_on_text(
         &mut self,
@@ -17606,6 +17489,7 @@ impl PyDocument {
         author: &str,
         text: &str,
         occurrence: usize,
+        tables_only: bool,
         initials: Option<&str>,
         date: Option<&str>,
         undated: bool,
@@ -17614,7 +17498,17 @@ impl PyDocument {
         let date = comment_date(date, undated)?;
         let mut candidate = self.inner.clone_for_staging();
         let id = candidate
-            .add_comment_on_text(anchor, occurrence, author, initials, text, date)
+            .add_comment_on_text(
+                anchor,
+                author,
+                text,
+                oxoffice_docx::TextCommentOptions {
+                    occurrence,
+                    tables_only,
+                    initials,
+                    date,
+                },
+            )
             .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,
@@ -17786,10 +17680,7 @@ impl PyDocument {
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -17848,10 +17739,7 @@ impl PyDocument {
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
     ) -> PyResult<Option<PyLayoutPage>> {
-        let options = oxoffice_docx::RenderOptions {
-            use_system_fonts: system_fonts,
-            ..oxoffice_docx::RenderOptions::default()
-        };
+        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -18540,9 +18428,13 @@ impl PyDocument {
                     PyTable::new(slf.clone_ref(py), path)
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
+                let savable = document.inner.unsavable_body_edit().is_none();
                 document.inner.add_table(rows, cols);
                 debug_assert_eq!(prepared.plan.table, index);
                 document.commit_body_splice(prepared, &publication)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(slot, savable);
                 return Ok(result);
             }
         }
@@ -18752,12 +18644,16 @@ impl PyDocument {
                     PyParagraph::new(slf.clone_ref(py), path)
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
+                let savable = document.inner.unsavable_body_edit().is_none();
                 edit(&mut document.inner.insert_paragraph(index, text));
                 debug_assert_eq!(
                     document.inner.paragraph_index_of_content(index),
                     Some(prepared.plan.paragraph)
                 );
                 document.commit_body_splice(prepared, &publication)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(index, savable);
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
@@ -18831,12 +18727,16 @@ impl PyDocument {
                     PyTable::new(slf.clone_ref(py), path)
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
+                let savable = document.inner.unsavable_body_edit().is_none();
                 document.inner.insert_table(index, rows, cols);
                 debug_assert_eq!(
                     document.inner.content_index_of_table(prepared.plan.table),
                     Some(index)
                 );
                 document.commit_body_splice(prepared, &publication)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(index, savable);
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
@@ -19233,11 +19133,9 @@ fn parse_render_options(
             "revision_style applies only with revision_view=\"tracked\"",
         ));
     }
-    Ok(oxoffice_docx::RenderOptions {
-        revision_view,
-        revision_style,
-        use_system_fonts: false,
-    })
+    Ok(oxoffice_docx::RenderOptions::default()
+        .with_revision_view(revision_view)
+        .with_revision_style(revision_style))
 }
 
 fn parse_raster_format(
@@ -20039,9 +19937,13 @@ impl PyDocument {
                 PyParagraph::new(slf.clone_ref(py), path)
                     .bind_prepared_splice(&document, &prepared)?,
             )?;
+            let savable = document.inner.unsavable_body_edit().is_none();
             edit(&mut document.inner.add_paragraph(text));
             debug_assert_eq!(prepared.plan.paragraph, index);
             document.commit_body_splice(prepared, &publication)?;
+            document
+                .inner
+                .keep_body_savable_after_typed_insert(slot, savable);
             return Ok(result);
         }
         let mut candidate = document.inner.clone_for_staging();

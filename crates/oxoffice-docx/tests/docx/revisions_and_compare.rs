@@ -1069,7 +1069,7 @@ fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     assert_eq!(texts(&rejected(&mut doc)), ["after"]);
 }
 
-// ---- Known failures ----
+// ---- Bookmarks, tables of contents and notes ----
 
 #[test]
 fn renamed_toc_heading_bookmarks_do_not_block_the_comparison() {
@@ -2143,4 +2143,218 @@ fn a_note_only_the_edited_version_references_is_revised_in_place() {
     let copy = rejected(&mut doc);
     assert_eq!(noted_texts(&copy), ["One.[Src]", "Two."]);
     assert_eq!(notes(&copy), ["Draft", "Src"]);
+}
+
+/// Two body paragraphs, an endnote at the end of each listed one.
+fn doc_with_endnotes(at: &[usize]) -> Document {
+    let mut doc = Document::new();
+    doc.add_paragraph("Claim one.");
+    doc.add_paragraph("Claim two.");
+    for &index in at {
+        let location = doc
+            .paragraph_story_location(index)
+            .expect("paragraph location resolves")
+            .expect("paragraph exists");
+        doc.create_endnote(&location, "Source")
+            .expect("endnote is created");
+    }
+    doc
+}
+
+#[test]
+fn a_moved_endnote_reference_is_refused_and_changes_nothing() {
+    // The comparison cannot delete and insert an endnote yet, and the
+    // redline would name it from both places, which Word for Mac cannot
+    // open.
+    let mut doc = doc_with_endnotes(&[0]);
+    let error = doc
+        .compare(&doc_with_endnotes(&[1]), AUTHOR, DATE)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("endnote") && error.to_string().contains("moved"),
+        "{error}"
+    );
+    assert!(doc.revisions().is_empty());
+    assert_eq!(endnote_paragraphs(&reopen(&mut doc)), [0]);
+}
+
+/// Each endnote reference of the body: its paragraph and the endnote id.
+fn endnote_references(doc: &Document) -> Vec<(usize, i32)> {
+    let mut references = Vec::new();
+    for (index, paragraph) in doc.paragraphs().iter().enumerate() {
+        for run in paragraph.runs() {
+            for item in run.items() {
+                if let RunItemRef::EndnoteReference(id) = item {
+                    references.push((index, id));
+                }
+            }
+        }
+    }
+    references
+}
+
+/// The indexes of the body paragraphs that hold an endnote reference.
+fn endnote_paragraphs(doc: &Document) -> Vec<usize> {
+    doc.paragraphs()
+        .iter()
+        .enumerate()
+        .filter(|(_, paragraph)| {
+            paragraph.runs().any(|run| {
+                run.items()
+                    .any(|item| matches!(item, RunItemRef::EndnoteReference(_)))
+            })
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+#[test]
+fn an_edit_beside_an_endnote_still_compares() {
+    let mut edited = doc_with_endnotes(&[0]);
+    edited
+        .paragraph_mut(1)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_text("Claim two, revised.");
+    let mut doc = redline(doc_with_endnotes(&[0]), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one.", "Claim two, revised."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one.", "Claim two."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+}
+
+#[test]
+fn a_moved_footnote_reference_with_footnotes_ignored_is_refused() {
+    // Ignored notes keep the original's, so the moved reference cannot get
+    // its own note: the redline would name one note from both places.
+    let mut doc = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Footnote],
+        ..Default::default()
+    };
+    let error = doc
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("footnote") && error.to_string().contains("moved"),
+        "{error}"
+    );
+    assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn an_edit_in_the_paragraph_of_an_endnote_still_compares() {
+    let mut edited = doc_with_endnotes(&[0]);
+    edited
+        .paragraph_mut(0)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_text("Claim one, revised.");
+    let mut doc = redline(doc_with_endnotes(&[0]), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one, revised.", "Claim two."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Claim one.", "Claim two."]);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+}
+
+#[test]
+fn a_paragraph_moved_with_its_endnote_is_refused() {
+    // Both ends of the move would name the endnote.
+    let document = |swapped: bool| {
+        let mut doc = Document::new();
+        let (first, second) = if swapped {
+            ("Other.", "Claim.")
+        } else {
+            ("Claim.", "Other.")
+        };
+        doc.add_paragraph(first);
+        doc.add_paragraph(second);
+        let claim = usize::from(swapped);
+        let location = doc.paragraph_story_location(claim).unwrap().unwrap();
+        doc.create_endnote(&location, "Source").unwrap();
+        doc
+    };
+    let mut doc = document(false);
+    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("comparison would give endnote ")
+            && message.contains(
+                " 2 references where each input has at most 1: its reference moved to another site, or what holds it was deleted and inserted again"
+            ),
+        "{message}"
+    );
+    assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn an_endnote_the_original_holds_unreferenced_compares_while_endnotes_are_ignored() {
+    // The original keeps the endnote but lost its reference; the edited
+    // version references it again, and the ignored story supplies it.
+    let mut original = doc_with_endnotes(&[0]);
+    original
+        .paragraph_mut(0)
+        .unwrap()
+        .set_text("Claim one.")
+        .unwrap();
+    let original = reopen(&mut original);
+    assert_eq!(endnote_paragraphs(&original), Vec::<usize>::new());
+    let edited = doc_with_endnotes(&[0]);
+    let id = (1..10)
+        .find(|&id| edited.endnote_story(id).unwrap().is_some())
+        .expect("the edited endnote");
+    assert!(original.endnote_story(id).unwrap().is_some());
+    let mut doc = original;
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    doc.compare_with_options(&edited, AUTHOR, DATE, &options)
+        .expect("the original supplies the endnote");
+    let copy = accepted(&mut doc);
+    assert_eq!(endnote_references(&copy), [(0, id)]);
+    assert!(copy.endnote_story(id).unwrap().is_some());
+    assert_eq!(endnote_paragraphs(&rejected(&mut doc)), Vec::<usize>::new());
+}
+
+#[test]
+fn an_endnote_the_original_lacks_is_refused_while_endnotes_are_ignored() {
+    // The original holds endnotes, but not the one the edited version adds.
+    let mut doc = doc_with_endnotes(&[0]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    let edited = doc_with_endnotes(&[0, 1]);
+    let (_, added) = endnote_references(&edited)[1];
+    let error = doc
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("ignored endnotes cannot supply the edited reference to endnote {added}")
+    );
+    assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn an_endnote_added_while_endnotes_are_ignored_is_refused() {
+    // The original's endnotes stay, so the new reference would name none.
+    let mut doc = doc_with_endnotes(&[]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    let error = doc
+        .compare_with_options(&doc_with_endnotes(&[1]), AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert!(error.to_string().contains("ignored endnotes"), "{error}");
+    assert!(doc.revisions().is_empty());
 }

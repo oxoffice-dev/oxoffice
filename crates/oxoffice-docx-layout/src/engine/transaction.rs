@@ -254,6 +254,7 @@ impl Engine {
         let generated_sources = (sources.is_none()
             && (needs_ref_projection
                 || needs_sequences
+                || input.form_fields
                 || document_has_section_fields(input)
                 || input
                     .sequence_snapshot
@@ -282,6 +283,12 @@ impl Engine {
             };
             // Reuse the semantic-preparation clone when one was required.
             prepared_input.to_mut().sequence_snapshot = snapshot;
+        }
+        if prepared_input.form_fields
+            && let Some(sources) = sources
+        {
+            let paragraphs = crate::forms::form_paragraphs(prepared_input.as_ref(), sources);
+            prepared_input.to_mut().form_paragraphs = Some(Arc::new(paragraphs));
         }
         let input = prepared_input.as_ref();
         // Load user-provided / DOCX-embedded fonts (highest priority). An exact
@@ -2107,6 +2114,11 @@ impl Engine {
         result.diagnostics = diagnostics;
         self.last_picture_draw_owners = media.picture_draw_owners_since(0);
         result.structure = Some(structure);
+        if input.form_fields
+            && let Some(sources) = sources
+        {
+            crate::forms::number_form_fields(&mut result, input, sources);
+        }
         let references = num_state.references_only();
         self.bookmark_numbering
             .extend(
@@ -2157,7 +2169,11 @@ impl Engine {
                     .as_ref()
                     .is_some_and(|s| s.navigation_exclusions.contains_key(path))
             });
-        if !paragraph_is_cache_safe(paragraph, styles) || excluded_owner {
+        // A block control field's paragraph draws marks, which a cached
+        // block would not carry.
+        let form = crate::forms::body_form_paragraph(input, source_node);
+        let form_block = form.is_some_and(|paragraph| paragraph.block);
+        if !paragraph_is_cache_safe(paragraph, styles) || excluded_owner || form_block {
             // Traversal-sensitive content can change generated state consumed
             // by later blocks. The conservative boundary is the first such
             // block, after which no retained block is read in this layout.
@@ -2174,6 +2190,7 @@ impl Engine {
                 source_node,
                 source_node,
                 doc_grid,
+                form,
             )?;
             return Ok(SharedLayoutBlock::Owned {
                 semantics: Some(ParagraphSemantics {
@@ -2236,6 +2253,8 @@ impl Engine {
             Some(CACHE_SOURCE_NODE),
             source_node,
             doc_grid,
+            // A cache-safe paragraph holds no control and no field.
+            None,
         );
         let font_trace = self.font_manager.finish_paragraph_font_events();
         let (mut block, reflow_direction, paint) = block_result?;

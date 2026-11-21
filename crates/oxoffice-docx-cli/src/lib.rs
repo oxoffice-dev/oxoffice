@@ -561,6 +561,14 @@ enum CommentCommand {
             conflicts_with_all = ["start_paragraph", "start_run", "end_paragraph", "end_run"]
         )]
         occurrence: Option<usize>,
+        /// Count only the --anchor matches in table cells, nested tables
+        /// included
+        #[arg(
+            long,
+            requires = "anchor",
+            conflicts_with_all = ["start_paragraph", "start_run", "end_paragraph", "end_run"]
+        )]
+        tables_only: bool,
         /// Comment author
         #[arg(long)]
         author: String,
@@ -969,6 +977,7 @@ pub fn run(cli: Cli) {
                 range,
                 anchor,
                 occurrence,
+                tables_only,
                 author,
                 initials,
                 text,
@@ -988,6 +997,7 @@ pub fn run(cli: Cli) {
                     (Some(anchor), ..) => commands::CommentAnchor::Text {
                         text: anchor,
                         occurrence: occurrence.unwrap_or(0),
+                        tables_only,
                     },
                     (
                         None,

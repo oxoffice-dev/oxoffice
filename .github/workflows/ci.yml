@@ -1,15 +1,19 @@
 name: CI
 
-# Every push to main, and every pull request that is ready and targets main,
-# builds and tests on Linux, macOS and Windows: a platform-only failure (paths,
-# line endings) shows before the merge. The jobs run in parallel, so Windows,
-# the slowest, bounds the wait. A draft, or a pull request whose base is
-# another branch, runs lint, WebAssembly and Linux only. The full run needs
-# both a base of main and a ready pull request, on opened, synchronize,
-# reopened or ready_for_review. A change of base to main (GitHub's move of a
-# stacked pull request when its base merges, or by hand) runs nothing: push
-# a new commit, or close and reopen, before merging. workflow_dispatch runs
-# everything. See specs/2026-11-21-lighter-ci-on-pull-requests.md.
+# Every pull request that is ready and targets main builds and tests on
+# Linux, macOS and Windows: a platform-only failure (paths, line endings)
+# shows before the merge. The jobs run in parallel, so Windows, the slowest,
+# bounds the wait. A draft, or a pull request whose base is another branch,
+# runs lint, WebAssembly and Linux only. The full run needs both a base of
+# main and a ready pull request, on opened, synchronize, reopened or
+# ready_for_review. A change of base to main (GitHub's move of a stacked pull
+# request when its base merges, or by hand) runs nothing: push a new commit,
+# or close and reopen, before merging. A push to main runs on Linux only,
+# every scaling call included: its pull request ran the three platforms. The
+# nightly schedule and workflow_dispatch run everything on the three
+# platforms. See specs/2026-11-21-lighter-ci-on-pull-requests.md,
+# specs/2026-11-21-nightly-scaling-on-macos-and-windows.md and
+# specs/2026-11-21-main-on-linux-with-one-waiting-run.md.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
@@ -24,11 +28,18 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   workflow_dispatch:
+  # The full scaling set on macOS and Windows runs once a night instead of on
+  # every push to main (specs/2026-11-21-nightly-scaling-on-macos-and-windows.md).
+  schedule:
+    - cron: "23 2 * * *"
 
-# A pull request keeps only its latest run. Every commit of main gets its own
-# run, so no run of main is queued behind or cancelled by another.
+# A pull request keeps only its latest run. Pushes to main share one group
+# that never cancels the run in progress: one run of main runs, one waits,
+# and a newer push replaces the waiting one, so a burst of merges builds the
+# first and the last. The nightly run and a dispatch are keyed by their event
+# and commit, so they never queue behind or cancel a push run, or each other.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -75,12 +86,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Three platforms unless this is a draft or a pull request stacked on
-        # another branch.
-        os: ${{ fromJSON((github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+        # Three platforms unless this is a push to main (its pull request
+        # built them), a draft, or a pull request stacked on another branch.
+        # Any other event, the nightly run and workflow_dispatch included,
+        # builds the three.
+        os: ${{ fromJSON((github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft))) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
@@ -101,6 +116,14 @@ jobs:
           oxoffice --version
           oxoffice docx --help > /dev/null
           oxoffice pptx --help > /dev/null
+      - name: Keep the Linux wheel for the skill examples
+        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-linux
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 1
       - name: Rust integration tests
         shell: bash
         run: |
@@ -117,16 +140,17 @@ jobs:
   # The scaling tests time every mutating call at N and 16N (docx) or 4N
   # (pptx). They need a build without debug assertions (the `scaling`
   # profile), built here beside the `ci` one so that pull requests wait no
-  # longer. A ready pull request into main times the QUICK set on Linux; main
-  # times every call on the three platforms. Drafts and stacked pull requests
-  # skip it.
+  # longer. A ready pull request into main times the QUICK set on Linux; a
+  # push to main times every call on Linux; the nightly run and
+  # workflow_dispatch time every call on the three platforms. Drafts and
+  # stacked pull requests skip it.
   scaling:
     name: Scaling (${{ matrix.os }})
     if: github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,3 +172,56 @@ jobs:
         env:
           OXOFFICE_SCALING: ${{ github.event_name == 'pull_request' && 'quick' || 'full' }}
         run: python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py -q -rxX
+
+  # The examples of the oxoffice-skills skills are the contract between the
+  # two repositories (tests/skills/README.md). They run on main only, against
+  # the Linux wheel and command that `build` just made and tested, and read
+  # the skills' default branch: a change on either side shows on the next
+  # push to main. A `ci` build takes about 9 minutes locally, 18 on a runner.
+  skill-examples:
+    name: Skill examples
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: oxoffice-dev/oxoffice-skills
+          path: oxoffice-skills
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheel-linux
+          path: dist
+      - name: Install the wheel
+        id: install
+        run: |
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          python -m pip install dist/*.whl
+          oxoffice --version
+          git -C oxoffice-skills log -1 --format='oxoffice-skills %h %s'
+      - name: Run the examples
+        timeout-minutes: 30
+        run: |
+          python tests/skills/make_fixtures.py "$RUNNER_TEMP/skills/fixtures"
+          python tests/skills/run_examples.py --skills oxoffice-skills/plugin/skills \
+            --fixtures "$RUNNER_TEMP/skills/fixtures" --work "$RUNNER_TEMP/skills"
+      - name: Check what they wrote
+        run: python tests/skills/check_outputs.py "$RUNNER_TEMP/skills"
+      - name: Check the names the skills cite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python tests/skills/check_names.py oxoffice-skills/plugin/skills
+      - name: Keep the logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: skill-examples-logs
+          path: ${{ runner.temp }}/skills
+          retention-days: 7

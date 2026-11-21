@@ -35,7 +35,7 @@ What we want from a suite, in order:
 | Binding parity | Is every public Rust facade call reachable from Python, with the same result? Is every CLI command wired? | PR |
 | Scaling | Does every public mutating call cost about the same at N and 4N? | PR (subset), main (all) |
 | Budgets | How many milliseconds does each common edit cost on Word- and Google-saved documents? | main, release |
-| Rendering | Are page count, line breaks and a few golden pages stable? | main |
+| Rendering | Are page count, line breaks and a few golden pages stable? | main (see [render fidelity](2026-11-21-render-fidelity.md): pull requests and the nightly run) |
 | Validity | Do Word, PowerPoint and LibreOffice open what we write? | LibreOffice on main, Word and PowerPoint on demand on a Mac |
 
 ### The corpus
@@ -78,7 +78,9 @@ a manifest: producer and version, features it carries, licence, size.
 - Pull request: fmt, clippy, Rust tests, Python tests on one Linux build,
   CLI tests, corpus subset, scaling subset. Target about 10 minutes.
 - Push to `main`: the same on Linux, macOS and Windows, full corpus, full
-  scaling, rendering checks, LibreOffice validity.
+  scaling, rendering checks, LibreOffice validity. (Since 2026-11-21 on
+  Linux only, the three platforms once a night: see
+  [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md).)
 - Release: everything, plus budgets reported in the release notes.
 
 ## Plan
@@ -105,7 +107,8 @@ a manifest: producer and version, features it carries, licence, size.
   push to `main` against the wheel and the CLI just built. Not on pull
   requests.
 - No nightly job. `main` runs the full set. A nightly job comes only if
-  `main` gets too long.
+  `main` gets too long. (It came on 2026-11-21 for scaling on macOS and
+  Windows: [nightly scaling](2026-11-21-nightly-scaling-on-macos-and-windows.md).)
 
 ## Outcome
 
@@ -142,8 +145,8 @@ a manifest: producer and version, features it carries, licence, size.
 ### Corpus at scale (plan step 3, #59)
 
 - 16 families authored and saved by LibreOffice: 36 files in 2 MB with the
-  pilot's Word, PowerPoint and Google copies; those of the new families wait
-  for a Mac and an rclone remote (#62).
+  pilot's Word, PowerPoint and Google copies. The Word, PowerPoint and Google
+  copies of the new families followed (#62): 64 files in 4.6 MB.
 - The round trip checks every part byte for byte. Details and learnings in
   [2026-11-21-corpus-at-scale-and-behaviour-tests.md](2026-11-21-corpus-at-scale-and-behaviour-tests.md).
 
@@ -157,3 +160,23 @@ a manifest: producer and version, features it carries, licence, size.
   had turned 22 of them into passing tests.
 - Pictures, charts, content controls and conversions on the docx side, and
   rendering on the pptx side, are the next round.
+### Skill examples (from the review)
+
+- `tests/skills/` runs the examples of oxoffice-skills (`references/examples.md`
+  of each skill, the recipes renamed) in the `skill-examples` job, on main
+  only: it waits for `build`, takes the Linux wheel that `build` made and
+  tested (the `ci` profile), and reads the skills' default branch, so a
+  change on either side shows on the next push to main.
+- Inputs are built at each run and come out the same every time: the
+  synthetic report and deck, Pillow's bundled CC0 font and a drawn picture
+  (python-docx, python-pptx and Pillow are already in `ci.txt`).
+- Three checks: every block runs (64 blocks), what they wrote is what they
+  describe (`check_outputs.py`), and every function, keyword, attribute,
+  command and flag the skills cite exists in the build (`check_names.py`,
+  which fails on the first list of problems).
+- Measured locally on 0.1.0 (Linux): 8 min 41 s on a `ci` build, 2 min 56 s on
+  a `scaling` build. The `ci` build was kept: it is the wheel the other jobs
+  test, and its debug assertions check the examples' edits too. On a runner
+  the examples take about 18 minutes; the job has a 40 minute timeout. The
+  checks read paragraphs through `docx text --json`: walking
+  `Document.paragraphs` on that build took over 6 minutes.

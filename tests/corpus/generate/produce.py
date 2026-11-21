@@ -16,7 +16,9 @@ Every producer by default, every family but the pilot (report, deck) unless
 - libreoffice: `soffice --headless`, on any machine.
 - google: an rclone remote (OXOFFICE_CORPUS_RCLONE, default `gdrive:`) uploads
   with conversion to Google Docs and Slides, exports back, and removes the
-  temporary folder.
+  temporary folder. Embedded faces whose licence is not the SIL Open Font
+  License are dropped from the Docs exports (drop_unlicensed_fonts); Slides
+  exports embed no font.
 
 Standard library only, Python 3.11 or later. On the Mac:
 
@@ -27,9 +29,12 @@ import os
 import shutil
 import subprocess
 import sys
+import re
+import struct
 import tempfile
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 import manifest
@@ -167,6 +172,65 @@ def through_libreoffice(only: list[str]) -> dict:
     return {("libreoffice", "docx"): name, ("libreoffice", "pptx"): name}
 
 
+def font_licence(data: bytes) -> str:
+    """The licence description and URL (name ids 13 and 14) of a TrueType or
+    OpenType face, empty when it names none."""
+    texts = []
+    try:
+        tables = struct.unpack(">H", data[4:6])[0]
+        for index in range(tables):
+            tag, _, offset, _ = struct.unpack(">4sIII", data[12 + 16 * index : 28 + 16 * index])
+            if tag == b"name":
+                break
+        else:
+            return ""
+        _, count, strings = struct.unpack(">HHH", data[offset : offset + 6])
+        for index in range(count):
+            record = data[offset + 6 + 12 * index : offset + 18 + 12 * index]
+            platform, _, _, name_id, length, start = struct.unpack(">HHHHHH", record)
+            if name_id in (13, 14):
+                raw = data[offset + strings + start : offset + strings + start + length]
+                texts.append(raw.decode("utf-16-be", "replace") if platform in (0, 3) else raw.decode("latin-1"))
+    except struct.error:
+        return ""  # not a well-formed face: no licence we can read
+    return " ".join(texts)
+
+
+def drop_unlicensed_fonts(path: Path) -> list[str]:
+    """Remove from a Google Docs export every embedded face whose licence is not
+    the SIL Open Font License, with its relationship and its font-table entry:
+    Google embeds whole faces it licenses (Cambria Math for equations), which
+    are not ours to redistribute. Every other part keeps its bytes. Returns the
+    parts removed."""
+    with zipfile.ZipFile(path) as package:
+        infos = package.infolist()
+        parts = {info.filename: package.read(info) for info in infos}
+    dropped = [
+        name
+        for name, data in parts.items()
+        if name.startswith("word/fonts/")
+        and not name.endswith("/")
+        and not re.search(r"Open Font License|/OFL\b", font_licence(data))
+    ]
+    if not dropped:
+        return []
+    rels_name, table_name = "word/_rels/fontTable.xml.rels", "word/fontTable.xml"
+    rels, table = parts[rels_name].decode(), parts[table_name].decode()
+    for name in dropped:
+        target = re.escape(name.removeprefix("word/"))
+        for relationship in re.findall(rf'<Relationship [^>]*Target="{target}"[^>]*/>', rels):
+            rid = re.search(r'Id="([^"]+)"', relationship).group(1)
+            rels = rels.replace(relationship, "")
+            table = re.sub(rf'<w:embed(?:Regular|Bold|Italic|BoldItalic) [^>]*r:id="{rid}"[^>]*/>', "", table)
+        del parts[name]
+    parts[rels_name], parts[table_name] = rels.encode(), table.encode()
+    with zipfile.ZipFile(path, "w") as package:
+        for info in infos:
+            if info.filename in parts:
+                package.writestr(info, parts[info.filename])
+    return dropped
+
+
 def through_google(only: list[str]) -> dict:
     remote = os.environ.get("OXOFFICE_CORPUS_RCLONE", "gdrive:") + f"oxoffice-corpus-{uuid.uuid4().hex[:8]}"
     out = FILES / "google"
@@ -180,7 +244,8 @@ def through_google(only: list[str]) -> dict:
             subprocess.run(["rclone", "copy", remote, exported, "--drive-export-formats", "docx,pptx"], check=True)
             for path in sorted(Path(exported).iterdir()):
                 shutil.copy(path, out / path.name)
-                print(f"google: {path.name}")
+                dropped = drop_unlicensed_fonts(out / path.name) if path.suffix == ".docx" else []
+                print(f"google: {path.name}" + (f" (dropped {', '.join(dropped)})" if dropped else ""))
         finally:
             subprocess.run(["rclone", "purge", remote], check=False)
     return {("google", "docx"): "Google Docs export", ("google", "pptx"): "Google Slides export"}

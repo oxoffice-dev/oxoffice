@@ -21,7 +21,8 @@ on the work. The repository is public, so this costs time, not money.
   and Windows (decided on 2026-11-20, so a platform-only failure shows before
   the merge), and times the QUICK scaling sets **on Linux only**. macOS
   runners are the noisiest for timings, and `main` still times every call on
-  the three platforms after the merge.
+  the three platforms after the merge (now once a night, see
+  [nightly scaling](2026-11-21-nightly-scaling-on-macos-and-windows.md)).
 - **A draft, or a pull request whose base is another branch**, runs lint,
   WebAssembly and the Linux build and tests only. The full run needs both a
   base of `main` and a ready pull request, on `opened`, `synchronize`,
@@ -35,8 +36,14 @@ on the work. The repository is public, so this costs time, not money.
   push a new commit, or close and reopen, first (loop step 6 of
   `docs/DEVELOPMENT.md`). A documentation-only pull request runs no build
   and has nothing to check.
-- `workflow_dispatch` runs everything, like `main`.
+- `workflow_dispatch` runs everything, like `main` (`main` no longer does
+  since [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md);
+  `workflow_dispatch` still runs everything).
 - `main` is unchanged: every job on the three platforms, every scaling call.
+  (Superseded in part by [nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md):
+  a push to `main` now times the scaling calls on Linux only; and by
+  [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md):
+  a push to `main` now builds and tests on Linux only.)
 
 Per push: 8 jobs become 6 for a ready pull request into `main`, 3 for a
 draft or a stacked one.

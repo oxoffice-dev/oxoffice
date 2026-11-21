@@ -727,7 +727,7 @@ impl SourceRegistry {
         id
     }
 
-    pub(super) fn body_id(&self, body_index: usize) -> Option<SourceNodeId> {
+    pub(crate) fn body_id(&self, body_index: usize) -> Option<SourceNodeId> {
         self.body_ids.get(body_index).copied().flatten()
     }
 

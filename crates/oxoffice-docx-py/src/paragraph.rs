@@ -176,7 +176,6 @@ impl ParagraphLocation {
         document: &oxoffice_docx::Document,
         location: &oxoffice_docx::ContentLocation,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        crate::document::note_fx260_word(document.content_count().max(1));
         crate::document::note_word_story_walk();
         let owner = location.story();
         let story = document
@@ -201,7 +200,6 @@ impl ParagraphLocation {
         &self,
         document: &oxoffice_docx::Document,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        crate::document::note_fx260_word(document.content_count().max(1));
         if !matches!(self, Self::Related(_)) {
             crate::document::note_word_story_walk();
         }
@@ -224,7 +222,6 @@ impl ParagraphLocation {
         document: &oxoffice_docx::Document,
         read: impl FnOnce(oxoffice_docx::ParagraphRef<'_>) -> T,
     ) -> oxoffice_docx::Result<T> {
-        crate::document::note_fx260_word(document.content_count().max(1));
         match self {
             Self::Body(index) => document.paragraph(*index).map(read).ok_or_else(|| {
                 oxoffice_docx::Error::Other("paragraph index out of range".to_owned())

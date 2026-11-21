@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use oxoffice_opc::OpcPackage;
+use oxoffice_opc::relationship::rel_types;
 use oxoffice_pptx::{
     ChartData, ChartKind, Emu, LegendPosition, LegendSettings, Presentation, RgbColor, ShapeType,
 };
@@ -930,9 +931,7 @@ fn removing_a_chart_drops_its_chart_part_and_workbook() {
     assert!(saved.validate().is_empty(), "{:?}", saved.validate());
 }
 
-// Fails today: remove_slide prunes only media, the chart and workbook stay. Issue: #38
 #[test]
-#[should_panic(expected = "the removed slide's chart parts are still in the file")]
 fn removing_the_slide_that_holds_a_chart_drops_its_chart_part_and_workbook() {
     let mut prs = blank_deck(2);
     chart_on(&mut prs, 1, ChartKind::Bar, &regions());
@@ -1020,6 +1019,94 @@ fn a_chart_title_and_cdata_chart_text_with_raw_line_ends_read_as_line_feeds() {
     package.write_to(&mut bytes).unwrap();
     let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
     assert_eq!(chart(&prs, 0, id).1.categories[0], "North\ncoast");
+}
+
+#[test]
+fn removing_a_chart_slide_from_every_editors_deck_drops_its_chart_and_keeps_the_rest() {
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let charts_before = chart_parts(&prs);
+        let mut texts = slide_texts(&prs);
+        chart_on(&mut prs, 1, ChartKind::Bar, &regions());
+        let package = saved_package(&prs);
+        let before: BTreeSet<String> = package.parts.keys().cloned().collect();
+        // The slide that holds the chart, and every part it reaches without
+        // going through its layout, the notes master or another slide.
+        let slide = package
+            .part_rels
+            .iter()
+            .find(|(_, relationships)| {
+                relationships
+                    .items
+                    .iter()
+                    .any(|relationship| relationship.rel_type == rel_types::CHART)
+            })
+            .map(|(part, _)| part.clone())
+            .expect("a part relates to the chart");
+        let mut graph = BTreeSet::new();
+        let mut pending = vec![slide.clone()];
+        while let Some(part) = pending.pop() {
+            if !graph.insert(part.clone()) {
+                continue;
+            }
+            for relationship in package
+                .get_part_rels(&part)
+                .map(|relationships| relationships.items.clone())
+                .unwrap_or_default()
+            {
+                let shared = [
+                    rel_types::SLIDE_LAYOUT,
+                    rel_types::NOTES_MASTER,
+                    rel_types::SLIDE,
+                ]
+                .contains(&relationship.rel_type.as_str());
+                if relationship.target_mode.as_deref() != Some("External") && !shared {
+                    pending.push(OpcPackage::resolve_rel_target(&part, &relationship.target));
+                }
+            }
+        }
+
+        prs.remove_slide(1).unwrap();
+
+        let saved = reopen(&prs);
+        let after: BTreeSet<String> = saved_package(&saved).parts.into_keys().collect();
+        let removed: BTreeSet<String> = before.difference(&after).cloned().collect();
+        // No corpus deck shares a part of that graph with another slide, so
+        // exactly the graph goes: nothing outside it, nothing of it stays.
+        assert_eq!(removed, graph, "{name}");
+        assert_eq!(chart_parts(&saved), charts_before, "{name}");
+        texts.remove(1);
+        assert_eq!(slide_texts(&saved), texts, "{name}");
+        assert!(
+            saved.validate().is_empty(),
+            "{name}: {:?}",
+            saved.validate()
+        );
+    }
+}
+
+#[test]
+fn a_chart_shared_with_a_duplicate_stays_until_its_last_slide_goes() {
+    let mut prs = blank_deck(2);
+    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    prs.duplicate_slide(0).unwrap();
+    let copy = last_shape_id(&prs, 1);
+    let parts = chart_parts(&prs);
+
+    prs.remove_slide(0).unwrap();
+    let saved = reopen(&prs);
+    assert_eq!(chart(&saved, 0, copy), (ChartKind::Bar, regions()));
+    assert!(chart_parts(&saved).is_subset(&parts));
+    assert!(!chart_parts(&saved).is_empty());
+    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+
+    prs.remove_slide(0).unwrap();
+    assert!(chart_parts(&reopen(&prs)).is_empty());
 }
 
 // --- Copies, groups ----------------------------------------------------------
