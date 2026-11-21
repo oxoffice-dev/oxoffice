@@ -1,0 +1,69 @@
+slide 1 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 1 | Subtitle 2 | 1 lines 38.4 pt | at 95 %: 1 lines 38.4 pt
+slide 2 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 2 | Content Placeholder 2 | 8 lines 343.7 pt | at 95 %: 8 lines 343.7 pt
+slide 2 | Rounded Rectangle 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 2 | Footer Placeholder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 2 | Slide Number Placeholder 5 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 3 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 3 | Rounded Rectangle 2 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Rounded Rectangle 3 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Rounded Rectangle 4 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Rounded Rectangle 5 | 3 lines 57.6 pt | at 95 %: 3 lines 57.6 pt
+slide 3 | Left Arrow 6 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 3 | TextBox 7 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 3 | Footer Placeholder 8 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 3 | Slide Number Placeholder 9 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 4 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 4 | Pentagon 2 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 3 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 4 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 5 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | Chevron 6 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 4 | TextBox 7 | 2 lines 43.2 pt | at 95 %: 2 lines 43.2 pt
+slide 4 | Footer Placeholder 8 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 4 | Slide Number Placeholder 9 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 5 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 5 | Terminator 2 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | Process 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | Decision 4 | 2 lines 33.6 pt | at 95 %: 2 lines 33.6 pt
+slide 5 | Process 5 | 1 lines 16.8 pt | at 95 %: 2 lines 33.6 pt
+slide 5 | Process 6 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 5 | Terminator 7 | 1 lines 15.6 pt | at 95 %: 1 lines 15.6 pt
+slide 5 | TextBox 14 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 5 | TextBox 15 | 1 lines 21.6 pt | at 95 %: 1 lines 21.6 pt
+slide 5 | Footer Placeholder 16 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 5 | Slide Number Placeholder 17 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 6 | Rectangle 3 | 1 lines 19.2 pt | at 95 %: 1 lines 19.2 pt
+slide 6 | Rounded Rectangle 5 | 1 lines 19.2 pt | at 95 %: 1 lines 19.2 pt
+slide 6 | Oval 6 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 7 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Oval 8 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 9 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Oval 10 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 11 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Rounded Rectangle 13 | 1 lines 19.2 pt | at 95 %: 1 lines 19.2 pt
+slide 6 | Oval 14 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 15 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Oval 16 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | TextBox 17 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 6 | Footer Placeholder 18 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 6 | Slide Number Placeholder 19 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 7 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 7 | Content Placeholder 2 | 5 lines 217.0 pt | at 95 %: 5 lines 217.0 pt
+slide 7 | Footer Placeholder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 7 | Slide Number Placeholder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 8 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 8 | Content Placeholder 2 | 4 lines 176.6 pt | at 95 %: 5 lines 215.0 pt
+slide 8 | Footer Placeholder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 8 | Slide Number Placeholder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 9 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 9 | Content Placeholder 2 | 5 lines 209.3 pt | at 95 %: 5 lines 209.3 pt
+slide 9 | Rounded Rectangle 3 | 1 lines 16.8 pt | at 95 %: 1 lines 16.8 pt
+slide 9 | Footer Placeholder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 9 | Slide Number Placeholder 5 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 10 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 10 | Content Placeholder 2 | 5 lines 215.0 pt | at 95 %: 5 lines 215.0 pt
+slide 10 | Footer Placeholder 3 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
+slide 10 | Slide Number Placeholder 4 | 1 lines 14.4 pt | at 95 %: 1 lines 14.4 pt
