@@ -1117,7 +1117,7 @@ fn a_word_saved_legacy_checkbox_draws_its_box_at_its_size() {
 }
 
 #[test]
-fn a_legacy_checkbox_with_a_stored_result_draws_it_once() {
+fn a_legacy_checkbox_with_a_stored_result_draws_its_box_from_its_state_once() {
     let doc = doc_with_body(
         r#"<w:p><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
     );
@@ -1125,5 +1125,60 @@ fn a_legacy_checkbox_with_a_stored_result_draws_it_once() {
         .into_iter()
         .map(|(text, _, _)| text)
         .collect();
-    assert_eq!(texts.concat(), "X", "the stored result, and no drawn box");
+    assert_eq!(
+        texts.concat(),
+        "\u{2612}",
+        "the box of its state, and not the stored X"
+    );
+}
+
+#[test]
+fn a_legacy_checkbox_set_through_the_facade_keeps_its_size() {
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}</w:p>",
+        word_checkbox(r#"<w:size w:val="24"/>"#, false)
+    ));
+    let field = doc.legacy_form_fields().unwrap().remove(0);
+    doc.set_legacy_form_field_value(
+        &field.source_part,
+        field.ordinal,
+        oxoffice_docx::LegacyFormFieldValue::Checked(true),
+    )
+    .unwrap();
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        let runs = drawn_runs(doc);
+        let checked = runs
+            .iter()
+            .find(|(text, _, _)| text == "\u{2612}")
+            .expect("checked box");
+        assert_eq!(checked.1, 12.0, "w:size still sizes the box");
+    }
+}
+
+#[test]
+fn a_legacy_checkbox_reads_its_opening_run_under_any_prefix() {
+    let doc = doc_with_body(
+        r#"<ns0:p xmlns:ns0="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><ns0:r><ns0:rPr><ns0:sz ns0:val="20"/></ns0:rPr><ns0:fldChar ns0:fldCharType="begin"><ns0:ffData><ns0:name ns0:val="Check1"/><ns0:enabled/><ns0:calcOnExit ns0:val="0"/><ns0:checkBox><ns0:sizeAuto/><ns0:default ns0:val="0"/></ns0:checkBox></ns0:ffData></ns0:fldChar></ns0:r><ns0:r><ns0:instrText xml:space="preserve"> FORMCHECKBOX </ns0:instrText></ns0:r><ns0:r><ns0:fldChar ns0:fldCharType="end"/></ns0:r></ns0:p>"#,
+    );
+    let runs = drawn_runs(&doc);
+    let unchecked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2610}")
+        .expect("empty box");
+    assert_eq!(unchecked.1, 10.0, "the opening run's size under ns0");
+}
+
+#[test]
+fn a_legacy_checkbox_in_a_table_cell_draws_its_box() {
+    let doc = doc_with_body(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="dxa"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        word_checkbox(r#"<w:size w:val="24"/>"#, true)
+    ));
+    let runs = drawn_runs(&doc);
+    let checked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2612}")
+        .expect("checked box in a cell");
+    assert_eq!(checked.1, 12.0);
 }

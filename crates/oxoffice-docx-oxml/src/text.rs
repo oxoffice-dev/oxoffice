@@ -2197,9 +2197,24 @@ impl Field {
     /// source. A field that stores no result, such as a legacy checkbox
     /// saved by Word, draws with it.
     pub fn begin_run_properties(&self) -> Option<CT_RPr> {
-        let FieldSource::Parsed { raw_xml, .. } = self.source.as_ref() else {
+        let FieldSource::Parsed {
+            raw_xml,
+            word_prefixes,
+            ..
+        } = self.source.as_ref()
+        else {
             return None;
         };
+        // Entries starting with NUL carry namespace bindings, the rest are the
+        // prefixes bound to the main namespace.
+        let mut prefixes: Vec<String> = word_prefixes
+            .iter()
+            .filter(|entry| !entry.starts_with('\0'))
+            .cloned()
+            .collect();
+        if prefixes.is_empty() {
+            prefixes.push("w".to_owned());
+        }
         let mut reader = Reader::from_reader(raw_xml.as_slice());
         let mut buf = Vec::new();
         let mut in_run = false;
@@ -2209,7 +2224,7 @@ impl Field {
                     in_run = matches_local_name(start.name().as_ref(), b"r");
                 }
                 Event::Start(start) if matches_local_name(start.name().as_ref(), b"rPr") => {
-                    return CT_RPr::from_xml(&mut reader).ok();
+                    return CT_RPr::from_xml_with_prefixes(&mut reader, &prefixes).ok();
                 }
                 // The run's first child is not its properties: it has none.
                 Event::Start(_) | Event::Empty(_) | Event::End(_) if in_run => return None,
@@ -30982,4 +30997,54 @@ pub(crate) fn source_value_is_modeled(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod legacy_checkbox_size_tests {
+    use super::*;
+
+    /// The checkbox size of a Word legacy checkbox with this `w:checkBox` size.
+    fn checkbox_size(size: &str) -> Option<LegacyCheckBoxSize> {
+        let xml = format!(
+            r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox>{size}<w:default w:val="0"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        );
+        let paragraph = CT_P::from_xml_fragment(xml.as_bytes()).unwrap();
+        paragraph
+            .runs
+            .iter()
+            .flat_map(|run| &run.content)
+            .find_map(|content| match content {
+                RunContent::Field(field) => field.legacy_form.as_ref()?.checkbox_size,
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn a_checkbox_size_reads_half_points_and_unit_measures() {
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="24"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(24))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="12pt"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(24))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="0.5in"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(72))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="1cm"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(57)),
+            "28.35 points"
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="2pc"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(48))
+        );
+        assert_eq!(
+            checkbox_size("<w:sizeAuto/>"),
+            Some(LegacyCheckBoxSize::Auto)
+        );
+    }
 }
