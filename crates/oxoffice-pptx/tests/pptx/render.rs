@@ -884,3 +884,15 @@ fn a_deck_names_its_text_drawn_as_boxes_once_with_the_font_file_way_out() {
         );
     }
 }
+
+#[test]
+fn a_deck_pdf_names_the_language_of_its_default_text() {
+    // PowerPoint writes the deck's language on its default text style.
+    let deck = corpus_deck("powerpoint/deck.pptx");
+    let pdf = Pdf::read(&deck.to_pdf_deterministic_with_fonts(&[]).unwrap());
+    let language = pdf
+        .catalog()
+        .get(b"Lang")
+        .map(|lang| String::from_utf8(pdf.resolve(lang).as_str().unwrap().to_vec()).unwrap());
+    assert_eq!(language.ok().as_deref(), Some("en-US"));
+}

@@ -336,12 +336,12 @@ impl PySectionHandle {
         )?;
         Ok(())
     }
-    #[pyo3(signature = (family, *, format="decimal", start=None, restart="continuous", placement=None))]
+    #[pyo3(signature = (family, *, format=None, start=None, restart="continuous", placement=None))]
     fn set_note_policy(
         &mut self,
         py: Python<'_>,
         family: &str,
-        format: &str,
+        format: Option<&str>,
         start: Option<&Bound<'_, PyAny>>,
         restart: &str,
         placement: Option<&str>,
@@ -659,7 +659,7 @@ impl PySectionHandle {
 
 pub(super) fn checked_note_policy(
     family: &str,
-    format: &str,
+    format: Option<&str>,
     start: Option<&Bound<'_, PyAny>>,
     restart: &str,
     placement: Option<&str>,
@@ -673,13 +673,20 @@ pub(super) fn checked_note_policy(
             ));
         }
     };
+    // Without a format Word numbers footnotes 1, 2, 3 and endnotes i, ii, iii.
     let format = match format {
-        "decimal" => oxoffice_docx::NoteNumberFormat::Decimal,
-        "upperRoman" => oxoffice_docx::NoteNumberFormat::UpperRoman,
-        "lowerRoman" => oxoffice_docx::NoteNumberFormat::LowerRoman,
-        "upperLetter" => oxoffice_docx::NoteNumberFormat::UpperLetter,
-        "lowerLetter" => oxoffice_docx::NoteNumberFormat::LowerLetter,
-        _ => return Err(PyValueError::new_err("unsupported note number format")),
+        None if family == oxoffice_docx::NoteFamily::Endnote => {
+            oxoffice_docx::NoteNumberFormat::LowerRoman
+        }
+        None => oxoffice_docx::NoteNumberFormat::Decimal,
+        Some(format) => match format {
+            "decimal" => oxoffice_docx::NoteNumberFormat::Decimal,
+            "upperRoman" => oxoffice_docx::NoteNumberFormat::UpperRoman,
+            "lowerRoman" => oxoffice_docx::NoteNumberFormat::LowerRoman,
+            "upperLetter" => oxoffice_docx::NoteNumberFormat::UpperLetter,
+            "lowerLetter" => oxoffice_docx::NoteNumberFormat::LowerLetter,
+            _ => return Err(PyValueError::new_err("unsupported note number format")),
+        },
     };
     let start = match start {
         None => 1,

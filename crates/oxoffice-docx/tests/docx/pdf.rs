@@ -1251,10 +1251,9 @@ fn notes_are_drawn_where_word_prints_them() {
     );
 }
 
-// Fails today: with no number format set, endnotes are numbered 1, 2, 3 like
-// footnotes; Word and LibreOffice number them i, ii, iii. Issue: #158
+// With no number format set, Word and LibreOffice number footnotes 1, 2, 3
+// and endnotes i, ii, iii.
 #[test]
-#[should_panic(expected = "the endnote marks read")]
 fn endnotes_are_numbered_in_lower_roman_by_default() {
     let mut doc = doc_with(&["First claim", "Second claim"]);
     for index in 0..2 {
@@ -1272,6 +1271,144 @@ fn endnotes_are_numbered_in_lower_roman_by_default() {
     );
     let marks = [texts[1], texts[3]];
     assert_eq!(marks, ["i", "ii"], "the endnote marks read {marks:?}");
+}
+
+/// The raised marks of a page whose paragraphs each cite one note: the line
+/// after each paragraph.
+fn marks_after(pdf: &Pdf, paragraphs: &[&str]) -> Vec<String> {
+    let lines = lines(&pdf.drawn(0));
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    paragraphs
+        .iter()
+        .map(|paragraph| {
+            let at = texts
+                .iter()
+                .position(|text| text == paragraph)
+                .unwrap_or_else(|| panic!("{paragraph:?} in {texts:?}"));
+            texts[at + 1].to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn note_marks_follow_the_number_format_of_their_policy() {
+    use oxoffice_docx::{NoteFamily, NoteNumberFormat, NotePlacement, NotePolicy, NoteRestart};
+    let paragraphs = ["First claim", "Second claim", "Third claim"];
+    let policy = |format, placement| NotePolicy {
+        format,
+        start: 1,
+        restart: NoteRestart::Continuous,
+        placement,
+    };
+    // A document policy for each family, then a section policy that
+    // overrides it.
+    for (family, document, section, expected) in [
+        (
+            NoteFamily::Footnote,
+            NoteNumberFormat::UpperLetter,
+            None,
+            ["A", "B", "C"],
+        ),
+        (
+            NoteFamily::Footnote,
+            NoteNumberFormat::UpperLetter,
+            Some(NoteNumberFormat::LowerRoman),
+            ["i", "ii", "iii"],
+        ),
+        (
+            NoteFamily::Endnote,
+            NoteNumberFormat::Decimal,
+            None,
+            ["1", "2", "3"],
+        ),
+        (
+            NoteFamily::Endnote,
+            NoteNumberFormat::Decimal,
+            Some(NoteNumberFormat::UpperRoman),
+            ["I", "II", "III"],
+        ),
+    ] {
+        let mut doc = doc_with(&paragraphs);
+        for index in 0..paragraphs.len() {
+            let cited = doc.paragraph_story_location(index).unwrap().unwrap();
+            match family {
+                NoteFamily::Footnote => doc.create_footnote(&cited, "Source.").unwrap(),
+                NoteFamily::Endnote => doc.create_endnote(&cited, "Source.").unwrap(),
+            };
+        }
+        let placement = match family {
+            NoteFamily::Footnote => NotePlacement::PageBottom,
+            NoteFamily::Endnote => NotePlacement::DocumentEnd,
+        };
+        doc.set_note_policy(family, policy(document, placement))
+            .unwrap();
+        if let Some(format) = section {
+            doc.section_mut(0)
+                .unwrap()
+                .set_note_policy(family, policy(format, placement))
+                .unwrap();
+        }
+        let pdf = pdf_of(&reopen(&mut doc));
+        assert_eq!(
+            marks_after(&pdf, &paragraphs),
+            expected,
+            "{family:?} {document:?} {section:?}"
+        );
+    }
+}
+
+#[test]
+fn note_marks_follow_a_section_policy_read_from_the_file() {
+    // Word's footnote dialog offers *, †, ‡, §; a file may also name a format
+    // oxoffice cannot draw, which gives decimal marks rather than none.
+    let paragraphs = [
+        "First claim",
+        "Second claim",
+        "Third claim",
+        "Fourth claim",
+        "Fifth claim",
+    ];
+    // A section policy naming only where endnotes go keeps i, ii, iii.
+    for (endnotes, properties, expected) in [
+        (
+            false,
+            r#"<w:footnotePr><w:numFmt w:val="chicago"/></w:footnotePr>"#,
+            ["*", "\u{2020}", "\u{2021}", "\u{a7}", "**"],
+        ),
+        (
+            false,
+            r#"<w:footnotePr><w:numFmt w:val="decimalEnclosedCircle"/></w:footnotePr>"#,
+            ["1", "2", "3", "4", "5"],
+        ),
+        (
+            true,
+            r#"<w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr>"#,
+            ["i", "ii", "iii", "iv", "v"],
+        ),
+    ] {
+        let mut doc = doc_with(&paragraphs);
+        for index in 0..paragraphs.len() {
+            let cited = doc.paragraph_story_location(index).unwrap().unwrap();
+            if endnotes {
+                doc.create_endnote(&cited, "Source.").unwrap();
+            } else {
+                doc.create_footnote(&cited, "Source.").unwrap();
+            }
+        }
+        let bytes = doc.to_bytes().unwrap();
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+        let part = package.main_document_part().expect("main document part");
+        let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen("<w:sectPr>", &format!("<w:sectPr>{properties}"), 1);
+        assert!(xml.contains(properties), "the section takes the policy");
+        package.set_part(&part, xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let doc = Document::from_bytes(&out.into_inner()).unwrap();
+        let pdf = pdf_of(&doc);
+        assert_eq!(marks_after(&pdf, &paragraphs), expected, "{properties}");
+    }
 }
 
 // Fails today: endnotes are drawn over a table that ends the document, at
@@ -2099,6 +2236,174 @@ fn pdfa_output_declares_its_part_and_carries_an_output_intent() {
     let plain = pdf_of(&doc);
     assert!(plain.catalog().get(b"OutputIntents").is_err());
     assert!(!plain.xmp().unwrap_or_default().contains("pdfaid"));
+}
+
+/// This document with `edit` applied to the XML of one of its parts.
+fn with_part(doc: &mut Document, part: &str, edit: impl Fn(String) -> String) -> Document {
+    let bytes = doc.to_bytes().unwrap();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(package.get_part(part).expect("the part").to_vec()).unwrap();
+    let edited = edit(xml.clone());
+    assert_ne!(edited, xml, "the edit changes {part}");
+    package.set_part(part, edited.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+fn file_id(pdf: &Pdf) -> Vec<u8> {
+    let id = pdf.doc.trailer.get(b"ID").expect("a file identifier");
+    let id = id.as_array().expect("an array of two strings");
+    assert_eq!(id.len(), 2);
+    assert_eq!(id[0], id[1]);
+    id[0].as_str().expect("a string").to_vec()
+}
+
+#[test]
+fn each_document_has_its_own_file_identifier() {
+    let first = doc_with(&["One document"]);
+    let second = doc_with(&["Another document"]);
+    for convert in [
+        |doc: &Document| doc.to_pdf_deterministic().unwrap(),
+        |doc: &Document| doc.to_pdfa_deterministic(PdfConformance::PdfA2b).unwrap(),
+    ] {
+        let id = file_id(&Pdf::read(&convert(&first)));
+        assert_eq!(id.len(), 16);
+        assert!(!id.starts_with(b"rdocx"), "{id:?}");
+        // The same document always gets the same identifier, another one
+        // another identifier.
+        assert_eq!(file_id(&Pdf::read(&convert(&first))), id);
+        assert_ne!(file_id(&Pdf::read(&convert(&second))), id);
+    }
+    // The two archival profiles of one document are two files.
+    let part = |profile| file_id(&Pdf::read(&first.to_pdfa_deterministic(profile).unwrap()));
+    assert_ne!(part(PdfConformance::PdfA2b), part(PdfConformance::PdfA3b));
+    // The PDF/A metadata names the document by the same identifier.
+    let pdf = Pdf::read(&first.to_pdfa_deterministic(PdfConformance::PdfA2b).unwrap());
+    let hex: String = file_id(&pdf)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let uuid = format!(
+        "uuid:{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    );
+    let xmp = pdf.xmp().unwrap();
+    assert!(
+        xmp.contains(&format!("<xmpMM:DocumentID>{uuid}</xmpMM:DocumentID>")),
+        "{xmp}"
+    );
+    assert!(!xmp.contains("72646f63"), "{xmp}");
+}
+
+fn catalog_language(pdf: &Pdf) -> Option<String> {
+    pdf.catalog()
+        .get(b"Lang")
+        .ok()
+        .map(|lang| String::from_utf8(pdf.resolve(lang).as_str().unwrap().to_vec()).unwrap())
+}
+
+#[test]
+fn the_catalog_language_is_the_language_of_the_document() {
+    let defaults = |doc: &mut Document, language: &str| {
+        let lang = format!(r#"<w:lang w:val="{language}"/>"#);
+        with_part(doc, "/word/styles.xml", |xml| {
+            if let Some(at) = xml.find("<w:rPrDefault><w:rPr>") {
+                let at = at + "<w:rPrDefault><w:rPr>".len();
+                format!("{}{lang}{}", &xml[..at], &xml[at..])
+            } else {
+                let at = xml.find("<w:style ").expect("a style");
+                format!(
+                    "{}<w:docDefaults><w:rPrDefault><w:rPr>{lang}</w:rPr></w:rPrDefault></w:docDefaults>{}",
+                    &xml[..at],
+                    &xml[at..]
+                )
+            }
+        })
+    };
+    // A document that names no language: undetermined.
+    let mut doc = doc_with(&["Bonjour"]);
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("und"));
+    // The document defaults name it.
+    let mut french = defaults(&mut doc, "fr-FR");
+    assert_eq!(catalog_language(&pdf_of(&french)).as_deref(), Some("fr-FR"));
+    // The default paragraph style overrides the defaults.
+    let swiss = with_part(&mut french, "/word/styles.xml", |xml| {
+        let at = xml.find(r#"w:styleId="Normal""#).expect("a Normal style");
+        let end = at + xml[at..].find("</w:style>").unwrap();
+        let style = &xml[at..end];
+        let style = match style.find("<w:rPr>") {
+            Some(rpr) => format!(
+                "{}<w:lang w:val=\"fr-CH\"/>{}",
+                &style[..rpr + "<w:rPr>".len()],
+                &style[rpr + "<w:rPr>".len()..]
+            ),
+            None => format!("{style}<w:rPr><w:lang w:val=\"fr-CH\"/></w:rPr>"),
+        };
+        format!("{}{style}{}", &xml[..at], &xml[end..])
+    });
+    assert_eq!(catalog_language(&pdf_of(&swiss)).as_deref(), Some("fr-CH"));
+    // A value that names no language (Word's x-none, a locale number) is
+    // passed over.
+    for value in ["x-none", "0409"] {
+        let mut doc = doc_with(&["Bonjour"]);
+        let doc = defaults(&mut doc, value);
+        assert_eq!(
+            catalog_language(&pdf_of(&doc)).as_deref(),
+            Some("und"),
+            "{value}"
+        );
+    }
+    // Without one in the styles, the document's language property names it.
+    let mut doc = doc_with(&["Guten Tag"]);
+    let mut properties = doc.core_properties().cloned().unwrap_or_default();
+    properties.language = Some("de-DE".to_owned());
+    doc.set_core_properties(properties).unwrap();
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("de-DE"));
+    // Styles that name no language leave the word to that property.
+    let doc = defaults(&mut doc, "x-none");
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("de-DE"));
+    // A PDF/A file says it too.
+    let archived = Pdf::read(
+        &french
+            .to_pdfa_deterministic(PdfConformance::PdfA2b)
+            .unwrap(),
+    );
+    assert_eq!(catalog_language(&archived).as_deref(), Some("fr-FR"));
+}
+
+#[test]
+fn every_embedded_font_subset_carries_a_subset_tag() {
+    let doc = corpus_doc("word/thesis.docx");
+    let pdf = pdf_of(&doc);
+    let mut names = Vec::new();
+    for object in pdf.doc.objects.values() {
+        let Ok(dict) = object.as_dict() else { continue };
+        let name = match dict.get(b"Type").and_then(Object::as_name) {
+            Ok(b"Font") => dict.get(b"BaseFont"),
+            Ok(b"FontDescriptor") => dict.get(b"FontName"),
+            _ => continue,
+        };
+        names.push(name.and_then(Object::as_name).unwrap().to_vec());
+    }
+    assert!(names.len() > 3, "{names:?}");
+    for name in &names {
+        let (tag, rest) = name.split_at(7);
+        assert!(
+            tag[..6].iter().all(u8::is_ascii_uppercase) && tag[6] == b'+' && !rest.is_empty(),
+            "{}",
+            String::from_utf8_lossy(name)
+        );
+    }
+    // One subset, one tag: the composite font, its descendant and its
+    // descriptor share the name, and another font has another tag.
+    let tags: std::collections::BTreeSet<&[u8]> = names.iter().map(|name| &name[..6]).collect();
+    assert!(tags.len() > 1, "{names:?}");
 }
 
 #[test]

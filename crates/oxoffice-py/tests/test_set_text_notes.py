@@ -45,3 +45,4 @@ def test_the_find_and_replace_loop_over_runs_keeps_the_note_mark():
     assert doc.paragraphs[0].text == "new"
     assert footnote_texts(doc) == ["note"]
     assert b"footnoteReference" in xml
+

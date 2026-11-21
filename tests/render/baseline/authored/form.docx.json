@@ -1,9 +1,9 @@
 {
   "file": "authored/form.docx",
-  "reason": "a legacy drop-down that stores no result draws its selected entry (#170)",
-  "resources": "0a5e654e3522ff7d666f2c92f94606b67b6a73030dfd6f426e60382564a37462",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "1679c016b8447f85294c78aa348c0348479073a6850d3887499482af53472df2",
   "outline_and_tags": "a076dd8390d3f1f08effa45393ba5b959c2c22aa5967a8f4bfeefc086049822a",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "ec59618174e2cb3d2ae42dfa431b5390a1e4d34c39714a14dcf61c9db496982c", "content": "3cf5f2a5fe58104944a2b3a3780e5ea9126304b20b9ad8bbf040cb2f65b449f9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
   ]

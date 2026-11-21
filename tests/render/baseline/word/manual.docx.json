@@ -1,9 +1,9 @@
 {
   "file": "word/manual.docx",
-  "reason": "internal links go to their bookmark as GoTo annotations",
-  "resources": "f7187c647975e15188bd4cfdf50dfea82abfc7419d815e5c89d03f4fe870d619",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "d6232b94b3b3cf8b97ca0c8be696a49021c8bf9cd1ccf4f7c318cbf9bb6a8261",
   "outline_and_tags": "143b66170fabf27d6c4cfa7f6beb9ed703bb3a447ff5864c7e43223dd39cbbd9",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "cd830f620bb11d5a79af19e355253f1765e231f86ed762dda23c790844408dc6", "content": "1ef5b9d19e1f475a7a82a0eef19cdd441b8de52cd56dac85965061b71bfdf343", "annotations": "83bc745f14cb4aacecfded4e54d5842552a8715ed857f5185e00101ea8d46140", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "f4b5596fea170a978c22cf760aef93805d7646d0f8ab95d0f51f1ea0030c9a7d", "content": "833daaca348917d2b9e2e60b2dc202ee7d99c3db3e9c6007b68e60d5c5c98717", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

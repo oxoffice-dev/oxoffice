@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/manual.docx",
-  "reason": "internal links go to their bookmark as GoTo annotations",
-  "resources": "1b2f46357be8a64f56288f0520af0896f94a88e5d1c6ce19a23ee33e6da776c3",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "08c5e9ad03f7ad9a8e58388a0dcfd12cb20249fa10adccd462fc44dad08f08e7",
   "outline_and_tags": "572c460bac09905d3c6a03390bd430c0be2fb56cee02564a0c1070ade0e865e2",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "3c13e0cad7a570e5872edddd82596b9cbfdb3f99d94435b5735d5b73c3a622f9", "content": "2ff857aff1115a3c448ffc08f7e58a38a6da21fe4ce9ffacee21749586e6d7f4", "annotations": "c740c5ce8cf46b6be13ec6550ca011980257cbf3ffedb3e043ef814378a71768", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "0bde516814ac0298e0c7d66967de3a36faff77b9489a99ce20056802487fa907", "content": "1badf6771ab42a76a5fa5474093b23cd233e303e57e70d81b92b3f4ca973782f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

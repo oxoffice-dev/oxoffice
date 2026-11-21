@@ -1,9 +1,9 @@
 {
   "file": "word/report.docx",
-  "reason": "a page break just before a next-page section break adds no blank page (#156): the four reports lose their empty page 3",
-  "resources": "15013ee696da4f11b1b79337e4397836d55d2becb771cb0e119137fec22bdb69",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "012d2710a5c66402d5457bce0d6d47f99b58d924a597e895504e1f3f79032115",
   "outline_and_tags": "4ab3aaafe21d1c492a1d9c18c684e5e8c0f2d93d462f3b34524d52523da51aac",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "707100859bb444a5c0aa0a776e08550d9a6bbe10fdbf47b60534d5e7b37d13cb", "content": "a417f4fcdadd9a43f98efadc4df4b140f15de87de28cc35dbcf9e4a4d7aa96d7", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "111d25a979588f391baf92f35627bdb6e0be61ca660ba72d2bd3c36a747c8ed8", "content": "37fe588fd3bfea587dbf387fabe21b3ac5dd0d980be721986eb85a1a23a913c0", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},

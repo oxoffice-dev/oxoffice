@@ -1,7 +1,7 @@
 {
   "file": "google/deck.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "7837d7dbb953910e30df3c670e00ea2125eecd11ce5874b1638cb608fc25dbc8",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "4ea9e96e40423a06259009cafe00ebeaf90e6298b7cd4ba51269e58008e29009",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [

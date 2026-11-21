@@ -1,7 +1,7 @@
 {
   "file": "libreoffice/multilingual.pptx",
-  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
-  "resources": "f596fb46322d7ee2f445420776d4afee7fec7e4da08824366c26efff8c2bdd2c",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "d692599ef3800a0f15a1345d285f07c76a839a55e5a43ee26fe2acb926d6315e",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [

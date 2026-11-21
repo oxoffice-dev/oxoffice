@@ -2245,12 +2245,12 @@ impl PyDocument {
         Self::create_note(slf, py, reference, text, true)
     }
 
-    #[pyo3(signature = (family, *, format="decimal", start=None, restart="continuous", placement=None))]
+    #[pyo3(signature = (family, *, format=None, start=None, restart="continuous", placement=None))]
     fn set_note_policy(
         &mut self,
         py: Python<'_>,
         family: &str,
-        format: &str,
+        format: Option<&str>,
         start: Option<&Bound<'_, PyAny>>,
         restart: &str,
         placement: Option<&str>,

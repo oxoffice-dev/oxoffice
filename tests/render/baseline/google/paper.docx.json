@@ -1,9 +1,9 @@
 {
   "file": "google/paper.docx",
-  "reason": "internal links go to their bookmark as GoTo annotations",
-  "resources": "92d69c116f02525a6b1958ad5d0eedba9eaa2568fdce597ca62175ddfd5814c7",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "f464b6f90f45b315d855a9d115de2e155f1d4430fcbbe30e4dc8f4a907e6fc37",
   "outline_and_tags": "91ded151671c928d054ac12ec9d1bbd148a6c7f7dc746d1b8a2b7aa28e04f0d0",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "cf8a1189191dd805764ea3aacda7e81dee923d1e71f95dc9e1a6b44caaec9c2d", "content": "0b583e52aabe118c95005e7db5107defc63828f2d3f362b96f8f4f1e449525a9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "1746b5f8d00ec74831071cc139368418bcd069e16b799cca57b85e6bcd2d67d2", "content": "194c47334922a93b0c4aa0e53459d81b5391d1e3d597c2cba3aede3236e8d3a7", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

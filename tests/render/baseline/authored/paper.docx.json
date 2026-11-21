@@ -1,9 +1,9 @@
 {
   "file": "authored/paper.docx",
-  "reason": "display equations take one line as tall as themselves, as in Word (#156): no empty line after them, no default space above, auto spacing scales the text only; the Word and authored theses go from 26 to 25 pages",
-  "resources": "7a28777bcb94ac1605c5ef1b89ac052b4d197b1e56048e0cdb8461c9892578ed",
+  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "resources": "a365e8ea17edac1932810904d6ea754fb88aaf8514a5d9dd1af9e10e639d3e39",
   "outline_and_tags": "68d296b3d6333065e9ff832961330cdd994d5801f5936abf3fbe756960c4494c",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "6c26a1a41e8f800d122fd505f5ccc0e40ffad09002e8978a1346135d244ca7a5", "content": "d1a8539f97062a55b8076a02358c939829816cdd3a08b90ff5d71fd4fdd9accb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "f6ad236cb6dfb2437fb150360fe0537e67911138bf24f23f8bdb12c95bf350c4", "content": "c4bacd64dea49f047e1896aa562b8bebcc02c371fdbfc55222be5eea640736f1", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

@@ -1,9 +1,9 @@
 {
   "file": "google/letter.docx",
-  "reason": "link annotations are tagged under /Link and pages with links tab in structure order",
-  "resources": "306588ad98bb65156d7164f17c1b84c95191d25bf7009346f014c1628a125746",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "99750a9d3c2fbe094255ea5729f769fb976a95b11439661b64ad1ee52ffc9d17",
   "outline_and_tags": "a2ef15ac82a25f308dae0be1eeec1e4510bede25f40bca1c8cf1ab251504c93f",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "fef527076ec184f5209d839a6aa9a666e45ae9b62ff7ff97ae3bd591e9d4c09d", "content": "e20b14ab0f452875c539d5e569d7dde9593a62f3a8dddfa06b1a18f270586f60", "annotations": "c5ffd1a1725e3cd185b90b06ecf15a53ec6b95be4cad5b7c8840b02f98e9016a", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "080c871755fb15c6b68f5e2692a25edb06e626f44d8643d58a56341040e67fc5", "content": "95068655444264be46b53418a0f3918d8c0b0a2be122428b5124fb8ca191ec27", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"}

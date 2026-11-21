@@ -1,9 +1,9 @@
 {
   "file": "google/thesis.docx",
-  "reason": "internal links go to their bookmark as GoTo annotations",
-  "resources": "c0c9a876d21fca3fdc43fca72951e8e9ec97858aecf63c6d37c99ac3f329b51e",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "b9fd4f930d21f6037c6f0a2ca94835a84e0fd5942dbc24c93166afb9b725aa94",
   "outline_and_tags": "7915fea2ddf7532ede2fe245c81bc897d77e5e95b10b48c38da75273ff933ff2",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "43b8c3dd24641ca5145bf9c5a9efea09d36bfa5e08a4905d8ab8743149359028", "content": "bcc873e21dceaf601cac70b4fe476b71a4b7c6108455993d3ecf898a26613133", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
     {"page": 2, "pixels": "dc933ce8d4f6fd3041cc3fd60654c3e5261b213447be9044c45795eb7e63b6eb", "content": "976c8c61b9f2a1533fb50c1aebe83deda68593d5012021d09bccad66482ea082", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

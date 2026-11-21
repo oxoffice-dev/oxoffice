@@ -3,4 +3,5 @@
 
 mod forms;
 mod links;
+mod metadata;
 mod support;

@@ -1,9 +1,9 @@
 {
   "file": "authored/record.docx",
-  "reason": "internal links go to their bookmark as GoTo annotations",
-  "resources": "604e0ced2c245852c92ab8614d202f320925b5e05a0632b36f845999fd8141b5",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "5eb1f32f9b57988c96ec972dbf3046d34adac5392139027048eab9ce3ce725e4",
   "outline_and_tags": "ea5a994532af7b6cf9d6f9716a382795b76f546a51d33ec22b2883b2ff966168",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "11912776c520ae0f0d62b085eb3c07967cab0ff66a55dde26fd49e895a5dab26", "content": "508652b822238f965dd0ecf1e80cd8cdb9caa6cd061986a718263603f7892ee4", "annotations": "1d7fc938e46e7cb53ea468e54826e0b8b87f8a27d1daa30a6b89757a828558c2", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "b8b40a051556d3d2e25cf616e5b1c8a9379eb01abc995e07b60a87af1395bb13", "content": "add4710d7b16fe0e6131ed7b81b1c634ffab6a397c4f8b8954557faaf89bbd2c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},

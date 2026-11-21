@@ -1,9 +1,9 @@
 {
   "file": "libreoffice/letter.docx",
-  "reason": "link annotations are tagged under /Link and pages with links tab in structure order",
-  "resources": "45b05ae63c26137761be23388166f461e2b1880073abd7e57e65d261e55f8fc1",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "a073ef2fa77276f11f037a35233b95e588be18e5f44c9fbb259c1755c86aee76",
   "outline_and_tags": "dde1610bc711dcf8b76aa756bcca6b41037120a2750d67188896ee00ed342957",
-  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "3b74b608eb9fca47cf1bcf5be28f2f8961b92ed3b562654ac227bda644dc7b6b", "content": "050275ae1af6815ce2108cdb60450a88011ede47b4c7c20db1740696de07371b", "annotations": "361243d8d943f06e7b6bdd2e44df844fec3dd76322c829ad57165a723d48fe34", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "f8a352d4eda7a3c23274609cd799b1dce96e940cc9077002c4d9876040c0533d", "content": "89411f091049a7db11bd8d556139d26371ee99ad1ec55f8d7925a3e43a82066e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"}
