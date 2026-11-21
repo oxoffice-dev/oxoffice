@@ -848,9 +848,10 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     assert_eq!(pdf.page_text(0), "First section");
     assert_eq!(pdf.page_text(1), "Second section");
 
-    // Without a section break after it, the page break keeps its page.
+    // Before a continuous section of the same page, the break keeps its page.
+    let continuous = section.replace("<w:pgSz", r#"<w:type w:val="continuous"/><w:pgSz"#);
     let doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:t>First page</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>Second page</w:t></w:r></w:p>"#
+        r#"<w:p><w:r><w:t>First page</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{continuous}</w:pPr></w:p><w:p><w:r><w:t>Second page</w:t></w:r></w:p>"#
     ));
     let pdf = pdf_of(&doc);
     assert_eq!(pdf.page_count(), 2);
@@ -865,6 +866,29 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     assert_eq!(pdf.page_count(), 3);
     assert_eq!(pdf.page_text(1), "After the break");
     assert_eq!(pdf.page_text(2), "Next section");
+}
+
+#[test]
+fn a_page_break_at_the_foot_of_a_full_page_before_a_section_break_stays_there() {
+    // Lines of exactly 12 pt with no spacing: 53 of them leave room for one
+    // more on a Letter page with one-inch margins.
+    let exact =
+        r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="exact"/></w:pPr>"#;
+    let filler: String = (1..=53)
+        .map(|line| format!("<w:p>{exact}<w:r><w:t>Line {line}</w:t></w:r></w:p>"))
+        .collect();
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let doc = doc_with_body(&format!(
+        r#"{filler}<w:p>{exact}<w:r><w:t>Last line</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    assert!(
+        pdf.page_text(0).ends_with("Last line"),
+        "{}",
+        pdf.page_text(0)
+    );
+    assert_eq!(pdf.page_text(1), "Next section");
 }
 
 // ---- Where text lands ----

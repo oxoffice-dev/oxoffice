@@ -1031,10 +1031,11 @@ fn shared_paragraph(block: &SharedLayoutBlock) -> Option<&ParagraphBlock> {
 }
 
 /// A page break that ends the last paragraph drawing anything in a group of
-/// sections, followed only by paragraphs that draw nothing, would start the
-/// page the next section starts anyway. Word and LibreOffice give it no page
-/// of its own, so the break goes: the empty paragraphs after it, the one
-/// holding the section break among them, stay on the page it ends.
+/// sections, followed only by paragraphs that draw nothing (the one holding
+/// the section break), would start the page the next section starts anyway.
+/// Word and LibreOffice give it no page of its own, so the break goes, and
+/// what follows it takes no room: the empty end of its paragraph and the
+/// empty paragraphs stay on the page it ends, even a full one.
 fn absorb_page_break_before_section_break(blocks: &mut [SharedLayoutBlock]) {
     let trailing_empty = blocks
         .iter()
@@ -1065,15 +1066,37 @@ fn absorb_page_break_before_section_break(blocks: &mut [SharedLayoutBlock]) {
     {
         return;
     }
-    let paragraph = match &mut blocks[last] {
+    let paragraph = shared_paragraph_mut(&mut blocks[last]);
+    paragraph.lines[last_break].forced_break_after = None;
+    paragraph.lines[last_break + 1..]
+        .iter_mut()
+        .for_each(take_no_room);
+    for block in &mut blocks[last + 1..] {
+        let paragraph = shared_paragraph_mut(block);
+        paragraph.space_before = 0.0;
+        paragraph.space_after = 0.0;
+        paragraph.lines.iter_mut().for_each(take_no_room);
+    }
+}
+
+/// The paragraph of a shared block found to hold one, made this block's own.
+fn shared_paragraph_mut(block: &mut SharedLayoutBlock) -> &mut ParagraphBlock {
+    match block {
         SharedLayoutBlock::Owned { block, .. } => match block.as_mut() {
             LayoutBlock::Paragraph(paragraph) => paragraph,
-            LayoutBlock::Table(_) => return,
+            LayoutBlock::Table(_) => unreachable!("only paragraphs are absorbed"),
         },
         SharedLayoutBlock::Paragraph { block, .. } => Arc::make_mut(block),
-        SharedLayoutBlock::Table { .. } => return,
-    };
-    paragraph.lines[last_break].forced_break_after = None;
+        SharedLayoutBlock::Table { .. } => unreachable!("only paragraphs are absorbed"),
+    }
+}
+
+/// An empty line made to take no room on its page.
+fn take_no_room(line: &mut LayoutLine) {
+    line.height = 0.0;
+    line.ascent = 0.0;
+    line.descent = 0.0;
+    line.line_gap = 0.0;
 }
 
 pub(crate) fn paginate_shared_sections(
@@ -1193,7 +1216,9 @@ pub(crate) fn paginate_shared_sections(
             .iter()
             .flat_map(|section| section.blocks.iter().cloned())
             .collect::<Vec<_>>();
-        if group_end < sections.len() {
+        // Endnotes printed at the end of the boundary section follow the
+        // break: then it ends a page that draws them, and stays.
+        if group_end < sections.len() && !sections[group_end - 1].endnotes_at_section_end {
             absorb_page_break_before_section_break(&mut blocks);
         }
         let section_page_number = section
