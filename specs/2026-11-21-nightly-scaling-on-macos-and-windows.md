@@ -29,9 +29,15 @@ with their own spec.
 
 ## Outcome
 
-- One `ci.yml` change: a `schedule` trigger and the scaling matrix chosen by
-  event. The nightly run also builds and tests on the three platforms, a
-  daily health check of `main`.
+- One `ci.yml` change: a `schedule` trigger, the scaling matrix chosen by
+  event, and a concurrency key per event and commit so the nightly run never
+  waits behind or is cancelled by a push run of the same commit. The nightly
+  run runs every job on the three platforms, a daily health check of `main`.
+- A red nightly run counts as a red `main`, and a release waits for a green
+  one (`docs/DEVELOPMENT.md`, `docs/RELEASE.md`).
+- Supersedes in part [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md):
+  `main` no longer times every scaling call on the three platforms on each
+  push.
 
 ## Links
 

@@ -158,8 +158,14 @@ entry and closes the issue.
   draft builds and tests on Linux, macOS and Windows and times the QUICK
   scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
   A draft, or one whose base is another branch, runs lint, WebAssembly and
-  the Linux build only. `main` and `workflow_dispatch` run everything on the
+  the Linux build only. A push to `main` builds and tests on the three
+  platforms and times every scaling call on Linux. The nightly run (02:23 UTC)
+  and `workflow_dispatch` run every job, every scaling call included, on the
   three platforms.
+- **A red nightly run is a red `main`.** Whoever sees it first opens an issue
+  (or fixes it) the same day; a release waits for a green nightly run (see
+  [RELEASE.md](RELEASE.md)). To find the commit, run `workflow_dispatch` on a
+  branch at each candidate commit.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
   pull request when its base merges or the author changes it by hand. Before
   merging, check the three platforms ran (loop step 6); if not, push a new

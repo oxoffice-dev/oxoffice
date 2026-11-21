@@ -8,8 +8,11 @@ name: CI
 # both a base of main and a ready pull request, on opened, synchronize,
 # reopened or ready_for_review. A change of base to main (GitHub's move of a
 # stacked pull request when its base merges, or by hand) runs nothing: push
-# a new commit, or close and reopen, before merging. workflow_dispatch runs
-# everything. See specs/2026-11-21-lighter-ci-on-pull-requests.md.
+# a new commit, or close and reopen, before merging. A push to main times the
+# scaling calls on Linux only; the nightly schedule and workflow_dispatch run
+# everything on the three platforms. See
+# specs/2026-11-21-lighter-ci-on-pull-requests.md and
+# specs/2026-11-21-nightly-scaling-on-macos-and-windows.md.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
@@ -29,10 +32,11 @@ on:
   schedule:
     - cron: "23 2 * * *"
 
-# A pull request keeps only its latest run. Every commit of main gets its own
-# run, so no run of main is queued behind or cancelled by another.
+# A pull request keeps only its latest run. Every other run is keyed by its
+# event and commit, so a push run, the nightly run and a dispatch on the same
+# commit of main never queue behind or cancel one another.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

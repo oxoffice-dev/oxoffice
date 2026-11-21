@@ -4,7 +4,9 @@ One manual workflow, no manual tags, no hand-edited changelog.
 
 ## Cutting a release
 
-1. Make sure `main` is green.
+1. Make sure `main` is green, and the last nightly run too
+   (`gh run list -w CI -e schedule -L 1`): it is the only run that times every
+   scaling call on macOS and Windows.
 2. Run a dry run first: Actions, **Release**, **Run workflow**, the version,
    **dry_run** ticked. Every job builds the commit `main` points at when the
    run's first job starts, even if `main` moves meanwhile (the smoke check
