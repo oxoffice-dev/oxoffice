@@ -1888,6 +1888,7 @@ fn a_note_the_edited_version_does_not_reference_keeps_the_id_a_pair_would_take()
     let copy = accepted(&mut doc);
     assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
     let after = notes(&copy);
+    assert_eq!(after.len(), 2);
     assert_eq!(after[0], unreferenced);
     assert_eq!(after[1].1, "A");
     let copy = rejected(&mut doc);
@@ -1929,13 +1930,7 @@ fn a_note_the_original_does_not_reference_keeps_the_id_a_pair_would_leave() {
     let mut doc = redline(original, &edited);
     let copy = accepted(&mut doc);
     assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
-    assert_eq!(
-        notes(&copy)
-            .into_iter()
-            .map(|(_, text)| text)
-            .collect::<Vec<_>>(),
-        ["A"]
-    );
+    assert_eq!(notes(&copy), [(before[0].0, "A".to_owned())]);
     let copy = rejected(&mut doc);
     assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
     assert_eq!(notes(&copy), before);
