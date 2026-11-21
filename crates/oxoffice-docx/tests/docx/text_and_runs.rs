@@ -1376,10 +1376,12 @@ fn saved_run_holding(doc: &mut Document, text: &str) -> String {
 fn isolate_span_leaves_a_picture_between_texts_or_ending_its_run_outside() {
     let pict = r#"<w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:10pt;height:10pt"/></w:pict>"#;
     let body = format!(
-        "<w:p><w:r><w:t>left</w:t>{pict}<w:t>right</w:t></w:r></w:p><w:p><w:r><w:t>Ann</w:t>{pict}</w:r></w:p>"
+        "<w:p><w:r><w:t>left</w:t>{pict}<w:t>right</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Ann</w:t>{pict}</w:r></w:p>\
+         <w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Name:</w:t><w:tab/>{pict}<w:t>John</w:t></w:r></w:p>"
     );
     let mut doc = doc_with_body(&body);
-    for (index, word) in [(0, "right"), (1, "Ann")] {
+    for (index, word, runs_after) in [(0, "right", 2), (1, "Ann", 2), (2, "John", 2)] {
         let span = doc.paragraph(index).unwrap().find_text(word, 0).unwrap();
         let runs = doc
             .paragraph_mut(index)
@@ -1387,9 +1389,10 @@ fn isolate_span_leaves_a_picture_between_texts_or_ending_its_run_outside() {
             .isolate_span(span)
             .unwrap();
         assert_eq!(runs.len(), 1, "{word}");
+        assert_eq!(runs_text(&doc, index, runs), word, "{word}");
         assert_eq!(
             doc.paragraph(index).unwrap().run_count(),
-            2,
+            runs_after,
             "{word}: the picture is in the other run"
         );
         assert!(
@@ -1397,8 +1400,28 @@ fn isolate_span_leaves_a_picture_between_texts_or_ending_its_run_outside() {
             "{word}: the picture is outside the span's run"
         );
     }
+    // Each picture is kept once, where it was among the texts.
+    let bytes = doc.to_bytes().unwrap();
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let order = [
+        "left", "w:pict", "right", "Ann", "w:pict", "Name:", "w:tab", "w:pict", "John",
+    ];
+    let mut from = 0;
+    for mark in order {
+        let at = main[from..]
+            .find(mark)
+            .unwrap_or_else(|| panic!("{mark} after byte {from}"));
+        from += at + mark.len();
+    }
+    assert_eq!(main.matches("<w:pict>").count(), 3);
     let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["leftright", "Ann"]);
+    assert_eq!(texts(&doc), ["leftright", "Ann", "Name:\tJohn"]);
+    assert_eq!(
+        doc.paragraph(2).unwrap().run(1).unwrap().italic_value(),
+        Some(true),
+        "the span's run keeps the run properties"
+    );
 }
 
 #[test]
