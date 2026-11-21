@@ -15810,6 +15810,14 @@ fn modeled_table_properties(properties: Option<&CT_TblPr>) -> Option<CT_TblPr> {
         properties.change = None;
         properties.revision_xml.clear();
         properties.extra_xml.clear();
+        // An empty border container, as LibreOffice writes it, is no border.
+        if properties
+            .borders
+            .as_ref()
+            .is_some_and(oxoffice_docx_oxml::table::CT_TblBorders::is_empty)
+        {
+            properties.borders = None;
+        }
         properties
     })
 }
@@ -20602,11 +20610,18 @@ fn row_formatting(row: &CT_Row) -> Result<Vec<u8>> {
 
 /// Cell properties as the model writes them. Empty containers, such as
 /// LibreOffice's `<w:tcBorders></w:tcBorders>` or the `<w:tcPr/>` Google
-/// Docs writes, read as no properties.
+/// Docs writes, read as no properties, although a save keeps them.
 fn cell_formatting(cell: &CT_Tc) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     if let Some(mut properties) = cell.properties.clone() {
         properties.from_source = false;
+        if properties
+            .borders
+            .as_ref()
+            .is_some_and(oxoffice_docx_oxml::table::CT_TblBorders::is_empty)
+        {
+            properties.borders = None;
+        }
         properties.to_xml(&mut writer)?;
     }
     Ok(writer.into_inner())

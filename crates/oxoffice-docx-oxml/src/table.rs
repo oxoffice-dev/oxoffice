@@ -2246,6 +2246,7 @@ impl CT_TrPr {
 fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) -> Result<bool> {
     let mut height = None;
     let mut rule = None;
+    let mut foreign = false;
     for attr in e.attributes() {
         let attr = attr?;
         let key = attr.key.as_ref();
@@ -2259,10 +2260,10 @@ fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) ->
         } else if is_word_attribute(key, b"hRule", prefixes) {
             rule = Some(val.to_string());
         } else if key != b"xmlns" && !key.starts_with(b"xmlns:") {
-            return Ok(false);
+            foreign = true;
         }
     }
-    if height.is_none() && rule.is_none() {
+    if foreign || (height.is_none() && rule.is_none()) {
         return Ok(false);
     }
     pr.height = height;
