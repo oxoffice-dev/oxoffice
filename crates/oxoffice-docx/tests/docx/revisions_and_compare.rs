@@ -845,17 +845,24 @@ fn a_redline_of_two_google_saved_reports_rejects_to_the_original() {
     assert_eq!(rejected(&mut doc).text(), text);
 }
 
-// ---- Known failures ----
+// ---- LibreOffice files and final tables ----
 
 // A textless run whose properties are written `<w:rPr></w:rPr>`, as
 // LibreOffice writes its empty paragraphs, reads as the run the model writes
 // back.
 #[test]
 fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
-    let body = r#"<w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:rPr></w:rPr></w:r></w:p>"#;
+    let body = r#"<w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:rPr></w:rPr></w:r></w:p>"#;
     let mut edited = doc_with_body(body);
     edited.add_paragraph("added");
     let mut doc = redline(doc_with_body(body), &edited);
+    assert!(
+        kinds(&doc)
+            .iter()
+            .all(|kind| *kind == RevisionKind::Insertion),
+        "only the added paragraph is a change: {:?}",
+        kinds(&doc)
+    );
     assert_eq!(texts(&accepted(&mut doc)), ["first", "", "added"]);
 }
 
@@ -865,6 +872,18 @@ fn a_libreoffice_report_compares_with_an_edited_copy() {
     let mut edited = corpus_doc("libreoffice/report.docx");
     edited.add_paragraph("A closing remark.");
     let mut doc = redline(corpus_doc("libreoffice/report.docx"), &edited);
+    // The appended paragraph, the mark of the paragraph before it, and the
+    // properties that paragraph gets back on rejection: no run of the
+    // report changes format.
+    assert_eq!(
+        kinds(&doc),
+        [
+            RevisionKind::Insertion,
+            RevisionKind::RunPropertyChange,
+            RevisionKind::ParagraphPropertyChange,
+            RevisionKind::Insertion,
+        ]
+    );
     let mut expected = original.clone();
     expected.push("A closing remark.".to_owned());
     assert_eq!(texts(&accepted(&mut doc)), expected);
@@ -921,6 +940,67 @@ fn two_paragraphs_appended_after_a_final_table_are_compared() {
 }
 
 #[test]
+fn a_table_and_a_paragraph_appended_after_a_final_table_are_compared() {
+    let table_last = || {
+        let mut doc = doc_with(&["intro"]);
+        doc.add_table(1, 1).cell(0, 0).unwrap().set_text("cell");
+        doc
+    };
+    let mut edited = table_last();
+    edited
+        .add_table(1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .set_text("second");
+    edited.add_paragraph("closing");
+    let mut doc = redline(table_last(), &edited);
+    assert_eq!(texts(&accepted(&mut doc)), ["intro", "closing"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_final_table_whose_grid_changed_is_compared() {
+    // The table is written as a deleted one and an inserted one: each
+    // resolution keeps one of them before the paragraph.
+    let table_last = |columns: usize| {
+        let mut doc = doc_with(&["intro"]);
+        let mut table = doc.add_table(1, columns);
+        for column in 0..columns {
+            table.cell(0, column).unwrap().set_text("cell");
+        }
+        doc
+    };
+    let mut edited = table_last(2);
+    edited.add_paragraph("closing");
+    let mut doc = redline(table_last(1), &edited);
+    assert_eq!(texts(&accepted(&mut doc)), ["intro", "closing"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_redlined_final_table_keeps_the_refusal() {
+    // The table is an earlier tracked insertion: rejecting it removes the
+    // table, and the new paragraph would then end the body alone.
+    let mut redlined = doc_with(&["intro"]);
+    let mut with_table = doc_with(&["intro"]);
+    with_table
+        .add_table(1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .set_text("cell");
+    redlined.compare(&with_table, AUTHOR, DATE).unwrap();
+    let mut original = reopen(&mut redlined);
+    let mut edited = reopen(&mut redlined);
+    edited.add_paragraph("closing");
+    assert!(original.compare(&edited, AUTHOR, DATE).is_err());
+    assert!(
+        kinds(&original)
+            .iter()
+            .all(|kind| *kind == RevisionKind::Insertion)
+    );
+}
+
+#[test]
 fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     // LibreOffice writes `<w:trPr></w:trPr>` and `<w:tcBorders></w:tcBorders>`;
     // an edit through the model writes them back as nothing.
@@ -933,10 +1013,19 @@ fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     let mut edited = doc_with_body(body);
     edited.add_paragraph("added");
     let mut doc = redline(doc_with_body(body), &edited);
+    assert!(
+        kinds(&doc)
+            .iter()
+            .all(|kind| *kind == RevisionKind::Insertion),
+        "no row, cell or run format change: {:?}",
+        kinds(&doc)
+    );
     assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["added"]);
     assert_eq!(texts(&accepted(&mut doc)), ["after", "added"]);
     assert_eq!(texts(&rejected(&mut doc)), ["after"]);
 }
+
+// ---- Known failures ----
 
 // Fails today: a heading whose _Toc bookmark was renamed, as Word renames them
 // when it rebuilds a table of contents, blocks the comparison. Known

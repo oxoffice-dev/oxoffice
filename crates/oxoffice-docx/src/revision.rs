@@ -3292,8 +3292,6 @@ impl<'a> XmlTree<'a> {
             .collect()
     }
 
-    /// Resolve paragraphs whose marks are removed before a table that stays,
-    /// and which go. Nothing of them but proofing marks may remain.
     /// A paragraph, table or block content control: an owner a story holds,
     /// rather than its section properties or markup around owners.
     fn story_owner(&self, index: usize) -> bool {
@@ -3303,8 +3301,8 @@ impl<'a> XmlTree<'a> {
             && matches!(element.local.as_str(), "p" | "tbl" | "sdt")
     }
 
-    /// Whether the owner before child `position` of `parent` is a table that
-    /// this resolution keeps.
+    /// Whether the owner before child `position` of `parent`, past the
+    /// tables whose every row this resolution removes, is a table it keeps.
     fn kept_table_before(
         &self,
         parent: &XmlElement,
@@ -3314,12 +3312,16 @@ impl<'a> XmlTree<'a> {
         parent.children[..position]
             .iter()
             .rev()
-            .find(|&&child| self.story_owner(child))
-            .is_some_and(|&table| {
-                self.elements[table].local == "tbl" && !self.owned_rows_all_remove(table, state)
+            .filter(|&&child| self.story_owner(child))
+            .find(|&&child| {
+                self.elements[child].local != "tbl" || !self.owned_rows_all_remove(child, state)
             })
+            .is_some_and(|&owner| self.elements[owner].local == "tbl")
     }
 
+    /// Resolve paragraphs whose marks are removed next to a table that stays,
+    /// before it or ending the body after it, and which go. Nothing of them
+    /// but proofing marks may remain.
     fn validate_removed_paragraphs(
         &self,
         paragraphs: &[usize],
@@ -3335,7 +3337,7 @@ impl<'a> XmlTree<'a> {
                     .all(u8::is_ascii_whitespace)
                 {
                     return Err(Error::Other(
-                        "paragraph mark removal before a table requires a paragraph with no content left".to_owned(),
+                        "paragraph mark removal next to a table requires a paragraph with no content left".to_owned(),
                     ));
                 }
                 cursor = element.end;
@@ -3345,7 +3347,7 @@ impl<'a> XmlTree<'a> {
                 .all(u8::is_ascii_whitespace)
             {
                 return Err(Error::Other(
-                    "paragraph mark removal before a table requires a paragraph with no content left".to_owned(),
+                    "paragraph mark removal next to a table requires a paragraph with no content left".to_owned(),
                 ));
             }
             for child in &owner.children {
@@ -3356,7 +3358,7 @@ impl<'a> XmlTree<'a> {
                     && !(child_element.word && child_element.local == "proofErr")
                 {
                     return Err(Error::Other(
-                        "paragraph mark removal before a table requires a paragraph with no \
+                        "paragraph mark removal next to a table requires a paragraph with no \
                          content left"
                             .to_owned(),
                     ));

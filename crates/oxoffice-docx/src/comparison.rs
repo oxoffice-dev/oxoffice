@@ -11207,8 +11207,14 @@ fn compare_body_impl(
                         diagnostics,
                     )?
                 };
+                // A table holding tracked revisions may not survive a
+                // resolution, so only one free of them counts as kept.
                 let owner = match (original_content, edited_content) {
-                    (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
+                    (BodyContent::Table(_), BodyContent::Table(_))
+                        if !held_original.holds(Some(left)) && !held_edited.holds(Some(right)) =>
+                    {
+                        EmittedOwner::KeptTable
+                    }
                     _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
                 };
                 output.push((owner, compared));
@@ -11260,7 +11266,7 @@ fn compare_body_impl(
                     && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_delete_start == Some(position) {
-                        trailing_after_table = after_kept_table(&output, "del");
+                        trailing_after_table = after_kept_table(&output, "del", location);
                         if !trailing_after_table {
                             refuse_held_mark(previous_mark_position(&output, "del"))?;
                             trailing_merged = mark_previous_paragraph(
@@ -11287,7 +11293,7 @@ fn compare_body_impl(
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
-                    && !after_kept_table(&output, "del")
+                    && !after_kept_table(&output, "del", location)
                 {
                     refuse_held_mark(previous_mark_position(&output, "del"))?;
                     let merged =
@@ -11342,7 +11348,7 @@ fn compare_body_impl(
                     && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_insert_start == Some(position) {
-                        trailing_after_table = after_kept_table(&output, "ins");
+                        trailing_after_table = after_kept_table(&output, "ins", location);
                         if !trailing_after_table {
                             refuse_held_mark(previous_mark_position(&output, "ins"))?;
                             trailing_merged = mark_previous_paragraph(
@@ -11369,7 +11375,7 @@ fn compare_body_impl(
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
-                    && !after_kept_table(&output, "ins")
+                    && !after_kept_table(&output, "ins", location)
                 {
                     refuse_held_mark(previous_mark_position(&output, "ins"))?;
                     let merged =
@@ -13225,11 +13231,14 @@ fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> 
 
 /// Whether the owner a final `kind` change would mark is a table both
 /// versions hold, so that the final paragraph carries its own change.
-fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str) -> bool {
-    matches!(
-        previous_mark_position(output, kind).map(|position| &output[position].0),
-        Some(EmittedOwner::KeptTable)
-    )
+fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str, location: &str) -> bool {
+    // Only the body may end with a table; every other story ends with a
+    // paragraph.
+    location == "body"
+        && matches!(
+            previous_mark_position(output, kind).map(|position| &output[position].0),
+            Some(EmittedOwner::KeptTable)
+        )
 }
 
 /// Mark the paragraph before a final inserted or deleted paragraph, and
@@ -13481,7 +13490,7 @@ fn coalesced_paragraph_signature(paragraph: &CT_P, options: &ComparisonOptions) 
                 })
                 .sum::<usize>();
             // Empty text and ignored whitespace still carry a real format.
-            let current = run.properties.as_ref();
+            let current = run_formatting(run);
             if let Some((previous, count)) = properties.last_mut()
                 && *previous == current
             {
@@ -16999,7 +17008,7 @@ fn coalesced_run_boundaries(paragraph: &CT_P, options: &ComparisonOptions) -> Ve
             && !cuts.contains(&index)
             && coalescible_plain_run(run)
             && coalescible_plain_run(&paragraph.runs[index - 1])
-            && run.properties == paragraph.runs[index - 1].properties;
+            && run_formatting(run) == run_formatting(&paragraph.runs[index - 1]);
         boundaries.push(boundaries[index] + usize::from(!joins));
     }
     boundaries
@@ -17266,6 +17275,39 @@ fn split_paragraph_mark(
 /// Rejecting a `w:pPrChange` keeps a mark `w:rPr` only when it holds a
 /// revision, so a mark with formatting also carries the `w:rPrChange` when
 /// only the paragraph properties differ.
+/// Paragraph properties without an empty mark `w:rPr`, which LibreOffice
+/// writes `<w:rPr></w:rPr>` and the model writes back as nothing, and none
+/// when nothing else is left.
+fn without_empty_mark(xml: Option<&str>) -> Result<Option<String>> {
+    let Some(xml) = xml else {
+        return Ok(None);
+    };
+    // Namespace declarations carry no property.
+    let bare = |element: &BytesStart<'_>| {
+        element.attributes().flatten().all(|attribute| {
+            attribute.key.as_ref() == b"xmlns" || attribute.key.as_ref().starts_with(b"xmlns:")
+        })
+    };
+    let empty = |source: &str| {
+        let mut reader = Reader::from_str(source);
+        reader.config_mut().trim_text(true);
+        match reader.read_event() {
+            Ok(Event::Empty(element)) => bare(&element),
+            Ok(Event::Start(element)) if bare(&element) => {
+                matches!(reader.read_event(), Ok(Event::End(_)))
+            }
+            _ => false,
+        }
+    };
+    let mut stripped = xml.to_owned();
+    for span in direct_word_element_spans(xml, "rPr")?.into_iter().rev() {
+        if empty(&xml[span.clone()]) {
+            stripped.replace_range(span, "");
+        }
+    }
+    Ok((!empty(&stripped)).then_some(stripped))
+}
+
 fn final_paragraph_properties_xml(
     own: &PropertySide<'_>,
     accepted: &PropertySide<'_>,
@@ -17275,7 +17317,9 @@ fn final_paragraph_properties_xml(
     let accepted_modeled = modeled_paragraph_properties(accepted.typed);
     let rejected_modeled = modeled_paragraph_properties(rejected.typed);
     if metadata.options.ignore_formatting
-        || (accepted_modeled == rejected_modeled && accepted.xml == rejected.xml)
+        || (accepted_modeled == rejected_modeled
+            && without_empty_mark(accepted.xml.as_deref())?
+                == without_empty_mark(rejected.xml.as_deref())?)
     {
         return Ok(own.xml.clone().unwrap_or_default());
     }
@@ -19688,7 +19732,7 @@ fn compared_run_xml_impl(
     let original_properties = modeled_run_properties(original);
     let edited_properties = modeled_run_properties(edited);
     if original_properties == edited_properties {
-        if original.properties != edited.properties {
+        if run_formatting(original) != run_formatting(edited) {
             formatting_diagnostic(diagnostics, location.to_owned());
         }
         return metadata.ids.generated(paragraph_owned_run_xml(original)?);
@@ -21176,13 +21220,13 @@ fn containing_run(xml: &str, at: usize) -> Result<(usize, usize)> {
 }
 
 fn modeled_run_properties(run: &CT_R) -> Option<oxoffice_docx_oxml::properties::CT_RPr> {
-    run.properties.clone().map(|mut properties| {
+    run_formatting(run).cloned().and_then(|mut properties| {
         properties.revision_markers.clear();
         properties.change = None;
         properties.revision_xml.clear();
         properties.revision_xml_positions.clear();
         properties.language_extra_attributes.clear();
-        properties
+        (properties != oxoffice_docx_oxml::properties::CT_RPr::default()).then_some(properties)
     })
 }
 
