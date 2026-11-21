@@ -664,7 +664,7 @@ fn patch_application_properties(
             append.extend(
                 format!(
                     "<ap:{name} xmlns:ap=\"{NS}\">{}</ap:{name}>",
-                    quick_xml::escape::escape(&value)
+                    oxoffice_core::xml::escape_text(&value)
                 )
                 .into_bytes(),
             );
@@ -705,7 +705,7 @@ fn custom_value_xml(value: &CustomPropertyValue) -> Result<String> {
         .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?;
     Ok(format!(
         "<vt:{kind} xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">{}</vt:{kind}>",
-        quick_xml::escape::escape(&text)
+        oxoffice_core::xml::escape_text(&text)
     ))
 }
 
@@ -755,9 +755,9 @@ fn patch_custom_property(
         if let Some((property, value)) = replacement {
             let xml = format!(
                 "<property xmlns=\"{NS}\" fmtid=\"{}\" pid=\"{}\" name=\"{}\">{value}</property>",
-                quick_xml::escape::escape(&property.fmtid),
+                oxoffice_core::xml::escape_attribute_value(&property.fmtid),
                 property.pid,
-                quick_xml::escape::escape(name)
+                oxoffice_core::xml::escape_attribute_value(name)
             );
             let mut result = source[..insertion].to_vec();
             result.extend(xml.as_bytes());
@@ -944,7 +944,9 @@ fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
             XmlEvent::Empty(start) if !opened => {
                 result.extend_from_slice(&source[begin..end - 2]);
                 result.push(b'>');
-                result.extend_from_slice(quick_xml::escape::escape(value.unwrap_or("")).as_bytes());
+                result.extend_from_slice(
+                    oxoffice_core::xml::escape_text(value.unwrap_or("")).as_bytes(),
+                );
                 result.extend_from_slice(b"</");
                 result.extend_from_slice(start.name().as_ref());
                 result.push(b'>');
@@ -952,7 +954,7 @@ fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
             XmlEvent::Text(_) | XmlEvent::CData(_) | XmlEvent::GeneralRef(_) => {
                 if !wrote {
                     result.extend_from_slice(
-                        quick_xml::escape::escape(value.unwrap_or("")).as_bytes(),
+                        oxoffice_core::xml::escape_text(value.unwrap_or("")).as_bytes(),
                     );
                     wrote = true;
                 }
@@ -960,7 +962,7 @@ fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
             XmlEvent::End(_) => {
                 if !wrote {
                     result.extend_from_slice(
-                        quick_xml::escape::escape(value.unwrap_or("")).as_bytes(),
+                        oxoffice_core::xml::escape_text(value.unwrap_or("")).as_bytes(),
                     );
                     wrote = true;
                 }
@@ -1037,7 +1039,7 @@ fn patch_core_properties(
         let replacement = after.as_ref().map(|value| {
             let prefix = if uri == DC { "dc" } else if uri == DT { "dcterms" } else { "cp" };
             let typed = if uri == DT { r#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="dcterms:W3CDTF""# } else { "" };
-            format!("<{prefix}:{name} xmlns:{prefix}=\"{uri}\"{typed}>{}</{prefix}:{name}>", quick_xml::escape::escape(value)).into_bytes()
+            format!("<{prefix}:{name} xmlns:{prefix}=\"{uri}\"{typed}>{}</{prefix}:{name}>", oxoffice_core::xml::escape_text(value)).into_bytes()
         }).unwrap_or_default();
         if let Some((_, _, start, end)) = matches.first() {
             let retained = edit_property_text(&source[*start..*end], after.as_deref())?;
