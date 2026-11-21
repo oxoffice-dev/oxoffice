@@ -275,8 +275,8 @@ pub(super) fn replace_changed_paragraph_runs(
     let mut carried = CarriedParagraphs::default();
     // A pair that revising in place cannot express, and that the in-place
     // replacement of `compare_paragraph` cannot take either: its bookmarks
-    // differ, or it is the last owner, whose inserted paragraph mark no
-    // rejection can remove. It becomes a deleted and an inserted paragraph,
+    // differ or are shared with the other input, or it is the last owner,
+    // whose inserted paragraph mark no rejection can remove. It becomes a deleted and an inserted paragraph,
     // which the trailing-paragraph rule then closes on the mark before them.
     // A bookmark both inputs hold is written once, where the edited input
     // has it (see `shared_bookmark_markers`), and the insertion then comes
@@ -300,27 +300,48 @@ pub(super) fn replace_changed_paragraph_runs(
         }
         !left.is_disjoint(&all_edited) || !right.is_disjoint(&all_original)
     };
+    // Whether the other input, as `other`, holds this bookmark marker's
+    // bookmark, by id or by name.
+    let held = |marker: &oxoffice_docx_oxml::text::BookmarkMarker, other: &HashSet<String>| {
+        marker
+            .id()
+            .is_some_and(|id| other.contains(&format!("bookmark id {id}")))
+            || marker
+                .name()
+                .is_some_and(|name| other.contains(&format!("bookmark {name}")))
+    };
     // Whether every bookmark marker of `paragraph` that the other input also
-    // holds, by id or by name, is one `place_shared_bookmarks` writes once.
+    // holds is one `place_shared_bookmarks` writes once, start and end alike.
     let movable = |paragraph: &CT_P, other: &HashSet<String>| -> Result<bool> {
-        let held = |marker: &oxoffice_docx_oxml::text::BookmarkMarker| {
-            marker
-                .id()
-                .is_some_and(|id| other.contains(&format!("bookmark id {id}")))
-                || marker
-                    .name()
-                    .is_some_and(|name| other.contains(&format!("bookmark {name}")))
-        };
-        if !paragraph.bookmark_markers.iter().any(held) {
+        if !paragraph
+            .bookmark_markers
+            .iter()
+            .any(|marker| held(marker, other))
+        {
             return Ok(true);
         }
         let written_once = shared_bookmark_markers(&paragraph_xml(paragraph)?, shared_bookmarks)?
             .into_iter()
-            .map(|(_, id)| id)
+            .map(|(_, id, start)| (start, id))
             .collect::<HashSet<_>>();
         Ok(paragraph.bookmark_markers.iter().all(|marker| {
-            !held(marker) || marker.id().is_some_and(|id| written_once.contains(&id))
+            !held(marker, other)
+                || marker
+                    .id()
+                    .is_some_and(|id| written_once.contains(&(marker.is_start(), id)))
         }))
+    };
+    // Whether the pair holds the start of a bookmark the other input holds:
+    // its insertion then comes first, so that rejecting it leaves that start
+    // before the restored paragraph's text, and an end alone stays after it.
+    let shares_start = |left: &CT_P, right: &CT_P| {
+        left.bookmark_markers
+            .iter()
+            .any(|marker| marker.is_start() && held(marker, &all_edited))
+            || right
+                .bookmark_markers
+                .iter()
+                .any(|marker| marker.is_start() && held(marker, &all_original))
     };
     let unpaired = |position: usize, i: usize, j: usize| -> Result<bool> {
         let (Some(left), Some(right)) = (original[i], edited[j]) else {
@@ -328,7 +349,9 @@ pub(super) fn replace_changed_paragraph_runs(
         };
         if original_signatures[i] == edited_signatures[j]
             || !paragraph_boundaries_differ(left, right, options)
-            || (left.bookmark_markers == right.bookmark_markers && position + 1 != aligned.len())
+            || (left.bookmark_markers == right.bookmark_markers
+                && position + 1 != aligned.len()
+                && !shares(left, right, false))
             || shares(left, right, true)
             || !movable(left, &all_edited)?
             || !movable(right, &all_original)?
@@ -357,7 +380,7 @@ pub(super) fn replace_changed_paragraph_runs(
                 let (Some(left), Some(right)) = (original[i], edited[j]) else {
                     unreachable!("an unpaired entry holds two paragraphs")
                 };
-                if index + 1 != aligned.len() && shares(left, right, false) {
+                if index + 1 != aligned.len() && shares_start(left, right) {
                     replaced.push((None, Some(j)));
                     replaced.push((Some(i), None));
                 } else {
@@ -385,16 +408,22 @@ pub(super) fn replace_changed_paragraph_runs(
         }
         index = range.end;
     }
-    // A whole inserted paragraph that writes a bookmark a deleted paragraph
-    // before it held, among the deletions right before it, goes before that
-    // deletion: rejecting the insertion then leaves the bookmark on the
-    // restored paragraph. Insertions keep their order, and so do deletions,
+    // A whole inserted paragraph that writes the start of a bookmark a
+    // deleted paragraph before it held, among the deletions right before it,
+    // goes before that deletion: rejecting the insertion then leaves the
+    // bookmark on the restored paragraph. Insertions keep their order, and so do deletions,
     // and the story's last entry stays last.
     let bookmarks = |paragraph: &CT_P| {
-        markers([paragraph].into_iter())
-            .into_iter()
-            .filter(|marker| marker.starts_with("bookmark "))
-            .collect::<HashSet<_>>()
+        let mut starts = HashSet::new();
+        for marker in paragraph
+            .bookmark_markers
+            .iter()
+            .filter(|marker| marker.is_start())
+        {
+            starts.extend(marker.id().map(|id| format!("bookmark id {id}")));
+            starts.extend(marker.name().map(|name| format!("bookmark {name}")));
+        }
+        starts
     };
     for index in 0..replaced.len().saturating_sub(1) {
         let (None, Some(j)) = replaced[index] else {

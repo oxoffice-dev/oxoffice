@@ -449,12 +449,14 @@ pub(super) fn compare_paragraph(
             let deleted = deleted_paragraph(original, false, metadata)?;
             let inserted = inserted_paragraph(edited, false, metadata)?;
             // A bookmark both inputs hold is written once, in the insertion
-            // (see `place_shared_bookmarks`), which then comes first, so that
-            // rejecting it leaves that bookmark on the restored paragraph.
+            // (see `place_shared_bookmarks`), which then comes first when it
+            // starts here, so that rejecting it leaves that bookmark on the
+            // restored paragraph.
             let shared = original.bookmark_markers.iter().any(|marker| {
-                marker
-                    .id()
-                    .is_some_and(|id| metadata.shared_bookmarks.contains(&id))
+                marker.is_start()
+                    && marker
+                        .id()
+                        .is_some_and(|id| metadata.shared_bookmarks.contains(&id))
             });
             return Ok(if shared {
                 format!("{inserted}{deleted}")

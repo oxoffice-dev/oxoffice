@@ -3232,6 +3232,105 @@ fn a_bookmark_inside_a_hyperlink_is_refused_rather_than_written_twice() {
     );
 }
 
+/// A heading holding `Kept` around a link to `anchor`.
+fn linked_heading(anchor: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="Kept"/><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>"#
+    )
+}
+
+#[test]
+fn a_heading_whose_link_changed_before_a_new_or_removed_last_paragraph_is_compared() {
+    // The paragraph marks of a trailing change close on the heading's own.
+    for (original, edited) in [
+        (
+            format!("{}{}", plain_paragraph("A"), linked_heading("First")),
+            format!(
+                "{}{}{}",
+                plain_paragraph("A"),
+                linked_heading("Second"),
+                plain_paragraph("Tail")
+            ),
+        ),
+        (
+            format!(
+                "{}{}{}",
+                plain_paragraph("A"),
+                linked_heading("First"),
+                plain_paragraph("Gone")
+            ),
+            format!("{}{}", plain_paragraph("A"), linked_heading("Second")),
+        ),
+    ] {
+        let edited = doc_with_body(&edited);
+        let mut doc = redline(doc_with_body(&original), &edited);
+        let copy = accepted(&mut doc);
+        assert_eq!(texts(&copy), texts(&edited));
+        assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+        let copy = rejected(&mut doc);
+        assert_eq!(texts(&copy), texts(&doc_with_body(&original)));
+        assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
+    }
+}
+
+#[test]
+fn a_bookmark_half_inside_a_hyperlink_is_refused_rather_than_written_twice() {
+    let document = |added: bool| {
+        let (start, end) = if added {
+            (
+                r#"<w:bookmarkStart w:id="2" w:name="Added"/>"#,
+                r#"<w:bookmarkEnd w:id="2"/>"#,
+            )
+        } else {
+            ("", "")
+        };
+        doc_with_body(&format!(
+            r#"{}<w:p>{start}<w:hyperlink w:anchor="Target"><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Linked</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/>{end}</w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let mut doc = document(false);
+    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("boundary structures at body/paragraph[1]"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_bookmark_ending_in_a_replaced_paragraph_still_covers_it_on_rejection() {
+    let document = |anchor: &str| {
+        doc_with_body(&format!(
+            r#"<w:p><w:bookmarkStart w:id="1" w:name="Span"/><w:r><w:t>From</w:t></w:r></w:p><w:p><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = document("Second");
+    let mut doc = redline(document("First"), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    let span = |doc: &Document| {
+        let bookmarks = doc.bookmarks();
+        let [bookmark] = bookmarks.as_slice() else {
+            panic!("one bookmark: {bookmarks:?}")
+        };
+        (
+            bookmark.text().to_owned(),
+            bookmark.range().unwrap().end.body_index,
+        )
+    };
+    assert_eq!(span(&copy), span(&edited));
+    // Rejecting leaves the end after the restored text, at the start of the
+    // next paragraph.
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["From", "Heading", "Two"]);
+    let (text, _) = span(&copy);
+    assert!(text.starts_with("From\nHeading"), "{text:?}");
+}
+
 /// A became a heading after the original's table of contents was built,
 /// and its next heading was rewritten: the pairing would give the new
 /// heading the old one's name, but the comparison pairs the old heading

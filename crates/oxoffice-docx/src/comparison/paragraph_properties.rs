@@ -470,7 +470,7 @@ pub(super) fn place_shared_bookmarks(
     deleted: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<()> {
-    for (range, id) in shared_bookmark_markers(children, &metadata.shared_bookmarks)?
+    for (range, id, _) in shared_bookmark_markers(children, &metadata.shared_bookmarks)?
         .into_iter()
         .rev()
     {
@@ -490,11 +490,12 @@ pub(super) fn place_shared_bookmarks(
 }
 
 /// The direct `w:bookmarkStart` and `w:bookmarkEnd` children of a paragraph's
-/// XML whose bookmark both inputs hold, as byte ranges and ids.
+/// XML whose bookmark both inputs hold, as byte ranges, ids and whether each
+/// starts.
 pub(super) fn shared_bookmark_markers(
     xml: &str,
     shared: &HashSet<i32>,
-) -> Result<Vec<(Range<usize>, i32)>> {
+) -> Result<Vec<(Range<usize>, i32, bool)>> {
     if shared.is_empty() {
         return Ok(Vec::new());
     }
@@ -511,7 +512,12 @@ pub(super) fn shared_bookmark_markers(
     let mut markers = Vec::new();
     for &child in &tree.elements[paragraph].children {
         let element = &tree.elements[child];
-        if !element.word || !matches!(element.local.as_str(), "bookmarkStart" | "bookmarkEnd") {
+        let start = match element.local.as_str() {
+            "bookmarkStart" => true,
+            "bookmarkEnd" => false,
+            _ => continue,
+        };
+        if !element.word {
             continue;
         }
         if let Some(id) = word_attributes(&tree, input.as_bytes(), child)?
@@ -522,6 +528,7 @@ pub(super) fn shared_bookmark_markers(
             markers.push((
                 element.start - opening.len()..element.end - opening.len(),
                 id,
+                start,
             ));
         }
     }
