@@ -151,7 +151,7 @@ refused at open when one of its parts holds a control character.
 | Speaker notes | ✅ | ✅ | ✅ | notes pages and handouts as PDF |
 | Comments and replies | ✅ | ✅ | ✅ | modern comments, on a slide or a shape |
 | Themes, masters and layouts | ✅ | ✅ | ✅ | theme colours and fonts, a theme taken from another deck |
-| Merging decks | — | ⚠️ | — | slides imported onto a layout of the deck, or with their own formatting, which refuses PowerPoint and Google slides that have notes for now |
+| Merging decks | — | ✅ | — | slides imported onto a layout of the deck, or with their own formatting and their notes |
 | Rendering and conversions | ✅ | — | ✅ | from ODP; to PDF and PDF/A, PNG and JPEG slides, HTML, Markdown and ODP |
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |

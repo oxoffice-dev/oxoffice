@@ -1429,6 +1429,8 @@ impl PySlideCollection {
     }
 
     /// Imports one slide, appending by default, with optional source formatting.
+    /// With it, notes text in East Asian or complex scripts takes this deck's
+    /// script fonts where the source theme leaves them automatic.
     #[pyo3(signature = (slide, layout=None, index=None, *, keep_source_formatting=false))]
     fn import_slide(
         &self,
@@ -1454,6 +1456,8 @@ impl PySlideCollection {
     }
 
     /// Imports one slide and returns every dropped-jump diagnostic.
+    /// With keep_source_formatting, notes text in East Asian or complex scripts
+    /// takes this deck's script fonts where the source theme leaves them automatic.
     #[pyo3(signature = (slide, layout=None, index=None, *, keep_source_formatting=false))]
     fn import_slide_with_diagnostics(
         &self,
@@ -1476,6 +1480,8 @@ impl PySlideCollection {
 
     /// Imports selected source indexes in caller order, or all source slides.
     /// Slide maps contain source and existing destination indexes before insertion.
+    /// With keep_source_formatting, notes text in East Asian or complex scripts
+    /// takes this deck's script fonts where the source theme leaves them automatic.
     #[pyo3(signature = (source, indexes=None, *, layout=None, index=None, keep_source_formatting=false, keep_sections=false, slide_map=None))]
     // The approved Python signature exposes these independent keyword options.
     #[allow(clippy::too_many_arguments)]

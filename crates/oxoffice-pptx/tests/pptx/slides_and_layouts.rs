@@ -818,9 +818,7 @@ fn keeping_source_formatting_brings_the_source_layout_and_master_once() {
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
-// Fails today: keep_source_formatting refuses PowerPoint and Google slides with notes. Issue: #40
 #[test]
-#[should_panic(expected = "unrepresentable source notes-master")]
 fn keeping_source_formatting_imports_a_slide_with_speaker_notes() {
     let options = ImportSlideOptions {
         keep_source_formatting: true,
@@ -840,6 +838,204 @@ fn keeping_source_formatting_imports_a_slide_with_speaker_notes() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn imported_notes_keep_their_source_fonts_and_leave_automatic_script_fonts_to_the_deck() {
+    let options = ImportSlideOptions {
+        keep_source_formatting: true,
+        ..ImportSlideOptions::default()
+    };
+    let source = corpus_deck("powerpoint/deck.pptx");
+    let mut prs = new_deck();
+    prs.import_slides(&source, &[1], &options, &[]).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(
+        prs.slide(0).unwrap().notes_text().as_deref(),
+        Some(HIGHLIGHTS_NOTES)
+    );
+    let notes: Vec<_> = saved_parts(&prs)
+        .into_iter()
+        .filter(|name| name.starts_with("ppt/notesSlides/") && name.ends_with(".xml"))
+        .collect();
+    assert_eq!(notes.len(), 1);
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(
+        package
+            .get_part(&format!("/{}", notes[0]))
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    // The source theme's Latin face is set on the notes page; its East Asian
+    // and complex-script faces are automatic, so their tokens stay and
+    // resolve against this deck's theme.
+    assert!(xml.contains(r#"typeface="Aptos""#), "{xml}");
+    assert!(!xml.contains(r#"typeface="+mn-lt""#), "{xml}");
+    assert!(xml.contains(r#"typeface="+mn-ea""#), "{xml}");
+    assert!(xml.contains(r#"typeface="+mn-cs""#), "{xml}");
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn a_notes_master_extension_other_than_its_creation_id_still_stops_a_source_formatted_import() {
+    let source = corpus_deck("powerpoint/deck.pptx");
+    let mut package = OpcPackage::from_reader(Cursor::new(source.to_bytes().unwrap())).unwrap();
+    let master = "/ppt/notesMasters/notesMaster1.xml";
+    let xml = String::from_utf8(package.get_part(master).unwrap().to_vec()).unwrap();
+    let extended = xml.replacen(
+        "</p:extLst></p:cSld>",
+        r#"<p:ext uri="{00000000-0000-0000-0000-00000000C0DE}"><x:unknown xmlns:x="urn:example:unknown"/></p:ext></p:extLst></p:cSld>"#,
+        1,
+    );
+    assert_ne!(
+        extended, xml,
+        "the notes master has a common extension list"
+    );
+    package.set_part(master, extended.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let source = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    let mut prs = new_deck();
+    let before = prs.to_bytes().unwrap();
+
+    let refused = prs
+        .import_slides(
+            &source,
+            &[1],
+            &ImportSlideOptions {
+                keep_source_formatting: true,
+                ..ImportSlideOptions::default()
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert!(
+        refused.to_string().contains("common extension authority"),
+        "{refused}"
+    );
+    assert_eq!(prs.to_bytes().unwrap(), before);
+}
+
+/// A corpus deck with one part rewritten by `edit`, reopened.
+fn corpus_deck_with(name: &str, part: &str, edit: impl FnOnce(&str) -> String) -> Presentation {
+    let source = corpus_deck(name);
+    let mut package = OpcPackage::from_reader(Cursor::new(source.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let edited = edit(&xml);
+    assert_ne!(edited, xml, "{part} changed");
+    package.set_part(part, edited.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    Presentation::from_bytes(&bytes.into_inner()).unwrap()
+}
+
+fn import_with_source_formatting(source: &Presentation) -> (Presentation, Result<(), String>) {
+    let mut prs = new_deck();
+    let result = prs
+        .import_slides(
+            source,
+            &[1],
+            &ImportSlideOptions {
+                keep_source_formatting: true,
+                ..ImportSlideOptions::default()
+            },
+            &[],
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    (prs, result)
+}
+
+#[test]
+fn an_empty_latin_theme_face_still_stops_a_source_formatted_import_with_notes() {
+    let source = corpus_deck_with("powerpoint/deck.pptx", "/ppt/theme/theme2.xml", |xml| {
+        let minor = xml.find("<a:minorFont>").unwrap();
+        let latin = minor + xml[minor..].find("<a:latin typeface=\"Aptos\"").unwrap();
+        format!(
+            "{}{}",
+            &xml[..latin],
+            xml[latin..].replacen("<a:latin typeface=\"Aptos\"", "<a:latin typeface=\"\"", 1)
+        )
+    });
+    let (prs, result) = import_with_source_formatting(&source);
+    let refused = result.unwrap_err();
+    assert!(refused.contains("script-font inheritance"), "{refused}");
+    assert_eq!(prs.len(), 0);
+}
+
+#[test]
+fn an_explicit_east_asian_theme_face_is_set_on_imported_notes() {
+    let source = corpus_deck_with("powerpoint/deck.pptx", "/ppt/theme/theme2.xml", |xml| {
+        let minor = xml.find("<a:minorFont>").unwrap();
+        let ea = minor + xml[minor..].find("<a:ea typeface=\"\"").unwrap();
+        format!(
+            "{}{}",
+            &xml[..ea],
+            xml[ea..].replacen("<a:ea typeface=\"\"", "<a:ea typeface=\"Yu Gothic\"", 1)
+        )
+    });
+    let (prs, result) = import_with_source_formatting(&source);
+    result.unwrap();
+    let prs = reopen(&prs);
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let (_, notes) = package
+        .parts
+        .iter()
+        .find(|(name, _)| name.starts_with("/ppt/notesSlides/"))
+        .expect("the import has notes");
+    let xml = String::from_utf8_lossy(notes);
+    assert!(xml.contains(r#"typeface="Yu Gothic""#), "{xml}");
+    assert!(!xml.contains(r#"typeface="+mn-ea""#), "{xml}");
+    assert!(xml.contains(r#"typeface="+mn-cs""#), "{xml}");
+}
+
+#[test]
+fn a_notes_tree_group_that_differs_beyond_its_id_and_name_still_stops_the_import() {
+    let source = corpus_deck_with(
+        "google/deck.pptx",
+        "/ppt/notesMasters/notesMaster1.xml",
+        |xml| {
+            xml.replacen(
+                r#"<p:cNvPr id="2" name="Shape 2"/>"#,
+                r#"<p:cNvPr id="2" name="Shape 2" hidden="1"/>"#,
+                1,
+            )
+        },
+    );
+    let (prs, result) = import_with_source_formatting(&source);
+    let refused = result.unwrap_err();
+    assert!(refused.contains("tree group authority"), "{refused}");
+    assert_eq!(prs.len(), 0);
+}
+
+#[test]
+fn an_imported_google_notes_page_keeps_its_source_look_and_validates() {
+    let (prs, result) = import_with_source_formatting(&corpus_deck("google/deck.pptx"));
+    result.unwrap();
+    let prs = reopen(&prs);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let (_, notes) = package
+        .parts
+        .iter()
+        .find(|(name, _)| name.starts_with("/ppt/notesSlides/"))
+        .expect("the import has notes");
+    let xml = String::from_utf8_lossy(notes);
+    // Google's notes theme names Arial everywhere: set on the page, no token
+    // left to resolve against this deck's theme, and the colours set too.
+    assert!(xml.contains(r#"typeface="Arial""#), "{xml}");
+    assert!(!xml.contains(r#"typeface="+m"#), "{xml}");
+    assert!(!xml.contains("<a:schemeClr"), "{xml}");
+    assert_eq!(
+        prs.slide(0).unwrap().notes_text().as_deref(),
+        Some(HIGHLIGHTS_NOTES)
+    );
 }
 
 #[test]

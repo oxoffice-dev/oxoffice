@@ -23,8 +23,9 @@ use crate::graphic_frame::CT_GraphicFrame;
 use crate::namespace::{
     FIXED_SHAPE_TREE_PREFIXES, MC_NS, NamespaceBindings, P_NS, R_NS, accessibility_parent_bindings,
     all_attributes, non_visual_drawing_decorative, non_visual_drawing_id, non_visual_drawing_name,
-    non_visual_drawing_text, root_attributes, self_contained_attributes,
-    set_non_visual_drawing_decorative, set_non_visual_drawing_name, set_non_visual_drawing_text,
+    non_visual_drawing_text, non_visual_drawing_without_identity, root_attributes,
+    self_contained_attributes, set_non_visual_drawing_decorative, set_non_visual_drawing_name,
+    set_non_visual_drawing_text,
 };
 use crate::picture::CT_Picture;
 use crate::placeholder::{ApplicationProperties, CT_Placeholder, parse_application_properties};
@@ -3480,8 +3481,21 @@ impl CT_ShapeTree {
             }
             group
         };
+        // The id and name of the tree group identify it in its own part only.
+        let without_identity =
+            |properties: &NonVisualGroupProperties| -> Result<NonVisualGroupProperties> {
+                let mut properties = properties.clone();
+                properties.non_visual_id = None;
+                properties.non_visual_name = None;
+                if let Some(index) = properties.drawing_properties_index {
+                    properties.raw_children[index] =
+                        non_visual_drawing_without_identity(&properties.raw_children[index])?;
+                }
+                Ok(properties)
+            };
         if normalize_group(&master.group_properties) != normalize_group(&self.group_properties)
-            || master.non_visual_group_properties != self.non_visual_group_properties
+            || without_identity(&master.non_visual_group_properties)?
+                != without_identity(&self.non_visual_group_properties)?
         {
             return Err(OxmlError::InvalidValue(
                 "unrepresentable source notes-master tree group authority".into(),

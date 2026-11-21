@@ -309,6 +309,8 @@ enum SlideCommand {
         /// One-based insertion position, append when absent
         #[arg(long)]
         at: Option<usize>,
+        /// Keep each slide's source layout, master and theme; speaker notes
+        /// keep their look, except script fonts left automatic by the source
         #[arg(long)]
         keep_source_formatting: bool,
         #[arg(long, short = 'o')]

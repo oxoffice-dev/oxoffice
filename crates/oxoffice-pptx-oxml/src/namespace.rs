@@ -136,6 +136,45 @@ pub(crate) fn non_visual_drawing_name(start: &BytesStart<'_>) -> Result<Option<S
         .map(|(_, value)| value))
 }
 
+/// Returns a `p:cNvPr` element without its `id` and `name`, which identify a
+/// shape rather than draw it, the rest of its bytes as they were.
+pub(crate) fn non_visual_drawing_without_identity(xml: &[u8]) -> Result<Vec<u8>, OxmlError> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        let event = reader.read_event_into(&mut buffer)?;
+        let is_empty = matches!(&event, Event::Empty(_));
+        match event {
+            Event::Start(start) | Event::Empty(start) => {
+                let end = reader.buffer_position() as usize;
+                let qualified_name = std::str::from_utf8(start.name().as_ref())?.to_owned();
+                let mut replacement = BytesStart::new(qualified_name);
+                for attribute in start.attributes().with_checks(false) {
+                    let attribute = attribute?;
+                    if !matches!(attribute.key.as_ref(), b"id" | b"name") {
+                        replacement.push_attribute(attribute);
+                    }
+                }
+                let mut writer = Writer::new(Vec::new());
+                if is_empty {
+                    writer.write_event(Event::Empty(replacement))?;
+                } else {
+                    writer.write_event(Event::Start(replacement))?;
+                    writer.get_mut().extend_from_slice(&xml[end..]);
+                }
+                return Ok(writer.into_inner());
+            }
+            Event::Eof => {
+                return Err(OxmlError::MissingElement(
+                    "non-visual drawing properties".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
 pub(crate) fn set_non_visual_drawing_name(xml: &mut Vec<u8>, name: &str) -> Result<(), OxmlError> {
     oxoffice_core::xml::reject_non_xml_characters("shape name", name)?;
     let mut reader = Reader::from_reader(xml.as_slice());
