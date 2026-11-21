@@ -855,9 +855,13 @@ fn a_section_note_policy_stays_in_its_section_and_can_be_removed() {
     let removed = doc.section_mut(0).unwrap().remove_note_policy(Endnote);
     assert_eq!(policy_of(removed.as_ref()), expected);
     let doc = reopen(&mut doc);
-    assert_eq!(
-        policy_of(doc.section(0).unwrap().endnote_properties()),
-        None
+    let left = doc.section(0).unwrap().endnote_properties();
+    assert!(
+        left.is_none_or(|p| p.pos.is_none()
+            && p.num_fmt.is_none()
+            && p.num_start.is_none()
+            && p.num_restart.is_none()),
+        "every field of the policy goes: {left:?}"
     );
 }
 
@@ -985,7 +989,16 @@ fn a_policy_on_the_word_report_is_removed_without_its_separator_selection() {
     assert!(policy_of(removed.as_ref()).is_some());
     let doc = reopen(&mut doc);
     let properties = doc.note_properties(Footnote).unwrap();
-    assert_eq!(policy_of(Some(properties)), None);
+    // Every field of the policy goes, not only one of them.
+    assert_eq!(
+        (
+            properties.pos.as_deref(),
+            properties.num_fmt.as_deref(),
+            properties.num_start,
+            properties.num_restart.as_deref()
+        ),
+        (None, None, None, None)
+    );
     assert_eq!(properties.special_references, [-1, 0]);
 }
 
