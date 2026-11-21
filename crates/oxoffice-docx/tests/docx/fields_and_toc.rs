@@ -407,20 +407,70 @@ fn an_if_field_picks_its_result_from_a_nested_merge_field() {
     assert_eq!(texts(&reopen(&mut doc)), ["Dear Madam"]);
 }
 
-// Fails today: a nested field inside a quoted IF operand breaks the IF ("requires 5 positional operands"), so the stored result stays. Issue: #31
+/// An IF whose first operand quotes a nested merge field, split over runs
+/// as Word writes it: `{ IF "{ MERGEFIELD Country }" = "<value>" ... }`.
+fn quoted_if_body(value: &str, stored: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "{value}" "Bonjour" "Hello" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{stored}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    )
+}
+
 #[test]
-#[should_panic(expected = "the IF field follows its quoted merge field")]
 fn an_if_field_with_a_quoted_nested_merge_field_is_updated() {
     // Quoting the nested field is the form Word recommends for comparisons.
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "France" "Bonjour" "Hello" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Hello</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    );
+    let mut doc = doc_with_body(&quoted_if_body("France", "Hello"));
     doc.update_fields(&merge_context(&[("Country", "France")]))
         .unwrap();
     assert_eq!(
         texts(&doc),
         ["Bonjour"],
         "the IF field follows its quoted merge field"
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Bonjour"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let mut rest = xml.as_str();
+    for piece in [
+        r#"<w:instrText xml:space="preserve"> IF "</w:instrText>"#,
+        r#"<w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText>"#,
+        r#"<w:instrText xml:space="preserve">" = "France" "Bonjour" "Hello" </w:instrText>"#,
+    ] {
+        let at = rest
+            .find(piece)
+            .unwrap_or_else(|| panic!("the instruction keeps {piece} in order: {xml}"));
+        rest = &rest[at + piece.len()..];
+    }
+}
+
+#[test]
+fn an_if_field_picks_a_quoted_nested_merge_field_as_its_result() {
+    // The mail-merge form: the result to show is itself a quoted merge field.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "France" "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD City </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«City»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" "Abroad" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Abroad</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    for (country, shown) in [("France", "Lyon"), ("Spain", "Abroad")] {
+        let outcome = doc
+            .evaluate_fields(&merge_context(&[("Country", country), ("City", "Lyon")]))
+            .unwrap()
+            .remove(0)
+            .outcome;
+        assert_eq!(outcome, FieldOutcome::Resolved(shown.into()), "{country}");
+    }
+}
+
+// Fails today: a quoted operand made of text and a nested field has no model, so the IF gets too many operands and keeps its stored result. Issue: #50
+#[test]
+#[should_panic(expected = "the IF field compares the text joined to its nested field")]
+fn an_if_field_whose_quoted_operand_joins_text_and_a_nested_field_is_updated() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "Mr </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Name»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Mr Smith" "Known" "Unknown" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Unknown</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    doc.update_fields(&merge_context(&[("Name", "Smith")]))
+        .unwrap();
+    assert_eq!(
+        texts(&doc),
+        ["Known"],
+        "the IF field compares the text joined to its nested field"
     );
 }
 
