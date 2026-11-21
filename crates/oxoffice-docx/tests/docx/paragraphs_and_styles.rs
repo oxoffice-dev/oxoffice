@@ -547,9 +547,7 @@ fn headings_are_found_in_the_word_and_google_reports_alike() {
     );
 }
 
-// Fails today: Heading1 of a new document has no w:outlineLvl, where Word writes 0 and Heading2 to 9 carry theirs. Issue: #27
 #[test]
-#[should_panic(expected = "Heading 1 has outline level 0")]
 fn heading_1_of_a_new_document_has_an_outline_level_like_the_others() {
     let doc = Document::new();
     for level in 2..=9 {
