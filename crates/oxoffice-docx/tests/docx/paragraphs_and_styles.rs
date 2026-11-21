@@ -1619,36 +1619,16 @@ fn a_google_list_item_whose_edges_are_all_nil_has_no_borders() {
 /// Applying a house style to a file Word saved in French: the heading styles
 /// nothing uses go first, and Word writes each with its linked character
 /// style (`Titre7`, `Titre7Car`). Removing one side of such an unused pair
-/// removes both; a pair that is used is refused.
-// Known failure #342: each side refuses because the other links to it. When
-// it passes, drop `should_panic`.
+/// removes both; a heading in use stays.
 #[test]
-#[should_panic(expected = "an unused linked pair is removed")]
-fn removing_an_unused_linked_style_removes_its_pair() {
+fn removing_an_unused_linked_style_of_a_french_word_file_removes_its_pair() {
     let mut doc = corpus_doc("word/report.docx");
     assert_eq!(
         doc.style("Titre7").unwrap().linked_style(),
         Some("Titre7Car")
     );
     assert!(doc.remove_style("Titre1").is_err(), "a used heading stays");
-    let removed = doc.remove_style("Titre7");
-    if let Err(refusal) = &removed {
-        // The #342 refusal, and no other, is the known failure.
-        assert!(
-            refusal
-                .to_string()
-                .contains("is referenced by style 'Titre7Car'"),
-            "unexpected refusal: {refusal}"
-        );
-    }
-    assert!(
-        !matches!(removed, Ok(false)),
-        "remove_style finds Titre7: {removed:?}"
-    );
-    assert!(
-        matches!(removed, Ok(true)),
-        "an unused linked pair is removed: {removed:?}"
-    );
+    assert!(doc.remove_style("Titre7").unwrap());
     let doc = reopen(&mut doc);
     assert!(doc.style("Titre7").is_none() && doc.style("Titre7Car").is_none());
     assert!(doc.style("Titre1").is_some() && doc.style("Titre1Car").is_some());
