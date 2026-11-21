@@ -13,9 +13,9 @@ pub mod transform;
 pub use error::{LayoutError, Result};
 pub use font::{
     FontContribution, FontContributionScope, FontFile, FontManager, FontMetrics, FontTraceEvent,
-    GlyphCluster, MultilingualTextSegment, ShapedText, TextDirection, TextScript,
+    GlyphCluster, MultilingualTextSegment, ShapedText, SystemFonts, TextDirection, TextScript,
 };
-pub use glyph_coverage::missing_glyph_diagnostics;
+pub use glyph_coverage::{glyph_coverage_diagnostics, missing_glyph_diagnostics};
 pub use line::{
     Align, ForcedBreakKind, FormMark, InlineItem, LayoutLine, LineBreakParams, LineItem,
     LineSpacing, NoteRef, NoteStream, TabAlign, TabLeader, TabStop, TextSegment, Underline,

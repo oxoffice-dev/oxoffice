@@ -1026,7 +1026,8 @@ fn layout_paragraph_with_source_and_table(
 
         // Resolved against the run's own text, so a family without glyphs for
         // this script is replaced by one that has them.
-        let font_id = fm.resolve_font_for_text(font_family.as_deref(), bold, italic, &run_text)?;
+        let font_id =
+            fm.resolve_font_for_split_text(font_family.as_deref(), bold, italic, &run_text)?;
         let metrics = fm.metrics(font_id, font_size)?;
 
         // Stored-display expansion replaces the sole Field run with its
@@ -1544,7 +1545,7 @@ fn layout_paragraph_with_source_and_table(
                         if let Some(position) = segment_rpr.position {
                             segment_baseline_offset += position as f64 / 2.0;
                         }
-                        let segment_font_id = fm.resolve_font_for_text(
+                        let segment_font_id = fm.resolve_font_for_split_text(
                             segment_font_family.as_deref(),
                             segment_bold,
                             segment_italic,

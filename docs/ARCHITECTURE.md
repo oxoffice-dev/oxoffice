@@ -82,12 +82,23 @@ render:
   layout output ─→ oxoffice-pdf ─→ PDF, or rasterised PNG
 ```
 
-Charts in both families go through `oxoffice-chart`. Rendering uses the
-bundled fonts by default, so output is the same on every machine. The
-optional `system-fonts` feature adds the host's fonts to a Word render that
-asks for them (`RenderOptions::with_system_fonts`, CLI `--system-fonts`,
-Python `system_fonts=True`); a deck takes font files only. Text no font in use
-can draw, such as Chinese, Japanese or Korean with the bundled fonts, is drawn
+Charts in both families go through `oxoffice-chart`. A Word render resolves
+every font family in the embedded, caller and bundled fonts, so a document
+they cover is the same on every machine. With the default `system-fonts` feature, a
+character none of them can draw, such as most Chinese, Japanese or Korean
+text, takes a system font found by its glyph coverage (`FontManager::
+new_with_system_fallback`: the host's fonts are scanned once per process, at
+the first such character, and no family name ever selects a system font); a
+diagnostic names the system font. In body text, which the multilingual layout
+splits by grapheme (`FontManager::resolve_font_for_split_text`), a run keeps
+the bundled face that draws part of it and only the missing graphemes take a
+system font; a label, list marker or watermark shaped with one face takes the
+system font for all of its text when it holds such a character. `RenderOptions::with_bundled_fonts_only`
+(CLI `--bundled-fonts-only`, Python `bundled_fonts_only=True`) never takes a
+system font, and `RenderOptions::with_system_fonts` (CLI `--system-fonts`,
+Python `system_fonts=True`) resolves families in the system fonts first; the
+`*_deterministic` helpers always use the bundled fonts only. A deck uses its
+embedded, caller and bundled fonts only. Text no font in use can draw is drawn
 as empty boxes and named by a diagnostic with the way out of its family.
 
 The Rust facades are the reference. The CLI crates and the Python crates are

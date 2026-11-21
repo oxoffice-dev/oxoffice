@@ -2036,51 +2036,85 @@ fn arabic_and_hebrew_text_reads_back_in_logical_order() {
     assert!(fonts.contains(&"NotoSansArabic".to_owned()), "{fonts:?}");
 }
 
-// Fails today: the default conversion uses bundled fonts only, whose Chinese,
-// Japanese and Korean faces hold a handful of test characters, so ordinary
-// text is drawn as .notdef boxes while the text layer still reads right (the
-// corpus minutes too). A diagnostic names the script and the way out (next
-// test); bundling full CJK faces or falling back to system fonts per glyph
-// is the maintainer's decision.
-// Workaround: pass a CJK font file (to_pdf_with_fonts), or
-// RenderOptions { use_system_fonts: true, .. } on a machine with a CJK font.
-// Issue: #157
+/// Whether `text` holds Chinese, Japanese or Korean characters.
+fn has_cjk(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(ch, '\u{3040}'..='\u{30ff}' | '\u{3400}'..='\u{9fff}' | '\u{ac00}'..='\u{d7af}')
+    })
+}
+
+// The default render resolves families in the bundled fonts and takes a
+// system font for the characters they lack. What it draws depends on the
+// machine's fonts, so this holds on any machine: each CJK piece is either drawn
+// with real glyphs while a diagnostic names the system font, or drawn as boxes
+// while a diagnostic says no system font has them. The fallback itself is
+// proved with fixed fonts in oxoffice-layout's system_fallback tests.
 #[test]
-#[should_panic(expected = "drawn as empty boxes")]
-fn chinese_japanese_and_korean_text_is_drawn_with_real_glyphs() {
+fn chinese_japanese_and_korean_text_takes_a_system_font_or_says_none_was_found() {
     let sentences = [
         "我们的公司在北京有很多客户。",
         "東京の会社は大きいです。",
         "한국어 문장입니다.",
     ];
-    // Plain to_pdf on purpose, not the bundled-only pdf_of: the failure is
-    // about what to_pdf draws by default.
     let doc = doc_with(&sentences);
-    let pdf = Pdf::read(&doc.to_pdf().expect("document converts to PDF"));
+    let (bytes, diagnostics) = doc
+        .to_pdf_with_diagnostics(&[], RenderOptions::default())
+        .expect("document converts to PDF");
+    let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+    let pdf = Pdf::read(&bytes);
     let drawn = pdf.drawn(0);
-    let lines = lines(&drawn);
-    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    let texts: Vec<String> = lines(&drawn).into_iter().map(|line| line.text).collect();
     assert_eq!(texts, sentences);
-    for piece in drawn {
-        assert_eq!(
-            piece.notdef, 0,
-            "{:?} is drawn as empty boxes ({} .notdef glyphs)",
-            piece.text, piece.notdef
-        );
-        assert!(
-            glyphs_draw_text(&piece),
-            "the glyphs of {:?} map back to {:?}",
-            piece.text,
-            piece.glyphs
-        );
+
+    // Pieces the bundled fonts alone draw without boxes, such as the kana
+    // of their Japanese subset.
+    let bundled_only = Pdf::read(
+        &doc.to_pdf_with_options(RenderOptions::default().with_bundled_fonts_only(true))
+            .expect("document converts to PDF"),
+    );
+    let bundled_drawn: Vec<String> = bundled_only
+        .drawn(0)
+        .into_iter()
+        .filter(|piece| piece.notdef == 0)
+        .map(|piece| piece.text)
+        .collect();
+
+    let cjk: Vec<&Drawn> = drawn.iter().filter(|piece| has_cjk(&piece.text)).collect();
+    assert!(!cjk.is_empty());
+    for piece in cjk {
+        if piece.notdef == 0 {
+            assert!(glyphs_draw_text(piece), "{piece:?}");
+            if bundled_drawn.contains(&piece.text) {
+                continue;
+            }
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains("is drawn with the system font '")),
+                "{:?} is drawn with real glyphs, but no diagnostic names the system font: \
+                 {messages:#?}",
+                piece.text
+            );
+        } else {
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains("drawn as empty boxes")
+                        && message.contains("no system font on this machine has them")),
+                "{:?} is drawn as boxes, but no diagnostic says no system font has them: \
+                 {messages:#?}",
+                piece.text
+            );
+        }
     }
 }
 
 #[test]
-fn text_drawn_as_empty_boxes_names_its_script_and_the_way_out() {
+fn bundled_fonts_only_draws_chinese_japanese_and_korean_text_as_named_boxes() {
     let doc = doc_with(&["我们的公司在北京", "東京のかいしゃ", "Latin stays drawn."]);
-    let (_, diagnostics) = doc
-        .to_pdf_with_diagnostics(&[], RenderOptions::default())
+    let bundled_only = RenderOptions::default().with_bundled_fonts_only(true);
+    let (bytes, diagnostics) = doc
+        .to_pdf_with_diagnostics(&[], bundled_only)
         .expect("document converts to PDF");
     let boxes: Vec<&str> = diagnostics
         .iter()
@@ -2100,24 +2134,122 @@ fn text_drawn_as_empty_boxes_names_its_script_and_the_way_out() {
     );
     for message in &boxes {
         for way_out in [
-            "--system-fonts",
-            "system_fonts=True",
-            "RenderOptions::with_system_fonts",
+            "bundled fonts only",
+            "--bundled-fonts-only",
+            "bundled_fonts_only=False",
+            "with_bundled_fonts_only(false)",
             "font file",
         ] {
             assert!(message.contains(way_out), "{message}");
         }
     }
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("system font '")),
+        "{diagnostics:?}"
+    );
+    let pdf = Pdf::read(&bytes);
+    assert!(pdf.drawn(0).iter().any(|piece| piece.notdef > 0));
+    // The same on every run, as on every machine.
+    let (again, _) = doc
+        .to_pdf_with_diagnostics(&[], bundled_only)
+        .expect("document converts to PDF");
+    assert_eq!(bytes, again);
 
     // Text the bundled fonts draw says nothing.
     let (_, diagnostics) = doc_with(&["Plain Latin, مرحبا, שלום"])
-        .to_pdf_with_diagnostics(&[], RenderOptions::default())
+        .to_pdf_with_diagnostics(&[], bundled_only)
         .expect("document converts to PDF");
     assert!(
         diagnostics
             .iter()
             .all(|diagnostic| !diagnostic.message.contains("empty boxes")),
         "{diagnostics:?}"
+    );
+}
+
+// Families resolve in the bundled fonts in both modes, so a document they
+// cover is the same file with or without the system fallback, on any machine.
+#[test]
+fn text_the_bundled_fonts_cover_renders_the_same_with_the_system_fallback() {
+    let doc = doc_with(&[
+        "Plain Latin in the default face, with digits 0123456789.",
+        "مرحبا بالعالم",
+        "שלום עולם",
+        "Ελληνικά και кириллица.",
+        // One run whose scripts no single bundled face has.
+        "Plain Latin, مرحبا, שלום",
+    ]);
+    let default = doc.to_pdf().expect("document converts to PDF");
+    let bundled_only = doc
+        .to_pdf_with_options(RenderOptions::default().with_bundled_fonts_only(true))
+        .expect("document converts to PDF");
+    assert_eq!(default, bundled_only);
+    assert_eq!(default, doc.to_pdf_deterministic().unwrap());
+}
+
+// A run the bundled fonts partly draw keeps its bundled face for that part:
+// only the characters they lack may take a system font, so the Latin words
+// are drawn alike in both modes, on any machine (the line's height may grow
+// with a taller system face, so only the horizontal placement is compared).
+#[test]
+fn latin_words_beside_text_the_bundled_fonts_lack_are_drawn_alike_in_both_modes() {
+    let doc = doc_with(&["Version 2 of the plan 计划书已经批准"]);
+    let latin = |options: RenderOptions| {
+        let pdf = Pdf::read(&doc.to_pdf_with_options(options).unwrap());
+        pdf.drawn(0)
+            .into_iter()
+            .filter(|piece| !has_cjk(&piece.text) && !piece.text.trim().is_empty())
+            .map(|piece| (piece.text, piece.glyphs, piece.x, piece.end, piece.size))
+            .collect::<Vec<_>>()
+    };
+    let default = latin(RenderOptions::default());
+    assert!(!default.is_empty());
+    assert_eq!(
+        default,
+        latin(RenderOptions::default().with_bundled_fonts_only(true))
+    );
+}
+
+#[test]
+fn system_fonts_first_and_bundled_fonts_only_are_refused_together() {
+    let options = RenderOptions::default()
+        .with_system_fonts(true)
+        .with_bundled_fonts_only(true);
+    let error = doc_with(&["Text"])
+        .to_pdf_with_options(options)
+        .expect_err("the two switches exclude each other");
+    assert!(error.to_string().contains("exclude each other"), "{error}");
+
+    // The caller-font renders follow the same switches.
+    let doc = doc_with(&["Text"]);
+    let fonts: [(&str, &[u8]); 1] = [(
+        "Caller",
+        oxoffice_layout::bundled_fonts::LIBERATION_SANS_REGULAR,
+    )];
+    let raster = oxoffice_pdf::RasterOptions {
+        dpi: 36.0,
+        format: oxoffice_pdf::RasterFormat::Png {
+            transparent_background: false,
+        },
+    };
+    assert!(doc.to_pdf_with_fonts_and_options(&fonts, options).is_err());
+    assert!(
+        doc.render_page_to_png_with_fonts_and_options(0, 36.0, &fonts, options)
+            .is_err()
+    );
+    assert!(
+        doc.render_page_to_svg_with_fonts_and_options(0, &fonts, options)
+            .is_err()
+    );
+    assert!(
+        doc.render_pages_with_fonts_and_options(&[0], raster, &fonts, options)
+            .is_err()
+    );
+    assert!(
+        doc.render_all_pages_with_fonts_and_options(36.0, &fonts, options)
+            .is_err()
     );
 }
 

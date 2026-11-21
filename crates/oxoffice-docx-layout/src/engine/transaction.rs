@@ -54,6 +54,20 @@ impl Engine {
         Ok(Self::with_font_manager(FontManager::new_deterministic()?))
     }
 
+    /// Create an engine that resolves fonts in the bundled set and takes a
+    /// system font only for characters it cannot draw, see
+    /// [`FontManager::new_with_system_fallback`].
+    pub fn new_with_system_fallback() -> Result<Self> {
+        Ok(Self::with_font_manager(
+            FontManager::new_with_system_fallback()?,
+        ))
+    }
+
+    /// How this engine's fonts reach the host's fonts.
+    pub fn system_fonts(&self) -> oxoffice_layout::SystemFonts {
+        self.font_manager.system_fonts()
+    }
+
     /// Create an engine whose font universe is supplied entirely by the
     /// layout input, without bundled or system-font discovery.
     pub(crate) fn new_with_caller_fonts() -> Self {
@@ -2155,12 +2169,11 @@ impl Engine {
         let mut result = LayoutResult::new(pages, fonts, metadata, outlines);
         diagnostics.extend(self.font_manager.current_font_diagnostics().iter().cloned());
         diagnostics.extend(self.font_manager.word_substitution_diagnostics());
-        diagnostics.extend(oxoffice_layout::missing_glyph_diagnostics(
+        diagnostics.extend(oxoffice_layout::glyph_coverage_diagnostics(
             &result.pages,
-            &result.fonts,
-            "render with system fonts (CLI --system-fonts, Python system_fonts=True, Rust \
-             RenderOptions::with_system_fonts) on a machine with a font for it, or pass a font \
-             file (CLI --font-dir, Python fonts= or font_dir=, Rust to_pdf_with_fonts)",
+            &self.font_manager,
+            "pass a font file (CLI --font-dir, Python fonts= or font_dir=, Rust \
+             to_pdf_with_fonts)",
         ));
         result.diagnostics = diagnostics;
         self.last_picture_draw_owners = media.picture_draw_owners_since(0);

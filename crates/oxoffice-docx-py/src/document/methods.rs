@@ -334,7 +334,7 @@ impl PyDocument {
                 .collect(),
         })
     }
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false))]
     fn page_count<'py>(
         &self,
         py: Python<'py>,
@@ -342,6 +342,7 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
     ) -> PyResult<usize> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let refs = caller_fonts.as_ref().map(|files| {
@@ -350,27 +351,15 @@ impl PyDocument {
                 .map(|font| (font.family.as_str(), font.data.as_slice()))
                 .collect::<Vec<_>>()
         });
-        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
-        py.detach(|| match refs.as_deref() {
-            None if system_fonts => self
-                .inner
-                .layout_with_options(options)
-                .map(|layout| layout.layout.pages.len()),
-            None => self
-                .inner
-                .layout_deterministic()
-                .map(|layout| layout.layout.pages.len()),
-            Some(fonts) if system_fonts => {
-                // Feature-off gate for this nonempty system request.
-                self.inner.layout_with_options(options)?;
-                self.inner
-                    .layout_with_additional_fonts_and_options(fonts, options)
-                    .map(|layout| layout.layout.pages.len())
-            }
-            Some(fonts) => self
-                .inner
-                .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)
-                .map(|layout| layout.layout.pages.len()),
+        let options = with_font_switches(
+            oxoffice_docx::RenderOptions::default(),
+            system_fonts,
+            bundled_fonts_only,
+        )?;
+        py.detach(|| {
+            self.inner
+                .layout_for_render(refs.as_deref().unwrap_or(&[]), options)
+                .map(|layout| layout.layout.pages.len())
         })
         .map_err(|error| docx_to_pyerr(py, error))
     }
@@ -1415,7 +1404,7 @@ impl PyDocument {
         Ok(boundary)
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain", fillable_forms = false))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain", fillable_forms = false))]
     #[allow(clippy::too_many_arguments)]
     fn to_pdf<'py>(
         &self,
@@ -1424,12 +1413,13 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
         fillable_forms: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         options.fillable_forms = check_fillable_forms(fillable_forms, revision_view)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1438,26 +1428,16 @@ impl PyDocument {
                 .map(|font| (font.family.as_str(), font.data.as_slice()))
                 .collect::<Vec<_>>()
         });
-        py.detach(|| match font_refs.as_deref() {
-            None if system_fonts => self.inner.to_pdf_with_options(options),
-            None => self.inner.to_pdf_deterministic_with_options(options),
-            Some(fonts) if system_fonts => self
-                .inner
-                .to_pdf_with_diagnostics(fonts, options)
-                .map(|(bytes, _)| bytes),
-            Some(fonts) => {
-                let layout = self
-                    .inner
-                    .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                oxoffice_pdf::render_to_pdf_checked(&layout.layout)
-                    .map_err(oxoffice_docx::Error::from)
-            }
+        py.detach(|| {
+            self.inner
+                .to_pdf_with_diagnostics(font_refs.as_deref().unwrap_or(&[]), options)
+                .map(|(bytes, _)| bytes)
         })
         .map(|bytes| PyBytes::new(py, &bytes))
         .map_err(|error| docx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain", fillable_forms = false))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain", fillable_forms = false))]
     #[allow(clippy::too_many_arguments)]
     fn to_pdf_with_diagnostics<'py>(
         &self,
@@ -1466,12 +1446,13 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
         fillable_forms: bool,
     ) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyTuple>)> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         options.fillable_forms = check_fillable_forms(fillable_forms, revision_view)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1481,17 +1462,9 @@ impl PyDocument {
                 .collect::<Vec<_>>()
         });
         let (payload, diagnostics) = py
-            .detach(|| match font_refs.as_deref() {
-                None => self.inner.to_pdf_with_diagnostics(&[], options),
-                Some(fonts) if system_fonts => self.inner.to_pdf_with_diagnostics(fonts, options),
-                Some(fonts) => {
-                    let layout = self
-                        .inner
-                        .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                    let bytes = oxoffice_pdf::render_to_pdf_checked(&layout.layout)
-                        .map_err(oxoffice_docx::Error::from)?;
-                    Ok((bytes, layout.layout.diagnostics.clone()))
-                }
+            .detach(|| {
+                self.inner
+                    .to_pdf_with_diagnostics(font_refs.as_deref().unwrap_or(&[]), options)
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
@@ -1522,7 +1495,7 @@ impl PyDocument {
         .map_err(|error| docx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain"))]
     #[allow(clippy::too_many_arguments)]
     fn render_page_to_png<'py>(
         &self,
@@ -1533,11 +1506,12 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -1545,33 +1519,21 @@ impl PyDocument {
                 .map(|font| (font.family.as_str(), font.data.as_slice()))
                 .collect::<Vec<_>>()
         });
-        py.detach(|| match font_refs.as_deref() {
-            None if system_fonts => self
-                .inner
-                .render_page_to_png_with_options(page_index, dpi, options),
-            None => self
-                .inner
-                .render_page_to_png_deterministic_with_options(page_index, dpi, options),
-            Some(fonts) if system_fonts => self
-                .inner
-                .render_page_to_png_with_diagnostics(page_index, dpi, fonts, options)
-                .map(|(bytes, _)| bytes),
-            Some(fonts) => {
-                let layout = self
-                    .inner
-                    .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                Ok(oxoffice_pdf::render_page_to_png(
-                    &layout.layout,
+        py.detach(|| {
+            self.inner
+                .render_page_to_png_with_diagnostics(
                     page_index,
                     dpi,
-                ))
-            }
+                    font_refs.as_deref().unwrap_or(&[]),
+                    options,
+                )
+                .map(|(bytes, _)| bytes)
         })
         .map(|bytes| bytes.map(|bytes| PyBytes::new(py, &bytes)))
         .map_err(|error| docx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain"))]
     #[allow(clippy::too_many_arguments)]
     fn render_page_to_png_with_diagnostics<'py>(
         &self,
@@ -1582,11 +1544,12 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
     ) -> PyResult<(Option<Bound<'py, PyBytes>>, Bound<'py, PyTuple>)> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -1595,29 +1558,20 @@ impl PyDocument {
                 .collect::<Vec<_>>()
         });
         let (payload, diagnostics) = py
-            .detach(|| match font_refs.as_deref() {
-                None => {
-                    self.inner
-                        .render_page_to_png_with_diagnostics(page_index, dpi, &[], options)
-                }
-                Some(fonts) if system_fonts => self
-                    .inner
-                    .render_page_to_png_with_diagnostics(page_index, dpi, fonts, options),
-                Some(fonts) => {
-                    let layout = self
-                        .inner
-                        .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                    Ok((
-                        oxoffice_pdf::render_page_to_png(&layout.layout, page_index, dpi),
-                        layout.layout.diagnostics.clone(),
-                    ))
-                }
+            .detach(|| {
+                self.inner.render_page_to_png_with_diagnostics(
+                    page_index,
+                    dpi,
+                    font_refs.as_deref().unwrap_or(&[]),
+                    options,
+                )
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((payload.map(|bytes| PyBytes::new(py, &bytes)), messages))
     }
-    #[pyo3(signature = (page_index, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false))]
+    #[pyo3(signature = (page_index, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false))]
+    #[allow(clippy::too_many_arguments)]
     fn render_page_to_svg<'py>(
         &self,
         py: Python<'py>,
@@ -1626,8 +1580,13 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
     ) -> PyResult<Option<PySvgRenderResult>> {
-        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
+        let options = with_font_switches(
+            oxoffice_docx::RenderOptions::default(),
+            system_fonts,
+            bundled_fonts_only,
+        )?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -1636,23 +1595,10 @@ impl PyDocument {
                 .collect::<Vec<_>>()
         });
         let rendered = py
-            .detach(|| match font_refs.as_deref() {
-                None if system_fonts => self
-                    .inner
-                    .render_page_to_svg_with_options(page_index, options),
-                None => self.inner.render_page_to_svg_deterministic(page_index),
-                Some(fonts) if system_fonts => {
-                    // Feature-off gate for this nonempty system request.
-                    self.inner.layout_with_options(options)?;
-                    self.inner
-                        .render_page_to_svg_with_fonts_and_options(page_index, fonts, options)
-                }
-                Some(fonts) => {
-                    let layout = self
-                        .inner
-                        .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                    Ok(oxoffice_docx::render_page(&layout.layout, page_index))
-                }
+            .detach(|| {
+                self.inner
+                    .layout_for_render(font_refs.as_deref().unwrap_or(&[]), options)
+                    .map(|layout| oxoffice_docx::render_page(&layout.layout, page_index))
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         Ok(rendered.map(|result| PySvgRenderResult {
@@ -1668,7 +1614,7 @@ impl PyDocument {
         }))
     }
 
-    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain"))]
     #[allow(clippy::too_many_arguments)] // Explicit public rendering keyword operands.
     fn render_all_pages<'py>(
         &self,
@@ -1678,11 +1624,12 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
     ) -> PyResult<Bound<'py, PyList>> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -1691,28 +1638,20 @@ impl PyDocument {
                 .collect::<Vec<_>>()
         });
         let pages = py
-            .detach(|| match font_refs.as_deref() {
-                None if system_fonts => self.inner.render_all_pages_with_options(dpi, options),
-                None => {
-                    let layout = self.inner.layout_deterministic_with_options(options)?;
-                    Ok(oxoffice_pdf::render_all_pages(&layout.layout, dpi))
-                }
-                Some(fonts) if system_fonts => self
-                    .inner
-                    .render_all_pages_with_diagnostics(dpi, fonts, options)
-                    .map(|(pages, _)| pages),
-                Some(fonts) => {
-                    let layout = self
-                        .inner
-                        .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                    Ok(oxoffice_pdf::render_all_pages(&layout.layout, dpi))
-                }
+            .detach(|| {
+                self.inner
+                    .render_all_pages_with_diagnostics(
+                        dpi,
+                        font_refs.as_deref().unwrap_or(&[]),
+                        options,
+                    )
+                    .map(|(pages, _)| pages)
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         PyList::new(py, pages.iter().map(|page| PyBytes::new(py, page)))
     }
 
-    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain"))]
     #[allow(clippy::too_many_arguments)] // Explicit public rendering keyword operands.
     fn render_all_pages_with_diagnostics<'py>(
         &self,
@@ -1722,11 +1661,12 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
     ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyTuple>)> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -1735,22 +1675,12 @@ impl PyDocument {
                 .collect::<Vec<_>>()
         });
         let (payload, diagnostics) = py
-            .detach(|| match font_refs.as_deref() {
-                None => self
-                    .inner
-                    .render_all_pages_with_diagnostics(dpi, &[], options),
-                Some(fonts) if system_fonts => self
-                    .inner
-                    .render_all_pages_with_diagnostics(dpi, fonts, options),
-                Some(fonts) => {
-                    let layout = self
-                        .inner
-                        .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                    Ok((
-                        oxoffice_pdf::render_all_pages(&layout.layout, dpi),
-                        layout.layout.diagnostics.clone(),
-                    ))
-                }
+            .detach(|| {
+                self.inner.render_all_pages_with_diagnostics(
+                    dpi,
+                    font_refs.as_deref().unwrap_or(&[]),
+                    options,
+                )
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
@@ -1759,7 +1689,7 @@ impl PyDocument {
             messages,
         ))
     }
-    #[pyo3(signature = (*, dpi = 150.0, format = "png", quality = 90, transparent = false, pages = None, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (*, dpi = 150.0, format = "png", quality = 90, transparent = false, pages = None, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain"))]
     #[allow(clippy::too_many_arguments)]
     fn render_pages<'py>(
         &self,
@@ -1773,6 +1703,7 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
     ) -> PyResult<Py<PyAny>> {
@@ -1789,13 +1720,14 @@ impl PyDocument {
             font_dir,
             font_dirs,
             system_fonts,
+            bundled_fonts_only,
             revision_view,
             revision_style,
         )
         .map(|(payload, _)| payload)
     }
 
-    #[pyo3(signature = (*, dpi = 150.0, format = "png", quality = 90, transparent = false, pages = None, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (*, dpi = 150.0, format = "png", quality = 90, transparent = false, pages = None, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false, revision_view = "accepted", revision_style = "plain"))]
     #[allow(clippy::too_many_arguments)]
     fn render_pages_with_diagnostics<'py>(
         &self,
@@ -1809,11 +1741,12 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
         revision_view: &str,
         revision_style: &str,
     ) -> PyResult<(Py<PyAny>, Bound<'py, PyTuple>)> {
         let mut options = parse_render_options(revision_view, revision_style)?;
-        options.use_system_fonts = system_fonts;
+        options = with_font_switches(options, system_fonts, bundled_fonts_only)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -1825,36 +1758,12 @@ impl PyDocument {
             .detach(|| {
                 let format = parse_raster_format(format, quality, transparent)?;
                 let raster = oxoffice_docx::RasterOptions { dpi, format };
-                match font_refs.as_deref() {
-                    None => self.inner.render_pages_with_diagnostics(
-                        pages.as_deref(),
-                        raster,
-                        &[],
-                        options,
-                    ),
-                    Some(fonts) if system_fonts => self.inner.render_pages_with_diagnostics(
-                        pages.as_deref(),
-                        raster,
-                        fonts,
-                        options,
-                    ),
-                    Some(fonts) => {
-                        let layout = self
-                            .inner
-                            .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?;
-                        let all_pages;
-                        let selected = match pages.as_deref() {
-                            Some(selected) => selected,
-                            None => {
-                                all_pages = (0..layout.layout.pages.len()).collect::<Vec<_>>();
-                                &all_pages
-                            }
-                        };
-                        let output = oxoffice_pdf::render_pages(&layout.layout, selected, raster)
-                            .map_err(oxoffice_docx::Error::Raster)?;
-                        Ok((output, layout.layout.diagnostics.clone()))
-                    }
-                }
+                self.inner.render_pages_with_diagnostics(
+                    pages.as_deref(),
+                    raster,
+                    font_refs.as_deref().unwrap_or(&[]),
+                    options,
+                )
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         let payload = match rendered {
@@ -3921,7 +3830,7 @@ impl PyDocument {
             .map_err(|error| docx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false))]
     fn layout<'py>(
         &self,
         py: Python<'py>,
@@ -3929,8 +3838,13 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
+        let options = with_font_switches(
+            oxoffice_docx::RenderOptions::default(),
+            system_fonts,
+            bundled_fonts_only,
+        )?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -3940,22 +3854,9 @@ impl PyDocument {
         });
         let fragments = py
             .detach(|| {
-                let layout = match font_refs.as_deref() {
-                    None if system_fonts => self.inner.layout_with_options(options)?,
-                    None => self.inner.layout_deterministic()?,
-                    Some(fonts) if system_fonts => {
-                        // Feature-off gate for this nonempty system request.
-                        self.inner.layout_with_options(options)?;
-                        std::sync::Arc::new(
-                            self.inner
-                                .layout_with_additional_fonts_and_options(fonts, options)?,
-                        )
-                    }
-                    Some(fonts) => std::sync::Arc::new(
-                        self.inner
-                            .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?,
-                    ),
-                };
+                let layout = self
+                    .inner
+                    .layout_for_render(font_refs.as_deref().unwrap_or(&[]), options)?;
                 let mut fragments = Vec::new();
                 for body_index in 0..self.inner.content_count() {
                     let Some(body_fragments) = layout.body_layout_fragments(body_index) else {
@@ -3979,7 +3880,8 @@ impl PyDocument {
         PyTuple::new(py, fragments)
     }
 
-    #[pyo3(signature = (page_index, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false))]
+    #[pyo3(signature = (page_index, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, bundled_fonts_only = false))]
+    #[allow(clippy::too_many_arguments)]
     fn layout_page<'py>(
         &self,
         page_index: usize,
@@ -3988,8 +3890,13 @@ impl PyDocument {
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
         system_fonts: bool,
+        bundled_fonts_only: bool,
     ) -> PyResult<Option<PyLayoutPage>> {
-        let options = oxoffice_docx::RenderOptions::default().with_system_fonts(system_fonts);
+        let options = with_font_switches(
+            oxoffice_docx::RenderOptions::default(),
+            system_fonts,
+            bundled_fonts_only,
+        )?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -3998,22 +3905,9 @@ impl PyDocument {
                 .collect::<Vec<_>>()
         });
         py.detach(|| {
-            let layout = match font_refs.as_deref() {
-                None if system_fonts => self.inner.layout_with_options(options)?,
-                None => self.inner.layout_deterministic()?,
-                Some(fonts) if system_fonts => {
-                    // Feature-off gate for this nonempty system request.
-                    self.inner.layout_with_options(options)?;
-                    std::sync::Arc::new(
-                        self.inner
-                            .layout_with_additional_fonts_and_options(fonts, options)?,
-                    )
-                }
-                Some(fonts) => std::sync::Arc::new(
-                    self.inner
-                        .layout_with_fonts_and_bundled_fallback_and_options(fonts, options)?,
-                ),
-            };
+            let layout = self
+                .inner
+                .layout_for_render(font_refs.as_deref().unwrap_or(&[]), options)?;
             Ok(layout
                 .layout
                 .pages

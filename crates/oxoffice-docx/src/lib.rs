@@ -119,7 +119,7 @@ pub use oxoffice_core::app_properties::AppProperties;
 pub use oxoffice_core::core_properties::CoreProperties;
 pub use oxoffice_core::custom_properties::{CustomProperty, CustomPropertyValue};
 pub use oxoffice_core::{HalfPoint, Length, Twips};
-pub use oxoffice_docx_layout::{RevisionStyle, RevisionView};
+pub use oxoffice_docx_layout::{RevisionStyle, RevisionView, WordLayoutResult};
 pub use oxoffice_docx_oxml::document::{CT_DocGrid, ST_DocGrid};
 pub use oxoffice_docx_oxml::header_footer::HdrFtrType;
 pub use oxoffice_docx_oxml::math::{

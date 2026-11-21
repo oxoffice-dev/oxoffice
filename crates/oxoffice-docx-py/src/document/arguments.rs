@@ -168,6 +168,22 @@ pub(super) fn check_fillable_forms(fillable_forms: bool, revision_view: &str) ->
     Ok(fillable_forms)
 }
 
+/// `options` with the two font switches, which exclude each other.
+pub(super) fn with_font_switches(
+    options: oxoffice_docx::RenderOptions,
+    system_fonts: bool,
+    bundled_fonts_only: bool,
+) -> PyResult<oxoffice_docx::RenderOptions> {
+    if system_fonts && bundled_fonts_only {
+        return Err(PyValueError::new_err(
+            "system_fonts and bundled_fonts_only exclude each other",
+        ));
+    }
+    Ok(options
+        .with_system_fonts(system_fonts)
+        .with_bundled_fonts_only(bundled_fonts_only))
+}
+
 pub(super) fn parse_render_options(
     revision_view: &str,
     revision_style: &str,
