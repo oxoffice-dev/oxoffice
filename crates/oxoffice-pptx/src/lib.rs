@@ -3198,12 +3198,17 @@ pub fn validate_presentation_file<P: AsRef<Path>>(path: P) -> Result<Vec<Validat
     let package = match OpcPackage::from_reader(Cursor::new(&bytes)) {
         Ok(package) => package,
         Err(OpcError::InvalidXmlCharacter {
-            part, code_point, ..
+            part,
+            code_point,
+            line,
+            column,
         }) => {
             return Ok(vec![ValidationIssue::InvalidXmlChild {
                 part,
                 path: "/".to_owned(),
-                message: format!("holds U+{code_point:04X}, a character XML 1.0 cannot carry"),
+                message: format!(
+                    "holds U+{code_point:04X} at line {line}, column {column}, a character XML 1.0 cannot carry: PowerPoint repairs such a deck by dropping what that part holds"
+                ),
             }]);
         }
         Err(error) => return Err(error.into()),

@@ -38,3 +38,4 @@ serde_json.workspace = true
 oxoffice-opc.workspace = true
 oxoffice-pptx.workspace = true
 serde_json.workspace = true
+zip.workspace = true
