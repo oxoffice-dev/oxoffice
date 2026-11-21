@@ -1574,6 +1574,7 @@ impl Document {
         }
 
         let mut input = LayoutInput {
+            block_bookmarks: Default::default(),
             form_fields: false,
             form_paragraphs: None,
             sequence_snapshot: None,

@@ -596,20 +596,17 @@ fn appending_with_a_break_puts_the_other_document_in_a_section_of_its_own() {
         doc.append_with_break(&source, kind);
         let doc = reopen(&mut doc);
         assert_eq!(doc.section_count(), 2, "{kind:?}");
-        // The break sits in an empty paragraph of its own.
-        assert_eq!(texts(&doc), ["dest", "", "source"], "{kind:?}");
+        // The section mark goes on the destination's last paragraph.
+        assert_eq!(texts(&doc), ["dest", "source"], "{kind:?}");
         assert_eq!(saved(&mut source), before, "{kind:?}: source unchanged");
     }
 }
 
-// Fails today: the break's type is written on the section that ends at the
-// break (the destination's) instead of the section that starts there, so a
-// continuous break starts the appended content on a new page. Issue: #193
 #[test]
-#[should_panic(expected = "the appended section starts as the break asks")]
 fn each_break_kind_starts_the_appended_section_as_asked() {
     let mut wrong = Vec::new();
     for (kind, expected) in [
+        (SectionBreak::NextPage, ST_SectionType::NextPage),
         (SectionBreak::Continuous, ST_SectionType::Continuous),
         (SectionBreak::EvenPage, ST_SectionType::EvenPage),
         (SectionBreak::OddPage, ST_SectionType::OddPage),
@@ -617,8 +614,10 @@ fn each_break_kind_starts_the_appended_section_as_asked() {
         let mut doc = doc_with(&["dest"]);
         doc.append_with_break(&doc_with(&["source"]), kind);
         let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["dest", "source"], "{kind:?}");
+        assert_eq!(doc.section_count(), 2, "{kind:?}");
         let started = doc.section(1).unwrap().break_type();
-        if started != Some(expected) {
+        if started.unwrap_or(ST_SectionType::NextPage) != expected {
             wrong.push(format!("{kind:?}: the appended section starts {started:?}"));
         }
         if kind == SectionBreak::Continuous {
@@ -634,11 +633,7 @@ fn each_break_kind_starts_the_appended_section_as_asked() {
     );
 }
 
-// Fails today: the break paragraph gets new Letter section properties, so
-// the destination's own pages lose their size, margins and header (the
-// destination's section properties move to the appended content). Issue: #193
 #[test]
-#[should_panic(expected = "the destination's pages keep their layout")]
 fn appending_with_a_break_keeps_the_destination_pages_layout_and_header() {
     let a4 = (Length::mm(210.0), Length::mm(297.0));
     let margin = Length::inches(0.5);
@@ -657,6 +652,201 @@ fn appending_with_a_break_keeps_the_destination_pages_layout_and_header() {
         (first.page_size(), first.margins(), header_shown(&doc, 0)),
         (size, margins, Some("Dest header".to_owned())),
         "the destination's pages keep their layout"
+    );
+    let appended = doc.section(1).unwrap();
+    assert_eq!(
+        (
+            appended.page_size(),
+            appended.margins(),
+            header_shown(&doc, 1)
+        ),
+        (size, margins, Some("Dest header".to_owned())),
+        "the appended section takes the same layout and header"
+    );
+}
+
+#[test]
+fn appending_with_a_break_starts_the_first_appended_section_as_asked() {
+    // The source brings two sections (cover | body): the break kind goes on
+    // the first one, and the last one starts as it did in the source.
+    let mut source = with_inner_section_header();
+    source
+        .section_mut(1)
+        .unwrap()
+        .set_break_type(ST_SectionType::EvenPage);
+    let source = reopen(&mut source);
+    let mut doc = doc_with(&["dest"]);
+    doc.append_with_break(&source, SectionBreak::Continuous);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "cover", "", "body"]);
+    assert_eq!(doc.section_count(), 3);
+    assert_eq!(
+        doc.section(1).unwrap().break_type(),
+        Some(ST_SectionType::Continuous)
+    );
+    assert_eq!(
+        doc.section(2).unwrap().break_type(),
+        Some(ST_SectionType::EvenPage)
+    );
+}
+
+#[test]
+fn appending_with_a_break_marks_the_section_on_the_last_paragraph_or_after_a_table() {
+    // As Word does: no empty paragraph after a paragraph, one after a table,
+    // which cannot hold a section mark.
+    let mut doc = doc_with(&["dest"]);
+    doc.append_with_break(&doc_with(&["source"]), SectionBreak::Continuous);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "source"]);
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(
+        doc.layout_deterministic().unwrap().layout.pages.len(),
+        1,
+        "a continuous break keeps one page"
+    );
+
+    let mut doc = doc_with(&["dest"]);
+    doc.add_table(1, 1).cell(0, 0).unwrap().set_text("cell");
+    let mut doc = reopen(&mut doc);
+    let before = doc.content_count();
+    doc.append_with_break(&doc_with(&["source"]), SectionBreak::NextPage);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.content_count(),
+        before + 2,
+        "a mark paragraph, then the source"
+    );
+    assert_eq!(doc.section_count(), 2);
+}
+
+#[test]
+fn appending_with_a_break_after_a_tracked_paragraph_mark_keeps_the_mark_paragraph() {
+    // Rejecting the tracked mark joins "dest" to the next paragraph: the
+    // section mark must not ride on it, or the destination's section goes.
+    let mut doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" w:author="A" w:date="2026-11-21T00:00:00Z"/></w:rPr></w:pPr>"#,
+        r#"<w:r><w:t>dest</w:t></w:r></w:p>"#,
+    ));
+    let mut doc = reopen(&mut doc);
+    doc.append_with_break(&doc_with(&["source"]), SectionBreak::OddPage);
+    let mut doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "", "source"]);
+    doc.reject_all().unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.section_count(), 2, "the destination's section stays");
+}
+
+#[test]
+fn appending_with_a_break_to_a_document_ending_with_a_section_mark_keeps_its_layout() {
+    // No final body section properties, but the last paragraph ends an A4
+    // section: those become the final ones, and the appended section is A4.
+    let a4 = (Length::mm(210.0), Length::mm(297.0));
+    let mut doc = doc_with(&["dest"]);
+    doc.set_page_size(a4.0, a4.1);
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let start = main.find("<w:sectPr").unwrap();
+    let end = main.find("</w:sectPr>").unwrap() + "</w:sectPr>".len();
+    let sect_pr = main[start..end].to_owned();
+    let main = format!("{}{}", &main[..start], &main[end..]);
+    let close = main.rfind("</w:p>").unwrap();
+    let paragraph = main[..close]
+        .rfind("<w:p>")
+        .map(|at| at + "<w:p>".len())
+        .unwrap();
+    let main = format!(
+        "{}<w:pPr>{sect_pr}</w:pPr>{}",
+        &main[..paragraph],
+        &main[paragraph..]
+    );
+    package.set_part("/word/document.xml", main.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let size = doc.section(0).unwrap().page_size();
+    doc.append_with_break(&doc_with(&["source"]), SectionBreak::NextPage);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "source"]);
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(doc.section(0).unwrap().page_size(), size);
+    assert_eq!(doc.section(1).unwrap().page_size(), size);
+}
+
+#[test]
+fn appending_with_a_break_to_a_document_without_final_section_properties_adds_them() {
+    let bytes = doc_with(&["dest"]).to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let start = main
+        .find("<w:sectPr")
+        .expect("a new document has a final sectPr");
+    let end = main.find("</w:sectPr>").expect("closed") + "</w:sectPr>".len();
+    package.set_part(
+        "/word/document.xml",
+        format!("{}{}", &main[..start], &main[end..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.append_with_break(&doc_with(&["source"]), SectionBreak::OddPage);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "source"]);
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(doc.section(0).unwrap().break_type(), None);
+    assert_eq!(
+        doc.section(1).unwrap().break_type(),
+        Some(ST_SectionType::OddPage)
+    );
+}
+
+#[test]
+fn the_appended_section_takes_the_destination_s_section_formatting_but_its_page_restart() {
+    let mut doc = doc_with(&["dest"]);
+    doc.set_first_page_header("First page");
+    doc.set_header("Other pages");
+    {
+        let mut section = doc.section_mut(0).unwrap();
+        section.set_different_first_page(true);
+        let properties = section.properties_mut();
+        properties.columns = Some(oxoffice_docx_oxml::document::CT_Columns {
+            num: Some(2),
+            ..Default::default()
+        });
+        properties.page_number = Some(oxoffice_docx_oxml::document::CT_PageNumberType::new(5));
+    }
+    let mut doc = reopen(&mut doc);
+    doc.append_with_break(&doc_with(&["source"]), SectionBreak::NextPage);
+    let doc = reopen(&mut doc);
+    let appended = doc.section(1).unwrap().properties().clone();
+    assert_eq!(appended.title_pg, Some(true), "first-page variants stay on");
+    assert_eq!(appended.columns.and_then(|columns| columns.num), Some(2));
+    assert_eq!(
+        appended.page_number.and_then(|number| number.start),
+        None,
+        "the page numbers go on"
+    );
+    assert!(appended.header_refs.is_empty(), "the headers are inherited");
+    let first = doc
+        .section_story(1, HeaderFooterKind::Header, HdrFtrType::First)
+        .unwrap()
+        .expect("a first-page header shows");
+    let text: Vec<_> = doc
+        .story_items(first.story())
+        .unwrap()
+        .iter()
+        .map(|item| item.text().unwrap().unwrap_or_default())
+        .collect();
+    assert_eq!(text, ["First page"]);
+    assert_eq!(
+        doc.section(0)
+            .unwrap()
+            .properties()
+            .page_number
+            .as_ref()
+            .and_then(|n| n.start),
+        Some(5),
+        "the destination keeps its restart"
     );
 }
 

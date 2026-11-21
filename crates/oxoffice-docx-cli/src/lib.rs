@@ -423,9 +423,9 @@ enum Command {
     },
     /// Set the value of content controls by tag
     ///
-    /// Every --tag must name at least one control of the body,
-    /// or nothing is written. A control bound to custom XML gets the value in
-    /// its bound part too.
+    /// Every --tag must name at least one control, in the body, a header, a
+    /// footer, a note, a comment or a text box, or nothing is written. A
+    /// control bound to custom XML gets the value in its bound part too.
     Fill {
         /// Path to the DOCX file
         file: PathBuf,

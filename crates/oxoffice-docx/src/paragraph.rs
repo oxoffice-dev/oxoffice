@@ -3172,9 +3172,9 @@ impl<'a> ParagraphRef<'a> {
                                     && (*markers_before).min(markers.len()) == marker_index
                             })
                             .map(|(_, _, _, control)| {
-                                ParagraphItemRef::ContentControl(ContentControlRef {
-                                    inner: control,
-                                })
+                                ParagraphItemRef::ContentControl(ContentControlRef::borrowed(
+                                    control,
+                                ))
                             }),
                     );
                     if let Some(marker) = markers.get(marker_index) {

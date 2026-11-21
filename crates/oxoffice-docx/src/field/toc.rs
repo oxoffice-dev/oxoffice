@@ -363,8 +363,10 @@ fn inspect_toc_bookmarks(body: &CT_Body, xml: &[u8]) -> Result<TocBookmarkState>
     let mut ends = HashMap::<i32, (usize, usize)>::new();
     let mut names = HashSet::new();
     let mut max_id = 0i32;
+    // A marker between blocks belongs to the paragraph it wraps.
+    let block_markers = oxoffice_docx_oxml::text::BlockBookmarks::of_blocks(&body.content);
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate() {
-        for marker in paragraph.current_bookmark_projection() {
+        for marker in block_markers.paragraph_projection(paragraph) {
             let Some(id) = marker.id() else {
                 return Err(Error::Other(
                     "table of contents source has a bookmark without an ID".to_owned(),
@@ -502,6 +504,8 @@ fn toc_crossing_bookmark_repairs(
 #[derive(Clone, Copy)]
 enum TocParagraphToken {
     Content,
+    /// A run with nothing but properties so far: no content of the paragraph.
+    EmptyRun,
     BookmarkStart(i32),
     BookmarkEnd(i32),
 }
@@ -554,7 +558,8 @@ fn toc_bookmark_marker_offsets(xml: &[u8]) -> Result<HashMap<(i32, bool), usize>
                 )?;
                 if word
                     && matches!(local.as_slice(), b"bookmarkStart" | b"bookmarkEnd")
-                    && accepted_bookmark_parent(&elements, paragraph)
+                    && (accepted_bookmark_parent(&elements, paragraph)
+                        || block_bookmark_parent(&elements, paragraph))
                     && let Some((_, id)) = resolved_element_attribute(
                         &element,
                         reader.resolver(),
@@ -619,7 +624,8 @@ fn toc_bookmark_marker_offsets(xml: &[u8]) -> Result<HashMap<(i32, bool), usize>
                 )?;
                 if word
                     && matches!(local.as_slice(), b"bookmarkStart" | b"bookmarkEnd")
-                    && accepted_bookmark_parent(&elements, paragraph)
+                    && (accepted_bookmark_parent(&elements, paragraph)
+                        || block_bookmark_parent(&elements, paragraph))
                     && let Some((_, id)) = resolved_element_attribute(
                         &element,
                         reader.resolver(),
@@ -653,12 +659,28 @@ fn toc_bookmark_marker_offsets(xml: &[u8]) -> Result<HashMap<(i32, bool), usize>
     Ok(offsets)
 }
 
+/// A bookmark marker between blocks, which belongs to the paragraph it wraps.
+fn block_bookmark_parent(elements: &[DynamicXmlElement], paragraph: Option<usize>) -> bool {
+    paragraph.is_none()
+        && elements.last().is_some_and(|parent| {
+            parent.is_word
+                && matches!(
+                    parent.local_name.as_slice(),
+                    b"body" | b"tc" | b"sdtContent" | b"tbl" | b"tr"
+                )
+        })
+}
+
 fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut elements = Vec::<DynamicXmlElement>::new();
     let mut paragraphs = Vec::<Vec<TocParagraphToken>>::new();
+    // Bookmark starts between blocks wait for the paragraph they wrap.
+    let mut block_starts = Vec::new();
+    // The open direct run of a paragraph: (paragraph, token, element depth).
+    let mut open_run: Option<(usize, usize, usize)> = None;
     loop {
         let before = reader.buffer_position() as usize;
         let (namespace, event) = reader
@@ -684,23 +706,29 @@ fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
                 )?;
                 let is_typed_paragraph = typed_block_owner == Some(TypedBlockOwner::Paragraph);
                 let paragraph = if is_typed_paragraph {
-                    paragraphs.push(Vec::new());
+                    paragraphs.push(std::mem::take(&mut block_starts));
                     Some(paragraphs.len() - 1)
                 } else {
                     elements.last().and_then(|element| element.paragraph)
                 };
+                mark_run_content(&mut paragraphs, &open_run, elements.len(), word, &local);
                 if let Some(index) = paragraph
                     && elements
                         .last()
                         .is_some_and(|parent| parent.is_typed_paragraph)
                     && local != b"pPr"
                 {
-                    paragraphs[index].push(paragraph_token(
-                        &element,
-                        reader.resolver(),
-                        word,
-                        &local,
-                    )?);
+                    if word && local == b"r" {
+                        open_run = Some((index, paragraphs[index].len(), elements.len()));
+                        paragraphs[index].push(TocParagraphToken::EmptyRun);
+                    } else {
+                        paragraphs[index].push(paragraph_token(
+                            &element,
+                            reader.resolver(),
+                            word,
+                            &local,
+                        )?);
+                    }
                 }
                 mark_typed_sdt_content(&mut elements, &local, typed_block_owner, false);
                 elements.push(DynamicXmlElement {
@@ -728,6 +756,7 @@ fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
                 let word = word && local != b"sdtContent";
                 let typed_block_owner = classify_typed_block_owner(word, local, &elements);
                 mark_typed_sdt_content(&mut elements, local, typed_block_owner, false);
+                mark_run_content(&mut paragraphs, &open_run, elements.len(), word, local);
                 if let Some(parent) = elements.last()
                     && parent.is_typed_paragraph
                     && local != b"pPr"
@@ -739,10 +768,33 @@ fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
                         word,
                         local,
                     )?);
+                } else if word
+                    && block_bookmark_parent(&elements, elements.last().and_then(|e| e.paragraph))
+                {
+                    // Between blocks: a start opens the next paragraph, an end
+                    // closes the previous one.
+                    match paragraph_token(&element, reader.resolver(), word, local)? {
+                        token @ TocParagraphToken::BookmarkStart(_) => block_starts.push(token),
+                        token @ TocParagraphToken::BookmarkEnd(id) => {
+                            // A collapsed bookmark waits with its start.
+                            if block_starts
+                                .iter()
+                                .any(|start| matches!(start, TocParagraphToken::BookmarkStart(s) if *s == id))
+                            {
+                                block_starts.push(token);
+                            } else if let Some(previous) = paragraphs.last_mut() {
+                                previous.push(token);
+                            }
+                        }
+                        TocParagraphToken::Content | TocParagraphToken::EmptyRun => {}
+                    }
                 }
             }
             Event::End(_) => {
                 elements.pop();
+                if open_run.is_some_and(|(_, _, depth)| depth == elements.len()) {
+                    open_run = None;
+                }
             }
             Event::Eof => break,
             _ => {}
@@ -769,7 +821,7 @@ fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
                 TocParagraphToken::BookmarkEnd(id) => {
                     ends.insert(*id, index);
                 }
-                TocParagraphToken::Content => {}
+                TocParagraphToken::Content | TocParagraphToken::EmptyRun => {}
             }
         }
         for (id, start) in starts {
@@ -785,6 +837,23 @@ fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
         }
     }
     Ok(whole)
+}
+
+/// A child of an open direct run other than its properties makes that run
+/// content of its paragraph.
+fn mark_run_content(
+    paragraphs: &mut [Vec<TocParagraphToken>],
+    open_run: &Option<(usize, usize, usize)>,
+    depth: usize,
+    word: bool,
+    local: &[u8],
+) {
+    if let Some((paragraph, token, run_depth)) = *open_run
+        && depth == run_depth + 1
+        && !(word && local == b"rPr")
+    {
+        paragraphs[paragraph][token] = TocParagraphToken::Content;
+    }
 }
 
 fn paragraph_token(
@@ -886,6 +955,17 @@ fn discover_toc_sources(
 ) -> Result<Vec<Vec<TocSource>>> {
     let mut paragraphs = Vec::new();
     collect_body_paragraphs(&document.document.body, &mut paragraphs, None);
+    // Direct body paragraphs whose deleted mark joins them to the next one.
+    let body = &document.document.body;
+    let joining = (0..body.content.len())
+        .filter(|index| body.accepted_paragraph_joins_next(*index))
+        .filter_map(|index| match &body.content[index] {
+            BodyContent::Paragraph(paragraph) => {
+                Some(std::ptr::from_ref(paragraph.as_ref()).addr())
+            }
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let context = FieldEvaluationContext::default();
     let sequence_snapshot = Arc::new(
         oxoffice_docx_layout::engine::evaluate_sequence_fields(&document.build_layout_input()?)
@@ -932,7 +1012,17 @@ fn discover_toc_sources(
         evaluator.bind_numbering_layout(Arc::clone(numbering_layout));
         evaluator.sequence_snapshot = Some(Arc::clone(&sequence_snapshot));
         let mut sequence_value = None;
+        // Accepting a deleted paragraph mark joins the paragraph to the next
+        // one, which keeps the next paragraph's properties: the joining text
+        // opens that paragraph's entry.
+        let mut joined_title = String::new();
         for (paragraph_index, paragraph) in paragraphs.iter().enumerate() {
+            let joins_next = joining.contains(&std::ptr::from_ref(*paragraph).addr());
+            let joined_prefix = if joins_next {
+                String::new()
+            } else {
+                std::mem::take(&mut joined_title)
+            };
             let paragraph_fully_owned = spans.iter().any(|span| {
                 paragraph_index > span.begin_paragraph && paragraph_index < span.end_paragraph
             });
@@ -1034,14 +1124,6 @@ fn discover_toc_sources(
             if !paragraph_in_bookmark {
                 continue;
             }
-            let effective_heading = evaluator
-                .numbering_source(sequence_nodes[paragraph_index])
-                .and_then(|node| numbering_layout.paragraph_navigation_source(node))
-                .map(|(_, level, ..)| level);
-            let Some(level) = toc_paragraph_level(document, toc, paragraph, effective_heading)?
-            else {
-                continue;
-            };
             let title = accepted_runs
                 .iter()
                 .filter(|run| {
@@ -1059,9 +1141,22 @@ fn discover_toc_sources(
                 })
                 .map(|run| run.run.text())
                 .collect::<String>();
+            if joins_next {
+                joined_title.push_str(&title);
+                continue;
+            }
+            let title = joined_prefix + &title;
             if title.is_empty() {
                 continue;
             }
+            let effective_heading = evaluator
+                .numbering_source(sequence_nodes[paragraph_index])
+                .and_then(|node| numbering_layout.paragraph_navigation_source(node))
+                .map(|(_, level, ..)| level);
+            let Some(level) = toc_paragraph_level(document, toc, paragraph, effective_heading)?
+            else {
+                continue;
+            };
             let omit_page_number = toc
                 .omit_page_number_levels
                 .is_some_and(|(start, end)| (start..=end).contains(&level));

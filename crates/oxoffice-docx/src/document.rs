@@ -37,7 +37,7 @@ use oxoffice_docx_oxml::settings::{
 };
 use oxoffice_docx_oxml::shared::{ST_Jc, ST_PageOrientation, ST_SectionType};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
-use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent, ST_VerticalJc, VMerge};
+use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent, ST_VerticalJc};
 use oxoffice_docx_oxml::text::{
     CT_P, CT_R, RangeAnchor, RunContent, SpecialCharacter, declare_w14_on_part_root,
     story_field_instruction_has_name, story_simple_field_is_typed,
@@ -66,7 +66,7 @@ use crate::paragraph::{Paragraph, ParagraphRef};
 use crate::revision::{RevisionRef, StoryRevision};
 use crate::run::{FieldDisplaySegmentRef, RunRef};
 use crate::style::{self, Style, StyleBuilder};
-use crate::table::{Table, TableRef, row_cell_ranges, validate_table_topology};
+use crate::table::{Table, TableRef, validate_table_topology};
 
 mod checked_replacement;
 mod story_paragraphs;
@@ -291,7 +291,7 @@ use story_scopes::{
 pub(crate) use story_scopes::{story_namespace_ancestors_at, story_namespace_scope_at};
 pub(crate) use story_source_edits::set_story_source_xml;
 use story_source_edits::{
-    append_story_fragments_to_root, append_story_sources_to_root,
+    append_story_fragments_to_root, append_story_sources_to_root, built_in_character_style_id,
     decoded_story_namespace_declaration, missing_note_specials, note_reference_style,
     owners_reference_styles, remove_note_references, serialized_footnote_fragment,
     serialized_note_fragment, serialized_note_fragment_in, set_story_source_xml_in,
@@ -1495,42 +1495,6 @@ struct XmlElementFrame {
 struct EditedParagraphContext {
     namespaces: BTreeMap<String, String>,
     ignorable: HashSet<String>,
-}
-
-/// Hand vertical merges started by `row_index` to the row below before removal.
-fn restart_merges_continued_below(table: &mut CT_Tbl, row_index: usize) -> Result<()> {
-    let grid_columns = table
-        .grid
-        .as_ref()
-        .map(|grid| grid.columns.len())
-        .ok_or_else(|| Error::Other("table has no active grid".to_owned()))?;
-    let Some([row, below]) = table.rows.get_mut(row_index..row_index + 2) else {
-        return Ok(());
-    };
-    let restarted = row_cell_ranges(row, grid_columns)?
-        .into_iter()
-        .zip(&row.cells)
-        .filter_map(|(range, cell)| {
-            (cell
-                .properties
-                .as_ref()
-                .and_then(|properties| properties.v_merge.as_ref())
-                == Some(&VMerge::Restart))
-            .then_some(range)
-        })
-        .collect::<HashSet<_>>();
-    for (range, cell) in row_cell_ranges(below, grid_columns)?
-        .into_iter()
-        .zip(&mut below.cells)
-    {
-        if restarted.contains(&range)
-            && let Some(properties) = cell.properties.as_mut()
-            && properties.v_merge == Some(VMerge::Continue)
-        {
-            properties.v_merge = Some(VMerge::Restart);
-        }
-    }
-    Ok(())
 }
 
 struct PairedTextBoxCopy {

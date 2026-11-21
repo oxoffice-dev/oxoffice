@@ -1267,7 +1267,7 @@ fn paragraph_mhtml_losses(
                     location.clone(),
                     "flattened Word paragraph content control",
                 )?;
-                control_mhtml_losses(document, control.inner, &location, diagnostics)?;
+                control_mhtml_losses(document, &control.inner, &location, diagnostics)?;
                 continue;
             }
             ParagraphItemRef::Revision(revision) => {
@@ -1431,8 +1431,9 @@ fn table_mhtml_losses(
             "dropped unsupported Word table content",
         )?;
     }
-    // Rows that content controls wrap are reported in document order.
-    for row_index in 0..=table.row_count() {
+    // Rows that content controls wrap are reported in document order, at
+    // their place among the table's own rows.
+    for row_index in 0..=table.inner.rows.len() {
         for (control_index, (_, _, control)) in table
             .inner
             .content_controls
@@ -1448,7 +1449,12 @@ fn table_mhtml_losses(
             )?;
             control_mhtml_losses(document, control, &control_location, diagnostics)?;
         }
-        if let Some(row) = table.row(row_index) {
+        if let Some(row) = table
+            .inner
+            .rows
+            .get(row_index)
+            .map(|inner| RowRef { inner })
+        {
             row_mhtml_losses(
                 document,
                 row,
@@ -1478,8 +1484,9 @@ fn row_mhtml_losses(
             "dropped unsupported Word table row content",
         )?;
     }
-    // Cells that content controls wrap are reported in document order.
-    for cell_index in 0..=row.cell_count() {
+    // Cells that content controls wrap are reported in document order, at
+    // their place among the row's own cells.
+    for cell_index in 0..=row.inner.cells.len() {
         for (control_index, (_, _, control)) in row
             .inner
             .content_controls
@@ -1495,7 +1502,12 @@ fn row_mhtml_losses(
             )?;
             control_mhtml_losses(document, control, &control_location, diagnostics)?;
         }
-        if let Some(cell) = row.cell(cell_index) {
+        if let Some(cell) = row
+            .inner
+            .cells
+            .get(cell_index)
+            .map(|inner| CellRef { inner })
+        {
             cell_mhtml_losses(
                 document,
                 cell,
@@ -1534,7 +1546,7 @@ fn cell_mhtml_losses(
                     control_location.clone(),
                     "flattened Word table cell content control",
                 )?;
-                control_mhtml_losses(document, control.inner, &control_location, diagnostics)?;
+                control_mhtml_losses(document, &control.inner, &control_location, diagnostics)?;
             }
             CellItemRef::UnsupportedXml(_) => push_mhtml_loss(
                 diagnostics,
@@ -1663,7 +1675,7 @@ fn mhtml_write_diagnostics(document: &Document) -> Result<Vec<MhtmlDiagnostic>> 
                     location.clone(),
                     "flattened Word body content control",
                 )?;
-                control_mhtml_losses(document, control.inner, &location, &mut diagnostics)?;
+                control_mhtml_losses(document, &control.inner, &location, &mut diagnostics)?;
             }
             BodyItemRef::UnsupportedXml(_) => push_mhtml_loss(
                 &mut diagnostics,

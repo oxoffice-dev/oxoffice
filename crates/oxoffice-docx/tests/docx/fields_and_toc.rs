@@ -1824,6 +1824,84 @@ fn drawn_text_in(doc: &Document, view: RevisionView) -> String {
     text
 }
 
+/// A heading as Google Docs writes it: its `_Toc` bookmark starts between
+/// paragraphs, a direct child of the body, and ends inside the heading.
+const GOOGLE_HEADING: &str = r#"<w:bookmarkStart w:colFirst="0" w:colLast="0" w:name="_Toc217000001" w:id="4"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="4"/></w:p>"#;
+
+/// A TOC field as Google Docs writes it, with one stale entry.
+const GOOGLE_TOC: &str = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \h \u \z \t "Heading 1,1,Heading 2,2," </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:hyperlink w:anchor="_Toc217000001"><w:r><w:t>Old entry</w:t></w:r><w:r><w:tab/><w:t>9</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+
+#[test]
+fn a_heading_bookmark_that_starts_between_paragraphs_is_reused_by_the_toc_rebuild() {
+    let mut doc = doc_with_body(&format!("{GOOGLE_TOC}{GOOGLE_HEADING}"));
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!((report.entry_count, report.bookmark_count), (1, 0));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc)[1], "Introduction\t1");
+    assert_eq!(
+        link_anchors(&doc),
+        pairs(&[("Introduction", "_Toc217000001")]),
+        "the entry links to the heading's own bookmark"
+    );
+}
+
+#[test]
+fn a_bookmark_that_starts_or_ends_between_paragraphs_is_listed_with_its_text() {
+    // Starts between paragraphs and ends inside the heading; then starts
+    // inside a paragraph and ends between two; then wraps two paragraphs.
+    let doc = doc_with_body(&format!(
+        r#"{GOOGLE_HEADING}<w:p><w:bookmarkStart w:id="5" w:name="Tail"/><w:r><w:t>Body</w:t></w:r></w:p><w:bookmarkEnd w:id="5"/><w:bookmarkStart w:id="6" w:name="Both"/><w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p><w:bookmarkEnd w:id="6"/>"#
+    ));
+    assert_eq!(
+        bookmark_list(&doc),
+        pairs(&[
+            ("_Toc217000001", "Introduction"),
+            ("Tail", "Body"),
+            ("Both", "One\nTwo")
+        ])
+    );
+    assert!(
+        doc.bookmarks()
+            .iter()
+            .all(|bookmark| bookmark.issue().is_none()),
+        "{:?}",
+        doc.bookmarks()
+    );
+}
+
+#[test]
+fn ref_and_pageref_read_a_bookmark_that_starts_between_paragraphs() {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> REF _Toc217000001 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> on page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF _Toc217000001 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p>{GOOGLE_HEADING}"#
+    ));
+    assert_eq!(
+        drawn_text_in(&doc, RevisionView::Accepted),
+        "See Introduction on page 2Introduction",
+        "the layout reads the heading's text and page"
+    );
+    // REF updates with the fields, PAGEREF with the layout.
+    doc.update_fields(&no_context()).unwrap();
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert_eq!(report.page_reference_fields, 1, "{:?}", report.diagnostics);
+    assert_eq!(texts(&reopen(&mut doc))[0], "See Introduction on page 2");
+}
+
+#[test]
+fn the_google_docs_thesis_rebuilds_its_tocs_on_its_own_heading_bookmarks() {
+    // Google Docs writes every `_Toc` start between paragraphs, and saves
+    // the Word copy's table of figures as a second heading TOC: two TOCs of
+    // the 29 headings. The 23 headings with a `_Toc` bookmark keep it, the
+    // six without one (Abstract, Contents, References...) get one.
+    let mut google = corpus_doc("google/thesis.docx");
+    let report = google.rebuild_toc().unwrap();
+    assert_eq!(
+        (report.entry_count, report.bookmark_count),
+        (58, 6),
+        "{report:?}"
+    );
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+}
+
 /// The main document part of a saved package.
 fn main_part_xml(bytes: &[u8]) -> String {
     let package =
@@ -1943,4 +2021,80 @@ fn a_heading_holding_a_field_deleted_in_word_keeps_its_result_in_tracked_navigat
         drawn_text_in(&doc, RevisionView::Tracked),
         "Results Q3Results Q3"
     );
+}
+
+#[test]
+fn bookmarks_between_cells_and_collapsed_between_blocks_read_without_issue() {
+    // Google Docs collapses an empty bookmark before a cell paragraph; Word
+    // puts its form field bookmarks between cells of a row.
+    for name in ["google/form.docx", "word/form.docx"] {
+        let doc = corpus_doc(name);
+        let issues: Vec<_> = doc
+            .bookmarks()
+            .iter()
+            .filter_map(|bookmark| bookmark.issue().map(str::to_owned))
+            .collect();
+        assert!(issues.is_empty(), "{name}: {issues:?}");
+    }
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="Empty"/><w:bookmarkEnd w:id="1"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+    );
+    let empty = &doc.bookmarks()[0];
+    assert_eq!((empty.issue(), empty.text()), (None, ""));
+    assert_eq!(
+        empty.range().unwrap().start.body_index,
+        1,
+        "at the next paragraph"
+    );
+}
+
+#[test]
+fn a_bookmark_around_a_table_with_a_row_control_reads_its_rows() {
+    let doc = doc_with_body(
+        r#"<w:bookmarkStart w:id="1" w:name="Rows"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>First</w:t></w:r></w:p></w:tc></w:tr><w:sdt><w:sdtPr><w:tag w:val="rows"/></w:sdtPr><w:sdtContent><w:tr><w:tc><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl><w:bookmarkEnd w:id="1"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(bookmark_list(&doc), pairs(&[("Rows", "First\nRepeated")]));
+}
+
+#[test]
+fn a_heading_bookmark_that_stops_before_the_heading_ends_is_not_reused() {
+    // A run of properties only after the end leaves the bookmark whole; a
+    // run of text does not, so the rebuild gives the heading its own.
+    let mut doc = doc_with_body(&format!(
+        r#"{GOOGLE_TOC}<w:bookmarkStart w:id="4" w:name="_Toc217000001"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="4"/><w:r><w:t xml:space="preserve"> and more</w:t></w:r></w:p>"#
+    ));
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!((report.entry_count, report.bookmark_count), (1, 1));
+    let mut doc = doc_with_body(&format!(
+        r#"{GOOGLE_TOC}<w:bookmarkStart w:id="4" w:name="_Toc217000001"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="4"/><w:r><w:rPr><w:b/></w:rPr></w:r></w:p>"#
+    ));
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!((report.entry_count, report.bookmark_count), (1, 0));
+}
+
+#[test]
+fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
+    // Word records a whole deleted heading as its runs in w:del and its
+    // paragraph mark in w:pPr/w:rPr/w:del; a heading whose mark alone is
+    // deleted joins the next paragraph, whose entry it opens.
+    let toc = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:r><w:t>stale</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let deleted_mark =
+        r#"<w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"{toc}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Kept</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:del w:id="8" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:r><w:t xml:space="preserve">twice </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>tail</w:t></w:r></w:p>"#
+    ));
+    let revisions = doc.revisions().len();
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!(report.entry_count, 3, "{report:?}");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..4],
+        ["Kept\t1", "Next\t1", "Joined twice tail\t1"]
+    );
+    assert_eq!(
+        doc.paragraph(3).unwrap().style_id(),
+        Some("TOC2"),
+        "the joined entry takes the level of the paragraph it joins"
+    );
+    assert_eq!(doc.revisions().len(), revisions, "the revisions stay");
 }

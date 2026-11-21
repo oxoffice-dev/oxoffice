@@ -231,22 +231,28 @@ impl<'a> InlineControls<'a> {
 
     /// A paragraph's controls, those inside its tracked insertions and
     /// moves included, in document order: by run boundary, then by the raw
-    /// children before them.
+    /// children before them, as the engine draws them (a tracked change
+    /// inside a hyperlink orders by the hyperlink).
     fn paragraph(&mut self, paragraph: &'a CT_P, parent: Option<&'a CT_Sdt>) {
+        use crate::engine::RawOrder;
         enum Owner<'a> {
             Control(&'a CT_Sdt),
             Revision(&'a oxoffice_docx_oxml::revision::CT_Revision),
         }
-        let mut owners: Vec<((usize, usize), Owner<'a>)> = paragraph
+        let mut owners: Vec<((usize, RawOrder, u8), Owner<'a>)> = paragraph
             .content_controls
             .iter()
-            .map(|(at, raw, _, control)| ((*at, *raw), Owner::Control(control)))
-            .chain(
-                paragraph
-                    .revisions
-                    .iter()
-                    .map(|(at, raw, revision)| ((*at, *raw), Owner::Revision(revision))),
-            )
+            .map(|(at, raw, _, control)| ((*at, RawOrder::Raw(*raw), 0), Owner::Control(control)))
+            .chain(paragraph.revisions.iter().map(|(at, slot, revision)| {
+                (
+                    (
+                        *at,
+                        crate::engine::paragraph_revision_raw_order(paragraph, *at, *slot),
+                        1,
+                    ),
+                    Owner::Revision(revision),
+                )
+            }))
             .collect();
         owners.sort_by_key(|(at, _)| *at);
         for (_, owner) in owners {
@@ -281,15 +287,17 @@ impl<'a> InlineControls<'a> {
         if let Some(parent) = parent {
             self.parent.insert(std::ptr::from_ref(control), parent);
         }
-        for content in &control.content {
-            match content {
-                SdtContent::ContentControl(nested) => self.visit(nested, Some(control)),
-                SdtContent::Paragraph(paragraph) => self.paragraph(paragraph, Some(control)),
+        // By content boundary, the tracked changes at a boundary before the
+        // content there, as the engine draws them.
+        for boundary in 0..=control.content.len() {
+            for (_, revision) in control.revisions().iter().filter(|(at, _)| *at == boundary) {
+                self.revision(revision, Some(control));
+            }
+            match control.content.get(boundary) {
+                Some(SdtContent::ContentControl(nested)) => self.visit(nested, Some(control)),
+                Some(SdtContent::Paragraph(paragraph)) => self.paragraph(paragraph, Some(control)),
                 _ => {}
             }
-        }
-        for (_, revision) in control.revisions() {
-            self.revision(revision, Some(control));
         }
     }
 
@@ -526,17 +534,28 @@ fn legacy_field(field: &Field) -> Option<FormField> {
 }
 
 /// The block content control around a body path, if it is a field.
-pub(crate) fn enclosing_block_field<'a>(body: &'a CT_Body, path: &[usize]) -> Option<&'a CT_Sdt> {
+pub(crate) fn enclosing_block_field<'a>(
+    body: &'a CT_Body,
+    path: &[usize],
+    known: &mut HashMap<*const CT_Sdt, bool>,
+) -> Option<&'a CT_Sdt> {
+    // Whether a control is a block field walks all its content: once per
+    // control, not once per paragraph inside it.
+    let mut is_field = |control: &CT_Sdt| {
+        *known
+            .entry(std::ptr::from_ref(control))
+            .or_insert_with(|| block_is_field(control))
+    };
     let BodyContent::ContentControl(outer) = body.content.get(*path.first()?)? else {
         return None;
     };
     let mut control: &CT_Sdt = outer;
-    let mut field = block_is_field(control).then_some(control);
+    let mut field = is_field(control).then_some(control);
     for index in &path[1..] {
         match control.content.get(*index) {
             Some(SdtContent::ContentControl(nested)) => {
                 control = nested;
-                if block_is_field(control) {
+                if is_field(control) {
                     field = Some(control);
                 }
             }
@@ -625,6 +644,15 @@ struct Entry<'a> {
 }
 
 impl Entry<'_> {
+    /// How a diagnostic names the entry: a legacy form field is a "form
+    /// field" everywhere, a content control a "form control".
+    fn kind(&self) -> &'static str {
+        match self.source {
+            Source::Control(_) => "form control",
+            Source::Legacy => "form field",
+        }
+    }
+
     /// The symbol a check box draws in its other state.
     fn other_symbol(&self, checked: bool) -> Option<char> {
         match self.source {
@@ -670,6 +698,10 @@ struct Inventory<'a> {
     paragraphs: HashMap<oxoffice_layout::SourceNodeId, FormParagraph>,
     /// Controls already said to stay static for their place.
     said: std::collections::HashSet<*const CT_Sdt>,
+    /// Whether a block control is a field, by control.
+    block_fields: HashMap<*const CT_Sdt, bool>,
+    /// Controls that make no field.
+    refused: std::collections::HashSet<*const CT_Sdt>,
 }
 
 impl<'a> Inventory<'a> {
@@ -682,6 +714,8 @@ impl<'a> Inventory<'a> {
             faulted: std::collections::HashSet::new(),
             paragraphs: HashMap::new(),
             said: std::collections::HashSet::new(),
+            block_fields: HashMap::new(),
+            refused: std::collections::HashSet::new(),
         };
         let body = &input.document.body;
         let items = crate::engine::body_layout_items(body);
@@ -694,7 +728,8 @@ impl<'a> Inventory<'a> {
             .filter(|(_, vertical)| **vertical)
             .filter_map(|(item, _)| match item {
                 crate::engine::MainStoryLayoutItem::Paragraph(_, path) => {
-                    enclosing_block_field(body, path).map(std::ptr::from_ref)
+                    enclosing_block_field(body, path, &mut inventory.block_fields)
+                        .map(std::ptr::from_ref)
                 }
                 crate::engine::MainStoryLayoutItem::Table(..) => None,
             })
@@ -707,7 +742,7 @@ impl<'a> Inventory<'a> {
                     } else {
                         sources.id(&crate::WordStory::Document, &path)
                     };
-                    let block = enclosing_block_field(body, &path);
+                    let block = enclosing_block_field(body, &path, &mut inventory.block_fields);
                     inventory.note_block_faults(body, &path);
                     let in_vertical_block = block
                         .is_some_and(|block| vertical_blocks.contains(&std::ptr::from_ref(block)));
@@ -1006,11 +1041,20 @@ impl<'a> Inventory<'a> {
         if let Some(index) = self.by_control.get(&std::ptr::from_ref(control)) {
             return Some(*index);
         }
+        // Each paragraph of a block control asks again: a refusal is
+        // decided once, not once per paragraph.
+        if self.refused.contains(&std::ptr::from_ref(control)) {
+            return None;
+        }
         if holds_floating_picture(control) {
+            self.refused.insert(std::ptr::from_ref(control));
             self.note_static(control, "it holds a floating picture");
             return None;
         }
-        let mut field = control_field(control, shown(), block)?;
+        let Some(mut field) = control_field(control, shown(), block) else {
+            self.refused.insert(std::ptr::from_ref(control));
+            return None;
+        };
         field.alignment = alignment;
         self.entries.push(Entry {
             source: Source::Control(control),
@@ -1022,17 +1066,25 @@ impl<'a> Inventory<'a> {
     }
 }
 
-/// Where a control's first physical run sits among the paragraph's runs.
+/// Where a control's first physical run sits among the paragraph's runs,
+/// the runs of its tracked changes included: a control whose own text sits
+/// only in a tracked insertion still orders by that text.
 fn first_run(control: &CT_Sdt, position: &HashMap<*const CT_R, usize>) -> Option<usize> {
-    control
-        .content
+    let at = |run: &CT_R| position.get(&std::ptr::from_ref(run)).copied();
+    let content = control.content.iter().filter_map(|content| match content {
+        SdtContent::Run(run) => at(run),
+        SdtContent::ContentControl(nested) => first_run(nested, position),
+        SdtContent::Paragraph(paragraph) => {
+            paragraph.source_runs().into_iter().filter_map(at).min()
+        }
+        _ => None,
+    });
+    let revisions = control
+        .revisions()
         .iter()
-        .filter_map(|content| match content {
-            SdtContent::Run(run) => position.get(&std::ptr::from_ref(run)).copied(),
-            SdtContent::ContentControl(nested) => first_run(nested, position),
-            _ => None,
-        })
-        .min()
+        .filter_map(|(_, revision)| revision.content_paragraph())
+        .filter_map(|paragraph| paragraph.source_runs().into_iter().filter_map(at).min());
+    content.chain(revisions).min()
 }
 
 /// A legacy form field's name for a diagnostic.
@@ -1638,13 +1690,18 @@ pub(crate) fn number_form_fields(
             .copied()
             .unwrap_or("nothing it draws could be placed");
         result.diagnostics.push(Diagnostic {
-            message: format!("form control {:?} stays static: {reason}", entry.field.name),
+            message: format!(
+                "{} {:?} stays static: {reason}",
+                entry.kind(),
+                entry.field.name
+            ),
         });
     }
     for field in &covering {
         result.diagnostics.push(Diagnostic {
             message: format!(
-                "form control {:?}: other text on its lines sits under its box",
+                "{} {:?}: other text on its lines sits under its box",
+                inventory.entries[*field as usize].kind(),
                 fields[*field as usize].name
             ),
         });

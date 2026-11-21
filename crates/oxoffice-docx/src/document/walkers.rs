@@ -451,18 +451,7 @@ pub(super) fn cell_paragraph_routes(
     owners: &[StoryOwnerSpan],
     part_name: &str,
 ) -> Result<(HashMap<(usize, usize, usize), Vec<ContentLocation>>, bool)> {
-    let mut addresses = HashMap::<*const CT_Tc, (usize, usize, usize)>::new();
-    for (table_index, table) in body.tables().enumerate() {
-        for (row_index, row) in table.rows.iter().enumerate() {
-            for (cell_index, cell) in row.cells.iter().enumerate() {
-                addresses.entry(cell as *const CT_Tc).or_insert((
-                    table_index,
-                    row_index,
-                    cell_index,
-                ));
-            }
-        }
-    }
+    let addresses = crate::table::cell_addresses(body.tables());
     let body_owner = owners
         .iter()
         .find(|owner| owner.kind == StoryKind::Body)
@@ -674,13 +663,28 @@ fn take_cell<'a>(cell: &'a mut CT_Tc, index: &mut usize) -> Option<&'a mut CT_Tc
     }
 }
 
-// Traverse the parsed physical tree once. Coordinates name direct physical
-// rows/cells only, while controls still participate in source correspondence.
+// Traverse the parsed physical tree once, in document order. Coordinates
+// count rows and cells as `TableRef::cell` does: the rows of row controls
+// and the cells of cell controls among the table's own, so a coordinate is
+// numbered when its node is visited.
 enum PhysicalCellNode<'a> {
     Table(&'a CT_Tbl),
-    Row(&'a CT_Row, usize, Option<usize>),
+    /// A row of table `.1`; `.2` when the row is one of its rows.
+    Row(&'a CT_Row, usize, bool),
+    /// A cell of table `.1`; `.2` is its row's coordinate and counter.
     Cell(&'a CT_Tc, usize, Option<(usize, usize)>),
-    Control(&'a CT_Sdt, usize),
+    /// A control of table `.1`: `.2` names what it holds rows or cells of.
+    Control(&'a CT_Sdt, usize, ControlSlot),
+}
+
+#[derive(Clone, Copy)]
+enum ControlSlot {
+    /// Between rows: its rows are rows of the table.
+    Rows,
+    /// Between the cells of a row, by its coordinate and counter.
+    Cells(usize, usize),
+    /// In a cell or another block: it holds no row or cell of the table.
+    Block,
 }
 
 #[allow(clippy::type_complexity)]
@@ -689,6 +693,8 @@ pub(super) fn physical_table_cells(
 ) -> (usize, Vec<(usize, Option<(usize, usize)>)>) {
     let mut stack = vec![PhysicalCellNode::Table(table)];
     let mut tables = 0;
+    let mut next_row = Vec::new();
+    let mut next_cell = Vec::new();
     let mut cells = Vec::new();
     while let Some(node) = stack.pop() {
         let mut children = Vec::new();
@@ -696,61 +702,80 @@ pub(super) fn physical_table_cells(
             PhysicalCellNode::Table(table) => {
                 let index = tables;
                 tables += 1;
+                next_row.push(0usize);
                 let mut controls = table.content_controls.iter().peekable();
                 for boundary in 0..=table.rows.len() {
                     while controls.peek().is_some_and(|(at, _, _)| *at == boundary) {
                         children.push(PhysicalCellNode::Control(
                             &controls.next().unwrap().2,
                             index,
+                            ControlSlot::Rows,
                         ));
                     }
                     if let Some(row) = table.rows.get(boundary) {
-                        children.push(PhysicalCellNode::Row(row, index, Some(boundary)));
+                        children.push(PhysicalCellNode::Row(row, index, true));
                     }
                 }
             }
-            PhysicalCellNode::Row(row, table, ordinal) => {
+            PhysicalCellNode::Row(row, table, counted) => {
+                let ordinal = counted.then(|| {
+                    let ordinal = next_row[table];
+                    next_row[table] += 1;
+                    next_cell.push(0usize);
+                    (ordinal, next_cell.len() - 1)
+                });
                 let mut controls = row.content_controls.iter().peekable();
                 for boundary in 0..=row.cells.len() {
                     while controls.peek().is_some_and(|(at, _, _)| *at == boundary) {
                         children.push(PhysicalCellNode::Control(
                             &controls.next().unwrap().2,
                             table,
+                            ordinal.map_or(ControlSlot::Block, |(row, counter)| {
+                                ControlSlot::Cells(row, counter)
+                            }),
                         ));
                     }
                     if let Some(cell) = row.cells.get(boundary) {
-                        children.push(PhysicalCellNode::Cell(
-                            cell,
-                            table,
-                            ordinal.map(|row| (row, boundary)),
-                        ));
+                        children.push(PhysicalCellNode::Cell(cell, table, ordinal));
                     }
                 }
             }
-            PhysicalCellNode::Cell(cell, table, coordinate) => {
+            PhysicalCellNode::Cell(cell, table, ordinal) => {
+                let coordinate = ordinal.map(|(row, counter)| {
+                    let index = next_cell[counter];
+                    next_cell[counter] += 1;
+                    (row, index)
+                });
                 cells.push((table, coordinate));
                 for child in &cell.content {
                     match child {
                         CellContent::Table(table) => children.push(PhysicalCellNode::Table(table)),
-                        CellContent::ContentControl(control) => {
-                            children.push(PhysicalCellNode::Control(control, table))
-                        }
+                        CellContent::ContentControl(control) => children.push(
+                            PhysicalCellNode::Control(control, table, ControlSlot::Block),
+                        ),
                         CellContent::Paragraph(_) => {}
                     }
                 }
             }
-            PhysicalCellNode::Control(control, table) => {
+            PhysicalCellNode::Control(control, table, slot) => {
                 for child in &control.content {
                     match child {
                         SdtContent::Table(table) => children.push(PhysicalCellNode::Table(table)),
-                        SdtContent::Row(row) => {
-                            children.push(PhysicalCellNode::Row(row, table, None))
-                        }
-                        SdtContent::Cell(cell) => {
-                            children.push(PhysicalCellNode::Cell(cell, table, None))
-                        }
+                        SdtContent::Row(row) => children.push(PhysicalCellNode::Row(
+                            row,
+                            table,
+                            matches!(slot, ControlSlot::Rows),
+                        )),
+                        SdtContent::Cell(cell) => children.push(PhysicalCellNode::Cell(
+                            cell,
+                            table,
+                            match slot {
+                                ControlSlot::Cells(row, counter) => Some((row, counter)),
+                                _ => None,
+                            },
+                        )),
                         SdtContent::ContentControl(control) => {
-                            children.push(PhysicalCellNode::Control(control, table))
+                            children.push(PhysicalCellNode::Control(control, table, slot))
                         }
                         _ => {}
                     }

@@ -3271,7 +3271,7 @@ pub fn fill_values(
     publish_document(&mut reopened, output)?;
     mutation_record(
         json_output,
-        "accepted-main-body-and-supported-legacy-stories",
+        "all-supported-stories",
         "fill",
         json!({"assignments":rows,"count":values.len()}),
         output,
@@ -3298,7 +3298,7 @@ pub fn fill(
     publish_document(&mut doc, output)?;
     mutation_record(
         json_output,
-        "accepted-main-body",
+        "all-supported-stories",
         "fill",
         json!({"tags":pairs.iter().zip(counts).map(|((tag,value),count)|json!({"tag":tag,"value":value,"count":count})).collect::<Vec<_>>()}),
         output,

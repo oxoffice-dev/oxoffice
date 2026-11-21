@@ -28,8 +28,7 @@ impl Document {
     ) -> Result<T> {
         let mut table_index = table;
         let selected = nth_table_in_body_ref(&self.document.body.content, &mut table_index)
-            .and_then(|table| table.rows.get(row))
-            .and_then(|row| row.cells.get(cell))
+            .and_then(|table| crate::table::table_cell(table, row, cell))
             .ok_or_else(|| Error::Other("cell index is out of range".to_owned()))?;
         let readers = selected.paragraphs();
         let direct_count = selected
@@ -102,8 +101,7 @@ impl Document {
         }
         let mut table_index = table;
         let selected = nth_table_in_body(&mut self.document.body.content, &mut table_index)
-            .and_then(|table| table.rows.get_mut(row))
-            .and_then(|row| row.cells.get_mut(cell))
+            .and_then(|table| crate::table::table_cell_mut(table, row, cell))
             .ok_or_else(|| Error::Other("cell index is out of range".to_owned()))?;
         if selected
             .content

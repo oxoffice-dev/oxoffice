@@ -177,6 +177,12 @@ impl Document {
             .grid
             .as_ref()
             .map_or(0, |grid| grid.columns.len());
+        if crate::table::table_holds_controls(table.inner) {
+            return Err(Error::Other(
+                "a table cell cannot be split while rows or cells sit in content controls"
+                    .to_owned(),
+            ));
+        }
         let source_row = table
             .inner
             .rows
@@ -198,6 +204,10 @@ impl Document {
 
     /// Insert a copy of one table row before row `insert_at` in the same table.
     ///
+    /// Rows count as [`TableRef::row`] counts them, the rows of row content
+    /// controls included; a row of a row control cannot be the copied one,
+    /// and the copy cannot go inside a control.
+    ///
     /// `table_index` counts the body tables in document order, as
     /// [`Self::table`] does; nested tables are not counted. `insert_at` may
     /// equal the row count to append. The copy keeps
@@ -217,7 +227,7 @@ impl Document {
                 .table_mut(table_index)
                 .ok_or_else(|| Error::Other(format!("table index {table_index} is out of range")))?
                 .inner;
-            let row_count = table.rows.len();
+            let row_count = TableRef { inner: table }.row_count();
             if source >= row_count {
                 return Err(Error::Other(format!(
                     "row index {source} is out of range for a table with {row_count} rows"
@@ -228,24 +238,14 @@ impl Document {
                     "row insertion index {insert_at} is out of range for a table with {row_count} rows"
                 )));
             }
-            table.rows[source].clone()
+            table.rows[own_copied_row(table, source)?].clone()
         };
         let copied_row = candidate.fresh_table_row_copy(source_row)?;
         let table = candidate
             .table_mut(table_index)
             .expect("the checked table remains available")
             .inner;
-        for (position, _) in &mut table.extra_xml {
-            if *position >= insert_at {
-                *position += 1;
-            }
-        }
-        for (position, _, _) in &mut table.content_controls {
-            if *position >= insert_at {
-                *position += 1;
-            }
-        }
-        table.rows.insert(insert_at, copied_row);
+        insert_copied_row(table, insert_at, copied_row)?;
         validate_table_topology(table)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -253,6 +253,9 @@ impl Document {
     }
 
     /// Remove one row from a table and report whether it was removed.
+    ///
+    /// `row_index` counts rows as [`TableRef::row`] counts them; a row of a
+    /// row content control is refused, as removing its control removes it.
     ///
     /// A table retains at least one direct row. If the removed row starts a
     /// vertical merge that continues below, the next row becomes its start.
@@ -266,18 +269,19 @@ impl Document {
             .table_mut(table_index)
             .ok_or_else(|| Error::Other(format!("table index {table_index} is out of range")))?
             .inner;
-        let row_count = table.rows.len();
+        let row_count = TableRef { inner: table }.row_count();
         if row_index >= row_count {
             return Err(Error::Other(format!(
                 "row index {row_index} is out of range for a table with {row_count} rows"
             )));
         }
-        if row_count == 1 {
+        let row_index = own_removed_row(table, row_index)?;
+        if table.rows.len() == 1 {
             return Err(Error::Other(
                 "a table keeps at least one row, so its only row cannot be removed".to_owned(),
             ));
         }
-        restart_merges_continued_below(table, row_index)?;
+        crate::table::hand_on_vertical_restarts(table, row_index)?;
         let raw_before_removed = table
             .extra_xml
             .iter()
@@ -336,23 +340,15 @@ impl Document {
     ) -> Result<usize> {
         let mut candidate = self.clone_for_staging();
         let mut table = candidate.story_table_model(location)?;
-        if source >= table.rows.len() || insert_at > table.rows.len() {
+        let row_count = TableRef { inner: &table }.row_count();
+        if source >= row_count || insert_at > row_count {
             return Err(Error::Other(
                 "rich table row copy index is out of range".to_owned(),
             ));
         }
-        let copied = candidate.fresh_table_row_copy(table.rows[source].clone())?;
-        for (position, _) in &mut table.extra_xml {
-            if *position >= insert_at {
-                *position += 1;
-            }
-        }
-        for (position, _, _) in &mut table.content_controls {
-            if *position >= insert_at {
-                *position += 1;
-            }
-        }
-        table.rows.insert(insert_at, copied);
+        let copied =
+            candidate.fresh_table_row_copy(table.rows[own_copied_row(&table, source)?].clone())?;
+        insert_copied_row(&mut table, insert_at, copied)?;
         validate_table_topology(&table)?;
         candidate.replace_story_content(location, ContentFragment::table(table)?)?;
         self.commit_staged_mutation(candidate);
@@ -369,17 +365,18 @@ impl Document {
     ) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
         let mut table = candidate.story_table_model(location)?;
-        if row_index >= table.rows.len() {
+        if row_index >= (TableRef { inner: &table }).row_count() {
             return Err(Error::Other(
                 "rich table row index is out of range".to_owned(),
             ));
         }
+        let row_index = own_removed_row(&table, row_index)?;
         if table.rows.len() == 1 {
             return Err(Error::Other(
                 "a table keeps at least one row, so its only row cannot be removed".to_owned(),
             ));
         }
-        restart_merges_continued_below(&mut table, row_index)?;
+        crate::table::hand_on_vertical_restarts(&mut table, row_index)?;
         let raw_before = table
             .extra_xml
             .iter()
@@ -492,4 +489,75 @@ impl Document {
     pub fn table_count(&self) -> usize {
         self.document.body.tables().count()
     }
+}
+
+/// The table's own row that row `index` names, for a copy: a row of a row
+/// content control is refused, as repeating the control copies it.
+fn own_copied_row(table: &CT_Tbl, index: usize) -> Result<usize> {
+    crate::table::own_row_index(table, index).ok_or_else(|| {
+        Error::Other(
+            "a row inside a row content control cannot be copied; repeat its control".to_owned(),
+        )
+    })
+}
+
+/// The table's own row that row `index` names, for a removal: a row of a
+/// row content control is refused, as removing the control removes it.
+fn own_removed_row(table: &CT_Tbl, index: usize) -> Result<usize> {
+    crate::table::own_row_index(table, index).ok_or_else(|| {
+        Error::Other(
+            "a row inside a row content control cannot be removed; remove its control".to_owned(),
+        )
+    })
+}
+
+/// Insert `row` among the table's own rows before row `insert_at`, rows
+/// counted as [`TableRef::row`] counts them, or after the last one. The
+/// preserved children and row controls of the boundary written before the
+/// new row stay at it, and those written after move with the rows after it,
+/// so that each control keeps the children written before it. When the copy
+/// goes after the boundary's controls, the children written after the last
+/// of them (all of them at a boundary without one) follow the copy, as they
+/// follow it in a table without controls.
+fn insert_copied_row(table: &mut CT_Tbl, insert_at: usize, row: CT_Row) -> Result<()> {
+    let (position, follows) =
+        crate::table::own_row_insertion(table, insert_at).ok_or_else(|| {
+            Error::Other("a row cannot be inserted inside a row content control".to_owned())
+        })?;
+    let first_moved_raw = follows.map_or_else(
+        || {
+            table
+                .content_controls
+                .iter()
+                .filter(|(at, _, _)| *at == position)
+                .map(|(_, raw_before, _)| *raw_before)
+                .max()
+                .unwrap_or(0)
+        },
+        |(first, _)| first,
+    );
+    let mut raw = 0;
+    for (at, _) in &mut table.extra_xml {
+        if *at == position {
+            if raw >= first_moved_raw {
+                *at += 1;
+            }
+            raw += 1;
+        } else if *at > position {
+            *at += 1;
+        }
+    }
+    for (index, (at, raw_before, _)) in table.content_controls.iter_mut().enumerate() {
+        if *at > position {
+            *at += 1;
+        } else if *at == position
+            && let Some((first, control)) = follows
+            && (*raw_before > first || *raw_before == first && index >= control)
+        {
+            *at += 1;
+            *raw_before -= first;
+        }
+    }
+    table.rows.insert(position, row);
+    Ok(())
 }
