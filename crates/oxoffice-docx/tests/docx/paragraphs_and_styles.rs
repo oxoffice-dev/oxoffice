@@ -549,7 +549,7 @@ fn headings_are_found_in_the_word_and_google_reports_alike() {
 
 #[test]
 fn heading_1_of_a_new_document_has_an_outline_level_like_the_others() {
-    let doc = Document::new();
+    let mut doc = Document::new();
     for level in 2..=9 {
         assert_eq!(
             doc.resolve_paragraph_properties(Some(&format!("Heading{level}")))
@@ -563,6 +563,17 @@ fn heading_1_of_a_new_document_has_an_outline_level_like_the_others() {
         Some(0),
         "Heading 1 has outline level 0"
     );
+    // The level is written, and a style based on Heading 1 inherits it.
+    doc.add_style(StyleBuilder::paragraph("Chapter", "Chapter").based_on("Heading1"))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    for style in ["Heading1", "Chapter"] {
+        assert_eq!(
+            doc.resolve_paragraph_properties(Some(style)).outline_lvl,
+            Some(0),
+            "{style} after a reopen"
+        );
+    }
 }
 
 // ---- Styles ----
