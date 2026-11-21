@@ -92,8 +92,9 @@ use source_metadata::{
 };
 use source_scopes::{
     ParentScopes, canonical_owned_story, child_scopes, publication_parent_at,
-    publication_parents_at, root_inner_range, root_namespace_bindings, same_owner_tree,
-    same_written_owner, source_child, source_children, source_fragment, story_skeleton,
+    publication_parents_at, root_inner_range, root_namespace_bindings, same_held_owner,
+    same_owner_tree, same_written_owner, source_child, source_children, source_fragment,
+    story_skeleton,
 };
 pub(crate) use stories::revision_story_parts;
 use stories::{
@@ -1444,13 +1445,19 @@ fn compare_body_impl(
                 let rewritten = protected
                     && !(equal && same_source)
                     && !metadata.leaf_capture
-                    && (same_owner_tree(original_source, left, edited_source, right)?
-                        || same_written_owner(
-                            original_content,
-                            edited_content,
-                            original_source.map_or(&[][..], |(_, _, bindings)| bindings),
-                            edited_source.2,
-                        )?);
+                    && same_held_owner(
+                        equal,
+                        same_source,
+                        || same_owner_tree(original_source, left, edited_source, right),
+                        || {
+                            same_written_owner(
+                                original_content,
+                                edited_content,
+                                original_source.map_or(&[][..], |(_, _, bindings)| bindings),
+                                edited_source.2,
+                            )
+                        },
+                    )?;
                 let equal = equal || rewritten;
                 let same_source = same_source || rewritten;
                 let needs_field_dispatch = equal

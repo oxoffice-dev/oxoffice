@@ -370,7 +370,8 @@ impl CT_Revision {
 }
 
 /// The prefixes the element and attribute names of `raw` use, `""` for an
-/// unprefixed element; `None` when `raw` does not read as XML.
+/// unprefixed element, and those its markup-compatibility attributes name in
+/// their values; `None` when `raw` does not read as XML.
 fn raw_name_prefixes(raw: &[u8]) -> Option<std::collections::HashSet<String>> {
     let mut reader = quick_xml::Reader::from_reader(raw);
     let mut used = std::collections::HashSet::new();
@@ -384,11 +385,29 @@ fn raw_name_prefixes(raw: &[u8]) -> Option<std::collections::HashSet<String>> {
                 };
                 used.insert(prefix);
                 for attribute in element.attributes() {
-                    let key = attribute.ok()?.key;
+                    let attribute = attribute.ok()?;
+                    let key = attribute.key;
                     if let Some(prefix) = key.prefix()
                         && !matches!(prefix.as_ref(), b"xmlns" | b"xml")
                     {
                         used.insert(std::str::from_utf8(prefix.as_ref()).ok()?.to_owned());
+                    }
+                    if matches!(
+                        key.local_name().as_ref(),
+                        b"Requires"
+                            | b"Ignorable"
+                            | b"MustUnderstand"
+                            | b"ProcessContent"
+                            | b"PreserveElements"
+                            | b"PreserveAttributes"
+                    ) {
+                        for token in std::str::from_utf8(&attribute.value)
+                            .ok()?
+                            .split_whitespace()
+                        {
+                            let prefix = token.split_once(':').map_or(token, |(prefix, _)| prefix);
+                            used.insert(prefix.to_owned());
+                        }
                     }
                 }
             }
@@ -2307,4 +2326,40 @@ fn optional_word_attribute(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The revision of a one-paragraph body whose root binds `x` to `uri`.
+    fn revision(uri: &str, choice: &str) -> CT_Revision {
+        let xml = format!(
+            concat!(
+                r#"<w:document xmlns:w="{w}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="{uri}"><w:body>"#,
+                r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r>"#,
+                r#"<mc:AlternateContent><mc:Choice Requires="{choice}"><w:t>a</w:t></mc:Choice>"#,
+                r#"<mc:Fallback><w:t>b</w:t></mc:Fallback></mc:AlternateContent></w:r></w:ins></w:p>"#,
+                r#"</w:body></w:document>"#,
+            ),
+            w = crate::namespace::W_NS,
+            uri = uri,
+            choice = choice,
+        );
+        let document = crate::CT_Document::from_xml(xml.as_bytes()).unwrap();
+        let Some(crate::document::BodyContent::Paragraph(paragraph)) =
+            document.body.content.first()
+        else {
+            panic!("one paragraph");
+        };
+        paragraph.revisions.first().expect("one revision").2.clone()
+    }
+
+    #[test]
+    fn a_revision_is_read_under_the_bindings_it_names_only() {
+        // A binding the revision never names is the part's, not the revision's.
+        assert_eq!(revision("urn:a", "mc"), revision("urn:b", "mc"));
+        // A prefix named in a markup-compatibility value is read.
+        assert_ne!(revision("urn:a", "x"), revision("urn:b", "x"));
+    }
 }

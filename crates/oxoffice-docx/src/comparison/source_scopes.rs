@@ -359,6 +359,21 @@ pub(super) fn same_owner_tree(
     Ok(canonical_owner_tokens(&left)? == canonical_owner_tokens(&right)?)
 }
 
+/// Whether an owner holding an earlier revision is the same in both
+/// versions: the same typed owner with the same source residual; or one tree
+/// another save wrote another way (references, attribute and declaration
+/// order); or, with the same residual, an owner the model writes back the
+/// same (a save rewrites values it reads alike, such as `0` as `false`, and
+/// leaves empty containers out). The residual keeps what the reader drops.
+pub(super) fn same_held_owner(
+    typed_equal: bool,
+    same_residual: bool,
+    same_tree: impl FnOnce() -> Result<bool>,
+    same_written: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
+    Ok(typed_equal && same_residual || same_tree()? || same_residual && same_written()?)
+}
+
 /// Whether two owners are written as one tree by the model's own writer.
 pub(super) fn same_written_owner(
     original: &BodyContent,
