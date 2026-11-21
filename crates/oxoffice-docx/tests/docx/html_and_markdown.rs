@@ -624,9 +624,9 @@ fn values_from_the_file_cannot_inject_markup_into_html_attributes() {
     assert_eq!(html_texts(&html, "p"), ["hostilesafe"]);
 
     // A single-quoted attribute hands a literal quote to the reader (and no
-    // other character the font check refuses). Exported before any save,
-    // which would write it as &quot; again.
-    let quoted = doc_with_body(concat!(
+    // other character the font check refuses); a save writes it as &quot;,
+    // which reads back as the same quote.
+    let mut quoted = doc_with_body(concat!(
         r#"<w:p><w:r><w:rPr><w:rFonts w:ascii='Arial" onmouseover="steal'/></w:rPr>"#,
         r#"<w:t>quoted</w:t></w:r></w:p>"#,
     ));
@@ -642,6 +642,12 @@ fn values_from_the_file_cannot_inject_markup_into_html_attributes() {
         }
     }
     assert_eq!(html_texts(&html, "p"), ["quoted"]);
+    let quoted = reopen(&mut quoted);
+    let paragraph = quoted.paragraph(0).unwrap();
+    assert_eq!(
+        run_with_text(&paragraph, "quoted").font_name(),
+        Some("Arial\" onmouseover=\"steal")
+    );
 }
 
 #[test]

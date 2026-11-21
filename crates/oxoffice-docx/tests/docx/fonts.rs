@@ -918,6 +918,65 @@ fn embedding_a_face_beside_a_face_the_record_keeps_as_written_is_refused() {
     assert_eq!(font(&doc.fonts(), "Gelasio").embedded_fonts.len(), 1);
 }
 
+#[test]
+fn a_run_font_name_with_markup_characters_survives_a_save() {
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_run("x").font("A&B \"Q\" <C>");
+    let first_font = |doc: &Document| {
+        let paragraph = doc.paragraph(0).expect("the paragraph");
+        let run = paragraph.runs().next().expect("the run");
+        run.font_name().map(str::to_owned)
+    };
+    let doc = reopen(&mut doc);
+    assert_eq!(first_font(&doc).as_deref(), Some("A&B \"Q\" <C>"));
+
+    // A tab is kept, save after save: the reader does not normalize it away.
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_run("x").font("A\tB");
+    let mut doc = reopen(&mut doc);
+    doc.paragraph_mut(0)
+        .expect("the paragraph")
+        .run_mut(0)
+        .expect("the run")
+        .set_bold(true);
+    let doc = reopen(&mut doc);
+    assert_eq!(first_font(&doc).as_deref(), Some("A\tB"));
+
+    // A file names the font with entities; a foreign attribute stays as written.
+    let mut doc = doc_with(&[]);
+    doc = {
+        let bytes = doc.to_bytes().expect("document saves");
+        let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+        let xml =
+            String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+        let xml = xml.replacen(
+            "<w:body>",
+            r#"<w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="A&amp;B" xmlns:x="urn:example:fonts" x:note="1&amp;2"/></w:rPr><w:t>x</w:t></w:r></w:p>"#,
+            1,
+        );
+        package.set_part("/word/document.xml", xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("package writes");
+        Document::from_bytes(&out.into_inner()).expect("document opens")
+    };
+    assert_eq!(first_font(&doc).as_deref(), Some("A&B"));
+    // An edit of the run writes its properties again.
+    doc.paragraph_mut(0)
+        .expect("the paragraph")
+        .run_mut(0)
+        .expect("the run")
+        .set_bold(true);
+    let mut doc = reopen(&mut doc);
+    assert_eq!(first_font(&doc).as_deref(), Some("A&B"));
+    let xml = saved_package(&mut doc)
+        .get_part("/word/document.xml")
+        .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap())
+        .unwrap();
+    assert!(xml.contains(r#"w:ascii="A&amp;B""#), "{xml}");
+    assert!(xml.contains("<w:b/>"), "{xml}");
+    assert!(xml.contains(r#"x:note="1&amp;2""#), "{xml}");
+}
+
 // ---- Embedding faces ----
 
 #[test]
