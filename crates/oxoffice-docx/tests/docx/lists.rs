@@ -2436,3 +2436,60 @@ fn a_swapped_in_level_without_a_format_reads_as_numbered() {
     let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
     assert_eq!(doc.numbering_is_bullet(id), Some(false));
 }
+
+#[test]
+fn a_style_numbered_without_a_level_links_and_unlinks_at_level_zero() {
+    // Word writes List Bullet with a w:numId and no w:ilvl; it numbers at
+    // level 0, as the graph check and the layout read it.
+    let mut doc = corpus_doc("word/report.docx");
+    doc.link_style_to_numbering("Listepuces", 1, 0)
+        .expect("already linked at level 0: nothing to change");
+    let mut doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    assert!(
+        styles.contains(r#"w:styleId="Listepuces""#)
+            && !styles[styles.find(r#"w:styleId="Listepuces""#).unwrap()..]
+                .split("</w:style>")
+                .next()
+                .unwrap()
+                .contains("w:ilvl"),
+        "the style keeps its form"
+    );
+    assert!(doc.link_style_to_numbering("Listepuces", 1, 2).is_err());
+    doc.unlink_style_from_numbering("Listepuces", 1, 0).unwrap();
+    let doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    let style = styles[styles.find(r#"w:styleId="Listepuces""#).unwrap()..]
+        .split("</w:style>")
+        .next()
+        .unwrap()
+        .to_owned();
+    assert!(!style.contains("w:numId"), "{style}");
+}
+
+#[test]
+fn a_paragraph_numbered_without_a_level_restarts_and_continues_at_level_zero() {
+    let mut doc = Document::new();
+    for text in ["a", "b", "c", "d"] {
+        doc.add_numbered_list_item(text, 0);
+    }
+    // The same list as a producer writes it: a w:numId and no w:ilvl.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"<w:ilvl w:val="0"/>"#), "{xml}");
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="0"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let old = doc.paragraph(0).unwrap().numbering().unwrap().0;
+    let new = doc.restart_numbering(2, 7).unwrap();
+    assert_ne!(new, old);
+    // An item added after them continues the list at level 0.
+    doc.add_numbered_list_item("e", 0);
+    let doc = reopen(&mut doc);
+    assert_eq!(markers(&doc), ["1.", "2.", "7.", "8.", "9."]);
+}
