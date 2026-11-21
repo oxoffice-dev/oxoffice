@@ -1651,6 +1651,60 @@ fn equations_in_wrappers_and_tracked_changes_reach_both_exports_in_their_place()
     );
 }
 
+/// A document whose body holds this raw XML, with the math namespace
+/// declared on the document root, as Word writes it, not on each equation.
+fn doc_with_math_body(body: &str) -> Document {
+    let mut doc = doc_with_body(body);
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let xml = xml.replacen(
+        "<w:document ",
+        &format!(r#"<w:document xmlns:m="{MATH_NAMESPACE}" "#),
+        1,
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn equations_word_writes_in_wrappers_fields_and_display_groups_reach_both_exports() {
+    let doc = doc_with_math_body(concat!(
+        // In a smart tag, `m` declared on the root only.
+        r#"<w:p><w:smartTag w:uri="urn:u" w:element="e"><w:r><w:t xml:space="preserve">tag </w:t></w:r>"#,
+        r#"<m:oMath><m:r><m:t>y</m:t></m:r></m:oMath></w:smartTag></w:p>"#,
+        // In a simple field's result.
+        r#"<w:p><w:fldSimple w:instr=" QUOTE x "><w:r><w:t xml:space="preserve">field </w:t></w:r>"#,
+        r#"<m:oMath><m:r><m:t>f</m:t></m:r></m:oMath></w:fldSimple></w:p>"#,
+        // A centred display group.
+        r#"<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="center"/></m:oMathParaPr>"#,
+        r#"<m:oMath><m:r><m:t>d</m:t></m:r></m:oMath></m:oMathPara></w:p>"#,
+        // After a two-run field, in a tracked insertion (the field's result
+        // text is lost there: #392).
+        r#"<w:p><w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:fldSimple w:instr=" QUOTE a ">"#,
+        r#"<w:r><w:t>1</w:t></w:r><w:r><w:t>2</w:t></w:r></w:fldSimple>"#,
+        r#"<m:oMath><m:r><m:t>z</m:t></m:r></m:oMath><w:r><w:t>C</w:t></w:r></w:ins></w:p>"#,
+    ));
+    let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
+    assert!(markdown.contains("tag $y$"), "{markdown}");
+    assert!(markdown.contains("field $f$"), "{markdown}");
+    assert!(markdown.contains("$$d$$"), "{markdown}");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message == "display group of equation 3: its justification was left out"),
+        "{diagnostics:?}"
+    );
+    // Both exports place it before the run that follows it.
+    assert!(markdown.contains("$z$C"), "{markdown}");
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<math").count(), 4, "{html}");
+    assert!(html.contains("<mi>z</mi></math>C</p>"), "{html}");
+}
+
 #[test]
 fn an_equation_after_a_link_is_not_part_of_the_link() {
     let mut doc = Document::new();

@@ -2158,8 +2158,19 @@ fn shifted_equations(
         .map(move |(at, slot, equation)| (offset + at, *slot, equation.clone()))
 }
 
+/// The scope a smart tag or inline custom XML element is read in when its
+/// own ancestors are not at hand: `w`, and `m` for the equations it holds,
+/// which Word declares on the document root.
+fn wrapper_scope() -> [String; 2] {
+    [
+        "w".to_owned(),
+        crate::numbering::namespace_binding("m", crate::namespace::M_NS),
+    ]
+}
+
 /// The equations a tracked insertion or move in holds, placed among the
-/// `count` runs it added at `offset` of the accepted view.
+/// `count` runs it added at `offset` of the accepted view (with field
+/// owners preserved, as Markdown reads it).
 fn push_inserted_equations(
     revision: &CT_Revision,
     offset: usize,
@@ -2473,13 +2484,27 @@ impl CT_P {
                             );
                             continue;
                         }
-                        append_accepted_revision_runs(revision, &mut owned);
-                        push_inserted_equations(revision, offset, owned.len(), &mut equations);
-                        hyperlink_revision_index(*slot)
+                        // The runs and equations of an insertion's own accepted
+                        // view, wrappers and simple fields read as everywhere.
+                        if matches!(
+                            revision.kind(),
+                            RevisionKind::Insertion | RevisionKind::MoveTo
+                        ) && let Some(paragraph) = revision.content_paragraph()
+                        {
+                            let (view, _) = paragraph.accepted_view_projection(false);
+                            let view = view.into_owned();
+                            links.extend(std::iter::repeat_n(
+                                hyperlink_revision_index(*slot),
+                                view.runs.len(),
+                            ));
+                            equations.extend(shifted_equations(&view, offset));
+                            runs.extend(view.runs);
+                        }
+                        continue;
                     }
                     BoundaryOwner::Wrapper(index) => {
                         if let Some(content) =
-                            run_wrapper_paragraph(&self.extra_xml[index].1, &["w".to_owned()])
+                            run_wrapper_paragraph(&self.extra_xml[index].1, &wrapper_scope())
                         {
                             let (view, boundaries) =
                                 content.accepted_view_projection(preserve_field_owners);
@@ -2571,7 +2596,7 @@ impl CT_P {
         if !is_run_wrapper(raw) {
             return None;
         }
-        run_wrapper_paragraph(raw, &["w".to_owned()])
+        run_wrapper_paragraph(raw, &wrapper_scope())
     }
 
     /// Current accepted/tracked indexes for the retained physical marker occurrences.
