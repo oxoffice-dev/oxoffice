@@ -535,6 +535,207 @@ fn doc_with_rows_in_row_controls() -> Document {
     ))
 }
 
+/// A row of two cells, its first cell's vertical merge `merge` when given.
+fn merge_row(name: &str, merge: Option<&str>) -> String {
+    let properties = merge.map_or_else(String::new, |merge| {
+        format!(r#"<w:tcPr><w:vMerge w:val="{merge}"/></w:tcPr>"#)
+    });
+    format!(
+        r#"<w:tr><w:tc>{properties}<w:p><w:r><w:t>{name}1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{name}2</w:t></w:r></w:p></w:tc></w:tr>"#
+    )
+}
+
+/// A two-column table of `content`, alone in the body or in a raw header.
+fn table_xml(content: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{content}</w:tbl><w:p/>"#
+    )
+}
+
+fn control_xml(tag: &str, content: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+/// Rows A, B in a row control after a column bookmark start, D, then E in a
+/// row control after the bookmark's end: table children beside the controls.
+fn bookmarked_rows() -> String {
+    table_xml(&format!(
+        r#"{}<w:bookmarkStart w:id="7" w:name="column" w:colFirst="0" w:colLast="1"/>{}{}<w:bookmarkEnd w:id="7"/>{}"#,
+        merge_row("A", None),
+        control_xml("lines", &merge_row("B", None)),
+        merge_row("D", None),
+        control_xml("tail", &merge_row("E", None)),
+    ))
+}
+
+/// The first column's text of each row of the first table of `story`.
+fn story_first_column(doc: &Document, story: &StoryId) -> Vec<String> {
+    let table = doc
+        .story_items(story)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::Table)
+        .unwrap()
+        .location()
+        .clone();
+    doc.read_story_table(&table, |table| {
+        (0..table.row_count())
+            .map(|row| table.cell(row, 0).unwrap().text())
+            .collect::<Vec<_>>()
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_copied_row_keeps_the_row_controls_and_the_table_children_beside_them() {
+    let mut doc = doc_with_body(&bookmarked_rows());
+    assert_eq!(first_column(&doc), ["A1", "B1", "D1", "E1"]);
+    // Before D, after the control the bookmark start comes before.
+    assert_eq!(doc.clone_table_row(0, 0, 2).unwrap(), 2);
+    // After the last row, after the control the bookmark end comes before.
+    assert_eq!(doc.clone_table_row(0, 0, 5).unwrap(), 5);
+    // Before B: the bookmark start stays before the copy.
+    assert_eq!(doc.clone_table_row(0, 2, 1).unwrap(), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        first_column(&doc),
+        ["A1", "A1", "B1", "A1", "D1", "E1", "A1"]
+    );
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let order: Vec<usize> = [
+        ">A1<",
+        "bookmarkStart",
+        ">B1<",
+        ">D1<",
+        "bookmarkEnd",
+        ">E1<",
+    ]
+    .iter()
+    .map(|needle| {
+        xml.find(needle)
+            .unwrap_or_else(|| panic!("{needle} is kept"))
+    })
+    .collect();
+    assert!(order.is_sorted(), "{order:?}: {xml}");
+    assert_eq!(xml.matches("bookmarkStart").count(), 1);
+
+    let mut doc = doc_with_raw_header(&bookmarked_rows());
+    let header = story(&doc, StoryKind::Header);
+    let table = doc
+        .story_items(&header)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::Table)
+        .unwrap()
+        .location()
+        .clone();
+    assert_eq!(doc.clone_story_table_row(&table, 0, 2).unwrap(), 2);
+    let header = story(&doc, StoryKind::Header);
+    let table = doc
+        .story_items(&header)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::Table)
+        .unwrap()
+        .location()
+        .clone();
+    assert_eq!(doc.clone_story_table_row(&table, 0, 5).unwrap(), 5);
+    let doc = reopen(&mut doc);
+    let header = story(&doc, StoryKind::Header);
+    assert_eq!(
+        story_first_column(&doc, &header),
+        ["A1", "B1", "A1", "D1", "E1", "A1"]
+    );
+}
+
+#[test]
+fn vertical_merges_run_through_the_rows_of_row_controls() {
+    let mut doc = doc_with_rows_in_row_controls();
+    assert!(
+        doc.table_mut(0)
+            .unwrap()
+            .set_cell_vertical_merge(1, 0, Some(oxoffice_docx::VMerge::Continue))
+            .is_err(),
+        "row B cannot continue a merge A does not start"
+    );
+
+    // A1 starts a merge that B1, C1 and D1 continue; removing A hands it to B.
+    let mut doc = doc_with_body(&table_xml(&format!(
+        "{}{}{}",
+        merge_row("A", Some("restart")),
+        control_xml(
+            "lines",
+            &format!(
+                "{}{}",
+                merge_row("B", Some("continue")),
+                control_xml("inner", &merge_row("C", Some("continue")))
+            )
+        ),
+        merge_row("D", Some("continue")),
+    )));
+    assert!(doc.remove_table_row(0, 0).unwrap());
+    let doc = reopen(&mut doc);
+    let table = doc.table(0).unwrap();
+    let merges: Vec<Option<oxoffice_docx::VMerge>> = (0..table.row_count())
+        .map(|row| table.cell(row, 0).unwrap().v_merge().copied())
+        .collect();
+    use oxoffice_docx::VMerge::{Continue, Restart};
+    assert_eq!(merges, [Some(Restart), Some(Continue), Some(Continue)]);
+}
+
+#[test]
+fn a_cell_of_a_cell_control_is_reported_once_in_the_web_page_losses() {
+    let inline = r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="name"/></w:sdtPr><w:sdtContent><w:r><w:t>Ada</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc>{}</w:tr></w:tbl><w:p/>"#,
+        control_xml("cells", &format!("<w:tc>{inline}</w:tc>"))
+    ));
+    let losses = doc.to_mhtml_bytes().unwrap().diagnostics;
+    let flattened: Vec<&str> = losses
+        .iter()
+        .filter(|loss| loss.message == "flattened Word paragraph content control")
+        .map(|loss| loss.location.as_str())
+        .collect();
+    assert_eq!(flattened.len(), 1, "{flattened:?}");
+}
+
+#[test]
+fn a_story_that_cannot_be_read_fails_the_setters_and_the_listing_keeps_the_body() {
+    let mut doc = doc_with_control("summary");
+    doc.create_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let header = package
+        .get_part_rels("/word/document.xml")
+        .unwrap()
+        .items
+        .iter()
+        .find(|relationship| relationship.target.contains("header"))
+        .unwrap()
+        .target
+        .clone();
+    package.remove_part(&format!("/word/{header}"));
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    assert_eq!(listed(&doc).len(), 1, "the body's control is listed");
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .set_content_control_value_by_tag("summary", "Done")
+        .unwrap_err();
+    assert!(error.to_string().contains("missing part"), "{error}");
+    let rule = prompt(target("summary"), false, "Summary");
+    assert!(
+        doc.fill_form(&[rule], &[assign(target("summary"), text("Done"))])
+            .is_err(),
+        "fill_form fails on the same story"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
 #[test]
 fn every_row_counted_is_addressed_by_row_and_cell_in_document_order() {
     let doc = doc_with_rows_in_row_controls();
@@ -996,17 +1197,27 @@ fn a_value_set_by_tag_reaches_controls_in_text_boxes_of_the_body_and_of_a_header
 }
 
 #[test]
-fn nested_story_controls_that_both_take_a_value_are_refused_and_change_nothing() {
+fn nested_controls_that_both_take_a_value_are_refused_in_every_story() {
     let nested = r#"<w:sdt><w:sdtPr><w:tag w:val="same"/></w:sdtPr><w:sdtContent><w:p><w:sdt><w:sdtPr><w:tag w:val="same"/></w:sdtPr><w:sdtContent><w:r><w:t>inner</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>"#;
-    let mut doc = doc_with_raw_header(nested);
+    for mut doc in [doc_with_raw_header(nested), doc_with_body(nested)] {
+        assert_eq!(
+            doc.content_controls_by_tag("same").len(),
+            2,
+            "the outer control, then the inner one"
+        );
+        let before = doc.to_bytes().unwrap();
+        let error = doc
+            .set_content_control_value_by_tag("same", "x")
+            .unwrap_err();
+        assert!(error.to_string().contains("nested"), "{error}");
+        assert_eq!(doc.to_bytes().unwrap(), before);
+    }
+    // Either one alone takes its value.
+    let mut doc = doc_with_body(&nested.replacen("same", "outer", 1));
     assert_eq!(
-        listed(&doc).len(),
-        2,
-        "the outer control, then the inner one"
+        doc.set_content_control_value_by_tag("same", "x").unwrap(),
+        1
     );
-    let before = doc.to_bytes().unwrap();
-    assert!(doc.set_content_control_value_by_tag("same", "x").is_err());
-    assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
 #[test]

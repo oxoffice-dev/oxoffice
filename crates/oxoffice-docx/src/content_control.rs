@@ -167,7 +167,7 @@ impl Document {
     /// [`Self::fill_form`] finds them: the body's text boxes, then the
     /// headers, footers, notes and comments in story order, with their text
     /// boxes. When the other stories cannot be read, the body's controls
-    /// alone are listed, and the setters reach them alone.
+    /// alone are listed; the setters then return the error.
     pub fn content_controls(&self) -> Vec<ContentControlRef<'_>> {
         let mut controls: Vec<ContentControlRef<'_>> = self
             .document
@@ -202,8 +202,9 @@ impl Document {
     }
 
     /// Replace the display and bound custom XML value of controls with `tag`,
-    /// in every story [`Self::content_controls`] lists. Outside the body, two
-    /// selected controls of which one holds the other are refused.
+    /// in every story [`Self::content_controls`] lists. Two selected controls
+    /// of which one holds the other are refused, as one value would
+    /// overwrite the other.
     pub fn set_content_control_value_by_tag(&mut self, tag: &str, value: &str) -> Result<usize> {
         self.apply_content_control_values(|control| {
             (control.tag() == Some(tag)).then(|| value.to_owned())
@@ -284,6 +285,7 @@ impl Document {
                 Some(prepare_control_value(inner, &value).map(|value| (index, value, binding)))
             })
             .collect::<Result<Vec<_>>>()?;
+        refuse_nested_selection(&self.document.body, &selected)?;
 
         let body = if selected.is_empty() {
             None
@@ -323,18 +325,15 @@ impl Document {
             Some((staged_document, staged_package))
         };
 
-        // The other stories, read as the listing reads them: when they cannot
-        // be read, the body's controls alone take values, as they alone are
-        // listed.
+        // The other stories, read as fill_form reads them: a story that
+        // cannot be read fails the call, as it fails fill_form.
         let mut candidate = self.clone_for_staging();
         if let Some((document, package)) = &body {
             candidate.document = document.clone();
             candidate.package = package.clone();
         }
-        let stories = candidate
-            .flush_to_package()
-            .and_then(|()| story_controls(&candidate))
-            .unwrap_or_default();
+        candidate.flush_to_package()?;
+        let stories = story_controls(&candidate)?;
         let picked = stories
             .iter()
             .filter_map(|story| {
@@ -357,6 +356,40 @@ impl Document {
         self.commit_staged_mutation(candidate.prepare_and_reopen_staged()?);
         Ok(selected.len() + picked.len())
     }
+}
+
+/// Refuse two selected body controls of which one holds the other, as the
+/// story controls are refused: the outer value would overwrite the inner one.
+/// `selected` holds indices of `body.content_controls()`, which lists each
+/// control before the controls nested in it.
+fn refuse_nested_selection(
+    body: &CT_Body,
+    selected: &[(usize, ControlValue, Option<CT_DataBinding>)],
+) -> Result<()> {
+    if selected.len() < 2 {
+        return Ok(());
+    }
+    let controls = body.content_controls();
+    for (index, _, _) in selected {
+        let nested = CT_Body {
+            content: vec![BodyContent::ContentControl(Box::new(
+                controls[*index].clone(),
+            ))],
+            sect_pr: None,
+        }
+        .content_controls()
+        .len()
+            - 1;
+        if selected
+            .iter()
+            .any(|(other, _, _)| *other > *index && *other <= *index + nested)
+        {
+            return Err(Error::Other(
+                "content controls nested in one another cannot take values at once".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A typed content control outside the body's model: in a text box of the

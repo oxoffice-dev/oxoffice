@@ -1484,8 +1484,9 @@ fn row_mhtml_losses(
             "dropped unsupported Word table row content",
         )?;
     }
-    // Cells that content controls wrap are reported in document order.
-    for cell_index in 0..=row.cell_count() {
+    // Cells that content controls wrap are reported in document order, at
+    // their place among the row's own cells.
+    for cell_index in 0..=row.inner.cells.len() {
         for (control_index, (_, _, control)) in row
             .inner
             .content_controls
@@ -1501,7 +1502,12 @@ fn row_mhtml_losses(
             )?;
             control_mhtml_losses(document, control, &control_location, diagnostics)?;
         }
-        if let Some(cell) = row.cell(cell_index) {
+        if let Some(cell) = row
+            .inner
+            .cells
+            .get(cell_index)
+            .map(|inner| CellRef { inner })
+        {
             cell_mhtml_losses(
                 document,
                 cell,

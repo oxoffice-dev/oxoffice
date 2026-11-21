@@ -120,3 +120,21 @@ def test_the_tag_setter_and_the_listing_reach_a_control_in_a_header():
     assert doc.set_content_control_value_by_tag("title", "Annual report") == 1
     doc = reopen(doc)
     assert [(c.tag, c.text) for c in doc.content_controls()] == [("title", "Annual report")]
+
+
+def test_a_vertical_merge_continues_only_a_merge_the_row_above_starts():
+    doc = with_body(ROWS)
+    with pytest.raises(oxdocx.DocxError):
+        doc.tables[0].set_cell_vertical_merge(1, 0, "continue")  # A1 starts no merge
+    doc.tables[0].set_cell_vertical_merge(0, 0, "restart")
+    doc.tables[0].set_cell_vertical_merge(1, 0, "continue")
+    doc = reopen(doc)
+    assert [doc.tables[0].cell(row, 0).vertical_merge for row in range(4)] == ["restart", "continue", None, None]
+
+
+def test_a_copied_row_keeps_a_row_control_beside_a_table_bookmark():
+    bookmark = '<w:bookmarkStart w:id="7" w:name="column" w:colFirst="0" w:colLast="1"/>'
+    doc = with_body(f"<w:tbl>{grid(2)}{row('A')}{bookmark}{control('lines', row('B'))}{row('D')}</w:tbl><w:p/>")
+    doc.tables[0].clone_row(0, 2)
+    doc = reopen(doc)
+    assert first_column(doc) == ["A1", "B1", "A1", "D1"]

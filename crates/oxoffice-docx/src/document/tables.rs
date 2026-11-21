@@ -281,7 +281,7 @@ impl Document {
                 "a table keeps at least one row, so its only row cannot be removed".to_owned(),
             ));
         }
-        restart_merges_continued_below(table, row_index)?;
+        crate::table::hand_on_vertical_restarts(table, row_index)?;
         let raw_before_removed = table
             .extra_xml
             .iter()
@@ -376,7 +376,7 @@ impl Document {
                 "a table keeps at least one row, so its only row cannot be removed".to_owned(),
             ));
         }
-        restart_merges_continued_below(&mut table, row_index)?;
+        crate::table::hand_on_vertical_restarts(&mut table, row_index)?;
         let raw_before = table
             .extra_xml
             .iter()
@@ -512,21 +512,35 @@ fn own_removed_row(table: &CT_Tbl, index: usize) -> Result<usize> {
 }
 
 /// Insert `row` among the table's own rows before row `insert_at`, rows
-/// counted as [`TableRef::row`] counts them, or after the last one, keeping
-/// the preserved children and the row controls at their place.
+/// counted as [`TableRef::row`] counts them, or after the last one. The
+/// preserved children and row controls of the boundary written before the
+/// new row stay at it, and those written after move with the rows after it,
+/// so that each control keeps the children written before it.
 fn insert_copied_row(table: &mut CT_Tbl, insert_at: usize, row: CT_Row) -> Result<()> {
-    let (position, controls_follow) = crate::table::own_row_insertion(table, insert_at)
-        .ok_or_else(|| {
+    let (position, follows) =
+        crate::table::own_row_insertion(table, insert_at).ok_or_else(|| {
             Error::Other("a row cannot be inserted inside a row content control".to_owned())
         })?;
+    let mut raw = 0;
     for (at, _) in &mut table.extra_xml {
-        if *at >= position {
+        if *at == position {
+            if follows.is_some_and(|(first, _)| raw >= first) {
+                *at += 1;
+            }
+            raw += 1;
+        } else if *at > position {
             *at += 1;
         }
     }
-    for (at, _, _) in &mut table.content_controls {
-        if *at > position || (*at == position && controls_follow) {
+    for (index, (at, raw_before, _)) in table.content_controls.iter_mut().enumerate() {
+        if *at > position {
             *at += 1;
+        } else if *at == position
+            && let Some((first, control)) = follows
+            && (*raw_before > first || *raw_before == first && index >= control)
+        {
+            *at += 1;
+            *raw_before -= first;
         }
     }
     table.rows.insert(position, row);

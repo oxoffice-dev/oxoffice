@@ -803,32 +803,33 @@ pub(crate) fn own_row_index(table: &CT_Tbl, index: usize) -> Option<usize> {
 }
 
 /// Where a row inserted before row `index` (as [`TableRef::row`] counts
-/// rows), or after the last row when `index` is their count, goes among
-/// the table's own rows, and whether the row controls at that boundary
-/// follow it. `None` where only a control could hold the row: inside one,
-/// or between two controls of one boundary.
-pub(crate) fn own_row_insertion(table: &CT_Tbl, index: usize) -> Option<(usize, bool)> {
+/// rows), or after the last row when `index` is their count, goes among the
+/// table's own rows: its own index, and what of that boundary follows it.
+/// `None` there: the boundary's preserved children and row controls all
+/// stay before it. `Some((raw, control))` when it goes before the first row
+/// of the row control `control` (its index in `content_controls`), written
+/// after `raw` preserved children of the boundary: that control and what is
+/// written after it follow. `None` overall where only a control could hold
+/// the row, after the first row of one.
+pub(crate) fn own_row_insertion(
+    table: &CT_Tbl,
+    index: usize,
+) -> Option<(usize, Option<(usize, usize)>)> {
     let rows = table_rows(table);
     if index == rows.len() {
-        return Some((table.rows.len(), false));
+        return Some((table.rows.len(), None));
     }
     let target = *rows.get(index)?;
     if let Some(own) = table.rows.iter().position(|row| std::ptr::eq(row, target)) {
-        return Some((own, false));
+        return Some((own, None));
     }
-    for boundary in 0..=table.rows.len() {
-        let mut first = true;
-        for (_, _, control) in table
-            .content_controls
-            .iter()
-            .filter(|(at, _, _)| *at == boundary)
-        {
-            let mut held = Vec::new();
-            push_control_rows(control, &mut held);
-            if let Some(position) = held.iter().position(|row| std::ptr::eq(*row, target)) {
-                return (first && position == 0).then_some((boundary, true));
-            }
-            first &= held.is_empty();
+    for (control_index, (boundary, raw_before, control)) in
+        table.content_controls.iter().enumerate()
+    {
+        let mut held = Vec::new();
+        push_control_rows(control, &mut held);
+        if let Some(position) = held.iter().position(|row| std::ptr::eq(*row, target)) {
+            return (position == 0).then_some((*boundary, Some((*raw_before, control_index))));
         }
     }
     None
@@ -950,8 +951,9 @@ pub(crate) fn validate_table_topology(table: &CT_Tbl) -> Result<()> {
     }
     let grid_columns = grid.columns.len();
     let mut previous_vertical_ranges = std::collections::BTreeSet::new();
-    for row in &table.rows {
-        // The cells of cell controls cover the grid with the row's own.
+    // The rows of row controls take part in the merges, and the cells of
+    // cell controls cover the grid with their row's own.
+    for row in table_rows(table) {
         let cells = row_cells(row);
         let ranges = cell_ranges(row, &cells, grid_columns)?;
         let mut current_vertical_ranges = std::collections::BTreeSet::new();
@@ -976,6 +978,52 @@ pub(crate) fn validate_table_topology(table: &CT_Tbl) -> Result<()> {
             }
         }
         previous_vertical_ranges = current_vertical_ranges;
+    }
+    Ok(())
+}
+
+/// Before the table's own row `own` is removed, hand the vertical merges it
+/// starts to the row below it, rows counted as [`TableRef::row`] counts
+/// them: a continuing cell of the same grid columns becomes the start.
+pub(crate) fn hand_on_vertical_restarts(table: &mut CT_Tbl, own: usize) -> Result<()> {
+    let grid_columns = table
+        .grid
+        .as_ref()
+        .map(|grid| grid.columns.len())
+        .ok_or_else(|| Error::Other("table has no active grid".to_owned()))?;
+    let Some(removed) = table.rows.get(own) else {
+        return Ok(());
+    };
+    let rows = table_rows(table);
+    let Some(index) = rows.iter().position(|row| std::ptr::eq(*row, removed)) else {
+        return Ok(());
+    };
+    let cells = row_cells(removed);
+    let restarted = cell_ranges(removed, &cells, grid_columns)?
+        .into_iter()
+        .zip(cells)
+        .filter_map(|(range, cell)| {
+            (cell
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.v_merge.as_ref())
+                == Some(&VMerge::Restart))
+            .then_some(range)
+        })
+        .collect::<std::collections::HashSet<_>>();
+    if restarted.is_empty() || index + 1 >= rows.len() {
+        return Ok(());
+    }
+    let below = rows[index + 1];
+    let ranges = cell_ranges(below, &row_cells(below), grid_columns)?;
+    let below = table_row_mut(table, index + 1).expect("the row below was read above");
+    for (range, cell) in ranges.into_iter().zip(row_cells_mut(below)) {
+        if restarted.contains(&range)
+            && let Some(properties) = cell.properties.as_mut()
+            && properties.v_merge == Some(VMerge::Continue)
+        {
+            properties.v_merge = Some(VMerge::Restart);
+        }
     }
     Ok(())
 }
