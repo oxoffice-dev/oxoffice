@@ -805,8 +805,9 @@ pub(crate) fn own_row_index(table: &CT_Tbl, index: usize) -> Option<usize> {
 /// Where a row inserted before row `index` (as [`TableRef::row`] counts
 /// rows), or after the last row when `index` is their count, goes among the
 /// table's own rows: its own index, and what of that boundary follows it.
-/// `None` there: the boundary's preserved children and row controls all
-/// stay before it. `Some((raw, control))` when it goes before the first row
+/// `None` there: it goes after the boundary's row controls, and only the
+/// preserved children written after the last of them follow it.
+/// `Some((raw, control))` when it goes before the first row
 /// of the row control `control` (its index in `content_controls`), written
 /// after `raw` preserved children of the boundary: that control and what is
 /// written after it follow. `None` overall where only a control could hold

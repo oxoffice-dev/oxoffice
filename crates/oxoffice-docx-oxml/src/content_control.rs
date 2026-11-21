@@ -3183,6 +3183,14 @@ impl CT_Sdt {
         Ok(())
     }
 
+    /// Every content control nested in this one, at any depth and whatever
+    /// it holds (blocks, rows, cells or runs), in document order.
+    pub fn nested_content_controls(&self) -> Vec<&CT_Sdt> {
+        let mut controls = Vec::new();
+        self.collect_controls(SdtOwner::Standalone, &mut controls);
+        controls
+    }
+
     pub(crate) fn collect_controls<'a>(&'a self, owner: SdtOwner, controls: &mut Vec<&'a CT_Sdt>) {
         for child in self
             .content

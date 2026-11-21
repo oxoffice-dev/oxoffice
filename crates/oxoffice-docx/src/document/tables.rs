@@ -515,16 +515,31 @@ fn own_removed_row(table: &CT_Tbl, index: usize) -> Result<usize> {
 /// counted as [`TableRef::row`] counts them, or after the last one. The
 /// preserved children and row controls of the boundary written before the
 /// new row stay at it, and those written after move with the rows after it,
-/// so that each control keeps the children written before it.
+/// so that each control keeps the children written before it. When the copy
+/// goes after the boundary's controls, the children written after the last
+/// of them (all of them at a boundary without one) follow the copy, as they
+/// follow it in a table without controls.
 fn insert_copied_row(table: &mut CT_Tbl, insert_at: usize, row: CT_Row) -> Result<()> {
     let (position, follows) =
         crate::table::own_row_insertion(table, insert_at).ok_or_else(|| {
             Error::Other("a row cannot be inserted inside a row content control".to_owned())
         })?;
+    let first_moved_raw = follows.map_or_else(
+        || {
+            table
+                .content_controls
+                .iter()
+                .filter(|(at, _, _)| *at == position)
+                .map(|(_, raw_before, _)| *raw_before)
+                .max()
+                .unwrap_or(0)
+        },
+        |(first, _)| first,
+    );
     let mut raw = 0;
     for (at, _) in &mut table.extra_xml {
         if *at == position {
-            if follows.is_some_and(|(first, _)| raw >= first) {
+            if raw >= first_moved_raw {
                 *at += 1;
             }
             raw += 1;

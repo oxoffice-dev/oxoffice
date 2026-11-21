@@ -651,6 +651,36 @@ fn a_copied_row_keeps_the_row_controls_and_the_table_children_beside_them() {
 }
 
 #[test]
+fn in_a_table_without_controls_a_copy_goes_before_the_table_children_of_its_place() {
+    let mut doc = doc_with_body(&table_xml(&format!(
+        r#"{}<w:bookmarkStart w:id="8" w:name="column" w:colFirst="0" w:colLast="1"/>{}<w:bookmarkEnd w:id="8"/>"#,
+        merge_row("A", None),
+        merge_row("B", None),
+    )));
+    // Before B: the bookmark start that precedes B follows the copy.
+    assert_eq!(doc.clone_table_row(0, 0, 1).unwrap(), 1);
+    // After the last row: the copy stays inside the bookmark.
+    assert_eq!(doc.clone_table_row(0, 0, 3).unwrap(), 3);
+    let doc = reopen(&mut doc);
+    assert_eq!(first_column(&doc), ["A1", "A1", "B1", "A1"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let mut at = 0;
+    for needle in [
+        ">A1<",
+        ">A1<",
+        "bookmarkStart",
+        ">B1<",
+        ">A1<",
+        "bookmarkEnd",
+    ] {
+        at += xml[at..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} after {at}: {xml}"))
+            + needle.len();
+    }
+}
+
+#[test]
 fn vertical_merges_run_through_the_rows_of_row_controls() {
     let mut doc = doc_with_rows_in_row_controls();
     assert!(
@@ -1212,6 +1242,18 @@ fn nested_controls_that_both_take_a_value_are_refused_in_every_story() {
         assert!(error.to_string().contains("nested"), "{error}");
         assert_eq!(doc.to_bytes().unwrap(), before);
     }
+    // A control in a cell of a row control.
+    let mut doc = doc_with_body(&table_xml(&control_xml(
+        "same",
+        r#"<w:tr><w:tc><w:p><w:sdt><w:sdtPr><w:tag w:val="same"/></w:sdtPr><w:sdtContent><w:r><w:t>inner</w:t></w:r></w:sdtContent></w:sdt></w:p></w:tc><w:tc><w:p/></w:tc></w:tr>"#,
+    )));
+    assert_eq!(doc.content_controls_by_tag("same").len(), 2);
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .set_content_control_value_by_tag("same", "x")
+        .unwrap_err();
+    assert!(error.to_string().contains("nested"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
     // Either one alone takes its value.
     let mut doc = doc_with_body(&nested.replacen("same", "outer", 1));
     assert_eq!(

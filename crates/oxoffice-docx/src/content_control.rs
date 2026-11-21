@@ -360,8 +360,7 @@ impl Document {
 
 /// Refuse two selected body controls of which one holds the other, as the
 /// story controls are refused: the outer value would overwrite the inner one.
-/// `selected` holds indices of `body.content_controls()`, which lists each
-/// control before the controls nested in it.
+/// `selected` holds indices of `body.content_controls()`.
 fn refuse_nested_selection(
     body: &CT_Body,
     selected: &[(usize, ControlValue, Option<CT_DataBinding>)],
@@ -371,19 +370,12 @@ fn refuse_nested_selection(
     }
     let controls = body.content_controls();
     for (index, _, _) in selected {
-        let nested = CT_Body {
-            content: vec![BodyContent::ContentControl(Box::new(
-                controls[*index].clone(),
-            ))],
-            sect_pr: None,
-        }
-        .content_controls()
-        .len()
-            - 1;
-        if selected
-            .iter()
-            .any(|(other, _, _)| *other > *index && *other <= *index + nested)
-        {
+        let nested = controls[*index].nested_content_controls();
+        if selected.iter().any(|(other, _, _)| {
+            nested
+                .iter()
+                .any(|control| std::ptr::eq(*control, controls[*other]))
+        }) {
             return Err(Error::Other(
                 "content controls nested in one another cannot take values at once".to_owned(),
             ));
