@@ -32,6 +32,10 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 8. **Known limitations** live in `crates/oxoffice-cli/limitations.json`
    (shown by `oxoffice limitations`). Add one with its issue, remove it with
    the fix, regenerate `docs/LIMITATIONS.md`.
+9. **An independent review before every merge**, posted on the pull request;
+   every finding answered first (fixed, or why it is not a defect; a major
+   is fixed unless the maintainer waives it). See
+   [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#independent-review).
 
 ## Commands
 

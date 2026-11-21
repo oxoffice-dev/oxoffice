@@ -15,12 +15,44 @@ How work lands in oxoffice. Short on purpose.
    tests, next, a few short bullets each, readable at a glance. Long notes,
    tables and measurements go in a `<details>` block. Issues follow the same
    shape.
-5. **CI green**, review, squash merge. The squash commit takes the title, so
+5. **Independent review**, posted on the pull request, then answer every
+   finding (see [Independent review](#independent-review)).
+6. **CI green**, squash merge. The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
-6. **Update** `docs/` when a structural fact changes, and the spec's status
+7. **Update** `docs/` when a structural fact changes, and the spec's status
    and Learnings when it ships.
+
+## Independent review
+
+Every pull request is reviewed before it is merged by someone who did not
+write it: a fresh agent given only the pull request, its branch and its spec,
+never the author's reasoning, or a person. Whoever works on the pull request
+or wants to merge it runs that review or asks for one.
+
+- **Posted, unedited.** One comment on the pull request headed
+  `🔍 Independent review`, with the head it read. The reviewer posts it; an
+  agent that cannot write to GitHub hands its report to whoever launched it,
+  who posts it as is. Each finding has `file:line`, the defect and a failure
+  scenario, or the review says it found nothing.
+- **Major** when it would ship a defect: wrong behaviour or a missed case, a
+  test that passes with the feature broken, Rust, CLI and Python disagreeing,
+  an unsafe CI change, a document that misstates how things work. Everything
+  else is **minor**. The reviewer classifies, the author may contest, the
+  maintainer decides.
+- **The author answers every finding** in the thread: fixed, with the commit,
+  or why it is not a defect. A major finding is fixed unless the maintainer
+  waives it.
+- **The review covers the merged head.** After the reviewed head, what
+  cannot change behaviour needs nothing more (a rebase without conflict, a
+  typo in prose); any change to code, tests, workflows or the meaning of a
+  document, fixes included, gets a review of the delta.
+- **Light review**, still posted, for documentation (links, anchors, text
+  agrees with the code and the other docs) and pure code moves (nothing but
+  location changed).
+
+See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
 ## Conventional commits
 
@@ -98,7 +130,8 @@ entry and closes the issue.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on pull requests,
   every call on `main`.
-- Dependabot opens the monthly updates. Review them like any change.
+- Dependabot opens the monthly updates. Review them like any change: the
+  maintainer, or the agent that merges them, answers the review's findings.
 
 ## Documents and Office apps
 
