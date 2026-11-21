@@ -11,6 +11,7 @@ use oxoffice_docx::{
     ContentControlPlacement, ContentControlSpec, ContentControlTypePayload, ContentLocation,
     Document, FormFieldAssignment, FormFieldRule, FormFieldTarget, FormFieldValue, FormResetValue,
     HdrFtrType, HeaderFooterKind, LegacyFormFieldValue, Length, StoryId, StoryItemKind, StoryKind,
+    StoryRunPosition,
 };
 use oxoffice_docx_oxml::content_control::SdtType;
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
@@ -315,6 +316,33 @@ fn doc_with_header_control() -> Document {
     doc
 }
 
+const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const VML_NS: &str = "urn:schemas-microsoft-com:vml";
+
+/// A block control tagged `tag` holding one paragraph of `text`, as XML.
+fn block_control_xml(tag: &str, text: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A paragraph holding a VML text box whose content is `content`, as XML.
+fn text_box_xml(content: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:pict xmlns:v="{VML_NS}"><v:shape id="box" style="width:120pt;height:40pt"><v:textbox><w:txbxContent>{content}</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#
+    )
+}
+
+/// A one-paragraph body and a default header of `content`, written raw.
+fn doc_with_raw_header(content: &str) -> Document {
+    let mut doc = doc_with(&["Body"]);
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{WORD_NS}">{content}</w:hdr>"#
+    );
+    doc.set_raw_header_with_images(header.into_bytes(), &[], HdrFtrType::Default);
+    doc
+}
+
 // ---- Inserting ----
 
 #[test]
@@ -469,10 +497,7 @@ fn row_and_cell_controls_add_a_row_as_wide_as_the_table_and_a_cell_to_a_row() {
     );
 }
 
-// Fails today: the typed table counts its direct rows only, so a row inside a
-// row control, as Word writes repeating table rows, is not one of its rows. Issue: #148
 #[test]
-#[should_panic(expected = "the row inside the control is a row of the table")]
 fn a_row_inside_a_row_control_counts_among_the_table_rows() {
     let mut doc = doc_with(&["Order"]);
     doc.add_table(1, 2);
@@ -488,6 +513,278 @@ fn a_row_inside_a_row_control_counts_among_the_table_rows() {
         2,
         "the row inside the control is a row of the table"
     );
+}
+
+/// A table of four rows: A, then a row control holding B and a nested row
+/// control holding C, then D. Each cell reads its row's letter and column.
+fn doc_with_rows_in_row_controls() -> Document {
+    let row = |name: &str| {
+        format!(
+            r#"<w:tr><w:tc><w:p><w:r><w:t>{name}1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{name}2</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let nested = format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="inner"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>"#,
+        row("C")
+    );
+    doc_with_body(&format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}<w:sdt><w:sdtPr><w:tag w:val="lines"/></w:sdtPr><w:sdtContent>{}{nested}</w:sdtContent></w:sdt>{}</w:tbl><w:p/>"#,
+        row("A"),
+        row("B"),
+        row("D")
+    ))
+}
+
+#[test]
+fn every_row_counted_is_addressed_by_row_and_cell_in_document_order() {
+    let doc = doc_with_rows_in_row_controls();
+    let table = doc.table(0).unwrap();
+    assert_eq!(table.row_count(), 4);
+    let firsts: Vec<String> = (0..table.row_count())
+        .map(|row| {
+            table
+                .row(row)
+                .expect("a counted row")
+                .cell(0)
+                .unwrap()
+                .text()
+        })
+        .collect();
+    assert_eq!(firsts, ["A1", "B1", "C1", "D1"]);
+    assert_eq!(table.cell(1, 1).unwrap().text(), "B2");
+    assert_eq!(table.cell(3, 1).unwrap().text(), "D2");
+    assert!(table.row(4).is_none() && table.cell(4, 0).is_none());
+}
+
+#[test]
+fn the_mutable_table_counts_and_edits_the_rows_of_row_controls_as_the_reader_does() {
+    let mut doc = doc_with_rows_in_row_controls();
+    {
+        let mut table = doc.table_mut(0).unwrap();
+        assert_eq!(table.row_count(), 4);
+        table.cell(2, 0).unwrap().set_text("Changed");
+        table
+            .set_cell_vertical_merge(1, 1, Some(oxoffice_docx::VMerge::Restart))
+            .unwrap();
+        table.cell(2, 1).unwrap().set_text("");
+        table.set_cell_grid_span_checked(2, 0, Some(2)).unwrap();
+        table.cell(3, 1).unwrap().set_text("");
+        table.set_row_grid_omissions(3, None, Some(1)).unwrap();
+    }
+    let doc = reopen(&mut doc);
+    let table = doc.table(0).unwrap();
+    assert_eq!(table.cell(2, 0).unwrap().text(), "Changed");
+    assert_eq!(table.cell(1, 1).unwrap().text(), "B2");
+    assert_eq!(
+        table.cell(1, 1).unwrap().v_merge(),
+        Some(&oxoffice_docx::VMerge::Restart)
+    );
+    assert_eq!(
+        table.cell(2, 0).unwrap().grid_span(),
+        Some(2),
+        "C1 spans row C"
+    );
+    assert_eq!(table.row(2).unwrap().cell_count(), 1);
+    let last = table.row(3).unwrap();
+    assert_eq!(
+        (last.cell_count(), last.grid_after()),
+        (1, Some(1)),
+        "D2 is omitted"
+    );
+    assert_eq!(
+        table.cell(1, 1).unwrap().grid_span(),
+        None,
+        "row B keeps its cells"
+    );
+    assert_eq!(
+        texts(&doc).last().map(String::as_str),
+        Some(""),
+        "the body is left alone"
+    );
+}
+
+/// The first column's text of each row of the first table.
+fn first_column(doc: &Document) -> Vec<String> {
+    let table = doc.table(0).unwrap();
+    (0..table.row_count())
+        .map(|row| table.cell(row, 0).unwrap().text())
+        .collect()
+}
+
+#[test]
+fn the_physical_cell_routes_count_rows_of_row_controls_as_the_table_does() {
+    let mut doc = doc_with_rows_in_row_controls();
+    let table = first_item(&doc, StoryItemKind::Table);
+    let xml = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap();
+    assert!(xml(doc.cell_element_xml(&table, 2, 1).unwrap()).contains("C2"));
+    assert!(xml(doc.cell_element_xml(&table, 3, 0).unwrap()).contains("D1"));
+    assert!(xml(doc.direct_body_cell_xml(0, 2, 0).unwrap().unwrap()).contains("C1"));
+    let paragraph = doc.cell_paragraph_story_location(0, 1, 1, 0).unwrap();
+    assert_eq!(
+        doc.read_story_paragraph(&paragraph, |paragraph| paragraph.text())
+            .unwrap(),
+        "B2"
+    );
+    let inventory = doc.cell_paragraph_story_locations().unwrap();
+    assert!(inventory.contains_key(&(0, 2, 1)) && inventory.contains_key(&(0, 3, 1)));
+    let (_, cells, _, _) = doc.story_owner_snapshots().unwrap();
+    let mut coordinates: Vec<(usize, usize)> = cells
+        .iter()
+        .map(|(_, row, cell, _)| (*row, *cell))
+        .collect();
+    coordinates.sort_unstable();
+    assert_eq!(
+        coordinates,
+        [
+            (0, 0),
+            (0, 1),
+            (1, 0),
+            (1, 1),
+            (2, 0),
+            (2, 1),
+            (3, 0),
+            (3, 1)
+        ]
+    );
+
+    assert_eq!(
+        doc.try_replace_text_in_cell((0, 2, 1), None, "C2", "Third", None)
+            .unwrap(),
+        Ok(1)
+    );
+    let doc = reopen(&mut doc);
+    let table = doc.table(0).unwrap();
+    assert_eq!(table.cell(2, 1).unwrap().text(), "Third");
+    assert_eq!(table.cell(3, 1).unwrap().text(), "D2");
+}
+
+#[test]
+fn the_local_cell_route_leaves_a_table_holding_row_controls_to_the_checked_one() {
+    let mut doc = doc_with_rows_in_row_controls();
+    let plain = doc_with_body(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    let edit = |cell: &mut oxoffice_docx::Cell<'_>| cell.try_set_text("x");
+    assert!(
+        plain
+            .direct_body_table_cell_candidate(0, 0, 0, edit)
+            .unwrap()
+            .is_some(),
+        "a plain table takes the local route"
+    );
+    assert!(
+        doc.direct_body_table_cell_candidate(0, 1, 1, edit)
+            .unwrap()
+            .is_none(),
+        "its own row 1 is D, row 1 is B"
+    );
+    doc.try_set_cell_text(0, 1, 1, "Bee").unwrap();
+    assert_eq!(doc.table(0).unwrap().cell(1, 1).unwrap().text(), "Bee");
+    assert_eq!(doc.table(0).unwrap().cell(3, 1).unwrap().text(), "D2");
+}
+
+#[test]
+fn rows_are_copied_and_removed_by_the_rows_the_table_counts() {
+    let mut doc = doc_with_rows_in_row_controls();
+    // Before the row control: the copy comes before its rows.
+    assert_eq!(doc.clone_table_row(0, 0, 1).unwrap(), 1);
+    assert_eq!(first_column(&doc), ["A1", "A1", "B1", "C1", "D1"]);
+    // Before row D: the copy comes after the control's rows.
+    assert_eq!(doc.clone_table_row(0, 4, 4).unwrap(), 4);
+    assert_eq!(first_column(&doc), ["A1", "A1", "B1", "C1", "D1", "D1"]);
+    // After the last row.
+    assert_eq!(doc.clone_table_row(0, 0, 6).unwrap(), 6);
+    assert_eq!(doc.table(0).unwrap().row_count(), 7);
+
+    let before = doc.to_bytes().unwrap();
+    assert!(
+        doc.clone_table_row(0, 2, 0).is_err(),
+        "row B sits in a control"
+    );
+    assert!(
+        doc.clone_table_row(0, 0, 3).is_err(),
+        "row C is inside a control"
+    );
+    assert!(
+        doc.remove_table_row(0, 3).is_err(),
+        "row C sits in a control"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+
+    assert!(doc.remove_table_row(0, 1).unwrap());
+    assert!(doc.remove_table_row(0, 4).unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(first_column(&doc), ["A1", "B1", "C1", "D1", "A1"]);
+}
+
+/// A table of one row: A, then a cell control holding X and a nested cell
+/// control holding Y, then D.
+fn doc_with_cells_in_cell_controls() -> Document {
+    let cell = |text: &str| format!(r#"<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#);
+    let control = |tag: &str, content: String| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+        )
+    };
+    let nested = control("inner", cell("Y"));
+    doc_with_body(&format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr>{}{}{}</w:tr><w:tr>{}{}{}{}</w:tr></w:tbl><w:p/>"#,
+        cell("A"),
+        control("cells", format!("{}{nested}", cell("X"))),
+        cell("D"),
+        cell("E"),
+        cell("F"),
+        cell("G"),
+        cell("H")
+    ))
+}
+
+#[test]
+fn every_cell_counted_is_addressed_among_the_cells_of_cell_controls() {
+    let mut doc = doc_with_cells_in_cell_controls();
+    {
+        let table = doc.table(0).unwrap();
+        let row = table.row(0).unwrap();
+        assert_eq!(row.cell_count(), 4);
+        let texts: Vec<String> = (0..4).map(|cell| row.cell(cell).unwrap().text()).collect();
+        assert_eq!(texts, ["A", "X", "Y", "D"]);
+        assert!(row.cell(4).is_none());
+        assert_eq!(table.cell(0, 2).unwrap().text(), "Y");
+        assert_eq!(table.cell(1, 2).unwrap().text(), "G");
+        let (_, cells, _, _) = doc.story_owner_snapshots().unwrap();
+        assert!(
+            cells
+                .iter()
+                .any(|(_, row, cell, _)| (*row, *cell) == (0, 3))
+        );
+        let table_location = first_item(&doc, StoryItemKind::Table);
+        let xml = String::from_utf8(doc.cell_element_xml(&table_location, 0, 2).unwrap()).unwrap();
+        assert!(xml.contains(">Y<"), "{xml}");
+    }
+    {
+        let mut table = doc.table_mut(0).unwrap();
+        assert_eq!(table.row(0).unwrap().cell_count(), 4);
+        table.cell(0, 1).unwrap().set_text("Changed");
+        table.row(0).unwrap().cell(2).unwrap().set_text("Nested");
+        table
+            .set_cell_vertical_merge(0, 3, Some(oxoffice_docx::VMerge::Restart))
+            .unwrap();
+        assert!(
+            table.set_cell_grid_span_checked(0, 0, Some(2)).is_err(),
+            "the grid of a row whose cells sit in controls is refused"
+        );
+    }
+    let doc = reopen(&mut doc);
+    let table = doc.table(0).unwrap();
+    assert_eq!(table.cell(0, 1).unwrap().text(), "Changed");
+    assert_eq!(table.cell(0, 2).unwrap().text(), "Nested");
+    assert_eq!(table.cell(0, 0).unwrap().text(), "A");
+    assert_eq!(
+        table.cell(0, 3).unwrap().v_merge(),
+        Some(&oxoffice_docx::VMerge::Restart),
+        "the merge is D's"
+    );
+    assert_eq!(table.cell(1, 3).unwrap().text(), "H");
 }
 
 #[test]
@@ -527,10 +824,7 @@ fn a_control_in_a_header_survives_a_save_and_the_form_calls_fill_and_reset_it() 
     assert_eq!(texts(&doc), ["Body"], "the body is left alone");
 }
 
-// Fails today: the tag setters walk the body only and return 0 for a control in
-// a header. Issue: #148
 #[test]
-#[should_panic(expected = "the tag setter fills the header control")]
 fn a_value_set_by_tag_reaches_a_control_in_a_header() {
     let mut doc = doc_with_header_control();
     let count = doc
@@ -543,6 +837,176 @@ fn a_value_set_by_tag_reaches_a_control_in_a_header() {
         (1, "Annual report"),
         "the tag setter fills the header control"
     );
+}
+
+#[test]
+fn the_tag_and_alias_setters_reach_controls_in_a_footer_and_a_footnote() {
+    let mut doc = doc_with(&["Body"]);
+    let footer = doc
+        .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .unwrap();
+    doc.insert_content_control(
+        &ContentLocation::end(footer),
+        ContentControlSpec {
+            alias: Some("Pied".to_owned()),
+            ..spec(Block, SdtType::PlainText, "page_note")
+        },
+    )
+    .unwrap();
+    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_footnote_at(
+        &StoryRunPosition {
+            location: paragraph,
+            run_index: 1,
+        },
+        "Note",
+    )
+    .unwrap();
+    let note = story(&doc, StoryKind::Footnote);
+    doc.insert_content_control(
+        &ContentLocation::end(note),
+        spec(Block, SdtType::RichText, "source"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        doc.set_content_control_value_by_alias("Pied", "Page 1")
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        doc.set_content_control_value_by_tag("source", "Annual report")
+            .unwrap(),
+        1
+    );
+    let doc = reopen(&mut doc);
+    let footer = story(&doc, StoryKind::Footer);
+    assert_eq!(item_text(&doc, &footer, "page_note"), "Page 1");
+    let note = story(&doc, StoryKind::Footnote);
+    assert_eq!(item_text(&doc, &note, "source"), "Annual report");
+    assert_eq!(texts(&doc), ["Body"], "the body is left alone");
+}
+
+#[test]
+fn the_listing_gives_the_controls_of_the_other_stories_after_the_body() {
+    let mut doc = doc_with_header_control();
+    let end = ContentLocation::end(body(&doc));
+    doc.insert_content_control(&end, spec(Block, SdtType::RichText, "summary"))
+        .unwrap();
+    let footer = doc
+        .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .unwrap();
+    doc.insert_content_control(
+        &ContentLocation::end(footer),
+        spec(Block, SdtType::RichText, "page_note"),
+    )
+    .unwrap();
+    doc.fill_content_control_tags(&[("title", "Report"), ("page_note", "Page 1")])
+        .unwrap();
+    let doc = reopen(&mut doc);
+
+    let tags: Vec<(Option<String>, String)> = doc
+        .content_controls()
+        .iter()
+        .map(|control| (control.tag().map(str::to_owned), control.text()))
+        .collect();
+    assert_eq!(
+        tags,
+        [
+            (Some("summary".to_owned()), String::new()),
+            (Some("title".to_owned()), "Report".to_owned()),
+            (Some("page_note".to_owned()), "Page 1".to_owned()),
+        ]
+    );
+    let found = doc.content_controls_by_tag("title");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].control_type(), Some(SdtType::PlainText));
+}
+
+#[test]
+fn bound_values_reach_a_header_control_and_its_custom_xml() {
+    let mut doc = doc_with_header_control();
+    let store = doc
+        .add_custom_xml_store(b"<report><title>Draft</title></report>", &[])
+        .unwrap();
+    let location = control_at(&doc, &story(&doc, StoryKind::Header), "title");
+    doc.set_content_control_binding(&location, &store, "/report/title", None)
+        .unwrap();
+    let values = HashMap::from([("title".to_owned(), "Annual report".to_owned())]);
+    assert_eq!(doc.bind_content_controls(&values).unwrap(), 1);
+    let doc = reopen(&mut doc);
+    let header = story(&doc, StoryKind::Header);
+    assert_eq!(item_text(&doc, &header, "title"), "Annual report");
+    assert_eq!(
+        doc.part_xml("customXml/item1.xml").unwrap(),
+        "<report><title>Annual report</title></report>"
+    );
+}
+
+#[test]
+fn one_call_fills_several_controls_of_one_header() {
+    let mut doc = doc_with_raw_header(&format!(
+        "{}{}",
+        block_control_xml("first", "1"),
+        block_control_xml("second", "2")
+    ));
+    let values = HashMap::from([
+        ("first".to_owned(), "A much longer first value".to_owned()),
+        ("second".to_owned(), "Second".to_owned()),
+    ]);
+    assert_eq!(doc.bind_content_controls(&values).unwrap(), 2);
+    let doc = reopen(&mut doc);
+    let header = story(&doc, StoryKind::Header);
+    assert_eq!(
+        item_text(&doc, &header, "first"),
+        "A much longer first value"
+    );
+    assert_eq!(item_text(&doc, &header, "second"), "Second");
+}
+
+#[test]
+fn a_value_set_by_tag_reaches_controls_in_text_boxes_of_the_body_and_of_a_header() {
+    let mut doc = doc_with_body(&text_box_xml(&block_control_xml("boxed", "Old")));
+    assert_eq!(listed(&doc).len(), 1, "the text box control is listed once");
+    assert_eq!(
+        doc.set_content_control_value_by_tag("boxed", "New")
+            .unwrap(),
+        1
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(value(&doc, "boxed"), "New");
+    let text_box = story(&doc, StoryKind::TextBox);
+    assert_eq!(item_text(&doc, &text_box, "boxed"), "New");
+
+    let mut doc = doc_with_raw_header(&text_box_xml(&block_control_xml("boxed", "Old")));
+    assert_eq!(
+        doc.set_content_control_value_by_tag("boxed", "New")
+            .unwrap(),
+        1
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(value(&doc, "boxed"), "New");
+    let header_box = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::TextBox && story.part_name().contains("header"))
+        .expect("the header's text box is a story");
+    assert_eq!(item_text(&doc, &header_box, "boxed"), "New");
+}
+
+#[test]
+fn nested_story_controls_that_both_take_a_value_are_refused_and_change_nothing() {
+    let nested = r#"<w:sdt><w:sdtPr><w:tag w:val="same"/></w:sdtPr><w:sdtContent><w:p><w:sdt><w:sdtPr><w:tag w:val="same"/></w:sdtPr><w:sdtContent><w:r><w:t>inner</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>"#;
+    let mut doc = doc_with_raw_header(nested);
+    assert_eq!(
+        listed(&doc).len(),
+        2,
+        "the outer control, then the inner one"
+    );
+    let before = doc.to_bytes().unwrap();
+    assert!(doc.set_content_control_value_by_tag("same", "x").is_err());
+    assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
 #[test]
@@ -1619,6 +2083,7 @@ fn a_cloned_control_gets_a_new_id_and_a_moved_one_keeps_its_own() {
     let doc = reopen(&mut doc);
 
     assert_eq!(texts(&doc), ["Block text", "first Ada", "second Ada"]);
+    // The body's controls come first, then the header's copy.
     assert_eq!(
         listed(&doc),
         [
@@ -1639,6 +2104,12 @@ fn a_cloned_control_gets_a_new_id_and_a_moved_one_keeps_its_own() {
                 Some(3),
                 Some(SdtType::PlainText),
                 " Ada".into()
+            ),
+            (
+                Some("block".into()),
+                Some(4),
+                Some(SdtType::RichText),
+                "Block text".into()
             ),
         ]
     );

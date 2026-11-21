@@ -797,10 +797,7 @@ impl Document {
         validate_element_owner_relationships(self, &owner, WordXmlOwner::Cell(&replacement))?;
         validate_element_xml_identity_change(self, &owner, &current, xml.as_bytes())?;
         let original_table = self.story_table_model(table)?;
-        let original_cell = original_table
-            .rows
-            .get(row)
-            .and_then(|row| row.cells.get(cell))
+        let original_cell = crate::table::table_cell(&original_table, row, cell)
             .ok_or_else(|| Error::Other("element XML original physical cell disappeared".into()))?;
         let profiles = |cell: &CT_Tc| {
             let mut profiles = Vec::new();
