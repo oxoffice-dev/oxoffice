@@ -345,23 +345,17 @@ fn emit_paragraph_content(
 
     for (run_idx, run) in para.runs.iter().enumerate() {
         let in_link = hyperlink_map.get(&run_idx).map(String::as_str);
-        // An anchor or an equation between a link and what follows it is not
-        // in the link.
-        if (anchors.iter().any(|(at, _)| *at == run_idx)
-            || crate::equations_at(para, run_idx).next().is_some())
-            && current_link.is_some()
-            && current_link != in_link
-        {
+        // An anchor is never inside a link: an open link closes before it
+        // and opens again after it when the next run is in it too. An
+        // equation between a link and what follows it is not in the link.
+        let anchor_here = anchors.iter().any(|(at, _)| *at == run_idx);
+        let equation_here = crate::equations_at(para, run_idx).next().is_some();
+        if current_link.is_some() && (anchor_here || (equation_here && current_link != in_link)) {
             out.push_str("</a>");
             current_link = None;
         }
         emit_anchors(out, run_idx);
-        // An equation between a link and what follows it is not in the link.
-        if crate::equations_at(para, run_idx).next().is_some() {
-            if current_link.is_some() && current_link != in_link {
-                out.push_str("</a>");
-                current_link = None;
-            }
+        if equation_here {
             emit_equations(out, para, run_idx, equations);
         }
 

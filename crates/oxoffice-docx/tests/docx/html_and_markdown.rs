@@ -1406,10 +1406,18 @@ fn links_to_bookmarks_in_cells_after_links_and_missing_ones_read_right() {
         r#"<w:bookmarkStart w:id="1" w:name="after"/><w:r><w:t>After</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
         r#"<w:p><w:hyperlink w:anchor="after"><w:r><w:t>to after</w:t></w:r></w:hyperlink>"#,
         r#"<w:hyperlink w:anchor="nowhere"><w:r><w:t xml:space="preserve"> lost</w:t></w:r></w:hyperlink></w:p>"#,
-        // A link and its bookmark in table cells.
-        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+        // A link and its bookmark in table cells, the row in a content control,
+        // and a bookmark in a deleted row.
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:sdt><w:sdtContent><w:tr><w:tc>"#,
         r#"<w:p><w:bookmarkStart w:id="2" w:name="cell"/><w:r><w:t>In cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
-        r#"<w:p><w:hyperlink w:anchor="cell"><w:r><w:t>to cell</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:hyperlink w:anchor="cell"><w:r><w:t>to cell</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:sdtContent></w:sdt>"#,
+        r#"<w:tr><w:trPr><w:del w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z"/></w:trPr><w:tc>"#,
+        r#"<w:p><w:bookmarkStart w:id="4" w:name="gone"/><w:r><w:t>Gone</w:t></w:r><w:bookmarkEnd w:id="4"/></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:hyperlink w:anchor="gone"><w:r><w:t>to gone</w:t></w:r></w:hyperlink></w:p>"#,
+        // A bookmark inside a link's text, and a link to it.
+        r#"<w:p><w:hyperlink r:id="rIdSite"><w:r><w:t>ab</w:t></w:r><w:bookmarkStart w:id="3" w:name="mid"/>"#,
+        r#"<w:r><w:t>cd</w:t></w:r><w:bookmarkEnd w:id="3"/></w:hyperlink></w:p>"#,
+        r#"<w:p><w:hyperlink w:anchor="mid"><w:r><w:t>to mid</w:t></w:r></w:hyperlink></w:p>"#,
         // An external link with an anchor keeps it as its fragment.
         r#"<w:p><w:hyperlink r:id="rIdSite" w:anchor="part"><w:r><w:t>deep</w:t></w:r></w:hyperlink></w:p>"#,
     ));
@@ -1444,6 +1452,17 @@ fn links_to_bookmarks_in_cells_after_links_and_missing_ones_read_right() {
     assert!(html.contains(r##"<a id="cell"></a>In cell"##), "{html}");
     assert!(html.contains(r##"<a href="#cell">to cell</a>"##), "{html}");
     assert!(
+        !html.contains("#gone") && html.contains("to gone"),
+        "{html}"
+    );
+    assert!(
+        html.contains(concat!(
+            r##"<a href="https://example.com/">ab</a><a id="mid"></a>"##,
+            r##"<a href="https://example.com/">cd</a>"##
+        )),
+        "an anchor inside a link's text parts the link: {html}"
+    );
+    assert!(
         html.contains(r##"<a href="https://example.com/#part">deep</a>"##),
         "{html}"
     );
@@ -1473,8 +1492,19 @@ fn a_header_row_holds_header_cells_in_html() {
         "{html}"
     );
     assert!(html.contains("<td><p>Ann</p>\n</td>"), "{html}");
-    // An HTML reader marks the row as a header again.
-    let reread = Document::from_html(&doc.to_html()).unwrap().document;
+    // An HTML reader marks the row as a header again, and reads the cells'
+    // style without a diagnostic.
+    let result = Document::from_html(&doc.to_html()).unwrap();
+    // (The base style sheet's rules are reported, as for every export.)
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.location.contains("/style[")),
+        "{:?}",
+        result.diagnostics
+    );
+    let reread = result.document;
     assert!(reread.table(0).unwrap().row(0).unwrap().is_header());
 }
 

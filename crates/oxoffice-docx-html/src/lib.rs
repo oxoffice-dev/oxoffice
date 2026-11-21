@@ -500,8 +500,14 @@ fn linked_bookmarks(body: &CT_Body) -> HashSet<String> {
                             .filter_map(|marker| marker.name().map(str::to_owned)),
                     );
                 }
+                // The exports leave out a table or row that accepting the
+                // tracked changes removes.
+                Block::Table(table) if table.accepted_view_removes() => {}
                 Block::Table(table) => {
                     for row in table.rows() {
+                        if row.accepted_view_removes() {
+                            continue;
+                        }
                         for cell in row.cells() {
                             collect(cell_blocks(cell), linked, present);
                         }
