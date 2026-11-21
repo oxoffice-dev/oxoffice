@@ -2217,6 +2217,82 @@ fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
     assert_eq!(doc.revisions().len(), revisions, "the revisions stay");
 }
 
+#[test]
+fn story_ranges_read_bookmarks_that_start_or_end_between_paragraphs() {
+    // A start between blocks goes to the next paragraph's first run, an end
+    // to the previous paragraph's end, a collapsed pair to the next
+    // paragraph.
+    let mut doc = doc_with_body(&format!(
+        r#"{GOOGLE_HEADING}<w:p><w:bookmarkStart w:id="5" w:name="Tail"/><w:r><w:t>Body</w:t></w:r></w:p><w:bookmarkEnd w:id="5"/><w:bookmarkStart w:id="6" w:name="Both"/><w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p><w:bookmarkEnd w:id="6"/><w:bookmarkStart w:id="7" w:name="Empty"/><w:bookmarkEnd w:id="7"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#
+    ));
+    let at = |doc: &Document, paragraph: usize| {
+        doc.paragraph_story_location(paragraph).unwrap().unwrap()
+    };
+    let ranges = doc.story_ranges().unwrap();
+    let found: Vec<_> = ranges
+        .iter()
+        .filter_map(|range| match range.kind() {
+            StoryRangeKind::Bookmark { name, .. } => Some((
+                name.clone(),
+                range.range().start.location.clone(),
+                range.range().start.run_index,
+                range.range().end.location.clone(),
+                range.range().end.run_index,
+            )),
+            _ => None,
+        })
+        .collect();
+    let expected = [
+        ("_Toc217000001", 0, 0, 0, 1),
+        ("Tail", 1, 0, 1, 1),
+        ("Both", 2, 0, 3, 1),
+        ("Empty", 4, 0, 4, 0),
+    ]
+    .map(|(name, start, start_run, end, end_run)| {
+        (
+            name.to_owned(),
+            at(&doc, start),
+            start_run,
+            at(&doc, end),
+            end_run,
+        )
+    });
+    assert_eq!(found, expected);
+    // Moving or removing a range with a marker between blocks is refused,
+    // and the document stays as it was.
+    let before = doc.to_bytes().unwrap();
+    let empty = ranges
+        .iter()
+        .find(|range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "Empty"))
+        .unwrap();
+    let refused = doc.remove_story_range(empty).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    // One marker between blocks is enough, through every path.
+    let tail = ranges
+        .iter()
+        .find(
+            |range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "Tail"),
+        )
+        .unwrap();
+    let refused = doc.remove_story_range(tail).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    let refused = doc.remove_story_bookmark(7).unwrap_err().to_string();
+    assert!(refused.contains("between paragraphs"), "{refused}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    // Google- and Word-saved files with heading and collapsed bookmarks
+    // between blocks.
+    for name in [
+        "google/thesis.docx",
+        "google/form.docx",
+        "google/manual.docx",
+        "word/form.docx",
+    ] {
+        corpus_doc(name)
+            .story_ranges()
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}
+
 /// What a tool does after each edit pass on a long document: rebuild the
 /// table of contents, refresh the page fields from the layout, save. The TOC
 /// lists the headings to its depth, in the file's own TOC styles, with the
