@@ -6777,6 +6777,28 @@ fn hdr_ftr_type_order(value: HdrFtrType) -> u8 {
     }
 }
 
+/// Where a header or footer reference of `hdr_type` goes in `references`:
+/// the place of the first one of its type, otherwise its place in the
+/// default, first, even order among the others, which keep theirs.
+fn story_reference_slot(references: &[HdrFtrRef], hdr_type: HdrFtrType) -> usize {
+    references
+        .iter()
+        .position(|reference| reference.hdr_ftr_type == hdr_type)
+        .or_else(|| {
+            references.iter().position(|reference| {
+                hdr_ftr_type_order(reference.hdr_ftr_type) > hdr_ftr_type_order(hdr_type)
+            })
+        })
+        .unwrap_or(references.len())
+}
+
+/// Puts `reference` in `references`, in place of those of its type.
+fn place_story_reference(references: &mut Vec<HdrFtrRef>, reference: HdrFtrRef) {
+    let slot = story_reference_slot(references, reference.hdr_ftr_type);
+    references.retain(|existing| existing.hdr_ftr_type != reference.hdr_ftr_type);
+    references.insert(slot, reference);
+}
+
 /// Every attribute value of an XML part. A relationship named by `r:embed`,
 /// `r:id`, `o:relid` or any other producer attribute counts as referenced.
 fn xml_attribute_values(xml: &[u8]) -> Result<HashSet<String>> {
@@ -8127,18 +8149,14 @@ impl Parsed {
     }
 }
 
-fn section_references_are_canonical(section: &CT_SectPr, preserved: &HashSet<String>) -> bool {
+/// Whether every header and footer reference of a section keeps a relationship
+/// read with the document.
+fn section_references_were_read(section: &CT_SectPr, preserved: &HashSet<String>) -> bool {
     section
         .header_refs
         .iter()
         .chain(&section.footer_refs)
         .all(|reference| preserved.contains(&reference.rel_id))
-        && section
-            .header_refs
-            .is_sorted_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type))
-        && section
-            .footer_refs
-            .is_sorted_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type))
 }
 
 enum ChartPackageSource<'a> {
@@ -25568,7 +25586,7 @@ impl Document {
             return None;
         }
         if let Some(section) = &self.document.body.sect_pr
-            && !section_references_are_canonical(section, &preserved)
+            && !section_references_were_read(section, &preserved)
         {
             return None;
         }
@@ -25578,7 +25596,7 @@ impl Document {
                 .properties
                 .as_ref()
                 .and_then(|properties| properties.sect_pr.as_ref())
-                && !section_references_are_canonical(section, &preserved)
+                && !section_references_were_read(section, &preserved)
             {
                 paragraph_sections_ok = false;
             }
@@ -25735,14 +25753,6 @@ impl Document {
             } else {
                 None
             };
-        if let Some(section) = &mut self.document.body.sect_pr {
-            section
-                .header_refs
-                .sort_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type));
-            section
-                .footer_refs
-                .sort_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type));
-        }
         let preserved_relationships = self
             .identifiers
             .preserved_relationship_ids
@@ -41714,22 +41724,30 @@ impl Document {
                     else {
                         unreachable!("recorded section owner changed")
                     };
-                    paragraph
+                    let references = &mut paragraph
                         .properties
                         .as_mut()
                         .and_then(|properties| properties.sect_pr.as_mut())
                         .expect("recorded section disappeared")
-                        .header_refs
-                        .push(reference);
+                        .header_refs;
+                    references.insert(
+                        story_reference_slot(references, reference.hdr_ftr_type),
+                        reference,
+                    );
                 }
-                None => self
-                    .document
-                    .body
-                    .sect_pr
-                    .as_mut()
-                    .expect("final section disappeared")
-                    .header_refs
-                    .push(reference),
+                None => {
+                    let references = &mut self
+                        .document
+                        .body
+                        .sect_pr
+                        .as_mut()
+                        .expect("final section disappeared")
+                        .header_refs;
+                    references.insert(
+                        story_reference_slot(references, reference.hdr_ftr_type),
+                        reference,
+                    );
+                }
             }
         }
         Ok(())
@@ -42059,11 +42077,13 @@ impl Document {
         } else {
             &mut sect.footer_refs
         };
-        refs.retain(|r| r.hdr_ftr_type != hdr_type);
-        refs.push(HdrFtrRef {
-            hdr_ftr_type: hdr_type,
-            rel_id,
-        });
+        place_story_reference(
+            refs,
+            HdrFtrRef {
+                hdr_ftr_type: hdr_type,
+                rel_id,
+            },
+        );
 
         Ok(part_name)
     }
@@ -45002,6 +45022,7 @@ impl Document {
             HeaderFooterKind::Header => &mut section.inner.header_refs,
             HeaderFooterKind::Footer => &mut section.inner.footer_refs,
         };
+        let slot = story_reference_slot(references, hdr_type);
         let mut removed = Vec::new();
         references.retain(|reference| {
             if reference.hdr_ftr_type == hdr_type {
@@ -45012,10 +45033,13 @@ impl Document {
             }
         });
         if let Some(rel_id) = relationship_id {
-            references.push(HdrFtrRef {
-                hdr_ftr_type: hdr_type,
-                rel_id,
-            });
+            references.insert(
+                slot,
+                HdrFtrRef {
+                    hdr_ftr_type: hdr_type,
+                    rel_id,
+                },
+            );
             if hdr_type == HdrFtrType::First {
                 section.inner.title_pg = Some(true);
             }
@@ -45329,14 +45353,14 @@ impl Document {
                 if !following_header_overrides[slot]
                     && let Some(inherited) = inherited
                 {
-                    following.properties_mut().header_refs.push(inherited);
+                    place_story_reference(&mut following.properties_mut().header_refs, inherited);
                 }
             }
             for (slot, inherited) in effective_footers.into_iter().enumerate() {
                 if !following_footer_overrides[slot]
                     && let Some(inherited) = inherited
                 {
-                    following.properties_mut().footer_refs.push(inherited);
+                    place_story_reference(&mut following.properties_mut().footer_refs, inherited);
                 }
             }
         }
