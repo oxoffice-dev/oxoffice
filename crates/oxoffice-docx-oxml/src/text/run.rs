@@ -287,7 +287,7 @@ impl RunChildPlan {
                     .and_then(|value| value.parse::<i32>().ok())
                     .unwrap_or(0);
                 let custom_mark = optional_word_attribute(start, b"customMarkFollows", prefixes)
-                    .filter(|value| value == "1" || value == "true")
+                    .filter(|value| matches!(value.as_str(), "1" | "true" | "on"))
                     .map(|_| String::new());
                 Some(if action == A::FootnoteReference {
                     RunLeafValue::Footnote { id, custom_mark }
@@ -1289,9 +1289,15 @@ impl CT_R {
         let mut extra_xml_positions = Vec::new();
         let mut alt_drawings = Vec::new();
         let mut modeled_children = 0usize;
+        // Whether the next `w:t` is the custom mark of the reference just
+        // read. Only whitespace, XML comments, processing instructions and a
+        // rendered page break may come between them, as the note removal
+        // reads it.
+        let mut mark_open = false;
         let mut buf = Vec::new();
         loop {
             let event_start = ordinary.as_ref().map(|_| reader.buffer_position());
+            let mark_was_open = std::mem::take(&mut mark_open);
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     let name = e.name();
@@ -1344,7 +1350,10 @@ impl CT_R {
                             | Some(RunContent::EndnoteRef {
                                 custom_mark: Some(mark),
                                 ..
-                            }) if mark.is_empty() => *mark = text,
+                            }) if mark_was_open && mark.is_empty() => {
+                                *mark = text;
+                                mark_open = mark.is_empty();
+                            }
                             _ => {
                                 if let Some(facts) = &mut text_facts {
                                     facts.push(ParsedWordText {
@@ -1455,9 +1464,25 @@ impl CT_R {
                         extra_xml_positions.push(modeled_children | RAW_COMMENT_REFERENCE_FLAG);
                     }
                     if let Some(leaf) = plan.leaf {
+                        mark_open = matches!(
+                            leaf,
+                            RunLeafValue::Footnote {
+                                custom_mark: Some(_),
+                                ..
+                            } | RunLeafValue::Endnote {
+                                custom_mark: Some(_),
+                                ..
+                            }
+                        );
                         content.push(leaf.into_content(extra_xml.len()));
                         modeled_children += 1;
                     } else if plan.action != RunChildAction::IgnoreEmptyProperties {
+                        mark_open = mark_was_open
+                            && is_word_element(
+                                e.name().as_ref(),
+                                b"lastRenderedPageBreak",
+                                &prefixes,
+                            );
                         // Capture unknown empty child elements (e.g.
                         // w:commentReference) as raw XML, mirroring the
                         // Event::Start fallback above.
@@ -1474,6 +1499,7 @@ impl CT_R {
                     }
                 }
                 Ok(event @ (Event::Comment(_) | Event::PI(_))) => {
+                    mark_open = mark_was_open;
                     extra_xml.push(capture_standalone_event(event.into_owned())?);
                     extra_xml_positions.push(modeled_children);
                 }
@@ -1482,7 +1508,7 @@ impl CT_R {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(e.into()),
-                _ => {}
+                _ => mark_open = mark_was_open,
             }
             buf.clear();
         }

@@ -113,10 +113,17 @@ fn complex_field_events(
                     && (is_word_element(name.as_ref(), b"footnoteReference", &prefixes)
                         || is_word_element(name.as_ref(), b"endnoteReference", &prefixes))
                     && optional_word_attribute(&root, b"customMarkFollows", &prefixes)
-                        .is_some_and(|value| matches!(value.as_str(), "1" | "true"));
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "on"));
             }
             if !empty {
                 reader.read_to_end_into(root.name(), &mut Vec::new())?;
+            }
+            // Any other child between a reference and its mark ends the mark
+            // slot, except a rendered page break, as the note removal reads it.
+            if (!modeled || properties)
+                && !(empty && is_word_element(name.as_ref(), b"lastRenderedPageBreak", &prefixes))
+            {
+                note_mark_empty = false;
             }
         }
         if let Some(sources) = &mut sources {

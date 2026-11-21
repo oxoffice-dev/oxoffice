@@ -1595,6 +1595,57 @@ fn a_save_keeps_empty_row_properties() {
 }
 
 #[test]
+fn a_row_height_rule_without_a_value_is_formatting_a_row_edit_can_copy_and_set() {
+    // The value of `w:trHeight` is optional: a rule alone is row formatting
+    // like any other, not opaque XML.
+    let body = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:hRule="exact"/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#;
+    let mut doc = doc_with_body(body);
+    doc.table_mut(0).unwrap().add_row().unwrap();
+    let mut doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        xml.matches(r#"<w:trPr><w:trHeight w:hRule="exact"/></w:trPr>"#)
+            .count(),
+        2,
+        "{xml}"
+    );
+
+    doc.table_mut(0)
+        .unwrap()
+        .row(0)
+        .unwrap()
+        .set_height_exact(oxoffice_docx::Length::twips(300));
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:tr><w:trPr><w:trHeight w:val="300" w:hRule="exact"/></w:trPr>"#),
+        "one height, the one set: {xml}"
+    );
+    assert_eq!(xml.matches("<w:trHeight").count(), 2, "{xml}");
+}
+
+#[test]
+fn a_row_height_written_with_an_end_tag_is_read_as_a_height() {
+    let body = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="400" w:hRule="atLeast"></w:trHeight></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#;
+    let mut doc = doc_with_body(body);
+    assert_eq!(
+        doc.table(0).unwrap().row(0).unwrap().height(),
+        Some(oxoffice_docx::RowHeight::AtLeast(
+            oxoffice_docx::Length::twips(400)
+        ))
+    );
+    doc.table_mut(0).unwrap().add_row().unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        xml.matches(r#"<w:trHeight w:val="400" w:hRule="atLeast"/>"#)
+            .count(),
+        2,
+        "{xml}"
+    );
+}
+
+#[test]
 fn a_row_added_beside_empty_properties_writes_none() {
     // A new row and its cells write only the formatting they carry.
     let mut doc = doc_with_body(

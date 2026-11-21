@@ -1820,22 +1820,9 @@ impl CT_TrPr {
                     // A child without the value it is modelled by stays
                     // verbatim in the raw branch below.
                     if is_word_element(name.as_ref(), b"trHeight", &prefixes)
-                        && get_word_val_attr(e, &prefixes)?.is_some()
+                        && read_row_height(e, &prefixes, &mut pr)?
                     {
-                        for attr in e.attributes() {
-                            let attr = attr?;
-                            let key = attr.key.as_ref();
-                            let val = std::str::from_utf8(&attr.value)?;
-                            if is_word_attribute(key, b"val", &prefixes) {
-                                pr.height = Some(Twips(parse_integer_measurement(
-                                    name.as_ref(),
-                                    key,
-                                    val,
-                                )?));
-                            } else if is_word_attribute(key, b"hRule", &prefixes) {
-                                pr.height_rule = Some(val.to_string());
-                            }
-                        }
+                        // Modelled by `read_row_height`.
                     } else if is_word_element(name.as_ref(), b"tblHeader", &prefixes) {
                         pr.header = Some(parse_word_toggle(e, &prefixes)?);
                     } else if is_word_element(name.as_ref(), b"jc", &prefixes)
@@ -1897,6 +1884,10 @@ impl CT_TrPr {
                     let (at, next) = tr_pr_raw_boundary(e.name().as_ref(), boundary, &prefixes);
                     if is_word_element(e.name().as_ref(), b"tblHeader", &prefixes) {
                         pr.header = Some(parse_word_toggle(e, &prefixes)?);
+                        reader.read_to_end_into(e.name(), &mut Vec::new())?;
+                    } else if is_word_element(e.name().as_ref(), b"trHeight", &prefixes)
+                        && read_row_height(e, &prefixes, &mut pr)?
+                    {
                         reader.read_to_end_into(e.name(), &mut Vec::new())?;
                     } else if is_word_element(e.name().as_ref(), b"cantSplit", &prefixes) {
                         pr.cant_split = Some(parse_word_toggle(e, &prefixes)?);
@@ -2027,10 +2018,13 @@ impl CT_TrPr {
         }
 
         write_extras_at(writer, &self.extra_xml, 7)?;
-        if let Some(height) = self.height {
+        // A rule without a height is written as read: the value is optional.
+        if self.height.is_some() || self.height_rule.is_some() {
             let mut buf = itoa::Buffer::new();
             let mut e = crate::text::FieldXmlStart::word(&prefix, "trHeight", emission)?;
-            e.push_word(&prefix, "val", buf.format(height.0))?;
+            if let Some(height) = self.height {
+                e.push_word(&prefix, "val", buf.format(height.0))?;
+            }
             if let Some(ref rule) = self.height_rule {
                 e.push_word(&prefix, "hRule", rule.as_str())?;
             }
@@ -2117,6 +2111,7 @@ impl CT_TrPr {
 
     fn is_empty(&self) -> bool {
         self.height.is_none()
+            && self.height_rule.is_none()
             && self.header.is_none()
             && self.jc.is_none()
             && self.cant_split.is_none()
@@ -2154,6 +2149,34 @@ impl CT_TrPr {
         }
         Ok(())
     }
+}
+
+/// Read a `w:trHeight` into the row model. Its value is optional (a
+/// missing one means 0), so a rule alone is modelled too. One without
+/// either attribute returns false and stays verbatim.
+fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) -> Result<bool> {
+    let mut height = None;
+    let mut rule = None;
+    for attr in e.attributes() {
+        let attr = attr?;
+        let key = attr.key.as_ref();
+        let val = std::str::from_utf8(&attr.value)?;
+        if is_word_attribute(key, b"val", prefixes) {
+            height = Some(Twips(parse_integer_measurement(
+                e.name().as_ref(),
+                key,
+                val,
+            )?));
+        } else if is_word_attribute(key, b"hRule", prefixes) {
+            rule = Some(val.to_string());
+        }
+    }
+    if height.is_none() && rule.is_none() {
+        return Ok(false);
+    }
+    pr.height = height;
+    pr.height_rule = rule;
+    Ok(true)
 }
 
 fn tr_pr_raw_boundary(name: &[u8], current: usize, word_prefixes: &[String]) -> (usize, usize) {
