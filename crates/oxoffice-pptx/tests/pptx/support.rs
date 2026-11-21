@@ -1,33 +1,112 @@
 //! Helpers shared by the modules of this binary.
 
 use std::fs;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use oxoffice_pptx::Presentation;
 
-/// Every file of the corpus (`tests/corpus/files`) with this extension,
-/// sorted.
-pub fn corpus_files(extension: &str) -> Vec<PathBuf> {
-    fn walk(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-        for entry in fs::read_dir(dir).expect("corpus folder is readable") {
-            let path = entry.expect("corpus entry is readable").path();
-            if path.is_dir() {
-                walk(&path, extension, out);
-            } else if path.extension().is_some_and(|ext| ext == extension) {
-                out.push(path);
-            }
+/// The corpus folder, `tests/corpus` at the repository root.
+pub fn corpus_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")
+}
+
+/// One file of the corpus manifest, `tests/corpus/manifest.toml`.
+pub struct CorpusFile {
+    /// Path under `tests/corpus/files`, such as `word/report.docx`.
+    pub path: String,
+    /// The issue that makes a save without an edit rewrite some parts of
+    /// this file today.
+    pub known_failure: Option<u32>,
+    /// The parts that known failure rewrites, by ZIP entry name.
+    pub rewritten: Vec<String>,
+}
+
+impl CorpusFile {
+    pub fn bytes(&self) -> Vec<u8> {
+        let path = corpus_root().join("files").join(&self.path);
+        fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+}
+
+/// Every entry of the corpus manifest, in its order. The manifest is written
+/// by `tests/corpus/generate/manifest.py` with one `key = value` per line, so
+/// the keys the tests need are read line by line.
+pub fn corpus_manifest() -> Vec<CorpusFile> {
+    let text =
+        fs::read_to_string(corpus_root().join("manifest.toml")).expect("manifest is readable");
+    let mut files: Vec<CorpusFile> = Vec::new();
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("path = ") {
+            files.push(CorpusFile {
+                path: path.trim_matches('"').to_owned(),
+                known_failure: None,
+                rewritten: Vec::new(),
+            });
+        } else if let Some(parts) = line.strip_prefix("rewritten = ") {
+            let file = files.last_mut().expect("rewritten follows a path");
+            file.rewritten = parts
+                .trim_matches(['[', ']'])
+                .split(',')
+                .map(|part| part.trim().trim_matches('"').to_owned())
+                .collect();
+        } else if let Some(issue) = line.strip_prefix("known_failure = ") {
+            let file = files.last_mut().expect("known_failure follows a path");
+            file.known_failure = Some(
+                issue
+                    .trim()
+                    .parse()
+                    .expect("known_failure is an issue number"),
+            );
         }
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/files");
-    let mut files = Vec::new();
-    walk(&root, extension, &mut files);
-    files.sort();
-    assert!(
-        !files.is_empty(),
-        "no .{extension} file in {}",
-        root.display()
-    );
+    assert!(!files.is_empty(), "the corpus manifest lists no file");
     files
+}
+
+/// The manifest entries of the files with this extension.
+pub fn corpus_files(extension: &str) -> Vec<CorpusFile> {
+    corpus_manifest()
+        .into_iter()
+        .filter(|file| file.path.ends_with(&format!(".{extension}")))
+        .collect()
+}
+
+/// `f` over every item, on as many threads as the machine has, each with the
+/// 8 MiB stack the test threads get, the results in item order. A panic in
+/// `f` stays on its item: it comes back as `None`.
+pub fn map_in_parallel<T: Sync, R: Send>(
+    items: &[T],
+    f: impl Fn(&T) -> R + Sync,
+) -> Vec<Option<R>> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let next = AtomicUsize::new(0);
+    let mut results: Vec<(usize, Option<R>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads.min(items.len()))
+            .map(|_| {
+                std::thread::Builder::new()
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn_scoped(scope, || {
+                        let mut done = Vec::new();
+                        loop {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(item) = items.get(index) else {
+                                break done;
+                            };
+                            done.push((index, catch_unwind(AssertUnwindSafe(|| f(item))).ok()));
+                        }
+                    })
+                    .expect("worker thread starts")
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("worker thread ends"))
+            .collect()
+    });
+    results.sort_by_key(|(index, _)| *index);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
 /// A corpus deck, by its path under `tests/corpus/files`:

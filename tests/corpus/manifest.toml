@@ -1,45 +1,241 @@
-# One entry per file under files/. Every file is ours: authored by
+# Written by generate/manifest.py from the files under files/: do not edit by
+# hand, except known_failure and rewritten. Every file is ours: authored by
 # generate/author.py, then opened and saved by the producer named here
 # (generate/produce.py). They are released under the repository's licence.
 #
-# features: what the content exercises, so a failure points at an area.
+# features: what the file's XML carries, so a failure points at an area.
+# known_failure: the issue that makes a save without an edit rewrite the parts
+# listed in `rewritten` today; the file must still open, save, reopen and keep
+# every part, and no other part may change.
 
 [[file]]
-path = "authored/report.docx"
+path = "authored/contract.docx"
 producer = "python-docx 1.2.0"
-features = ["headings", "bullet-list", "numbered-list", "table-style", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "core-properties"]
+size = 43381
+features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid"]
 
 [[file]]
-path = "word/report.docx"
-producer = "Microsoft Word for Mac 16.115"
-features = ["headings", "bullet-list", "numbered-list", "table-style", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "rsid", "paraId"]
-
-[[file]]
-path = "libreoffice/report.docx"
-producer = "LibreOffice 26.8.3.1"
-features = ["headings", "bullet-list", "numbered-list", "table-style", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape"]
-
-[[file]]
-path = "google/report.docx"
-producer = "Google Docs export"
-features = ["headings", "bullet-list", "numbered-list", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape"]
+path = "authored/cv.docx"
+producer = "python-docx 1.2.0"
+size = 39022
+features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink", "rsid"]
 
 [[file]]
 path = "authored/deck.pptx"
 producer = "python-pptx 1.0.2"
+size = 37419
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
 
 [[file]]
-path = "powerpoint/deck.pptx"
-producer = "Microsoft PowerPoint for Mac 16.115"
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+path = "authored/form.docx"
+producer = "python-docx 1.2.0"
+size = 39281
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection", "rsid"]
 
 [[file]]
-path = "libreoffice/deck.pptx"
-producer = "LibreOffice 26.8.3.1"
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+path = "authored/letter.docx"
+producer = "python-docx 1.2.0"
+size = 43276
+features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink", "rsid"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "authored/long-deck.pptx"
+producer = "python-pptx 1.0.2"
+size = 163712
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen", "long"]
+
+[[file]]
+path = "authored/long-report.docx"
+producer = "python-docx 1.2.0"
+size = 75624
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "rsid", "long"]
+
+[[file]]
+path = "authored/manual.docx"
+producer = "python-docx 1.2.0"
+size = 48323
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "page-fields", "bookmark", "hyperlink", "rsid"]
+
+[[file]]
+path = "authored/minutes.docx"
+producer = "python-docx 1.2.0"
+size = 40392
+features = ["headings", "title", "bullet-list", "table", "header-footer", "rtl", "cjk", "rsid"]
+
+[[file]]
+path = "authored/multilingual.pptx"
+producer = "python-pptx 1.0.2"
+size = 45657
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "text-box", "rtl", "cjk", "widescreen"]
+
+[[file]]
+path = "authored/newsletter.docx"
+producer = "python-docx 1.2.0"
+size = 43633
+features = ["headings", "picture", "floating-picture", "text-box", "shape", "header-footer", "sections", "columns", "rsid"]
+
+[[file]]
+path = "authored/paper.docx"
+producer = "python-docx 1.2.0"
+size = 42565
+features = ["headings", "table", "picture", "endnote", "sections", "columns", "equation", "rsid"]
+
+[[file]]
+path = "authored/pitch.pptx"
+producer = "python-pptx 1.0.2"
+size = 70468
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "text-box", "transition", "sections", "widescreen"]
+
+[[file]]
+path = "authored/report.docx"
+producer = "python-docx 1.2.0"
+size = 41240
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "rsid"]
+
+[[file]]
+path = "authored/thesis.docx"
+producer = "python-docx 1.2.0"
+size = 54437
+features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid"]
+
+[[file]]
+path = "authored/training.pptx"
+producer = "python-pptx 1.0.2"
+size = 55781
+features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
 
 [[file]]
 path = "google/deck.pptx"
 producer = "Google Slides export"
+size = 47502
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box"]
+
+[[file]]
+path = "google/report.docx"
+producer = "Google Docs export"
+size = 203806
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "bookmark", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "libreoffice/contract.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 29009
+features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/cv.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 23145
+features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/deck.pptx"
+producer = "LibreOffice 26.8.3.1"
+size = 39790
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "widescreen"]
+
+[[file]]
+path = "libreoffice/form.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 23874
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/letter.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 27325
+features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/long-deck.pptx"
+producer = "LibreOffice 26.2.6.3"
+size = 229234
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "widescreen", "long"]
+
+[[file]]
+path = "libreoffice/long-report.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 110812
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "long"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/manual.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 35588
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "page-fields", "bookmark", "hyperlink"]
+
+[[file]]
+path = "libreoffice/minutes.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 25166
+features = ["headings", "title", "bullet-list", "table", "header-footer", "rtl", "cjk"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/multilingual.pptx"
+producer = "LibreOffice 26.2.6.3"
+size = 51938
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "rtl", "cjk", "widescreen"]
+
+[[file]]
+path = "libreoffice/newsletter.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 27947
+features = ["headings", "picture", "floating-picture", "text-box", "shape", "header-footer", "sections", "columns"]
+
+[[file]]
+path = "libreoffice/paper.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 26410
+features = ["headings", "table", "picture", "endnote", "sections", "columns", "equation"]
+
+[[file]]
+path = "libreoffice/pitch.pptx"
+producer = "LibreOffice 26.2.6.3"
+size = 66888
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "transition", "widescreen"]
+
+[[file]]
+path = "libreoffice/report.docx"
+producer = "LibreOffice 26.8.3.1"
+size = 29655
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape"]
+
+[[file]]
+path = "libreoffice/thesis.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 48197
+features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation"]
+known_failure = 57
+rewritten = ["word/document.xml"]
+
+[[file]]
+path = "libreoffice/training.pptx"
+producer = "LibreOffice 26.2.6.3"
+size = 64055
+features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
+
+[[file]]
+path = "powerpoint/deck.pptx"
+producer = "Microsoft PowerPoint for Mac 16.115"
+size = 44408
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+
+[[file]]
+path = "word/report.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 38827
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "rsid", "paraId"]
