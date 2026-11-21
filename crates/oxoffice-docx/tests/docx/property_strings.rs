@@ -167,6 +167,7 @@ fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
         b"<vt:lpstr>a&#x1F;b</vt:lpstr>",
         b"<vt:lpstr>&#0;</vt:lpstr>",
         b"<vt:lpstr>a&#xD800;</vt:lpstr>",
+        "<vt:lpstr><![CDATA[a]]>\u{e9}&#7;</vt:lpstr>".as_bytes(),
     ] {
         let message = doc
             .set_custom_property(custom("Raw", CustomPropertyValue::Raw(raw.to_vec())))
@@ -181,7 +182,8 @@ fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
     doc.set_custom_property(custom(
         "Raw",
         CustomPropertyValue::Raw(
-            b"<vt:lpstr>a&#9;b&amp;c<![CDATA[&#7;]]><!-- &#7; --></vt:lpstr>".to_vec(),
+            b"<vt:lpstr>a&#9;b&amp;c<![CDATA[&#7;]]><!-- &#7; --><!--x--><![CDATA[&#7;]]></vt:lpstr>"
+                .to_vec(),
         ),
     ))
     .expect("a tab reference, an escaped ampersand and literal text are fine");

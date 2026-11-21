@@ -34,7 +34,9 @@ impl Presentation {
         // the file does not hold is refused.
         let held = self
             .package
-            .get_part(&self.core_properties_part_name)
+            .package_rels
+            .get_by_type(rel_types::CORE_PROPERTIES)
+            .and_then(|_| self.package.get_part(&self.core_properties_part_name))
             .and_then(|source| CoreProperties::from_xml(source).ok());
         properties
             .reject_new_non_xml_characters(held.as_ref())

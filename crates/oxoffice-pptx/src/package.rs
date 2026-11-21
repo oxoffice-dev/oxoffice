@@ -304,16 +304,22 @@ impl Presentation {
                 .and_then(|_| self.package.get_part(&self.core_properties_part_name));
             // A part the patch cannot express exactly (an empty value, a
             // duplicate or nested element) is written whole, as before.
-            let patched = source.and_then(|source| {
-                let old = CoreProperties::from_xml(source).ok()?;
-                crate::properties::patch_core_properties(source, &old, properties).ok()
+            // Written whole, a character the file held as a reference has to
+            // go: no XML reader takes it written out.
+            let held = source.and_then(|source| CoreProperties::from_xml(source).ok());
+            let patched = source.zip(held.as_ref()).and_then(|(source, old)| {
+                crate::properties::patch_core_properties(source, old, properties).ok()
             });
             let xml = match patched {
                 Some(xml) => xml,
-                None => properties.to_xml().map_err(|error| Error::MalformedPart {
-                    part_name: self.core_properties_part_name.clone(),
-                    message: error.to_string(),
-                })?,
+                None => {
+                    let mut whole = properties.clone();
+                    whole.drop_held_non_xml_characters(held.as_ref());
+                    whole.to_xml().map_err(|error| Error::MalformedPart {
+                        part_name: self.core_properties_part_name.clone(),
+                        message: error.to_string(),
+                    })?
+                }
             };
             package.set_part(&self.core_properties_part_name, xml);
             package.content_types.add_override(

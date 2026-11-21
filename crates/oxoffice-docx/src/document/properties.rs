@@ -379,17 +379,19 @@ fn drop_held_custom_characters(properties: &mut CustomProperties) {
 /// comments is literal text, not a reference.
 fn reject_non_xml_character_references(what: &str, raw: &str) -> Result<()> {
     let mut rest = raw;
-    while let Some(start) = rest.find(['&', '<']) {
+    'scan: while let Some(start) = rest.find(['&', '<']) {
         rest = &rest[start..];
         for (open, close) in [("<![CDATA[", "]]>"), ("<!--", "-->")] {
             if rest.starts_with(open) {
                 rest = rest
                     .find(close)
                     .map_or("", |end| &rest[end + close.len()..]);
+                continue 'scan;
             }
         }
         let Some(reference) = rest.strip_prefix("&#") else {
-            rest = rest.get(1..).unwrap_or("");
+            // `&` and `<` are one byte long.
+            rest = &rest[1..];
             continue;
         };
         let end = reference.find(';').unwrap_or(reference.len());

@@ -1903,10 +1903,27 @@ fn setting_core_properties_keeps_a_bad_character_the_file_held_and_refuses_a_new
         xml.contains("J&#11;Doe") && xml.contains(">Plans<"),
         "{xml}"
     );
-    // A value the patch cannot express exactly is written whole, as before.
+    // A value the patch cannot express exactly is written whole, as before,
+    // and the character the file held goes.
     prs.core_properties_mut().title = Some(String::new());
-    prs.core_properties_mut().last_modified_by = Some("J Doe".to_owned());
-    prs.to_bytes().expect("an empty value saves");
+    let prs = Presentation::from_bytes(&prs.to_bytes().expect("an empty value saves")).unwrap();
+    let core = prs.core_properties().unwrap();
+    assert_eq!(core.category.as_deref(), Some("Plans"));
+    assert_eq!(core.last_modified_by.as_deref(), Some("JDoe"));
+    // So is a part holding a duplicate element.
+    let mut package = OpcPackage::from_reader(Cursor::new(saved_with_reference())).unwrap();
+    let xml = String::from_utf8(package.get_part("/docProps/core.xml").unwrap().to_vec()).unwrap();
+    let xml = xml.replace(
+        "<dc:title>Deck</dc:title>",
+        "<dc:title>Deck</dc:title><dc:creator>A</dc:creator><dc:creator>B</dc:creator>",
+    );
+    package.set_part("/docProps/core.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    prs.core_properties_mut().creator = Some("C".to_owned());
+    let prs = Presentation::from_bytes(&prs.to_bytes().expect("a duplicate saves")).unwrap();
+    assert_eq!(prs.core_properties().unwrap().creator.as_deref(), Some("C"));
     // A bad value set through the mutable model is refused by name by the
     // next set_core_properties, which compares with the part.
     let mut prs = Presentation::from_bytes(&saved_with_reference()).unwrap();
@@ -1918,6 +1935,28 @@ fn setting_core_properties_keeps_a_bad_character_the_file_held_and_refuses_a_new
         .expect_err("refused")
         .to_string();
     assert!(message.contains("core property title"), "{message}");
+}
+
+#[test]
+fn a_core_part_without_its_package_relationship_is_not_taken_over() {
+    // Both the setter and the save refuse to adopt a part nothing points at.
+    let mut package = OpcPackage::from_reader(Cursor::new(saved_with_reference())).unwrap();
+    package
+        .package_rels
+        .items
+        .retain(|relationship| !relationship.rel_type.ends_with("/core-properties"));
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert!(prs.core_properties().is_none());
+    let core = oxoffice_pptx::CoreProperties {
+        title: Some("Q3".to_owned()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        prs.set_core_properties(core),
+        Err(Error::CorePropertiesPartCollision { .. })
+    ));
 }
 
 /// A new deck whose core part holds a title and a `lastModifiedBy` with a
