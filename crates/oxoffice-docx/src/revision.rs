@@ -1116,10 +1116,16 @@ impl RevisionScope<'_> {
 /// Track actual paragraph-content owners without moving a simple field or
 /// hyperlink into the narrower run-revision grammar. The adaptor supplies only
 /// the caller's paragraph root and canonical writer binding, not a new resolver root.
+///
+/// `published` holds the byte ranges in `source` of paragraph children the
+/// caller already wrapped, each a whole field in a wrapper of its own: they
+/// are written as they are, and the markers next to them stay in the
+/// wrappers of their other neighbours.
 pub(crate) fn tracked_paragraph_children(
     source: &str,
     deleted: bool,
     inside_hyperlink: bool,
+    published: &[Range<usize>],
     wrap: &mut impl FnMut(&str) -> Result<String>,
 ) -> Result<String> {
     struct Frame {
@@ -1194,6 +1200,7 @@ pub(crate) fn tracked_paragraph_children(
         output_start: 0,
     }];
     let mut output = String::new();
+    let mut published_seen = 0;
     while let Some(frame) = frames.last_mut() {
         let owner = &tree.elements[frame.owner];
         let Some(child_index) = owner.children.get(frame.next).copied() else {
@@ -1222,6 +1229,14 @@ pub(crate) fn tracked_paragraph_children(
                 .push((input[frame.cursor..child.start].to_owned(), false));
         }
         frame.cursor = child.end;
+        if frame.owner == *paragraph
+            && published.contains(&(child.start - opening.len()..child.end - opening.len()))
+        {
+            flush(&mut frame.groups, &mut output, wrap)?;
+            output.push_str(&input[child.start..child.end]);
+            published_seen += 1;
+            continue;
+        }
         if publication_frames[child_index] {
             if child.local == "hyperlink" && frame.hyperlink {
                 return Err(Error::Other(
@@ -1361,6 +1376,11 @@ pub(crate) fn tracked_paragraph_children(
         } else {
             frame.groups.push((raw, !marker));
         }
+    }
+    if published_seen != published.len() {
+        return Err(Error::Other(
+            "a published whole-paragraph field is not a child of its paragraph".into(),
+        ));
     }
     Ok(output)
 }
@@ -2729,11 +2749,6 @@ impl<'a> XmlTree<'a> {
                 && !state.discarded
                 && self.paragraph_mark_removes(child, state)
             {
-                if !state.leaf_elements.is_empty() {
-                    return Err(Error::Other(
-                        "comparison leaf transport does not admit paragraph merging".into(),
-                    ));
-                }
                 let mut paragraphs = vec![child];
                 // A table whose every row is removed is crossed, so the
                 // paragraphs on either side of it merge. Rendering it resolves
@@ -2799,6 +2814,20 @@ impl<'a> XmlTree<'a> {
                         break;
                     }
                 }
+                // A crossed table leaves nothing, so a comparison leaf in it
+                // has no place in the output.
+                if siblings.iter().any(|sibling| {
+                    let sibling = &self.elements[*sibling];
+                    sibling.local == "tbl"
+                        && state.leaf_elements.iter().any(|leaf| {
+                            self.elements[*leaf].start >= sibling.start
+                                && self.elements[*leaf].end <= sibling.end
+                        })
+                }) {
+                    return Err(Error::Other(
+                        "comparison leaf transport does not admit a crossed table".into(),
+                    ));
+                }
                 for pair in siblings.windows(2) {
                     output.extend_from_slice(
                         &self.source[self.elements[pair[0]].end..self.elements[pair[1]].start],
@@ -2810,11 +2839,10 @@ impl<'a> XmlTree<'a> {
                 if before_table {
                     self.validate_removed_paragraphs(&paragraphs, state)?;
                 } else {
-                    output.extend_from_slice(&self.render_merged_paragraphs(
-                        &paragraphs,
-                        state,
-                        destination,
-                    )?);
+                    let leaf_mark = state.leaf_updates.len();
+                    let merged = self.render_merged_paragraphs(&paragraphs, state, destination)?;
+                    state.shift_leaves(leaf_mark, output.len());
+                    output.extend_from_slice(&merged);
                 }
                 cursor = self.elements[*siblings.last().expect("paragraph chain exists")].end;
                 child_index = next_index;
@@ -3402,17 +3430,17 @@ impl<'a> XmlTree<'a> {
             &current_element.namespace_declarations,
             &declarations,
         );
+        // Comparison leaves keep their place in the merged paragraph.
         if let Some(properties) = next_element
             .children
             .iter()
             .find(|child| self.elements[**child].word && self.elements[**child].local == "pPr")
         {
-            output.extend_from_slice(&self.render_with_namespaces(
-                *properties,
-                state,
-                false,
-                &current_scope,
-            )?);
+            let leaf_mark = state.leaf_updates.len();
+            let rendered =
+                self.render_with_namespaces(*properties, state, false, &current_scope)?;
+            state.shift_leaves(leaf_mark, output.len());
+            output.extend_from_slice(&rendered);
         }
         for paragraph in paragraphs {
             for child in &self.elements[*paragraph].children {
@@ -3422,12 +3450,11 @@ impl<'a> XmlTree<'a> {
                         self.validate_selected_descendants(*child, state)?;
                     }
                 } else {
-                    output.extend_from_slice(&self.render_with_namespaces(
-                        *child,
-                        state,
-                        false,
-                        &current_scope,
-                    )?);
+                    let leaf_mark = state.leaf_updates.len();
+                    let rendered =
+                        self.render_with_namespaces(*child, state, false, &current_scope)?;
+                    state.shift_leaves(leaf_mark, output.len());
+                    output.extend_from_slice(&rendered);
                 }
             }
         }

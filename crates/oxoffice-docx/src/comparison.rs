@@ -125,6 +125,17 @@ struct FieldConversionWitness {
     generated_spans: [String; 2],
 }
 
+/// A simple field written as one complex field with the paragraph that
+/// holds it, inserted or deleted whole. Only the input that keeps the
+/// paragraph holds the field: the witness names that occurrence and the one
+/// revision id of the wrapper that publishes the whole field.
+#[derive(Clone, Debug)]
+struct WholeFieldWitness {
+    source: FieldSourceOccurrence,
+    revision_id: i32,
+    generated_span: String,
+}
+
 struct Metadata<'a> {
     author: &'a str,
     timestamp: &'a str,
@@ -140,6 +151,7 @@ struct Metadata<'a> {
     paired_field_story: Option<String>,
     leaf_publications: Vec<LeafPublication>,
     field_conversions: Vec<FieldConversionWitness>,
+    whole_field_conversions: Vec<WholeFieldWitness>,
 }
 
 #[derive(Clone)]
@@ -295,10 +307,13 @@ struct MovePairs {
     edited: Vec<Option<i32>>,
 }
 
+/// Pair each deleted owner with an equal inserted one as a move, except the
+/// `unmovable` owners of each side.
 fn pair_moves(
     aligned: &[(Option<usize>, Option<usize>)],
     original: &[String],
     edited: &[String],
+    unmovable: [HashSet<usize>; 2],
     ids: &mut IdAllocator,
 ) -> Result<MovePairs> {
     let mut pairs = MovePairs {
@@ -308,10 +323,12 @@ fn pair_moves(
     let unmatched_edited = aligned
         .iter()
         .filter_map(|(left, right)| left.is_none().then_some(*right).flatten())
+        .filter(|right| !unmovable[1].contains(right))
         .collect::<Vec<_>>();
     for left in aligned
         .iter()
         .filter_map(|(left, right)| right.is_none().then_some(*left).flatten())
+        .filter(|left| !unmovable[0].contains(left))
     {
         let Some(right) = unmatched_edited
             .iter()
@@ -700,6 +717,7 @@ impl Document {
                     paired_field_story: None,
                     leaf_publications: Vec::new(),
                     field_conversions: Vec::new(),
+                    whole_field_conversions: Vec::new(),
                 },
                 &mut Vec::new(),
             )
@@ -839,6 +857,7 @@ impl Document {
             paired_field_story: None,
             leaf_publications: Vec::new(),
             field_conversions: Vec::new(),
+            whole_field_conversions: Vec::new(),
         };
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
@@ -1130,6 +1149,7 @@ impl Document {
             &edited_package,
             &field_stories,
             &metadata.field_conversions,
+            &metadata.whole_field_conversions,
             1,
             &new_ids,
         )?;
@@ -1169,6 +1189,7 @@ impl Document {
             &original_package,
             &field_stories,
             &metadata.field_conversions,
+            &metadata.whole_field_conversions,
             0,
             &new_ids,
         )?;
@@ -4571,9 +4592,18 @@ fn validate_field_conversion_role(
     wanted: &NormalizedPackage,
     stories: &[StoryPart],
     witnesses: &[FieldConversionWitness],
+    whole: &[WholeFieldWitness],
     role: usize,
     new_ids: &HashSet<i32>,
 ) -> Result<()> {
+    /// One input's side of a conversion: the field's occurrence there, and
+    /// the id and payload of the one wrapper that publishes it.
+    struct Side<'w> {
+        source: &'w FieldSourceOccurrence,
+        revision_id: i32,
+        generated_span: &'w str,
+        input_complex: bool,
+    }
     fn observations<'a>(
         items: &'a [GuardItem],
         output: &mut Vec<(
@@ -4604,10 +4634,8 @@ fn validate_field_conversion_role(
     for (_, _, items) in &wanted.1 {
         observations(items, &mut actual_inputs);
     }
-    let mut consumed = HashSet::new();
-    let mut consumed_occurrences = HashSet::new();
+    let mut sides = Vec::with_capacity(witnesses.len() + whole.len());
     for witness in witnesses {
-        let source = &witness.sources[role];
         let forms = [
             actual_field_is_complex(&witness.sources[0].source, &witness.sources[0].scope)?,
             actual_field_is_complex(&witness.sources[1].source, &witness.sources[1].scope)?,
@@ -4632,13 +4660,49 @@ fn validate_field_conversion_role(
                 return Err(Error::Other("field conversion instruction reason differs from independently read source instructions".into()));
             }
         }
+        if !(witness.instruction_changed || witness.form_changed)
+            || witness.revision_ids[0] == witness.revision_ids[1]
+            || witness.revision_ids.iter().any(|id| !new_ids.contains(id))
+        {
+            return Err(Error::Other(
+                "invalid or multiply consumed field conversion witness".into(),
+            ));
+        }
+        sides.push(Side {
+            source: &witness.sources[role],
+            revision_id: witness.revision_ids[role],
+            generated_span: &witness.generated_spans[role],
+            input_complex: witness.input_complex[role],
+        });
+    }
+    // A field written with its whole paragraph is checked by the resolution
+    // that keeps the paragraph; the other one removes it with the paragraph.
+    for witness in whole {
+        if witness.source.input_role != role {
+            continue;
+        }
+        if !new_ids.contains(&witness.revision_id)
+            || actual_field_is_complex(&witness.source.source, &witness.source.scope)?
+        {
+            return Err(Error::Other(
+                "invalid whole-paragraph field conversion witness".into(),
+            ));
+        }
+        sides.push(Side {
+            source: &witness.source,
+            revision_id: witness.revision_id,
+            generated_span: &witness.generated_span,
+            input_complex: false,
+        });
+    }
+    let mut consumed = HashSet::new();
+    let mut consumed_occurrences = HashSet::new();
+    for side in &sides {
+        let source = side.source;
         if source.input_role != role
             || source.bounds.start >= source.bounds.end
             || source.bounds.len() != source.source.len()
-            || !(witness.instruction_changed || witness.form_changed)
-            || witness.revision_ids[0] == witness.revision_ids[1]
-            || witness.revision_ids.iter().any(|id| !new_ids.contains(id))
-            || !consumed.insert(witness.revision_ids[role])
+            || !consumed.insert(side.revision_id)
             || !consumed_occurrences.insert((
                 source.story.clone(),
                 source.owner_path.clone(),
@@ -4664,7 +4728,7 @@ fn validate_field_conversion_role(
                     && actual.scope == source.scope
             })
             .collect::<Vec<_>>();
-        if matches.len() != 1 || matches[0].1.complex != witness.input_complex[role] {
+        if matches.len() != 1 || matches[0].1.complex != side.input_complex {
             return Err(Error::Other(
                 "field conversion witness has no unique actual input occurrence".into(),
             ));
@@ -4689,7 +4753,7 @@ fn validate_field_conversion_role(
             .ok_or_else(|| Error::Other("field conversion part is missing".into()))?;
         let spans = crate::revision::modeled_revision_spans(bytes)?
             .into_iter()
-            .filter(|(_, id)| *id == witness.revision_ids[role])
+            .filter(|(_, id)| *id == side.revision_id)
             .collect::<Vec<_>>();
         if spans.len() != 1 {
             return Err(Error::Other(
@@ -4699,7 +4763,7 @@ fn validate_field_conversion_role(
         let raw = std::str::from_utf8(&bytes[spans[0].0.clone()]).map_err(utf8_error)?;
         let kind = if role == 0 { "del" } else { "ins" };
         let inner = element_inner_range_any_prefix(raw, kind)?;
-        if raw[inner] != witness.generated_spans[role] {
+        if raw[inner] != *side.generated_span {
             return Err(Error::Other(
                 "field conversion publication payload differs from its checked local span".into(),
             ));
@@ -4720,33 +4784,33 @@ fn validate_field_conversion_role(
         } else {
             crate::revision::Resolution::Accept
         };
-        let (transported, mapped) =
-            if FootnotePart::of(candidate)?.is_some_and(|notes| notes.name == part) {
-                let mut trace =
-                    crate::revision::NotePublication::new(part, witness.revision_ids[role], &roots);
-                let mut carrier = candidate.clone_for_staging();
-                carrier.resolve_revisions_with_note_publication(
+        let (transported, mapped) = if FootnotePart::of(candidate)?
+            .is_some_and(|notes| notes.name == part)
+        {
+            let mut trace = crate::revision::NotePublication::new(part, side.revision_id, &roots);
+            let mut carrier = candidate.clone_for_staging();
+            carrier.resolve_revisions_with_note_publication(
+                resolution,
+                crate::revision::RevisionScope::Ids(new_ids),
+                Some(&mut trace),
+            )?;
+            (
+                trace.output.ok_or_else(|| {
+                    Error::Other("selected publication note part was removed".into())
+                })?,
+                trace.roots,
+            )
+        } else {
+            let (transported, _, mapped) =
+                crate::revision::resolve_story_xml_with_publication_roots(
+                    bytes,
                     resolution,
                     crate::revision::RevisionScope::Ids(new_ids),
-                    Some(&mut trace),
+                    side.revision_id,
+                    &roots,
                 )?;
-                (
-                    trace.output.ok_or_else(|| {
-                        Error::Other("selected publication note part was removed".into())
-                    })?,
-                    trace.roots,
-                )
-            } else {
-                let (transported, _, mapped) =
-                    crate::revision::resolve_story_xml_with_publication_roots(
-                        bytes,
-                        resolution,
-                        crate::revision::RevisionScope::Ids(new_ids),
-                        witness.revision_ids[role],
-                        &roots,
-                    )?;
-                (transported, mapped)
-            };
+            (transported, mapped)
+        };
         let mut ranges = Vec::with_capacity(mapped.len());
         let mut previous = None;
         for range in mapped {
@@ -4803,7 +4867,7 @@ fn validate_field_conversion_role(
         {
             return Err(Error::Other("publication transport does not reach the actual resolved Field's complete part extent".into()));
         }
-        if !witness.input_complex[role] {
+        if !side.input_complex {
             let (observation, field, metadata) = *matches[0];
             let expected_record = observation
                 .metadata_record
@@ -4830,7 +4894,12 @@ fn validate_field_conversion_role(
             }
         }
     }
-    map_nested_conversion_metadata(&mut actual.0, &wanted.0, witnesses, role)?;
+    let converted = sides
+        .iter()
+        .filter(|side| !side.input_complex)
+        .map(|side| side.source)
+        .collect::<Vec<_>>();
+    map_nested_conversion_metadata(&mut actual.0, &wanted.0, &converted)?;
     for ((actual_kind, actual_part, actual_items), (wanted_kind, wanted_part, wanted_items)) in
         actual.1.iter_mut().zip(&wanted.1)
     {
@@ -4839,7 +4908,7 @@ fn validate_field_conversion_role(
                 "nested conversion changed physical story inventory".into(),
             ));
         }
-        map_nested_conversion_metadata(actual_items, wanted_items, witnesses, role)?;
+        map_nested_conversion_metadata(actual_items, wanted_items, &converted)?;
     }
     Ok(())
 }
@@ -4972,8 +5041,7 @@ fn map_field_metadata_record(
 fn map_nested_conversion_metadata(
     actual: &mut [GuardItem],
     wanted: &[GuardItem],
-    witnesses: &[FieldConversionWitness],
-    role: usize,
+    converted: &[&FieldSourceOccurrence],
 ) -> Result<()> {
     fn same_occurrence(left: &FieldSourceOccurrence, right: &FieldSourceOccurrence) -> bool {
         left.story == right.story
@@ -5096,10 +5164,9 @@ fn map_nested_conversion_metadata(
                         && !observation.result_path.is_empty()
                 })
                 .filter(|observation| {
-                    witnesses.iter().any(|witness| {
-                        !witness.input_complex[role]
-                            && same_occurrence(&witness.sources[role], &observation.occurrence)
-                    })
+                    converted
+                        .iter()
+                        .any(|source| same_occurrence(source, &observation.occurrence))
                 })
                 .map(|observation| observation.result_path.clone())
                 .collect::<Vec<_>>();
@@ -5154,7 +5221,7 @@ fn map_nested_conversion_metadata(
             let wanted_host = wanted.iter().flat_map(|item| &item.hosts).nth(host_index);
             if let Some(wanted_host) = wanted_host {
                 for (body, input) in host.bodies.iter_mut().zip(&wanted_host.bodies) {
-                    map_nested_conversion_metadata(body, input, witnesses, role)?;
+                    map_nested_conversion_metadata(body, input, converted)?;
                 }
             }
         }
@@ -8994,17 +9061,11 @@ fn compare_body_impl(
         &edited_signatures,
         metadata.options,
     )?;
-    refuse_uncarried_field_owners(
-        &aligned,
-        &original_paragraphs,
-        &edited_paragraphs,
-        &carried,
-        location,
-    )?;
     let moves = pair_moves(
         &aligned,
         &original_signatures,
         &edited_signatures,
+        uncarried_field_owners(&aligned, &original_paragraphs, &edited_paragraphs, &carried)?,
         &mut metadata.ids,
     )?;
     let trailing_inserted = trailing_paragraphs(&aligned, |(left, right)| {
@@ -9194,6 +9255,7 @@ fn compare_body_impl(
                 }
                 let move_id = moves.original[left];
                 let kind = if move_id.is_some() { "moveFrom" } else { "del" };
+                let whole = carried.original.contains(&left);
                 if let BodyContent::Paragraph(paragraph) = content
                     && let Some((first, last)) =
                         trailing_deleted.filter(|&(first, _)| position >= first)
@@ -9205,6 +9267,7 @@ fn compare_body_impl(
                             paragraph,
                             kind,
                             move_id,
+                            carried: whole,
                             first: position == first,
                             single: first == last,
                             next_takes_mark,
@@ -9227,9 +9290,13 @@ fn compare_body_impl(
                         source_bindings,
                         metadata,
                     )?;
-                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
+                    output.push(final_paragraph(
+                        paragraph, kind, move_id, whole, merged, metadata,
+                    )?);
                 } else {
-                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
+                    output.push(unmatched_body_owner(
+                        content, kind, move_id, whole, metadata,
+                    )?);
                 }
             }
             (None, Some(right)) => {
@@ -9247,6 +9314,7 @@ fn compare_body_impl(
                 }
                 let move_id = moves.edited[right];
                 let kind = if move_id.is_some() { "moveTo" } else { "ins" };
+                let whole = carried.edited.contains(&right);
                 if let BodyContent::Paragraph(paragraph) = content
                     && let Some((first, last)) =
                         trailing_inserted.filter(|&(first, _)| position >= first)
@@ -9258,6 +9326,7 @@ fn compare_body_impl(
                             paragraph,
                             kind,
                             move_id,
+                            carried: whole,
                             first: position == first,
                             single: first == last,
                             next_takes_mark,
@@ -9280,9 +9349,13 @@ fn compare_body_impl(
                         source_bindings,
                         metadata,
                     )?;
-                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
+                    output.push(final_paragraph(
+                        paragraph, kind, move_id, whole, merged, metadata,
+                    )?);
                 } else {
-                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
+                    output.push(unmatched_body_owner(
+                        content, kind, move_id, whole, metadata,
+                    )?);
                 }
             }
             (None, None) => unreachable!(),
@@ -9657,7 +9730,7 @@ fn moved_body_content(
     content: &BodyContent,
     kind: &str,
     id: i32,
-    metadata: &Metadata<'_>,
+    metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match content {
         BodyContent::Paragraph(paragraph) => moved_paragraph(paragraph, kind, id, metadata),
@@ -9672,7 +9745,7 @@ fn moved_paragraph(
     paragraph: &CT_P,
     kind: &str,
     id: i32,
-    metadata: &Metadata<'_>,
+    metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     refuse_moved_markers(paragraph)?;
     let marker = metadata.ids.generated(IdAllocator::marker_with_id(
@@ -9691,11 +9764,12 @@ fn moved_paragraph(
     )?;
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&properties);
-    let children = paragraph_children_xml(paragraph, false, metadata)?;
+    let (children, published) = paragraph_children_xml(paragraph, false, false, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         false,
         false,
+        &published,
         &mut |content| {
             metadata.ids.generated(IdAllocator::revision_with_id(
                 kind,
@@ -11251,6 +11325,9 @@ struct TrailingRun<'a, 'l> {
     paragraph: &'a CT_P,
     kind: &'static str,
     move_id: Option<i32>,
+    /// Whether it is replaced whole inside a complex field (see
+    /// [`deleted_paragraph`]).
+    carried: bool,
     /// Whether it is the first paragraph of the run, and the only one.
     first: bool,
     single: bool,
@@ -11300,6 +11377,7 @@ fn trailing_paragraph<'a>(
             run.content,
             run.kind,
             run.move_id,
+            run.carried,
             metadata,
         )?);
         *previous_moved = run.move_id.is_some();
@@ -11315,6 +11393,7 @@ fn trailing_paragraph<'a>(
         run.paragraph,
         run.kind,
         run.move_id,
+        run.carried,
         merged.clone(),
         metadata,
     )?);
@@ -11322,17 +11401,19 @@ fn trailing_paragraph<'a>(
 }
 
 /// A body owner one side alone holds, written with its own `kind` marks:
-/// moved under `move_id`, deleted or inserted.
+/// moved under `move_id`, deleted or inserted, `carried` or not (see
+/// [`deleted_paragraph`]).
 fn unmatched_body_owner<'a>(
     content: &'a BodyContent,
     kind: &'static str,
     move_id: Option<i32>,
+    carried: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<(EmittedOwner<'a>, String)> {
     let xml = match (move_id, kind) {
         (Some(id), _) => moved_body_content(content, kind, id, metadata)?,
-        (None, "del") => deleted_body_content(content, metadata)?,
-        (None, _) => inserted_body_content(content, metadata)?,
+        (None, "del") => deleted_body_content(content, carried, metadata)?,
+        (None, _) => inserted_body_content(content, carried, metadata)?,
     };
     Ok((
         EmittedOwner::of(content, content, Some(kind), metadata)?,
@@ -11395,10 +11476,14 @@ fn mark_previous_paragraph_with_id<'a>(
 /// paragraph before has on that side, so this paragraph carries the accepted
 /// properties with a `w:pPrChange` and a mark `w:rPrChange` that hold the
 /// rejected ones, and both resolutions keep each paragraph's properties.
+///
+/// Its simple fields are written as for [`deleted_paragraph`], unless it is
+/// moved or `carried`.
 fn final_paragraph<'a>(
     paragraph: &'a CT_P,
     kind: &str,
     move_id: Option<i32>,
+    carried: bool,
     merged: PropertySide<'a>,
     metadata: &mut Metadata<'_>,
 ) -> Result<(EmittedOwner<'a>, String)> {
@@ -11412,11 +11497,17 @@ fn final_paragraph<'a>(
     output.push_str(&final_paragraph_properties_xml(
         &own, &accepted, &rejected, metadata,
     )?);
-    let children = paragraph_children_xml(paragraph, kind == "del", metadata)?;
+    let (children, published) = paragraph_children_xml(
+        paragraph,
+        kind == "del",
+        move_id.is_none() && !carried,
+        metadata,
+    )?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         kind == "del",
         false,
+        &published,
         &mut |content| match move_id {
             Some(id) => metadata.ids.generated(IdAllocator::revision_with_id(
                 kind,
@@ -11476,9 +11567,13 @@ fn compare_body_content(
     }
 }
 
-fn deleted_body_content(content: &BodyContent, metadata: &mut Metadata<'_>) -> Result<String> {
+fn deleted_body_content(
+    content: &BodyContent,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
     match content {
-        BodyContent::Paragraph(paragraph) => deleted_paragraph(paragraph, metadata),
+        BodyContent::Paragraph(paragraph) => deleted_paragraph(paragraph, carried, metadata),
         BodyContent::Table(table) => marked_table(table, "del", metadata),
         BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
             "comparison cannot delete an unmatched content-control or opaque body node".to_owned(),
@@ -11486,9 +11581,13 @@ fn deleted_body_content(content: &BodyContent, metadata: &mut Metadata<'_>) -> R
     }
 }
 
-fn inserted_body_content(content: &BodyContent, metadata: &mut Metadata<'_>) -> Result<String> {
+fn inserted_body_content(
+    content: &BodyContent,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
     match content {
-        BodyContent::Paragraph(paragraph) => inserted_paragraph(paragraph, metadata),
+        BodyContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         BodyContent::Table(table) => marked_table(table, "ins", metadata),
         BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
             "comparison cannot insert an unmatched content-control or opaque body node".to_owned(),
@@ -11875,8 +11974,8 @@ fn compare_paragraph(
         {
             return Ok(format!(
                 "{}{}",
-                deleted_paragraph(original, metadata)?,
-                inserted_paragraph(edited, metadata)?
+                deleted_paragraph(original, false, metadata)?,
+                inserted_paragraph(edited, false, metadata)?
             ));
         }
         if metadata.options.ignore_formatting
@@ -15530,14 +15629,22 @@ fn section_properties_xml(
         .generated(inject_before_close(&current, "</w:sectPr>", &change)?)
 }
 
-fn deleted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -> Result<String> {
+/// A paragraph deleted whole. Unless it is `carried` (deleted inside a complex
+/// field replaced with it, which owns its simple fields), its simple fields
+/// are written as whole complex fields (see [`paragraph_children_xml`]).
+fn deleted_paragraph(
+    paragraph: &CT_P,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&paragraph_mark_properties(paragraph, "del", metadata)?);
-    let children = paragraph_children_xml(paragraph, true, metadata)?;
+    let (children, published) = paragraph_children_xml(paragraph, true, !carried, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         true,
         false,
+        &published,
         &mut |content| {
             metadata
                 .ids
@@ -15548,14 +15655,20 @@ fn deleted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -> Result<St
     metadata.ids.generated(output)
 }
 
-fn inserted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -> Result<String> {
+/// A paragraph inserted whole: [`deleted_paragraph`] for an insertion.
+fn inserted_paragraph(
+    paragraph: &CT_P,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&paragraph_mark_properties(paragraph, "ins", metadata)?);
-    let children = paragraph_children_xml(paragraph, false, metadata)?;
+    let (children, published) = paragraph_children_xml(paragraph, false, !carried, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         false,
         false,
+        &published,
         &mut |content| {
             metadata
                 .ids
@@ -15569,11 +15682,25 @@ fn inserted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -> Result<S
 /// Stage a whole paragraph without its properties, retaining actual run source
 /// and destination namespace custody before the shared revision publisher wraps
 /// eligible payloads. Field and hyperlink shells remain that publisher's owners.
+///
+/// With `whole_fields`, each simple field of the paragraph is written as one
+/// complex field, the whole of it in an `ins` (or, `deleted`, a `del`) of its
+/// own under one new revision id: a `w:fldSimple` cannot carry a mark, and
+/// resolving the paragraph would leave its shell. That is the shape Word
+/// writes for a field deleted with its paragraph. The byte ranges of those
+/// wrappers are returned for the publisher to keep as they are.
 fn paragraph_children_xml(
     paragraph: &CT_P,
     deleted: bool,
-    metadata: &Metadata<'_>,
-) -> Result<String> {
+    whole_fields: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<(String, Vec<Range<usize>>)> {
+    if whole_fields && simple_field_paths(paragraph)?.linked {
+        return Err(Error::Other(
+            "comparison cannot track a whole paragraph's simple field outside a field it replaces: it is inside a hyperlink"
+                .into(),
+        ));
+    }
     let mut children = paragraph.clone();
     children.properties = None;
     if deleted {
@@ -15584,6 +15711,7 @@ fn paragraph_children_xml(
     // One read of the paragraph answers the scope of every run.
     let parents = ParentScopes::new(&xml, spans.iter().map(|span| span.start).collect());
     let mut replacements = Vec::new();
+    let mut fields = Vec::new();
     let mut index = 0;
     while index < children.runs.len() {
         if let Some((coverage, _)) = children.field_source_run_fragments_at(index)? {
@@ -15591,6 +15719,15 @@ fn paragraph_children_xml(
             continue;
         }
         let run = &paragraph.runs[index];
+        if whole_fields && let Some(field) = run_field(run).filter(|field| !field.is_complex()) {
+            fields.push(replacements.len());
+            replacements.push((
+                spans[index].clone(),
+                whole_simple_field(field, deleted, metadata)?,
+            ));
+            index += 1;
+            continue;
+        }
         if let Some(source) = metadata.run_source(run) {
             let span = spans[index].clone();
             replacements.push((span.clone(), {
@@ -15609,10 +15746,70 @@ fn paragraph_children_xml(
         }
         index += 1;
     }
+    let mut published = Vec::with_capacity(fields.len());
+    let mut shift = 0isize;
+    for (position, (span, replacement)) in replacements.iter().enumerate() {
+        let start = span.start.checked_add_signed(shift).ok_or_else(|| {
+            Error::Other("whole-paragraph field publication offset overflow".into())
+        })?;
+        if fields.contains(&position) {
+            published.push(start..start + replacement.len());
+        }
+        shift += replacement.len() as isize - span.len() as isize;
+    }
     for (span, replacement) in replacements.into_iter().rev() {
         xml.replace_range(span, &replacement);
     }
-    Ok(xml)
+    Ok((xml, published))
+}
+
+/// One simple field of a paragraph inserted or deleted whole, as the complex
+/// field that `compare_field_xml` writes for a change of form, in a wrapper
+/// of its own under one new revision id. The witness names the occurrence of
+/// the input that keeps the paragraph; with fields ignored, the guard
+/// compares no field and none is recorded.
+fn whole_simple_field(
+    field: &oxoffice_docx_oxml::text::Field,
+    deleted: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
+    let scope = field_result_scope(field, metadata);
+    let complex = clean_simple_complex_source(&field_xml(field)?, &scope, field)?;
+    let payload = qualified_complete_field_payload(&complex, &scope, deleted, false, true, &mut 0)?;
+    let id = metadata.ids.allocate()?;
+    let wrapper = metadata.ids.generated(IdAllocator::revision_with_id(
+        if deleted { "del" } else { "ins" },
+        metadata.author,
+        metadata.timestamp,
+        &payload,
+        id,
+    ))?;
+    if !metadata.options.ignore_fields {
+        let source = metadata
+            .source_frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                frame
+                    .field_occurrences
+                    .get(&(std::ptr::from_ref(field) as usize))
+            })
+            .cloned()
+            .ok_or_else(|| {
+                Error::Other("whole-paragraph field has no physical source occurrence".into())
+            })?;
+        if source.input_role != usize::from(!deleted) {
+            return Err(Error::Other(
+                "whole-paragraph field occurrence is on the other input".into(),
+            ));
+        }
+        metadata.whole_field_conversions.push(WholeFieldWitness {
+            source,
+            revision_id: id,
+            generated_span: payload,
+        });
+    }
+    Ok(wrapper)
 }
 
 /// Expanded Word names in a serialized owner. The writer supplies canonical
@@ -16426,13 +16623,6 @@ fn compare_aligned_cell_children(
         &edited_signatures,
         options,
     )?;
-    refuse_uncarried_field_owners(
-        &aligned,
-        &original_paragraphs,
-        &edited_paragraphs,
-        &carried,
-        location,
-    )?;
     let is_paragraph =
         |child: Option<&CellContent>| matches!(child, Some(CellContent::Paragraph(_)));
     let trailing_paragraph_insert_start = aligned
@@ -16533,6 +16723,7 @@ fn compare_aligned_cell_children(
             )),
             (Some(i), None) => {
                 let child = &original.content[i];
+                let whole = carried.original.contains(&i);
                 if let CellContent::Paragraph(paragraph) = child
                     && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                 {
@@ -16543,13 +16734,14 @@ fn compare_aligned_cell_children(
                     if next_takes_mark {
                         content.push((
                             EmittedOwner::paragraph(paragraph, paragraph, metadata)?,
-                            marked_cell_child(child, "del", metadata)?,
+                            marked_cell_child(child, "del", whole, metadata)?,
                         ));
                     } else {
                         content.push(final_paragraph(
                             paragraph,
                             "del",
                             None,
+                            whole,
                             trailing_merged.clone(),
                             metadata,
                         )?);
@@ -16558,16 +16750,19 @@ fn compare_aligned_cell_children(
                     && !next_takes_mark
                 {
                     let merged = mark_previous_paragraph(&mut content, "del", &bindings, metadata)?;
-                    content.push(final_paragraph(paragraph, "del", None, merged, metadata)?);
+                    content.push(final_paragraph(
+                        paragraph, "del", None, whole, merged, metadata,
+                    )?);
                 } else {
                     content.push((
                         EmittedOwner::of_cell(child, child, Some("del"), metadata)?,
-                        marked_cell_child(child, "del", metadata)?,
+                        marked_cell_child(child, "del", whole, metadata)?,
                     ));
                 }
             }
             (None, Some(j)) => {
                 let child = &edited.content[j];
+                let whole = carried.edited.contains(&j);
                 if let CellContent::Paragraph(paragraph) = child
                     && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                 {
@@ -16578,13 +16773,14 @@ fn compare_aligned_cell_children(
                     if next_takes_mark {
                         content.push((
                             EmittedOwner::paragraph(paragraph, paragraph, metadata)?,
-                            marked_cell_child(child, "ins", metadata)?,
+                            marked_cell_child(child, "ins", whole, metadata)?,
                         ));
                     } else {
                         content.push(final_paragraph(
                             paragraph,
                             "ins",
                             None,
+                            whole,
                             trailing_merged.clone(),
                             metadata,
                         )?);
@@ -16593,11 +16789,13 @@ fn compare_aligned_cell_children(
                     && !next_takes_mark
                 {
                     let merged = mark_previous_paragraph(&mut content, "ins", &bindings, metadata)?;
-                    content.push(final_paragraph(paragraph, "ins", None, merged, metadata)?);
+                    content.push(final_paragraph(
+                        paragraph, "ins", None, whole, merged, metadata,
+                    )?);
                 } else {
                     content.push((
                         EmittedOwner::of_cell(child, child, Some("ins"), metadata)?,
-                        marked_cell_child(child, "ins", metadata)?,
+                        marked_cell_child(child, "ins", whole, metadata)?,
                     ));
                 }
             }
@@ -16618,13 +16816,14 @@ fn compare_aligned_cell_children(
 fn marked_cell_child(
     child: &CellContent,
     kind: &str,
+    carried: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match child {
         CellContent::Paragraph(paragraph) if kind == "del" => {
-            deleted_paragraph(paragraph, metadata)
+            deleted_paragraph(paragraph, carried, metadata)
         }
-        CellContent::Paragraph(paragraph) => inserted_paragraph(paragraph, metadata),
+        CellContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         CellContent::Table(table) => marked_table(table, kind, metadata),
         CellContent::ContentControl(_) => Err(Error::Other(
             "comparison cannot add or remove an unmatched content control in a cell".to_owned(),
@@ -16850,13 +17049,6 @@ fn compare_control_from_xml(
             &edited_signatures,
             metadata.options,
         )?;
-        refuse_uncarried_field_owners(
-            &aligned,
-            &original_paragraphs,
-            &edited_paragraphs,
-            &carried,
-            location,
-        )?;
         let trailing_paragraph_insert_start = aligned
             .iter()
             .enumerate()
@@ -16962,6 +17154,7 @@ fn compare_control_from_xml(
                     )?,
                 )),
                 (Some(i), None) => {
+                    let whole = carried.original.contains(&i);
                     if let SdtContent::Paragraph(paragraph) = original_content[i]
                         && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                     {
@@ -16975,6 +17168,7 @@ fn compare_control_from_xml(
                                 marked_control_content(
                                     original_content[i],
                                     "del",
+                                    whole,
                                     &bindings,
                                     metadata,
                                 )?,
@@ -16984,6 +17178,7 @@ fn compare_control_from_xml(
                                 paragraph,
                                 "del",
                                 None,
+                                whole,
                                 trailing_merged.clone(),
                                 metadata,
                             )?);
@@ -16993,7 +17188,9 @@ fn compare_control_from_xml(
                     {
                         let merged =
                             mark_previous_paragraph(&mut content, "del", &bindings, metadata)?;
-                        content.push(final_paragraph(paragraph, "del", None, merged, metadata)?);
+                        content.push(final_paragraph(
+                            paragraph, "del", None, whole, merged, metadata,
+                        )?);
                     } else {
                         content.push((
                             EmittedOwner::of_control(
@@ -17005,6 +17202,7 @@ fn compare_control_from_xml(
                             marked_control_content(
                                 original_content[i],
                                 "del",
+                                whole,
                                 &bindings,
                                 metadata,
                             )?,
@@ -17012,6 +17210,7 @@ fn compare_control_from_xml(
                     }
                 }
                 (None, Some(j)) => {
+                    let whole = carried.edited.contains(&j);
                     if let SdtContent::Paragraph(paragraph) = edited_content[j]
                         && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                     {
@@ -17025,6 +17224,7 @@ fn compare_control_from_xml(
                                 marked_control_content(
                                     edited_content[j],
                                     "ins",
+                                    whole,
                                     &bindings,
                                     metadata,
                                 )?,
@@ -17034,6 +17234,7 @@ fn compare_control_from_xml(
                                 paragraph,
                                 "ins",
                                 None,
+                                whole,
                                 trailing_merged.clone(),
                                 metadata,
                             )?);
@@ -17043,7 +17244,9 @@ fn compare_control_from_xml(
                     {
                         let merged =
                             mark_previous_paragraph(&mut content, "ins", &bindings, metadata)?;
-                        content.push(final_paragraph(paragraph, "ins", None, merged, metadata)?);
+                        content.push(final_paragraph(
+                            paragraph, "ins", None, whole, merged, metadata,
+                        )?);
                     } else {
                         content.push((
                             EmittedOwner::of_control(
@@ -17052,7 +17255,13 @@ fn compare_control_from_xml(
                                 Some("ins"),
                                 metadata,
                             )?,
-                            marked_control_content(edited_content[j], "ins", &bindings, metadata)?,
+                            marked_control_content(
+                                edited_content[j],
+                                "ins",
+                                whole,
+                                &bindings,
+                                metadata,
+                            )?,
                         ));
                     }
                 }
@@ -17672,12 +17881,15 @@ fn compare_control_runs_with_options(
 fn marked_control_content(
     content: &SdtContent,
     kind: &str,
+    carried: bool,
     destination_parent: &NamespaceBindings,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match content {
-        SdtContent::Paragraph(paragraph) if kind == "del" => deleted_paragraph(paragraph, metadata),
-        SdtContent::Paragraph(paragraph) => inserted_paragraph(paragraph, metadata),
+        SdtContent::Paragraph(paragraph) if kind == "del" => {
+            deleted_paragraph(paragraph, carried, metadata)
+        }
+        SdtContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         SdtContent::Table(table) => marked_table(table, kind, metadata),
         SdtContent::Row(row) => marked_row(row, kind, metadata),
         SdtContent::Run(run) => {
@@ -19014,6 +19226,7 @@ fn tracked_field_result(
             .cloned(),
         leaf_publications: Vec::new(),
         field_conversions: Vec::new(),
+        whole_field_conversions: Vec::new(),
     };
     let mut diagnostics = Vec::new();
     let result = compare_paragraph(
@@ -19026,6 +19239,9 @@ fn tracked_field_result(
     )?;
     metadata.ids = inner.ids;
     metadata.field_conversions.extend(inner.field_conversions);
+    metadata
+        .whole_field_conversions
+        .extend(inner.whole_field_conversions);
     let inner_range = element_inner_range_any_prefix(&result, "p")?;
     Ok(result[inner_range].to_owned())
 }
@@ -19649,11 +19865,12 @@ fn replace_changed_paragraph_runs(
         {
             return Ok(false);
         }
+        // A simple field goes with its paragraph as a whole complex field
+        // (see `paragraph_children_xml`); a complex field could span others.
         for paragraph in [left, right] {
             if paragraph_field_events(paragraph)?
                 .iter()
                 .any(|event| matches!(event, FieldEvent::Begin | FieldEvent::End))
-                || paragraph_wraps_simple_field(paragraph)?
             {
                 return Ok(false);
             }
@@ -19705,39 +19922,53 @@ struct CarriedParagraphs {
     edited: HashSet<usize>,
 }
 
-/// Refuse a whole deleted, inserted or moved paragraph that holds a simple
-/// field outside a complex field carried with it.
+/// The whole deleted or inserted paragraphs, by index on each side, that hold
+/// a simple field outside a complex field carried with them.
 ///
-/// A tracked result alone cannot authorize retiring its simple-field shell.
-/// Whole-paragraph publication therefore retains the existing refusal unless
-/// the complete carried owner supplies the admitted shell-lifetime proof.
-fn refuse_uncarried_field_owners(
+/// Their emitters write each such field as one complex field in a wrapper of
+/// its own (see [`paragraph_children_xml`]). A move pair gives one id to both
+/// ends, which such a wrapper cannot share, so these paragraphs are not moved.
+fn uncarried_field_owners(
     aligned: &[(Option<usize>, Option<usize>)],
     original: &[Option<&CT_P>],
     edited: &[Option<&CT_P>],
     carried: &CarriedParagraphs,
-    location: &str,
-) -> Result<()> {
+) -> Result<[HashSet<usize>; 2]> {
+    let mut owners = [HashSet::new(), HashSet::new()];
     for (left, right) in aligned {
-        let paragraph = match (left, right) {
-            (Some(i), None) if !carried.original.contains(i) => original[*i],
-            (None, Some(j)) if !carried.edited.contains(j) => edited[*j],
-            _ => None,
+        let (side, index, paragraph) = match (left, right) {
+            (Some(i), None) if !carried.original.contains(i) => (0, *i, original[*i]),
+            (None, Some(j)) if !carried.edited.contains(j) => (1, *j, edited[*j]),
+            _ => continue,
         };
         if let Some(paragraph) = paragraph
             && paragraph_wraps_simple_field(paragraph)?
         {
-            return Err(Error::Other(format!(
-                "comparison cannot track a whole paragraph's simple field outside a field it replaces at {location}"
-            )));
+            owners[side].insert(index);
         }
     }
-    Ok(())
+    Ok(owners)
 }
 
 /// Whether this paragraph has a simple-field owner on the existing direct or
 /// hyperlink path that requires complete carriage for whole-paragraph changes.
 fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
+    let paths = simple_field_paths(paragraph)?;
+    Ok(paths.direct || paths.linked)
+}
+
+/// Where a paragraph holds the simple fields a whole-paragraph change must
+/// track: as its own children, or inside a hyperlink.
+struct SimpleFieldPaths {
+    direct: bool,
+    linked: bool,
+}
+
+fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
+    let mut paths = SimpleFieldPaths {
+        direct: false,
+        linked: false,
+    };
     let xml = paragraph_xml(paragraph)?;
     let word_starts = word_element_starts(&xml)?;
     let mut reader = Reader::from_reader(xml.as_bytes());
@@ -19757,7 +19988,7 @@ fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
                 buffer.clear();
                 continue;
             }
-            Event::Eof => return Ok(false),
+            Event::Eof => return Ok(paths),
             _ => {
                 buffer.clear();
                 continue;
@@ -19766,7 +19997,11 @@ fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
         let local = element.local_name();
         let parent_wrapped = open.last().copied();
         if word && parent_wrapped == Some(true) && local.as_ref() == b"fldSimple" {
-            return Ok(true);
+            if open.len() == 1 {
+                paths.direct = true;
+            } else {
+                paths.linked = true;
+            }
         }
         if !empty {
             open.push(

@@ -3201,24 +3201,28 @@ fn check_both_ways(
 }
 
 /// The text of each `w:p` of the saved part ending with `suffix`, read from
-/// its `w:t` and `w:delText` elements, with no pending deletion.
+/// its `w:t` elements; the part holds no pending deletion.
 fn part_texts(doc: &mut Document, suffix: &str) -> Vec<String> {
     let xml = part_xml(doc, suffix);
     assert!(!xml.contains("<w:del "), "resolved: {xml}");
-    xml.split("<w:p>")
-        .chain(xml.split("<w:p "))
-        .skip(1)
-        .map(|paragraph| {
-            let paragraph = paragraph.split("</w:p>").next().unwrap();
+    let starts = xml
+        .match_indices("<w:p")
+        .map(|(at, _)| at)
+        .filter(|at| matches!(xml.as_bytes().get(at + 4), Some(b'>' | b' ')));
+    starts
+        .map(|at| {
+            let paragraph = &xml[at..];
+            let paragraph = &paragraph[..paragraph.find("</w:p>").unwrap_or(paragraph.len())];
             paragraph
-                .split("<w:t")
-                .skip(1)
-                .filter_map(|text| {
-                    let text = text.strip_prefix('>').or_else(|| {
-                        text.starts_with(' ')
-                            .then(|| &text[text.find('>').unwrap() + 1..])
-                    })?;
-                    Some(text.split("</w:t>").next().unwrap().to_owned())
+                .match_indices("<w:t")
+                .filter_map(|(at, _)| {
+                    let text = &paragraph[at + 4..];
+                    let text = match text.as_bytes().first() {
+                        Some(b'>') => &text[1..],
+                        Some(b' ') => &text[text.find('>')? + 1..],
+                        _ => return None,
+                    };
+                    Some(&text[..text.find("</w:t>")?])
                 })
                 .collect::<String>()
         })
@@ -3451,6 +3455,25 @@ fn a_simple_field_inside_a_hyperlink_keeps_the_whole_paragraph_refusal() {
     // inserted paragraph, refused the same way.
     let relinked = linked.replace("_Top", "_Bottom");
     refused(&format!("{linked}{after}"), &format!("{relinked}{after}"));
+}
+
+#[test]
+fn a_simple_field_nested_in_another_keeps_a_refusal_when_its_paragraph_goes_whole() {
+    // The conversion writes one complex field; a simple field in its result
+    // has no qualified place there, and the comparison says so.
+    let nested = r#"<w:p><w:fldSimple w:instr=" IF 1 = 1 "><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:fldSimple></w:p>"#;
+    let after = plain("After.");
+    for (original, edited) in [
+        (after.clone(), format!("{nested}{after}")),
+        (format!("{nested}{after}"), after.clone()),
+    ] {
+        let mut doc = doc_with_body(&original);
+        let error = doc
+            .compare(&doc_with_body(&edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(error.to_string().contains("fldSimple"), "{error}");
+        assert!(doc.revisions().is_empty());
+    }
 }
 
 #[test]
