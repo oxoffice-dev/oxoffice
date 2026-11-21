@@ -5,7 +5,6 @@
 # `message` is text the failure must hold, so that a failure with another
 # cause still fails the test.
 
-
 # With the contents oxoffice rebuilt on both versions, the comparison tracks
 # the new heading's entry (#66); Google's copy then stops on a paragraph whose
 # boundary structures differ.
