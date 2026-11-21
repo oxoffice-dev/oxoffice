@@ -1519,8 +1519,14 @@ impl<'a> Table<'a> {
         self
     }
 
-    /// Set the table width as a percentage in place.
+    /// Set the table width as a percentage in place, clamped to 0–100 as
+    /// Word writes it. A NaN leaves the width as it was; use
+    /// [`Self::set_width_mode`] to have a bad value refused.
     pub fn set_width_pct(&mut self, percent: f64) {
+        if percent.is_nan() {
+            return;
+        }
+        let percent = percent.clamp(0.0, 100.0);
         self.ensure_tbl_pr().width = Some(CT_TblWidth::pct(percent_fiftieths(percent)));
     }
 

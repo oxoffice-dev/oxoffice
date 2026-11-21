@@ -878,6 +878,34 @@ fn table_percentages_round_to_the_nearest_fiftieth_through_both_setters() {
 }
 
 #[test]
+fn the_unchecked_percentage_setter_keeps_to_what_word_writes() {
+    for (percent, stored) in [
+        (150.0, 100.0),
+        (-5.0, 0.0),
+        (f64::INFINITY, 100.0),
+        (f64::NEG_INFINITY, 0.0),
+    ] {
+        let mut doc = Document::new();
+        doc.add_table(1, 1).set_width_pct(percent);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.table(0).unwrap().width_mode(),
+            Some(TableWidth::Percentage(stored)),
+            "{percent}"
+        );
+    }
+    // NaN names no width: the one already set stays.
+    let mut doc = Document::new();
+    doc.add_table(1, 1).set_width_pct(40.0);
+    doc.table_mut(0).unwrap().set_width_pct(f64::NAN);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.table(0).unwrap().width_mode(),
+        Some(TableWidth::Percentage(40.0))
+    );
+}
+
+#[test]
 fn a_cell_reads_its_tracked_insertions_as_its_paragraphs_do() {
     let doc = doc_with_body(concat!(
         r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>"#,
