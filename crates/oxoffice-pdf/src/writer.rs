@@ -10,7 +10,7 @@ use oxoffice_layout::{
 };
 use pdf_writer::types::{
     ActionType, AnnotationFlags, AnnotationType, CidFontType, ColorSpaceOperand, FontFlags,
-    FunctionShadingType, LineCapStyle, LineJoinStyle, OutputIntentSubtype, SystemInfo,
+    FunctionShadingType, LineCapStyle, LineJoinStyle, OutputIntentSubtype, SystemInfo, TabOrder,
     TextRenderingMode,
 };
 use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
@@ -588,7 +588,12 @@ pub(crate) fn write_pdf_impl(
     let declares_pdfua = tagged.is_some() && !layout_uses_notdef(layout);
     let metadata_id = (declares_pdfua || profile.is_some()).then(&mut alloc);
     let icc_profile_id = profile.map(|_| alloc());
-    let forms = forms::FormPlan::new(&layout.pages, &layout.form_fields, &mut alloc);
+    let forms = forms::FormPlan::new(
+        &layout.pages,
+        &layout.form_fields,
+        tagged.is_some(),
+        &mut alloc,
+    );
 
     // ── Write catalog ────────────────────────────────────────────────
     {
@@ -920,7 +925,12 @@ pub(crate) fn write_pdf_impl(
         });
 
         if let Some(forms) = forms.as_ref() {
+            let before = page_annotations.len();
             page_annotations.extend(forms.widgets_on(page_idx));
+            // Tagged pages tab through their fields in structure order.
+            if tagged.is_some() && page_annotations.len() > before {
+                page_dict.tab_order(TabOrder::StructureOrder);
+            }
         }
         if !page_annotations.is_empty() {
             page_dict.annotations(page_annotations.iter().copied());
@@ -987,7 +997,11 @@ pub(crate) fn write_pdf_impl(
     }
 
     if let Some(tagged) = tagged.as_ref() {
-        tagged.write(&mut pdf, &page_ids);
+        let widgets = forms
+            .as_ref()
+            .map(forms::FormPlan::tagged_widgets)
+            .unwrap_or_default();
+        tagged.write(&mut pdf, &page_ids, &widgets);
     }
 
     pdf.finish()
@@ -1669,11 +1683,21 @@ fn emit_form_field<'a>(
                 Vec::new()
             };
             let drawing = state.field_drawings.entry(fragment.field).or_default();
-            drawing.current.extend_from_slice(&current);
-            drawing.other.extend_from_slice(&other);
+            append_drawing(&mut drawing.current, &current);
+            append_drawing(&mut drawing.other, &other);
         }
     }
     state.structure = structure;
+}
+
+/// Append one fragment's drawing to its field's appearance. A content
+/// stream ends without whitespace, so the next fragment's `q` would fuse
+/// with the previous `Q` into an unknown operator.
+fn append_drawing(appearance: &mut Vec<u8>, drawing: &[u8]) {
+    if !appearance.is_empty() && !drawing.is_empty() {
+        appearance.push(b'\n');
+    }
+    appearance.extend_from_slice(drawing);
 }
 
 /// Children drawn in page coordinates under the groups around them, as an

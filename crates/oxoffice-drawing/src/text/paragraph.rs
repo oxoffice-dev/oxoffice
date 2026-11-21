@@ -3,8 +3,8 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
-use oxoffice_core::xml::{local_name, matches_local_name};
-use oxoffice_core::xml_text::{decode_plain, resolve_entity};
+use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
+use oxoffice_core::xml_text::resolve_entity;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
 use quick_xml::{NsReader, Reader, Writer, XmlVersion};
@@ -641,11 +641,18 @@ impl TextValue {
                 .read_event_into(&mut buffer)
                 .map_err(OxmlError::from)?
             {
-                Event::Text(value) => text.value.push_str(&decode_plain(&value)),
-                Event::CData(value) => {
-                    let value = std::str::from_utf8(value.as_ref()).map_err(OxmlError::from)?;
-                    text.value.push_str(value);
-                }
+                // XML end-of-line handling: a raw CR or CR LF reads as a line
+                // feed, as in every other reader; `&#13;` stays a CR.
+                Event::Text(value) => text.value.push_str(
+                    &value
+                        .xml10_content()
+                        .map_err(|error| OxmlError::InvalidValue(error.to_string()))?,
+                ),
+                Event::CData(value) => text.value.push_str(
+                    &value
+                        .xml10_content()
+                        .map_err(|error| OxmlError::InvalidValue(error.to_string()))?,
+                ),
                 Event::GeneralRef(value) => text.value.push_str(&resolve_entity(&value)),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"t") => {
                     if text.space == TextSpace::Default
@@ -742,7 +749,9 @@ impl TextValue {
         }
         write_start(writer, start)?;
         writer
-            .write_event(Event::Text(BytesText::new(&self.value)))
+            .write_event(Event::Text(BytesText::from_escaped(escape_text(
+                &self.value,
+            ))))
             .map_err(OxmlError::from)?;
         write_end(writer, tag)
     }

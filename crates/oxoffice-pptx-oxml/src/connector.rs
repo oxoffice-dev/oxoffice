@@ -2,6 +2,7 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::xml::{push_escaped_attribute, reject_non_xml_characters};
 use oxoffice_drawing::geometry::CT_PresetGeometry2D;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
@@ -304,6 +305,7 @@ impl CT_ConnectionShape {
 
     /// Changes the producer-facing non-visual connector name.
     pub fn set_name(&mut self, name: &str) -> Result<()> {
+        reject_non_xml_characters("shape name", name)?;
         let attributes = &mut self.raw.non_visual.drawing_properties.raw_attributes;
         if let Some((_, value)) = attributes
             .iter_mut()
@@ -1023,16 +1025,10 @@ impl RawElement {
 
     fn write_xml<W: Write>(&self, writer: &mut Writer<W>, name: &str) -> Result<()> {
         let mut start = BytesStart::new(name);
+        // The values are decoded, so a tab or line feed one holds, in a name
+        // or alt text, is written as a character reference.
         for (key, value) in &self.raw_attributes {
-            if matches!(key.as_str(), "descr" | "title") {
-                let escaped = quick_xml::escape::escape(value)
-                    .replace('\r', "&#13;")
-                    .replace('\n', "&#10;")
-                    .replace('\t', "&#9;");
-                start.push_attribute((key.as_bytes(), escaped.as_bytes()));
-            } else {
-                start.push_attribute((key.as_str(), value.as_str()));
-            }
+            push_escaped_attribute(&mut start, key, value);
         }
         if self.was_empty {
             writer.write_event(Event::Empty(start))?;

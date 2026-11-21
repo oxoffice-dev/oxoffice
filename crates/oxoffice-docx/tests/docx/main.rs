@@ -1,6 +1,7 @@
 //! Behaviour of the docx facade, one module per area, in one test binary:
 //! `cargo test -p oxoffice-docx --test docx`.
 
+mod checked_replacement;
 mod comments;
 mod corpus;
 mod fields_and_toc;

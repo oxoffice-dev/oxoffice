@@ -339,8 +339,8 @@ fn counting_an_empty_text_is_refused() {
 
 #[test]
 fn body_paragraphs_read_as_paragraph_text_reads_them() {
-    for path in crate::support::corpus_files("docx") {
-        let doc = Document::open(&path).unwrap();
+    for file in crate::support::corpus_files("docx") {
+        let doc = Document::from_bytes(&file.bytes()).unwrap();
         let listed = doc
             .story_paragraphs()
             .unwrap()
@@ -353,7 +353,7 @@ fn body_paragraphs_read_as_paragraph_text_reads_them() {
             .iter()
             .map(|paragraph| paragraph.text())
             .collect::<Vec<_>>();
-        assert_eq!(listed, read, "{}", path.display());
+        assert_eq!(listed, read, "{}", file.path);
     }
 }
 

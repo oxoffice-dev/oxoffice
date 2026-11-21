@@ -218,7 +218,13 @@ enum Command {
     /// Replace placeholders in a DOCX file
     ///
     /// Give one pair with -p and -v, or many with --map. Nothing is written
-    /// unless every pair with an expected count replaced exactly that count.
+    /// unless every pair with an expected count replaced exactly that count,
+    /// and, without --regex or --allow-unreached, unless no placeholder is
+    /// left after its replacement, out of its reach. A tab reads as a tab
+    /// character and a break as a line feed, as `text` prints them: a
+    /// placeholder holding one matches it, a value holding one writes it, a
+    /// carriage return writing a line break too (in --map JSON, "\t" and
+    /// "\n"); a page or column break written back becomes a line break.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,
@@ -247,6 +253,10 @@ enum Command {
         /// Require exactly this many replacements before publishing output
         #[arg(long, conflicts_with = "map")]
         expect: Option<usize>,
+        /// Publish even when a placeholder is still in the document after its
+        /// replacement, out of its reach
+        #[arg(long, conflicts_with = "regex")]
+        allow_unreached: bool,
         /// Output the count of each pair as JSON
         #[arg(long)]
         json: bool,
@@ -322,6 +332,13 @@ enum Command {
     /// unchanged. Any other change to it fails with its location and creates
     /// no output. Section properties holding revisions must also remain
     /// unchanged in both inputs. Changing them fails without creating output.
+    ///
+    /// Bookmark ids, which Word renumbers on every save, and the `_Toc` names
+    /// a rebuilt table of contents gives its heading bookmarks are no change:
+    /// a body bookmark both files hold keeps the original's id, a heading
+    /// paired with one of the original's takes its `_Toc` name, a new heading
+    /// takes a fresh one where the original uses its own, and the links and
+    /// page references of the edited file follow them.
     Compare {
         /// Original DOCX file
         original: PathBuf,
@@ -887,6 +904,7 @@ pub fn run(cli: Cli) {
             regex,
             output,
             expect,
+            allow_unreached,
             json,
         } => commands::replace(
             &file,
@@ -895,6 +913,7 @@ pub fn run(cli: Cli) {
                 map: map.as_deref(),
                 expect,
                 regex,
+                allow_unreached,
             },
             &output,
             json,

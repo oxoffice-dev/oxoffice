@@ -68,7 +68,11 @@ use crate::run::{FieldDisplaySegmentRef, RunRef};
 use crate::style::{self, Style, StyleBuilder};
 use crate::table::{Table, TableRef, row_cell_ranges, validate_table_topology};
 
+mod checked_replacement;
 mod story_paragraphs;
+pub use checked_replacement::{
+    ReplaceOptions, ReplacementRefusal, UncheckedReplacement, UnreachedReplacement,
+};
 pub use story_paragraphs::StoryParagraph;
 
 /// Options that select a native document render projection.
@@ -42904,14 +42908,19 @@ impl Document {
                 "numbering restart requires a numbered non-bullet level".into(),
             ));
         }
-        let mut instance = self
-            .numbering_instance(id)
+        let source = self
+            .numbering
+            .as_ref()
+            .and_then(|numbering| numbering.nums.iter().find(|item| item.num_id == id))
             .ok_or_else(|| Error::Other("numbering instance is absent".into()))?;
-        if instance.has_unmodeled_properties {
+        if !restart_can_copy(source) {
             return Err(Error::Other(
                 "numbering restart cannot project unsupported override source".into(),
             ));
         }
+        let mut instance = self
+            .numbering_instance(id)
+            .expect("the instance was found above");
         if let Some(value) = instance
             .level_overrides
             .iter_mut()
@@ -48517,6 +48526,12 @@ impl Document {
     /// tracked-insertion boundary is not replaced. Returns the total number
     /// of replacements made.
     ///
+    /// A tab reads as `\t` and every break, a page or column break included,
+    /// as `\n`, as in [`crate::Paragraph::text`], so a match does not skip
+    /// them and one that holds them removes them. A `\t` in `replacement`
+    /// becomes a tab and a `\n`, `\r` or `\r\n` one line break: a page or
+    /// column break written back by a replacement is a line break.
+    ///
     /// A `replacement` that contains `placeholder` is substituted once, not
     /// repeatedly.
     ///
@@ -49168,10 +49183,11 @@ impl Document {
     /// a value is never searched by another pair, so `{"left": "right",
     /// "right": "left"}` swaps the two words. Where two placeholders overlap,
     /// the longer one (in characters) wins, then the one that sorts first,
-    /// whatever the order of the map. [`Self::try_replace_all_expected`]
-    /// applies ordered pairs one after another instead, as Python
-    /// `Document.replace_all` and the CLI's `replace --map` do: their pairs
-    /// come in a list, so a later pair sees what an earlier one wrote.
+    /// whatever the order of the map. [`Self::try_replace_all_expected`] and
+    /// [`Self::try_replace_all_checked`] apply ordered pairs one after another
+    /// instead, as Python `Document.replace_all` and the CLI's `replace --map`
+    /// do through the checked one: their pairs come in a list, so a later pair
+    /// sees what an earlier one wrote.
     ///
     /// Cheaper than calling [`Self::replace_text`] per entry: the document is
     /// serialised and re-parsed once per pass for the whole batch rather than
@@ -49287,7 +49303,9 @@ impl Document {
     ///
     /// Tags use `{{ path.to.value }}` syntax and may cross ordinary Word run
     /// boundaries. String, number and boolean leaves render as text, while
-    /// `null` renders as an empty string. Missing paths, malformed tags, and
+    /// `null` renders as an empty string. In paragraphs and text boxes, a tab
+    /// in a value renders as a tab and a line ending as a line break; chart
+    /// labels take the value as plain text. Missing paths, malformed tags, and
     /// object or array leaves return an error without changing the document.
     /// Dedicated main-body paragraphs and table rows may contain nested
     /// `{% for item in path %}` or `{% if path %}` blocks with their matching
@@ -50169,6 +50187,11 @@ impl Document {
     /// footnotes, endnotes and text boxes, the content controls at every level
     /// of them and the text of tracked insertions. Returns the total number of replacements made, or an error if the
     /// regex is invalid.
+    ///
+    /// The text reads tabs and breaks as [`Self::replace_text`] does: `\s`
+    /// matches a tab and any break, a page break included, so a pattern such
+    /// as `\s+` replaces them too, and a break a capture group writes back
+    /// becomes a line break.
     pub fn replace_regex(&mut self, pattern: &str, replacement: &str) -> Result<usize> {
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let re =
@@ -53586,6 +53609,26 @@ fn numbering_level_has_unmodeled(level: &CT_Lvl) -> bool {
         || level.rpr_raw.is_some()
         || unprojected_paragraph_properties
         || matches!(level.num_fmt.as_ref(), Some(ST_NumberFormat::Other(_)))
+}
+
+/// Whether a restart can copy this instance into a new one: everything it
+/// holds is modelled, but namespace declarations and Word's
+/// `w16cid:durableId`, which names the source instance and which the copy
+/// must not take. The durable id is matched with the prefix Word writes, so
+/// an attribute of that name under another prefix is refused, not dropped.
+fn restart_can_copy(instance: &CT_Num) -> bool {
+    instance.extra_xml.is_empty()
+        && instance.extra_attributes.iter().all(|(name, _)| {
+            name == "xmlns" || name.starts_with("xmlns:") || name == "w16cid:durableId"
+        })
+        && !instance
+            .abstract_num_id_raw
+            .as_ref()
+            .is_some_and(|(_, raw, prefixes)| typed_numbering_leaf_has_unmodeled(raw, prefixes))
+        && !instance
+            .level_overrides
+            .iter()
+            .any(numbering_override_has_unmodeled)
 }
 
 fn numbering_override_has_unmodeled(value: &CT_NumLvl) -> bool {

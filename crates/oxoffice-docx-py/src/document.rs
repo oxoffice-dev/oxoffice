@@ -1367,6 +1367,20 @@ pub struct PyStoryParagraph {
     text: String,
 }
 
+impl PyStoryParagraph {
+    /// A paragraph whose story is not bound to a document, as a refusal
+    /// reports it after the candidate it was read from is dropped.
+    pub(crate) fn unbound(paragraph: oxoffice_docx::StoryParagraph) -> Self {
+        Self {
+            kind: story_kind_name(paragraph.kind).to_owned(),
+            story: story_snapshot(paragraph.location.story()),
+            index_path: paragraph.location.index_path().to_vec(),
+            style: paragraph.style,
+            text: paragraph.text,
+        }
+    }
+}
+
 #[pymethods]
 impl PyStoryParagraph {
     /// The story of the part: body, header, footer, footnote, endnote or
@@ -13606,17 +13620,26 @@ impl PyDocument {
         Ok(count)
     }
 
+    /// `check` refuses a pair whose text is left out of its replacement's
+    /// reach, as `Document::try_replace_all_checked` does.
     fn dormant_replacements(
         &mut self,
         py: Python<'_>,
         pairs: &[(&str, &str, Option<usize>)],
         batch: bool,
+        check: Option<oxoffice_docx::ReplaceOptions>,
     ) -> PyResult<Option<(oxoffice_docx::Document, Vec<usize>)>> {
         let candidate = self.inner.clone_for_staging();
-        let changed = py
-            .detach(|| candidate.try_replace_all_expected_owned(pairs))
-            .map_err(|error| docx_to_pyerr(py, error))?
-            .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, batch))?;
+        let changed = match check {
+            None => py
+                .detach(|| candidate.try_replace_all_expected_owned(pairs))
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, batch))?,
+            Some(options) => py
+                .detach(|| candidate.try_replace_all_checked_owned(pairs, options))
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .map_err(|refusal| crate::replacement_refusal_to_pyerr(py, refusal, batch))?,
+        };
         if let Some((candidate, _)) = &changed {
             drop(validate_word_facts(candidate, py)?);
         }
@@ -13648,12 +13671,19 @@ impl PyDocument {
         py: Python<'_>,
         pairs: &[(&str, &str, Option<usize>)],
         batch: bool,
+        check: Option<oxoffice_docx::ReplaceOptions>,
     ) -> PyResult<(oxoffice_docx::Document, Vec<usize>)> {
         let mut candidate = self.inner.clone_for_staging();
-        let counts = py
-            .detach(|| candidate.try_replace_all_expected(pairs))
-            .map_err(|error| docx_to_pyerr(py, error))?
-            .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, batch))?;
+        let counts = match check {
+            None => py
+                .detach(|| candidate.try_replace_all_expected(pairs))
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .map_err(|mismatch| crate::replacement_count_to_pyerr(py, &mismatch, batch))?,
+            Some(options) => py
+                .detach(|| candidate.try_replace_all_checked(pairs, options))
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .map_err(|refusal| crate::replacement_refusal_to_pyerr(py, refusal, batch))?,
+        };
         Ok((candidate, counts))
     }
 
@@ -15183,6 +15213,54 @@ impl PyDocument {
             )
         })
         .map_err(|error| docx_to_pyerr(py, error))
+    }
+
+    /// Split runs so that `span`, from `Paragraph.find_text`, covers whole
+    /// runs, and return the indexes `(first, last)` of those runs, the last
+    /// excluded, as `Paragraph.runs` counts them. The text does not change,
+    /// and a tab, a break or another text-free item right before or right
+    /// after the span stays out of those runs, so formatting them or setting
+    /// their text leaves it alone.
+    /// A paragraph of the body, a table cell, a header, a footer, a note or a
+    /// comment is accepted. A change stales the document's earlier handles,
+    /// the paragraphs of other spans included: find the next span after.
+    fn isolate_span(
+        slf: Py<Self>,
+        py: Python<'_>,
+        span: PyRef<'_, crate::paragraph::PyTextSpan>,
+    ) -> PyResult<(usize, usize)> {
+        let paragraph = span.paragraph.bind(py).borrow();
+        if !paragraph.belongs_to(py, &slf) {
+            return Err(PyValueError::new_err(
+                "span belongs to a different document",
+            ));
+        }
+        let location = paragraph.validate(py)?;
+        let mut document = slf.borrow_mut(py);
+        let run_count = |document: &oxoffice_docx::Document| {
+            location.read(document, |paragraph| paragraph.run_count())
+        };
+        let before = run_count(&document.inner).map_err(|error| docx_to_pyerr(py, error))?;
+        let mut candidate = document.inner.clone_for_staging();
+        let runs = location
+            .edit(&mut candidate, |paragraph| {
+                paragraph.isolate_span(oxoffice_docx::TextSpan {
+                    start: span.start,
+                    end: span.end,
+                })
+            })
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        if run_count(&candidate).map_err(|error| docx_to_pyerr(py, error))? != before {
+            let prepared = document.prepare_word_revision(
+                py,
+                &candidate,
+                "Document.isolate_span",
+                crate::document::WordPublication::Conservative,
+            )?;
+            document.commit_word_revision(prepared)?;
+            document.install_inner(candidate);
+        }
+        Ok((runs.start, runs.end))
     }
 
     fn split_run(
@@ -17984,7 +18062,7 @@ impl PyDocument {
                     .map_err(|error| docx_to_pyerr(py, error))?;
             }
             let Some((candidate, counts)) =
-                self.dormant_replacements(py, &[(placeholder, replacement, expect)], false)?
+                self.dormant_replacements(py, &[(placeholder, replacement, expect)], false, None)?
             else {
                 return Ok(PyInt::new(py, 0));
             };
@@ -18000,7 +18078,7 @@ impl PyDocument {
                 .map(|count| PyInt::new(py, count));
         }
         let (candidate, counts) =
-            self.expected_replacements(py, &[(placeholder, replacement, expect)], false)?;
+            self.expected_replacements(py, &[(placeholder, replacement, expect)], false, None)?;
         if counts[0] > 0 {
             let prepared = self.prepare_word_revision(
                 py,
@@ -18014,11 +18092,14 @@ impl PyDocument {
         Ok(PyInt::new(py, counts[0]))
     }
 
+    #[pyo3(signature = (pairs, *, allow_unreached = false))]
     fn replace_all<'py>(
         &mut self,
         py: Python<'py>,
         pairs: &Bound<'py, PyAny>,
+        allow_unreached: bool,
     ) -> PyResult<Bound<'py, PyTuple>> {
+        let check = Some(oxoffice_docx::ReplaceOptions { allow_unreached });
         let mut owned = Vec::new();
         for (index, pair) in pairs.try_iter()?.enumerate() {
             let pair = pair?;
@@ -18042,7 +18123,7 @@ impl PyDocument {
             })
             .collect::<Vec<_>>();
         if self.snapshot_scope.is_none() {
-            let changed = self.dormant_replacements(py, &pairs, true)?;
+            let changed = self.dormant_replacements(py, &pairs, true, check)?;
             let (candidate, counts) = match changed {
                 Some((candidate, counts)) => (Some(candidate), counts),
                 None => (None, vec![0; pairs.len()]),
@@ -18053,7 +18134,7 @@ impl PyDocument {
             }
             return Ok(result);
         }
-        let (candidate, counts) = self.expected_replacements(py, &pairs, true)?;
+        let (candidate, counts) = self.expected_replacements(py, &pairs, true, check)?;
         let changed = counts.iter().any(|count| *count > 0);
         let result = PyTuple::new(py, counts)?;
         if changed {

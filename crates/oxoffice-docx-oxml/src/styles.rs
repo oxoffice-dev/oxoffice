@@ -1877,6 +1877,8 @@ impl CT_Styles {
                 keep_lines: Some(true),
                 space_before: Some(crate::units::Twips(240)),
                 space_after: Some(crate::units::Twips(0)),
+                // Word's built-in Heading 1, like Heading 2 to 9.
+                outline_lvl: Some(0),
                 ..Default::default()
             }),
             rpr: Some(CT_RPr {

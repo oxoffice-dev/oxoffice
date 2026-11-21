@@ -123,6 +123,12 @@ byte for byte when both inputs hold it unchanged. Editing, deleting, moving or
 inserting such an owner is refused with its location, without publishing output.
 Section properties holding revisions must also stay unchanged in both inputs.
 Changing them fails without publishing output.
+Bookmark ids, which Word renumbers on every save, and the `_Toc` names a
+rebuilt table of contents gives its heading bookmarks are no change: a body
+bookmark both files hold keeps the original's id, a heading paired with one of
+the original's takes its `_Toc` name, a new heading takes a fresh one where the
+original uses its own, and the links and page references of the edited file
+follow them.
 Reported counts include newly created revisions only, even when a new review
 uses an existing author's name.
 
@@ -275,6 +281,31 @@ remains in `not_compared` even when another story differs. Without
 `replace --expect N` publishes only when the run-aware replacement count is
 exactly `N`. A mismatch exits unsuccessfully without creating or replacing the
 requested output.
+
+A tab reads as a tab character and a line, page or column break as a line
+feed, as `text` prints them: a placeholder holding one matches it, and a value
+holding one writes a `w:tab` or a line break (a carriage return or a Windows
+line ending writes one line break too, and a page or column break matched and
+written back becomes a line break). In a `--map` file write them `\t` and
+`\n`; on a shell command line, pass the characters themselves (`$'a\tb'` in
+bash).
+
+A literal `replace`, one pair or a `--map`, also refuses a pair after which a
+paragraph that held the placeholder (outside the comments) does not read as its
+text with every occurrence replaced: the occurrences it keeps are out of the
+replacement's reach, such as a match across the edge of a content control, a
+tracked change or a simple field, text in a text box inside a note, or the
+paragraphs of a block custom XML element. The error names the pair, how many
+occurrences are left, and the first paragraphs that hold them with their part
+and style, and nothing is written. A value that forms the placeholder again
+with its neighbours, as `"  "` to `" "` on three spaces, or a value equal to
+the placeholder, is not refused.
+Comments are not searched and do not refuse. A document whose stories the
+check cannot read, such as one whose header relationship targets a missing
+part, is refused with the reason. `--allow-unreached` skips the check and
+publishes with the reachable occurrences replaced. `--regex` pairs are not
+checked, and `--allow-unreached` conflicts with `--regex`. A table of contents
+is reached like the body: its cached entries are replaced with their headings.
 
 The count covers the text a reader sees in the body, tables,
 content controls, headers, footers, footnotes, endnotes, and tracked insertions,

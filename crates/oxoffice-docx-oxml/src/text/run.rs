@@ -896,47 +896,122 @@ impl CT_R {
             .sum()
     }
 
+    /// Where a split at a literal `offset` with `edge` cuts this run, or `None`
+    /// when one side would show nothing, as at either end of the run for
+    /// [`SplitEdge::Plain`].
+    pub(crate) fn split_point(&self, offset: usize, edge: SplitEdge) -> Option<RunCut> {
+        let len = self.literal_len();
+        let at_edge = match edge {
+            SplitEdge::Plain => false,
+            SplitEdge::SpanStart => offset == 0,
+            SplitEdge::SpanEnd => offset == len,
+        };
+        if offset > len || ((offset == 0 || offset == len) && !at_edge) {
+            return None;
+        }
+        // A cut between items falls in the gap `[gap_start, gap_end)` of
+        // text-free items between the text before it and the text after it.
+        let mut end = 0;
+        let mut gap_start = 0;
+        let mut gap_end = self.content.len();
+        for (index, content) in self.content.iter().enumerate() {
+            let width = Self::literal_text(content).chars().count();
+            if width == 0 {
+                continue;
+            }
+            if end >= offset {
+                gap_end = index;
+                break;
+            }
+            if end + width > offset {
+                return Some(RunCut::Inside {
+                    index,
+                    within: offset - end,
+                });
+            }
+            gap_start = index + 1;
+            end += width;
+        }
+        // The first run keeps the content items before `index`, and the raw
+        // children up to `head_raw` content items.
+        let (index, head_raw) = match edge {
+            SplitEdge::SpanStart => (gap_end, gap_end),
+            SplitEdge::Plain | SplitEdge::SpanEnd => (gap_start, gap_start.saturating_sub(1)),
+        };
+        let properties = usize::from(self.properties.is_some());
+        let positioned = self.extra_xml_positions.len() == self.extra_xml.len();
+        let shown_raw = |in_first: bool| {
+            self.extra_xml.iter().enumerate().any(|(at, raw)| {
+                let encoded = positioned.then(|| self.extra_xml_positions[at]);
+                // Raw children without positions stay in the first run.
+                let first = encoded.is_none_or(|encoded| {
+                    Self::raw_child_position(encoded) <= properties + head_raw
+                });
+                first == in_first && !Self::raw_child_shows_nothing(raw, encoded)
+            })
+        };
+        let head_shows = index > 0 || shown_raw(true);
+        let tail_shows = index < self.content.len() || shown_raw(false);
+        (head_shows && tail_shows).then_some(RunCut::Between { index, head_raw })
+    }
+
+    /// Whether a raw run child shows nothing in the paragraph: a record of run
+    /// root attributes or namespace bindings, a last rendered page break, or a
+    /// comment reference. `encoded` is its entry of `extra_xml_positions`.
+    #[doc(hidden)]
+    pub fn raw_child_shows_nothing(raw: &[u8], encoded: Option<usize>) -> bool {
+        if encoded.is_some_and(|encoded| {
+            encoded
+                & (RAW_ROOT_ATTRIBUTES_FLAG
+                    | RAW_RUN_LOCAL_BINDINGS_FLAG
+                    | RAW_COMMENT_REFERENCE_FLAG)
+                != 0
+        }) {
+            return true;
+        }
+        let name = raw
+            .strip_prefix(b"<")
+            .unwrap_or(raw)
+            .split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>'))
+            .next()
+            .unwrap_or_default();
+        let local = name.rsplit(|byte| *byte == b':').next().unwrap_or_default();
+        matches!(
+            local,
+            b"lastRenderedPageBreak" | b"commentReference" | b"rdocxRootAttributes"
+        )
+    }
+
     /// Split this run at a Unicode scalar offset of its literal text.
     ///
     /// This run keeps the content before `offset`, and the returned run, with
-    /// cloned properties, receives the rest. Text-free content and raw children
-    /// at the split point stay in this run. Nothing changes on error.
+    /// cloned properties, receives the rest. `edge` says where the text-free
+    /// content at the cut goes (tabs, breaks, fields, drawings, raw children).
+    /// Nothing changes on error.
     pub(super) fn split_off_at(
         &mut self,
         offset: usize,
+        edge: SplitEdge,
     ) -> std::result::Result<CT_R, RunSplitError> {
         let len = self.literal_len();
-        if offset == 0 || offset >= len {
+        let Some(cut) = self.split_point(offset, edge) else {
             return Err(RunSplitError::OffsetOutOfRange { offset, len });
-        }
-        // The first item whose text reaches past the offset, and how many of
-        // its characters come before the offset.
-        let mut end = 0;
-        let (index, within, width) = self
-            .content
-            .iter()
-            .enumerate()
-            .find_map(|(index, content)| {
-                let start = end;
-                let width = Self::literal_text(content).chars().count();
-                end += width;
-                (width > 0 && end >= offset).then_some((index, offset - start, width))
-            })
-            .expect("an offset inside the run text falls inside one content item");
-        let tail_content = if within == width {
-            self.content.split_off(index + 1)
-        } else {
-            let rest = match &mut self.content[index] {
-                RunContent::Text(text) => RunContent::Text(text.split_off_at(within)),
-                RunContent::DeletedText(text) => RunContent::DeletedText(text.split_off_at(within)),
-                _ => unreachable!("an interior literal offset falls inside literal text"),
-            };
-            let mut tail = self.content.split_off(index + 1);
-            tail.insert(0, rest);
-            tail
         };
-        let removed_prefix_content = index + usize::from(within == width);
-
+        let (tail_content, removed_prefix_content, head_boundary) = match cut {
+            RunCut::Inside { index, within } => {
+                let rest = match &mut self.content[index] {
+                    RunContent::Text(text) => RunContent::Text(text.split_off_at(within)),
+                    RunContent::DeletedText(text) => {
+                        RunContent::DeletedText(text.split_off_at(within))
+                    }
+                    _ => unreachable!("an interior literal offset falls inside literal text"),
+                };
+                let mut tail = self.content.split_off(index + 1);
+                tail.insert(0, rest);
+                (tail, index, index)
+            }
+            RunCut::Between { index, head_raw } => (self.content.split_off(index), index, head_raw),
+        };
         let mut tail = CT_R {
             properties: self.properties.clone(),
             content: tail_content,
@@ -945,8 +1020,8 @@ impl CT_R {
             alt_drawings: Vec::new(),
         };
         // A raw child position counts the modeled children before it, so a
-        // child after the first `index` content items moves to the tail.
-        let head_boundary = usize::from(self.properties.is_some()) + index;
+        // child after the first `head_boundary` content items moves to the tail.
+        let head_boundary = usize::from(self.properties.is_some()) + head_boundary;
         if self.extra_xml_positions.len() == self.extra_xml.len() {
             let raw_children = std::mem::take(&mut self.extra_xml);
             let positions = std::mem::take(&mut self.extra_xml_positions);

@@ -13,7 +13,7 @@ use oxoffice_docx::{
 };
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{corpus_doc, doc_with, reopen, texts};
+use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
 
 const PRODUCERS: [&str; 4] = [
     "word/report.docx",
@@ -187,6 +187,22 @@ fn author_initials_and_date_read_back_as_given() {
     assert_eq!(bare.initials(), None);
     assert_eq!(bare.date(), None);
     assert_eq!(texts(&doc), ["Hello brave world"]);
+}
+
+#[test]
+fn a_comment_on_text_after_a_tab_leaves_the_tab_out_of_its_range() {
+    let mut doc =
+        doc_with_body(r#"<w:p><w:r><w:t>Name:</w:t><w:tab/><w:t>John Smith</w:t></w:r></w:p>"#);
+    let id = doc
+        .add_comment_on_text("John Smith", 0, "Ada", None, "Who?", None)
+        .unwrap();
+
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Name:\tJohn Smith"]);
+    assert_eq!(
+        doc.comment_anchor_text(id).unwrap().as_deref(),
+        Some("John Smith")
+    );
 }
 
 #[test]

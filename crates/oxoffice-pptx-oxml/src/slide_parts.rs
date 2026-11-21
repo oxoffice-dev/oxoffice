@@ -2,6 +2,7 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::xml::push_escaped_attribute;
 use oxoffice_drawing::color::{ColorChoice, ColorMap, ColorMapSlot, ThemeColorSlot};
 use oxoffice_drawing::fill::Fill;
 use oxoffice_drawing::namespace::A_NS;
@@ -1857,7 +1858,7 @@ impl CT_CommonSlideData {
     pub(crate) fn write_xml<W: Write>(&self, writer: &mut Writer<W>) -> Result<()> {
         let mut start = BytesStart::new("p:cSld");
         if let Some(name) = &self.name {
-            start.push_attribute(("name", name.as_str()));
+            push_escaped_attribute(&mut start, "name", name);
         }
         push_attributes(&mut start, &self.raw_attributes);
         writer.write_event(Event::Start(start))?;

@@ -96,7 +96,7 @@ __all__ = [
     "Bookmark", "BoundingBox", "Cell", "CellCollection", "CellParagraphCollection",
     "Chart", "Comment", "ComparisonDiagnostic", "ContentFragment", "CoreProperties", "DefaultParagraphFormat", "Document", "Font", "ColorFormat",
     "FootnoteEndnote", "HeaderFooter", "SectionHandle", "Settings",
-    "HeaderFooterVariant", "Hyperlink", "FieldEvaluation", "FieldsUpdateReport", "LayoutBackedFieldUpdateReport", "LayoutFragment", "LayoutPage", "ListLevel", "Paragraph", "ParagraphCollection",
+    "HeaderFooterVariant", "Hyperlink", "FieldEvaluation", "FieldsUpdateReport", "LayoutBackedFieldUpdateReport", "LayoutFragment", "LayoutPage", "ListLevel", "Paragraph", "ParagraphCollection", "TextSpan",
     "ParagraphFormat", "Revision", "Row", "RowCollection", "Run", "RunCollection", "RunPosition",
     "RunRange", "Section", "Story", "StoryItem", "StoryParagraph", "StoryRunPosition", "StoryRunRange", "Style",
     "SvgDiagnostic", "SvgRenderResult", "Table", "TableCollection", "TabStop", "TabStops", "TocRebuildReport",
@@ -1167,6 +1167,7 @@ class Document:
     def split_run(
         self, body_index: int | Paragraph, run_index: int, character_offset: int
     ) -> int: ...
+    def isolate_span(self, span: TextSpan) -> tuple[int, int]: ...
     def to_pdf_with_diagnostics(
         self,
         *,
@@ -1270,6 +1271,13 @@ class Document:
         raises ``DocxError`` with its location, and the document is left
         unchanged. Section properties holding revisions must also stay
         unchanged in both inputs. Changing them raises ``DocxError``.
+
+        Bookmark ids, which Word renumbers on every save, and the ``_Toc``
+        names a rebuilt table of contents gives its heading bookmarks are no
+        change: a body bookmark both documents hold keeps this document's id, a
+        heading paired with one of this document's takes its ``_Toc`` name, a
+        new heading takes a fresh one where this document uses its own, and
+        the links and page references of ``edited`` follow them.
         """
     @property
     def comments(self) -> tuple[Comment, ...]: ...
@@ -1521,11 +1529,15 @@ class Document:
         self, placeholder: str, replacement: str, *, expect: int | None = None
     ) -> int: ...
     def replace_all(
-        self, pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]]
+        self,
+        pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]],
+        *,
+        allow_unreached: bool = False,
     ) -> tuple[int, ...]:
         """Apply (old, new) or (old, new, expected) pairs in order, one after another, all or nothing: a later pair
         sees what an earlier one wrote, unlike the Rust `Document::replace_all` over a map, whose pairs apply
-        together. Returns the count of each pair."""
+        together. Returns the count of each pair. Raises UnreachedTextError when a pair's text is still in a
+        paragraph after its replacement, unless allow_unreached is true."""
     def replace_all_regex_expected(self, pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]]) -> tuple[int, ...]: ...
     def fill_content_control_tags(self, pairs: list[tuple[str, str]]) -> tuple[int, ...]: ...
     def insert_content_control(
@@ -1638,6 +1650,16 @@ class Document:
     def add_section(self, start_type: _section.WD_SECTION_START | int | None = None) -> _Never: ...
 
 @_final
+class TextSpan:
+    @property
+    def paragraph(self) -> Paragraph: ...
+    @property
+    def start(self) -> int: ...
+    @property
+    def end(self) -> int: ...
+
+
+@_final
 class Paragraph:
     @property
     def _p(self) -> _Never: ...
@@ -1651,6 +1673,7 @@ class Paragraph:
     def replace_xml(self, xml: str) -> None: ...
     def equations(self) -> tuple[Equation, ...]: ...
     def add_equation(self, source: str, *, format: _Literal["latex", "mathml"], display: bool = False) -> EquationInsertResult: ...
+    def find_text(self, text: str, occurrence: int = 0) -> TextSpan | None: ...
 
     def __new__(cls, *, _private: _Never) -> Paragraph: ...
     def replace_text(

@@ -472,7 +472,7 @@ enum CommentCommand {
         initials: Option<String>,
         #[arg(long)]
         text: String,
-        /// RFC 3339 creation timestamp
+        /// Creation date and time, such as 2026-11-21T10:00:00Z (the zone may be omitted)
         #[arg(long)]
         date: String,
         #[arg(long, short = 'o')]
@@ -492,7 +492,7 @@ enum CommentCommand {
         author: String,
         #[arg(long)]
         text: String,
-        /// RFC 3339 creation timestamp
+        /// Creation date and time, such as 2026-11-21T10:00:00Z (the zone may be omitted)
         #[arg(long)]
         date: String,
         #[arg(long, short = 'o')]
