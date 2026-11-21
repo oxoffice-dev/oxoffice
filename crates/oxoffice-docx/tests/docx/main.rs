@@ -10,6 +10,7 @@ mod content_controls;
 mod corpus;
 mod fields_and_toc;
 mod fonts;
+mod fragment_import;
 mod inspection;
 mod lists;
 mod notes;
