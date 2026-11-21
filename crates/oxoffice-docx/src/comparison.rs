@@ -13235,10 +13235,12 @@ fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str, location:
     // Only the body may end with a table; every other story ends with a
     // paragraph.
     location == "body"
-        && matches!(
-            previous_mark_position(output, kind).map(|position| &output[position].0),
-            Some(EmittedOwner::KeptTable)
-        )
+        && match previous_mark_position(output, kind).map(|position| &output[position].0) {
+            Some(EmittedOwner::KeptTable) => true,
+            // A table the other resolution removes stays on this one's side.
+            Some(EmittedOwner::MarkedTable(marked)) => *marked != kind,
+            _ => false,
+        }
 }
 
 /// Mark the paragraph before a final inserted or deleted paragraph, and
@@ -13795,7 +13797,9 @@ fn coalesced_paragraphs_equal(
                     None
                 }
             }));
-    original.properties == edited.properties
+    (original.properties == edited.properties
+        || without_empty_mark_properties(original.properties.as_ref())
+            == without_empty_mark_properties(edited.properties.as_ref()))
         && equal_fields
         && coalesced_paragraph_signature(original, options)
             == coalesced_paragraph_signature(edited, options)
@@ -15014,8 +15018,8 @@ fn align_words_between_shells(
         for (a, b) in align(&left_signatures, &right_signatures) {
             if !ignore_formatting
                 && let (Some(a), Some(b)) = (a, b)
-                && original[left[a].1.start].run.properties
-                    != edited[right[b].1.start].run.properties
+                && run_formatting(&original[left[a].1.start].run)
+                    != run_formatting(&edited[right[b].1.start].run)
             {
                 // Formatting transitions retain the existing Word replacement
                 // owner and its ignore-formatting left bias.
@@ -17267,6 +17271,41 @@ fn split_paragraph_mark(
     }
 }
 
+/// Whether `source` is one element without children or attributes, namespace
+/// declarations aside, such as LibreOffice's `<w:rPr></w:rPr>`.
+fn bare_empty_element(source: &str) -> bool {
+    let bare = |element: &BytesStart<'_>| {
+        element.attributes().flatten().all(|attribute| {
+            attribute.key.as_ref() == b"xmlns" || attribute.key.as_ref().starts_with(b"xmlns:")
+        })
+    };
+    let mut reader = Reader::from_str(source);
+    reader.config_mut().trim_text(true);
+    match reader.read_event() {
+        Ok(Event::Empty(element)) => bare(&element),
+        Ok(Event::Start(element)) if bare(&element) => {
+            matches!(reader.read_event(), Ok(Event::End(_)))
+        }
+        _ => false,
+    }
+}
+
+/// Paragraph properties without an empty mark `w:rPr`, which LibreOffice
+/// writes `<w:rPr></w:rPr>` and the model writes back as nothing, and none
+/// when nothing else is left.
+fn without_empty_mark(xml: Option<&str>) -> Result<Option<String>> {
+    let Some(xml) = xml else {
+        return Ok(None);
+    };
+    let mut stripped = xml.to_owned();
+    for span in direct_word_element_spans(xml, "rPr")?.into_iter().rev() {
+        if bare_empty_element(&xml[span.clone()]) {
+            stripped.replace_range(span, "");
+        }
+    }
+    Ok((!bare_empty_element(&stripped)).then_some(stripped))
+}
+
 /// The `w:pPr` of a [`final_paragraph`]: the `own` properties when both
 /// resolutions agree, otherwise the `accepted` ones with the section break of
 /// `own`, a `w:pPrChange` holding the rejected paragraph properties, and a
@@ -17275,39 +17314,6 @@ fn split_paragraph_mark(
 /// Rejecting a `w:pPrChange` keeps a mark `w:rPr` only when it holds a
 /// revision, so a mark with formatting also carries the `w:rPrChange` when
 /// only the paragraph properties differ.
-/// Paragraph properties without an empty mark `w:rPr`, which LibreOffice
-/// writes `<w:rPr></w:rPr>` and the model writes back as nothing, and none
-/// when nothing else is left.
-fn without_empty_mark(xml: Option<&str>) -> Result<Option<String>> {
-    let Some(xml) = xml else {
-        return Ok(None);
-    };
-    // Namespace declarations carry no property.
-    let bare = |element: &BytesStart<'_>| {
-        element.attributes().flatten().all(|attribute| {
-            attribute.key.as_ref() == b"xmlns" || attribute.key.as_ref().starts_with(b"xmlns:")
-        })
-    };
-    let empty = |source: &str| {
-        let mut reader = Reader::from_str(source);
-        reader.config_mut().trim_text(true);
-        match reader.read_event() {
-            Ok(Event::Empty(element)) => bare(&element),
-            Ok(Event::Start(element)) if bare(&element) => {
-                matches!(reader.read_event(), Ok(Event::End(_)))
-            }
-            _ => false,
-        }
-    };
-    let mut stripped = xml.to_owned();
-    for span in direct_word_element_spans(xml, "rPr")?.into_iter().rev() {
-        if empty(&xml[span.clone()]) {
-            stripped.replace_range(span, "");
-        }
-    }
-    Ok((!empty(&stripped)).then_some(stripped))
-}
-
 fn final_paragraph_properties_xml(
     own: &PropertySide<'_>,
     accepted: &PropertySide<'_>,
@@ -17335,18 +17341,18 @@ fn final_paragraph_properties_xml(
         .flatten()
         .unwrap_or_default();
     current = replace_property_slot(&current, "sectPr", &own_section)?;
-    let accepted_mark = accepted
-        .xml
-        .as_deref()
-        .map(|xml| direct_property(xml, "rPr"))
-        .transpose()?
-        .flatten();
-    let rejected_mark = rejected
-        .xml
-        .as_deref()
-        .map(|xml| direct_property(xml, "rPr"))
-        .transpose()?
-        .flatten();
+    // An empty mark carries no format, written either way.
+    let mark = |side: &PropertySide<'_>| -> Result<Option<String>> {
+        Ok(side
+            .xml
+            .as_deref()
+            .map(|xml| direct_property(xml, "rPr"))
+            .transpose()?
+            .flatten()
+            .filter(|mark| !bare_empty_element(mark)))
+    };
+    let accepted_mark = mark(accepted)?;
+    let rejected_mark = mark(rejected)?;
     if accepted_mark != rejected_mark {
         let previous = rejected_mark
             .clone()
@@ -17378,6 +17384,21 @@ fn final_paragraph_properties_xml(
         current = append_word_child(&current, "pPr", &change)?;
     }
     Ok(current)
+}
+
+/// Paragraph properties with an empty mark read as none, and none when
+/// nothing else is left.
+fn without_empty_mark_properties(properties: Option<&CT_PPr>) -> Option<CT_PPr> {
+    properties.cloned().and_then(|mut properties| {
+        if properties
+            .rpr
+            .as_ref()
+            .is_some_and(|mark| *mark == oxoffice_docx_oxml::properties::CT_RPr::default())
+        {
+            properties.rpr = None;
+        }
+        (properties != CT_PPr::default()).then_some(properties)
+    })
 }
 
 fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Option<CT_PPr> {

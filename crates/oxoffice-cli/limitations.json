@@ -18,6 +18,15 @@
     "issue": 4
   },
   {
+    "id": "docx-compare-final-table",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses a paragraph moved after a final table, or a change after a redlined final table",
+    "symptom": "compare refuses with \"needs an adjacent paragraph for a final paragraph move\", or \"holds an existing tracked revision\" for a paragraph added or deleted after a table that holds tracked changes",
+    "workaround": "put a paragraph after the table in both versions, or resolve the earlier tracked changes on both copies first",
+    "issue": 120
+  },
+  {
     "id": "docx-python-replace-slower",
     "format": "docx",
     "area": "replace",

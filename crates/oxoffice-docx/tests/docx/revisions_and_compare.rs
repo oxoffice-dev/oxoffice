@@ -873,13 +873,12 @@ fn a_libreoffice_report_compares_with_an_edited_copy() {
     edited.add_paragraph("A closing remark.");
     let mut doc = redline(corpus_doc("libreoffice/report.docx"), &edited);
     // The appended paragraph, the mark of the paragraph before it, and the
-    // properties that paragraph gets back on rejection: no run of the
-    // report changes format.
+    // properties that paragraph gets back on rejection (its style and
+    // spacing): no run of the report changes format.
     assert_eq!(
         kinds(&doc),
         [
             RevisionKind::Insertion,
-            RevisionKind::RunPropertyChange,
             RevisionKind::ParagraphPropertyChange,
             RevisionKind::Insertion,
         ]
@@ -978,6 +977,30 @@ fn a_paragraph_appended_after_a_final_table_whose_grid_changed_is_compared() {
 }
 
 #[test]
+fn a_final_table_replaced_by_a_paragraph_is_compared() {
+    let mut original = doc_with(&["intro"]);
+    original
+        .add_table(1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .set_text("cell");
+    let edited = doc_with(&["intro", "closing"]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(texts(&accepted(&mut doc)), ["intro", "closing"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn a_final_paragraph_replaced_by_a_table_is_compared() {
+    let original = doc_with(&["intro", "closing"]);
+    let mut edited = doc_with(&["intro"]);
+    edited.add_table(1, 1).cell(0, 0).unwrap().set_text("cell");
+    let mut doc = redline(original, &edited);
+    assert_eq!(texts(&accepted(&mut doc)), ["intro"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["intro", "closing"]);
+}
+
+#[test]
 fn a_paragraph_appended_after_a_redlined_final_table_keeps_the_refusal() {
     // The table is an earlier tracked insertion: rejecting it removes the
     // table, and the new paragraph would then end the body alone.
@@ -992,7 +1015,14 @@ fn a_paragraph_appended_after_a_redlined_final_table_keeps_the_refusal() {
     let mut original = reopen(&mut redlined);
     let mut edited = reopen(&mut redlined);
     edited.add_paragraph("closing");
-    assert!(original.compare(&edited, AUTHOR, DATE).is_err());
+    let error = original.compare(&edited, AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+    assert!(!kinds(&original).is_empty());
     assert!(
         kinds(&original)
             .iter()
