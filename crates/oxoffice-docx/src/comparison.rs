@@ -5611,7 +5611,9 @@ fn generated_heading_bookmark(name: &str) -> bool {
 /// edited input holds a fresh id. When a reference cannot follow, because a
 /// field splits the name across runs or another story names it, or when the
 /// comparison would pair a renamed heading otherwise, the names stay as they
-/// are and only the ids follow; links to another file are left alone.
+/// are and only the ids follow, but a body heading's `_Toc` name the pairing
+/// did not keep keeps the edited id, since the original may give that name
+/// to another heading. Links to another file are left alone.
 fn reconcile_body_bookmarks(
     original: &Document,
     edited: &mut Document,
@@ -5717,6 +5719,11 @@ fn reconcile_body_bookmarks(
     };
     let left_generated = generated(original);
     let right_generated = generated(edited);
+    let seen = right_generated
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<HashSet<_>>();
     let left_names = left
         .iter()
         .filter_map(|bookmark| bookmark.name.as_deref())
@@ -5724,7 +5731,8 @@ fn reconcile_body_bookmarks(
     let mut names = HashMap::new();
     let mut unpaired = HashSet::new();
     let mut renamed_pairs = Vec::new();
-    // Generated names a pairing keeps as they are.
+    // Generated names a pairing keeps as they are, among those of the body
+    // paragraphs it saw.
     let mut kept = HashSet::new();
     if right_generated.iter().any(|names| !names.is_empty()) {
         let (left_signatures, right_signatures) = (signatures(original), signatures(edited));
@@ -5868,9 +5876,9 @@ fn reconcile_body_bookmarks(
                 // Without the renames, a generated name no pairing kept may name
                 // another heading of the original: it keeps the edited id.
                 let unkept = fallback
-                    && name.as_deref().is_some_and(|name| {
-                        generated_heading_bookmark(name) && !kept.contains(name)
-                    });
+                    && name
+                        .as_deref()
+                        .is_some_and(|name| seen.contains(name) && !kept.contains(name));
                 let target = match name
                     .as_deref()
                     .filter(|_| !unkept)
@@ -5902,8 +5910,8 @@ fn reconcile_body_bookmarks(
         };
     let unnamed = HashMap::new();
     // The rewritten main story, when references can follow every rename.
-    let rewritten = |names: &HashMap<String, String>| -> Result<Option<Vec<u8>>> {
-        let Some(ids) = id_map(names, names.is_empty())? else {
+    let rewritten = |names: &HashMap<String, String>, fallback: bool| -> Result<Option<Vec<u8>>> {
+        let Some(ids) = id_map(names, fallback)? else {
             return Ok(None);
         };
         if names.is_empty() && ids.is_empty() {
@@ -5925,7 +5933,7 @@ fn reconcile_body_bookmarks(
         crate::document::set_story_source_xml(&mut candidate, &part, xml)?;
         Ok(candidate)
     };
-    let candidate = match rewritten(&names)? {
+    let candidate = match rewritten(&names, false)? {
         Some(xml) if renamed_pairs.is_empty() => staged(xml)?,
         Some(xml) => {
             let candidate = staged(xml)?;
@@ -5943,7 +5951,7 @@ fn reconcile_body_bookmarks(
             } else {
                 // Ids are matched by name and need no rename: they still
                 // follow the original's.
-                let Some(xml) = rewritten(&unnamed)? else {
+                let Some(xml) = rewritten(&unnamed, true)? else {
                     return Ok(());
                 };
                 staged(xml)?
@@ -5951,7 +5959,7 @@ fn reconcile_body_bookmarks(
         }
         None if names.is_empty() => return Ok(()),
         None => {
-            let Some(xml) = rewritten(&unnamed)? else {
+            let Some(xml) = rewritten(&unnamed, true)? else {
                 return Ok(());
             };
             staged(xml)?

@@ -52,7 +52,9 @@ where they mean the same bookmark, in its main story:
 - **Checked.** The comparison pairs the rewritten blocks again; if it pairs
   a renamed heading with another one than the pairing did, the names stay as
   they are and only the ids follow (ids are matched by name and need no
-  rename), so a wrong pairing never writes a heading bookmark twice.
+  rename), except that a body heading's `_Toc` name the pairing did not keep
+  keeps the edited id, since the original may give that name to another
+  heading. A wrong pairing never writes a heading bookmark twice.
 
 The guarantee becomes: accepting every revision gives the edited version up
 to its bookmark ids and the names of its `_Toc` bookmarks (paired ones take

@@ -1369,6 +1369,43 @@ fn a_kept_name_the_original_gives_another_heading_keeps_the_edited_id() {
     assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
 }
 
+#[test]
+fn a_toc_caption_in_a_table_takes_the_original_id() {
+    // A table of figures names its captions `_Toc` too. Word renumbered the
+    // ids after a new bookmark at the top: the caption in the table keeps
+    // its name and takes back its original id, so the table is unchanged.
+    let table = |id: u32| {
+        format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:bookmarkStart w:id="{id}" w:name="_Toc2"/><w:r><w:t>Figure 1</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p></w:tc></w:tr></w:tbl>"#
+        )
+    };
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}",
+            heading_with("Intro", &[(0, "_Toc1")]),
+            table(1),
+            body("Body."),
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}",
+        heading_with("Note", &[(0, "remark")]),
+        heading_with("Intro", &[(1, "_Toc1")]),
+        table(2),
+        body("Body."),
+    ));
+    let mut doc = redline(original(), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Note"]);
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        Vec::<String>::new()
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
+}
+
 /// The instruction of every field of the body, in order.
 fn field_instructions(doc: &Document) -> Vec<String> {
     let mut instructions = Vec::new();
