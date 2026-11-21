@@ -42,6 +42,11 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
    real defect the pull request cannot carry, at most one per pull request,
    grouping its findings. See
    [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#independent-review).
+10. **Issues and fixes: finish what you start.** Fix the class, not the
+    instance; a pull request closes its issue, and what it leaves stays
+    in that issue; one root cause, one issue. Every issue has a severity
+    (`S1`-`S4`), an area and a "Seen with" line. See
+    [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#issues-and-fixes).
 
 ## Commands
 

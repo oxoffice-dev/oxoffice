@@ -75,6 +75,38 @@ or wants to merge it runs that review or asks for one.
 
 See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
+## Issues and fixes
+
+Finish what you start.
+
+- **Fix the class, not the instance.** Before the review, look for the same
+  defect in sibling places (the other attributes the same helper reads, the
+  other setters with the same gap, the same escape in another reader, the
+  other package) and fix them in the same pull request, each with its test.
+- **A pull request closes its issue.** It says `Closes #N` when it fixes
+  all of it. What a fix still leaves stays in the same issue: the pull
+  request says `Refs #N`, the issue is updated with what remains, and
+  closed when all of it is done. A minor review finding is fixed in the
+  pull request when the fix is cheap, answered when it is not a defect, and
+  becomes a new issue only when it is a different defect the pull request
+  cannot carry: at most one per pull request. A major is fixed unless the
+  maintainer waives it (see [Independent review](#independent-review)).
+- **One root cause, one issue.** When several issues share a cause (an
+  escape, a measurement parser, a text decoder), open one issue for the
+  cause, link the others to it, and fix the cause.
+- **Every issue says how bad it is and who meets it**: a severity label
+  (`S1 data loss`, `S2 wrong result`, `S3 rare or workaround`, `S4 polish`),
+  an area label (`area: docx`, `area: pptx`, `area: render`,
+  `area: python`, `area: ci`) and a "Seen with" line (which producer, which
+  kind of file). Search for an existing issue first.
+- **Order of work**: S1 at once, S2 next, S3 and S4 in batches by module,
+  one pull request per batch, never one pull request per trivial issue.
+- **Test rounds are scheduled, not continuous.** A round that finds bugs
+  faster than they are fixed waits for the fix queue; the workflows of real
+  consumers decide what is tested first.
+- **Measure**: issues opened and closed per hour, open issues by severity,
+  follow-up issues per pull request (target: fewer than one in three).
+
 ## Conventional commits
 
 ```
