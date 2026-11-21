@@ -113,7 +113,7 @@ fn add_textbox(prs: &mut Presentation, slide: usize) -> u32 {
     prs.slide(slide)
         .unwrap()
         .shapes()
-        .last()
+        .next_back()
         .and_then(|shape| shape.non_visual_id())
         .unwrap()
 }
