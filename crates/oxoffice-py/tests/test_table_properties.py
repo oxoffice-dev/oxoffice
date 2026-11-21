@@ -2,6 +2,8 @@
 edits still reads its own element and the new values, which a save writes; a refused edit leaves the document as it
 was; tables in a cell or a header take the same edits."""
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -171,3 +173,144 @@ def test_row_and_cell_edits_made_in_turn_keep_every_handle(producer):
             assert current.cell(index, 1).vertical_alignment == WD_CELL_VERTICAL_ALIGNMENT.CENTER
             assert current.cell(index, 2).shading == RGBColor(0xEE, 0xEE, 0xEE)
     assert [cell.text for cell in cells] == ["value 1", "value 2", "value 3"]
+
+
+def bare_cells(first_cell="<w:p><w:r><w:t>bare</w:t></w:r></w:p>"):
+    """A table of two cells without w:tcPr, the first holding `first_cell`, between two paragraphs."""
+    return (
+        "<w:p><w:r><w:t>before</w:t></w:r></w:p>"
+        '<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>'
+        f"<w:tr><w:tc>{first_cell}</w:tc><w:tc><w:p><w:r><w:t>neighbour</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        '<w:p><w:bookmarkStart w:id="0" w:name="after"/><w:r><w:t>after</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>'
+    )
+
+
+def document_with_body(body):
+    """A new document whose body holds `body` before its section properties."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(oxdocx.Document().to_bytes())) as source, \
+            zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            part = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                xml = part.decode("utf-8")
+                start = xml.index("<w:body>") + len("<w:body>")
+                part = (xml[:start] + body + xml[xml.index("<w:sectPr"):]).encode("utf-8")
+            target.writestr(item, part)
+    return oxdocx.Document.from_bytes(out.getvalue())
+
+
+def saved_cells(doc):
+    """The w:tc elements of the saved body, as written."""
+    with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as package:
+        body = package.read("word/document.xml").decode("utf-8")
+    return [cell.split("</w:tc>")[0] for cell in body.split("<w:tc>")[1:]]
+
+
+FIRST_CELL_PROPERTIES = {
+    "shading": (lambda cell: setattr(cell, "shading", "FFFF00"), lambda cell: cell.shading,
+                RGBColor(0xFF, 0xFF, 0x00)),
+    "vertical alignment": (lambda cell: setattr(cell, "vertical_alignment", WD_CELL_VERTICAL_ALIGNMENT.CENTER),
+                           lambda cell: cell.vertical_alignment, WD_CELL_VERTICAL_ALIGNMENT.CENTER),
+    "width": (lambda cell: setattr(cell, "width", Pt(90)), lambda cell: cell.width, Pt(90)),
+    "border": (lambda cell: cell.set_border("bottom", "dashed", size=4, color="0000FF"),
+               lambda cell: cell.border("bottom"), ("dashed", 4, RGBColor(0x00, 0x00, 0xFF))),
+    "margins": (lambda cell: cell.set_margins(top=Pt(5), right=Pt(6), bottom=Pt(7), left=Pt(8)),
+                lambda cell: cell.margins, (Pt(5), Pt(6), Pt(7), Pt(8))),
+}
+
+
+@pytest.mark.parametrize("name", FIRST_CELL_PROPERTIES)
+def test_a_first_property_of_a_cell_without_properties_reads_back_through_the_handle_taken_before(name):
+    """The first property writes the cell's w:tcPr before its paragraphs, which moves them."""
+    set_property, read, expected = FIRST_CELL_PROPERTIES[name]
+    doc = document_with_body(bare_cells())
+    table = doc.tables[0]
+    cell, neighbour = table.cell(0, 0), table.cell(0, 1)
+    paragraph = cell.paragraphs[0]
+    run = paragraph.runs[0]
+    after = doc.paragraphs[1]
+    assert read(cell) is None
+    assert after.text == "after"
+
+    set_property(cell)
+
+    assert read(cell) == expected
+    assert read(neighbour) is None
+    assert (paragraph.text, run.text, neighbour.text, after.text) == ("bare", "bare", "neighbour", "after")
+    # Handles taken before the edit still edit their own element.
+    run.bold = True
+    after.runs[0].italic = True
+    saved = oxdocx.Document.from_bytes(doc.to_bytes())
+    table = saved.tables[0]
+    assert read(table.cell(0, 0)) == expected
+    assert read(table.cell(0, 1)) is None
+    assert table.cell(0, 0).paragraphs[0].text == "bare"
+    assert table.cell(0, 0).paragraphs[0].runs[0].bold is True
+    assert [p.text for p in saved.paragraphs] == ["before", "after"]
+    assert saved.paragraphs[1].runs[0].italic is True
+    # The properties come first in the cell, as the schema orders them; the neighbour gets none.
+    first, second = saved_cells(doc)
+    assert first.startswith("<w:tcPr>"), first
+    assert "<w:tcPr" not in second, second
+
+
+def test_grid_widths_give_cells_without_properties_a_width_the_handles_taken_before_read():
+    """A table edit that writes the first w:tcPr of its cells cannot go in place either: it is published from a
+    candidate document whose handles are relocated."""
+    doc = document_with_body(bare_cells())
+    table = doc.tables[0]
+    cell, neighbour = table.cell(0, 0), table.cell(0, 1)
+    paragraph = cell.paragraphs[0]
+    after = doc.paragraphs[1]
+    assert (cell.width, neighbour.width) == (None, None)
+
+    table.grid_widths = [Pt(100), Pt(80)]
+
+    assert (cell.width, neighbour.width) == (Pt(100), Pt(80))
+    assert (paragraph.text, neighbour.text, after.text) == ("bare", "neighbour", "after")
+    paragraph.runs[0].bold = True
+    saved = oxdocx.Document.from_bytes(doc.to_bytes())
+    table = saved.tables[0]
+    assert table.grid_widths == (Pt(100), Pt(80))
+    assert (table.cell(0, 0).width, table.cell(0, 1).width) == (Pt(100), Pt(80))
+    assert table.cell(0, 0).paragraphs[0].runs[0].bold is True
+    assert [p.text for p in saved.paragraphs] == ["before", "after"]
+    first, second = saved_cells(doc)
+    assert first.startswith("<w:tcPr>") and second.startswith("<w:tcPr>"), (first, second)
+
+
+CELL_CONTENT_OFF_THE_LOCAL_ROUTE = {
+    "hyperlink": ('<w:p><w:r><w:t>bare</w:t></w:r><w:hyperlink w:anchor="after"><w:r><w:t> link</w:t></w:r>'
+                  "</w:hyperlink></w:p>", "bare link"),
+    "nested table": ('<w:p><w:r><w:t>bare</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/>'
+                     "</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>",
+                     "bare"),
+}
+
+
+# Fails today: a first w:tcPr in a cell holding a hyperlink or a table is published from a candidate whose owners
+# are not relocated, so every handle of the document goes stale, the table's and the body paragraphs' too. Issue: #320
+@pytest.mark.xfail(strict=True, raises=oxdocx.StaleElementError)
+@pytest.mark.parametrize("content", CELL_CONTENT_OFF_THE_LOCAL_ROUTE)
+def test_a_first_property_of_a_cell_holding_a_hyperlink_or_a_table_keeps_the_handles_taken_before(content):
+    first_cell, text = CELL_CONTENT_OFF_THE_LOCAL_ROUTE[content]
+    doc = document_with_body(bare_cells(first_cell))
+    table = doc.tables[0]
+    cell = table.cell(0, 0)
+    paragraph = cell.paragraphs[0]
+    after = doc.paragraphs[1]
+    assert (cell.shading, paragraph.text) == (None, text)
+
+    try:
+        cell.shading = "FFFF00"
+    except oxdocx.StaleElementError as error:
+        pytest.fail(f"the edit itself was refused: {error}")
+    # The saved value first, through the document only: only the old handles may go stale.
+    saved = oxdocx.Document.from_bytes(doc.to_bytes()).tables[0]
+    assert (saved.cell(0, 0).shading, saved.cell(0, 0).paragraphs[0].text) == (RGBColor(0xFF, 0xFF, 0x00), text)
+
+    assert cell.shading == RGBColor(0xFF, 0xFF, 0x00)
+    assert (paragraph.text, after.text) == (text, "after")
+    assert table.cell(0, 1).shading is None
+
