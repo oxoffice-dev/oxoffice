@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: process
 ---
 
@@ -23,28 +23,45 @@ from its Rust twin.
 - **Whoever works on the pull request or wants to merge it** runs that review
   or asks someone for it. No CI job: the review belongs to the merge, not to
   every push.
-- **The reviewer posts its findings on the pull request itself**, in one
-  comment headed `🔍 Independent review` with the head it read, major and
-  minor alike, each with `file:line`, the defect and a concrete failure
-  scenario. A review with nothing to report says so. The pull request keeps
-  the trace.
-- **The author fixes the findings**, or answers in the thread why one is not
-  a defect. A major finding is fixed unless the maintainer waives it in the
-  thread. A substantial fix gets a new review of what changed.
+- **The review is posted on the pull request, unedited**, in one comment
+  headed `🔍 Independent review` with the head it read. The reviewer posts
+  it; an agent reviewer that cannot write to GitHub hands its report to
+  whoever launched it, who posts it as is. Each finding has `file:line`, the
+  defect and a concrete failure scenario. A review with nothing to report
+  says so. The pull request keeps the trace.
+- **Major or minor.** A finding is major when it would ship a defect: wrong
+  behaviour or a missed case a user can hit, a test that would pass with the
+  feature broken, Rust, CLI and Python disagreeing on the same feature, an
+  unsafe CI change (unpinned action, exposed secret, a step that passes
+  silently), a document that misstates how things work. Everything else is
+  minor. The reviewer classifies, the author may contest the class in the
+  thread, the maintainer decides.
+- **The author answers every finding in the thread**: fixed, with the commit,
+  or why it is not a defect. A major finding is fixed unless the maintainer
+  waives it in the thread.
+- **The review covers the head that is merged.** Commits after the reviewed
+  head that only rebase without conflict, reformat or fix a typo need
+  nothing more. Any other change, fixes for findings included, gets a review
+  of the delta, posted the same way.
 - **Then CI green, squash merge.**
-- Documentation-only and pure code moves get a light review, still posted:
-  for a move, that nothing but location changed.
+- **Light review** for documentation-only changes and pure code moves, still
+  posted: for documentation, that links and anchors resolve and the text
+  agrees with the code and the other documents; for a move, that nothing but
+  location changed.
+- Dependabot pull requests are reviewed too; the maintainer, or the agent
+  that merges them, answers the findings.
 
 What a review looks for, most important first: wrong behaviour and missed
 cases, tests that would pass with the feature broken, Rust, CLI and Python
-disagreeing on the same feature, unsafe CI changes (unpinned actions,
-secrets, steps that pass silently). Style only where it breaks a documented
+disagreeing, unsafe CI changes. Style only where it breaks a documented
 convention.
 
 ## Plan
 
-1. This spec and the review step in [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md).
-2. Applied from now on to every open pull request.
+1. This spec, the review step in [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md)
+   and a rule in [CLAUDE.md](../CLAUDE.md). Checked: from this pull request
+   on, every merged pull request carries a `🔍 Independent review` comment
+   that covers its merged head.
 
 ## Links
 

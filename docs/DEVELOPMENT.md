@@ -31,16 +31,25 @@ write it: a fresh agent given only the pull request, its branch and its spec,
 never the author's reasoning, or a person. Whoever works on the pull request
 or wants to merge it runs that review or asks for one.
 
-- The reviewer itself posts its findings on the pull request, in one comment
-  headed `🔍 Independent review` with the head it read: major and minor, each
-  with `file:line`, the defect and a failure scenario, or that it found
-  nothing. The pull request keeps the trace.
-- The author fixes them, or answers in the thread why one is not a defect. A
-  major finding is fixed unless the maintainer waives it. A substantial fix
-  gets a new review of what changed.
-- It looks for wrong behaviour and missed cases first, then tests that would
-  pass with the feature broken, Rust, CLI and Python disagreeing, unsafe CI
-  changes. Documentation and pure code moves get a light review.
+- **Posted, unedited.** One comment on the pull request headed
+  `🔍 Independent review`, with the head it read. The reviewer posts it; an
+  agent that cannot write to GitHub hands its report to whoever launched it,
+  who posts it as is. Each finding has `file:line`, the defect and a failure
+  scenario, or the review says it found nothing.
+- **Major** when it would ship a defect: wrong behaviour or a missed case, a
+  test that passes with the feature broken, Rust, CLI and Python disagreeing,
+  an unsafe CI change, a document that misstates how things work. Everything
+  else is **minor**. The reviewer classifies, the author may contest, the
+  maintainer decides.
+- **The author answers every finding** in the thread: fixed, with the commit,
+  or why it is not a defect. A major finding is fixed unless the maintainer
+  waives it.
+- **The review covers the merged head.** After the reviewed head, a rebase
+  without conflict, formatting or a typo needs nothing more; any other
+  change, fixes included, gets a review of the delta.
+- **Light review**, still posted, for documentation (links, anchors, text
+  agrees with the code and the other docs) and pure code moves (nothing but
+  location changed).
 
 See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
@@ -120,7 +129,8 @@ entry and closes the issue.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on pull requests,
   every call on `main`.
-- Dependabot opens the monthly updates. Review them like any change.
+- Dependabot opens the monthly updates. Review them like any change: the
+  maintainer, or the agent that merges them, answers the review's findings.
 
 ## Documents and Office apps
 
