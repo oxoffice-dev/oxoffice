@@ -1549,9 +1549,11 @@ fn a_legacy_checkbox_inside_another_fields_result_draws_its_box_at_its_size() {
     // An IF field whose stored result holds checkboxes as Word saves them,
     // with no result run of their own.
     let doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}{}{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
         word_checkbox("<w:sizeAuto/>", true),
-        word_checkbox(r#"<w:size w:val="24"/>"#, false)
+        word_checkbox(r#"<w:size w:val="24"/>"#, false),
+        // A box that stores a result takes that result's formatting first.
+        r#"<w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check3"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
     ));
     let runs = drawn_runs(&doc);
     let drawn: Vec<(&str, f64)> = runs
@@ -1560,9 +1562,24 @@ fn a_legacy_checkbox_inside_another_fields_result_draws_its_box_at_its_size() {
         .collect();
     assert_eq!(
         drawn,
-        [("\u{2612}", 10.0), ("\u{2610}", 12.0)],
+        [("\u{2612}", 10.0), ("\u{2610}", 12.0), ("\u{2610}", 20.0)],
         "each nested box draws from its state, at the opening run's size or its own"
     );
+}
+
+#[test]
+fn a_styleref_to_a_heading_holding_a_legacy_checkbox_reads_its_text_without_the_box() {
+    // The heading draws its box on the page; navigation text, which STYLEREF
+    // reads, keeps the checkbox's stored text, empty as Word saves it.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{}<w:r><w:t xml:space="preserve"> Approve</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> STYLEREF "Heading 1" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        word_checkbox("<w:sizeAuto/>", false)
+    ));
+    let texts: String = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(texts, "\u{2610} Approve Approve");
 }
 
 #[test]
