@@ -682,6 +682,91 @@ fn a_style_linked_to_a_list_level_numbers_every_paragraph_of_that_style() {
 }
 
 #[test]
+fn an_instance_update_keeps_the_style_links_of_its_levels() {
+    // Heading1 and Heading2 are linked both ways to the list's levels; an
+    // update that would drop the levels' names of them is refused.
+    let (mut doc, id) = numbered_headings();
+    let plain = doc
+        .add_numbering_definition(&[ListLevel::decimal(), ListLevel::decimal()])
+        .unwrap();
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(id, plain, &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    doc.update_numbering_instance(
+        id,
+        definition_of(&doc, id),
+        &[NumberingLevelOverride::new(0).start(3)],
+    )
+    .unwrap();
+    assert_eq!(
+        markers(&doc)[0],
+        "3",
+        "an update that keeps the links goes through"
+    );
+}
+
+#[test]
+fn an_instance_update_keeps_a_style_link_held_by_a_swapped_in_level() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet())],
+        )
+        .unwrap();
+    doc.add_style(StyleBuilder::paragraph("Points", "Points"))
+        .unwrap();
+    doc.link_style_to_numbering("Points", swapped, 0).unwrap();
+    let link = doc.numbering_instance(swapped).unwrap().level_overrides[0]
+        .paragraph_style_link
+        .clone();
+    assert_eq!(
+        link.as_deref(),
+        Some("Points"),
+        "the swapped-in level holds the link"
+    );
+
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(swapped, definition_of(&doc, swapped), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn a_level_that_names_a_style_not_numbered_by_it_is_refused() {
+    // The other way round from LibreOffice's one-way link: the level names
+    // Heading2, whose style no longer points at any list.
+    let (mut doc, _) = numbered_headings();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let style = xml
+        .find(r#"w:styleId="Heading2""#)
+        .expect("the Heading2 style");
+    let start = style + xml[style..].find("<w:numPr>").expect("its numbering");
+    let end = start + xml[start..].find("</w:numPr>").unwrap() + "</w:numPr>".len();
+    let xml = format!("{}{}", &xml[..start], &xml[end..]);
+    package.set_part("/word/styles.xml", xml.into_bytes());
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(
+        error.contains("and style 'Heading2' are not reciprocally linked"),
+        "{error}"
+    );
+}
+
+#[test]
 fn headings_linked_to_a_list_show_their_numbers_in_the_outline() {
     fn flatten(nodes: &[NumberedOutlineNode], out: &mut Vec<String>) {
         for node in nodes {
@@ -831,10 +916,11 @@ fn list_items_of_every_producer_read_the_same_after_a_save() {
 }
 
 #[test]
-fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
+fn items_added_to_the_corpus_reports_continue_their_lists() {
     for (name, bullet) in [
         ("word/report.docx", SYMBOL_BULLET),
         ("google/report.docx", "●"),
+        ("libreoffice/report.docx", SYMBOL_BULLET),
         ("authored/report.docx", SYMBOL_BULLET),
     ] {
         let mut doc = corpus_doc(name);
@@ -894,9 +980,7 @@ fn roman_markers_go_up_to_3999_then_show_the_number() {
 
 // Known failures.
 
-// Fails today: LibreOffice keeps List Bullet's numbering but drops the level's style back-link, and every list edit is refused. Issue: #29
 #[test]
-#[should_panic(expected = "are not reciprocally linked")]
 fn items_can_be_added_to_a_libreoffice_report() {
     let mut doc = corpus_doc("libreoffice/report.docx");
     doc.try_add_bullet_list_item("New point", 0).unwrap();
@@ -909,6 +993,63 @@ fn items_can_be_added_to_a_libreoffice_report() {
         "4. New step".to_owned(),
     ]);
     assert_eq!(list_lines(&doc), expected);
+}
+
+#[test]
+fn every_list_edit_works_on_a_libreoffice_report() {
+    // LibreOffice keeps the numbering of its List Bullet style and drops the
+    // level's link back to the style: a one-way link, which Word reads.
+    let mut doc = corpus_doc("libreoffice/report.docx");
+    let point = doc
+        .paragraph(paragraph_starting(&doc, "Subscription revenue"))
+        .unwrap();
+    assert_eq!(point.style_id(), Some("ListBullet"));
+    let effective = doc.effective_paragraph_properties(&point);
+    let (id, level) = (effective.num_id.unwrap(), effective.num_ilvl.unwrap_or(0));
+    assert_eq!(
+        doc.numbering_level(id, level).unwrap().paragraph_style,
+        None
+    );
+    doc.validate_numbering_graph().unwrap();
+
+    doc.add_bullet_list_item("New point", 0);
+    let step = doc.paragraph_count();
+    doc.add_numbered_list_item("New step", 0);
+    doc.restart_numbering(step, 5).unwrap();
+    assert_ne!(doc.add_list_definition(&[ListLevel::decimal()]), 0);
+    doc.add_numbering_definition(&[ListLevel::bullet()])
+        .unwrap();
+    let mut unlinked = corpus_doc("libreoffice/report.docx");
+    unlinked
+        .unlink_style_from_numbering("ListBullet", id, level)
+        .unwrap();
+    let style = unlinked.style("ListBullet").unwrap();
+    let properties = style.paragraph_properties().unwrap();
+    assert_eq!(
+        (properties.num_id, properties.num_ilvl),
+        (None, None),
+        "unlinking removes the style's side of a one-way link"
+    );
+    unlinked.validate_numbering_graph().unwrap();
+    doc.link_style_to_numbering("ListBullet", id, level)
+        .unwrap();
+    assert_eq!(
+        doc.numbering_level(id, level).unwrap().paragraph_style,
+        Some("ListBullet"),
+        "linking completes the link"
+    );
+    doc.validate_numbering_graph().unwrap();
+
+    let doc = reopen(&mut doc);
+    let lines = list_lines(&doc);
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            format!("{SYMBOL_BULLET} New point"),
+            "5. New step".to_owned()
+        ]
+    );
+    doc.validate_numbering_graph().unwrap();
 }
 
 // Fails today: Word writes w16cid:durableId on every list instance, and a restart refuses an instance with attributes it does not model. Issue: #29
