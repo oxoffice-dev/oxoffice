@@ -61,6 +61,8 @@ cause rather than each call.
   check moves to save time, or to debug builds and tests.
 - The scaling and budget tests of the new suite are the gate.
 
+See [the edit cost spec](specs/2026-11-21-edit-cost-at-the-root.md).
+
 ## 4. Fillable PDF forms
 
 Export Word form controls to an AcroForm PDF: text fields, checkboxes,
