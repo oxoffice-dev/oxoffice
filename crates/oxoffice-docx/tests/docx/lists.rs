@@ -933,9 +933,7 @@ fn lettered_lists_go_on_with_doubled_letters_after_z() {
     assert_eq!(markers(&doc)[26..], ["aa.", "bb."]);
 }
 
-// Fails today: numbering_is_bullet reads the definition only, not the instance's replacement level that layout draws. Issue: #29
 #[test]
-#[should_panic(expected = "left: Some(false)")]
 fn a_list_whose_instance_swaps_in_a_bullet_level_reads_as_a_bullet_list() {
     let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
     let dashed = doc
@@ -945,8 +943,43 @@ fn a_list_whose_instance_swaps_in_a_bullet_level_reads_as_a_bullet_list() {
         )
         .unwrap();
     add_items(&mut doc, dashed, &[0]);
+    assert_eq!(doc.numbering_is_bullet(dashed), Some(true));
+    assert_eq!(doc.numbering_is_bullet(numbered), Some(false));
 
+    // A save renumbers the instances made in this session by first use, so
+    // the reopened list is found through its paragraph.
     let doc = reopen(&mut doc);
     assert_eq!(markers(&doc), ["–"]);
-    assert_eq!(doc.numbering_is_bullet(dashed), Some(true));
+    let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
+    assert_eq!(doc.numbering_is_bullet(id), Some(true));
+}
+
+#[test]
+fn a_bullet_list_whose_instance_swaps_in_a_numbered_level_reads_as_numbered() {
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let numbered = doc
+        .add_numbering_instance(
+            definition_of(&doc, bullets),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal())],
+        )
+        .unwrap();
+    let restarted = doc
+        .add_numbering_instance(
+            definition_of(&doc, bullets),
+            &[NumberingLevelOverride::new(0).start(3)],
+        )
+        .unwrap();
+    add_items(&mut doc, numbered, &[0]);
+    assert_eq!(doc.numbering_is_bullet(numbered), Some(false));
+    assert_eq!(
+        doc.numbering_is_bullet(restarted),
+        Some(true),
+        "a start override keeps the definition's level"
+    );
+    assert_eq!(doc.numbering_is_bullet(bullets), Some(true));
+
+    let doc = reopen(&mut doc);
+    assert_eq!(markers(&doc), ["1."]);
+    let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
+    assert_eq!(doc.numbering_is_bullet(id), Some(false));
 }

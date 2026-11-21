@@ -40617,12 +40617,22 @@ impl Document {
         relationship_id
     }
 
-    /// Whether the given numbering definition renders as bullets (true)
-    /// or numbers (false). None if the id is unknown.
+    /// Whether the first level of the given numbering instance renders as
+    /// bullets (true) or numbers (false), with the replacement level the
+    /// instance sets in place of its definition's, as layout draws it. None
+    /// if the id is unknown.
     pub fn numbering_is_bullet(&self, num_id: u32) -> Option<bool> {
         let numbering = self.numbering.as_ref()?;
+        let instance = numbering.nums.iter().find(|item| item.num_id == num_id)?;
         let abstract_num = numbering.get_abstract_num_for(num_id)?;
-        let fmt = abstract_num.levels.first()?.num_fmt.as_ref()?;
+        let base = abstract_num.levels.first()?;
+        let level = instance
+            .level_overrides
+            .iter()
+            .find(|value| value.ilvl == base.ilvl)
+            .and_then(|value| value.level.as_ref())
+            .unwrap_or(base);
+        let fmt = level.num_fmt.as_ref()?;
         match fmt {
             oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet => Some(true),
             oxoffice_docx_oxml::numbering::ST_NumberFormat::Other(_) => None,
