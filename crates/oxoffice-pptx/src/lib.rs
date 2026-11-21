@@ -9986,8 +9986,8 @@ impl Presentation {
     /// Removes one slide and its owned package graph by zero-based index.
     ///
     /// The package metadata stops naming it: `docProps/app.xml` counts the
-    /// slides left and drops its title lists, and the package thumbnail,
-    /// which may picture it, goes.
+    /// slides left and drops its title lists, unless it lies outside its
+    /// namespace, and the package thumbnail, which may picture it, goes.
     pub fn remove_slide(&mut self, index: usize) -> Result<()> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10951,7 +10951,15 @@ impl Presentation {
         };
         let mut new = old.clone();
         new.slides = old.slides.map(|_| count(|_| true));
-        new.notes = old.notes.map(|_| count(|record| record.notes.is_some()));
+        // `Notes` counts slides containing notes, not empty notes pages.
+        new.notes = old.notes.map(|_| {
+            count(|record| {
+                record
+                    .notes
+                    .as_ref()
+                    .is_some_and(|notes| !notes.notes.notes_text().trim().is_empty())
+            })
+        });
         new.hidden_slides = old
             .hidden_slides
             .map(|_| count(|record| record.slide.hidden()));

@@ -1258,3 +1258,14 @@ fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
         assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
     }
 }
+
+#[test]
+fn the_notes_count_after_a_removal_counts_slides_with_notes_text() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.set_notes_text(1, "").unwrap();
+
+    prs.remove_slide(3).unwrap();
+
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>0</Notes>"), "{app}");
+}
