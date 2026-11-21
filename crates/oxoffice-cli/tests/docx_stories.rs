@@ -402,12 +402,9 @@ fn a_comment_added_to_a_copy_is_the_one_difference() {
     );
 }
 
-// Known failure #356: diff matches comments by their order in comments.xml,
-// which Word, Google Docs and LibreOffice all rewrite (see the producer-diff
-// snapshots of the contract). When it passes, drop `should_panic` and update
-// the producer-diff snapshots of the contract.
+// Word, Google Docs and LibreOffice all rewrite the order of comments.xml:
+// diff pairs comments by what identifies them, not by that order.
 #[test]
-#[should_panic(expected = "only the resolved comment Google drops differs")]
 fn comments_a_producer_reordered_are_no_difference() {
     let diff = read_json(&[
         "docx",
