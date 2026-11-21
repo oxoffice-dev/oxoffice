@@ -1171,8 +1171,10 @@ impl Document {
         let mut effective = style::resolve_paragraph_properties(style_id, &self.styles);
         self.apply_effective_numbering(&mut effective, direct, style_id);
 
-        if let Some((num_id, level)) = effective.num_id.zip(effective.num_ilvl)
-            && let Some(definition) = self.resolved_numbering_level_definition(num_id, level)
+        // A `w:numId` without `w:ilvl` numbers at level 0, as Word reads it.
+        if let Some(num_id) = effective.num_id
+            && let Some(definition) =
+                self.resolved_numbering_level_definition(num_id, effective.num_ilvl.unwrap_or(0))
             && let Some(properties) = &definition.ppr
         {
             effective.merge_from(properties);

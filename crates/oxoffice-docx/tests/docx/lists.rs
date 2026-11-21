@@ -2493,3 +2493,29 @@ fn a_paragraph_numbered_without_a_level_restarts_and_continues_at_level_zero() {
     let doc = reopen(&mut doc);
     assert_eq!(markers(&doc), ["1.", "2.", "7.", "8.", "9."]);
 }
+
+#[test]
+fn a_paragraph_numbered_without_a_level_takes_the_indentation_of_level_zero() {
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("a", 0);
+    let numbered = doc.paragraph(0).unwrap();
+    let expected = doc.effective_paragraph_properties(&numbered).ind_left;
+    assert!(expected.is_some(), "level 0 of a new list is indented");
+    // The same item as a producer writes it: a w:numId and no w:ilvl.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"<w:ilvl w:val="0"/>"#), "{xml}");
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="0"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        doc.effective_paragraph_properties(&paragraph).ind_left,
+        expected
+    );
+}
