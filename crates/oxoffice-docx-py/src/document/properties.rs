@@ -197,27 +197,16 @@ pub(super) fn default_paragraph_format_snapshot(
 }
 
 pub(super) fn length_keyword(
-    py: Python<'_>,
     value: &Bound<'_, PyAny>,
     name: &str,
 ) -> PyResult<Option<oxoffice_docx::Twips>> {
-    if value.is_none() {
-        return Ok(None);
-    }
-    let message = format!("{name} requires a Length or None");
-    let length_type = py.import("oxoffice.docx")?.getattr("Length")?;
-    if value.is_instance_of::<PyBool>()
-        || value.is_instance_of::<PyFloat>()
-        || !value.is_instance(&length_type)?
-    {
-        return Err(PyTypeError::new_err(message));
-    }
-    let emu = value
-        .extract::<i64>()
-        .map_err(|_| PyValueError::new_err(format!("{name} must be a representable Length")))?;
-    let twips = i32::try_from(emu / 635)
-        .map_err(|_| PyValueError::new_err(format!("{name} must fit signed twips")))?;
-    Ok(Some(oxoffice_docx::Twips(twips)))
+    crate::length_argument(Some(value), name, crate::LengthUnit::Twips)?
+        .map(|emu| {
+            i32::try_from(emu / 635)
+                .map(oxoffice_docx::Twips)
+                .map_err(|_| PyValueError::new_err(format!("{name} must fit signed twips")))
+        })
+        .transpose()
 }
 
 /// A default `line_spacing` keyword. `Length` is an exact pitch. A non-bool
@@ -234,7 +223,10 @@ pub(super) fn line_spacing_keyword(
         return Err(PyTypeError::new_err(message));
     }
     if value.is_instance(&py.import("oxoffice.docx")?.getattr("Length")?)? {
-        return Ok(length_keyword(py, value, "line_spacing")?.map(|twips| (twips, "exact")));
+        return Ok(
+            length_keyword(value, "Document.set_default_paragraph_format(line_spacing)")?
+                .map(|twips| (twips, "exact")),
+        );
     }
     if !value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyFloat>() {
         return Err(PyTypeError::new_err(message));

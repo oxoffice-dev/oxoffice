@@ -9,7 +9,7 @@ use std::path::Path;
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
     CommentDate, CommentRef, ContentLocation, Document, HalfPoint, RunItemRef, RunPosition,
-    RunRange, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
+    RunRange, StoryItemKind, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
     TextCommentOptions, Twips,
 };
 use oxoffice_opc::OpcPackage;
@@ -967,6 +967,81 @@ fn deleting_commented_content_takes_whole_threads_and_refuses_half_ones() {
 }
 
 #[test]
+fn removing_an_inline_control_takes_whole_threads_and_refuses_half_ones() {
+    // The control holds the whole thread, or only its start and its text.
+    for kind in [StoryKind::Body, StoryKind::Header] {
+        for whole in [true, false] {
+            let mut doc = doc_with(&["Body"]);
+            doc.set_header("Header words");
+            let paragraph = story_paragraph(&doc, kind, 0);
+            let part = doc
+                .stories()
+                .unwrap()
+                .into_iter()
+                .find(|story| story.kind() == kind)
+                .unwrap()
+                .part_name()
+                .trim_start_matches('/')
+                .to_owned();
+            if kind == StoryKind::Body {
+                doc.add_comment(run_range(0, 0, 0, 1), "Ada", None, "Thread")
+                    .unwrap();
+            } else {
+                doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
+                    .unwrap();
+            }
+            let bytes = doc.to_bytes().unwrap();
+            let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+            let name = format!("/{part}");
+            let xml = String::from_utf8(package.get_part(&name).unwrap().to_vec()).unwrap();
+            let start = xml.find("<w:commentRangeStart").unwrap();
+            let end = if whole {
+                let reference = xml.find("<w:commentReference").unwrap();
+                reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len()
+            } else {
+                xml.find("<w:commentRangeEnd").unwrap()
+            };
+            let xml = format!(
+                "{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            );
+            package.set_part(&name, xml.into_bytes());
+            let mut out = Cursor::new(Vec::new());
+            package.write_to(&mut out).unwrap();
+            let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+            let story = story_paragraph(&doc, kind, 0).story().clone();
+            let control = doc
+                .story_items(&story)
+                .unwrap()
+                .into_iter()
+                .find(|item| item.kind() == StoryItemKind::ContentControl)
+                .expect("the control")
+                .location()
+                .clone();
+            let result = doc.remove_content_control(&control);
+            if whole {
+                result.unwrap();
+                let doc = reopen(&mut doc);
+                assert!(doc.comments().is_empty(), "{kind:?}");
+                assert!(
+                    !doc.part_xml(&part).unwrap().contains("w:comment"),
+                    "{kind:?}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("part of comment"),
+                    "{kind:?}: {error}"
+                );
+                assert_eq!(doc.comments().len(), 1, "{kind:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn moving_a_comment_to_other_text_brings_its_replies() {
     let mut doc = doc_with(&["alpha beta", "gamma delta"]);
     let root = doc
@@ -1906,4 +1981,150 @@ fn removing_a_comment_takes_its_styled_reference_run_with_it() {
     let doc = reopen(&mut doc);
     let body = doc.part_xml("word/document.xml").unwrap();
     assert!(!body.contains("Marquedecommentaire"), "{body}");
+}
+
+/// `doc` has no comment yet: no comments part, nothing listed.
+fn assert_no_comments_yet(doc: &Document) {
+    assert!(doc.comments().is_empty(), "no comment yet");
+    assert!(
+        doc.part_xml("word/comments.xml").is_err(),
+        "no comments part yet"
+    );
+}
+
+/// After a save, comment `id` reads back `text`, and its mark in `part`
+/// carries the comment reference style.
+fn assert_first_comment_reads_back(doc: &mut Document, id: i32, part: &str, text: &str) {
+    let doc = reopen(doc);
+    assert_eq!(comment(&doc, id).text(), text);
+    let xml = doc.part_xml(part).unwrap();
+    assert_eq!(
+        comment_reference_style(&xml, id).as_deref(),
+        Some("CommentReference"),
+        "the mark of comment {id} in {part}:\n{xml}"
+    );
+}
+
+#[test]
+fn a_first_story_comment_on_a_body_paragraph_comes_with_the_comment_parts() {
+    // #372: the story-range route wrote the commented paragraph back through
+    // the stories after adding the relationship to a comments part not
+    // written yet, and the stories followed it.
+    let mut doc = doc_with(&["Body"]);
+    assert_no_comments_yet(&doc);
+    let paragraph = story_paragraph(&doc, StoryKind::Body, 0);
+    let id = doc
+        .add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "Thread");
+}
+
+#[test]
+fn a_first_story_comment_in_a_table_cell_comes_with_the_comment_parts() {
+    let mut doc = table_doc();
+    assert_no_comments_yet(&doc);
+    let cell = story_paragraph(&doc, StoryKind::TableCell, 0);
+    let id = doc
+        .add_story_comment(story_range(&cell, 0, 1), "Ada", None, "In a cell")
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "In a cell");
+}
+
+#[test]
+fn a_first_story_comment_in_a_block_content_control_comes_with_the_comment_parts() {
+    let mut doc = doc_with_body(concat!(
+        "<w:p><w:r><w:t>before</w:t></w:r></w:p>",
+        "<w:sdt><w:sdtPr/><w:sdtContent>",
+        "<w:p><w:r><w:t>in a control</w:t></w:r></w:p>",
+        "</w:sdtContent></w:sdt>",
+    ));
+    assert_no_comments_yet(&doc);
+    let control = doc.paragraph_story_location(1).unwrap().unwrap();
+    assert_eq!(control.index_path().len(), 2, "a paragraph in a control");
+    let id = doc
+        .add_story_comment(story_range(&control, 0, 1), "Ada", None, "In a control")
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "In a control");
+}
+
+#[test]
+fn a_first_story_comment_in_a_header_or_a_footer_comes_with_the_comment_parts() {
+    for (kind, part) in [
+        (StoryKind::Header, "word/header1.xml"),
+        (StoryKind::Footer, "word/footer1.xml"),
+    ] {
+        let mut doc = doc_with(&["Body"]);
+        doc.set_header("Header words");
+        doc.set_footer("Footer words");
+        assert_no_comments_yet(&doc);
+        let paragraph = story_paragraph(&doc, kind, 0);
+        let id = doc
+            .add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Up here")
+            .unwrap();
+        assert_eq!(anchor_kind(&doc, id), kind);
+        assert_first_comment_reads_back(&mut doc, id, part, "Up here");
+    }
+}
+
+#[test]
+fn a_first_comment_on_text_or_on_runs_comes_with_the_comment_parts() {
+    let mut doc = doc_with(&["review this"]);
+    assert_no_comments_yet(&doc);
+    let id = doc
+        .add_comment_on_text(
+            "review",
+            "Ada",
+            "On text",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "On text");
+
+    let mut doc = doc_with(&["review this"]);
+    assert_no_comments_yet(&doc);
+    let id = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "On runs")
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "On runs");
+}
+
+#[test]
+fn a_reply_on_the_first_comment_of_a_document_takes_the_reference_style() {
+    type First = fn(&mut Document) -> i32;
+    let routes: [(&str, First); 3] = [
+        ("on text", |doc| {
+            doc.add_comment_on_text(
+                "Body",
+                "Ada",
+                "Thread",
+                TextCommentOptions {
+                    date: CommentDate::Undated,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        }),
+        ("on runs", |doc| {
+            doc.add_comment(run_range(0, 0, 0, 1), "Ada", None, "Thread")
+                .unwrap()
+        }),
+        ("on a story range", |doc| {
+            let paragraph = story_paragraph(doc, StoryKind::Body, 0);
+            doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
+                .unwrap()
+        }),
+    ];
+    for (route, first) in routes {
+        let mut doc = doc_with(&["Body"]);
+        assert_no_comments_yet(&doc);
+        let root = first(&mut doc);
+        let reply = doc.reply_to(root, "Ben", "Reply").unwrap();
+        let mut doc = reopen(&mut doc);
+        assert_eq!(comment(&doc, reply).parent_id(), Some(root), "{route}");
+        assert_first_comment_reads_back(&mut doc, root, "word/document.xml", "Thread");
+        assert_first_comment_reads_back(&mut doc, reply, "word/document.xml", "Reply");
+    }
 }

@@ -1856,6 +1856,10 @@ impl Document {
     }
 
     /// Delete one control, including the content inside it.
+    /// The footnotes and endnotes only that content referenced go too, and
+    /// so do the comment threads wholly inside it; a comment the control
+    /// holds only part of makes the call fail, as in
+    /// [`Document::try_remove_content`].
     pub fn remove_content_control(&mut self, location: &ContentLocation) -> Result<()> {
         let (_part, xml, range, direct) = control_item(self, location)?;
         if last_repeating_item(&xml, &range)? {
@@ -1865,10 +1869,17 @@ impl Document {
         }
         if direct && control_parent_is_block(&xml, &range)? {
             refuse_cell_without_paragraph(self, location.story(), &xml, &range, b"")?;
-            return self
+            // The removed content is dropped, not handed back: the notes only
+            // it referenced go with it.
+            let mut candidate = self.clone_for_staging();
+            let before = candidate.main_part_snapshot()?;
+            candidate
                 .remove_content_at(location)
-                .map(|_| ())
-                .map_err(control_fault);
+                .map_err(control_fault)?;
+            let after = candidate.main_part_snapshot()?;
+            candidate.remove_unreferenced_notes(&before, &after)?;
+            candidate.reconcile_comment_removal(self)?;
+            return self.publish_candidate(candidate);
         }
         self.rewrite_control(location, ControlRewrite::Remove)
     }
@@ -2040,8 +2051,18 @@ impl Document {
                 inner
             }
         };
+        // A removal takes the comment threads inside it, and from the main
+        // part the notes only it referenced.
+        let removing = matches!(rewrite, ControlRewrite::Remove);
+        let before = (removing && part == candidate.doc_part_name).then(|| xml.clone());
         xml.splice(range, replacement);
-        candidate.write_story_part(&part, xml)?;
+        candidate.write_story_part(&part, xml.clone())?;
+        if let Some(before) = before {
+            candidate.remove_unreferenced_notes(&before, &xml)?;
+        }
+        if removing {
+            candidate.reconcile_comment_removal(self)?;
+        }
         self.publish_candidate(candidate)
     }
 }

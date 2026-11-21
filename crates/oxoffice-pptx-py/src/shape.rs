@@ -773,7 +773,8 @@ impl PyShape {
         length(py, Some(point.0))
     }
     #[setter]
-    fn set_begin_x(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_begin_x(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.begin_x", crate::LengthUnit::Emu)?;
         check_coordinate("begin_x", value, MIN_COORDINATE)?;
         let mut point = self
             .read(py, |shape| {
@@ -795,7 +796,8 @@ impl PyShape {
         length(py, Some(point.1))
     }
     #[setter]
-    fn set_begin_y(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_begin_y(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.begin_y", crate::LengthUnit::Emu)?;
         check_coordinate("begin_y", value, MIN_COORDINATE)?;
         let mut point = self
             .read(py, |shape| {
@@ -817,7 +819,8 @@ impl PyShape {
         length(py, Some(point.0))
     }
     #[setter]
-    fn set_end_x(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_end_x(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.end_x", crate::LengthUnit::Emu)?;
         check_coordinate("end_x", value, MIN_COORDINATE)?;
         let mut point = self
             .read(py, |shape| {
@@ -839,7 +842,8 @@ impl PyShape {
         length(py, Some(point.1))
     }
     #[setter]
-    fn set_end_y(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_end_y(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.end_y", crate::LengthUnit::Emu)?;
         check_coordinate("end_y", value, MIN_COORDINATE)?;
         let mut point = self
             .read(py, |shape| {
@@ -994,7 +998,8 @@ impl PyShape {
     }
 
     #[setter]
-    pub(crate) fn set_left(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    pub(crate) fn set_left(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.left", crate::LengthUnit::Emu)?;
         check_coordinate("left", value, MIN_COORDINATE)?;
         let top = self
             .prepared_geometry(py)?
@@ -1008,7 +1013,8 @@ impl PyShape {
     }
 
     #[setter]
-    fn set_top(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_top(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.top", crate::LengthUnit::Emu)?;
         check_coordinate("top", value, MIN_COORDINATE)?;
         let left = self
             .prepared_geometry(py)?
@@ -1022,7 +1028,8 @@ impl PyShape {
     }
 
     #[setter]
-    fn set_width(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_width(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.width", crate::LengthUnit::Emu)?;
         check_coordinate("width", value, 0)?;
         let height = self
             .prepared_geometry(py)?
@@ -1036,7 +1043,8 @@ impl PyShape {
     }
 
     #[setter]
-    fn set_height(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_height(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "Shape.height", crate::LengthUnit::Emu)?;
         check_coordinate("height", value, 0)?;
         let width = self
             .prepared_geometry(py)?
@@ -1962,13 +1970,33 @@ impl PyShapeCollection {
         &mut self,
         py: Python<'_>,
         movie_file: &Bound<'_, PyAny>,
-        left: i64,
-        top: i64,
-        width: i64,
-        height: i64,
+        left: &Bound<'_, PyAny>,
+        top: &Bound<'_, PyAny>,
+        width: &Bound<'_, PyAny>,
+        height: &Bound<'_, PyAny>,
         poster_frame_image: Option<&Bound<'_, PyAny>>,
         mime_type: Option<&str>,
     ) -> PyResult<Py<PyShape>> {
+        let left = crate::required_length(
+            left,
+            "ShapeCollection.add_movie(left)",
+            crate::LengthUnit::Emu,
+        )?;
+        let top = crate::required_length(
+            top,
+            "ShapeCollection.add_movie(top)",
+            crate::LengthUnit::Emu,
+        )?;
+        let width = crate::required_length(
+            width,
+            "ShapeCollection.add_movie(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "ShapeCollection.add_movie(height)",
+            crate::LengthUnit::Emu,
+        )?;
         let (owner, group) = self.target(py)?;
         let oxoffice_pptx::ShapeOwner::Slide(slide_index) = owner else {
             return Err(PyValueError::new_err("movies require a slide owner"));
@@ -2274,12 +2302,32 @@ impl PyShapeCollection {
         &self,
         py: Python<'_>,
         chart_type: &Bound<'_, PyAny>,
-        left: i64,
-        top: i64,
-        width: i64,
-        height: i64,
+        left: &Bound<'_, PyAny>,
+        top: &Bound<'_, PyAny>,
+        width: &Bound<'_, PyAny>,
+        height: &Bound<'_, PyAny>,
         chart_data: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyShape>> {
+        let left = crate::required_length(
+            left,
+            "ShapeCollection.add_chart(left)",
+            crate::LengthUnit::Emu,
+        )?;
+        let top = crate::required_length(
+            top,
+            "ShapeCollection.add_chart(top)",
+            crate::LengthUnit::Emu,
+        )?;
+        let width = crate::required_length(
+            width,
+            "ShapeCollection.add_chart(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "ShapeCollection.add_chart(height)",
+            crate::LengthUnit::Emu,
+        )?;
         self.require_slide_root()?;
         let (kind, data) = checked_chart_inputs(chart_type, chart_data)?;
         self.validate(py)?;
@@ -2321,11 +2369,31 @@ impl PyShapeCollection {
     pub(crate) fn add_textbox(
         &mut self,
         py: Python<'_>,
-        left: i64,
-        top: i64,
-        width: i64,
-        height: i64,
+        left: &Bound<'_, PyAny>,
+        top: &Bound<'_, PyAny>,
+        width: &Bound<'_, PyAny>,
+        height: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyShape>> {
+        let left = crate::required_length(
+            left,
+            "ShapeCollection.add_textbox(left)",
+            crate::LengthUnit::Emu,
+        )?;
+        let top = crate::required_length(
+            top,
+            "ShapeCollection.add_textbox(top)",
+            crate::LengthUnit::Emu,
+        )?;
+        let width = crate::required_length(
+            width,
+            "ShapeCollection.add_textbox(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "ShapeCollection.add_textbox(height)",
+            crate::LengthUnit::Emu,
+        )?;
         self.add(py, "ShapeCollection.add_textbox", |shapes| {
             shapes
                 .add_textbox(
@@ -2342,11 +2410,31 @@ impl PyShapeCollection {
         &mut self,
         py: Python<'_>,
         shape_type: &Bound<'_, PyAny>,
-        left: i64,
-        top: i64,
-        width: i64,
-        height: i64,
+        left: &Bound<'_, PyAny>,
+        top: &Bound<'_, PyAny>,
+        width: &Bound<'_, PyAny>,
+        height: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyShape>> {
+        let left = crate::required_length(
+            left,
+            "ShapeCollection.add_shape(left)",
+            crate::LengthUnit::Emu,
+        )?;
+        let top = crate::required_length(
+            top,
+            "ShapeCollection.add_shape(top)",
+            crate::LengthUnit::Emu,
+        )?;
+        let width = crate::required_length(
+            width,
+            "ShapeCollection.add_shape(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "ShapeCollection.add_shape(height)",
+            crate::LengthUnit::Emu,
+        )?;
         let preset = preset_name(py, shape_type)?;
         self.add(py, "ShapeCollection.add_shape", |shapes| {
             shapes
@@ -2365,11 +2453,31 @@ impl PyShapeCollection {
         &mut self,
         py: Python<'_>,
         connector_type: i64,
-        begin_x: i64,
-        begin_y: i64,
-        end_x: i64,
-        end_y: i64,
+        begin_x: &Bound<'_, PyAny>,
+        begin_y: &Bound<'_, PyAny>,
+        end_x: &Bound<'_, PyAny>,
+        end_y: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyShape>> {
+        let begin_x = crate::required_length(
+            begin_x,
+            "ShapeCollection.add_connector(begin_x)",
+            crate::LengthUnit::Emu,
+        )?;
+        let begin_y = crate::required_length(
+            begin_y,
+            "ShapeCollection.add_connector(begin_y)",
+            crate::LengthUnit::Emu,
+        )?;
+        let end_x = crate::required_length(
+            end_x,
+            "ShapeCollection.add_connector(end_x)",
+            crate::LengthUnit::Emu,
+        )?;
+        let end_y = crate::required_length(
+            end_y,
+            "ShapeCollection.add_connector(end_y)",
+            crate::LengthUnit::Emu,
+        )?;
         let connector = match connector_type {
             1 => oxoffice_pptx::ConnectorType::Straight,
             2 => oxoffice_pptx::ConnectorType::Elbow,
@@ -2484,11 +2592,31 @@ impl PyShapeCollection {
         py: Python<'_>,
         rows: usize,
         cols: usize,
-        left: i64,
-        top: i64,
-        width: i64,
-        height: i64,
+        left: &Bound<'_, PyAny>,
+        top: &Bound<'_, PyAny>,
+        width: &Bound<'_, PyAny>,
+        height: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyShape>> {
+        let left = crate::required_length(
+            left,
+            "ShapeCollection.add_table(left)",
+            crate::LengthUnit::Emu,
+        )?;
+        let top = crate::required_length(
+            top,
+            "ShapeCollection.add_table(top)",
+            crate::LengthUnit::Emu,
+        )?;
+        let width = crate::required_length(
+            width,
+            "ShapeCollection.add_table(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "ShapeCollection.add_table(height)",
+            crate::LengthUnit::Emu,
+        )?;
         self.add(py, "ShapeCollection.add_table", |shapes| {
             shapes
                 .add_table(
@@ -2508,11 +2636,31 @@ impl PyShapeCollection {
         &mut self,
         py: Python<'_>,
         image_file: &Bound<'_, PyAny>,
-        left: i64,
-        top: i64,
-        width: Option<i64>,
-        height: Option<i64>,
+        left: &Bound<'_, PyAny>,
+        top: &Bound<'_, PyAny>,
+        width: Option<&Bound<'_, PyAny>>,
+        height: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyShape>> {
+        let left = crate::required_length(
+            left,
+            "ShapeCollection.add_picture(left)",
+            crate::LengthUnit::Emu,
+        )?;
+        let top = crate::required_length(
+            top,
+            "ShapeCollection.add_picture(top)",
+            crate::LengthUnit::Emu,
+        )?;
+        let width = crate::length_argument(
+            width,
+            "ShapeCollection.add_picture(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::length_argument(
+            height,
+            "ShapeCollection.add_picture(height)",
+            crate::LengthUnit::Emu,
+        )?;
         self.target(py)?;
         let (bytes, filename) = image_bytes(image_file)?;
         self.add(py, "ShapeCollection.add_picture", |shapes| {
