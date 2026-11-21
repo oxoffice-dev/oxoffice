@@ -121,16 +121,19 @@ save refusal (#10), each in a binary of its own.
   are known failures that rewrite `word/document.xml` (#57).
 - 13 entries in `limitations.json` for the bugs users can work around.
 - By the next morning, the fixes made overnight by other sessions had turned
-  21 of the 47 known failures into passing tests (17 docx, 4 pptx), each fix
-  removing its `should_panic` and its limitation entry.
+  22 of the 47 known failures into passing tests (18 docx, 4 pptx): each fix
+  removed its `should_panic`, and its limitation entry went or was narrowed to
+  the cases left.
+- #140 (follow-up of #59's last review): manifest features for the form's
+  signature and locked controls, and 16:9 by its ratio, before the Mac run.
 - Not done here: Word, PowerPoint and Google copies of the new families. The
   machine that built them has neither Office nor an rclone remote; the scripts
   are ready and #62 holds the commands.
 
 ### Learnings
 
-- **Every pull request's independent review found tests that passed whatever
-  the facade did**: header parts counted from the stories still referenced, a
+- **The independent reviews of #34, #46 and #59 found tests that passed
+  whatever the facade did**: header parts counted from the stories still referenced, a
   replacement whose result was never read, a stale frame pinned as correct, a
   table compared with the parser's own output, a known failure built on counts
   nobody had checked against the file. Fixing them turned up four more bugs
@@ -148,9 +151,11 @@ save refusal (#10), each in a binary of its own.
 - **A strict known failure needs a message only its own assertion makes**, so
   that a fix flips it and an unrelated panic does not; and a known failure of
   the corpus names the parts it may rewrite, nothing more.
-- Debug-build cost: the docx binary runs in about 15 s, the pptx one in 7 s,
-  the corpus round trip in 12 s on parallel threads (one long report alone
-  takes 12 s), so no subset is needed on pull requests.
+- Debug-build cost, measured locally: the docx binary runs in about 15 s, the
+  pptx one in 7 s, the corpus round trip in 12 s on parallel threads (one long
+  report alone takes 12 s). On CI (#59's run) the docx binary takes about 57 s
+  and the pptx one 28 s, the round trip about 21 s: no subset is needed yet,
+  but the docx binary is near the minute the decision set for one.
 - **The pilot files are frozen**: the behaviour tests pin facts of every
   producer's copy of the report and the deck, so their sources match the
   pilot's part for part (its chart PNG is a committed file: PNG compression
