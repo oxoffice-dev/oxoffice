@@ -13,6 +13,7 @@ replaces text, and produces deterministic fixed output.
   placeholder, geometry, rotation, autofit, and text detail.
 - Slide-order text extraction and recursive outlines, as plain text or schema-1
   JSON, with speaker notes on request.
+- A flat list of every shape, those inside groups included, with its path.
 - PDF, PNG, JPEG, and multi-page TIFF conversion.
 - Selected-slide rendering, thumbnails, text diff, replacement, and validation.
 - Modern comment thread listing, addition, replies, resolution, and removal.
@@ -60,6 +61,7 @@ cargo install oxoffice-cli --version '^0.1.0'
 oxoffice pptx inspect deck.pptx --json
 oxoffice pptx text deck.pptx --json
 oxoffice pptx outline deck.pptx --notes
+oxoffice pptx shapes deck.pptx --slide 2
 oxoffice pptx comment add deck.pptx --slide 2 --author Reviewer \
   --text "Check the figures" --date 2026-09-25T10:00:00Z -o reviewed.pptx
 oxoffice pptx comment list reviewed.pptx --json
@@ -96,6 +98,14 @@ levels, and its speaker notes. Notes are the plain text of the notes body, with
 paragraphs and line breaks both written as newlines. `--notes` prints one
 `Notes:` line for each non-empty notes line after a slide's plain text or
 outline. JSON output always carries the notes.
+
+`shapes` lists the shapes of every slide, or of `--slide N`, depth first in
+z-order: a group, then the shapes inside it, indented one more step. Each line
+has the shape id, kind, name, direct position and size in EMU, and the first 50
+characters of its text. `--json` gives, for each shape, its `path` (z-order
+index in the slide, then in each group below it), `depth`, id, name, kind,
+geometry and full text. It is the CLI side of `Shapes::walk` in Rust and
+`ShapeCollection.walk()` in Python.
 
 `comment` works on modern PowerPoint comments. Legacy comments stay preserved
 but are not listed. `list` shows each comment and reply as `open`, `resolved`,

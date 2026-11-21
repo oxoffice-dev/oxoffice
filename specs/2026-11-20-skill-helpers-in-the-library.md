@@ -67,6 +67,17 @@ One pull request per row group, each with tests on the corpus:
 - Unoptimised builds overflow the 2 MiB stack of a test thread on some
   PowerPoint edits (already on `main`): `.cargo/config.toml` gives test
   threads 8 MiB, the size the CLI uses.
+- **6. `Shapes::walk()`**: `SlideRef::shapes()` and `ShapeRef::children()`
+  now return a named `Shapes` iterator (still an `ExactSizeIterator` of
+  `ShapeRef`), and `Presentation::part_shapes(owner)` gives the same for a
+  layout or master. `Shapes::walk()` visits the shapes left in it and
+  everything inside groups and selected alternate-content fallbacks, depth
+  first in z-order, each with its index path, so `path.len() - 1` is the depth
+  and `part_shape_at` finds it again. It keeps its own stack, so nesting
+  cannot overflow the thread's. Python has `ShapeCollection.walk()`, a list of
+  `(depth, shape)` with live handles, on slides, groups, layouts and masters.
+  The CLI gains `oxoffice pptx shapes [--slide N] [--json]`, the flat listing
+  the skills' `pptx_ops.py shapes` printed, with paths in JSON.
 
 ## Links
 

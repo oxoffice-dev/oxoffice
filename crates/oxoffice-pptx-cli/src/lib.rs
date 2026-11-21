@@ -222,6 +222,16 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// List the shapes of each slide, those inside groups included, in z-order
+    Shapes {
+        file: PathBuf,
+        /// One-based slide number, every slide when absent
+        #[arg(long)]
+        slide: Option<usize>,
+        /// Output the shapes with their paths as schema-1 JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Print each slide title and recursive paragraph outline
     Outline {
         file: PathBuf,
@@ -723,6 +733,7 @@ pub fn run(cli: Cli) {
             output,
             force,
         } => commands::thumbnail(&file, output.as_deref(), force, font_dir.as_deref()),
+        Command::Shapes { file, slide, json } => commands::shapes(&file, slide, json),
         Command::Outline { file, json, notes } => commands::outline(&file, json, notes),
         Command::Footer {
             file,
