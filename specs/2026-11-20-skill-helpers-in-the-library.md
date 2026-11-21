@@ -81,6 +81,47 @@ One pull request per row group, each with tests on the corpus:
   list of `(depth, shape)` with live handles, on slides, groups, layouts and
   masters. The CLI gains `oxoffice pptx shapes [--slide N] [--json]`, the flat
   listing the skills' `pptx_ops.py shapes` printed, with paths in JSON.
+- **4. Story paragraphs and counts** (#18): `Document::story_paragraphs()` gives a
+  `StoryParagraph` for every paragraph of every story: the body with its
+  table cells, text boxes and block content controls, each header and footer
+  part, the notes (separators left out) and the comments. Each one carries
+  the kind of its part's story (`Body`, `Header`, `Footer`, `Footnote`,
+  `Endnote`, `Comment`: a table cell or a text box takes the kind of the story
+  around it), its location (owner story, part name, and the item path of
+  `story_items`, which counts every item, not paragraphs), its direct style
+  id and the text a reader sees in the accepted view. Parts come in
+  `stories()` order, paragraphs in document order within a part.
+  `Document::count_text(text)` counts by story kind, in a fixed order,
+  without overlaps or crossing a paragraph end, and refuses an empty text.
+  CLI `docx count FILE TEXT [--json]`, with the total and the total outside
+  comments; `docx text --json` story items gain `style` (the part name and
+  the body styles were already there). Python `Document.story_paragraphs`,
+  `StoryParagraph`, `Document.count_text(text)` returning `{kind: count}`.
+- Design moves: comments are listed (the helper left them out), as kind
+  `comment`, so a caller that wants the replacement's reach filters them
+  (`docx count` gives `outside comments`). The story item inventory lists a
+  block content control, a table of contents for one, as one item with its
+  paragraphs' texts joined; story paragraphs split it with the paragraph
+  paths that comment ranges already use, so a TOC entry keeps its `TOC1`
+  style. Style ids are the document's own, localised by Word (`Titre1`,
+  `En-tte`). Part names are OPC names (`/word/header1.xml`), where the
+  helper gave ZIP names.
+- The text is read by a pass of its own over each paragraph, not by the
+  story item reader: that reader keeps `w:smartTag` and `w:customXml` opaque
+  and skips their text, which `Paragraph::text` and replacement read (found
+  by the independent review). The pass reads every `w:t` but deleted and
+  moved-away text, properties, the phonetic guide of a ruby (`w:rt`),
+  `mc:Fallback` copies, text boxes and field codes (nested fields included),
+  and matches `Paragraph::text` on every corpus file. It also reads what no
+  other call reaches: a smart tag inside a tracked insertion, the base of a
+  ruby Word writes in a run (which `Paragraph::text` leaves out), and the
+  paragraphs of a block `w:customXml`, text boxes inside it included, which
+  are listed with the element's path then their index. Counts see that
+  text, so item 2 can refuse to leave it behind. Known gap: a text box in a
+  run inside an inline smart tag or custom XML element is not listed (#78).
+  The cost is linear in the document (measured ×3.8 per 4× paragraphs), and
+  the scaling tests now time `story_paragraphs` and `count_text` against
+  the linear bound.
 
 ## Links
 

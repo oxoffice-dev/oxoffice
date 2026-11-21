@@ -17,6 +17,7 @@ import ast
 import datetime
 import io
 import itertools
+import os
 import re
 import time
 from pathlib import Path
@@ -697,6 +698,7 @@ WHOLE_DOCUMENT = {
 RAISES = {"Document.add_section", "Table.add_column", "Section.left_margin",
           "Section.different_first_page_header_footer", "TabStop.alignment"}
 READS = {"Document.verify_signatures", "Document.chart_legend", "Document.text", "Document.text_report",
+         "Document.count_text",
          "Document.word_count", "Document.character_count", "Document.page_count", "Document.validate",
          "Document.section", "Document.save", "Document.image_data", "Document.pictures", "Document.part_names",
          "Document.part_xml", "Document.legacy_form_fields", "Document.content_controls", "Document.layout",
@@ -832,6 +834,35 @@ def test_call_cost_does_not_grow_with_the_document(documents, name):
         return
     small, large = measured(documents, name, lambda s, l: l < RATIO * s + FLOOR_MS)
     assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {LARGE * N} paragraphs, {small:.1f} ms at {N}"
+
+
+# Reads of every story by design: their cost grows with the document, but no faster. Timed only with OXOFFICE_SCALING,
+# which needs a build without debug assertions, on documents of 10N and 40N paragraphs: at N and 4N, the fixed tail of
+# probes keeps the body from growing much more than twice, which a quadratic cost would pass under LINEAR.
+WHOLE_DOCUMENT_READS = {
+    "Document.story_paragraphs": lambda doc: lambda k: lambda: doc.story_paragraphs,
+    "Document.count_text": lambda doc: lambda k: lambda: doc.count_text("alpha"),
+}
+
+
+@pytest.fixture(scope="module")
+def large_documents(tmp_path_factory):
+    folder = tmp_path_factory.mktemp("scaling-large")
+    return (edit_cost_docx(folder / "10n.docx", 10 * N), edit_cost_docx(folder / "40n.docx", 40 * N))
+
+
+@pytest.mark.parametrize("name", sorted(WHOLE_DOCUMENT_READS))
+def test_whole_document_read_grows_no_faster_than_the_document(large_documents, name):
+    if not os.environ.get("OXOFFICE_SCALING"):
+        pytest.skip("timed with OXOFFICE_SCALING only")
+    small, large = costs_ms(large_documents, WHOLE_DOCUMENT_READS[name])
+    for _ in range(REMEASURE):
+        if large < LINEAR * small + FLOOR_MS:
+            break
+        again = costs_ms(large_documents, WHOLE_DOCUMENT_READS[name])
+        small, large = min(small, again[0]), min(large, again[1])
+    assert large < LINEAR * small + FLOOR_MS, (
+        f"{name}: {large:.1f} ms at {40 * N} paragraphs, {small:.1f} ms at {10 * N}")
 
 
 def test_every_mutating_call_is_timed():
