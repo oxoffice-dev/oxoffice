@@ -9026,12 +9026,17 @@ fn compare_body_impl(
         .take_while(|(_, (left, right))| {
             right.is_none()
                 && left.is_some_and(|index| {
-                    moves.original[index].is_none()
-                        && matches!(original.body.content[index], BodyContent::Paragraph(_))
+                    matches!(original.body.content[index], BodyContent::Paragraph(_))
                 })
         })
         .map(|(position, _)| position)
         .last();
+    // The move id of the paragraph that ends the body, on each side: the
+    // last paragraph of a trailing run, whose change the mark before the run
+    // carries.
+    let (last_original, last_edited) = aligned.last().copied().unwrap_or_default();
+    let trailing_delete_end = last_original.and_then(|index| moves.original[index]);
+    let trailing_insert_end = last_edited.and_then(|index| moves.edited[index]);
     // A final paragraph change marks the paragraph mark of an owner already
     // emitted, which must not be one that holds an existing revision.
     let refuse_held_mark = |position: Option<usize>| -> Result<()> {
@@ -9185,14 +9190,8 @@ fn compare_body_impl(
                         diagnostics,
                     )?
                 };
-                // A table holding tracked revisions may not survive a
-                // resolution, so only one free of them counts as kept.
                 let owner = match (original_content, edited_content) {
-                    (BodyContent::Table(_), BodyContent::Table(_))
-                        if !held_original.holds(Some(left)) && !held_edited.holds(Some(right)) =>
-                    {
-                        EmittedOwner::KeptTable
-                    }
+                    (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
                     _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
                 };
                 output.push((owner, compared));
@@ -9215,73 +9214,55 @@ fn compare_body_impl(
                         )
                     }));
                 }
-                if let Some(id) = moves.original[left] {
-                    if let BodyContent::Paragraph(paragraph) = content
-                        && !next_takes_mark
-                    {
-                        refuse_held_mark(output.len().checked_sub(1))?;
-                        let merged = mark_previous_paragraph_with_id(
-                            &mut output,
-                            "moveFrom",
-                            id,
-                            source_bindings,
-                            metadata,
-                        )?;
-                        output.push(final_paragraph(
-                            paragraph,
-                            "moveFrom",
-                            Some(id),
-                            merged,
-                            metadata,
-                        )?);
-                    } else {
-                        output.push((
-                            EmittedOwner::of(content, content, None, metadata)?,
-                            moved_body_content(content, "moveFrom", id, metadata)?,
-                        ));
-                    }
-                } else if let BodyContent::Paragraph(paragraph) = content
+                let move_id = moves.original[left];
+                let kind = if move_id.is_some() { "moveFrom" } else { "del" };
+                if let BodyContent::Paragraph(paragraph) = content
                     && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_delete_start == Some(position) {
-                        trailing_after_table = after_kept_table(&output, "del", location);
+                        let end_kind = if trailing_delete_end.is_some() {
+                            "moveFrom"
+                        } else {
+                            "del"
+                        };
+                        trailing_after_table = after_kept_table(&output, end_kind, location);
                         if !trailing_after_table {
-                            refuse_held_mark(previous_mark_position(&output, "del"))?;
-                            trailing_merged = mark_previous_paragraph(
+                            refuse_held_mark(previous_mark_position(&output, end_kind))?;
+                            trailing_merged = mark_before_final_paragraph(
                                 &mut output,
-                                "del",
+                                end_kind,
+                                trailing_delete_end,
                                 source_bindings,
                                 metadata,
                             )?;
                         }
                     }
                     if next_takes_mark || trailing_after_table {
-                        output.push((
-                            EmittedOwner::of(content, content, Some("del"), metadata)?,
-                            deleted_body_content(content, metadata)?,
-                        ));
+                        output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
                     } else {
                         output.push(final_paragraph(
                             paragraph,
-                            "del",
-                            None,
+                            kind,
+                            move_id,
                             trailing_merged.clone(),
                             metadata,
                         )?);
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
-                    && !after_kept_table(&output, "del", location)
+                    && !after_kept_table(&output, kind, location)
                 {
-                    refuse_held_mark(previous_mark_position(&output, "del"))?;
-                    let merged =
-                        mark_previous_paragraph(&mut output, "del", source_bindings, metadata)?;
-                    output.push(final_paragraph(paragraph, "del", None, merged, metadata)?);
+                    refuse_held_mark(previous_mark_position(&output, kind))?;
+                    let merged = mark_before_final_paragraph(
+                        &mut output,
+                        kind,
+                        move_id,
+                        source_bindings,
+                        metadata,
+                    )?;
+                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
                 } else {
-                    output.push((
-                        EmittedOwner::of(content, content, Some("del"), metadata)?,
-                        deleted_body_content(content, metadata)?,
-                    ));
+                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
                 }
             }
             (None, Some(right)) => {
@@ -9297,73 +9278,55 @@ fn compare_body_impl(
                         body_location(location, content, right)
                     )));
                 }
-                if let Some(id) = moves.edited[right] {
-                    if let BodyContent::Paragraph(paragraph) = content
-                        && !next_takes_mark
-                    {
-                        refuse_held_mark(output.len().checked_sub(1))?;
-                        let merged = mark_previous_paragraph_with_id(
-                            &mut output,
-                            "moveTo",
-                            id,
-                            source_bindings,
-                            metadata,
-                        )?;
-                        output.push(final_paragraph(
-                            paragraph,
-                            "moveTo",
-                            Some(id),
-                            merged,
-                            metadata,
-                        )?);
-                    } else {
-                        output.push((
-                            EmittedOwner::of(content, content, None, metadata)?,
-                            moved_body_content(content, "moveTo", id, metadata)?,
-                        ));
-                    }
-                } else if let BodyContent::Paragraph(paragraph) = content
+                let move_id = moves.edited[right];
+                let kind = if move_id.is_some() { "moveTo" } else { "ins" };
+                if let BodyContent::Paragraph(paragraph) = content
                     && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_insert_start == Some(position) {
-                        trailing_after_table = after_kept_table(&output, "ins", location);
+                        let end_kind = if trailing_insert_end.is_some() {
+                            "moveTo"
+                        } else {
+                            "ins"
+                        };
+                        trailing_after_table = after_kept_table(&output, end_kind, location);
                         if !trailing_after_table {
-                            refuse_held_mark(previous_mark_position(&output, "ins"))?;
-                            trailing_merged = mark_previous_paragraph(
+                            refuse_held_mark(previous_mark_position(&output, end_kind))?;
+                            trailing_merged = mark_before_final_paragraph(
                                 &mut output,
-                                "ins",
+                                end_kind,
+                                trailing_insert_end,
                                 source_bindings,
                                 metadata,
                             )?;
                         }
                     }
                     if next_takes_mark || trailing_after_table {
-                        output.push((
-                            EmittedOwner::of(content, content, None, metadata)?,
-                            inserted_body_content(content, metadata)?,
-                        ));
+                        output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
                     } else {
                         output.push(final_paragraph(
                             paragraph,
-                            "ins",
-                            None,
+                            kind,
+                            move_id,
                             trailing_merged.clone(),
                             metadata,
                         )?);
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
-                    && !after_kept_table(&output, "ins", location)
+                    && !after_kept_table(&output, kind, location)
                 {
-                    refuse_held_mark(previous_mark_position(&output, "ins"))?;
-                    let merged =
-                        mark_previous_paragraph(&mut output, "ins", source_bindings, metadata)?;
-                    output.push(final_paragraph(paragraph, "ins", None, merged, metadata)?);
+                    refuse_held_mark(previous_mark_position(&output, kind))?;
+                    let merged = mark_before_final_paragraph(
+                        &mut output,
+                        kind,
+                        move_id,
+                        source_bindings,
+                        metadata,
+                    )?;
+                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
                 } else {
-                    output.push((
-                        EmittedOwner::of(content, content, Some("ins"), metadata)?,
-                        inserted_body_content(content, metadata)?,
-                    ));
+                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
                 }
             }
             (None, None) => unreachable!(),
@@ -11105,16 +11068,19 @@ enum EmittedOwner<'a> {
         accepted: PropertySide<'a>,
         rejected: PropertySide<'a>,
     },
-    /// A table whose every row carries this `w:ins` or `w:del` marker. A change
-    /// of the same kind crosses it, because resolving that kind removes the
-    /// table and leaves the paragraphs on either side adjacent.
+    /// A table whose every row carries a marker of this kind (`ins`, `del`,
+    /// `moveFrom` or `moveTo`). A change that the same resolution removes
+    /// crosses it, because that resolution removes the table and leaves the
+    /// paragraphs on either side adjacent; the other resolution keeps it.
     MarkedTable(&'static str),
     /// Source whitespace between owners, which every change crosses.
     Whitespace,
-    /// A table both versions hold, which both resolutions keep. A final
-    /// paragraph after it carries its own change: the resolution removing
-    /// its mark removes it, and the body ends with the table, as it did on
-    /// that side.
+    /// A table both versions hold, which resolving the comparison's
+    /// revisions keeps. A final paragraph after it carries its own change:
+    /// the resolution removing its mark removes it, and the body ends with
+    /// the table, as it did on that side. When existing revisions in the
+    /// table remove it too, resolving them with the change, the paragraph
+    /// goes with the table, and the body ends with what came before it.
     KeptTable,
     Other,
 }
@@ -11197,11 +11163,16 @@ fn next_kept_owner(
         })
 }
 
+/// Whether accepting, rather than rejecting, removes content marked `kind`.
+fn accept_removes(kind: &str) -> bool {
+    matches!(kind, "del" | "moveFrom")
+}
+
 /// The position in `output` of the owner whose paragraph mark
 /// [`mark_previous_paragraph`] marks for a final `kind` change.
 fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> Option<usize> {
     output.iter().rposition(|(owner, _)| match owner {
-        EmittedOwner::MarkedTable(marked) => *marked != kind,
+        EmittedOwner::MarkedTable(marked) => accept_removes(marked) != accept_removes(kind),
         EmittedOwner::Whitespace => false,
         EmittedOwner::Paragraph { .. } | EmittedOwner::KeptTable | EmittedOwner::Other => true,
     })
@@ -11209,7 +11180,7 @@ fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> 
 
 /// Whether the owner a final `kind` change would mark is a table this
 /// change's resolution keeps: one both versions hold, or one the other
-/// resolution removes (a table marked with the same kind is crossed before
+/// resolution removes (a table this resolution removes is crossed before
 /// it). The final paragraph then carries its own change.
 fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str, location: &str) -> bool {
     // Only the body may end with a table; every other story ends with a
@@ -11291,8 +11262,42 @@ fn marked_paragraph_properties_xml(
     append_word_child(properties, "pPr", &run_properties)
 }
 
+/// A body owner one side alone holds, written with its own `kind` marks:
+/// moved under `move_id`, deleted or inserted.
+fn unmatched_body_owner<'a>(
+    content: &'a BodyContent,
+    kind: &'static str,
+    move_id: Option<i32>,
+    metadata: &mut Metadata<'_>,
+) -> Result<(EmittedOwner<'a>, String)> {
+    let xml = match (move_id, kind) {
+        (Some(id), _) => moved_body_content(content, kind, id, metadata)?,
+        (None, "del") => deleted_body_content(content, metadata)?,
+        (None, _) => inserted_body_content(content, metadata)?,
+    };
+    Ok((
+        EmittedOwner::of(content, content, Some(kind), metadata)?,
+        xml,
+    ))
+}
+
+/// Mark the paragraph before a final `kind` paragraph, with the id of its
+/// move pair when it is moved, and return what [`final_paragraph`] merges.
+fn mark_before_final_paragraph<'a>(
+    output: &mut [(EmittedOwner<'a>, String)],
+    kind: &str,
+    move_id: Option<i32>,
+    bindings: &[(String, String)],
+    metadata: &mut Metadata<'_>,
+) -> Result<PropertySide<'a>> {
+    match move_id {
+        Some(id) => mark_previous_paragraph_with_id(output, kind, id, bindings, metadata),
+        None => mark_previous_paragraph(output, kind, bindings, metadata),
+    }
+}
+
 /// [`mark_previous_paragraph`] for a final moved paragraph, whose move
-/// pair shares `id`. The paragraph before must be the last owner emitted.
+/// pair shares `id`.
 fn mark_previous_paragraph_with_id<'a>(
     output: &mut [(EmittedOwner<'a>, String)],
     kind: &str,
@@ -11300,7 +11305,8 @@ fn mark_previous_paragraph_with_id<'a>(
     bindings: &[(String, String)],
     metadata: &Metadata<'_>,
 ) -> Result<PropertySide<'a>> {
-    let Some((EmittedOwner::Paragraph { accepted, rejected }, paragraph)) = output.last_mut()
+    let Some((EmittedOwner::Paragraph { accepted, rejected }, paragraph)) =
+        previous_mark_position(output, kind).map(|position| &mut output[position])
     else {
         return Err(Error::Other(
             "comparison needs an adjacent paragraph for a final paragraph move".to_owned(),

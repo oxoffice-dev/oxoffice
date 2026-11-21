@@ -2746,14 +2746,16 @@ impl<'a> XmlTree<'a> {
                     // The end of the body after a table that stays: as before
                     // a table, the paragraphs go, and the body ends with that
                     // table, as it did before they were inserted or after
-                    // they were deleted.
+                    // they were deleted. After a table this resolution
+                    // removes, they go with it, and the body ends with what
+                    // came before that table.
                     if element.children[next_index..]
                         .iter()
                         .all(|&next| !self.story_owner(next))
                     {
                         if element.word
                             && element.local == "body"
-                            && self.kept_table_before(element, child_index, state)
+                            && self.body_end_goes(element, child_index, state)
                         {
                             before_table = true;
                             break;
@@ -3298,27 +3300,31 @@ impl<'a> XmlTree<'a> {
             && matches!(element.local.as_str(), "p" | "tbl" | "sdt")
     }
 
-    /// Whether the owner before child `position` of `parent`, past the
-    /// tables whose every row this resolution removes, is a table it keeps.
-    fn kept_table_before(
-        &self,
-        parent: &XmlElement,
-        position: usize,
-        state: &RenderState<'_>,
-    ) -> bool {
-        parent.children[..position]
-            .iter()
-            .rev()
-            .filter(|&&child| self.story_owner(child))
-            .find(|&&child| {
-                self.elements[child].local != "tbl" || !self.owned_rows_all_remove(child, state)
-            })
-            .is_some_and(|&owner| self.elements[owner].local == "tbl")
+    /// Whether the paragraphs from child `position` of `parent` to the end
+    /// of the body can go: the owner before them, past the tables whose
+    /// every row this resolution removes, is a table it keeps, or such a
+    /// table was crossed, so that the body ends with whatever came before
+    /// it.
+    fn body_end_goes(&self, parent: &XmlElement, position: usize, state: &RenderState<'_>) -> bool {
+        let mut crossed = false;
+        for &child in parent.children[..position].iter().rev() {
+            if !self.story_owner(child) {
+                continue;
+            }
+            let element = &self.elements[child];
+            if element.local == "tbl" && self.owned_rows_all_remove(child, state) {
+                crossed = true;
+                continue;
+            }
+            return element.local == "tbl" || crossed;
+        }
+        crossed
     }
 
     /// Resolve paragraphs whose marks are removed next to a table that stays,
-    /// before it or ending the body after it, and which go. Nothing of them
-    /// but proofing marks may remain.
+    /// before it or ending the body after it, or ending the body after a
+    /// table that goes, and which go. Nothing of them but proofing marks may
+    /// remain.
     fn validate_removed_paragraphs(
         &self,
         paragraphs: &[usize],
