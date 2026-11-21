@@ -108,8 +108,9 @@ assert all(f.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" for f in (d / "checked-pag
 assert json.loads((d / "layout.json").read_text())["page_count"] > 1
 assert any(line.startswith("footer\t") for line in (d / "all-stories.txt").read_text().splitlines())
 assert (d / "redline-tracked.pdf").read_bytes()[:5] == b"%PDF-"
-nobm = oxoffice.docx.Document.open(d / "redline-nobm.docx")
-assert [(r.kind, r.story.kind) for r in nobm.revisions] == [("deletion", "body"), ("insertion", "body")]
+from_python = oxoffice.docx.Document.open(d / "redline-py.docx")
+assert [(r.kind, r.author, r.story.kind) for r in from_python.revisions] == [
+    ("deletion", "Reviewer", "body"), ("insertion", "Reviewer", "body")]
 red = oxoffice.docx.Document.open(d / "redline.docx")
 assert [(r.kind, r.story.kind) for r in red.revisions] == [("deletion", "body"), ("insertion", "body")]
 assert any(r["text"] == "safety of path users" and r["formatting"]["bold"] for q in body("bold.docx") for r in q["runs"])
