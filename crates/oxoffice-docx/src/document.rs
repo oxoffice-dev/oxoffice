@@ -4290,6 +4290,36 @@ fn xml_holds_element_named(xml: &[u8], names: &HashSet<&[u8]>) -> bool {
     }
 }
 
+/// Whether two tables hold the same rows, cells, cell content and unmodelled
+/// children, whatever their table, row and cell properties. A cell must also
+/// write a `w:tcPr` in both or in neither: it counts among the items of the
+/// cell's story, so giving a cell its first property, or taking its last,
+/// moves the paragraphs and tables of that story.
+fn same_table_content(
+    a: &oxoffice_docx_oxml::table::CT_Tbl,
+    b: &oxoffice_docx_oxml::table::CT_Tbl,
+) -> bool {
+    a.extra_xml == b.extra_xml
+        && a.content_controls == b.content_controls
+        && a.rows.len() == b.rows.len()
+        && a.rows.iter().zip(&b.rows).all(|(a, b)| {
+            a.extra_xml == b.extra_xml
+                && a.content_controls == b.content_controls
+                && a.cells.len() == b.cells.len()
+                && a.cells.iter().zip(&b.cells).all(|(a, b)| {
+                    a.content == b.content
+                        && a.extra_xml == b.extra_xml
+                        && writes_cell_properties(a) == writes_cell_properties(b)
+                })
+        })
+}
+
+fn writes_cell_properties(cell: &oxoffice_docx_oxml::table::CT_Tc) -> bool {
+    cell.properties
+        .as_ref()
+        .is_some_and(|properties| !properties.is_empty())
+}
+
 fn shadowed_namespace_diagnostic(prefix: &str) -> String {
     format!("cannot serialize a modified document with a shadowed `{prefix}` namespace")
 }
@@ -37290,6 +37320,41 @@ impl Document {
             .map(|inner| Table { inner })
     }
 
+    /// Apply `edit`, an edit of the properties of the body table at `index`
+    /// (among tables only), of its rows or of its cells, in place, without a
+    /// copy of the document. A failure or a panic puts the table back as it
+    /// was. So does an edit that changed anything besides properties (rows,
+    /// cells, their content, unmodelled children) or gave a cell its first
+    /// property or took its last, which returns `Ok(None)`: such an edit moves
+    /// content and belongs to a route that publishes content changes.
+    #[doc(hidden)]
+    pub fn edit_table_properties_in_place<T>(
+        &mut self,
+        index: usize,
+        edit: impl FnOnce(&mut Table<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let mut table = self
+            .table_mut(index)
+            .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        let before = table.inner.clone();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(&mut table)));
+        match outcome {
+            Ok(Ok(value)) if same_table_content(&before, table.inner) => Ok(Some(value)),
+            Ok(Ok(_)) => {
+                *table.inner = before;
+                Ok(None)
+            }
+            Ok(Err(error)) => {
+                *table.inner = before;
+                Err(error)
+            }
+            Err(panic) => {
+                *table.inner = before;
+                std::panic::resume_unwind(panic)
+            }
+        }
+    }
+
     /// Append a formatted empty row through one checked package transaction.
     pub fn add_empty_table_row(&mut self, table_index: usize) -> Result<usize> {
         let mut candidate = self.clone_for_staging();
@@ -54339,6 +54404,57 @@ mod tests {
     use super::*;
 
     const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+
+    #[test]
+    fn a_cell_that_gains_its_first_property_has_other_table_content() {
+        let mut doc = read_with_body(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr>\
+             </w:tbl><w:p/>",
+        );
+        let bare = doc.table_mut(0).expect("the table").inner.clone();
+        assert!(
+            !writes_cell_properties(&bare.rows[0].cells[0]),
+            "the cell has no w:tcPr"
+        );
+        let mut empty = bare.clone();
+        empty.rows[0].cells[0].properties = Some(Default::default());
+        assert!(
+            same_table_content(&bare, &empty),
+            "an empty w:tcPr is not written"
+        );
+        doc.table_mut(0)
+            .and_then(|mut table| {
+                table
+                    .cell(0, 0)
+                    .map(|mut cell| cell.set_vertical_alignment(crate::VerticalAlignment::Center))
+            })
+            .expect("the cell");
+        let aligned = doc.table_mut(0).expect("the table").inner.clone();
+        assert!(!same_table_content(&bare, &aligned));
+        assert!(!same_table_content(&aligned, &bare));
+    }
+
+    #[test]
+    fn a_change_of_row_cell_controls_is_a_change_of_table_content() {
+        let mut doc = read_with_body(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>\
+             <w:tc><w:p/></w:tc><w:sdt><w:sdtPr><w:tag w:val=\"cell\"/></w:sdtPr><w:sdtContent>\
+             <w:tc><w:p/></w:tc></w:sdtContent></w:sdt></w:tr></w:tbl><w:p/>",
+        );
+        let table = doc.table_mut(0).expect("the table").inner.clone();
+        assert_eq!(
+            table.rows[0].content_controls.len(),
+            1,
+            "the row holds a cell control"
+        );
+        let mut properties = table.clone();
+        properties.properties = Some(Default::default());
+        properties.rows[0].properties = Some(Default::default());
+        assert!(same_table_content(&table, &properties));
+        let mut controls = table.clone();
+        controls.rows[0].content_controls.clear();
+        assert!(!same_table_content(&table, &controls));
+    }
 
     /// A document read from bytes whose body is `body`, as a file is read.
     fn read_with_body(body: &str) -> Document {

@@ -1179,3 +1179,109 @@ fn rows_added_to_google_and_libreoffice_tables_keep_their_formatting() {
     assert_eq!(added.shading_fill(), Some("D3DFEE"));
     assert_eq!(added.grid_span(), Some(4));
 }
+
+#[test]
+fn a_property_edit_in_place_changes_the_table_and_keeps_its_cells() {
+    for name in REPORTS {
+        let mut doc = corpus_doc(name);
+        let before = cell_texts(&doc, 0);
+        let edited = doc
+            .edit_table_properties_in_place(0, |table| {
+                table.set_alignment(Alignment::Right);
+                table
+                    .row(1)
+                    .expect("the row exists")
+                    .set_header_value(Some(true));
+                Ok(())
+            })
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(edited, Some(()), "{name}");
+        let reopened = reopen(&mut doc);
+        let table = reopened.table(0).expect("the table exists");
+        assert_eq!(table.alignment(), Some(Alignment::Right), "{name}");
+        assert_eq!(table.row(1).unwrap().header_value(), Some(true), "{name}");
+        assert_eq!(cell_texts(&reopened, 0), before, "{name}");
+    }
+}
+
+#[test]
+fn a_cell_property_is_edited_in_place_unless_it_is_the_cells_first() {
+    // Word writes the width of every cell, Google Docs none.
+    let mut word = corpus_doc("word/report.docx");
+    let edited = word
+        .edit_table_properties_in_place(0, |table| {
+            table
+                .cell(1, 0)
+                .expect("the cell")
+                .set_shading_checked("FFFF00")
+        })
+        .expect("the edit runs");
+    assert_eq!(edited, Some(()));
+    let word = reopen(&mut word);
+    assert_eq!(
+        word.table(0).unwrap().cell(1, 0).unwrap().shading_fill(),
+        Some("FFFF00")
+    );
+
+    // A first property writes a `w:tcPr`, which moves the cell's paragraphs.
+    let mut google = corpus_doc("google/report.docx");
+    let before = google.to_bytes().expect("the report saves");
+    let edited = google
+        .edit_table_properties_in_place(0, |table| {
+            table
+                .cell(1, 0)
+                .expect("the cell")
+                .set_shading_checked("FFFF00")
+        })
+        .expect("the edit runs");
+    assert_eq!(edited, None);
+    assert_eq!(google.to_bytes().expect("the report saves"), before);
+}
+
+#[test]
+fn an_in_place_table_edit_that_moves_content_is_undone_and_declined() {
+    let mut doc = corpus_doc("word/report.docx");
+    let before = doc.to_bytes().expect("the report saves");
+    let edited = doc
+        .edit_table_properties_in_place(0, |table| {
+            table.set_alignment(Alignment::Right);
+            table.add_row().map(|_| ())
+        })
+        .expect("the edit runs");
+    assert_eq!(edited, None, "a new row is content, not a property");
+    let edited = doc
+        .edit_table_properties_in_place(0, |table| {
+            table.set_alignment(Alignment::Right);
+            table
+                .cell(1, 0)
+                .expect("the cell exists")
+                .set_text("changed");
+            Ok(())
+        })
+        .expect("the edit runs");
+    assert_eq!(edited, None, "cell text is content, not a property");
+    assert_eq!(doc.to_bytes().expect("the report saves"), before);
+}
+
+#[test]
+fn a_failed_or_panicking_in_place_table_edit_leaves_the_table_as_it_was() {
+    let mut doc = corpus_doc("word/report.docx");
+    let before = doc.to_bytes().expect("the report saves");
+    let failed = doc.edit_table_properties_in_place(0, |table| {
+        table.set_alignment(Alignment::Right);
+        table
+            .cell(1, 0)
+            .expect("the cell exists")
+            .set_shading_checked("not a colour")
+    });
+    assert!(failed.is_err(), "a bad shading colour is refused");
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        doc.edit_table_properties_in_place(0, |table| -> oxoffice_docx::Result<()> {
+            table.set_alignment(Alignment::Right);
+            panic!("an edit that panics half way");
+        })
+    }));
+    assert!(panicked.is_err(), "the panic reaches the caller");
+    assert!(doc.edit_table_properties_in_place(99, |_| Ok(())).is_err());
+    assert_eq!(doc.to_bytes().expect("the report saves"), before);
+}

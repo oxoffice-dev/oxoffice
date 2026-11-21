@@ -7066,7 +7066,7 @@ impl PyDocument {
     /// equal their rebuild from the current document, story fingerprints
     /// aside, which local edits leave stale in the inventory too.
     #[cfg(debug_assertions)]
-    fn assert_word_inventory_rebuilds(&self) {
+    pub(crate) fn assert_word_inventory_rebuilds(&self) {
         let address = |location: &WordOwnerLocation,
                        parent: Option<usize>,
                        body_slot: Option<usize>,
