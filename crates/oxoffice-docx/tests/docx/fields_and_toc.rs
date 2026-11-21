@@ -2447,10 +2447,8 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
             assert!(distinct.len() > 5, "{path}: {pages:?}");
         }
 
-        // The PDF on the small thesis and one corpus copy: every corpus
-        // file's render checks the same on the file as saved, and a thesis
-        // PDF costs a layout of its own.
-        if path != crate::support::SMALL_THESIS && !path.starts_with("word/") {
+        // The PDF on the copies the walks render.
+        if !crate::support::walk_renders(path) {
             return;
         }
         let pdf = oxoffice_render_test::pdf::Pdf::read(&doc.to_pdf().unwrap());

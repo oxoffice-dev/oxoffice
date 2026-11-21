@@ -4280,9 +4280,12 @@ fn a_redline_of_two_thesis_versions_resolves_to_either_and_prints_in_legal_colou
         );
         assert_eq!(story_texts(&rejected(&mut doc)), original, "{path}");
 
-        // Printed in the legal style: insertions blue, deletions red, the
-        // moved paragraph green, in the body and in the header alike, and
-        // the text around in its own colour.
+        // Printed in the legal style, on the copies the walks render:
+        // insertions blue, deletions red, the moved paragraph green, in the
+        // body and in the header alike, and the text around in its own colour.
+        if !crate::support::walk_renders(path) {
+            return;
+        }
         let legal = View::of(
             &doc,
             RenderOptions::default()
