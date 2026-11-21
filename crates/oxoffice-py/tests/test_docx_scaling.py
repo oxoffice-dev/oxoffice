@@ -749,8 +749,8 @@ def costs_ms(paths, setup):
 
 
 def measured(documents, name, expected):
-    """The costs of `name` at N and LARGE * N, measured again up to REMEASURE times while expected(small, large) is false,
-    the fastest of every measure counting at each size."""
+    """The costs of `name` at N and LARGE * N, measured again up to REMEASURE times while expected(small, large) is
+    false, the fastest of every measure counting at each size."""
     small, large = costs_ms(documents, (TIMED | READS_TIMED)[name])
     for _ in range(REMEASURE):
         if expected(small, large):
@@ -768,7 +768,8 @@ def documents(tmp_path_factory):
 
 
 # Calls whose cost grows with the body (oxoffice-dev/oxoffice#6), measured on a build without debug assertions
-# (2026-11-21, Linux; Windows in main run 44858823180): over FIXED, none over LINEAR. A call leaves the set when a fix makes it flat, which the strict xfail reports as an XPASS.
+# (2026-11-21, Linux; Windows in main run 44858823180): over FIXED, none over LINEAR. A call leaves the set when a
+# fix makes it flat, which the strict xfail reports as an XPASS.
 GROWING = {
     "Cell.add_paragraph", "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text",
     "Cell.replace_xml", "Cell.set_border", "Cell.set_margins", "Cell.shading", "Cell.split", "Cell.text",
