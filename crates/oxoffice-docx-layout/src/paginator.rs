@@ -6029,10 +6029,17 @@ fn paragraph_aligned_fields(
         Some(Align::Center) => (0.5, remaining_width / 2.0),
         _ => return fields,
     };
-    if items
-        .iter()
-        .any(|item| matches!(item, LineItem::Tab { .. }))
-    {
+    // A tab aligns its own text; a picture or a drawing on the line would
+    // not move with the text.
+    if items.iter().any(|item| {
+        matches!(
+            item,
+            LineItem::Tab { .. }
+                | LineItem::Image { .. }
+                | LineItem::Group { .. }
+                | LineItem::Figure { .. }
+        )
+    }) {
         return fields;
     }
     let end = items.iter().map(LineItem::width).sum::<f64>();

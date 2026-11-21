@@ -953,7 +953,9 @@ fn a_right_aligned_or_centred_header_stays_aligned_with_its_page_value() {
         let pdf = pdf_of(&Document::from_bytes(&out.into_inner()).unwrap());
         assert_eq!(pdf.page_count(), 12);
         for page in [0, 11] {
-            let header = &lines(&pdf.drawn(page))[0];
+            let drawn = pdf.drawn(page);
+            assert_contiguous(&drawn, &format!("{jc}, page {page}"));
+            let header = &lines(&drawn)[0];
             assert_eq!(header.text, format!("Page {}", page + 1));
             let at = match jc {
                 "right" => header.right,
@@ -961,6 +963,92 @@ fn a_right_aligned_or_centred_header_stays_aligned_with_its_page_value() {
             };
             assert!((at - edge).abs() < 0.5, "{jc}, page {page}: {header:?}");
         }
+    }
+}
+
+/// The pieces of the first line of a page touch, left to right: nothing on
+/// it was left behind or drawn over its neighbour.
+fn assert_contiguous(drawn: &[Drawn], context: &str) {
+    let first = &lines(drawn)[0];
+    let mut pieces: Vec<&Drawn> = drawn
+        .iter()
+        .filter(|piece| (piece.y - first.y).abs() < 0.5)
+        .collect();
+    pieces.sort_by(|a, b| a.x.total_cmp(&b.x));
+    for pair in pieces.windows(2) {
+        assert!(
+            (pair[1].x - pair[0].end).abs() < 0.5,
+            "{context}: {:?} then {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
+
+// A STYLEREF and a PAGE field on one right-aligned line move it together:
+// the chapter title is longer and the page number wider than their stored
+// results, and the line still ends at the margin, its pieces side by side.
+#[test]
+fn a_right_aligned_header_with_a_styleref_and_a_page_field_ends_at_the_margin() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Intro").style("Heading1");
+    for _ in 0..11 {
+        doc.add_paragraph("A chapter title much longer than the stored one")
+            .style("Heading1")
+            .page_break_before(true);
+    }
+    doc.set_header("placeholder");
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let headers: Vec<String> = (1..=3)
+        .map(|index| format!("/word/header{index}.xml"))
+        .filter(|name| package.contains_part(name))
+        .collect();
+    for part in headers {
+        let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        let tag = xml
+            .match_indices("<w:p")
+            .map(|(at, _)| at)
+            .find(|at| matches!(xml.as_bytes()[at + 4], b' ' | b'>'))
+            .expect("a header paragraph");
+        let end = tag + xml[tag..].find('>').unwrap() + 1;
+        let close = xml.rfind("</w:p>").expect("the paragraph end");
+        // Complex fields, as Word writes them (the thesis header): STYLEREF
+        // and PAGE take their values in two passes.
+        let field = |instruction: &str, result: &str| {
+            format!(
+                r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+            )
+        };
+        let xml = format!(
+            r#"{}<w:pPr><w:jc w:val="right"/></w:pPr>{}<w:r><w:t xml:space="preserve"> p. </w:t></w:r>{}{}"#,
+            &xml[..end],
+            field(r#"STYLEREF "Heading 1""#, "Intro"),
+            field("PAGE", "5"),
+            &xml[close..]
+        );
+        package.set_part(&part, xml.into_bytes());
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let pdf = pdf_of(&Document::from_bytes(&out.into_inner()).unwrap());
+    assert_eq!(pdf.page_count(), 12);
+    for (page, title) in [
+        (0, "Intro"),
+        (11, "A chapter title much longer than the stored one"),
+    ] {
+        let drawn = pdf.drawn(page);
+        let header = &lines(&drawn)[0];
+        assert_eq!(
+            header.text,
+            format!("{title} p. {}", page + 1),
+            "page {page}"
+        );
+        assert!(
+            (header.right - 540.0).abs() < 0.5,
+            "page {page}: {header:?}"
+        );
+        assert_contiguous(&drawn, &format!("page {page}"));
     }
 }
 
