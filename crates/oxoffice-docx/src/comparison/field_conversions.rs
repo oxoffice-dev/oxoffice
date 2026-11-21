@@ -12,9 +12,18 @@ pub(super) fn validate_field_conversion_role(
     wanted: &NormalizedPackage,
     stories: &[StoryPart],
     witnesses: &[FieldConversionWitness],
+    whole: &[WholeFieldWitness],
     role: usize,
     new_ids: &HashSet<i32>,
 ) -> Result<()> {
+    /// One input's side of a conversion: the field's occurrence there, and
+    /// the id and payload of the one wrapper that publishes it.
+    struct Side<'w> {
+        source: &'w FieldSourceOccurrence,
+        revision_id: i32,
+        generated_span: &'w str,
+        input_complex: bool,
+    }
     fn observations<'a>(
         items: &'a [GuardItem],
         output: &mut Vec<(
@@ -45,10 +54,8 @@ pub(super) fn validate_field_conversion_role(
     for (_, _, items) in &wanted.1 {
         observations(items, &mut actual_inputs);
     }
-    let mut consumed = HashSet::new();
-    let mut consumed_occurrences = HashSet::new();
+    let mut sides = Vec::with_capacity(witnesses.len() + whole.len());
     for witness in witnesses {
-        let source = &witness.sources[role];
         let forms = [
             actual_field_is_complex(&witness.sources[0].source, &witness.sources[0].scope)?,
             actual_field_is_complex(&witness.sources[1].source, &witness.sources[1].scope)?,
@@ -73,13 +80,49 @@ pub(super) fn validate_field_conversion_role(
                 return Err(Error::Other("field conversion instruction reason differs from independently read source instructions".into()));
             }
         }
+        if !(witness.instruction_changed || witness.form_changed)
+            || witness.revision_ids[0] == witness.revision_ids[1]
+            || witness.revision_ids.iter().any(|id| !new_ids.contains(id))
+        {
+            return Err(Error::Other(
+                "invalid or multiply consumed field conversion witness".into(),
+            ));
+        }
+        sides.push(Side {
+            source: &witness.sources[role],
+            revision_id: witness.revision_ids[role],
+            generated_span: &witness.generated_spans[role],
+            input_complex: witness.input_complex[role],
+        });
+    }
+    // A field written with its whole paragraph is checked by the resolution
+    // that keeps the paragraph; the other one removes it with the paragraph.
+    for witness in whole {
+        if witness.source.input_role != role {
+            continue;
+        }
+        if !new_ids.contains(&witness.revision_id)
+            || actual_field_is_complex(&witness.source.source, &witness.source.scope)?
+        {
+            return Err(Error::Other(
+                "invalid whole-paragraph field conversion witness".into(),
+            ));
+        }
+        sides.push(Side {
+            source: &witness.source,
+            revision_id: witness.revision_id,
+            generated_span: &witness.generated_span,
+            input_complex: false,
+        });
+    }
+    let mut consumed = HashSet::new();
+    let mut consumed_occurrences = HashSet::new();
+    for side in &sides {
+        let source = side.source;
         if source.input_role != role
             || source.bounds.start >= source.bounds.end
             || source.bounds.len() != source.source.len()
-            || !(witness.instruction_changed || witness.form_changed)
-            || witness.revision_ids[0] == witness.revision_ids[1]
-            || witness.revision_ids.iter().any(|id| !new_ids.contains(id))
-            || !consumed.insert(witness.revision_ids[role])
+            || !consumed.insert(side.revision_id)
             || !consumed_occurrences.insert((
                 source.story.clone(),
                 source.owner_path.clone(),
@@ -105,7 +148,7 @@ pub(super) fn validate_field_conversion_role(
                     && actual.scope == source.scope
             })
             .collect::<Vec<_>>();
-        if matches.len() != 1 || matches[0].1.complex != witness.input_complex[role] {
+        if matches.len() != 1 || matches[0].1.complex != side.input_complex {
             return Err(Error::Other(
                 "field conversion witness has no unique actual input occurrence".into(),
             ));
@@ -130,7 +173,7 @@ pub(super) fn validate_field_conversion_role(
             .ok_or_else(|| Error::Other("field conversion part is missing".into()))?;
         let spans = crate::revision::modeled_revision_spans(bytes)?
             .into_iter()
-            .filter(|(_, id)| *id == witness.revision_ids[role])
+            .filter(|(_, id)| *id == side.revision_id)
             .collect::<Vec<_>>();
         if spans.len() != 1 {
             return Err(Error::Other(
@@ -140,7 +183,7 @@ pub(super) fn validate_field_conversion_role(
         let raw = std::str::from_utf8(&bytes[spans[0].0.clone()]).map_err(utf8_error)?;
         let kind = if role == 0 { "del" } else { "ins" };
         let inner = element_inner_range_any_prefix(raw, kind)?;
-        if raw[inner] != witness.generated_spans[role] {
+        if raw[inner] != *side.generated_span {
             return Err(Error::Other(
                 "field conversion publication payload differs from its checked local span".into(),
             ));
@@ -161,33 +204,33 @@ pub(super) fn validate_field_conversion_role(
         } else {
             crate::revision::Resolution::Accept
         };
-        let (transported, mapped) =
-            if FootnotePart::of(candidate)?.is_some_and(|notes| notes.name == part) {
-                let mut trace =
-                    crate::revision::NotePublication::new(part, witness.revision_ids[role], &roots);
-                let mut carrier = candidate.clone_for_staging();
-                carrier.resolve_revisions_with_note_publication(
+        let (transported, mapped) = if FootnotePart::of(candidate)?
+            .is_some_and(|notes| notes.name == part)
+        {
+            let mut trace = crate::revision::NotePublication::new(part, side.revision_id, &roots);
+            let mut carrier = candidate.clone_for_staging();
+            carrier.resolve_revisions_with_note_publication(
+                resolution,
+                crate::revision::RevisionScope::Ids(new_ids),
+                Some(&mut trace),
+            )?;
+            (
+                trace.output.ok_or_else(|| {
+                    Error::Other("selected publication note part was removed".into())
+                })?,
+                trace.roots,
+            )
+        } else {
+            let (transported, _, mapped) =
+                crate::revision::resolve_story_xml_with_publication_roots(
+                    bytes,
                     resolution,
                     crate::revision::RevisionScope::Ids(new_ids),
-                    Some(&mut trace),
+                    side.revision_id,
+                    &roots,
                 )?;
-                (
-                    trace.output.ok_or_else(|| {
-                        Error::Other("selected publication note part was removed".into())
-                    })?,
-                    trace.roots,
-                )
-            } else {
-                let (transported, _, mapped) =
-                    crate::revision::resolve_story_xml_with_publication_roots(
-                        bytes,
-                        resolution,
-                        crate::revision::RevisionScope::Ids(new_ids),
-                        witness.revision_ids[role],
-                        &roots,
-                    )?;
-                (transported, mapped)
-            };
+            (transported, mapped)
+        };
         let mut ranges = Vec::with_capacity(mapped.len());
         let mut previous = None;
         for range in mapped {
@@ -244,7 +287,7 @@ pub(super) fn validate_field_conversion_role(
         {
             return Err(Error::Other("publication transport does not reach the actual resolved Field's complete part extent".into()));
         }
-        if !witness.input_complex[role] {
+        if !side.input_complex {
             let (observation, field, metadata) = *matches[0];
             let expected_record = observation
                 .metadata_record
@@ -271,7 +314,12 @@ pub(super) fn validate_field_conversion_role(
             }
         }
     }
-    map_nested_conversion_metadata(&mut actual.0, &wanted.0, witnesses, role)?;
+    let converted = sides
+        .iter()
+        .filter(|side| !side.input_complex)
+        .map(|side| side.source)
+        .collect::<Vec<_>>();
+    map_nested_conversion_metadata(&mut actual.0, &wanted.0, &converted)?;
     for ((actual_kind, actual_part, actual_items), (wanted_kind, wanted_part, wanted_items)) in
         actual.1.iter_mut().zip(&wanted.1)
     {
@@ -280,7 +328,7 @@ pub(super) fn validate_field_conversion_role(
                 "nested conversion changed physical story inventory".into(),
             ));
         }
-        map_nested_conversion_metadata(actual_items, wanted_items, witnesses, role)?;
+        map_nested_conversion_metadata(actual_items, wanted_items, &converted)?;
     }
     Ok(())
 }
@@ -413,8 +461,7 @@ fn map_field_metadata_record(
 fn map_nested_conversion_metadata(
     actual: &mut [GuardItem],
     wanted: &[GuardItem],
-    witnesses: &[FieldConversionWitness],
-    role: usize,
+    converted: &[&FieldSourceOccurrence],
 ) -> Result<()> {
     fn same_occurrence(left: &FieldSourceOccurrence, right: &FieldSourceOccurrence) -> bool {
         left.story == right.story
@@ -537,10 +584,9 @@ fn map_nested_conversion_metadata(
                         && !observation.result_path.is_empty()
                 })
                 .filter(|observation| {
-                    witnesses.iter().any(|witness| {
-                        !witness.input_complex[role]
-                            && same_occurrence(&witness.sources[role], &observation.occurrence)
-                    })
+                    converted
+                        .iter()
+                        .any(|source| same_occurrence(source, &observation.occurrence))
                 })
                 .map(|observation| observation.result_path.clone())
                 .collect::<Vec<_>>();
@@ -595,7 +641,7 @@ fn map_nested_conversion_metadata(
             let wanted_host = wanted.iter().flat_map(|item| &item.hosts).nth(host_index);
             if let Some(wanted_host) = wanted_host {
                 for (body, input) in host.bodies.iter_mut().zip(&wanted_host.bodies) {
-                    map_nested_conversion_metadata(body, input, witnesses, role)?;
+                    map_nested_conversion_metadata(body, input, converted)?;
                 }
             }
         }

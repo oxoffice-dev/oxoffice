@@ -857,6 +857,55 @@ fn clean_simple_complex_source(
     Ok(output)
 }
 
+/// One simple field of a paragraph inserted or deleted whole, as the complex
+/// field that `compare_field_xml` writes for a change of form, in a wrapper
+/// of its own under one new revision id. The witness names the occurrence of
+/// the input that keeps the paragraph; with fields ignored, the guard
+/// compares no field and none is recorded.
+pub(super) fn whole_simple_field(
+    field: &oxoffice_docx_oxml::text::Field,
+    deleted: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
+    let scope = field_result_scope(field, metadata);
+    let complex = clean_simple_complex_source(&field_xml(field)?, &scope, field)?;
+    let payload = qualified_complete_field_payload(&complex, &scope, deleted, false, true, &mut 0)?;
+    let id = metadata.ids.allocate()?;
+    let wrapper = metadata.ids.generated(IdAllocator::revision_with_id(
+        if deleted { "del" } else { "ins" },
+        metadata.author,
+        metadata.timestamp,
+        &payload,
+        id,
+    ))?;
+    if !metadata.options.ignore_fields {
+        let source = metadata
+            .source_frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                frame
+                    .field_occurrences
+                    .get(&(std::ptr::from_ref(field) as usize))
+            })
+            .cloned()
+            .ok_or_else(|| {
+                Error::Other("whole-paragraph field has no physical source occurrence".into())
+            })?;
+        if source.input_role != usize::from(!deleted) {
+            return Err(Error::Other(
+                "whole-paragraph field occurrence is on the other input".into(),
+            ));
+        }
+        metadata.whole_field_conversions.push(WholeFieldWitness {
+            source,
+            revision_id: id,
+            generated_span: payload,
+        });
+    }
+    Ok(wrapper)
+}
+
 /// Qualify an ordinary whole-field run-revision payload at its actual owners.
 /// Direct runs use the existing qualified child scanner. Opaque run payloads
 /// and real nested control/wrapper custody retain their own source authority.
@@ -1319,6 +1368,7 @@ fn tracked_field_result(
             .cloned(),
         leaf_publications: Vec::new(),
         field_conversions: Vec::new(),
+        whole_field_conversions: Vec::new(),
     };
     let mut diagnostics = Vec::new();
     let result = compare_paragraph(
@@ -1331,6 +1381,9 @@ fn tracked_field_result(
     )?;
     metadata.ids = inner.ids;
     metadata.field_conversions.extend(inner.field_conversions);
+    metadata
+        .whole_field_conversions
+        .extend(inner.whole_field_conversions);
     let inner_range = element_inner_range_any_prefix(&result, "p")?;
     Ok(result[inner_range].to_owned())
 }

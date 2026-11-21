@@ -84,17 +84,11 @@ fn compare_body_impl(
         &edited_signatures,
         metadata.options,
     )?;
-    refuse_uncarried_field_owners(
-        &aligned,
-        &original_paragraphs,
-        &edited_paragraphs,
-        &carried,
-        location,
-    )?;
     let moves = pair_moves(
         &aligned,
         &original_signatures,
         &edited_signatures,
+        uncarried_field_owners(&aligned, &original_paragraphs, &edited_paragraphs, &carried)?,
         &mut metadata.ids,
     )?;
     let trailing_inserted = trailing_paragraphs(&aligned, |(left, right)| {
@@ -306,6 +300,7 @@ fn compare_body_impl(
                 }
                 let move_id = moves.original[left];
                 let kind = if move_id.is_some() { "moveFrom" } else { "del" };
+                let whole = carried.original.contains(&left);
                 if let BodyContent::Paragraph(paragraph) = content
                     && let Some((first, last)) =
                         trailing_deleted.filter(|&(first, _)| position >= first)
@@ -317,6 +312,7 @@ fn compare_body_impl(
                             paragraph,
                             kind,
                             move_id,
+                            carried: whole,
                             first: position == first,
                             single: first == last,
                             next_takes_mark,
@@ -339,9 +335,13 @@ fn compare_body_impl(
                         source_bindings,
                         metadata,
                     )?;
-                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
+                    output.push(final_paragraph(
+                        paragraph, kind, move_id, whole, merged, metadata,
+                    )?);
                 } else {
-                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
+                    output.push(unmatched_body_owner(
+                        content, kind, move_id, whole, metadata,
+                    )?);
                 }
             }
             (None, Some(right)) => {
@@ -359,6 +359,7 @@ fn compare_body_impl(
                 }
                 let move_id = moves.edited[right];
                 let kind = if move_id.is_some() { "moveTo" } else { "ins" };
+                let whole = carried.edited.contains(&right);
                 if let BodyContent::Paragraph(paragraph) = content
                     && let Some((first, last)) =
                         trailing_inserted.filter(|&(first, _)| position >= first)
@@ -370,6 +371,7 @@ fn compare_body_impl(
                             paragraph,
                             kind,
                             move_id,
+                            carried: whole,
                             first: position == first,
                             single: first == last,
                             next_takes_mark,
@@ -392,9 +394,13 @@ fn compare_body_impl(
                         source_bindings,
                         metadata,
                     )?;
-                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
+                    output.push(final_paragraph(
+                        paragraph, kind, move_id, whole, merged, metadata,
+                    )?);
                 } else {
-                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
+                    output.push(unmatched_body_owner(
+                        content, kind, move_id, whole, metadata,
+                    )?);
                 }
             }
             (None, None) => unreachable!(),
@@ -769,7 +775,7 @@ pub(super) fn moved_body_content(
     content: &BodyContent,
     kind: &str,
     id: i32,
-    metadata: &Metadata<'_>,
+    metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match content {
         BodyContent::Paragraph(paragraph) => moved_paragraph(paragraph, kind, id, metadata),
@@ -784,7 +790,7 @@ fn moved_paragraph(
     paragraph: &CT_P,
     kind: &str,
     id: i32,
-    metadata: &Metadata<'_>,
+    metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     refuse_moved_markers(paragraph)?;
     let marker = metadata.ids.generated(IdAllocator::marker_with_id(
@@ -803,11 +809,12 @@ fn moved_paragraph(
     )?;
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&properties);
-    let children = paragraph_children_xml(paragraph, false, metadata)?;
+    let (children, published) = paragraph_children_xml(paragraph, false, false, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         false,
         false,
+        &published,
         &mut |content| {
             metadata.ids.generated(IdAllocator::revision_with_id(
                 kind,

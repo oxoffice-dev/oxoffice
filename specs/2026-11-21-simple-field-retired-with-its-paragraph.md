@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: docx
 ---
 
@@ -63,6 +63,14 @@ One pull request, tests first, in `tests/docx/revisions_and_compare.rs`:
 - a heading added under a table of contents that `rebuild_toc` filled on both versions; then, on the accepted redline, `rebuild_toc` again.
 
 Then the rewriting in `comparison.rs`, the one-sided witness in its checks, the admission in `refuse_uncarried_field_owners`, and the `docx-compare-simple-field-paragraph` limitation file removed.
+
+## Learnings
+
+- **The publication proof met paragraph merges.** It resolves the whole story while it follows the field's wrapper, and it refused any paragraph merge on the way. A deleted paragraph next to an inserted one (a paired paragraph whose boundaries change, a move written as a deletion and an insertion) merges on acceptance. The merge now carries the followed roots (`render_merged_paragraphs`); a root inside a table the merge crosses is still refused.
+- **`xml:space` on a field instruction.** The guard's protected residual modelled `xml:space` on `w:t` and `w:delText` only. The complex field writes `xml:space="preserve"` on its instruction, and under `ignore_fields` no witness maps the field's facts, so the residual models it on `w:instrText` and `w:delInstrText` too.
+- **The last paragraph of a story.** A paired paragraph whose boundaries differ and which ends its story was kept paired when it held a simple field, and its inserted mark could not be rejected. It is now written as a deleted and an inserted paragraph like any other.
+- **Table of contents entries.** An entry that `rebuild_toc` writes lies inside the table's field, begun in an earlier paragraph. Its `PAGEREF` field converts like any other and is proved as a field nested in that result.
+- **Still refused**: a simple field inside a hyperlink (the #66 message) or inside another simple field (the conversion's message), kept as the narrowed limitation `docx-compare-simple-field-paragraph` on #66; a simple field the reader keeps as raw XML (an empty instruction) fails earlier, when the comparison correlates the paragraph's runs.
 
 ## Links
 

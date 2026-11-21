@@ -819,8 +819,13 @@ pub fn protected_source_residual(
                                 &decoded,
                             )
                     } else if namespace.as_deref() == Some("http://www.w3.org/XML/1998/namespace") {
+                        // The whitespace rule of a run's modeled text, field
+                        // instructions included.
                         name.as_ref() == b"space"
-                            && matches!(local.as_str(), "t" | "delText")
+                            && matches!(
+                                local.as_str(),
+                                "t" | "delText" | "instrText" | "delInstrText"
+                            )
                             && parent_local == b"r"
                             && matches!(decoded.as_str(), "default" | "preserve")
                     } else {

@@ -780,13 +780,6 @@ fn compare_aligned_cell_children(
         &edited_signatures,
         options,
     )?;
-    refuse_uncarried_field_owners(
-        &aligned,
-        &original_paragraphs,
-        &edited_paragraphs,
-        &carried,
-        location,
-    )?;
     let is_paragraph =
         |child: Option<&CellContent>| matches!(child, Some(CellContent::Paragraph(_)));
     let trailing_paragraph_insert_start = aligned
@@ -887,6 +880,7 @@ fn compare_aligned_cell_children(
             )),
             (Some(i), None) => {
                 let child = &original.content[i];
+                let whole = carried.original.contains(&i);
                 if let CellContent::Paragraph(paragraph) = child
                     && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                 {
@@ -897,13 +891,14 @@ fn compare_aligned_cell_children(
                     if next_takes_mark {
                         content.push((
                             EmittedOwner::paragraph(paragraph, paragraph, metadata)?,
-                            marked_cell_child(child, "del", metadata)?,
+                            marked_cell_child(child, "del", whole, metadata)?,
                         ));
                     } else {
                         content.push(final_paragraph(
                             paragraph,
                             "del",
                             None,
+                            whole,
                             trailing_merged.clone(),
                             metadata,
                         )?);
@@ -912,16 +907,19 @@ fn compare_aligned_cell_children(
                     && !next_takes_mark
                 {
                     let merged = mark_previous_paragraph(&mut content, "del", &bindings, metadata)?;
-                    content.push(final_paragraph(paragraph, "del", None, merged, metadata)?);
+                    content.push(final_paragraph(
+                        paragraph, "del", None, whole, merged, metadata,
+                    )?);
                 } else {
                     content.push((
                         EmittedOwner::of_cell(child, child, Some("del"), metadata)?,
-                        marked_cell_child(child, "del", metadata)?,
+                        marked_cell_child(child, "del", whole, metadata)?,
                     ));
                 }
             }
             (None, Some(j)) => {
                 let child = &edited.content[j];
+                let whole = carried.edited.contains(&j);
                 if let CellContent::Paragraph(paragraph) = child
                     && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                 {
@@ -932,13 +930,14 @@ fn compare_aligned_cell_children(
                     if next_takes_mark {
                         content.push((
                             EmittedOwner::paragraph(paragraph, paragraph, metadata)?,
-                            marked_cell_child(child, "ins", metadata)?,
+                            marked_cell_child(child, "ins", whole, metadata)?,
                         ));
                     } else {
                         content.push(final_paragraph(
                             paragraph,
                             "ins",
                             None,
+                            whole,
                             trailing_merged.clone(),
                             metadata,
                         )?);
@@ -947,11 +946,13 @@ fn compare_aligned_cell_children(
                     && !next_takes_mark
                 {
                     let merged = mark_previous_paragraph(&mut content, "ins", &bindings, metadata)?;
-                    content.push(final_paragraph(paragraph, "ins", None, merged, metadata)?);
+                    content.push(final_paragraph(
+                        paragraph, "ins", None, whole, merged, metadata,
+                    )?);
                 } else {
                     content.push((
                         EmittedOwner::of_cell(child, child, Some("ins"), metadata)?,
-                        marked_cell_child(child, "ins", metadata)?,
+                        marked_cell_child(child, "ins", whole, metadata)?,
                     ));
                 }
             }
@@ -972,13 +973,14 @@ fn compare_aligned_cell_children(
 fn marked_cell_child(
     child: &CellContent,
     kind: &str,
+    carried: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     match child {
         CellContent::Paragraph(paragraph) if kind == "del" => {
-            deleted_paragraph(paragraph, metadata)
+            deleted_paragraph(paragraph, carried, metadata)
         }
-        CellContent::Paragraph(paragraph) => inserted_paragraph(paragraph, metadata),
+        CellContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         CellContent::Table(table) => marked_table(table, kind, metadata),
         CellContent::ContentControl(_) => Err(Error::Other(
             "comparison cannot add or remove an unmatched content control in a cell".to_owned(),

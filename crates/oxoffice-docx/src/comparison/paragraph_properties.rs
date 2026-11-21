@@ -403,14 +403,22 @@ pub(super) fn section_properties_xml(
         .generated(inject_before_close(&current, "</w:sectPr>", &change)?)
 }
 
-pub(super) fn deleted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -> Result<String> {
+/// A paragraph deleted whole. Unless it is `carried` (deleted inside a complex
+/// field replaced with it, which owns its simple fields), its simple fields
+/// are written as whole complex fields (see [`paragraph_children_xml`]).
+pub(super) fn deleted_paragraph(
+    paragraph: &CT_P,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&paragraph_mark_properties(paragraph, "del", metadata)?);
-    let children = paragraph_children_xml(paragraph, true, metadata)?;
+    let (children, published) = paragraph_children_xml(paragraph, true, !carried, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         true,
         false,
+        &published,
         &mut |content| {
             metadata
                 .ids
@@ -421,14 +429,20 @@ pub(super) fn deleted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -
     metadata.ids.generated(output)
 }
 
-pub(super) fn inserted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) -> Result<String> {
+/// A paragraph inserted whole: [`deleted_paragraph`] for an insertion.
+pub(super) fn inserted_paragraph(
+    paragraph: &CT_P,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
     let (mut output, closing) = paragraph_shell(metadata.paragraph_source(paragraph))?;
     output.push_str(&paragraph_mark_properties(paragraph, "ins", metadata)?);
-    let children = paragraph_children_xml(paragraph, false, metadata)?;
+    let (children, published) = paragraph_children_xml(paragraph, false, !carried, metadata)?;
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         false,
         false,
+        &published,
         &mut |content| {
             metadata
                 .ids
@@ -442,11 +456,25 @@ pub(super) fn inserted_paragraph(paragraph: &CT_P, metadata: &mut Metadata<'_>) 
 /// Stage a whole paragraph without its properties, retaining actual run source
 /// and destination namespace custody before the shared revision publisher wraps
 /// eligible payloads. Field and hyperlink shells remain that publisher's owners.
+///
+/// With `whole_fields`, each simple field of the paragraph is written as one
+/// complex field, the whole of it in an `ins` (or, `deleted`, a `del`) of its
+/// own under one new revision id: a `w:fldSimple` cannot carry a mark, and
+/// resolving the paragraph would leave its shell. That is the shape Word
+/// writes for a field deleted with its paragraph. The byte ranges of those
+/// wrappers are returned for the publisher to keep as they are.
 pub(super) fn paragraph_children_xml(
     paragraph: &CT_P,
     deleted: bool,
-    metadata: &Metadata<'_>,
-) -> Result<String> {
+    whole_fields: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<(String, Vec<Range<usize>>)> {
+    if whole_fields && simple_field_paths(paragraph)?.linked {
+        return Err(Error::Other(
+            "comparison cannot track a whole paragraph's simple field outside a field it replaces: it is inside a hyperlink"
+                .into(),
+        ));
+    }
     let mut children = paragraph.clone();
     children.properties = None;
     if deleted {
@@ -457,6 +485,7 @@ pub(super) fn paragraph_children_xml(
     // One read of the paragraph answers the scope of every run.
     let parents = ParentScopes::new(&xml, spans.iter().map(|span| span.start).collect());
     let mut replacements = Vec::new();
+    let mut fields = Vec::new();
     let mut index = 0;
     while index < children.runs.len() {
         if let Some((coverage, _)) = children.field_source_run_fragments_at(index)? {
@@ -464,6 +493,15 @@ pub(super) fn paragraph_children_xml(
             continue;
         }
         let run = &paragraph.runs[index];
+        if whole_fields && let Some(field) = run_field(run).filter(|field| !field.is_complex()) {
+            fields.push(replacements.len());
+            replacements.push((
+                spans[index].clone(),
+                whole_simple_field(field, deleted, metadata)?,
+            ));
+            index += 1;
+            continue;
+        }
         if let Some(source) = metadata.run_source(run) {
             let span = spans[index].clone();
             replacements.push((span.clone(), {
@@ -482,10 +520,21 @@ pub(super) fn paragraph_children_xml(
         }
         index += 1;
     }
+    let mut published = Vec::with_capacity(fields.len());
+    let mut shift = 0isize;
+    for (position, (span, replacement)) in replacements.iter().enumerate() {
+        let start = span.start.checked_add_signed(shift).ok_or_else(|| {
+            Error::Other("whole-paragraph field publication offset overflow".into())
+        })?;
+        if fields.contains(&position) {
+            published.push(start..start + replacement.len());
+        }
+        shift += replacement.len() as isize - span.len() as isize;
+    }
     for (span, replacement) in replacements.into_iter().rev() {
         xml.replace_range(span, &replacement);
     }
-    Ok(xml)
+    Ok((xml, published))
 }
 
 fn paragraph_mark_properties(
