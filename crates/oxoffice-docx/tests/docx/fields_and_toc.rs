@@ -1859,7 +1859,7 @@ fn ref_and_pageref_read_a_bookmark_that_starts_between_paragraphs() {
         r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> REF _Toc217000001 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> on page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF _Toc217000001 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p>{GOOGLE_HEADING}"#
     ));
     assert_eq!(
-        drawn_text(&doc, RevisionView::Accepted),
+        drawn_text_in(&doc, RevisionView::Accepted),
         "See Introduction on page 2Introduction",
         "the layout reads the heading's text and page"
     );
@@ -1887,7 +1887,7 @@ fn the_google_docs_thesis_rebuilds_its_tocs_on_its_own_heading_bookmarks() {
 }
 
 /// The text drawn on the pages in this revision view.
-fn drawn_text(doc: &Document, view: RevisionView) -> String {
+fn drawn_text_in(doc: &Document, view: RevisionView) -> String {
     let options = RenderOptions::default().with_revision_view(view);
     let result = doc.layout_with_options(options).unwrap();
     let mut text = String::new();
@@ -1899,4 +1899,53 @@ fn drawn_text(doc: &Document, view: RevisionView) -> String {
         });
     }
     text
+}
+
+#[test]
+fn bookmarks_between_cells_and_collapsed_between_blocks_read_without_issue() {
+    // Google Docs collapses an empty bookmark before a cell paragraph; Word
+    // puts its form field bookmarks between cells of a row.
+    for name in ["google/form.docx", "word/form.docx"] {
+        let doc = corpus_doc(name);
+        let issues: Vec<_> = doc
+            .bookmarks()
+            .iter()
+            .filter_map(|bookmark| bookmark.issue().map(str::to_owned))
+            .collect();
+        assert!(issues.is_empty(), "{name}: {issues:?}");
+    }
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="Empty"/><w:bookmarkEnd w:id="1"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+    );
+    let empty = &doc.bookmarks()[0];
+    assert_eq!((empty.issue(), empty.text()), (None, ""));
+    assert_eq!(
+        empty.range().unwrap().start.body_index,
+        1,
+        "at the next paragraph"
+    );
+}
+
+#[test]
+fn a_bookmark_around_a_table_with_a_row_control_reads_its_rows() {
+    let doc = doc_with_body(
+        r#"<w:bookmarkStart w:id="1" w:name="Rows"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>First</w:t></w:r></w:p></w:tc></w:tr><w:sdt><w:sdtPr><w:tag w:val="rows"/></w:sdtPr><w:sdtContent><w:tr><w:tc><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl><w:bookmarkEnd w:id="1"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(bookmark_list(&doc), pairs(&[("Rows", "First\nRepeated")]));
+}
+
+#[test]
+fn a_heading_bookmark_that_stops_before_the_heading_ends_is_not_reused() {
+    // A run of properties only after the end leaves the bookmark whole; a
+    // run of text does not, so the rebuild gives the heading its own.
+    let mut doc = doc_with_body(&format!(
+        r#"{GOOGLE_TOC}<w:bookmarkStart w:id="4" w:name="_Toc217000001"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="4"/><w:r><w:t xml:space="preserve"> and more</w:t></w:r></w:p>"#
+    ));
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!((report.entry_count, report.bookmark_count), (1, 1));
+    let mut doc = doc_with_body(&format!(
+        r#"{GOOGLE_TOC}<w:bookmarkStart w:id="4" w:name="_Toc217000001"/><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="4"/><w:r><w:rPr><w:b/></w:rPr></w:r></w:p>"#
+    ));
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!((report.entry_count, report.bookmark_count), (1, 0));
 }

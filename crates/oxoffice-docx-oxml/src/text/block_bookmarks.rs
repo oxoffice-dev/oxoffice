@@ -90,13 +90,22 @@ impl BlockBookmarks {
             })
             .collect::<Vec<_>>();
         let mut output = Self::default();
+        // Starts still waiting for a paragraph: an end of one of them, with
+        // no paragraph in between, is a collapsed bookmark at that start.
+        let mut waiting = Vec::new();
         for (index, item) in items.into_iter().enumerate() {
             let BlockItem::Marker(start, id, name) = item else {
+                waiting.clear();
                 continue;
             };
-            let next = paragraphs.iter().find(|(at, _)| *at > index);
-            let previous = paragraphs.iter().rev().find(|(at, _)| *at < index);
-            let (paragraph, leading) = match (start, next, previous) {
+            let after = paragraphs.partition_point(|(at, _)| *at < index);
+            let next = paragraphs.get(after);
+            let previous = after.checked_sub(1).and_then(|at| paragraphs.get(at));
+            let collapsed = !start && id.is_some() && waiting.contains(&id);
+            if start {
+                waiting.push(id);
+            }
+            let (paragraph, leading) = match (start || collapsed, next, previous) {
                 (true, Some((_, next)), _) | (false, Some((_, next)), None) => (*next, true),
                 (_, _, Some((_, previous))) => (*previous, false),
                 (_, None, None) => continue,
@@ -149,30 +158,44 @@ impl BookmarkMarker {
 }
 
 fn push_table<'a>(table: &'a CT_Tbl, items: &mut Vec<BlockItem<'a>>) {
-    for (index, row) in table.rows.iter().enumerate() {
-        for (_, raw) in table.extra_xml.iter().filter(|(at, _)| *at == index) {
-            push_raw(raw, items);
-        }
-        for (cell_index, cell) in row.cells.iter().enumerate() {
-            for (_, raw) in row.extra_xml.iter().filter(|(at, _)| *at == cell_index) {
-                push_raw(raw, items);
+    for boundary in 0..=table.rows.len() {
+        push_slot(&table.extra_xml, &table.content_controls, boundary, items);
+        if let Some(row) = table.rows.get(boundary) {
+            for cell_boundary in 0..=row.cells.len() {
+                push_slot(&row.extra_xml, &row.content_controls, cell_boundary, items);
+                if let Some(cell) = row.cells.get(cell_boundary) {
+                    push_cell(cell, items);
+                }
             }
-            push_cell(cell, items);
-        }
-        for (_, raw) in row
-            .extra_xml
-            .iter()
-            .filter(|(at, _)| *at >= row.cells.len())
-        {
-            push_raw(raw, items);
         }
     }
-    for (_, raw) in table
-        .extra_xml
+}
+
+/// The raw children and controls of a table or row before one boundary, in
+/// order: a control after the raw children it counts before it.
+fn push_slot<'a>(
+    raw: &'a [(usize, Vec<u8>)],
+    controls: &'a [(usize, usize, CT_Sdt)],
+    boundary: usize,
+    items: &mut Vec<BlockItem<'a>>,
+) {
+    let raws = raw
         .iter()
-        .filter(|(at, _)| *at >= table.rows.len())
-    {
+        .filter(|(at, _)| *at == boundary)
+        .map(|(_, raw)| raw)
+        .collect::<Vec<_>>();
+    let mut controls = controls
+        .iter()
+        .filter(|(at, _, _)| *at == boundary)
+        .peekable();
+    for (index, raw) in raws.iter().enumerate() {
+        while let Some((_, _, control)) = controls.next_if(|(_, before, _)| *before <= index) {
+            push_control(control, items);
+        }
         push_raw(raw, items);
+    }
+    for (_, _, control) in controls {
+        push_control(control, items);
     }
 }
 

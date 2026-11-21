@@ -768,13 +768,21 @@ fn whole_paragraph_bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
                         word,
                         local,
                     )?);
-                } else if word && block_bookmark_parent(&elements, None) {
+                } else if word
+                    && block_bookmark_parent(&elements, elements.last().and_then(|e| e.paragraph))
+                {
                     // Between blocks: a start opens the next paragraph, an end
                     // closes the previous one.
                     match paragraph_token(&element, reader.resolver(), word, local)? {
                         token @ TocParagraphToken::BookmarkStart(_) => block_starts.push(token),
-                        token @ TocParagraphToken::BookmarkEnd(_) => {
-                            if let Some(previous) = paragraphs.last_mut() {
+                        token @ TocParagraphToken::BookmarkEnd(id) => {
+                            // A collapsed bookmark waits with its start.
+                            if block_starts
+                                .iter()
+                                .any(|start| matches!(start, TocParagraphToken::BookmarkStart(s) if *s == id))
+                            {
+                                block_starts.push(token);
+                            } else if let Some(previous) = paragraphs.last_mut() {
                                 previous.push(token);
                             }
                         }
