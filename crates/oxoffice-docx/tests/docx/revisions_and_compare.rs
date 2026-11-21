@@ -1622,9 +1622,48 @@ fn rejecting_a_final_paragraph_inserted_with_the_table_before_it_ends_the_body_w
 }
 
 #[test]
+fn empty_border_containers_against_none_are_no_format_change() {
+    // The original saved by LibreOffice, with empty table and cell border
+    // containers, the edited copy saved by Word without them.
+    let table = |borders: &str, cell_borders: &str, text: &str| {
+        format!(
+            concat!(
+                r#"<w:tbl><w:tblPr>{}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+                r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{}</w:tcPr>"#,
+                r#"<w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+            ),
+            borders, cell_borders, text
+        )
+    };
+    for (original, edited) in [
+        (
+            table(
+                "<w:tblBorders></w:tblBorders>",
+                "<w:tcBorders></w:tcBorders>",
+                "cell",
+            ),
+            table("", "", "cell edited"),
+        ),
+        (
+            table("", "", "cell"),
+            table("<w:tblBorders/>", "<w:tcBorders/>", "cell edited"),
+        ),
+    ] {
+        let doc = redline(doc_with_body(&original), &doc_with_body(&edited));
+        assert!(
+            kinds(&doc)
+                .iter()
+                .all(|kind| matches!(kind, RevisionKind::Insertion | RevisionKind::Deletion)),
+            "no table or cell format change: {:?}",
+            kinds(&doc)
+        );
+    }
+}
+
+#[test]
 fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     // LibreOffice writes `<w:trPr></w:trPr>` and `<w:tcBorders></w:tcBorders>`;
-    // an edit through the model writes them back as nothing.
+    // the comparison reads them as no properties.
     let body = concat!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
         r#"<w:tr><w:trPr></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:tcBorders></w:tcBorders></w:tcPr>"#,

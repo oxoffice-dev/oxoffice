@@ -5615,8 +5615,8 @@ pub(crate) fn source_value_is_modeled(
             return value.parse::<i32>().is_ok();
         }
         if key == b"customMarkFollows" {
-            return parse_field_bool(value)
-                .is_some_and(|parsed| parsed == matches!(value, "1" | "true"));
+            // The reader takes every on/off spelling; an off one is absent.
+            return parse_field_bool(value).is_some();
         }
     }
     if matches!(local, b"fldSimple" | b"fldChar") {
