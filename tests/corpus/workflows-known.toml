@@ -1,0 +1,9 @@
+# Corpus copies a workflow test fails on today, read by the workflow tests of
+# the docx and pptx test binaries (specs/2026-11-21-consumer-workflows.md).
+# Written by hand. Like every known failure of the suite, an entry is strict:
+# once the copy passes the workflow, the test fails until the entry goes.
+
+[[known]]
+file = "google/thesis.docx"
+workflow = "page-numbers"
+issue = 340

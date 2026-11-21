@@ -192,3 +192,40 @@ pub fn package_parts(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>
         })
         .collect()
 }
+/// The issue a workflow test fails on for this corpus copy today, from
+/// `tests/corpus/workflows-known.toml`.
+pub fn workflow_known_failure(file: &str, workflow: &str) -> Option<u32> {
+    let text = fs::read_to_string(corpus_root().join("workflows-known.toml"))
+        .expect("workflows-known.toml is readable");
+    let mut entries = Vec::new();
+    let (mut path, mut name) = (None, None);
+    for line in text.lines() {
+        let value = |prefix: &str| line.strip_prefix(prefix).map(|v| v.trim().trim_matches('"').to_owned());
+        if let Some(v) = value("file = ") {
+            path = Some(v);
+        } else if let Some(v) = value("workflow = ") {
+            name = Some(v);
+        } else if let Some(v) = value("issue = ") {
+            entries.push((path.take().unwrap(), name.take().unwrap(), v.parse::<u32>().unwrap()));
+        }
+    }
+    entries
+        .into_iter()
+        .find(|(path, name, _)| path == file && name == workflow)
+        .map(|(_, _, issue)| issue)
+}
+
+/// Runs `walk` on each copy: a copy listed in `workflows-known.toml` for
+/// this workflow must fail it, any other must pass, so a fix shows.
+pub fn run_workflow(workflow: &str, copies: &[String], walk: impl Fn(&str)) {
+    for copy in copies {
+        let outcome = catch_unwind(AssertUnwindSafe(|| walk(copy)));
+        match (workflow_known_failure(copy, workflow), outcome) {
+            (None, Err(panic)) => std::panic::resume_unwind(panic),
+            (Some(issue), Ok(())) => panic!(
+                "{copy} passes the {workflow} walk now: remove its line (#{issue}) from workflows-known.toml"
+            ),
+            _ => {}
+        }
+    }
+}
