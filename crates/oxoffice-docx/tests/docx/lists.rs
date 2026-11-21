@@ -1382,14 +1382,37 @@ fn exports_show_the_level_an_instance_swaps_in() {
     );
 }
 
-// Fails today: the layout starts a lettered list again at "a." after "z." where Word goes on with "aa.". Issue: #29
 #[test]
-#[should_panic(expected = r#"left: ["a.", "b."]"#)]
 fn lettered_lists_go_on_with_doubled_letters_after_z() {
     let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::LowerLetter)]);
     add_items(&mut doc, id, &[0; 28]);
     assert_eq!(markers(&doc)[24..26], ["y.", "z."]);
     assert_eq!(markers(&doc)[26..], ["aa.", "bb."]);
+}
+
+#[test]
+fn lettered_lists_triple_their_letters_after_zz_in_both_cases() {
+    for (format, expected) in [
+        (ListNumberFormat::LowerLetter, ["zz.", "aaa.", "bbb."]),
+        (ListNumberFormat::UpperLetter, ["ZZ.", "AAA.", "BBB."]),
+    ] {
+        let (mut doc, id) = single_list(&[ListLevel::new(format.clone()).start(52)]);
+        add_items(&mut doc, id, &[0; 3]);
+        assert_eq!(markers(&doc), expected, "{format:?}");
+    }
+}
+
+#[test]
+fn a_huge_letter_start_draws_a_short_marker() {
+    let (mut doc, id) =
+        single_list(&[ListLevel::new(ListNumberFormat::LowerLetter).start(u32::MAX)]);
+    add_items(&mut doc, id, &[0]);
+    let marker = &markers(&doc)[0];
+    assert!(
+        marker.len() <= 31,
+        "a hostile start value stays a short marker: {} bytes",
+        marker.len()
+    );
 }
 
 #[test]
