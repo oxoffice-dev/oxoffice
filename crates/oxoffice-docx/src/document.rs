@@ -17179,17 +17179,19 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
             }
         }
         if reference_id == Some(id) {
-            let mut end = if matches!(event, Event::Empty(_)) {
+            let end = if matches!(event, Event::Empty(_)) {
                 reader.buffer_position() as usize
             } else {
                 story_element_end(xml, before)?
             };
             let event = event.into_owned();
+            let mut mark_range = None;
             if custom_mark_follows {
                 // The custom mark is the text, deleted text or symbol that
                 // follows the reference in its run, as Word reads it: it
-                // goes with the note. Whitespace, comments and a rendered
-                // page break between them are passed over.
+                // goes with the note. Whitespace, XML comments, processing
+                // instructions and a rendered page break between them are
+                // passed over and kept.
                 if let Event::Start(reference) = &event {
                     let name = reference.name().as_ref().to_vec();
                     reader
@@ -17212,6 +17214,17 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                         Event::Empty(hint)
                             if word_element(&namespace)
                                 && hint.local_name().as_ref() == b"lastRenderedPageBreak" => {}
+                        Event::Start(hint)
+                            if word_element(&namespace)
+                                && hint.local_name().as_ref() == b"lastRenderedPageBreak" =>
+                        {
+                            let name = hint.name().as_ref().to_vec();
+                            reader
+                                .read_to_end_into(quick_xml::name::QName(&name), &mut Vec::new())
+                                .map_err(|error| {
+                                    Error::Other(format!("custom mark scan failed: {error}"))
+                                })?;
+                        }
                         Event::Start(mark)
                             if word_element(&namespace)
                                 && matches!(
@@ -17219,7 +17232,7 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                                     b"t" | b"delText" | b"sym"
                                 ) =>
                         {
-                            end = story_element_end(xml, offset)?;
+                            mark_range = Some(offset..story_element_end(xml, offset)?);
                             let name = mark.name().as_ref().to_vec();
                             reader
                                 .read_to_end_into(quick_xml::name::QName(&name), &mut Vec::new())
@@ -17235,7 +17248,7 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                                     b"t" | b"delText" | b"sym"
                                 ) =>
                         {
-                            end = reader.buffer_position() as usize;
+                            mark_range = Some(offset..reader.buffer_position() as usize);
                             break;
                         }
                         _ => break,
@@ -17244,6 +17257,7 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
                 }
             }
             ranges.push(before..end);
+            ranges.extend(mark_range);
         }
         buffer.clear();
     }
