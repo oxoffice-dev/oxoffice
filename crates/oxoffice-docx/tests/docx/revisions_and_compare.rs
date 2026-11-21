@@ -2268,8 +2268,38 @@ fn a_paragraph_moved_with_its_endnote_is_refused() {
     };
     let mut doc = document(false);
     let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
-    assert!(error.to_string().contains("endnote"), "{error}");
+    let message = error.to_string();
+    assert!(
+        message.contains("comparison would give endnote ")
+            && message.contains(
+                " 2 references where each input has at most 1: its reference moved to another site, or what holds it was deleted and inserted again"
+            ),
+        "{message}"
+    );
     assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn an_endnote_the_original_holds_unreferenced_compares_while_endnotes_are_ignored() {
+    // The original keeps the endnote but lost its reference; the edited
+    // version references it again, and the ignored story supplies it.
+    let mut original = doc_with_endnotes(&[0]);
+    original
+        .paragraph_mut(0)
+        .unwrap()
+        .set_text("Claim one.")
+        .unwrap();
+    let original = reopen(&mut original);
+    assert_eq!(endnote_paragraphs(&original), Vec::<usize>::new());
+    let mut doc = original;
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    doc.compare_with_options(&doc_with_endnotes(&[0]), AUTHOR, DATE, &options)
+        .expect("the original supplies the endnote");
+    assert_eq!(endnote_paragraphs(&accepted(&mut doc)), [0]);
+    assert_eq!(endnote_paragraphs(&rejected(&mut doc)), Vec::<usize>::new());
 }
 
 #[test]

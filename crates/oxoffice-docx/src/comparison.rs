@@ -6775,7 +6775,8 @@ fn note_reference_counts(document: &Document) -> Result<HashMap<(String, i32), u
 /// naming one note, which Word for Mac cannot open. Moved footnotes became
 /// new notes before this point. Endnotes, and footnotes whose story is
 /// ignored, have no such path: the pair is refused. Nor may the result name
-/// an endnote that ignored endnotes keep out of it.
+/// an endnote the original does not hold while endnotes are ignored, since
+/// the result keeps the original's endnotes.
 fn refuse_shared_note_references(
     original: &Document,
     edited: &Document,
@@ -6790,7 +6791,8 @@ fn refuse_shared_note_references(
     pending.sort();
     for ((element, id), count) in pending {
         let key = (element, id);
-        if endnotes_ignored && key.0 == "endnoteReference" && !left.contains_key(&key) {
+        if endnotes_ignored && key.0 == "endnoteReference" && original.endnote_story(id)?.is_none()
+        {
             return Err(Error::Other(format!(
                 "ignored endnotes cannot supply the edited reference to endnote {id}"
             )));
