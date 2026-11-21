@@ -4,6 +4,6 @@
   "area": "metadata",
   "title": "Document metadata goes stale after slides are retitled, moved or edited",
   "symptom": "docProps/app.xml keeps its title lists after a retitle or a move (they go when slides are added or removed), its counts are not refreshed when notes text alone changes, when a slide is hidden or shown through its XML, or when the source-preserving patch cannot edit app.xml (one outside its namespace, for example), Words and Paragraphs are never recounted, core.xml keeps its title, and the package thumbnail keeps the first slide as it was saved until a removal",
-  "workaround": "set the counts and the title through the document properties before saving (Rust set_application_properties and set_core_properties, Python prs.app_properties and prs.core_properties); for the title lists and the thumbnail, add a slide and remove it again, which drops both and recounts (Rust remove_application_properties also drops the title lists, with the rest of app.xml)",
+  "workaround": "set the counts and the title through the document properties before saving (Rust set_application_properties and set_core_properties, Python prs.app_properties and prs.core_properties, CLI oxoffice pptx meta set --title for the title); for the title lists and the thumbnail, add a slide and remove it again, which drops both and recounts (Rust remove_application_properties also drops the title lists, with the rest of app.xml)",
   "issue": 103
 }
