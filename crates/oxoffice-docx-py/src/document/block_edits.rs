@@ -17,8 +17,11 @@ pub(crate) struct BlockShift {
     story: (oxoffice_docx::StoryKind, String, usize),
     /// The first story item after the element before the edit, and the
     /// change in the number of items inside it.
-    #[cfg(debug_assertions)]
     items: (usize, isize),
+    /// The items of the edited story the extents read, before the edit:
+    /// their hyperlinks are listed; those of later items move by the change
+    /// in the item count.
+    read: std::ops::Range<usize>,
     /// The hyperlinks of the edited story, by their routes before the edit,
     /// that retire: those inside the element, and those after it whose
     /// route the edit moves.
@@ -92,11 +95,11 @@ impl BlockShift {
                 story.part_name().to_owned(),
                 story.owner_index(),
             ),
-            #[cfg(debug_assertions)]
             items: (
                 before.items.0 + before.items.1,
                 change(before.items.1, after.items.1)?,
             ),
+            read: before.read.clone(),
             retired_links,
             #[cfg(debug_assertions)]
             kept_links,
@@ -151,10 +154,13 @@ impl BlockShift {
 
     /// Whether an owner of `story` other than a hyperlink is renumbered with
     /// its story: a text box after the element, when the edit changes how
-    /// many text boxes the element holds. Table cell stories are found
-    /// through their table, which the edit does not move.
-    fn story_renumbered(&self, story: &oxoffice_docx::StoryId) -> bool {
-        story.kind() == oxoffice_docx::StoryKind::TextBox
+    /// many text boxes the element holds; with `found_by_story`, a table cell
+    /// story after it too. The content of a cell is found through its table,
+    /// which the edit does not move, unless no cell owner holds it (a table
+    /// inside a block content control): then it is found by its story.
+    fn story_renumbered(&self, story: &oxoffice_docx::StoryId, found_by_story: bool) -> bool {
+        (story.kind() == oxoffice_docx::StoryKind::TextBox
+            || found_by_story && story.kind() == oxoffice_docx::StoryKind::TableCell)
             && self
                 .later_stories(story)
                 .is_some_and(|(first, change)| change != 0 && story.owner_index() >= first)
@@ -166,9 +172,13 @@ impl BlockShift {
     fn link_retired(&self, location: &oxoffice_docx::ContentLocation, index: usize) -> bool {
         let story = location.story();
         if self.is_edited_story(story) {
-            return self
-                .retired_links
-                .contains(&(location.index_path().to_vec(), index));
+            let head = location.index_path().first().copied().unwrap_or_default();
+            return if self.read.contains(&head) {
+                self.retired_links
+                    .contains(&(location.index_path().to_vec(), index))
+            } else {
+                head >= self.read.end && self.items.1 != 0
+            };
         }
         self.story_inside(story)
             || self
@@ -237,7 +247,8 @@ impl BlockShift {
             },
             WordOwnerLocation::Section(index) => WordOwnerLocation::Section(*index),
             WordOwnerLocation::Hyperlink(location, index) => {
-                if self.is_edited_story(location.story()) {
+                let head = location.index_path().first().copied().unwrap_or_default();
+                if self.is_edited_story(location.story()) && self.read.contains(&head) {
                     let (path, index) = self
                         .kept_links
                         .get(&(location.index_path().to_vec(), *index))?
@@ -280,16 +291,18 @@ pub(super) fn block_retention(
         }
         false
     };
+    // An owner without a parent is matched by its story's ordinal.
     let renumbered = |owner: &WordOwner| match &owner.location {
         WordOwnerLocation::Paragraph(location)
         | WordOwnerLocation::Table(location)
         | WordOwnerLocation::Run(location, _) => {
-            shift.story_inside(location.story()) || shift.story_renumbered(location.story())
+            shift.story_inside(location.story())
+                || shift.story_renumbered(location.story(), owner.parent.is_none())
         }
         WordOwnerLocation::Cell { table, story, .. } => {
             shift.story_inside(story)
                 || shift.story_inside(table.story())
-                || shift.story_renumbered(table.story())
+                || shift.story_renumbered(table.story(), false)
         }
         WordOwnerLocation::Hyperlink(location, index) => shift.link_retired(location, *index),
         WordOwnerLocation::Section(_) => false,
@@ -356,39 +369,100 @@ impl PyDocument {
         ) {
             return Ok(None);
         }
-        // The cell's story is read from the inventory.
+        // The element's owner and the cell's story are read from the inventory.
         self.ensure_word_authority(py)?;
-        let (story, path) = match publication {
-            WordPublication::ParagraphEdit(location) => {
-                (location.story().clone(), Some(location.index_path()))
-            }
+        let (story, path, owner) = match publication {
+            WordPublication::ParagraphEdit(location) => (
+                location.story().clone(),
+                Some(location.index_path()),
+                self.indexes.find(
+                    &self.owners,
+                    &WordOwnerLocation::Paragraph(location.clone()),
+                ),
+            ),
             WordPublication::CellInsert(table, row, cell) => {
-                let Some(story) = self.owners.iter().find_map(|owner| match &owner.location {
-                    WordOwnerLocation::Cell {
-                        table: owned,
-                        row: r,
-                        cell: c,
-                        story,
-                    } if same_content_owner(owned, table) && r == row && c == cell => {
-                        Some(story.clone())
-                    }
-                    _ => None,
-                }) else {
+                let Some((index, story)) =
+                    self.owners.iter().enumerate().find_map(|(index, owner)| {
+                        match &owner.location {
+                            WordOwnerLocation::Cell {
+                                table: owned,
+                                row: r,
+                                cell: c,
+                                story,
+                            } if same_content_owner(owned, table) && r == row && c == cell => {
+                                Some((index, story.clone()))
+                            }
+                            _ => None,
+                        }
+                    })
+                else {
                     return Ok(None);
                 };
-                (story, None)
+                (story, None, Some(index))
             }
             _ => return Ok(None),
         };
+        // The direct body block that holds the element is read alone when the
+        // pieces give the story counts before it; otherwise the whole part.
+        let block = owner
+            .and_then(|owner| self.block_read(owner))
+            .filter(|_| candidate.body_children().len() == self.inner.body_children().len());
         let read = |document: &oxoffice_docx::Document| {
-            document
-                .element_extent(&story, path)
-                .map_err(|error| docx_to_pyerr(py, error))
+            match block {
+                Some((slot, bases)) => document.block_element_extent(slot, bases, &story, path),
+                None => document.element_extent(&story, path),
+            }
+            .map_err(|error| docx_to_pyerr(py, error))
         };
-        Ok(match (read(&self.inner)?, read(candidate)?) {
+        let (before, after) = (read(&self.inner)?, read(candidate)?);
+        #[cfg(debug_assertions)]
+        if block.is_some() {
+            for (document, extent) in [(&self.inner, &before), (candidate, &after)] {
+                let whole = document
+                    .element_extent(&story, path)
+                    .expect("an element extent reads from its part");
+                let Some(extent) = extent else {
+                    assert!(whole.is_none(), "a block read finds what the part holds");
+                    continue;
+                };
+                let mut whole = whole.expect("a part holds what its block holds");
+                whole
+                    .links
+                    .retain(|(route, _, _)| extent.read.contains(&route[0]));
+                whole.read = extent.read.clone();
+                assert_eq!(extent, &whole, "block element extent");
+            }
+        }
+        Ok(match (before, after) {
             (Some(before), Some(after)) => BlockShift::of(&story, before, after),
             _ => None,
         })
+    }
+
+    /// The direct body slot of the block that holds owner `owner`, with the
+    /// body story items and the text box and table cell stories before that
+    /// block, from the pieces; `None` when the owner is not in a direct body
+    /// block, or the pieces do not tell.
+    fn block_read(&self, owner: usize) -> Option<(usize, (usize, usize, usize))> {
+        let pieces = self.pieces.as_ref()?;
+        if pieces.context.as_ref() != Some(&self.inner.body_item_context())
+            || pieces.blocks.len() != self.inner.body_children().len()
+        {
+            return None;
+        }
+        let mut root = owner;
+        while let Some(parent) = self.owners[root].parent {
+            root = parent;
+        }
+        let slot = self.owners[root].body_slot?;
+        let mut bases = (0, 0, 0);
+        for piece in pieces.blocks.get(..slot)? {
+            let owners = piece.owners.as_ref()?;
+            bases.0 += owners.body_items;
+            bases.1 += owners.text_boxes;
+            bases.2 += owners.cell_stories;
+        }
+        Some((slot, bases))
     }
 
     /// Publish `candidate`, this document after one block edit, unless the
@@ -480,10 +554,16 @@ pub(super) fn assert_kept_owners_name_their_elements(
             .zip(new.iter().rev())
             .take_while(|(a, b)| a == b)
             .count();
-        let first = old.len().saturating_sub(edited_before.len() + suffix);
+        // An element that holds the edited one starts and ends around it:
+        // its own start and end events are not the edited element's.
+        let first = old
+            .len()
+            .saturating_sub(edited_before.len() + suffix)
+            .max(1);
         old.len() + edited_after.len() == new.len() + edited_before.len()
             && (first..=prefix.min(old.len())).any(|at| {
-                old.get(at..at + edited_before.len()) == Some(edited_before.as_slice())
+                at + edited_before.len() < old.len()
+                    && old.get(at..at + edited_before.len()) == Some(edited_before.as_slice())
                     && new.get(at..at + edited_after.len()) == Some(edited_after.as_slice())
             })
     };

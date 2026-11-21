@@ -359,19 +359,19 @@ def test_removing_the_first_of_two_links_retires_the_other_link_of_its_paragraph
 @pytest.mark.parametrize("story", ["footer", "cell"])
 @pytest.mark.parametrize("edit", ["field removed", "field added"])
 def test_a_field_removed_or_added_retires_the_links_of_later_paragraphs_of_its_story_only(edit, story, ids):
-    paragraphs = p(FIELD, " page") + p("see ", link(1, "later")) if edit == "field removed" else p("page") + p(
-        "see ", link(1, "later")
-    )
+    # Two later linked paragraphs: a moved link lands on the route the other one had.
+    later_paragraphs = p("see ", link(1, "later")) + p("also ", link(3, "last"))
+    paragraphs = (p(FIELD, " page") if edit == "field removed" else p("page")) + later_paragraphs
     if story == "footer":
         doc = document(p("body", link(2, "body")), footer=paragraphs, ids=ids)
         fresh = lambda: doc.section(0).footer.paragraphs  # noqa: E731
     else:
         doc = document(table(paragraphs) + p("body", link(2, "body")), ids=ids)
         fresh = lambda: doc.tables[0].cell(0, 0).paragraphs  # noqa: E731
-    edited, later = fresh()
+    edited, later, last = fresh()
     later_run = later.runs[0]
     body = doc.paragraphs[-1]
-    later_link, body_link = link_named(doc, "later"), link_named(doc, "body")
+    later_link, last_link, body_link = (link_named(doc, name) for name in ("later", "last", "body"))
 
     if edit == "field removed":
         edited.text = "page"
@@ -382,9 +382,10 @@ def test_a_field_removed_or_added_retires_the_links_of_later_paragraphs_of_its_s
         "edited paragraph": (lambda: edited.text, lambda: fresh()[0].text),
         "later paragraph": (lambda: later.text, lambda: fresh()[1].text),
         "its run": (lambda: later_run.text, lambda: fresh()[1].runs[0].text),
+        "last paragraph": (lambda: last.text, lambda: fresh()[2].text),
         "body paragraph": (lambda: body.text, lambda: doc.paragraphs[-1].text),
     }
-    check(doc, handles, [body_link], [later_link])
+    check(doc, handles, [body_link], [later_link, last_link])
 
 
 @IDS
@@ -469,3 +470,106 @@ def test_an_edit_in_a_text_box_retires_its_paragraph_and_keeps_the_paragraph_tha
     }
     # The box's story is not the body's: the body link keeps its route.
     check(doc, handles, [later], [])
+
+
+@IDS
+@pytest.mark.parametrize("insertion", ["Cell.add_table", "Cell.add_paragraph"])
+def test_the_cells_of_a_table_in_a_block_content_control_retire_when_cell_stories_move(insertion, ids):
+    # A table inside a block content control has no table or cell handle of its own: its cells' content is found by
+    # the ordinal of the cell story, which a table added in an earlier cell moves.
+    doc = document(
+        table(p("a")) + control(table(p("b"), p("c"))) + table(p("d")),
+        ids=ids,
+    )
+    in_control = {
+        text: next(item.paragraph for item in doc.story_items if item.kind == "paragraph" and item.text == text)
+        for text in ("b", "c")
+    }
+    runs = {text: paragraph.runs[0] for text, paragraph in in_control.items()}
+    # `doc.tables` lists the table in the control too: the later table is the last one.
+    later = doc.tables[-1].cell(0, 0).paragraphs[0]
+    later_run = later.runs[0]
+
+    cell = doc.tables[0].cell(0, 0)
+    if insertion == "Cell.add_table":
+        cell.add_table(1, 1)
+    else:
+        cell.add_paragraph("added")
+
+    moved = insertion == "Cell.add_table"
+    handles = {
+        "paragraph of the later table": (lambda: later.text, lambda: doc.tables[-1].cell(0, 0).paragraphs[0].text),
+        "its run": (lambda: later_run.text, lambda: doc.tables[-1].cell(0, 0).paragraphs[0].runs[0].text),
+    }
+    for text in ("b", "c"):
+        handles[f"paragraph {text}"] = (lambda h=in_control[text]: h.text, STALE if moved else (lambda t=text: t))
+        handles[f"run of {text}"] = (lambda h=runs[text]: h.text, STALE if moved else (lambda t=text: t))
+    check(doc, handles, [], [])
+
+
+@pytest.mark.parametrize("call", ["Run.remove", "Run.add_field", "Paragraph.text"])
+def test_an_edit_in_a_nested_block_content_control_still_works(call):
+    doc = document(p("before") + control(p("outer", " two"), control(p("inner", " two"))) + p("after"))
+    inner = next(paragraph for paragraph in doc.paragraphs if paragraph.text == "inner two")
+    {
+        "Run.remove": lambda: inner.runs[1].remove(),
+        "Run.add_field": lambda: inner.runs[0].add_field("PAGE", "1"),
+        "Paragraph.text": lambda: setattr(inner, "text", "inner"),
+    }[call]()
+    texts = [paragraph.text for paragraph in doc.paragraphs]
+    assert texts[0] == "before" and texts[-1] == "after"
+    assert texts[2] in ("inner", "inner1 two"), texts
+
+
+def plain_table_document(kind):
+    """A table without hyperlinks, text boxes or nested tables between two body paragraphs, made through the API
+    (new, or saved and opened again): `Paragraph.text` edits its cell paragraphs on the local cell route."""
+    doc = oxdocx.Document()
+    doc.add_paragraph("first").add_run(" second")
+    cells = doc.add_table(1, 2)
+    cells.cell(0, 0).text = "cell"
+    cells.cell(0, 1).text = "other"
+    doc.add_paragraph("last").add_run(" second")
+    return oxdocx.Document.from_bytes(doc.to_bytes()) if kind == "reopened" else doc
+
+
+LOCAL = pytest.mark.parametrize("kind", ["new", "reopened"])
+
+
+@LOCAL
+def test_a_cell_paragraph_edit_on_the_local_cell_route_keeps_the_runs_elsewhere(kind):
+    doc = plain_table_document(kind)
+    edited = doc.tables[0].cell(0, 0).paragraphs[0]
+    edited_run = edited.runs[0]
+    others = {
+        "first": doc.paragraphs[0].runs[0],
+        "other cell": doc.tables[0].cell(0, 1).paragraphs[0].runs[0],
+        "last": doc.paragraphs[1].runs[0],
+    }
+    cell, table_handle = doc.tables[0].cell(0, 0), doc.tables[0]
+
+    edited.text = "new text"
+
+    handles = {
+        "edited paragraph": (lambda: edited.text, lambda: "new text"),
+        "its run": (lambda: edited_run.text, STALE),
+        "cell": (lambda: cell.text, lambda: "new text"),
+        "table": (lambda: len(table_handle.rows), lambda: 1),
+    }
+    for label, run in others.items():
+        handles[f"run of {label}"] = (lambda h=run: h.text, lambda t=label.split()[0]: t)
+    check(doc, handles, [], [])
+
+
+@LOCAL
+def test_setting_the_text_a_cell_paragraph_already_has_on_the_local_cell_route_keeps_every_handle(kind):
+    doc = plain_table_document(kind)
+    doc.tables[0].cell(0, 0).paragraphs[0].text = "same"
+    paragraph = doc.tables[0].cell(0, 0).paragraphs[0]
+    run = paragraph.runs[0]
+    other = doc.paragraphs[0].runs[0]
+
+    paragraph.text = "same"
+
+    assert outcome(lambda: run.text) == "same"
+    assert outcome(lambda: other.text) == "first"

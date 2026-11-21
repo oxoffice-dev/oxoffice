@@ -137,6 +137,59 @@ fn a_cell_extent_is_its_story_with_what_it_holds() {
 }
 
 #[test]
+fn a_paragraph_in_a_cell_counts_its_own_cell_story_before_it() {
+    let doc = document();
+    let cell = story(&doc, StoryKind::TableCell, 0);
+    let extent = doc.element_extent(&cell, Some(&[0])).unwrap().unwrap();
+    assert_eq!(extent.items, (0, 1));
+    assert_eq!(extent.cell_stories, (1, 0));
+    assert_eq!(extent.text_boxes, (1, 0));
+}
+
+#[test]
+fn a_block_read_gives_the_extent_of_the_whole_part_for_its_block() {
+    let doc = document();
+    let body = story(&doc, StoryKind::Body, 0);
+    let whole = doc.element_extent(&body, Some(&[1])).unwrap().unwrap();
+    // Block 1 is the edited paragraph; block 0 holds one item and no story.
+    let block = doc
+        .block_element_extent(1, (1, 0, 0), &body, Some(&[1]))
+        .unwrap()
+        .unwrap();
+    assert_eq!(block.read, 1..4);
+    assert_eq!(
+        (
+            &block.xml,
+            block.items,
+            block.text_boxes,
+            block.cell_stories
+        ),
+        (
+            &whole.xml,
+            whole.items,
+            whole.text_boxes,
+            whole.cell_stories
+        )
+    );
+    assert_eq!(block.links, vec![(vec![1], 0, Equal)]);
+    // The cell of the table in block 3, after one text box and no cell story.
+    let cell = story(&doc, StoryKind::TableCell, 0);
+    let control = 4;
+    let in_block = doc
+        .block_element_extent(3, (control + 1, 1, 0), &cell, Some(&[0]))
+        .unwrap()
+        .unwrap();
+    let in_part = doc.element_extent(&cell, Some(&[0])).unwrap().unwrap();
+    assert_eq!(in_block, in_part);
+    // Not in that block.
+    assert_eq!(
+        doc.block_element_extent(0, (0, 0, 0), &body, Some(&[1]))
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
 fn an_element_the_part_does_not_hold_has_no_extent() {
     let doc = document();
     let body = story(&doc, StoryKind::Body, 0);

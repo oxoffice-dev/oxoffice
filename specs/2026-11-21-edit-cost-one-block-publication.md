@@ -79,7 +79,9 @@ matcher pairs old and new owners by equal route.
        owner of a later text box of that part;
      - when it changes how many table-cell stories its part holds, the
        hyperlinks of the later cell stories of that part. A cell, and what it
-       holds, is found through its table, which the edit does not move.
+       holds, is found through its table, which the edit does not move; the
+       content of a later cell whose table has no owner of its own (a table
+       inside a block content control) is found by its story, and retires.
      Paragraphs and tables keep their states: the body's are matched by their
      block slot, the other stories' by their ordinal among the story's
      paragraphs or tables, which an edit of one paragraph does not move.

@@ -439,10 +439,11 @@ impl PyRun {
                 added
             })
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::ParagraphEdit(
-            document
-                .paragraph_route(&location, None)
-                .map_err(|error| crate::docx_to_pyerr(py, error))?,
+        // A paragraph without a checked route retires every handle, as
+        // these edits did before.
+        let publication = document.paragraph_route(&location, None).map_or(
+            crate::document::WordPublication::Conservative,
+            crate::document::WordPublication::ParagraphEdit,
         );
         document.publish_block_edit(py, candidate, "Run.add_field", publication)
     }
@@ -464,10 +465,11 @@ impl PyRun {
                 added
             })
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::ParagraphEdit(
-            document
-                .paragraph_route(&location, None)
-                .map_err(|error| crate::docx_to_pyerr(py, error))?,
+        // A paragraph without a checked route retires every handle, as
+        // these edits did before.
+        let publication = document.paragraph_route(&location, None).map_or(
+            crate::document::WordPublication::Conservative,
+            crate::document::WordPublication::ParagraphEdit,
         );
         document.publish_block_edit(py, candidate, "Run.add_legacy_form_field", publication)
     }
@@ -480,10 +482,11 @@ impl PyRun {
         location
             .edit(&mut candidate, |paragraph| paragraph.remove_run(run_index))
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::ParagraphEdit(
-            document
-                .paragraph_route(&location, None)
-                .map_err(|error| crate::docx_to_pyerr(py, error))?,
+        // A paragraph without a checked route retires every handle, as
+        // these edits did before.
+        let publication = document.paragraph_route(&location, None).map_or(
+            crate::document::WordPublication::Conservative,
+            crate::document::WordPublication::ParagraphEdit,
         );
         document.publish_block_edit(py, candidate, "Run.remove", publication)
     }

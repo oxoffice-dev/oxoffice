@@ -248,6 +248,10 @@ pub struct ElementExtent {
     /// there are, the element itself included when it is an item. With none,
     /// the index the next item would take.
     pub items: (usize, usize),
+    /// The story items of the element's story that the read covers: all of
+    /// them, or those of one body block. `links` lists the hyperlinks of
+    /// those items only.
+    pub read: std::ops::Range<usize>,
     /// The hyperlinks of the element's story in document order: the index
     /// path of the story item that holds each, its index among that item's
     /// hyperlinks, and where it lies against the element (`Less` before,

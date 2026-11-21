@@ -182,6 +182,7 @@ impl Document {
     /// its item count, the hyperlinks after it in an item that holds it (a
     /// block content control) by the change in its hyperlink count, and the
     /// text box and table cell stories after it by the change in theirs.
+    /// The read covers the whole story.
     #[doc(hidden)]
     pub fn element_extent(
         &self,
@@ -203,110 +204,78 @@ impl Document {
                 None => return Ok(None),
             }
         };
-        let owners = scan_story_owners(&xml, root_kind)?;
-        let Some(owner) = owners
-            .iter()
-            .find(|owner| owner.kind == story.kind && owner.owner_index == story.owner_index)
+        extent_in_source(
+            &xml,
+            root_kind,
+            &story.part_name,
+            (story.kind, story.owner_index),
+            paragraph,
+        )
+    }
+
+    /// [`Self::element_extent`] read from the direct body block at `slot`
+    /// alone, as [`Self::body_item_owners`] reads it: `bases` are the story
+    /// items of the body and the text box and table cell stories of the main
+    /// part before that block. Item indexes and story ordinals are those of
+    /// the whole part; the read covers the block's body story items only, so
+    /// it lists the body story's hyperlinks in that block alone. `None` when
+    /// the element is not in that block.
+    #[doc(hidden)]
+    pub fn block_element_extent(
+        &self,
+        slot: usize,
+        (items, boxes, cells): (usize, usize, usize),
+        story: &StoryId,
+        paragraph: Option<&[usize]>,
+    ) -> Result<Option<ElementExtent>> {
+        if story.part_name != self.doc_part_name {
+            return Ok(None);
+        }
+        let Some(item) = self.document.body.content.get(slot) else {
+            return Ok(None);
+        };
+        let local = match story.kind {
+            StoryKind::Body => Some(story.owner_index),
+            StoryKind::TextBox => story.owner_index.checked_sub(boxes),
+            StoryKind::TableCell => story.owner_index.checked_sub(cells),
+            _ => None,
+        };
+        let Some(local) = local else {
+            return Ok(None);
+        };
+        let path = match paragraph {
+            Some(path) if story.kind == StoryKind::Body => {
+                let mut path = path.to_vec();
+                match path.first_mut().map(|head| head.checked_sub(items)) {
+                    Some(Some(head)) => path[0] = head,
+                    _ => return Ok(None),
+                }
+                Some(path)
+            }
+            Some(path) => Some(path.to_vec()),
+            None => None,
+        };
+        let xml = self.document.standalone_body_item_xml(item)?;
+        let Some(mut extent) = extent_in_source(
+            &xml,
+            StoryKind::Body,
+            &story.part_name,
+            (story.kind, local),
+            path.as_deref(),
+        )?
         else {
             return Ok(None);
         };
-        let owner_scopes = story_namespace_scopes_at(&xml, [owner.full.start])?;
-        let scope = owner_scopes.get(&owner.full.start).ok_or_else(|| {
-            Error::Other("story owner namespace scope was not inventoried".into())
-        })?;
-        let items = scan_story_items_with_scope(&xml, owner, scope, None)?;
-        let item_scopes = story_namespace_scopes_at(
-            &xml,
-            items
-                .iter()
-                .flat_map(|item| [item.scan.start, item.full.start]),
-        )?;
-        let id = StoryId {
-            kind: owner.kind,
-            part_name: story.part_name.clone(),
-            owner_index: owner.owner_index,
-            fingerprint: owner.fingerprint,
-        };
-        let span = match paragraph {
-            None => owner.full.clone(),
-            Some(path) => {
-                let spans = story_range_paragraph_spans_from_inventory(
-                    &xml,
-                    &[(id.clone(), owner.clone())],
-                    std::slice::from_ref(&items),
-                    &item_scopes,
-                )?;
-                match spans
-                    .into_iter()
-                    .flatten()
-                    .find(|(location, _)| location.index_path == path)
-                {
-                    Some((_, span)) => span,
-                    None => return Ok(None),
-                }
-            }
-        };
-        let placement = |range: &Range<usize>| {
-            if range.end <= span.start {
-                Some(std::cmp::Ordering::Less)
-            } else if span.end <= range.start {
-                Some(std::cmp::Ordering::Greater)
-            } else if span.start <= range.start && range.end <= span.end {
-                Some(std::cmp::Ordering::Equal)
-            } else {
-                None
-            }
-        };
-        let mut first = 0;
-        let mut count = 0;
-        for (index, item) in items.iter().enumerate() {
-            match placement(&item.full) {
-                Some(std::cmp::Ordering::Less) => first = index + 1,
-                Some(std::cmp::Ordering::Equal) if first + count == index => count += 1,
-                Some(std::cmp::Ordering::Greater) => {}
-                // A block content control holds the paragraph: it starts before.
-                None if item.full.start <= span.start && span.end <= item.full.end => {
-                    first = index + 1;
-                }
-                _ => return Ok(None),
+        if story.kind == StoryKind::Body {
+            extent.items.0 += items;
+            extent.read = extent.read.start + items..extent.read.end + items;
+            for (path, _, _) in &mut extent.links {
+                path[0] += items;
             }
         }
-        let mut local = HashMap::<Vec<usize>, usize>::new();
-        let mut links = Vec::new();
-        for (location, link) in ordered_story_link_spans(&xml, &id, items, &item_scopes)? {
-            let Some(place) = placement(&link.full) else {
-                return Ok(None);
-            };
-            let index = local.entry(location.index_path.clone()).or_default();
-            links.push((location.index_path, *index, place));
-            *index += 1;
-        }
-        let stories = |kind: StoryKind| {
-            let mut before = 0;
-            let mut inside = 0;
-            for other in owners.iter().filter(|other| other.kind == kind) {
-                if std::ptr::eq(other, owner) {
-                    continue;
-                }
-                match placement(&other.full) {
-                    Some(std::cmp::Ordering::Equal) => inside += 1,
-                    _ if other.full.start < span.start => before += 1,
-                    _ => {}
-                }
-            }
-            (before, inside)
-        };
-        let element_scope = story_namespace_scopes_at(&xml, [span.start])?;
-        let element_scope = element_scope.get(&span.start).ok_or_else(|| {
-            Error::Other("story element namespace scope was not inventoried".into())
-        })?;
-        Ok(Some(ElementExtent {
-            xml: close_content_fragment_namespaces(&xml[span.clone()], element_scope)?,
-            items: (first, count),
-            links,
-            text_boxes: stories(StoryKind::TextBox),
-            cell_stories: stories(StoryKind::TableCell),
-        }))
+        extent.text_boxes.0 += boxes;
+        extent.cell_stories.0 += cells;
+        Ok(Some(extent))
     }
 
     /// The bytes of every story owner, story item, paragraph and hyperlink of
@@ -903,4 +872,123 @@ pub fn resolved_xml_events(xml: &[u8]) -> Result<Vec<Vec<u8>>> {
         buffer.clear();
     }
     Ok(events)
+}
+
+/// The extent of the element of [`Document::element_extent`] in one story
+/// source: the paragraph at `paragraph` in the story of `kind` and ordinal
+/// `owner_index`, or that story itself.
+fn extent_in_source(
+    xml: &[u8],
+    root_kind: StoryKind,
+    part_name: &str,
+    (kind, owner_index): (StoryKind, usize),
+    paragraph: Option<&[usize]>,
+) -> Result<Option<ElementExtent>> {
+    let owners = scan_story_owners(xml, root_kind)?;
+    let Some(owner) = owners
+        .iter()
+        .find(|owner| owner.kind == kind && owner.owner_index == owner_index)
+    else {
+        return Ok(None);
+    };
+    let owner_scopes = story_namespace_scopes_at(xml, [owner.full.start])?;
+    let scope = owner_scopes
+        .get(&owner.full.start)
+        .ok_or_else(|| Error::Other("story owner namespace scope was not inventoried".into()))?;
+    let items = scan_story_items_with_scope(xml, owner, scope, None)?;
+    let item_scopes = story_namespace_scopes_at(
+        xml,
+        items
+            .iter()
+            .flat_map(|item| [item.scan.start, item.full.start]),
+    )?;
+    let id = StoryId {
+        kind: owner.kind,
+        part_name: part_name.to_owned(),
+        owner_index: owner.owner_index,
+        fingerprint: owner.fingerprint,
+    };
+    let span = match paragraph {
+        None => owner.full.clone(),
+        Some(path) => {
+            let spans = story_range_paragraph_spans_from_inventory(
+                xml,
+                &[(id.clone(), owner.clone())],
+                std::slice::from_ref(&items),
+                &item_scopes,
+            )?;
+            match spans
+                .into_iter()
+                .flatten()
+                .find(|(location, _)| location.index_path == path)
+            {
+                Some((_, span)) => span,
+                None => return Ok(None),
+            }
+        }
+    };
+    let placement = |range: &Range<usize>| {
+        if range.end <= span.start {
+            Some(std::cmp::Ordering::Less)
+        } else if span.end <= range.start {
+            Some(std::cmp::Ordering::Greater)
+        } else if span.start <= range.start && range.end <= span.end {
+            Some(std::cmp::Ordering::Equal)
+        } else {
+            None
+        }
+    };
+    let mut first = 0;
+    let mut count = 0;
+    for (index, item) in items.iter().enumerate() {
+        match placement(&item.full) {
+            Some(std::cmp::Ordering::Less) => first = index + 1,
+            Some(std::cmp::Ordering::Equal) if first + count == index => count += 1,
+            Some(std::cmp::Ordering::Greater) => {}
+            // A block content control holds the paragraph: it starts before.
+            None if item.full.start <= span.start && span.end <= item.full.end => {
+                first = index + 1;
+            }
+            _ => return Ok(None),
+        }
+    }
+    let read = 0..items.len();
+    let mut local = HashMap::<Vec<usize>, usize>::new();
+    let mut links = Vec::new();
+    for (location, link) in ordered_story_link_spans(xml, &id, items, &item_scopes)? {
+        let Some(place) = placement(&link.full) else {
+            return Ok(None);
+        };
+        let index = local.entry(location.index_path.clone()).or_default();
+        links.push((location.index_path, *index, place));
+        *index += 1;
+    }
+    let stories = |kind: StoryKind| {
+        let mut before = 0;
+        let mut inside = 0;
+        for other in owners.iter().filter(|other| other.kind == kind) {
+            // A cell is its own story; a paragraph's story starts before it.
+            if paragraph.is_none() && std::ptr::eq(other, owner) {
+                continue;
+            }
+            match placement(&other.full) {
+                Some(std::cmp::Ordering::Equal) => inside += 1,
+                _ if other.full.start < span.start => before += 1,
+                _ => {}
+            }
+        }
+        (before, inside)
+    };
+    let element_scope = story_namespace_scopes_at(xml, [span.start])?;
+    let element_scope = element_scope
+        .get(&span.start)
+        .ok_or_else(|| Error::Other("story element namespace scope was not inventoried".into()))?;
+    Ok(Some(ElementExtent {
+        xml: close_content_fragment_namespaces(&xml[span.clone()], element_scope)?,
+        items: (first, count),
+        read,
+        links,
+        text_boxes: stories(StoryKind::TextBox),
+        cell_stories: stories(StoryKind::TableCell),
+    }))
 }

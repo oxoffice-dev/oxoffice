@@ -1027,17 +1027,22 @@ impl PyParagraph {
         let location = self.validate(py)?;
         let text = text.unwrap_or_default();
         let mut document = self.document.borrow_mut(py);
-        let native = document
-            .paragraph_route(&location, None)
-            .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        if document.try_local_cell_paragraph_text(py, &native, text)? {
+        // A paragraph without a checked route (one in a nested block content
+        // control) retires every handle.
+        let native = document.paragraph_route(&location, None).ok();
+        if let Some(native) = &native
+            && document.try_local_cell_paragraph_text(py, native, text)?
+        {
             return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| paragraph.set_text(text))
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::ParagraphEdit(native);
+        let publication = native.map_or(
+            crate::document::WordPublication::Conservative,
+            crate::document::WordPublication::ParagraphEdit,
+        );
         document.publish_block_edit(py, candidate, "Paragraph.text", publication)
     }
 
