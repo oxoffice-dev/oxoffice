@@ -1768,15 +1768,379 @@ fn a_toc_bookmark_named_in_another_story_keeps_its_name() {
     assert_eq!(bookmark_names(&accepted(&mut doc)), ["_Toc1"]);
 }
 
-// Fails today: the same footnote, its reference moved to another paragraph,
-// is refused. Known limitation. Issue: #4
 #[test]
-#[should_panic(expected = "its reference moved to another site")]
 fn a_footnote_reference_moved_to_another_paragraph_is_compared() {
     let original = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
     let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
     let mut doc = redline(original, &edited);
+    // As Word shows it: the note is deleted with its old reference and
+    // inserted again with the new one.
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        [" ", "Source"]
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Insertion),
+        [" ", "Source"]
+    );
     let copy = accepted(&mut doc);
     assert_eq!(texts(&copy), ["Claim one.", "Claim two."]);
     assert_eq!(copy.footnotes().len(), 1);
+    assert_eq!(noted_texts(&copy), ["Claim one.", "Claim two.[Source]"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(copy.footnotes().len(), 1);
+    assert_eq!(noted_texts(&copy), ["Claim one.[Source]", "Claim two."]);
+}
+
+/// Each body paragraph's text with its footnote references shown as
+/// `[note text]`, whatever their ids.
+fn noted_texts(doc: &Document) -> Vec<String> {
+    let notes = doc.footnotes().into_iter().collect::<HashMap<_, _>>();
+    doc.paragraphs()
+        .iter()
+        .map(|paragraph| {
+            let mut text = String::new();
+            for run in paragraph.runs() {
+                for item in run.items() {
+                    match item {
+                        RunItemRef::Text(part) => text.push_str(part),
+                        RunItemRef::FootnoteReference(id) => {
+                            let note = notes.get(&id).map_or("?", |note| note.trim());
+                            text.push_str(&format!("[{note}]"));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            text
+        })
+        .collect()
+}
+
+#[test]
+fn swapped_footnote_references_are_compared() {
+    // Both versions hold the same two notes, each referenced from the
+    // other paragraph.
+    let document = |swapped: bool| {
+        let mut doc = Document::new();
+        let first = doc.add_footnote("First");
+        let second = doc.add_footnote("Second");
+        let (a, b) = if swapped {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        doc.add_paragraph("A.").add_footnote_ref(a);
+        doc.add_paragraph("B.").add_footnote_ref(b);
+        doc
+    };
+    let mut doc = redline(document(false), &document(true));
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[Second]", "B.[First]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[First]", "B.[Second]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+}
+
+#[test]
+fn a_moved_footnote_whose_text_changed_is_compared() {
+    let original = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source, p. 4"))]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Claim one.", "Claim two.[Source, p. 4]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["Claim one.[Source]", "Claim two."]
+    );
+}
+
+#[test]
+fn a_footnote_reference_moved_within_its_paragraph_is_compared() {
+    let document = |at_end: bool| {
+        let mut doc = Document::new();
+        let id = doc.add_footnote("Source");
+        let mut paragraph = doc.add_paragraph("Claim");
+        if !at_end {
+            paragraph.add_footnote_ref(id);
+        }
+        paragraph.add_run(" and more.");
+        if at_end {
+            paragraph.add_footnote_ref(id);
+        }
+        doc
+    };
+    let mut doc = redline(document(false), &document(true));
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Claim and more.[Source]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["Claim[Source] and more."]
+    );
+}
+
+/// A new document holding these paragraphs, each with its footnote if any,
+/// the notes created in paragraph order as Word numbers them when it saves.
+fn doc_with_notes_in_order(paragraphs: &[(&str, Option<&str>)]) -> Document {
+    let mut doc = Document::new();
+    let ids = paragraphs
+        .iter()
+        .map(|(_, note)| note.map(|note| doc.add_footnote(note)))
+        .collect::<Vec<_>>();
+    for ((text, _), id) in paragraphs.iter().zip(ids) {
+        let mut paragraph = doc.add_paragraph(text);
+        if let Some(id) = id {
+            paragraph.add_footnote_ref(id);
+        }
+    }
+    doc
+}
+
+#[test]
+fn a_note_added_before_others_is_the_only_note_change() {
+    // Word numbers notes by position: the new first note takes the id of
+    // the old first one, and every later note moves up one.
+    let sections = [
+        ("One.", Some("A")),
+        ("Two.", Some("B")),
+        ("Three.", Some("C")),
+    ];
+    let edited = doc_with_notes_in_order(&[
+        ("Zero.", Some("N")),
+        ("One.", Some("A")),
+        ("Two.", Some("B")),
+        ("Three.", Some("C")),
+    ]);
+    let mut doc = redline(doc_with_notes_in_order(&sections), &edited);
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        Vec::<String>::new()
+    );
+    let inserted = revision_texts(&doc, RevisionKind::Insertion);
+    assert!(
+        !inserted
+            .iter()
+            .any(|text| ["A", "B", "C"].contains(&text.as_str())),
+        "an unchanged note is not revised: {inserted:?}"
+    );
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Zero.[N]", "One.[A]", "Two.[B]", "Three.[C]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["One.[A]", "Two.[B]", "Three.[C]"]
+    );
+}
+
+#[test]
+fn a_paragraph_moved_with_its_footnote_is_deleted_and_inserted_with_the_note() {
+    // A move would leave its two ends naming one note, so the paragraph is
+    // deleted with its note and inserted again with a new one.
+    let original = doc_with_notes_in_order(&[("Claim.", Some("Source")), ("Other.", None)]);
+    let edited = doc_with_notes_in_order(&[("Other.", None), ("Claim.", Some("Source"))]);
+    let mut doc = redline(original, &edited);
+    assert!(
+        !kinds(&doc).contains(&RevisionKind::MoveFrom),
+        "{:?}",
+        kinds(&doc)
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Other.", "Claim.[Source]"]);
+    assert_eq!(copy.footnotes().len(), 1);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[Source]", "Other."]);
+    assert_eq!(copy.footnotes().len(), 1);
+}
+
+#[test]
+fn swapped_footnote_references_numbered_by_position_are_compared() {
+    // As Word saves them: each version numbers its notes in reading order.
+    let original = doc_with_notes_in_order(&[("A.", Some("First")), ("B.", Some("Second"))]);
+    let edited = doc_with_notes_in_order(&[("A.", Some("Second")), ("B.", Some("First"))]);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[Second]", "B.[First]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[First]", "B.[Second]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+}
+
+#[test]
+fn a_note_added_above_and_a_reference_moved_down_are_compared() {
+    let original =
+        doc_with_notes_in_order(&[("One.", Some("A")), ("Two.", None), ("Three.", Some("B"))]);
+    let edited = doc_with_notes_in_order(&[
+        ("Zero.", Some("N")),
+        ("One.", None),
+        ("Two.", Some("A")),
+        ("Three.", Some("B")),
+    ]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Zero.[N]", "One.", "Two.[A]", "Three.[B]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["One.[A]", "Two.", "Three.[B]"]
+    );
+}
+
+#[test]
+fn a_moved_note_under_a_new_id_is_compared() {
+    // The edited version deleted the note and wrote a new one, under a new
+    // id, at the next paragraph; the other note keeps its id.
+    let original = doc_with_notes(&[("One.", Some("A")), ("Two.", None), ("Three.", Some("B"))]);
+    let mut edited = doc_with_notes(&[("One.", Some("A")), ("Two.", None), ("Three.", Some("B"))]);
+    let first = edited.footnotes()[0].0;
+    edited.remove_footnote(first).unwrap();
+    let id = edited.add_footnote("A, p. 4");
+    edited.paragraph_mut(1).unwrap().add_footnote_ref(id);
+    let edited = reopen(&mut edited);
+    assert_eq!(noted_texts(&edited), ["One.", "Two.[A, p. 4]", "Three.[B]"]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["One.", "Two.[A, p. 4]", "Three.[B]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["One.[A]", "Two.", "Three.[B]"]
+    );
+}
+
+#[test]
+fn a_note_neither_version_references_keeps_its_id() {
+    let document = |source: &str| {
+        let mut doc = Document::new();
+        doc.add_footnote("Orphan");
+        let id = doc.add_footnote(source);
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let mut doc = redline(document("Src"), &document("Src, p. 4"));
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[Src, p. 4]"]);
+    let notes = copy
+        .footnotes()
+        .into_iter()
+        .map(|(_, text)| text.trim().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(notes, ["Orphan", "Src, p. 4"]);
+    assert_eq!(noted_texts(&rejected(&mut doc)), ["Claim.[Src]"]);
+}
+
+#[test]
+fn a_note_the_edited_version_does_not_reference_keeps_the_id_a_pair_would_take() {
+    // The edited version holds a note it does not reference under the id the
+    // original gives the referenced note; that note keeps its id and the
+    // referenced one is compared as moved to a new id.
+    let original = {
+        let mut doc = Document::new();
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let edited = {
+        let mut doc = Document::new();
+        doc.add_footnote("B");
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let notes = |doc: &Document| {
+        doc.footnotes()
+            .into_iter()
+            .map(|(id, text)| (id, text.trim().to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let unreferenced = notes(&edited)[0].clone();
+    assert_eq!(unreferenced.1, "B");
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    let after = notes(&copy);
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0], unreferenced);
+    assert_eq!(after[1].1, "A");
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(
+        notes(&copy)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>(),
+        ["A"]
+    );
+}
+
+#[test]
+fn a_note_the_original_does_not_reference_keeps_the_id_a_pair_would_leave() {
+    // The original holds a draft note it does not reference before the
+    // referenced one; the edited version, numbered by position, holds the
+    // referenced note under the draft's id. The draft is revised in place.
+    let original = {
+        let mut doc = Document::new();
+        doc.add_footnote("Draft");
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let edited = {
+        let mut doc = Document::new();
+        let id = doc.add_footnote("A");
+        doc.add_paragraph("Claim.").add_footnote_ref(id);
+        doc
+    };
+    let notes = |doc: &Document| {
+        doc.footnotes()
+            .into_iter()
+            .map(|(id, text)| (id, text.trim().to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let before = notes(&original);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(notes(&copy), [(before[0].0, "A".to_owned())]);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
+    assert_eq!(notes(&copy), before);
+}
+
+#[test]
+fn a_note_only_the_edited_version_references_is_revised_in_place() {
+    // The original holds a draft note it does not reference yet; the edited
+    // version rewrites it and references it.
+    let document = |draft: &str, referenced: bool| {
+        let mut doc = Document::new();
+        let note = doc.add_footnote(draft);
+        let source = doc.add_footnote("Src");
+        doc.add_paragraph("One.").add_footnote_ref(source);
+        let mut second = doc.add_paragraph("Two.");
+        if referenced {
+            second.add_footnote_ref(note);
+        }
+        doc
+    };
+    let notes = |doc: &Document| {
+        doc.footnotes()
+            .into_iter()
+            .map(|(_, text)| text.trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let mut doc = redline(document("Draft", false), &document("Final", true));
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["One.[Src]", "Two.[Final]"]);
+    assert_eq!(notes(&copy), ["Final", "Src"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["One.[Src]", "Two."]);
+    assert_eq!(notes(&copy), ["Draft", "Src"]);
 }

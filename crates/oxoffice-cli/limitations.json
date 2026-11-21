@@ -9,15 +9,6 @@
     "issue": 66
   },
   {
-    "id": "docx-compare-moved-footnote",
-    "format": "docx",
-    "area": "compare",
-    "title": "Comparison refuses two versions where a footnote reference moved",
-    "symptom": "compare refuses and writes nothing (\"its reference moved to another site\")",
-    "workaround": "compare that pair in Word",
-    "issue": 4
-  },
-  {
     "id": "docx-compare-final-table",
     "format": "docx",
     "area": "compare",

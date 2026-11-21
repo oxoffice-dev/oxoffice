@@ -338,7 +338,11 @@ enum Command {
     /// a body bookmark both files hold keeps the original's id, a heading
     /// paired with one of the original's takes its `_Toc` name, a new heading
     /// takes a fresh one where the original uses its own, and the links and
-    /// page references of the edited file follow them.
+    /// page references of the edited file follow them. Footnote ids, which Word
+    /// also renumbers, take the original's, the notes paired in reference
+    /// order. A footnote whose reference moved is deleted with its old
+    /// reference and inserted again, under a new id, with the new one, as Word
+    /// shows it.
     Compare {
         /// Original DOCX file
         original: PathBuf,
