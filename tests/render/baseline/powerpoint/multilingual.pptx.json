@@ -1,9 +1,9 @@
 {
   "file": "powerpoint/multilingual.pptx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "a deck's PDF names the language of its default text (#159)",
   "resources": "b4a7b1ce0b33f5f877c1790fdefe29aa75bc59fe2cd1174d94d0c2a980db0b49",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
+  "catalog": "b27a9b5434eefbc2920ba3c5e96c5d930939a9e48f6b570df1ff3419747be10b",
   "pages": [
     {"page": 1, "pixels": "986b9cebc35b28c1c0a1683db48e0c0d0cc2e1bb8a2ad8fb153aab1053e8afc5", "content": "08385f2786ed7c27a52d27ec9a3e9067449bafa0e74eef4a46796f6725ec8f15", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 2, "pixels": "1690229b372eb7c2a7a6907a64552c66b9ad962f38cb690a769b4f0e4216a9c8", "content": "53b9db004f34fcbdc14f72be7e3d603a47f2e5008401b5c2f7e3f7ebfce2b2fe", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},

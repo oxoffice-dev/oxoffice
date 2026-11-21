@@ -1,9 +1,9 @@
 {
   "file": "powerpoint/long-deck.pptx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "a deck's PDF names the language of its default text (#159)",
   "resources": "9628f6df0821fdf2f866090ea82a7f52549c03bedfcd65aeb5a1f2fc2f279913",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
+  "catalog": "b27a9b5434eefbc2920ba3c5e96c5d930939a9e48f6b570df1ff3419747be10b",
   "pages": [
     {"page": 1, "pixels": "df4d537b6a1b322284829c3761caa5d8241f904bb821174177baa871dcd143ca", "content": "b6e5863841220913f57f5c98595f37357cfe2b311b9d37b651f8c9f4de77141c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 2, "pixels": "117f90ede864ad338793e03c9b327750e21b3961a50da33f2a731dfeb7062f49", "content": "1dc8b1dea23bcae3b28bc4d1e0c4f85a59b353420fe9fcbd3d22765cbd6303a6", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
