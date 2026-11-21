@@ -59,9 +59,10 @@ workflow = "redline"
 issue = 408
 message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
 
-# Google's copy refuses the footnote the new version adds before its equation.
+# Google's copy compares the footnote the new version adds (#419), then stops
+# on its equation too.
 [[known]]
 file = "google/thesis.docx"
 workflow = "redline"
-issue = 419
-message = "footnotes retained root/special/opaque shell changed"
+issue = 408
+message = "comparison acceptance does not reproduce the edited stories at body story item[55]"
