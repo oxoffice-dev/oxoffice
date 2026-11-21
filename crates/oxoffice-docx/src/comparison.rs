@@ -999,6 +999,11 @@ fn crossing_reply_additions(
 
 impl Document {
     /// Compare every supported Word story with `edited` and record tracked changes.
+    ///
+    /// Bookmark ids, which Word renumbers on every save, and the `_Toc` names
+    /// a rebuilt table of contents gives its heading bookmarks are no change:
+    /// a body bookmark both documents hold keeps this document's id and name,
+    /// and the links and page references of `edited` follow it.
     pub fn compare(
         &mut self,
         edited: &Document,
@@ -1023,6 +1028,9 @@ impl Document {
         if !story_ignored(options, ComparisonStoryKind::Footnote) {
             retire_completed_footnote_inputs(&mut original, &mut edited)?;
             reconcile_footnote_custody_inputs(&original, &mut edited)?;
+        }
+        if !story_ignored(options, ComparisonStoryKind::Main) {
+            reconcile_body_bookmarks(&original, &mut edited)?;
         }
         preflight_footnote_inputs(
             &original,
@@ -5570,6 +5578,503 @@ fn reconcile_footnote_custody_inputs(original: &Document, edited: &mut Document)
     }
     validate_footnote_custody(edited, &crate::revision::RevisionScope::All)?;
     Ok(())
+}
+
+/// A bookmark start of a main story.
+struct BodyBookmark {
+    id: Option<i32>,
+    name: Option<String>,
+    /// The text of its paragraph, read for a generated heading bookmark only.
+    heading: String,
+}
+
+/// Word and [`Document::rebuild_toc`] name the bookmarks a table of contents
+/// links to `_Toc` followed by digits, and rename them when they rebuild it.
+fn generated_heading_bookmark(name: &str) -> bool {
+    name.strip_prefix("_Toc").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+/// Word renumbers bookmark ids on every save, and a rebuilt table of contents
+/// renames the `_Toc` bookmarks of its headings. Neither changes what the
+/// document says, and no tracked change can record either. Before comparing,
+/// the edited main story takes the original's id for each bookmark name both
+/// inputs hold, and the original's name for each `_Toc` bookmark paired with
+/// one of the original by heading text, in order. Its links and field
+/// instructions that name a renamed bookmark follow, so it reads the same. A
+/// bookmark only the edited input holds takes a fresh id or name where the
+/// original uses its own. When a reference cannot follow, because a field
+/// splits the name across runs or another story names it, the edited input
+/// stays as it is.
+fn reconcile_body_bookmarks(original: &Document, edited: &mut Document) -> Result<()> {
+    fn part_xml<'a>(document: &'a Document, name: &str) -> Result<&'a [u8]> {
+        document
+            .package
+            .get_part(name)
+            .ok_or_else(|| Error::Other(format!("missing comparison story {name}")))
+    }
+    let left_xml = part_xml(original, &original.doc_part_name)?;
+    let right_xml = part_xml(edited, &edited.doc_part_name)?;
+    let left = body_bookmarks(left_xml)?;
+    let right = body_bookmarks(right_xml)?;
+    if right.is_empty() {
+        return Ok(());
+    }
+    let mut parts = Vec::new();
+    for document in [original, &*edited] {
+        parts.push((document, document.doc_part_name.clone()));
+        for story in story_parts(document)? {
+            if story.part_name != document.doc_part_name {
+                parts.push((document, story.part_name));
+            }
+        }
+    }
+
+    let generated = |bookmarks: &[BodyBookmark]| {
+        bookmarks
+            .iter()
+            .filter_map(|bookmark| {
+                let name = bookmark.name.as_deref()?;
+                generated_heading_bookmark(name)
+                    .then(|| (name.to_owned(), bookmark.heading.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let left_generated = generated(&left);
+    let right_generated = generated(&right);
+    let headings = |generated: &[(String, String)]| {
+        generated
+            .iter()
+            .map(|(_, heading)| heading.clone())
+            .collect::<Vec<_>>()
+    };
+    let left_names = left
+        .iter()
+        .filter_map(|bookmark| bookmark.name.as_deref())
+        .collect::<HashSet<_>>();
+    let mut names = HashMap::new();
+    let mut unpaired = Vec::new();
+    for pair in align(&headings(&left_generated), &headings(&right_generated)) {
+        match pair {
+            (Some(left), Some(right)) => {
+                names.insert(
+                    right_generated[right].0.clone(),
+                    left_generated[left].0.clone(),
+                );
+            }
+            (None, Some(right)) => unpaired.push(&right_generated[right].0),
+            _ => {}
+        }
+    }
+    // A name of the original on a heading it does not pair would meet that
+    // bookmark in the redline: such a heading takes a name neither input uses.
+    let mut taken = None;
+    for name in unpaired {
+        if left_names.contains(name.as_str()) {
+            let (taken, suffix) = match &mut taken {
+                Some(taken) => taken,
+                slot => {
+                    let mut tokens = HashSet::new();
+                    for (document, name) in &parts {
+                        for token in name_tokens(part_xml(document, name)?) {
+                            tokens.insert(token.to_owned());
+                        }
+                    }
+                    let suffix = tokens
+                        .iter()
+                        .filter_map(|token| token.strip_prefix("_Toc")?.parse::<u64>().ok())
+                        .max()
+                        .unwrap_or(0);
+                    slot.insert((tokens, suffix))
+                }
+            };
+            let fresh = loop {
+                *suffix = suffix.checked_add(1).ok_or_else(|| {
+                    Error::Other("comparison bookmark names are exhausted".into())
+                })?;
+                let candidate = format!("_Toc{suffix}");
+                if !taken.contains(&candidate) {
+                    break candidate;
+                }
+            };
+            names.insert(name.clone(), fresh);
+        }
+    }
+    names.retain(|from, to| from != to);
+    let final_name = |bookmark: &BodyBookmark| {
+        bookmark
+            .name
+            .as_ref()
+            .map(|name| names.get(name).unwrap_or(name).clone())
+    };
+    let mut final_names = HashSet::new();
+    if right
+        .iter()
+        .filter_map(final_name)
+        .any(|name| !final_names.insert(name))
+    {
+        return Ok(());
+    }
+
+    // The original's id for a name both hold, and a fresh id where a
+    // bookmark only the edited input holds uses an id of the original.
+    let mut left_ids = HashMap::new();
+    let mut ambiguous = HashSet::new();
+    for bookmark in &left {
+        if let (Some(name), Some(id)) = (bookmark.name.as_deref(), bookmark.id)
+            && left_ids.insert(name, id).is_some()
+        {
+            ambiguous.insert(name);
+        }
+    }
+    for name in ambiguous {
+        left_ids.remove(name);
+    }
+    let left_id_set = left
+        .iter()
+        .filter_map(|bookmark| bookmark.id)
+        .collect::<HashSet<_>>();
+    let mut allocator = None;
+    let mut ids = HashMap::new();
+    let mut targets = HashSet::new();
+    for bookmark in &right {
+        let Some(id) = bookmark.id else {
+            continue;
+        };
+        let name = final_name(bookmark);
+        // Footnote custody markers are reconciled by their own owner.
+        let custody = name
+            .as_deref()
+            .is_some_and(|name| name.starts_with("_rdocxCmp"));
+        let target = match name.as_deref().and_then(|name| left_ids.get(name)) {
+            _ if custody => id,
+            Some(&target) => target,
+            None if left_id_set.contains(&id) => {
+                let allocator = match &mut allocator {
+                    Some(allocator) => allocator,
+                    slot => {
+                        let mut occupied = HashSet::new();
+                        for (document, name) in &parts {
+                            occupied.extend(word_ids(part_xml(document, name)?)?);
+                        }
+                        slot.insert(IdAllocator::new(occupied))
+                    }
+                };
+                allocator.allocate()?
+            }
+            None => id,
+        };
+        if ids.insert(id, target).is_some() || !targets.insert(target) {
+            return Ok(());
+        }
+    }
+    ids.retain(|from, to| from != to);
+    if names.is_empty() && ids.is_empty() {
+        return Ok(());
+    }
+    for (document, name) in &parts {
+        if std::ptr::eq(*document, &*edited)
+            && *name != edited.doc_part_name
+            && name_tokens(part_xml(document, name)?).any(|token| names.contains_key(token))
+        {
+            return Ok(());
+        }
+    }
+    let Some(xml) = rewrite_body_bookmarks(right_xml, &names, &ids)? else {
+        return Ok(());
+    };
+    let part = edited.doc_part_name.clone();
+    crate::document::set_story_source_xml(edited, &part, xml)
+}
+
+/// The bookmark starts of a main story, in document order. Copies in an
+/// `mc:Fallback` repeat their `mc:Choice` and are left out.
+fn body_bookmarks(xml: &[u8]) -> Result<Vec<BodyBookmark>> {
+    let tree = crate::revision::XmlTree::parse(xml)?;
+    let mut bookmarks = Vec::new();
+    for (index, node) in tree.elements.iter().enumerate() {
+        if !node.word || node.local != "bookmarkStart" || in_fallback(&tree, index) {
+            continue;
+        }
+        let attributes = word_attributes(&tree, xml, index)?;
+        let name = attributes.get("name").cloned();
+        let heading = if name.as_deref().is_some_and(generated_heading_bookmark) {
+            enclosing_paragraph_text(&tree, xml, index)
+        } else {
+            String::new()
+        };
+        bookmarks.push(BodyBookmark {
+            id: attributes.get("id").and_then(|id| id.parse().ok()),
+            name,
+            heading,
+        });
+    }
+    Ok(bookmarks)
+}
+
+fn in_fallback(tree: &crate::revision::XmlTree<'_>, index: usize) -> bool {
+    let mut current = tree.elements[index].parent;
+    while let Some(parent) = current {
+        let node = &tree.elements[parent];
+        if !node.word && node.local == "Fallback" {
+            return true;
+        }
+        current = node.parent;
+    }
+    false
+}
+
+/// The `w:t` text of the paragraph holding `index`, empty outside a paragraph.
+fn enclosing_paragraph_text(
+    tree: &crate::revision::XmlTree<'_>,
+    xml: &[u8],
+    index: usize,
+) -> String {
+    let mut current = tree.elements[index].parent;
+    while let Some(parent) = current {
+        let node = &tree.elements[parent];
+        if node.word && node.local == "p" {
+            return tree.elements[parent + 1..]
+                .iter()
+                .take_while(|child| child.start < node.end)
+                .filter(|child| child.word && child.local == "t" && !child.empty)
+                .map(|child| String::from_utf8_lossy(&xml[child.open_end..child.close_start]))
+                .collect();
+        }
+        current = node.parent;
+    }
+    String::new()
+}
+
+/// The Word attributes of an element, raw values by local name.
+fn word_attributes(
+    tree: &crate::revision::XmlTree<'_>,
+    xml: &[u8],
+    index: usize,
+) -> Result<BTreeMap<String, String>> {
+    let node = &tree.elements[index];
+    let scope = tree
+        .source_scope(index)
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let mut reader = Reader::from_reader(&xml[node.start..node.open_end]);
+    let (Event::Start(start) | Event::Empty(start)) = reader
+        .read_event()
+        .map_err(|error| Error::Other(error.to_string()))?
+    else {
+        unreachable!("element opening");
+    };
+    let mut attributes = BTreeMap::new();
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+        let key = std::str::from_utf8(attribute.key.as_ref()).map_err(utf8_error)?;
+        if let Some((prefix, local)) = key.split_once(':')
+            && scope.get(prefix).is_some_and(|uri| uri == W_NS)
+        {
+            let value = std::str::from_utf8(&attribute.value).map_err(utf8_error)?;
+            attributes.insert(local.to_owned(), value.to_owned());
+        }
+    }
+    Ok(attributes)
+}
+
+/// The runs of letters, digits and underscores in `text`, the characters a
+/// bookmark name is made of, as they appear in field instructions and anchors.
+fn name_token_ranges(text: &[u8]) -> impl Iterator<Item = Range<usize>> + '_ {
+    let name = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_';
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let start = at + text[at..].iter().position(name)?;
+        let end = start
+            + text[start..]
+                .iter()
+                .position(|byte| !name(byte))
+                .unwrap_or(text.len() - start);
+        at = end;
+        Some(start..end)
+    })
+}
+
+fn name_tokens(text: &[u8]) -> impl Iterator<Item = &str> {
+    name_token_ranges(text).map(|range| std::str::from_utf8(&text[range]).expect("ASCII token"))
+}
+
+/// The main story with these bookmark names and ids, with its links and field
+/// instructions naming a renamed bookmark. None when a field instruction
+/// splits a renamed name across runs.
+fn rewrite_body_bookmarks(
+    xml: &[u8],
+    names: &HashMap<String, String>,
+    ids: &HashMap<i32, i32>,
+) -> Result<Option<Vec<u8>>> {
+    let tree = crate::revision::XmlTree::parse(xml)?;
+    let renamed = |value: &[u8]| -> Option<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut at = 0;
+        for range in name_token_ranges(value) {
+            let token = std::str::from_utf8(&value[range.clone()]).expect("ASCII token");
+            if let Some(name) = names.get(token) {
+                output.extend_from_slice(&value[at..range.start]);
+                output.extend_from_slice(name.as_bytes());
+                at = range.end;
+            }
+        }
+        (at > 0).then(|| {
+            output.extend_from_slice(&value[at..]);
+            output
+        })
+    };
+    let renumbered = |value: &[u8]| {
+        let id = std::str::from_utf8(value).ok()?.parse::<i32>().ok()?;
+        ids.get(&id).map(|id| id.to_string().into_bytes())
+    };
+    let mut edits = Vec::new();
+    // The instruction elements of each open complex field, while its
+    // instruction is read: a renamed name must sit in one of them.
+    let mut fields: Vec<(Vec<usize>, bool)> = Vec::new();
+    let instruction = |elements: Vec<usize>, edits: &mut Vec<(Range<usize>, Vec<u8>)>| {
+        let mut text = Vec::new();
+        let mut segments = Vec::new();
+        for index in elements {
+            let node = &tree.elements[index];
+            if node.empty {
+                continue;
+            }
+            segments.push((text.len(), node.open_end));
+            text.extend_from_slice(&xml[node.open_end..node.close_start]);
+        }
+        for range in name_token_ranges(&text) {
+            let token = std::str::from_utf8(&text[range.clone()]).expect("ASCII token");
+            let Some(name) = names.get(token) else {
+                continue;
+            };
+            let at = segments.partition_point(|(start, _)| *start <= range.start) - 1;
+            let segment_end = segments.get(at + 1).map_or(text.len(), |(start, _)| *start);
+            if range.end > segment_end {
+                return false;
+            }
+            let (start, source) = segments[at];
+            let from = source + range.start - start;
+            edits.push((from..from + range.len(), name.clone().into_bytes()));
+        }
+        true
+    };
+    for (index, node) in tree.elements.iter().enumerate() {
+        if !node.word {
+            continue;
+        }
+        match node.local.as_str() {
+            "fldChar" => {
+                match word_attributes(&tree, xml, index)?
+                    .get("fldCharType")
+                    .map(String::as_str)
+                {
+                    Some("begin") => fields.push((Vec::new(), true)),
+                    Some("separate") => {
+                        if let Some(field) = fields.last_mut() {
+                            field.1 = false;
+                        }
+                    }
+                    Some("end") => {
+                        if let Some((elements, _)) = fields.pop()
+                            && !instruction(elements, &mut edits)
+                        {
+                            return Ok(None);
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            "instrText" | "delInstrText" => {
+                match fields.last_mut() {
+                    Some((elements, true)) => elements.push(index),
+                    _ => {
+                        if !instruction(vec![index], &mut edits) {
+                            return Ok(None);
+                        }
+                    }
+                }
+                continue;
+            }
+            "bookmarkStart" | "bookmarkEnd" | "hyperlink" | "fldSimple" => {}
+            _ => continue,
+        }
+        let updated = rewritten_opening(&tree, xml, index, |local, value| {
+            match (node.local.as_str(), local) {
+                ("bookmarkStart" | "bookmarkEnd", "id") => renumbered(value),
+                ("bookmarkStart", "name") | ("hyperlink", "anchor") | ("fldSimple", "instr") => {
+                    renamed(value)
+                }
+                _ => None,
+            }
+        })?;
+        if let Some(updated) = updated {
+            edits.push((node.start..node.open_end, updated));
+        }
+    }
+    for (elements, _) in std::mem::take(&mut fields) {
+        if !instruction(elements, &mut edits) {
+            return Ok(None);
+        }
+    }
+    edits.sort_by_key(|(range, _)| range.start);
+    let mut updated = xml.to_vec();
+    for (range, value) in edits.into_iter().rev() {
+        updated.splice(range, value);
+    }
+    Ok(Some(updated))
+}
+
+/// The opening tag of an element with some Word attribute values replaced,
+/// or None when `value` replaces none. `value` takes the local name and the
+/// raw value, and returns the raw replacement.
+fn rewritten_opening(
+    tree: &crate::revision::XmlTree<'_>,
+    xml: &[u8],
+    index: usize,
+    value: impl Fn(&str, &[u8]) -> Option<Vec<u8>>,
+) -> Result<Option<Vec<u8>>> {
+    let node = &tree.elements[index];
+    let scope = tree
+        .source_scope(index)
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let mut reader = Reader::from_reader(&xml[node.start..node.open_end]);
+    let (Event::Start(start) | Event::Empty(start)) = reader
+        .read_event()
+        .map_err(|error| Error::Other(error.to_string()))?
+    else {
+        unreachable!("element opening");
+    };
+    let mut changed = false;
+    let mut updated = BytesStart::new(node.name.as_str());
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+        let key = std::str::from_utf8(attribute.key.as_ref()).map_err(utf8_error)?;
+        let replacement = key
+            .split_once(':')
+            .filter(|(prefix, _)| scope.get(*prefix).is_some_and(|uri| uri == W_NS))
+            .and_then(|(_, local)| value(local, &attribute.value));
+        match replacement {
+            Some(replacement) => {
+                changed = true;
+                updated.push_attribute((key.as_bytes(), replacement.as_slice()));
+            }
+            None => updated.push_attribute((key.as_bytes(), attribute.value.as_ref())),
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut writer = Writer::new(Vec::new());
+    writer.write_event(if node.empty {
+        Event::Empty(updated)
+    } else {
+        Event::Start(updated)
+    })?;
+    Ok(Some(writer.into_inner()))
 }
 
 fn retire_completed_footnote_inputs(original: &mut Document, edited: &mut Document) -> Result<()> {

@@ -1254,6 +1254,11 @@ class Document:
         raises ``DocxError`` with its location, and the document is left
         unchanged. Section properties holding revisions must also stay
         unchanged in both inputs. Changing them raises ``DocxError``.
+
+        Bookmark ids, which Word renumbers on every save, and the ``_Toc``
+        names a rebuilt table of contents gives its heading bookmarks are no
+        change: a body bookmark both documents hold keeps this document's id
+        and name, and the links and page references of ``edited`` follow it.
         """
     @property
     def comments(self) -> tuple[Comment, ...]: ...

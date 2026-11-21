@@ -13,7 +13,6 @@ python -c "import oxoffice; print(oxoffice.limitations('docx'))"
 
 | Area | Limitation | Workaround | Issue |
 | --- | --- | --- | --- |
-| compare | Comparison refuses two versions whose TOC heading bookmarks were renumbered: compare refuses with "duplicate bookmark id N in authored XML" or "cannot revise paragraph boundary structures" | remove the _Toc bookmarks from both copies, compare, then rebuild the table of contents on the result | [#3](https://github.com/oxoffice-dev/oxoffice/issues/3) |
 | compare | Comparison refuses two versions where a footnote reference moved: compare refuses and writes nothing ("its reference moved to another site") | compare that pair in Word | [#4](https://github.com/oxoffice-dev/oxoffice/issues/4) |
 | replace | Text replacement through Python is slower than the CLI: about 1.5 times the time of the CLI for the same pairs | when only replacing, use `oxoffice docx replace FILE --map pairs.json` | [#5](https://github.com/oxoffice-dev/oxoffice/issues/5) |
 | performance | Edits cost more as the document grows, most on files saved by Word or Google Docs: Run.text, Paragraph.text, add_run, Table.add_row, remove_content and notes cost the whole body: tens of milliseconds per call, up to seconds on long reports | batch the edits, or build the content aside and insert it once | [#6](https://github.com/oxoffice-dev/oxoffice/issues/6) |
