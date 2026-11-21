@@ -35,7 +35,7 @@ What we want from a suite, in order:
 | Binding parity | Is every public Rust facade call reachable from Python, with the same result? Is every CLI command wired? | PR |
 | Scaling | Does every public mutating call cost about the same at N and 4N? | PR (subset), main (all) |
 | Budgets | How many milliseconds does each common edit cost on Word- and Google-saved documents? | main, release |
-| Rendering | Are page count, line breaks and a few golden pages stable? | main |
+| Rendering | Are page count, line breaks and a few golden pages stable? | main (see [render fidelity](2026-11-21-render-fidelity.md): pull requests and the nightly run) |
 | Validity | Do Word, PowerPoint and LibreOffice open what we write? | LibreOffice on main, Word and PowerPoint on demand on a Mac |
 
 ### The corpus
