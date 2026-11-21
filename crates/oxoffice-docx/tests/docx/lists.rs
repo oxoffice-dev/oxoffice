@@ -1483,8 +1483,8 @@ fn html_list_of<'a>(html: &'a str, text: &str) -> &'a str {
         .find(text)
         .unwrap_or_else(|| panic!("no HTML holds {text:?}"));
     let before = &html[..at];
-    let ul = before.rfind("<ul>");
-    let ol = before.rfind("<ol>");
+    let ul = before.rfind("<ul");
+    let ol = before.rfind("<ol");
     let closed = before.rfind("</ul>").max(before.rfind("</ol>"));
     match ul.max(ol) {
         Some(open) if Some(open) > closed => {
@@ -1747,9 +1747,9 @@ fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
         [
             "1. item 1",
             "   item 2",
-            "1. item 3",
+            "2. item 3",
             "   item 4",
-            "1. item 5"
+            "3. item 5"
         ],
         "one list, each sub-paragraph under its clause:\n{markdown}"
     );
@@ -1800,9 +1800,17 @@ fn exports_keep_counting_a_clause_whose_body_text_follows_its_sub_items() {
     );
     assert_eq!(
         html.matches("</ol>").count(),
-        html.matches("<ol>").count(),
+        html.matches("<ol").count(),
         "{html}"
     );
+    // The body text sits in the clause's item, after its sub-list, so an
+    // HTML reader keeps it.
+    assert!(
+        html.contains("<li>item 2</li>\n</ol>\n<p>item 3</p></li>"),
+        "{html}"
+    );
+    let reread = Document::from_html(&doc.to_html()).unwrap().document;
+    assert_eq!(texts(&reread), ["item 1", "item 2", "item 3", "item 4"]);
     assert!(
         html[..second].rfind("<ol>").unwrap() < html.find("item 3").unwrap(),
         "no list opens again before the second clause: {html}"
@@ -1829,6 +1837,397 @@ fn exports_close_a_list_before_an_unmarked_paragraph_of_another_list() {
     );
     let html = doc.to_html_fragment();
     assert!(html.contains("</ul>\n<p>indented body</p>"), "{html}");
+}
+
+/// The document after `edit` changed the XML of one of its parts, saved and
+/// reopened: markup Word writes that the facade does not.
+fn with_part(doc: &mut Document, part: &str, edit: impl Fn(String) -> String) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(package.get_part(part).expect("part exists").to_vec())
+        .expect("part is UTF-8");
+    package.set_part(part, edit(xml).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("edited document opens")
+}
+
+/// What each Markdown list item shows, in order: its number, or "-" for a
+/// bullet.
+fn markdown_item_markers(markdown: &str) -> Vec<String> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            if line.starts_with("- ") {
+                return Some("-".to_owned());
+            }
+            let digits: String = line.chars().take_while(char::is_ascii_digit).collect();
+            (!digits.is_empty() && line[digits.len()..].starts_with(". ")).then_some(digits)
+        })
+        .collect()
+}
+
+/// What a browser shows before each HTML list item, in order: the number it
+/// counts from its `<ol start>`, or "-" in a `<ul>`.
+fn html_item_numbers(html: &str) -> Vec<String> {
+    let mut lists: Vec<Option<u32>> = Vec::new();
+    let mut numbers = Vec::new();
+    let mut rest = html;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let tag = &rest[..rest.find('>').unwrap() + 1];
+        if tag.starts_with("<ol") {
+            let start = tag.split("start=\"").nth(1).map_or(1, |value| {
+                value[..value.find('"').unwrap()].parse().unwrap()
+            });
+            lists.push(Some(start));
+        } else if tag.starts_with("<ul") {
+            lists.push(None);
+        } else if tag == "</ol>" || tag == "</ul>" {
+            lists.pop();
+        } else if tag.starts_with("<li") {
+            match lists.last_mut().expect("an item is in a list") {
+                Some(next) => {
+                    numbers.push(next.to_string());
+                    *next += 1;
+                }
+                None => numbers.push("-".to_owned()),
+            }
+        }
+        rest = &rest[tag.len()..];
+    }
+    numbers
+}
+
+#[test]
+fn exports_go_on_counting_a_list_after_body_text_as_layout_does() {
+    // A body paragraph and an empty one between items: layout goes on.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0, 0]);
+    doc.add_paragraph("between");
+    doc.add_paragraph("item 3").numbering(id, 0);
+    doc.add_paragraph("");
+    doc.add_paragraph("item 4").numbering(id, 0);
+    assert_eq!(markers(&doc), ["1.", "2.", "", "3.", "", "4."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown_item_markers(&markdown),
+        ["1", "2", "3", "4"],
+        "{markdown}"
+    );
+    assert!(
+        markdown.lines().any(|line| line == "3. item 3"),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "2", "3", "4"], "{html}");
+    assert!(html.contains("<ol start=\"3\">\n<li>item 3"), "{html}");
+
+    // A restarted item and the items after it.
+    let mut doc = Document::new();
+    for text in ["a", "b", "c", "d"] {
+        doc.add_numbered_list_item(text, 0);
+    }
+    doc.restart_numbering(2, 7).unwrap();
+    assert_eq!(markers(&doc), ["1.", "2.", "7.", "8."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown_item_markers(&markdown),
+        ["1", "2", "7", "8"],
+        "{markdown}"
+    );
+    // CommonMark would read one list counted from 1: a comment parts them.
+    assert!(
+        markdown.contains("2. b\n\n<!-- -->\n\n7. c\n8. d\n"),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "2", "7", "8"], "{html}");
+}
+
+#[test]
+fn exports_open_a_new_list_for_another_kind_of_item() {
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let numbers = doc
+        .add_numbering_definition(&[ListLevel::decimal()])
+        .unwrap();
+    let numbers = doc.add_numbering_instance(numbers, &[]).unwrap();
+    doc.add_paragraph("point").numbering(bullets, 0);
+    doc.add_paragraph("step").numbering(numbers, 0);
+    doc.add_paragraph("point 2").numbering(bullets, 0);
+    assert_eq!(markers(&doc), ["•", "1.", "•"]);
+
+    let html = doc.to_html_fragment();
+    assert_eq!(html_list_of(&html, "point"), "ul", "{html}");
+    assert_eq!(html_list_of(&html, "step"), "ol", "{html}");
+    assert_eq!(html_list_of(&html, "point 2"), "ul", "{html}");
+    assert_eq!(html_item_numbers(&html), ["-", "1", "-"], "{html}");
+    let markdown = doc.to_markdown();
+    // A new kind starts a new list by itself in CommonMark.
+    assert_eq!(markdown, "- point\n1. step\n- point 2\n", "{markdown}");
+
+    // A numbered list from 3 cannot interrupt a bullet item's text.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let numbers = doc
+        .add_numbering_definition(&[ListLevel::decimal().start(3)])
+        .unwrap();
+    let numbers = doc.add_numbering_instance(numbers, &[]).unwrap();
+    doc.add_paragraph("point").numbering(bullets, 0);
+    doc.add_paragraph("step").numbering(numbers, 0);
+    assert_eq!(markers(&doc), ["•", "3."]);
+    assert_eq!(doc.to_markdown(), "- point\n\n3. step\n");
+}
+
+#[test]
+fn exports_start_a_new_list_after_items_of_a_skipped_level() {
+    // Levels 0, 2, 1: the level-1 item is not the next item of the level-2
+    // list, though Markdown writes both at the same column.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%2."),
+        ListLevel::new(ListNumberFormat::LowerRoman).level_text("%3."),
+    ]);
+    add_items(&mut doc, id, &[0, 2, 1]);
+    assert_eq!(markers(&doc), ["1.", "i.", "a."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown, "1. item 1\n   1. item 2\n\n   <!-- -->\n\n   1. item 3\n",
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "1", "1"], "{html}");
+
+    // A list that starts at level 1, then a level-0 item.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%2."),
+    ]);
+    add_items(&mut doc, id, &[1, 1, 0]);
+    assert_eq!(markers(&doc), ["a.", "b.", "1."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown, "1. item 1\n2. item 2\n\n<!-- -->\n\n1. item 3\n",
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "2", "1"], "{html}");
+}
+
+#[test]
+fn exports_write_a_heading_whose_numbering_is_turned_off_after_the_list() {
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0]);
+    doc.add_paragraph("Heading")
+        .style("Heading2")
+        .numbering(0, 0);
+    let markdown = doc.to_markdown();
+    assert!(markdown.contains("\n\n## Heading\n"), "{markdown}");
+    assert!(!markdown.contains("   ## Heading"), "{markdown}");
+    let html = doc.to_html_fragment();
+    assert!(html.contains("</ol>\n<h2>Heading</h2>"), "{html}");
+}
+
+#[test]
+fn exports_nest_the_items_of_a_level_in_one_list_inside_their_parent_item() {
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%2."),
+    ]);
+    add_items(&mut doc, id, &[0, 1, 1, 0, 1]);
+    assert_eq!(markers(&doc), ["1.", "a.", "b.", "2.", "a."]);
+
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains(concat!(
+            "<li>item 1\n<ol type=\"a\">\n<li>item 2</li>\n<li>item 3</li>\n</ol>\n</li>\n",
+            "<li>item 4\n<ol type=\"a\">\n<li>item 5</li>\n</ol>\n</li>\n</ol>"
+        )),
+        "{html}"
+    );
+    assert_eq!(
+        html_item_numbers(&html),
+        ["1", "1", "2", "2", "1"],
+        "{html}"
+    );
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown, "1. item 1\n   1. item 2\n   2. item 3\n2. item 4\n   1. item 5\n",
+        "{markdown}"
+    );
+    // An HTML reader finds every item at its level.
+    let reread = Document::from_html(&doc.to_html()).unwrap().document;
+    assert_eq!(
+        reread
+            .paragraphs()
+            .iter()
+            .map(|paragraph| paragraph.numbering().map(|(_, level)| level))
+            .collect::<Vec<_>>(),
+        [Some(0), Some(1), Some(1), Some(0), Some(1)]
+    );
+
+    // A nested level that never restarts counts on under the next parent.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::decimal()
+            .level_text("%2.")
+            .restart(ListLevelRestart::Never),
+    ]);
+    add_items(&mut doc, id, &[0, 1, 0, 1]);
+    assert_eq!(markers(&doc), ["1.", "1.", "2.", "2."]);
+    let markdown = doc.to_markdown();
+    // A nested list from 2 cannot interrupt its parent's text.
+    assert_eq!(
+        markdown, "1. item 1\n   1. item 2\n2. item 3\n\n   2. item 4\n",
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "1", "2", "2"], "{html}");
+}
+
+#[test]
+fn exports_count_the_instances_of_one_definition_together_as_layout_does() {
+    let (mut doc, first) =
+        single_list(&[ListLevel::decimal(), ListLevel::new(ListNumberFormat::None)]);
+    let second = doc
+        .add_numbering_instance(definition_of(&doc, first), &[])
+        .unwrap();
+    doc.add_paragraph("clause 1").numbering(first, 0);
+    doc.add_paragraph("clause 2").numbering(second, 0);
+    // Unmarked text on the first instance, after an item of the second.
+    doc.add_paragraph("body of clause 2").numbering(first, 1);
+    doc.add_paragraph("clause 3").numbering(first, 0);
+    assert_eq!(markers(&doc), ["1.", "2.", "", "3."]);
+
+    let markdown = doc.to_markdown();
+    let lines: Vec<&str> = markdown.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        [
+            "1. clause 1",
+            "2. clause 2",
+            "   body of clause 2",
+            "3. clause 3"
+        ],
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<ol").count(), 1, "{html}");
+    assert!(
+        html.contains("<li>clause 2<p>body of clause 2</p>"),
+        "{html}"
+    );
+}
+
+#[test]
+fn exports_part_two_numbered_lists_that_count_on_their_own() {
+    let (mut doc, first) = single_list(&[ListLevel::decimal()]);
+    let second = doc
+        .add_numbering_definition(&[ListLevel::decimal()])
+        .unwrap();
+    let second = doc.add_numbering_instance(second, &[]).unwrap();
+    doc.add_paragraph("a1").numbering(first, 0);
+    doc.add_paragraph("a2").numbering(first, 0);
+    doc.add_paragraph("b1").numbering(second, 0);
+    assert_eq!(markers(&doc), ["1.", "2.", "1."]);
+
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown, "1. a1\n2. a2\n\n<!-- -->\n\n1. b1\n",
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<ol>").count(), 2, "{html}");
+    assert_eq!(html_item_numbers(&html), ["1", "2", "1"], "{html}");
+}
+
+#[test]
+fn exports_count_the_list_items_of_a_table_as_layout_does() {
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0]);
+    {
+        let mut table = doc.add_table(2, 1);
+        for row in 0..2 {
+            let mut cell = table.cell(row, 0).unwrap();
+            cell.add_paragraph("in a cell").numbering(id, 0);
+        }
+    }
+    doc.add_paragraph("after the table").numbering(id, 0);
+    assert_eq!(markers(&doc), ["1.", "4."]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.lines().any(|line| line == "4. after the table"),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains("<ol start=\"4\">\n<li>after the table"),
+        "{html}"
+    );
+
+    // Layout leaves out a row deleted as a tracked change, the other kept.
+    let doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let at = xml.find("<w:tr").unwrap();
+        let at = at + xml[at..].find('>').unwrap() + 1;
+        format!(
+            r#"{}<w:trPr><w:del w:id="90" w:author="A" w:date="2026-01-01T00:00:00Z"/></w:trPr>{}"#,
+            &xml[..at],
+            &xml[at..]
+        )
+    });
+    assert_eq!(markers(&doc), ["1.", "3."]);
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.lines().any(|line| line == "3. after the table"),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains("<ol start=\"3\">\n<li>after the table"),
+        "{html}"
+    );
+}
+
+#[test]
+fn exports_restart_a_list_after_a_section_break_as_layout_does() {
+    // A definition marked to restart after a section break, as Word 2013
+    // writes it, and a section break between its items.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0]);
+    doc.add_paragraph("end of the section");
+    add_items(&mut doc, id, &[0]);
+    let mut doc = with_part(&mut doc, "/word/numbering.xml", |xml| {
+        xml.replacen(
+            "<w:numbering ",
+            r#"<w:numbering xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" "#,
+            1,
+        )
+        .replacen(
+            "<w:abstractNum ",
+            r#"<w:abstractNum w15:restartNumberingAfterBreak="1" "#,
+            1,
+        )
+    });
+    let doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let text = xml.find("end of the section").unwrap();
+        let at = xml[..text].rfind("<w:p>").expect("a plain paragraph") + "<w:p>".len();
+        format!(
+            concat!(
+                "{}<w:pPr><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>",
+                "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" ",
+                "w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr></w:pPr>{}"
+            ),
+            &xml[..at],
+            &xml[at..]
+        )
+    });
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(markers(&doc), ["1.", "", "1."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(markdown_item_markers(&markdown), ["1", "1"], "{markdown}");
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "1"], "{html}");
 }
 
 #[test]

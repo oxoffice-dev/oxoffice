@@ -1704,7 +1704,6 @@ impl Document {
         let mut identifiers = self.identifiers.clone();
         let id = identifiers.reserve_comment_id()?;
         self.ensure_comment_models()?;
-        self.ensure_comment_relationships()?;
         let styles = self.prepare_comment_authoring()?;
         if range.start.location == range.end.location {
             anchor_paragraph_range(
@@ -1736,6 +1735,10 @@ impl Document {
             *self.story_paragraph_mut(&range.end.location)? = end;
         }
 
+        // After the paragraphs are written back: finding them reads the
+        // stories, which would follow the relationship to a comments part
+        // not written yet.
+        self.ensure_comment_relationships()?;
         self.push_comment_definition(id, author, initials, text, date, &styles)?;
         self.identifiers = identifiers;
         self.comments_dirty = true;

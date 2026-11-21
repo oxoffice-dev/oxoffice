@@ -9,13 +9,6 @@
 # entry is updated or goes.
 
 [[known]]
-file = "libreoffice/thesis.docx"
-check = "text"
-pages = [0]
-finding = "43 words"
-issue = 225
-
-[[known]]
 file = "word/long-report.docx"
 check = "text"
 pages = [0]

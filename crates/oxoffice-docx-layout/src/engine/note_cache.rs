@@ -69,7 +69,7 @@ pub(super) fn stored_note_cache_runs(
                 "NUMPAGES" => Some(FieldKind::NumPages),
                 "SECTION" => Some(FieldKind::Section),
                 "SECTIONPAGES" => Some(FieldKind::SectionPages),
-                "PAGEREF" => input
+                "PAGEREF" if !page_reference_keeps_stored_display(&field.cached_result) => input
                     .and_then(|input| {
                         field_text_argument(&instruction, 0)
                             .and_then(|name| page_ref_id(input, name))
