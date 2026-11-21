@@ -344,12 +344,67 @@ impl std::fmt::Debug for RevisionReadContext {
     }
 }
 
+impl CT_Revision {
+    /// The entries of the parse context that this revision's source reads:
+    /// the bindings of the prefixes its captured XML names, in a stable
+    /// order. The other bindings in scope belong to the part, which another
+    /// producer or a save declares differently for the same revision.
+    fn read_prefix_context(&self) -> Vec<&String> {
+        let mut entries = match raw_name_prefixes(&self.raw_xml) {
+            Some(used) => self
+                .parse_word_prefixes
+                .iter()
+                .filter(|entry| {
+                    let prefix = entry
+                        .strip_prefix('\0')
+                        .and_then(|entry| entry.split_once('\0'))
+                        .map_or(entry.as_str(), |(prefix, _)| prefix);
+                    used.contains(prefix)
+                })
+                .collect::<Vec<_>>(),
+            None => self.parse_word_prefixes.iter().collect(),
+        };
+        entries.sort_unstable();
+        entries
+    }
+}
+
+/// The prefixes the element and attribute names of `raw` use, `""` for an
+/// unprefixed element; `None` when `raw` does not read as XML.
+fn raw_name_prefixes(raw: &[u8]) -> Option<std::collections::HashSet<String>> {
+    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut used = std::collections::HashSet::new();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer).ok()? {
+            quick_xml::events::Event::Start(element) | quick_xml::events::Event::Empty(element) => {
+                let prefix = match element.name().prefix() {
+                    Some(prefix) => std::str::from_utf8(prefix.as_ref()).ok()?.to_owned(),
+                    None => String::new(),
+                };
+                used.insert(prefix);
+                for attribute in element.attributes() {
+                    let key = attribute.ok()?.key;
+                    if let Some(prefix) = key.prefix()
+                        && !matches!(prefix.as_ref(), b"xmlns" | b"xml")
+                    {
+                        used.insert(std::str::from_utf8(prefix.as_ref()).ok()?.to_owned());
+                    }
+                }
+            }
+            quick_xml::events::Event::Eof => return Some(used),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
 // Callers compare Debug output as a signature, so the prefix context is
-// written in a stable order, as equality reads it.
+// written as equality reads it: the bindings the revision reads, in a
+// stable order.
 impl std::fmt::Debug for CT_Revision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut parse_word_prefixes = self.parse_word_prefixes.iter().collect::<Vec<_>>();
-        parse_word_prefixes.sort_unstable();
+        let parse_word_prefixes = self.read_prefix_context();
         f.debug_struct("CT_Revision")
             .field("kind", &self.kind)
             .field("id", &self.id)
@@ -383,13 +438,13 @@ impl PartialEq for CT_Revision {
         {
             return false;
         }
-        // Context enumeration order is parser bookkeeping, not revision identity.
-        // Keep complete entries and multiplicity without changing parser inputs.
+        // Context enumeration order is parser bookkeeping, not revision
+        // identity, and so are the bindings the captured source never reads.
         let mut left = self.parse_word_prefixes.iter().collect::<Vec<_>>();
         let mut right = other.parse_word_prefixes.iter().collect::<Vec<_>>();
         left.sort_unstable();
         right.sort_unstable();
-        left == right
+        left == right || self.read_prefix_context() == other.read_prefix_context()
     }
 }
 

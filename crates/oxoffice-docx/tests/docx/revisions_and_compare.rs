@@ -951,6 +951,105 @@ fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
 }
 
 #[test]
+fn a_redline_in_one_name_on_the_google_and_libreoffice_contracts_edited_by_oxoffice_is_compared() {
+    // The same walk on the copies Google Docs and LibreOffice saved: the
+    // save also writes their held paragraphs' property values its own way
+    // and declares the part's namespaces differently.
+    for path in ["google/contract.docx", "libreoffice/contract.docx"] {
+        let mut edited = corpus_doc(path);
+        let replaced = edited.replace_all(&HashMap::from([(
+            "thirty-six (36) months",
+            "forty-eight (48) months",
+        )]));
+        assert_eq!(replaced, 1, "{path}");
+        let edited = reopen(&mut edited);
+        let original = corpus_doc(path);
+        let earlier = original
+            .revisions()
+            .iter()
+            .map(|revision| (revision.kind(), revision.author().to_owned()))
+            .collect::<Vec<_>>();
+        assert!(!earlier.is_empty(), "{path}");
+        let mut doc = redline(original, &edited);
+        let others = doc
+            .revisions()
+            .iter()
+            .filter(|revision| revision.author() != AUTHOR)
+            .map(|revision| (revision.kind(), revision.author().to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            others, earlier,
+            "{path}: the other reviewers' revisions stay"
+        );
+        assert!(
+            doc.revisions()
+                .iter()
+                .any(|revision| revision.author() == AUTHOR),
+            "{path}: the replacement is tracked in the reviewer's name"
+        );
+        // Resolve this reviewer's revisions only: LibreOffice's own property
+        // revisions do not resolve today, whatever the comparison does.
+        let mut copy = reopen(&mut doc);
+        copy.accept_revisions_by_author(AUTHOR).unwrap();
+        assert_eq!(texts(&reopen(&mut copy)), texts(&edited), "{path}");
+        let mut copy = reopen(&mut doc);
+        copy.reject_revisions_by_author(AUTHOR).unwrap();
+        assert_eq!(
+            texts(&reopen(&mut copy)),
+            texts(&corpus_doc(path)),
+            "{path}"
+        );
+    }
+}
+
+/// `doc` with its term changed from thirty-six to forty-eight months,
+/// saved and opened again.
+fn with_term_changed(mut doc: Document) -> Document {
+    let replaced = doc.replace_all(&HashMap::from([("thirty-six", "forty-eight")]));
+    assert_eq!(replaced, 1);
+    reopen(&mut doc)
+}
+
+#[test]
+fn a_held_revision_under_a_part_namespace_a_save_drops_is_unchanged() {
+    // Google Docs declares a default namespace on the part's root, which the
+    // save does not write again; the earlier revision reads none of it.
+    let with_default_namespace = |doc: &mut Document| {
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+                .unwrap();
+        let main = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen(
+            "<w:document ",
+            r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+            1,
+        );
+        package.set_part(&main, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        Document::from_bytes(&out.into_inner()).unwrap()
+    };
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Term: thirty-six months.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+        r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let mut edited = with_term_changed(with_default_namespace(&mut doc_with_body(body)));
+    assert!(!main_part_xml(&mut edited).contains("documenttasks"));
+    let original = with_default_namespace(&mut doc_with_body(body));
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        texts(&accepted(&mut doc)),
+        ["Term: forty-eight months.", "Kept clause."]
+    );
+    assert_eq!(
+        texts(&rejected(&mut doc)),
+        ["Term: thirty-six months.", "Kept "]
+    );
+}
+
+#[test]
 fn a_held_paragraph_whose_blank_math_text_changed_keeps_the_refusal() {
     // Blank text is content in a math run: the held paragraph changed, and
     // the comparison may not replace it.

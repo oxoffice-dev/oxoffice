@@ -3442,6 +3442,18 @@ fn same_owner_tree(
     Ok(canonical_owner_tokens(&left)? == canonical_owner_tokens(&right)?)
 }
 
+/// Whether two owners are written as one tree by the model's own writer.
+fn same_written_owner(
+    original: &BodyContent,
+    edited: &BodyContent,
+    original_bindings: &[(String, String)],
+    edited_bindings: &[(String, String)],
+) -> Result<bool> {
+    let left = source_fragment(&body_content_xml(original)?, original_bindings)?;
+    let right = source_fragment(&body_content_xml(edited)?, edited_bindings)?;
+    Ok(canonical_owner_tokens(&left)? == canonical_owner_tokens(&right)?)
+}
+
 /// One owner's XML read so that two serializations of one tree compare
 /// equal, as [`canonical_owned_story`] reads a story, and further: character
 /// and entity references read as the characters they stand for, and
@@ -9223,9 +9235,15 @@ fn compare_body_impl(
                 // writes them), is unchanged: the redline keeps the
                 // original's bytes.
                 let rewritten = protected
-                    && !equal
+                    && !(equal && same_source)
                     && !metadata.leaf_capture
-                    && same_owner_tree(original_source, left, edited_source, right)?;
+                    && (same_owner_tree(original_source, left, edited_source, right)?
+                        || same_written_owner(
+                            original_content,
+                            edited_content,
+                            original_source.map_or(&[][..], |(_, _, bindings)| bindings),
+                            edited_source.2,
+                        )?);
                 let equal = equal || rewritten;
                 let same_source = same_source || rewritten;
                 let needs_field_dispatch = equal
