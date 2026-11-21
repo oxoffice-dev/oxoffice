@@ -7,7 +7,8 @@ use std::collections::{HashMap, HashSet};
 use oxoffice_docx::{
     Alignment, BorderStyle, CellBorderEdge, CellItemRef, CellTextDirection, CommentDate, Document,
     Length, RowHeight, StyleType, TableBorderEdge, TableCellMargins, TableConditionalFormatting,
-    TableLayout, TableLook, TableWidth, TextCommentOptions, VMerge, VerticalAlignment,
+    TableFloatX, TableLayout, TableLook, TableTextDistance, TableWidth, TextCommentOptions, VMerge,
+    VerticalAlignment,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -794,7 +795,7 @@ fn table_widths_written_as_a_percent_or_with_a_unit_open_and_read_back() {
 }
 
 #[test]
-fn a_malformed_table_width_or_a_percent_cell_margin_is_refused() {
+fn a_malformed_table_width_is_refused() {
     for (element, refused) in [
         (r#"<w:tblW w:w="%" w:type="pct"/>"#, "%"),
         (r#"<w:tblW w:w="1e2%" w:type="pct"/>"#, "1e2%"),
@@ -808,10 +809,6 @@ fn a_malformed_table_width_or_a_percent_cell_margin_is_refused() {
         (
             r#"<w:tblW w:w="118153599625325855.369227294247141741in" w:type="dxa"/>"#,
             "118153599625325855.369227294247141741in",
-        ),
-        (
-            r#"<w:tblCellMar><w:left w:w="5%" w:type="pct"/></w:tblCellMar>"#,
-            "5%",
         ),
     ] {
         let body = format!(
@@ -1943,4 +1940,99 @@ fn exports_report_no_list_level_formatting_for_empty_property_elements() {
         })
         .collect();
     assert!(reported.is_empty(), "{reported:?}");
+}
+
+#[test]
+fn table_twips_measures_written_with_a_unit_open_and_a_percent_cell_margin_is_ignored() {
+    // ST_TwipsMeasure and ST_SignedTwipsMeasure take a universal measure in
+    // Transitional; Word ignores a cell margin written as a percent.
+    let body = concat!(
+        r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="0.1in" w:rightFromText="9pt" w:topFromText="1cm" "#,
+        r#"w:bottomFromText="0" w:tblpX="-0.5in" w:tblpY="2pc"/>"#,
+        r#"<w:tblCellMar><w:left w:w="5%" w:type="pct"/><w:right w:w="0.1in" w:type="dxa"/></w:tblCellMar>"#,
+        r#"</w:tblPr><w:tblGrid><w:gridCol w:w="2in"/><w:gridCol w:w="1.5cm"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr><w:trHeight w:val="0.5in" w:hRule="exact"/></w:trPr>"#,
+        r#"<w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    let doc = doc_with_body(body);
+    let table = doc.table(0).expect("the table");
+    assert_eq!(
+        table.grid_widths(),
+        [Length::twips(2880), Length::twips(850)]
+    );
+    assert_eq!(
+        table.row(0).unwrap().height(),
+        Some(RowHeight::Exact(Length::twips(720)))
+    );
+    let float = table.float_position().expect("the float position");
+    assert_eq!(
+        float.distance_from_text,
+        TableTextDistance {
+            top: Length::twips(567),
+            right: Length::twips(180),
+            bottom: Length::twips(0),
+            left: Length::twips(144),
+        }
+    );
+    assert_eq!(float.horizontal, TableFloatX::Offset(Length::twips(-720)));
+    let margins = table.cell_margins().expect("the margins");
+    assert_eq!(margins.left, None, "the percent margin reads as none");
+    assert_eq!(margins.right, Some(Length::twips(144)));
+
+    // Inside a block content control the table is read the same way.
+    let doc = doc_with_body(&format!(
+        "<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt><w:p/>",
+        body.trim_end_matches("<w:p/>")
+    ));
+    assert_eq!(
+        doc.table(0)
+            .expect("the table in the control")
+            .grid_widths(),
+        [Length::twips(2880), Length::twips(850)]
+    );
+
+    // Table XML replaced through the checked route takes the same forms.
+    let mut doc = doc_with_body(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    let body_story = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == oxoffice_docx::StoryKind::Body)
+        .unwrap();
+    let location = doc.story_items(&body_story).unwrap()[0].location().clone();
+    doc.replace_table_xml(
+        &location,
+        concat!(
+            r#"<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblPr/>"#,
+            r#"<w:tblGrid><w:gridCol w:w="2in"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="0.5in"/></w:trPr>"#,
+            r#"<w:tc><w:p/></w:tc></w:tr></w:tbl>"#
+        ),
+    )
+    .expect("the checked route reads a twips measure with a unit");
+    assert_eq!(doc.table(0).unwrap().grid_widths(), [Length::twips(2880)]);
+
+    // A twips measure takes no percent, and a malformed unit is refused.
+    for (element, refused) in [
+        (r#"<w:gridCol w:w="5%"/>"#, "5%"),
+        (r#"<w:gridCol w:w="2.in"/>"#, "2.in"),
+    ] {
+        let body = format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid>{element}</w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
+        );
+        let bytes = Document::new().to_bytes().expect("new document saves");
+        let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes))
+            .expect("package opens");
+        let part = package.main_document_part().expect("main part");
+        let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen("<w:body>", &format!("<w:body>{body}"), 1);
+        package.set_part(&part, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let error = Document::from_bytes(&out.into_inner())
+            .err()
+            .expect("refused");
+        assert!(error.to_string().contains(refused), "{refused}: {error}");
+    }
 }

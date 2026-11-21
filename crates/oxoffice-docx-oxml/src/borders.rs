@@ -10,7 +10,7 @@ use quick_xml::{Reader, Writer};
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
 use crate::numbering::word_prefixes_at;
-use crate::properties::parse_integer_measurement;
+use crate::properties::{parse_integer_measurement, parse_twips_measure};
 use crate::shared::{ST_Border, ST_TabJc, ST_TabLeader};
 use crate::units::Twips;
 
@@ -65,7 +65,7 @@ impl BorderMeasurement {
             Self::Size(_) => Self::Size(parse_integer_measurement(element, attribute, value)?),
             Self::Space(_) => Self::Space(parse_integer_measurement(element, attribute, value)?),
             Self::TabPosition(_) => {
-                Self::TabPosition(parse_integer_measurement(element, attribute, value)?)
+                Self::TabPosition(parse_twips_measure(element, attribute, value)?)
             }
         })
     }

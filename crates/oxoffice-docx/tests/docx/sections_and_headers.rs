@@ -1619,3 +1619,53 @@ fn a_new_footer_leaves_the_header_order_it_read() {
         ["even", "default", "first"]
     );
 }
+
+#[test]
+fn section_twips_measures_written_with_a_unit_open() {
+    // The section of a paragraph, so the template's own sectPr stays last.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="8.5in" w:h="11in"/>"#,
+        r#"<w:pgMar w:top="1in" w:right="2cm" w:bottom="72pt" w:left="6pc" w:header="0.5in" w:footer="0.25in" w:gutter="0"/>"#,
+        r#"<w:lnNumType w:countBy="1" w:distance="0.25in"/>"#,
+        r#"<w:cols w:space="0.5in"/></w:sectPr></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:sectPr><w:cols w:num="2" w:equalWidth="0"><w:col w:w="3in" w:space="0.5in"/>"#,
+        r#"<w:col w:w="2in"/></w:cols></w:sectPr></w:pPr><w:r><w:t>Columns</w:t></w:r></w:p>"#,
+    ));
+    let section = doc.section(0).expect("the section");
+    assert_eq!(
+        section.page_size(),
+        Some((Length::twips(12240), Length::twips(15840)))
+    );
+    assert_eq!(
+        section.margins(),
+        Some((
+            Length::twips(1440),
+            Length::twips(1134),
+            Length::twips(1440),
+            Length::twips(1440)
+        ))
+    );
+    assert_eq!(
+        section.header_footer_distance(),
+        Some((Length::twips(720), Length::twips(360)))
+    );
+    assert_eq!(
+        section.columns().map(|(_, space)| space),
+        Some(Length::twips(720))
+    );
+    assert_eq!(
+        section
+            .line_numbers()
+            .and_then(|numbers| numbers.distance)
+            .map(|d| d.0),
+        Some(360)
+    );
+    let columns = doc.section(1).expect("the second section").column_widths();
+    assert_eq!(
+        columns,
+        Some(vec![
+            (Length::twips(4320), Length::twips(720)),
+            (Length::twips(2880), Length::twips(0))
+        ])
+    );
+}

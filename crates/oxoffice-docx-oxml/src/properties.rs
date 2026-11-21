@@ -541,6 +541,115 @@ pub(crate) fn parse_integer_measurement<T: TryFrom<i64>>(
     T::try_from(signed(rounded)).map_err(|_| error("is out of range"))
 }
 
+/// Twips per unit of an `ST_UniversalMeasure`, as numerator over
+/// denominator.
+pub(crate) const UNIVERSAL_UNITS: [(&str, i128, i128); 6] = [
+    ("in", 1440, 1),
+    ("cm", 144000, 254),
+    ("mm", 14400, 254),
+    ("pt", 20, 1),
+    ("pc", 240, 1),
+    ("pi", 240, 1),
+];
+
+/// Read an `ST_TwipsMeasure` or `ST_SignedTwipsMeasure`: twips, written as
+/// an integer as [`parse_integer_measurement`] reads it or, in
+/// Transitional, as a universal measure such as `"2in"` or `"1.5cm"`,
+/// rounded to the nearest twip. A value outside `T` is refused with an
+/// error naming the element, the attribute and the value.
+pub(crate) fn parse_twips_measure<T: TryFrom<i64>>(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+) -> Result<T> {
+    parse_universal_measure(element, attribute, value, 1)
+}
+
+/// Read an `ST_HpsMeasure` or `ST_SignedHpsMeasure`: half-points, written as
+/// an integer or, in Transitional, a universal measure such as `"12pt"`,
+/// rounded to the nearest half-point.
+pub(crate) fn parse_half_point_measure<T: TryFrom<i64>>(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+) -> Result<T> {
+    parse_universal_measure(element, attribute, value, 10)
+}
+
+/// An integer as [`parse_integer_measurement`] reads it, or a universal
+/// measure in twips divided by `twips_per_unit`.
+fn parse_universal_measure<T: TryFrom<i64>>(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+    twips_per_unit: i128,
+) -> Result<T> {
+    let Some((number, numerator, denominator)) =
+        UNIVERSAL_UNITS
+            .iter()
+            .find_map(|(unit, numerator, denominator)| {
+                value
+                    .strip_suffix(unit)
+                    .map(|number| (number, *numerator, *denominator))
+            })
+    else {
+        return parse_integer_measurement(element, attribute, value);
+    };
+    let error = |problem: &str| {
+        OxmlError::InvalidValue(format!(
+            "{}/@{} {value:?} {problem}",
+            String::from_utf8_lossy(element),
+            String::from_utf8_lossy(attribute),
+        ))
+    };
+    let scaled = scaled_decimal(number, numerator, denominator * twips_per_unit)
+        .ok_or_else(|| error("is not a measurement or is out of range"))?;
+    T::try_from(i64::from(scaled)).map_err(|_| error("is out of range"))
+}
+
+/// `-?[0-9]+(\.[0-9]+)?` times `numerator / denominator`, rounded half away
+/// from zero in decimal arithmetic from the first eighteen fraction digits,
+/// if it fits an `i32`.
+pub(crate) fn scaled_decimal(number: &str, numerator: i128, denominator: i128) -> Option<i32> {
+    let (negative, unsigned) = match number.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, number),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (unsigned.contains('.') && fraction.is_empty())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    // The smallest scale is 2 half-points a point, so eleven whole digits never
+    // fit an i32; with eighteen fraction digits the products stay well
+    // inside an i128, and checked arithmetic refuses anything else.
+    let whole = whole.trim_start_matches('0');
+    let fraction = &fraction[..fraction.len().min(18)];
+    if whole.len() > 10 {
+        return None;
+    }
+    // "0", "00" or "-0" leave no digit once the zeros are trimmed.
+    let digits = format!("{whole}{fraction}");
+    let digits: i128 = if digits.is_empty() {
+        0
+    } else {
+        digits.parse().ok()?
+    };
+    let scale = 10i128
+        .checked_pow(fraction.len() as u32)?
+        .checked_mul(denominator)?;
+    let product = digits.checked_mul(numerator)?;
+    let rounded = product
+        .checked_mul(2)?
+        .checked_add(scale)?
+        .checked_div(scale.checked_mul(2)?)?;
+    let signed = if negative { -rounded } else { rounded };
+    i32::try_from(signed).ok()
+}
+
 pub(crate) fn parse_word_toggle(e: &BytesStart, word_prefixes: &[String]) -> Result<bool> {
     let val = get_word_val_attr(e, word_prefixes)?;
     Ok(ST_OnOff::from_str_or_default(val.as_deref()).is_on())

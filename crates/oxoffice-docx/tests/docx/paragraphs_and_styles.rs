@@ -1656,3 +1656,23 @@ fn removing_an_unused_linked_style_of_a_french_word_file_removes_its_pair() {
     assert!(doc.style("Titre7").is_none() && doc.style("Titre7Car").is_none());
     assert!(doc.style("Titre1").is_some() && doc.style("Titre1Car").is_some());
 }
+
+#[test]
+fn paragraph_twips_measures_written_with_a_unit_open() {
+    // Indents, spacing and tab positions are ST_TwipsMeasure or
+    // ST_SignedTwipsMeasure, which take a universal measure in Transitional.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="2in"/></w:tabs>"#,
+        r#"<w:spacing w:before="12pt" w:after="0.1in"/><w:ind w:left="1in" w:hanging="0.25in"/></w:pPr>"#,
+        r#"<w:r><w:t>Measured</w:t></w:r></w:p>"#,
+    ));
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(paragraph.indent_left(), Some(Length::twips(1440)));
+    assert_eq!(paragraph.space_before(), Some(Length::twips(240)));
+    assert_eq!(paragraph.first_line_indent(), Some(Length::twips(-360)));
+    assert_eq!(paragraph.tab_stop_count(), 1);
+    assert_eq!(
+        paragraph.tab_stop(0).unwrap().position(),
+        Length::twips(2880)
+    );
+}
