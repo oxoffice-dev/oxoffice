@@ -2178,7 +2178,6 @@ fn a_moved_endnote_reference_is_refused_and_changes_nothing() {
     assert_eq!(endnote_paragraphs(&reopen(&mut doc)), [0]);
 }
 
-/// The indexes of the body paragraphs that hold an endnote reference.
 /// Each endnote reference of the body: its paragraph and the endnote id.
 fn endnote_references(doc: &Document) -> Vec<(usize, i32)> {
     let mut references = Vec::new();
@@ -2194,6 +2193,7 @@ fn endnote_references(doc: &Document) -> Vec<(usize, i32)> {
     references
 }
 
+/// The indexes of the body paragraphs that hold an endnote reference.
 fn endnote_paragraphs(doc: &Document) -> Vec<usize> {
     doc.paragraphs()
         .iter()
@@ -2332,14 +2332,14 @@ fn an_endnote_the_original_lacks_is_refused_while_endnotes_are_ignored() {
         ignored_stories: vec![ComparisonStoryKind::Endnote],
         ..Default::default()
     };
+    let edited = doc_with_endnotes(&[0, 1]);
+    let (_, added) = endnote_references(&edited)[1];
     let error = doc
-        .compare_with_options(&doc_with_endnotes(&[0, 1]), AUTHOR, DATE, &options)
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
         .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("ignored endnotes cannot supply the edited reference to endnote"),
-        "{error}"
+    assert_eq!(
+        error.to_string(),
+        format!("ignored endnotes cannot supply the edited reference to endnote {added}")
     );
     assert!(doc.revisions().is_empty());
 }
