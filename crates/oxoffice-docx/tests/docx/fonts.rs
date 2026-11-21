@@ -35,6 +35,7 @@ const FONT_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/re
 const OBFUSCATED_FONT_TYPE: &str = "application/vnd.openxmlformats-officedocument.obfuscatedFont";
 const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 
 /// A one-table sfnt face whose `name` table holds `marker`: enough for the
 /// embedding checks, and each marker gives different bytes. `marker` needs
@@ -214,6 +215,21 @@ fn doc_with_font_table(records: &str, faces: &[(&str, &str, &str, Vec<u8>)]) -> 
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).expect("package writes");
     Document::from_bytes(&out.into_inner()).expect("document with this font table opens")
+}
+
+/// A new document whose font table holds `record` (raw `w:font` XML), and
+/// relates `rId9` to a font part as an embedded face would, without a
+/// modelled face naming it.
+fn doc_with_font_record(record: &str) -> Document {
+    doc_with_font_table(
+        record,
+        &[(
+            "rId9",
+            "fonts/font9.odttf",
+            OBFUSCATED_FONT_TYPE,
+            b"stored face bytes".to_vec(),
+        )],
+    )
 }
 
 // ---- Reading the font table ----
@@ -504,10 +520,7 @@ fn removing_a_described_font_takes_it_out_of_the_table() {
     assert_eq!(font_names(&doc), ["Calibri"]);
 }
 
-// Fails today: a record with Word's panose, charset and signature is refused
-// as opaque payload. Issue: #177
 #[test]
-#[should_panic(expected = "remove_font refused a record Word wrote")]
 fn a_font_record_word_wrote_can_be_removed() {
     let mut doc = corpus_doc("word/report.docx");
     let removed = match doc.remove_font("Courier") {
@@ -522,10 +535,7 @@ fn a_font_record_word_wrote_can_be_removed() {
     assert!(!font_names(&doc).contains(&"Courier".to_owned()));
 }
 
-// Fails today: clearing a field of a record Word wrote goes through the same
-// refusal as removing it. Issue: #177
 #[test]
-#[should_panic(expected = "set_font refused to clear a field of a record Word wrote")]
 fn a_field_of_a_font_record_word_wrote_can_be_cleared() {
     let mut doc = corpus_doc("word/report.docx");
     assert_eq!(
@@ -581,6 +591,138 @@ fn a_minimal_document_gets_a_font_table_and_a_theme_when_first_given_them() {
         [FontDefinition::new("Gelasio").with_family("roman")]
     );
     assert_eq!(doc.theme(), Some(&theme));
+}
+
+// ---- Removing the records Word and LibreOffice write ----
+
+#[test]
+fn a_font_record_word_wrote_is_removed_with_its_panose_charset_and_signature() {
+    let mut doc = corpus_doc("word/report.docx");
+    let removed = doc
+        .remove_font("Symbol")
+        .expect("Word's Symbol record can be removed");
+    assert_eq!(
+        removed,
+        Some(
+            FontDefinition::new("Symbol")
+                .with_family("decorative")
+                .with_pitch("variable")
+        )
+    );
+
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        font_names(&doc),
+        [
+            "Times New Roman",
+            "Cambria",
+            "MS Mincho",
+            "Calibri",
+            "MS Gothic",
+            "Courier"
+        ]
+    );
+    // Symbol's panose and signature went with it, the next record keeps its.
+    let xml = doc.part_xml(FONT_TABLE).expect("font table");
+    assert!(!xml.contains("05050102010706020507"), "{xml}");
+    assert!(!xml.contains(r#"w:usb1="10000000""#), "{xml}");
+    assert!(
+        xml.contains(
+            r#"<w:font w:name="Times New Roman"><w:panose1 w:val="02020603050405020304"/><w:charset w:val="00"/>"#
+        ),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_font_record_libreoffice_wrote_is_removed_with_its_charset() {
+    let mut doc = corpus_doc("libreoffice/report.docx");
+    let removed = doc
+        .remove_font("Times New Roman")
+        .expect("LibreOffice's Times New Roman record can be removed");
+    assert_eq!(
+        removed,
+        Some(
+            FontDefinition::new("Times New Roman")
+                .with_family("roman")
+                .with_pitch("variable")
+        )
+    );
+
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        font_names(&doc),
+        [
+            "Symbol",
+            "Arial",
+            "Liberation Serif",
+            "Cambria",
+            "Calibri",
+            "Courier",
+            "Liberation Sans",
+            "Symbol"
+        ]
+    );
+    // The font LibreOffice drew with still names the one it stands for.
+    let fonts = doc.fonts();
+    let liberation = fonts
+        .iter()
+        .find(|font| font.name == "Liberation Serif")
+        .expect("Liberation Serif record");
+    assert_eq!(
+        liberation.alternate_name.as_deref(),
+        Some("Times New Roman")
+    );
+}
+
+#[test]
+fn a_font_record_whose_kept_xml_names_a_relationship_is_still_refused() {
+    // Only modelled embedded faces have their relationship and part removed
+    // after the record, so each of these would leave rId9 and its part behind.
+    for record in [
+        // An unknown child with a relationship id, between Word's children.
+        r#"<w:font w:name="Gelasio"><w:panose1 w:val="02020503060000020004"/><x:face xmlns:x="urn:example:fonts" r:id="rId9"/><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>"#.to_owned(),
+        // The same under another prefix for the relationships namespace.
+        format!(
+            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><x:face xmlns:x="urn:example:fonts" xmlns:rel="{REL_NS}" rel:embed="rId9"/></w:font>"#
+        ),
+        // An embedded face behind markup compatibility.
+        format!(
+            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><mc:AlternateContent xmlns:mc="{MC_NS}"><mc:Choice Requires="w"><w:embedRegular r:id="rId9" w:fontKey="{KEY}"/></mc:Choice></mc:AlternateContent></w:font>"#
+        ),
+        // An embedded face whose content the model does not read, so it is
+        // kept as written, relationship id included.
+        format!(
+            r#"<w:font w:name="Gelasio"><w:charset w:val="00"/><w:embedRegular r:id="rId9" w:fontKey="{KEY}"><x:note xmlns:x="urn:example:fonts"/></w:embedRegular></w:font>"#
+        ),
+    ] {
+        let mut doc = doc_with_font_record(&record);
+        let before = doc.to_bytes().expect("document saves");
+        let error = doc
+            .remove_font("Gelasio")
+            .expect_err(&record)
+            .to_string();
+        assert!(error.contains("names a relationship"), "{record}: {error}");
+        assert_eq!(font_names(&doc), ["Gelasio"], "{record}");
+        assert_eq!(doc.to_bytes().expect("document saves"), before, "{record}");
+    }
+}
+
+#[test]
+fn an_unknown_child_that_names_no_relationship_goes_with_its_record() {
+    let mut doc = doc_with_font_record(
+        r#"<w:font w:name="Gelasio"><w:panose1 w:val="02020503060000020004"/><x:note xmlns:x="urn:example:fonts" x:by="a producer"/><w:charset w:val="00"/><w:family w:val="roman"/></w:font><w:font w:name="Courier"><w:family w:val="modern"/></w:font>"#,
+    );
+    assert_eq!(
+        doc.remove_font("Gelasio")
+            .expect("the record can be removed"),
+        Some(FontDefinition::new("Gelasio").with_family("roman"))
+    );
+
+    let doc = reopen(&mut doc);
+    assert_eq!(font_names(&doc), ["Courier"]);
+    let xml = doc.part_xml(FONT_TABLE).expect("font table");
+    assert!(!xml.contains("urn:example:fonts"), "{xml}");
 }
 
 // ---- Embedding faces ----
