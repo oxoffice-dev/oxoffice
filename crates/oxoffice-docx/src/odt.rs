@@ -7,7 +7,7 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use oxoffice_docx_oxml::document::BodyContent;
-use oxoffice_docx_oxml::numbering::ST_NumberFormat;
+use oxoffice_docx_oxml::numbering::{CT_Lvl, ST_NumberFormat};
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::{ST_HighlightColor, ST_Jc, ST_Underline};
 use oxoffice_docx_oxml::table::{
@@ -1167,18 +1167,34 @@ impl<'a> OdtWriter<'a> {
     }
 
     fn list_level_has_producer_format(&self, num_id: u32, level: u32) -> bool {
-        self.document
-            .numbering
-            .as_ref()
-            .and_then(|numbering| numbering.get_abstract_num_for(num_id))
-            .and_then(|abstract_num| {
-                abstract_num
-                    .levels
-                    .iter()
-                    .find(|definition| definition.ilvl == level)
-            })
+        self.effective_list_level(num_id, level)
             .and_then(|definition| definition.num_fmt.as_ref())
             .is_some_and(|format| matches!(format, ST_NumberFormat::Other(_)))
+    }
+
+    /// The definition's level, or the level the instance swaps in for it, as
+    /// layout draws it.
+    fn effective_list_level(&self, num_id: u32, level: u32) -> Option<&CT_Lvl> {
+        let numbering = self.document.numbering.as_ref()?;
+        let definition = numbering
+            .get_abstract_num_for(num_id)?
+            .levels
+            .iter()
+            .find(|item| item.ilvl == level)?;
+        Some(
+            numbering
+                .nums
+                .iter()
+                .find(|item| item.num_id == num_id)
+                .and_then(|instance| {
+                    instance
+                        .level_overrides
+                        .iter()
+                        .find(|item| item.ilvl == level)
+                })
+                .and_then(|item| item.level.as_ref())
+                .unwrap_or(definition),
+        )
     }
 
     fn effective_run_properties(&self, paragraph: &CT_P, run: &CT_R) -> CT_RPr {
@@ -1689,22 +1705,12 @@ impl<'a> OdtWriter<'a> {
     }
 
     fn list_level_is_bullet(&mut self, num_id: u32, level: u32, path: &str) -> Result<bool> {
-        let numbering = self.document.numbering.as_ref();
-        let abstract_num = numbering.and_then(|numbering| numbering.get_abstract_num_for(num_id));
-        // The level the instance swaps in replaces the definition's, as
-        // layout draws it.
-        let replacement = numbering
-            .and_then(|numbering| numbering.nums.iter().find(|item| item.num_id == num_id))
-            .and_then(|instance| {
-                instance
-                    .level_overrides
-                    .iter()
-                    .find(|item| item.ilvl == level)
-            })
-            .and_then(|item| item.level.as_ref());
-        let level_definition = abstract_num
-            .and_then(|abstract_num| abstract_num.levels.iter().find(|item| item.ilvl == level))
-            .map(|definition| replacement.unwrap_or(definition));
+        let abstract_num = self
+            .document
+            .numbering
+            .as_ref()
+            .and_then(|numbering| numbering.get_abstract_num_for(num_id));
+        let level_definition = self.effective_list_level(num_id, level);
         let (
             is_bullet,
             is_decimal,

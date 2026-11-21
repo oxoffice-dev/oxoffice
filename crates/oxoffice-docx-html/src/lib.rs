@@ -137,13 +137,14 @@ pub fn to_markdown_with_charts(input: &HtmlInput, charts: &HashMap<String, Chart
 /// style's `basedOn` chain (the default paragraph style when it names none),
 /// else from the document defaults; a numbering id of 0 means no list. The
 /// level is the one the instance swaps in, else its definition's. Returns
-/// the instance id, the level index, the level and the instance's start
-/// override for it.
+/// the instance id, the level index, the level and the number the list
+/// starts at: the instance's start override, else the definition's start,
+/// as layout counts.
 fn list_level<'a>(
     paragraph: &CT_P,
     styles: &CT_Styles,
     numbering: &'a CT_Numbering,
-) -> Option<(u32, u32, &'a CT_Lvl, Option<u32>)> {
+) -> Option<(u32, u32, &'a CT_Lvl, u32)> {
     let direct = paragraph.properties.as_ref();
     let mut num_id = direct.and_then(|properties| properties.num_id);
     let mut ilvl = direct.and_then(|properties| properties.num_ilvl);
@@ -189,12 +190,19 @@ fn list_level<'a>(
     let level = level_override
         .and_then(|item| item.level.as_ref())
         .unwrap_or(base);
-    Some((
-        num_id,
-        ilvl,
-        level,
-        level_override.and_then(|item| item.start_override),
-    ))
+    let start = level_override
+        .and_then(|item| item.start_override)
+        .or(base.start)
+        .unwrap_or(1);
+    Some((num_id, ilvl, level, start))
+}
+
+/// Whether the paragraph sets a numbering id itself, not through its style.
+fn has_own_numbering(paragraph: &CT_P) -> bool {
+    paragraph
+        .properties
+        .as_ref()
+        .is_some_and(|properties| properties.num_id.is_some())
 }
 
 fn paragraph_chart_ids(paragraph: &CT_P) -> Vec<String> {

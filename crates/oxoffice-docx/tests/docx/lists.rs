@@ -980,6 +980,83 @@ fn exports_show_the_report_lists_of_every_producer() {
 }
 
 #[test]
+fn exports_keep_headings_numbered_through_their_style_as_headings() {
+    // Word numbers its headings by linking the heading styles to a list.
+    let (doc, _) = numbered_headings();
+    let markdown = doc.to_markdown();
+    for line in ["# Introduction", "## Scope", "# Method"] {
+        assert!(
+            markdown.lines().any(|candidate| candidate == line),
+            "Markdown keeps {line:?}:\n{markdown}"
+        );
+    }
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<h1>Introduction</h1>"), "{html}");
+    assert!(html.contains("<h2>Scope</h2>"), "{html}");
+    assert!(!html.contains("<ol>"), "{html}");
+}
+
+#[test]
+fn exports_follow_a_style_numbered_through_its_based_on_chain_or_the_default_style() {
+    let (mut doc, id) = single_list(&[ListLevel::bullet()]);
+    doc.add_style(StyleBuilder::paragraph("Points", "Points"))
+        .unwrap();
+    doc.link_style_to_numbering("Points", id, 0).unwrap();
+    doc.add_style(StyleBuilder::paragraph("SubPoints", "Sub points").based_on("Points"))
+        .unwrap();
+    doc.add_paragraph("inherited point").style("SubPoints");
+    assert_eq!(markers(&doc), ["•"]);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == "- inherited point")
+    );
+    assert_eq!(
+        html_list_of(&doc.to_html_fragment(), "inherited point"),
+        "ul"
+    );
+
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.link_style_to_numbering("Normal", id, 0).unwrap();
+    doc.add_paragraph("default style step");
+    assert_eq!(markers(&doc), ["1."]);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == "1. default style step")
+    );
+}
+
+#[test]
+fn exports_leave_a_level_without_marker_out_of_lists() {
+    let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
+    add_items(&mut doc, id, &[0]);
+    assert_eq!(markers(&doc), [""]);
+    assert!(doc.to_markdown().lines().any(|line| line == "item 1"));
+    assert_eq!(html_list_of(&doc.to_html_fragment(), "item 1"), "none");
+}
+
+#[test]
+fn markdown_starts_a_swapped_in_level_where_layout_does() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal().start(5))],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    let marker = markers(&doc).remove(0);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == format!("{marker} item 1")),
+        "Markdown starts at {marker}: {}",
+        doc.to_markdown()
+    );
+}
+
+#[test]
 fn exports_show_the_level_an_instance_swaps_in() {
     let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
     let dashed = doc

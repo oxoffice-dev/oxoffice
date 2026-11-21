@@ -30,7 +30,13 @@ pub(crate) fn emit_body(
     for block in body_blocks(body, false) {
         match block {
             Block::Paragraph(p, _) => {
-                let list_info = detect_list(&p, styles, numbering);
+                // A heading numbered through its style, as Word numbers its
+                // headings, stays a heading; only its own numbering makes it
+                // a list item.
+                let list_info = detect_list(&p, styles, numbering).filter(|_| {
+                    detect_heading_level(p.properties.as_ref(), styles).is_none()
+                        || crate::has_own_numbering(&p)
+                });
 
                 // Close lists that are no longer active
                 while let Some(top) = list_stack.last() {
@@ -153,9 +159,9 @@ fn detect_list(
             | ST_NumberFormat::LowerRoman
             | ST_NumberFormat::UpperLetter
             | ST_NumberFormat::LowerLetter
-            | ST_NumberFormat::Ordinal
-            | ST_NumberFormat::None,
+            | ST_NumberFormat::Ordinal,
         ) => true,
+        // A `none` level draws no marker, as in layout: not a list item.
         Some(_) => return None,
     };
 

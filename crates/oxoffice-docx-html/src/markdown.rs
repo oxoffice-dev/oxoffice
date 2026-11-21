@@ -174,7 +174,7 @@ fn detect_list(
     styles: &CT_Styles,
     numbering: Option<&CT_Numbering>,
 ) -> Option<(bool, u32, u32, u32)> {
-    let (num_id, ilvl, level, start_override) = crate::list_level(para, styles, numbering?)?;
+    let (num_id, ilvl, level, start) = crate::list_level(para, styles, numbering?)?;
 
     use oxoffice_docx_oxml::numbering::ST_NumberFormat;
     let is_ordered = match level.num_fmt.as_ref() {
@@ -186,13 +186,12 @@ fn detect_list(
             | ST_NumberFormat::LowerRoman
             | ST_NumberFormat::UpperLetter
             | ST_NumberFormat::LowerLetter
-            | ST_NumberFormat::Ordinal
-            | ST_NumberFormat::None,
+            | ST_NumberFormat::Ordinal,
         ) => true,
+        // A `none` level draws no marker, as in layout: not a list item.
         Some(_) => return None,
     };
 
-    let start = start_override.or(level.start).unwrap_or(1);
     Some((is_ordered, ilvl, num_id, start))
 }
 
@@ -209,7 +208,10 @@ fn emit_paragraph(
     let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
     let mut heading_level = detect_heading_level(para.properties.as_ref(), styles);
-    let list_info = detect_list(para, styles, numbering);
+    // A heading numbered through its style, as Word numbers its headings,
+    // stays a heading; only its own numbering makes it a list item.
+    let list_info = detect_list(para, styles, numbering)
+        .filter(|_| heading_level.is_none() || crate::has_own_numbering(para));
 
     // Collect inline text for the paragraph
     let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries);
