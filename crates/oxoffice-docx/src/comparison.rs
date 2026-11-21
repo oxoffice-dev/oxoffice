@@ -1014,6 +1014,9 @@ impl Document {
     }
 
     /// Compare supported Word stories using an explicit granularity and ignore policy.
+    ///
+    /// Bookmark ids and generated `_Toc` names are reconciled as for
+    /// [`Document::compare`].
     pub fn compare_with_options(
         &mut self,
         edited: &Document,
@@ -5580,12 +5583,19 @@ fn reconcile_footnote_custody_inputs(original: &Document, edited: &mut Document)
     Ok(())
 }
 
+/// A main story read for its bookmarks: the bookmark starts in document
+/// order, and the text of each paragraph.
+struct BodyBookmarks {
+    bookmarks: Vec<BodyBookmark>,
+    paragraphs: Vec<String>,
+}
+
 /// A bookmark start of a main story.
 struct BodyBookmark {
     id: Option<i32>,
     name: Option<String>,
-    /// The text of its paragraph, read for a generated heading bookmark only.
-    heading: String,
+    /// The paragraph holding it, among [`BodyBookmarks::paragraphs`].
+    paragraph: Option<usize>,
 }
 
 /// Word and [`Document::rebuild_toc`] name the bookmarks a table of contents
@@ -5600,8 +5610,9 @@ fn generated_heading_bookmark(name: &str) -> bool {
 /// renames the `_Toc` bookmarks of its headings. Neither changes what the
 /// document says, and no tracked change can record either. Before comparing,
 /// the edited main story takes the original's id for each bookmark name both
-/// inputs hold, and the original's name for each `_Toc` bookmark paired with
-/// one of the original by heading text, in order. Its links and field
+/// inputs hold, and the original's name for each `_Toc` bookmark whose
+/// paragraph pairs with one of the original holding one, the paragraphs
+/// aligned by text. Its links and field
 /// instructions that name a renamed bookmark follow, so it reads the same. A
 /// bookmark only the edited input holds takes a fresh id or name where the
 /// original uses its own. When a reference cannot follow, because a field
@@ -5616,8 +5627,14 @@ fn reconcile_body_bookmarks(original: &Document, edited: &mut Document) -> Resul
     }
     let left_xml = part_xml(original, &original.doc_part_name)?;
     let right_xml = part_xml(edited, &edited.doc_part_name)?;
-    let left = body_bookmarks(left_xml)?;
-    let right = body_bookmarks(right_xml)?;
+    let BodyBookmarks {
+        bookmarks: left,
+        paragraphs: left_paragraphs,
+    } = body_bookmarks(left_xml)?;
+    let BodyBookmarks {
+        bookmarks: right,
+        paragraphs: right_paragraphs,
+    } = body_bookmarks(right_xml)?;
     if right.is_empty() {
         return Ok(());
     }
@@ -5631,46 +5648,49 @@ fn reconcile_body_bookmarks(original: &Document, edited: &mut Document) -> Resul
         }
     }
 
+    // The generated bookmarks of each paragraph, in order. A heading pairs
+    // with the paragraph the alignment gives it, which is what the
+    // comparison will revise it against, and its bookmarks pair in order
+    // when both hold as many.
     let generated = |bookmarks: &[BodyBookmark]| {
-        bookmarks
-            .iter()
-            .filter_map(|bookmark| {
-                let name = bookmark.name.as_deref()?;
-                generated_heading_bookmark(name)
-                    .then(|| (name.to_owned(), bookmark.heading.clone()))
-            })
-            .collect::<Vec<_>>()
+        let mut by_paragraph = BTreeMap::<usize, Vec<String>>::new();
+        for bookmark in bookmarks {
+            if let (Some(name), Some(paragraph)) = (bookmark.name.as_deref(), bookmark.paragraph)
+                && generated_heading_bookmark(name)
+            {
+                by_paragraph
+                    .entry(paragraph)
+                    .or_default()
+                    .push(name.to_owned());
+            }
+        }
+        by_paragraph
     };
     let left_generated = generated(&left);
-    let right_generated = generated(&right);
-    let headings = |generated: &[(String, String)]| {
-        generated
-            .iter()
-            .map(|(_, heading)| heading.clone())
-            .collect::<Vec<_>>()
-    };
+    let mut right_generated = generated(&right);
     let left_names = left
         .iter()
         .filter_map(|bookmark| bookmark.name.as_deref())
         .collect::<HashSet<_>>();
     let mut names = HashMap::new();
-    let mut unpaired = Vec::new();
-    for pair in align(&headings(&left_generated), &headings(&right_generated)) {
-        match pair {
-            (Some(left), Some(right)) => {
-                names.insert(
-                    right_generated[right].0.clone(),
-                    left_generated[left].0.clone(),
-                );
+    if !right_generated.is_empty() && !left_generated.is_empty() {
+        for pair in align_trimmed(&left_paragraphs, &right_paragraphs) {
+            if let (Some(left), Some(right)) = pair
+                && let Some(left) = left_generated.get(&left)
+                && right_generated
+                    .get(&right)
+                    .is_some_and(|right| right.len() == left.len())
+            {
+                let right = right_generated.remove(&right).expect("paired paragraph");
+                names.extend(right.into_iter().zip(left.iter().cloned()));
             }
-            (None, Some(right)) => unpaired.push(&right_generated[right].0),
-            _ => {}
         }
     }
+    let unpaired = right_generated.into_values().flatten().collect::<Vec<_>>();
     // A name of the original on a heading it does not pair would meet that
     // bookmark in the redline: such a heading takes a name neither input uses.
     let mut taken = None;
-    for name in unpaired {
+    for name in &unpaired {
         if left_names.contains(name.as_str()) {
             let (taken, suffix) = match &mut taken {
                 Some(taken) => taken,
@@ -5731,10 +5751,16 @@ fn reconcile_body_bookmarks(original: &Document, edited: &mut Document) -> Resul
     for name in ambiguous {
         left_ids.remove(name);
     }
-    let left_id_set = left
+    // An id the original gives a bookmark of another story is taken too.
+    let mut left_id_set = left
         .iter()
         .filter_map(|bookmark| bookmark.id)
         .collect::<HashSet<_>>();
+    for (document, name) in &parts {
+        if std::ptr::eq(*document, original) && *name != original.doc_part_name {
+            left_id_set.extend(bookmark_ids(part_xml(document, name)?)?);
+        }
+    }
     let mut allocator = None;
     let mut ids = HashMap::new();
     let mut targets = HashSet::new();
@@ -5788,29 +5814,96 @@ fn reconcile_body_bookmarks(original: &Document, edited: &mut Document) -> Resul
     crate::document::set_story_source_xml(edited, &part, xml)
 }
 
-/// The bookmark starts of a main story, in document order. Copies in an
-/// `mc:Fallback` repeat their `mc:Choice` and are left out.
-fn body_bookmarks(xml: &[u8]) -> Result<Vec<BodyBookmark>> {
+/// The bookmark starts and the paragraphs of a main story, in document
+/// order. Copies in an `mc:Fallback` repeat their `mc:Choice` and are left
+/// out.
+fn body_bookmarks(xml: &[u8]) -> Result<BodyBookmarks> {
     let tree = crate::revision::XmlTree::parse(xml)?;
     let mut bookmarks = Vec::new();
+    let mut paragraphs = Vec::new();
+    // The paragraph ordinal of each open paragraph element, innermost last.
+    let mut open: Vec<(usize, usize)> = Vec::new();
     for (index, node) in tree.elements.iter().enumerate() {
-        if !node.word || node.local != "bookmarkStart" || in_fallback(&tree, index) {
+        while open
+            .last()
+            .is_some_and(|&(element, _)| tree.elements[element].end <= node.start)
+        {
+            open.pop();
+        }
+        if !node.word || in_fallback(&tree, index) {
             continue;
         }
-        let attributes = word_attributes(&tree, xml, index)?;
-        let name = attributes.get("name").cloned();
-        let heading = if name.as_deref().is_some_and(generated_heading_bookmark) {
-            enclosing_paragraph_text(&tree, xml, index)
-        } else {
-            String::new()
-        };
-        bookmarks.push(BodyBookmark {
-            id: attributes.get("id").and_then(|id| id.parse().ok()),
-            name,
-            heading,
-        });
+        match node.local.as_str() {
+            "p" => {
+                open.push((index, paragraphs.len()));
+                paragraphs.push(paragraph_text(&tree, xml, index));
+            }
+            "bookmarkStart" => {
+                let attributes = word_attributes(&tree, xml, index)?;
+                bookmarks.push(BodyBookmark {
+                    id: attributes.get("id").and_then(|id| id.parse().ok()),
+                    name: attributes.get("name").cloned(),
+                    paragraph: open.last().map(|&(_, paragraph)| paragraph),
+                });
+            }
+            _ => {}
+        }
     }
-    Ok(bookmarks)
+    Ok(BodyBookmarks {
+        bookmarks,
+        paragraphs,
+    })
+}
+
+/// The ids of the bookmark starts of a story.
+fn bookmark_ids(xml: &[u8]) -> Result<HashSet<i32>> {
+    let tree = crate::revision::XmlTree::parse(xml)?;
+    let mut ids = HashSet::new();
+    for (index, node) in tree.elements.iter().enumerate() {
+        if node.word && node.local == "bookmarkStart" {
+            ids.extend(
+                word_attributes(&tree, xml, index)?
+                    .get("id")
+                    .and_then(|id| id.parse::<i32>().ok()),
+            );
+        }
+    }
+    Ok(ids)
+}
+
+/// [`align`] after setting the common prefix and suffix aside, so that its
+/// table covers only the changed middle of two long sequences.
+fn align_trimmed(original: &[String], edited: &[String]) -> Vec<(Option<usize>, Option<usize>)> {
+    let prefix = original
+        .iter()
+        .zip(edited)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let suffix = original[prefix..]
+        .iter()
+        .rev()
+        .zip(edited[prefix..].iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let middle = align(
+        &original[prefix..original.len() - suffix],
+        &edited[prefix..edited.len() - suffix],
+    );
+    (0..prefix)
+        .map(|index| (Some(index), Some(index)))
+        .chain(middle.into_iter().map(|(left, right)| {
+            (
+                left.map(|left| left + prefix),
+                right.map(|right| right + prefix),
+            )
+        }))
+        .chain((0..suffix).map(|offset| {
+            (
+                Some(original.len() - suffix + offset),
+                Some(edited.len() - suffix + offset),
+            )
+        }))
+        .collect()
 }
 
 fn in_fallback(tree: &crate::revision::XmlTree<'_>, index: usize) -> bool {
@@ -5825,26 +5918,15 @@ fn in_fallback(tree: &crate::revision::XmlTree<'_>, index: usize) -> bool {
     false
 }
 
-/// The `w:t` text of the paragraph holding `index`, empty outside a paragraph.
-fn enclosing_paragraph_text(
-    tree: &crate::revision::XmlTree<'_>,
-    xml: &[u8],
-    index: usize,
-) -> String {
-    let mut current = tree.elements[index].parent;
-    while let Some(parent) = current {
-        let node = &tree.elements[parent];
-        if node.word && node.local == "p" {
-            return tree.elements[parent + 1..]
-                .iter()
-                .take_while(|child| child.start < node.end)
-                .filter(|child| child.word && child.local == "t" && !child.empty)
-                .map(|child| String::from_utf8_lossy(&xml[child.open_end..child.close_start]))
-                .collect();
-        }
-        current = node.parent;
-    }
-    String::new()
+/// The `w:t` text of the paragraph element `index`.
+fn paragraph_text(tree: &crate::revision::XmlTree<'_>, xml: &[u8], index: usize) -> String {
+    let end = tree.elements[index].end;
+    tree.elements[index + 1..]
+        .iter()
+        .take_while(|child| child.start < end)
+        .filter(|child| child.word && child.local == "t" && !child.empty)
+        .map(|child| String::from_utf8_lossy(&xml[child.open_end..child.close_start]))
+        .collect()
 }
 
 /// The Word attributes of an element, raw values by local name.
