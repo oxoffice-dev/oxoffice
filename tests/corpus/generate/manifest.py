@@ -81,10 +81,10 @@ def _number_format(numbering: str, num: str, ilvl: int) -> str | None:
 def _signature_control(stories: str) -> bool:
     """A control PDF form export turns into a signature field: a plain text,
     rich text or picture control tagged `signature` or `signature:<name>`,
-    whatever the case."""
+    whatever the ASCII case (a placeholder's `w:docPart` is not a kind)."""
     for properties in re.findall(r"<w:sdtPr>(.*?)</w:sdtPr>", stories, re.S):
-        tagged = re.search(r'<w:tag w:val="(?i:signature)(:[^"]*)?"', properties)
-        other_kind = re.search(r"<(w:date|w:dropDownList|w:comboBox|w14:checkbox|w:docPart\w*|w:group|w:equation"
+        tagged = re.search(r'<w:tag w:val="(?ai:signature)(:[^"]*)?"', properties)
+        other_kind = re.search(r"<(w:date|w:dropDownList|w:comboBox|w14:checkbox|w:docPart(?:Obj|List)|w:group|w:equation"
                                r"|w:citation|w:bibliography|w15:repeatingSection\w*)\b", properties)
         if tagged and not other_kind:
             return True
