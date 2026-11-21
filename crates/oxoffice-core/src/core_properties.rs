@@ -236,7 +236,8 @@ impl CoreProperties {
             tag: &str,
             value: &Option<String>,
         ) -> Result<()> {
-            if let Some(val) = value {
+            // An empty value reads back as no value: it writes no element.
+            if let Some(val) = value.as_deref().filter(|value| !value.is_empty()) {
                 writer.write_event(Event::Start(BytesStart::new(tag)))?;
                 writer.write_event(Event::Text(BytesText::from_escaped(escape_text(val))))?;
                 writer.write_event(Event::End(BytesEnd::new(tag)))?;
@@ -249,7 +250,8 @@ impl CoreProperties {
             tag: &str,
             value: &Option<String>,
         ) -> Result<()> {
-            if let Some(val) = value {
+            // An empty W3CDTF date is not a date: it writes no element.
+            if let Some(val) = value.as_deref().filter(|value| !value.is_empty()) {
                 let mut e = BytesStart::new(tag);
                 e.push_attribute(("xsi:type", "dcterms:W3CDTF"));
                 writer.write_event(Event::Start(e))?;

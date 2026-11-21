@@ -2056,3 +2056,42 @@ fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
         assert!(xml.contains(written), "{part}: {written} in {xml}");
     }
 }
+
+#[test]
+fn a_removed_property_removes_its_element() {
+    // A new deck's own core part writes no empty element either.
+    let mut prs = new_deck();
+    prs.core_properties_mut().created = Some(String::new());
+    let saved = saved_part_text(&prs, "/docProps/core.xml").unwrap();
+    assert!(!saved.contains("created"), "{saved}");
+
+    let mut prs = new_deck();
+    let mut core = prs.core_properties().cloned().unwrap_or_default();
+    core.created = Some("2026-01-01T00:00:00Z".to_owned());
+    core.title = Some("Plan".to_owned());
+    prs.set_core_properties(core).unwrap();
+    let mut prs = reopen(&prs);
+    let mut core = prs.core_properties().cloned().unwrap();
+    core.created = None;
+    // An empty value reads back as no value: it removes the property too.
+    core.title = Some(String::new());
+    prs.set_core_properties(core).unwrap();
+    let saved = saved_part_text(&reopen(&prs), "/docProps/core.xml").unwrap();
+    // An empty W3CDTF date is not a valid date: the element goes.
+    assert!(
+        !saved.contains("created") && !saved.contains("title"),
+        "{saved}"
+    );
+
+    let mut prs = corpus_deck("authored/deck.pptx");
+    let mut app = prs.application_properties().unwrap().clone();
+    assert!(app.slides.is_some() && app.company.is_some(), "{app:?}");
+    app.slides = None;
+    app.company = None;
+    prs.set_application_properties(app).unwrap();
+    let saved = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(
+        !saved.contains("<Slides>") && !saved.contains("Company"),
+        "{saved}"
+    );
+}
