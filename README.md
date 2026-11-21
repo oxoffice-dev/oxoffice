@@ -24,8 +24,8 @@ from Rust, the command line or Python.**
 ## ✨ Why oxoffice
 
 - 🦀 **One engine, three doors**: a Rust API, an `oxoffice` command for everything that makes sense in a
-  shell, and an `oxoffice` Python package that covers nearly all of it (bibliographies and encryption are Rust
-  only for now) for when the shell is not enough.
+  shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as bibliographies and
+  encryption, are Rust only for now) for when the shell is not enough.
 - 📄 **Word and PowerPoint as equals**, with spreadsheets on the [roadmap](ROADMAP.md).
 - ✍️ **Edits that keep the file intact**: unmodelled XML is carried over verbatim, child order follows the
   schema, and text changes keep their formatting.
@@ -106,9 +106,10 @@ doc.save("hello.docx")?;
 
 A tour by family rather than a full list, as `main` stands, a step ahead of the last release: each command's
 `--help`, the Python type stubs and the examples of [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills)
-go into the details. ✅ works, ⚠️ works with known gaps, ❌ not yet, — does not apply. The gaps are in
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md), each with its workaround (`oxoffice limitations` in a build of `main`),
-together with a few that touch whole files, such as edits that cost more as a Word document grows.
+go into the details. ✅ works, ⚠️ works with known gaps, ❌ not yet, — does not apply. The note says what a ⚠️
+lacks; [docs/LIMITATIONS.md](docs/LIMITATIONS.md) (`oxoffice limitations` in a build of `main`) gives each listed gap
+its workaround, with a few that touch whole files: edits and form operations that cost more as a Word document
+grows, and a deck refused at open when one of its parts holds a control character.
 
 ### 📝 Word
 
@@ -123,7 +124,7 @@ together with a few that touch whole files, such as edits that cost more as a Wo
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
 | Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields and final tables; writing your own edits as tracked changes is on the [roadmap](ROADMAP.md) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
-| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect; controls in headers and dates in Word's long format are not reached yet; fillable PDF fields are coming |
+| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect; a value set over a control's prompt keeps the prompt's style, controls in headers are not reached, and a date control in Word's long format cannot be set yet; fillable PDF fields are coming |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
@@ -138,7 +139,7 @@ together with a few that touch whole files, such as edits that cost more as a Wo
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a slide with comments cannot be duplicated yet |
+| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a removed slide leaves its charts and legacy comments in the file, and sections do not follow moved slides yet |
 | Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
 | Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
 | Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
@@ -148,7 +149,7 @@ together with a few that touch whole files, such as edits that cost more as a Wo
 | Speaker notes | ✅ | ✅ | ✅ | notes pages and handouts as PDF |
 | Comments and replies | ✅ | ✅ | ✅ | modern comments, on a slide or a shape |
 | Themes, masters and layouts | ✅ | ✅ | ✅ | theme colours and fonts, a theme taken from another deck |
-| Merging decks | — | ⚠️ | — | slides imported onto a layout of the deck, or with their own formatting, which refuses PowerPoint and Google slides that have notes for now |
+| Merging decks | — | ⚠️ | — | slides imported onto a layout of the deck, or with their own formatting, which refuses PowerPoint and Google slides that have notes for now; sections do not follow them yet |
 | Rendering and conversions | ✅ | — | ✅ | from ODP; to PDF and PDF/A, PNG and JPEG slides, HTML, Markdown and ODP |
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |
