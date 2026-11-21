@@ -2193,6 +2193,33 @@ impl Field {
 }
 
 impl Field {
+    /// The direct formatting of the run that opens this field, read from its
+    /// source. A field that stores no result, such as a legacy checkbox
+    /// saved by Word, draws with it.
+    pub fn begin_run_properties(&self) -> Option<CT_RPr> {
+        let FieldSource::Parsed { raw_xml, .. } = self.source.as_ref() else {
+            return None;
+        };
+        let mut reader = Reader::from_reader(raw_xml.as_slice());
+        let mut buf = Vec::new();
+        let mut in_run = false;
+        loop {
+            match reader.read_event_into(&mut buf).ok()? {
+                Event::Start(start) if !in_run => {
+                    in_run = matches_local_name(start.name().as_ref(), b"r");
+                }
+                Event::Start(start) if matches_local_name(start.name().as_ref(), b"rPr") => {
+                    return CT_RPr::from_xml(&mut reader).ok();
+                }
+                // The run's first child is not its properties: it has none.
+                Event::Start(_) | Event::Empty(_) | Event::End(_) if in_run => return None,
+                Event::Eof => return None,
+                _ => {}
+            }
+            buf.clear();
+        }
+    }
+
     fn owned_clone_children(&self) -> Vec<&Field> {
         let mut children = Vec::new();
         for argument in self.instruction.arguments.iter().chain(
@@ -6072,6 +6099,8 @@ pub struct LegacyFormFieldData {
     pub value: LegacyFormFieldValue,
     pub choices: Vec<String>,
     pub max_length: Option<usize>,
+    /// A checkbox's drawn size, `None` for the other kinds.
+    pub checkbox_size: Option<LegacyCheckBoxSize>,
 }
 
 /// Help or status text stored on a legacy form field.
@@ -12364,6 +12393,7 @@ struct LegacyFormProjection {
     text_type_seen: bool,
     text_format_seen: bool,
     checkbox_size_seen: bool,
+    checkbox_size: Option<LegacyCheckBoxSize>,
     default_text: Option<String>,
     default_text_seen: bool,
     checked: Option<bool>,
@@ -12659,6 +12689,7 @@ fn parse_legacy_form_data(
             value,
             choices: projection.choices,
             max_length: projection.max_length,
+            checkbox_size: projection.checkbox_size,
         },
         reset_default,
         text_default,
@@ -12888,7 +12919,9 @@ fn project_legacy_form_element(
                     &mut projection.checkbox_size_seen,
                     "w:checkBox size choice",
                 )?;
-                legacy_form_hps_measure_value(element, word_prefixes, "w:checkBox/w:size")?;
+                projection.checkbox_size = Some(LegacyCheckBoxSize::HalfPoints(
+                    legacy_form_hps_measure_value(element, word_prefixes, "w:checkBox/w:size")?,
+                ));
             }
             (Some(LegacyFormFieldKind::CheckBox), Some("sizeAuto")) => {
                 mark_legacy_form_singleton(
@@ -12896,6 +12929,7 @@ fn project_legacy_form_element(
                     "w:checkBox size choice",
                 )?;
                 legacy_form_boolean_value(element, word_prefixes, "w:checkBox/w:sizeAuto")?;
+                projection.checkbox_size = Some(LegacyCheckBoxSize::Auto);
             }
             (Some(LegacyFormFieldKind::CheckBox), Some("checked")) => {
                 mark_legacy_form_singleton(&mut projection.checked_seen, "w:checkBox/w:checked")?;
@@ -13164,14 +13198,16 @@ fn legacy_form_usize_value(
         .map_err(|_| OxmlError::InvalidValue(format!("invalid {name} numeric token")))
 }
 
+/// A half-point measure: a count of half-points, or a number with a unit,
+/// rounded to the nearest half-point.
 fn legacy_form_hps_measure_value(
     element: &BytesStart<'_>,
     word_prefixes: &[String],
     name: &str,
-) -> Result<()> {
+) -> Result<u64> {
     let value = required_legacy_form_value(element, word_prefixes, name)?;
-    if value.parse::<u64>().is_ok() {
-        return Ok(());
+    if let Ok(half_points) = value.parse::<u64>() {
+        return Ok(half_points);
     }
     let Some(unit) = ["mm", "cm", "in", "pt", "pc", "pi"]
         .into_iter()
@@ -13196,7 +13232,15 @@ fn legacy_form_hps_measure_value(
             "invalid {name} measure token"
         )));
     }
-    Ok(())
+    let points_per_unit = match unit {
+        "mm" => 72.0 / 25.4,
+        "cm" => 72.0 / 2.54,
+        "in" => 72.0,
+        "pt" => 1.0,
+        _ => 12.0,
+    };
+    let half_points = number.parse::<f64>().unwrap_or(0.0) * points_per_unit * 2.0;
+    Ok(half_points.round().min(u64::MAX as f64) as u64)
 }
 
 fn set_legacy_form_kind(
@@ -24223,6 +24267,7 @@ fn legacy_form_author_parts(
         value,
         choices,
         max_length,
+        checkbox_size: author.checkbox_size,
     };
     Ok((name, display, data, author, reset_default, text_default))
 }

@@ -10740,12 +10740,31 @@ fn computed_layout_field(
             _ => (None, None),
         }
     };
+    // Word draws a legacy checkbox itself, locked or not, and saves no
+    // result for it.
+    if let Some(glyph) = drawn_legacy_checkbox(field) {
+        return (Some(glyph.to_owned()), None);
+    }
     let (computed_value, field_kind) = if field.locked() == Some(true) {
         (None, None)
     } else {
         (computed_value, field_kind)
     };
     (computed_value, field_kind)
+}
+
+/// The box a legacy checkbox draws when it stores no result, as Word does:
+/// ☒ when checked, ☐ when not.
+fn drawn_legacy_checkbox(field: &oxoffice_docx_oxml::text::Field) -> Option<&'static str> {
+    let data = field.legacy_form.as_ref()?;
+    let oxoffice_docx_oxml::text::LegacyFormFieldValue::Checked(checked) = data.value else {
+        return None;
+    };
+    let stores_result = field
+        .effective_display_field_segments()
+        .iter()
+        .any(|(text, _, _)| !text.is_empty());
+    (!stores_result).then_some(if checked { "\u{2612}" } else { "\u{2610}" })
 }
 
 /// Lay out a single paragraph into a ParagraphBlock.
@@ -12026,6 +12045,28 @@ fn layout_paragraph_with_source_and_table(
                         };
                         if let Some(properties) = stored_properties {
                             segment_rpr.merge_from(properties);
+                        }
+                        if computed_value.is_some() && drawn_legacy_checkbox(field).is_some() {
+                            // No result run: the box takes the opening run's
+                            // formatting, then its own size unless automatic.
+                            if stored_properties.is_none()
+                                && let Some(begin) = field.begin_run_properties()
+                            {
+                                segment_rpr.merge_from(&begin);
+                            }
+                            if let Some(oxoffice_docx_oxml::text::LegacyCheckBoxSize::HalfPoints(
+                                size,
+                            )) = field
+                                .legacy_form
+                                .as_ref()
+                                .and_then(|data| data.checkbox_size)
+                            {
+                                let size = oxoffice_docx_oxml::HalfPoint(
+                                    u32::try_from(size).unwrap_or(u32::MAX),
+                                );
+                                segment_rpr.sz = Some(size);
+                                segment_rpr.sz_cs = Some(size);
+                            }
                         }
                         if segment_rpr.vanish == Some(true) {
                             continue;

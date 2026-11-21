@@ -1062,3 +1062,68 @@ fn a_toc_in_a_google_docs_file_links_each_heading_beside_google_bookmarks() {
         assert!(after.contains(kept), "lost {kept:?}");
     }
 }
+
+/// Every glyph run a laid-out document draws, as (text, size, font family).
+fn drawn_runs(doc: &Document) -> Vec<(String, f64, String)> {
+    let result = doc.layout().expect("the document lays out");
+    let mut runs = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                let family = result
+                    .layout
+                    .fonts
+                    .iter()
+                    .find(|font| font.id == run.font_id)
+                    .map(|font| font.family.clone())
+                    .unwrap_or_default();
+                runs.push((run.text.clone(), run.font_size, family));
+            }
+        });
+    }
+    runs
+}
+
+/// A legacy checkbox as Word saves it: `w:ffData` and no result run.
+fn word_checkbox(size: &str, checked: bool) -> String {
+    format!(
+        r#"<w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox>{size}<w:default w:val="0"/>{checked}</w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>"#,
+        checked = if checked { r#"<w:checked/>"# } else { "" },
+    )
+}
+
+#[test]
+fn a_word_saved_legacy_checkbox_draws_its_box_at_its_size() {
+    let doc = doc_with_body(&format!(
+        "<w:p>{}<w:r><w:t xml:space=\"preserve\"> I agree</w:t></w:r></w:p><w:p>{}</w:p>",
+        word_checkbox(r#"<w:size w:val="24"/>"#, true),
+        word_checkbox("<w:sizeAuto/>", false),
+    ));
+    let runs = drawn_runs(&doc);
+    let checked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2612}")
+        .expect("checked box drawn");
+    assert_eq!(checked.1, 12.0, "w:size is in half-points");
+    let unchecked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2610}")
+        .expect("empty box drawn");
+    assert_eq!(unchecked.1, 10.0, "w:sizeAuto takes the run's size");
+    assert_eq!(
+        unchecked.2, "Noto Sans Symbols 2",
+        "a font that has the box"
+    );
+}
+
+#[test]
+fn a_legacy_checkbox_with_a_stored_result_draws_it_once() {
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let texts: Vec<String> = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(texts.concat(), "X", "the stored result, and no drawn box");
+}
