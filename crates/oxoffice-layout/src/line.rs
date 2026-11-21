@@ -370,6 +370,9 @@ pub struct LineBreakParams {
     pub ind_first_line: f64,
     /// Hanging indent in points (positive = text lines indented relative to first).
     pub ind_hanging: f64,
+    /// Whether the first-line and hanging indents apply at the right edge,
+    /// where a right-to-left paragraph starts.
+    pub first_line_at_right: bool,
     /// Tab stops.
     pub tab_stops: Vec<TabStop>,
     /// Line spacing rule and value.
@@ -409,6 +412,7 @@ impl Default for LineBreakParams {
             ind_right: 0.0,
             ind_first_line: 0.0,
             ind_hanging: 0.0,
+            first_line_at_right: false,
             tab_stops: Vec::new(),
             line_spacing: LineSpacing::Single,
             jc: None,
@@ -2327,7 +2331,11 @@ fn line_indent_at(params: &LineBreakParams, line_index: usize, is_first_line: bo
 }
 
 fn first_line_indent(params: &LineBreakParams) -> f64 {
-    if params.ind_hanging > 0.0 {
+    // At the right edge, the first line's indent only narrows it: the line
+    // still starts at the left indent.
+    if params.first_line_at_right {
+        params.ind_left
+    } else if params.ind_hanging > 0.0 {
         params.ind_left - params.ind_hanging
     } else {
         params.ind_left + params.ind_first_line

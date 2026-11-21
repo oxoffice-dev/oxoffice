@@ -2003,25 +2003,22 @@ fn layout_paragraph_with_source_and_table(
     if let Some(reflow_direction_out) = reflow_direction_out {
         *reflow_direction_out = layout_direction;
     }
-    let logical_left = match layout_direction {
-        TextDirection::RightToLeft => effective_ppr.ind_end,
-        TextDirection::Auto | TextDirection::LeftToRight => effective_ppr.ind_start,
+    // A right-to-left (`w:bidi`) paragraph starts on the right: Word reads
+    // its left and right indents and alignments as start and end, so
+    // `w:ind w:left` indents it from the right margin and `w:jc="left"`
+    // aligns it on the right. Without `w:bidi`, they keep their plain sides,
+    // whatever the script of the text.
+    let right_to_left = effective_ppr.bidi == Some(true);
+    let start_indent = effective_ppr.ind_left.or(effective_ppr.ind_start);
+    let end_indent = effective_ppr.ind_right.or(effective_ppr.ind_end);
+    let (left_indent, right_indent) = if right_to_left {
+        (end_indent, start_indent)
+    } else {
+        (start_indent, end_indent)
     };
-    let logical_right = match layout_direction {
-        TextDirection::RightToLeft => effective_ppr.ind_start,
-        TextDirection::Auto | TextDirection::LeftToRight => effective_ppr.ind_end,
-    };
-    let ind_left = effective_ppr
-        .ind_left
-        .or(logical_left)
-        .map(|t| t.to_pt())
-        .unwrap_or(0.0);
-    let ind_right = effective_ppr
-        .ind_right
-        .or(logical_right)
-        .map(|t| t.to_pt())
-        .unwrap_or(0.0);
-    let jc = convert::alignment_for_direction(effective_ppr.jc, layout_direction);
+    let ind_left = left_indent.map(|t| t.to_pt()).unwrap_or(0.0);
+    let ind_right = right_indent.map(|t| t.to_pt()).unwrap_or(0.0);
+    let jc = convert::paragraph_alignment(effective_ppr.jc, right_to_left);
 
     // Line breaking
     let mut line_params =
@@ -2030,6 +2027,7 @@ fn layout_paragraph_with_source_and_table(
     line_params.ind_left = ind_left;
     line_params.ind_right = ind_right;
     line_params.jc = jc;
+    line_params.first_line_at_right = right_to_left;
 
     // A line holding only inline objects takes its proportional spacing from
     // the paragraph mark, whose run properties `equation_rpr` already are. A
@@ -2162,6 +2160,7 @@ fn layout_paragraph_with_source_and_table(
         page_break_before,
         widow_control,
     );
+    result.right_to_left = right_to_left;
     result.heading_level = heading_level;
     result.heading_text = heading_level.map(|_| heading_text);
     result.change_bar = change_bar_color(para, input);

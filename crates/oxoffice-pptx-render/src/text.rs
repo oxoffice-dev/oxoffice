@@ -1270,6 +1270,7 @@ fn line_break_params(
         ind_right: paragraph.right_margin,
         ind_first_line,
         ind_hanging,
+        first_line_at_right: false,
         tab_stops: Vec::new(),
         line_spacing: match paragraph.line_spacing.as_ref() {
             Some(ResolvedTextSpacing::Percent(factor)) => LineSpacing::Multiple(

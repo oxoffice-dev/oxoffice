@@ -3599,7 +3599,7 @@ fn script_for_grapheme(grapheme: &str) -> TextScript {
         .unwrap_or(TextScript::Common)
 }
 
-fn script_for_char(character: char) -> TextScript {
+pub(crate) fn script_for_char(character: char) -> TextScript {
     match character as u32 {
         0x0041..=0x024f | 0x1e00..=0x1eff => TextScript::Latin,
         0x0590..=0x05ff => TextScript::Hebrew,

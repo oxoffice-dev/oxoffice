@@ -84,7 +84,11 @@ render:
 
 Charts in both families go through `oxoffice-chart`. Rendering uses the
 bundled fonts by default, so output is the same on every machine. The
-optional `system-fonts` feature adds the host's fonts.
+optional `system-fonts` feature adds the host's fonts to a call that asks for
+them (`RenderOptions::with_system_fonts`, CLI `--system-fonts`, Python
+`system_fonts=True`). Text no font in use can draw, such as Chinese, Japanese
+or Korean with the bundled fonts, is drawn as empty boxes and named by a
+diagnostic.
 
 The Rust facades are the reference. The CLI crates and the Python crates are
 thin layers over them: a feature lands in the facade first, then reaches the

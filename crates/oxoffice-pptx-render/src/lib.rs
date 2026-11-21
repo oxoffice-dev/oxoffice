@@ -365,6 +365,10 @@ pub fn layout_presentation_with_displayed_numbers(
         Vec::new(),
     );
     diagnostics.extend(font_manager.current_font_diagnostics().iter().cloned());
+    diagnostics.extend(oxoffice_layout::missing_glyph_diagnostics(
+        &layout.pages,
+        &layout.fonts,
+    ));
     layout.diagnostics = diagnostics;
     Ok(layout)
 }

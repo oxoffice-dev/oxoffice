@@ -116,3 +116,32 @@ fn a_document_without_controls_converts_with_no_form() {
     assert!(pdf.starts_with(b"%PDF-"));
     assert!(!pdf.windows(9).any(|window| window == b"/AcroForm"));
 }
+
+#[test]
+fn text_drawn_as_empty_boxes_is_named_with_the_way_out() {
+    for (family, input) in [
+        ("docx", corpus("word/minutes.docx")),
+        ("pptx", corpus("powerpoint/multilingual.pptx")),
+    ] {
+        let path = scratch(&format!("boxes-{family}.pdf"));
+        let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+            .args([family, "convert"])
+            .arg(&input)
+            .args(["--to", "pdf", "--force", "-o"])
+            .arg(&path)
+            .output()
+            .expect("oxoffice runs");
+        assert!(output.status.success(), "{}", stderr(&output));
+        let stderr = stderr(&output);
+        let han = stderr
+            .lines()
+            .find(|line| {
+                line.contains("Chinese, Japanese or Korean ideograph (Han) text has no glyph")
+            })
+            .unwrap_or_else(|| panic!("{family}: {stderr}"));
+        assert!(
+            han.contains("drawn as empty boxes") && han.contains("--system-fonts"),
+            "{family}: {han}"
+        );
+    }
+}

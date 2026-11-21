@@ -1944,6 +1944,9 @@ pub struct ParagraphBlock {
     pub indent_right: f64,
     /// Paragraph justification.
     pub jc: Option<Align>,
+    /// A right-to-left (`w:bidi`) paragraph, whose justified last line ends
+    /// on the right.
+    pub right_to_left: bool,
     /// Keep with next paragraph.
     pub keep_next: bool,
     /// Keep all lines together on one page.
@@ -2138,6 +2141,7 @@ pub fn build_paragraph_block(
         indent_left,
         indent_right,
         jc,
+        right_to_left: false,
         keep_next,
         keep_lines,
         page_break_before,
