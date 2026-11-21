@@ -2936,6 +2936,52 @@ fn an_endnote_added_while_endnotes_are_ignored_is_refused() {
     assert!(doc.revisions().is_empty());
 }
 
+/// `body` with every revision accepted, and the main part the resolution
+/// wrote.
+fn accepted_main_part(body: &str) -> String {
+    let mut doc = doc_with_body(body);
+    doc.accept_all().expect("accept all");
+    main_part_xml(&mut doc)
+}
+
+const DELETED_MARK: &str = r#"<w:pPr><w:rPr><w:del w:id="1" w:author="Eve" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr>"#;
+
+#[test]
+fn a_merged_paragraph_takes_no_default_namespace_its_runs_do_not_use() {
+    // The second paragraph declares a default namespace that no element of
+    // it takes: its run moves into the first paragraph without it.
+    let xml = accepted_main_part(&format!(
+        r#"<w:p>{DELETED_MARK}<w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p xmlns="urn:example:tasks"><w:r><w:t>two</w:t></w:r></w:p>"#
+    ));
+    assert!(xml.contains("<w:t>two</w:t>"), "{xml}");
+    assert!(!xml.contains(r#"xmlns="urn:example:tasks""#), "{xml}");
+}
+
+#[test]
+fn an_element_with_its_own_default_namespace_moves_without_an_undeclaration() {
+    // The first paragraph declares a default namespace; the run moved into
+    // it holds an element that declares its own, so the run needs no
+    // `xmlns=""`.
+    let xml = accepted_main_part(&format!(
+        r#"<w:p xmlns="urn:example:tasks">{DELETED_MARK}<w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p><w:r><w:t>two</w:t><extra xmlns="urn:example:extra"/></w:r></w:p>"#
+    ));
+    assert!(
+        xml.contains(r#"<extra xmlns="urn:example:extra"/>"#),
+        "{xml}"
+    );
+    assert!(!xml.contains(r#"xmlns="""#), "{xml}");
+}
+
+#[test]
+fn an_element_taking_the_inherited_default_moves_with_an_undeclaration() {
+    // The moved element has no prefix and no declaration: it takes no
+    // namespace in its own paragraph, and keeps none in the first one.
+    let xml = accepted_main_part(&format!(
+        r#"<w:p xmlns="urn:example:tasks">{DELETED_MARK}<w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r><extra/></w:p>"#
+    ));
+    assert!(xml.contains(r#"<extra xmlns=""/>"#), "{xml}");
+}
+
 #[test]
 fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
     // Word 2019 declares a default namespace on the document root; the
@@ -2965,30 +3011,36 @@ fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
         package.write_to(&mut out).unwrap();
         out.into_inner()
     };
-    let with_toc = {
-        let mut doc = Document::from_bytes(&base).unwrap();
-        doc.insert_toc(0, 3).unwrap();
-        doc.to_bytes().unwrap()
-    };
-    let without = Document::from_bytes(&base).unwrap();
-    for granularity in [
-        ComparisonGranularity::Word,
-        ComparisonGranularity::default(),
-    ] {
-        let mut doc = Document::from_bytes(&with_toc).unwrap();
-        let options = ComparisonOptions {
-            granularity,
-            ..Default::default()
+    // At the start, and in the middle of the body filled by rebuild_toc.
+    for (position, rebuilt) in [(0, false), (1, true)] {
+        let with_toc = {
+            let mut doc = Document::from_bytes(&base).unwrap();
+            doc.insert_toc(position, 3).unwrap();
+            if rebuilt {
+                doc.rebuild_toc().unwrap();
+            }
+            doc.to_bytes().unwrap()
         };
-        let diagnostics = doc
-            .compare_with_options(&without, AUTHOR, DATE, &options)
-            .expect("a table of contents removed whole compares");
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        let mut doc = reopen(&mut doc);
-        assert_eq!(texts(&accepted(&mut doc)), texts(&without));
-        assert_eq!(
-            texts(&rejected(&mut doc)),
-            texts(&Document::from_bytes(&with_toc).unwrap())
-        );
+        let without = Document::from_bytes(&base).unwrap();
+        for granularity in [
+            ComparisonGranularity::Word,
+            ComparisonGranularity::default(),
+        ] {
+            let mut doc = Document::from_bytes(&with_toc).unwrap();
+            let options = ComparisonOptions {
+                granularity,
+                ..Default::default()
+            };
+            let diagnostics = doc
+                .compare_with_options(&without, AUTHOR, DATE, &options)
+                .expect("a table of contents removed whole compares");
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let mut doc = reopen(&mut doc);
+            assert_eq!(texts(&accepted(&mut doc)), texts(&without));
+            assert_eq!(
+                texts(&rejected(&mut doc)),
+                texts(&Document::from_bytes(&with_toc).unwrap())
+            );
+        }
     }
 }
