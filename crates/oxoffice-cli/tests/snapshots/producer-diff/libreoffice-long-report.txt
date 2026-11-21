@@ -1,0 +1,5 @@
+changed footer: "Page 1 of 1" -> "Page 153 of 153"
+added header: "-" -> ""
+added header: "-" -> "Northwind Analytics: Annual Operations R"
+added footer: "-" -> ""
+added footer: "-" -> "Page 153 of 153"

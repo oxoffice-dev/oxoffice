@@ -1,0 +1,15 @@
+body_items
+body_items[].body_index
+body_items[].fragments
+body_items[].fragments[].displayed_page
+body_items[].fragments[].height
+body_items[].fragments[].physical_page
+body_items[].fragments[].width
+body_items[].fragments[].x
+body_items[].fragments[].y
+body_items[].kind
+page_count
+revision_view
+schema
+scope
+units

@@ -171,6 +171,9 @@ jobs:
         shell: bash
         env:
           OXOFFICE_RENDER: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'full' || matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
+          # The workflow tests read one corpus file each on a pull request, every
+          # producer's copy otherwise (specs/2026-11-21-consumer-workflows.md).
+          OXOFFICE_WORKFLOWS: ${{ github.event_name != 'pull_request' && 'full' || '' }}
         run: |
           if ls crates/*/tests/*.rs > /dev/null 2>&1; then
             cargo test --profile ci --locked --workspace $PY_CRATES --test '*'
