@@ -9007,36 +9007,15 @@ fn compare_body_impl(
         &edited_signatures,
         &mut metadata.ids,
     )?;
-    let trailing_paragraph_insert_start = aligned
-        .iter()
-        .enumerate()
-        .rev()
-        .take_while(|(_, (left, right))| {
-            left.is_none()
-                && right
-                    .and_then(|index| edited.body.content.get(index))
-                    .is_some_and(|content| matches!(content, BodyContent::Paragraph(_)))
-        })
-        .map(|(position, _)| position)
-        .last();
-    let trailing_paragraph_delete_start = aligned
-        .iter()
-        .enumerate()
-        .rev()
-        .take_while(|(_, (left, right))| {
-            right.is_none()
-                && left.is_some_and(|index| {
-                    matches!(original.body.content[index], BodyContent::Paragraph(_))
-                })
-        })
-        .map(|(position, _)| position)
-        .last();
-    // The move id of the paragraph that ends the body, on each side: the
-    // last paragraph of a trailing run, whose change the mark before the run
-    // carries.
-    let (last_original, last_edited) = aligned.last().copied().unwrap_or_default();
-    let trailing_delete_end = last_original.and_then(|index| moves.original[index]);
-    let trailing_insert_end = last_edited.and_then(|index| moves.edited[index]);
+    let trailing_inserted = trailing_paragraphs(&aligned, |(left, right)| {
+        right
+            .filter(|_| left.is_none())
+            .and_then(|index| edited.body.content.get(index))
+    });
+    let trailing_deleted = trailing_paragraphs(&aligned, |(left, right)| {
+        left.filter(|_| right.is_none())
+            .and_then(|index| original.body.content.get(index))
+    });
     // A final paragraph change marks the paragraph mark of an owner already
     // emitted, which must not be one that holds an existing revision.
     let refuse_held_mark = |position: Option<usize>| -> Result<()> {
@@ -9055,8 +9034,7 @@ fn compare_body_impl(
     // formatting. Caller ignore policies still govern ordinary comparison.
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
-    let mut trailing_merged = PropertySide::default();
-    let mut trailing_after_table = false;
+    let mut trailing = (PropertySide::default(), false);
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();
@@ -9217,37 +9195,26 @@ fn compare_body_impl(
                 let move_id = moves.original[left];
                 let kind = if move_id.is_some() { "moveFrom" } else { "del" };
                 if let BodyContent::Paragraph(paragraph) = content
-                    && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
+                    && let Some((first, last)) =
+                        trailing_deleted.filter(|&(first, _)| position >= first)
                 {
-                    if trailing_paragraph_delete_start == Some(position) {
-                        let end_kind = if trailing_delete_end.is_some() {
-                            "moveFrom"
-                        } else {
-                            "del"
-                        };
-                        trailing_after_table = after_kept_table(&output, end_kind, location);
-                        if !trailing_after_table {
-                            refuse_held_mark(previous_mark_position(&output, end_kind))?;
-                            trailing_merged = mark_before_final_paragraph(
-                                &mut output,
-                                end_kind,
-                                trailing_delete_end,
-                                source_bindings,
-                                metadata,
-                            )?;
-                        }
-                    }
-                    if next_takes_mark || trailing_after_table {
-                        output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
-                    } else {
-                        output.push(final_paragraph(
+                    trailing_paragraph(
+                        &mut output,
+                        TrailingRun {
+                            content,
                             paragraph,
                             kind,
                             move_id,
-                            trailing_merged.clone(),
-                            metadata,
-                        )?);
-                    }
+                            first: position == first,
+                            single: first == last,
+                            next_takes_mark,
+                            location,
+                        },
+                        &mut trailing,
+                        &refuse_held_mark,
+                        source_bindings,
+                        metadata,
+                    )?;
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
                     && !after_kept_table(&output, kind, location)
@@ -9281,37 +9248,26 @@ fn compare_body_impl(
                 let move_id = moves.edited[right];
                 let kind = if move_id.is_some() { "moveTo" } else { "ins" };
                 if let BodyContent::Paragraph(paragraph) = content
-                    && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
+                    && let Some((first, last)) =
+                        trailing_inserted.filter(|&(first, _)| position >= first)
                 {
-                    if trailing_paragraph_insert_start == Some(position) {
-                        let end_kind = if trailing_insert_end.is_some() {
-                            "moveTo"
-                        } else {
-                            "ins"
-                        };
-                        trailing_after_table = after_kept_table(&output, end_kind, location);
-                        if !trailing_after_table {
-                            refuse_held_mark(previous_mark_position(&output, end_kind))?;
-                            trailing_merged = mark_before_final_paragraph(
-                                &mut output,
-                                end_kind,
-                                trailing_insert_end,
-                                source_bindings,
-                                metadata,
-                            )?;
-                        }
-                    }
-                    if next_takes_mark || trailing_after_table {
-                        output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
-                    } else {
-                        output.push(final_paragraph(
+                    trailing_paragraph(
+                        &mut output,
+                        TrailingRun {
+                            content,
                             paragraph,
                             kind,
                             move_id,
-                            trailing_merged.clone(),
-                            metadata,
-                        )?);
-                    }
+                            first: position == first,
+                            single: first == last,
+                            next_takes_mark,
+                            location,
+                        },
+                        &mut trailing,
+                        &refuse_held_mark,
+                        source_bindings,
+                        metadata,
+                    )?;
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
                     && !after_kept_table(&output, kind, location)
@@ -11168,6 +11124,32 @@ fn accept_removes(kind: &str) -> bool {
     matches!(kind, "del" | "moveFrom")
 }
 
+/// The first and last positions of the paragraphs in the run of owners
+/// that one side alone holds (`one_sided` gives the owner) and that ends
+/// the body. The tables between them are crossed: the mark before the
+/// first paragraph carries the change of the last one, whose own mark ends
+/// the story.
+fn trailing_paragraphs<'d>(
+    aligned: &[(Option<usize>, Option<usize>)],
+    one_sided: impl Fn((Option<usize>, Option<usize>)) -> Option<&'d BodyContent>,
+) -> Option<(usize, usize)> {
+    let paragraphs = aligned
+        .iter()
+        .enumerate()
+        .rev()
+        .map_while(|(position, &pair)| {
+            one_sided(pair)
+                .filter(|content| {
+                    matches!(content, BodyContent::Paragraph(_) | BodyContent::Table(_))
+                })
+                .map(|content| (position, content))
+        })
+        .filter(|(_, content)| matches!(content, BodyContent::Paragraph(_)))
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    paragraphs.last().copied().zip(paragraphs.first().copied())
+}
+
 /// The position in `output` of the owner whose paragraph mark
 /// [`mark_previous_paragraph`] marks for a final `kind` change.
 fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> Option<usize> {
@@ -11260,6 +11242,79 @@ fn marked_paragraph_properties_xml(
         return Ok(updated);
     }
     append_word_child(properties, "pPr", &run_properties)
+}
+
+/// A paragraph of the run of owners one side alone holds that ends the
+/// body.
+struct TrailingRun<'a, 'l> {
+    content: &'a BodyContent,
+    paragraph: &'a CT_P,
+    kind: &'static str,
+    move_id: Option<i32>,
+    /// Whether it is the first paragraph of the run, and the only one.
+    first: bool,
+    single: bool,
+    next_takes_mark: bool,
+    location: &'l str,
+}
+
+/// Emit a paragraph of the run that ends the body, with `trailing` the
+/// properties [`final_paragraph`] merges and whether a kept table precedes
+/// the run.
+///
+/// The first paragraph marks the paragraph before the run, unless a kept
+/// table precedes it: with its own change when it is the only one, else
+/// with a mark of the run's resolution under a fresh id, so that resolving
+/// one move of the run alone merges nothing else. Each paragraph but the
+/// last carries its own change. The last keeps its mark as the story
+/// terminator; when it is moved, its move also goes on the mark of the
+/// paragraph before it in the run, which resolving that move alone merges
+/// into it.
+fn trailing_paragraph<'a>(
+    output: &mut Vec<(EmittedOwner<'a>, String)>,
+    run: TrailingRun<'a, '_>,
+    trailing: &mut (PropertySide<'a>, bool),
+    refuse_held_mark: &dyn Fn(Option<usize>) -> Result<()>,
+    bindings: &[(String, String)],
+    metadata: &mut Metadata<'_>,
+) -> Result<()> {
+    let (merged, after_table) = (&mut trailing.0, &mut trailing.1);
+    if run.first {
+        let (kind, move_id) = if run.single {
+            (run.kind, run.move_id)
+        } else if accept_removes(run.kind) {
+            ("del", None)
+        } else {
+            ("ins", None)
+        };
+        *after_table = after_kept_table(output, kind, run.location);
+        if !*after_table {
+            refuse_held_mark(previous_mark_position(output, kind))?;
+            *merged = mark_before_final_paragraph(output, kind, move_id, bindings, metadata)?;
+        }
+    }
+    if run.next_takes_mark || *after_table {
+        output.push(unmatched_body_owner(
+            run.content,
+            run.kind,
+            run.move_id,
+            metadata,
+        )?);
+        return Ok(());
+    }
+    if let Some(id) = run.move_id
+        && !run.single
+    {
+        mark_previous_paragraph_with_id(output, run.kind, id, bindings, metadata)?;
+    }
+    output.push(final_paragraph(
+        run.paragraph,
+        run.kind,
+        run.move_id,
+        merged.clone(),
+        metadata,
+    )?);
+    Ok(())
 }
 
 /// A body owner one side alone holds, written with its own `kind` marks:

@@ -2755,7 +2755,12 @@ impl<'a> XmlTree<'a> {
                     {
                         if element.word
                             && element.local == "body"
-                            && self.body_end_goes(element, child_index, state)
+                            && self.body_end_goes(
+                                element,
+                                child_index,
+                                siblings.len() > paragraphs.len(),
+                                state,
+                            )
                         {
                             before_table = true;
                             break;
@@ -3303,10 +3308,15 @@ impl<'a> XmlTree<'a> {
     /// Whether the paragraphs from child `position` of `parent` to the end
     /// of the body can go: the owner before them, past the tables whose
     /// every row this resolution removes, is a table it keeps, or such a
-    /// table was crossed, so that the body ends with whatever came before
-    /// it.
-    fn body_end_goes(&self, parent: &XmlElement, position: usize, state: &RenderState<'_>) -> bool {
-        let mut crossed = false;
+    /// table was crossed, among them (`crossed`) or before them, so that
+    /// the body ends with whatever came before it.
+    fn body_end_goes(
+        &self,
+        parent: &XmlElement,
+        position: usize,
+        mut crossed: bool,
+        state: &RenderState<'_>,
+    ) -> bool {
         for &child in parent.children[..position].iter().rev() {
             if !self.story_owner(child) {
                 continue;
