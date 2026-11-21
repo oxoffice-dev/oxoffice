@@ -338,10 +338,12 @@ impl PyRun {
     ) -> PyResult<Py<crate::document::PyPicture>> {
         let (location, index) = self.validate(py)?;
         let (data, filename) = crate::document::picture_input(data, filename)?;
-        let width = crate::document::checked_section_length(width, "picture width")?
-            .map(oxoffice_docx::Length::emu);
-        let height = crate::document::checked_section_length(height, "picture height")?
-            .map(oxoffice_docx::Length::emu);
+        let width =
+            crate::length_argument(width, "Run.add_picture(width)", crate::LengthUnit::Emu)?
+                .map(oxoffice_docx::Length::emu);
+        let height =
+            crate::length_argument(height, "Run.add_picture(height)", crate::LengthUnit::Emu)?
+                .map(oxoffice_docx::Length::emu);
         let mut document = self.document.borrow_mut(py);
         let position = oxoffice_docx::StoryRunPosition {
             location: location

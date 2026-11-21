@@ -38,6 +38,32 @@ pub(crate) fn length_object(py: Python<'_>, value: oxoffice_docx::Length) -> PyR
         .map(Bound::unbind)
 }
 
+pub(crate) use oxoffice_py_support::LengthUnit;
+
+const LENGTHS: oxoffice_py_support::LengthClasses = oxoffice_py_support::LengthClasses {
+    module: "oxoffice.docx",
+    hint: "Pt, Twips or Emu",
+};
+
+/// Read one optional length argument by the rule every Word length argument
+/// follows: see [`oxoffice_py_support::length_argument`].
+pub(crate) fn length_argument(
+    value: Option<&Bound<'_, PyAny>>,
+    name: &str,
+    unit: LengthUnit,
+) -> PyResult<Option<i64>> {
+    oxoffice_py_support::length_argument(value, LENGTHS, name, unit)
+}
+
+/// Read one length argument that takes no `None`, by the same rule.
+pub(crate) fn required_length(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    unit: LengthUnit,
+) -> PyResult<i64> {
+    oxoffice_py_support::required_length(value, LENGTHS, name, unit)
+}
+
 pub(crate) fn enum_object(py: Python<'_>, name: &str, value: i32) -> PyResult<Py<PyAny>> {
     py.import("oxoffice.docx")?
         .getattr(name)?

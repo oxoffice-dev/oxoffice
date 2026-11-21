@@ -120,12 +120,10 @@ mod owner_edits;
 mod replacements;
 mod snapshots;
 
-pub(crate) use arguments::checked_section_length;
 use arguments::{
     binary_stream_bytes, body_index_argument, check_fillable_forms, checked_heading_level,
-    checked_update_section_length, comment_date, given_or_current_length, open_document_input,
-    parse_comparison_granularity, parse_comparison_story, parse_raster_format,
-    parse_render_options,
+    comment_date, given_or_current_length, open_document_input, parse_comparison_granularity,
+    parse_comparison_story, parse_raster_format, parse_render_options,
 };
 use snapshots::{
     header_footer_kind_from_name, header_footer_variant_from_name, section_snapshot,
@@ -361,6 +359,8 @@ pub struct PyChart {
 /// font size are EMU, as `Length` values are, and `None` leaves a property to
 /// the style's base.
 struct StyleFormatting {
+    /// `Document.add_style` or `Document.set_style`, for messages.
+    method: &'static str,
     font_name: Option<String>,
     font_size: Option<i64>,
     bold: Option<bool>,
