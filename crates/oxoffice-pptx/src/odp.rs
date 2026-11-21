@@ -657,7 +657,7 @@ fn from_odp_with_limits(bytes: &[u8], limits: OdpLimits) -> Result<OdpReadResult
                         .file_name()
                         .and_then(|name| name.to_str())
                         .unwrap_or("image.png");
-                    presentation.add_picture(
+                    match presentation.add_picture(
                         page_index,
                         image,
                         filename,
@@ -665,7 +665,17 @@ fn from_odp_with_limits(bytes: &[u8], limits: OdpLimits) -> Result<OdpReadResult
                         rect.top,
                         Some(rect.width),
                         Some(rect.height),
-                    )?;
+                    ) {
+                        Ok(_) => {}
+                        // A LibreOffice metafile (.svm) and the like: a loss
+                        // to report, as for any other dropped ODP object.
+                        Err(Error::UnsupportedPicture { .. }) => push_diagnostic(
+                            &mut diagnostics,
+                            &path,
+                            "ODP image in a format a presentation cannot hold was dropped",
+                        )?,
+                        Err(error) => return Err(error),
+                    }
                 }
                 OdpObject::Unsupported(message) => {
                     push_diagnostic(&mut diagnostics, &path, &message)?;
