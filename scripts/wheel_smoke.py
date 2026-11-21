@@ -1,15 +1,14 @@
 """Open, edit, save and render every Word and PowerPoint file of the corpus with the installed oxoffice package, on
-the main thread.
+the main thread, then measure the stack the same work needs.
 
-The release workflow runs it on each wheel it built, before publishing anything. It stays off pytest on purpose:
-the Python tests run each test on an 8 MiB thread (crates/oxoffice-py/tests/conftest.py), while a user's script runs
-on the main thread: 2,000,000 bytes under python.exe on Windows, 1 MiB in most Windows programs that embed Python. A
-stack overflow ends the process without a traceback.
+The release workflow runs it on each wheel it built, before the GitHub release, PyPI and prefix.dev. It stays off
+pytest on purpose: the Python tests run each test on an 8 MiB thread (crates/oxoffice-py/tests/conftest.py), while a
+user's script runs on the main thread. A stack overflow ends the process without a traceback.
 
     python -I scripts/wheel_smoke.py tests/corpus/files [--version X.Y.Z] [--measure]
 
-With --measure, it then reports the smallest thread stack on which the same work completes, found by running it in
-new processes on threads of decreasing stack sizes.
+With --measure, it then finds the smallest thread stack on which the same work completes, by running it in new
+processes on threads of decreasing stack sizes, and fails above STACK_BUDGET_KIB.
 """
 
 import argparse
@@ -25,6 +24,12 @@ from pathlib import Path
 import oxoffice
 import oxoffice.docx as oxdocx
 import oxoffice.pptx as oxpptx
+
+# The stack the work must fit in: 1 MiB is what the Windows linker gives a program's main thread by default, so most
+# Windows programs that embed Python run it with that much. python.exe itself reserves 2,000,000 bytes, Linux and
+# macOS main threads 8 MiB.
+STACK_BUDGET_KIB = 1024
+PRERELEASES = {"alpha": "a", "beta": "b", "rc": "rc"}
 
 MARK = "Added by the oxoffice wheel smoke test"
 REPLACED = "Replaced by the oxoffice wheel smoke test"
@@ -77,7 +82,7 @@ def work(corpus, quiet=False):
 
 
 def on_thread(corpus, kib):
-    """Exit 0 when the work completes on a thread of `kib` KiB of stack. An overflow kills the process."""
+    """Exit 0 when the work completes on a new thread with `kib` KiB of stack. An overflow kills the process."""
     raised = []
 
     def run():
@@ -86,11 +91,43 @@ def on_thread(corpus, kib):
         except BaseException as error:  # noqa: BLE001 - reported by the exit status
             raised.append(error)
 
-    threading.stack_size(kib * 1024)
-    thread = threading.Thread(target=run)
-    thread.start()
-    thread.join()
+    if sys.platform == "win32":
+        run_on_windows_thread(run, kib * 1024)
+    else:
+        threading.stack_size(kib * 1024)
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join()
     return 1 if raised else 0
+
+
+def run_on_windows_thread(run, size):
+    """Run `run` on a native thread whose stack reserve is `size` bytes.
+
+    threading.stack_size hands _beginthreadex a commit size, and Windows then keeps the executable's larger default
+    reserve, so a thread made that way never has less than python.exe's 2,000,000 bytes."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    routine = ctypes.WINFUNCTYPE(wintypes.DWORD, wintypes.LPVOID)
+    kernel32.CreateThread.argtypes = [wintypes.LPVOID, ctypes.c_size_t, routine, wintypes.LPVOID, wintypes.DWORD,
+                                      wintypes.LPVOID]
+    kernel32.CreateThread.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    stack_size_param_is_a_reservation, infinite = 0x00010000, 0xFFFFFFFF
+
+    @routine
+    def start(_):
+        run()
+        return 0
+
+    handle = kernel32.CreateThread(None, size, start, None, stack_size_param_is_a_reservation, None)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    kernel32.WaitForSingleObject(handle, infinite)
+    kernel32.CloseHandle(handle)
 
 
 def fits(corpus, kib):
@@ -99,13 +136,27 @@ def fits(corpus, kib):
 
 
 def stack_needed(corpus, low=64, high=8192, step=16):
-    """The smallest thread stack, to `step` KiB, on which the work completes, or None above `high`."""
+    """The smallest thread stack, to `step` KiB, on which the work completes, or None above `high`.
+
+    The work must fail on `low` KiB: if it does not, the thread did not get the stack it asked for, and any number
+    would be wrong."""
+    if fits(corpus, low):
+        raise SystemExit(f"the work completed on a {low} KiB thread stack: the stack size is not honoured here")
     if not fits(corpus, high):
         return None
     while high - low > step:
         middle = (low + high) // 2 // step * step
         low, high = (low, middle) if fits(corpus, middle) else (middle, high)
     return high
+
+
+def pep440(version):
+    """The version a wheel built for this release version reports: 0.2.0-rc.1 is 0.2.0rc1."""
+    release, _, prerelease = version.partition("-")
+    if not prerelease:
+        return release
+    kind, _, number = prerelease.partition(".")
+    return f"{release}{PRERELEASES[kind]}{number}"
 
 
 def main():
@@ -119,18 +170,22 @@ def main():
         return on_thread(args.corpus, args.thread_stack)
     assert threading.current_thread() is threading.main_thread()
     if args.version:
-        assert oxoffice.__version__ == args.version, f"installed {oxoffice.__version__}, expected {args.version}"
+        expected = pep440(args.version)
+        assert oxoffice.__version__ == expected, f"installed {oxoffice.__version__}, expected {expected}"
     command = subprocess.run(["oxoffice", "--version"], capture_output=True, text=True, check=True).stdout.strip()
     print(f"oxoffice {oxoffice.__version__} from {Path(oxoffice.__file__).parent}, command: {command}")
     work(args.corpus)
     print(f"{len(corpus_files(args.corpus))} files opened, edited, saved, reopened and rendered on the main thread")
     if args.measure:
         kib = stack_needed(args.corpus)
-        line = f"the same work needs a thread stack of {kib} KiB" if kib else "the work needs more than 8 MiB of stack"
+        need = f"{kib} KiB" if kib else "more than 8 MiB"
+        line = f"the same work needs a thread stack of {need}, budget {STACK_BUDGET_KIB} KiB"
         print(line)
         if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(summary, "a", encoding="utf-8") as f:
                 f.write(f"{sys.platform} {platform.machine()}: {line}\n")
+        if not kib or kib > STACK_BUDGET_KIB:
+            sys.exit(f"over the stack budget of {STACK_BUDGET_KIB} KiB")
 
 
 if __name__ == "__main__":

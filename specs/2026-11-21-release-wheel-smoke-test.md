@@ -33,24 +33,43 @@ x86_64 and aarch64, macOS arm64 and x86_64, Windows x64) and runs
 file of the corpus is opened, edited (paragraph, table, slide added,
 duplicated and removed, counted replacement), saved, reopened and rendered to
 PDF, all on the main thread, and the `oxoffice` command answers
-`--version`. The GitHub release, PyPI and prefix.dev wait for it. The job
-also reports, in its summary, the smallest thread stack on which the same
-work completes (`--measure`, a bisection in fresh processes), so that the
-margin on each platform is visible at every release.
+`--version`. The GitHub release, PyPI and prefix.dev wait for it.
+
+The main thread alone guards little: 8 MiB on Linux and macOS, 2,000,000
+bytes under `python.exe`. So the job then measures the smallest thread stack
+on which the same work completes (a bisection in fresh processes, shown in
+the job summary) and **fails above a budget of 1 MiB** (`STACK_BUDGET_KIB`),
+the main thread of most Windows programs that embed Python. On Windows the
+probe threads are made with `CreateThread` and
+`STACK_SIZE_PARAM_IS_A_RESERVATION`: `threading.stack_size` only sets the
+commit size there, and the executable's 2,000,000-byte reserve would hide
+any smaller need. A measure that completes on 64 KiB fails the job too, since
+the stack size was then not honoured.
+
+The version the wheel reports is compared with the release version in its
+PEP 440 spelling (`0.2.0-rc.1` is `0.2.0rc1`), and `prepare` only accepts
+`X.Y.Z` and `-alpha.N`, `-beta.N`, `-rc.N` prereleases, before it tags.
 
 It is a plain script, not pytest, so that nothing moves the work to another
 thread. It does not replace the tests: it checks that the wheels we publish
 load and work where users run them.
 
-Not done here: the CLI binaries already run on an 8 MiB thread on Windows,
-and the conda packages repackage the same wheels.
+Not done here:
+
+- The CLI binaries already run on an 8 MiB thread on Windows, and the conda
+  packages repackage the same wheels.
+- The tag is still pushed before the builds, so a failed check leaves the
+  release commit and tag with nothing published. `docs/RELEASE.md` says to
+  dry run first and how to recover. Tagging after the checks means building
+  from an unpushed commit, a separate change.
 
 ## Plan
 
 1. The job and the script, then a dry run of the release workflow from the
    branch, which builds `main` (0.1.0) and runs the script on its wheels.
-2. If Windows overflows: run the bindings' work on a thread with a larger
-   stack, or cut the stack the commit path uses, then a patch release.
+2. If a wheel is over the budget: cut the stack the open and commit paths
+   use (large values kept by value), or run the bindings' work on a thread
+   with a larger stack, then a patch release.
 
 ## Links
 
