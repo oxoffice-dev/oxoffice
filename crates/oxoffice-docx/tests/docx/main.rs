@@ -18,6 +18,7 @@ mod notes;
 mod paragraphs_and_styles;
 mod pdf;
 mod pdf_forms;
+mod pictures;
 mod revisions_and_compare;
 mod save;
 mod sections_and_headers;
