@@ -14,7 +14,7 @@ pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,
 };
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(debug_assertions)]
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -5588,8 +5588,6 @@ impl Presentation {
     }
 
     fn staged_package(&self, preserve_unchanged_modelled_parts: bool) -> Result<OpcPackage> {
-        #[cfg(all(feature = "render", test))]
-        STAGED_PACKAGE_COUNT.with(|count| count.set(count.get() + 1));
         if self.core_properties_dirty
             && self
                 .package
@@ -5760,7 +5758,6 @@ impl Presentation {
             }
         }
         for record in &self.slides {
-            note_fx260_slide(1);
             // A record parsed from the bytes its parts still hold is unchanged
             // without parsing them again.
             let parsed = self
@@ -7610,7 +7607,6 @@ impl Presentation {
         let snapshot = child_at(&self.owner_data(part)?.shape_tree.children, &path)
             .ok_or_else(|| invalid_shape_mutation("replace XML", "shape owner is absent"))?
             .clone();
-        note_fx260_slide(1);
         let part_name = self.owner_part_name(part)?.to_owned();
         let assigned = (|| -> Result<()> {
             match owner {
@@ -7677,7 +7673,6 @@ impl Presentation {
         if ppt_xml_known_owner_equivalent(&before, xml.as_bytes())? {
             return Ok(());
         }
-        note_fx260_slide(self.slides.len().max(1));
         let mut candidate = self.clone();
         match owner {
             PptXmlOwner::Part(ShapeOwner::Slide(index)) => {
@@ -13071,7 +13066,6 @@ impl Presentation {
         if self.local_shape_fill(owner, &fill)? {
             return self.assign_local_shape_fill(owner, fill);
         }
-        note_fx260_slide(self.slides.len().max(1));
         let mut candidate = self.clone();
         candidate.assign_fill_at(owner, fill)?;
         if candidate.owner_data(owner.owner())? == self.owner_data(owner.owner())? {
@@ -13119,7 +13113,6 @@ impl Presentation {
                 invalid_shape_mutation("set owned fill", "fill owner is absent or unsupported")
             })?
             .clone();
-        note_fx260_slide(1);
         let assigned = self.assign_fill_at(location, fill);
         if let Err(error) = assigned {
             if let Some(child) =
@@ -15120,8 +15113,6 @@ fn render_prepared_timeline_request(
     request: TimelineRequest,
     slide_count: usize,
 ) -> Result<(DeterministicTimelineFrame, Vec<EvaluatedMediaState>)> {
-    #[cfg(test)]
-    let _retention = ActiveResolvedSample::enter();
     let incoming_source =
         assembly
             .slides
@@ -23534,7 +23525,6 @@ impl<'a> SlideMut<'a> {
             let index = self.presentation.append_locally(owner, &[], build)?;
             return Ok(owned_shape_mut(self.presentation, owner, vec![index]));
         }
-        note_fx260_slide(self.presentation.slides.len().max(1));
         let mut candidate = self.presentation.clone();
         let tree = &mut Arc::make_mut(&mut candidate.slides[self.index])
             .slide
@@ -23694,7 +23684,6 @@ impl ShapesMut<'_> {
             path.push(index);
             return Ok(owned_shape_mut(self.presentation, self.owner, path));
         }
-        note_fx260_slide(self.presentation.slides.len().max(1));
         let mut candidate = self.presentation.clone();
         let tree = &mut candidate.owner_data_mut(self.owner)?.shape_tree;
         let index = append_new_member(tree, &self.group, build)?;
@@ -23840,7 +23829,6 @@ impl Presentation {
         group: &[usize],
         build: impl FnOnce(u32) -> Result<ShapeTreeChild>,
     ) -> Result<usize> {
-        note_fx260_slide(1);
         let index = {
             let tree = &mut self.owner_data_mut(owner)?.shape_tree;
             append_new_member(tree, group, build)?
@@ -24582,7 +24570,6 @@ impl<'a> ShapeMut<'a> {
 
     /// Changes the direct alt text on this physical owner.
     pub fn set_alt_text(&mut self, text: Option<&str>) -> Result<()> {
-        note_fx260_slide(1);
         let result = match self.leaf_mut() {
             ShapeTreeChild::Shape(shape) => shape.set_alt_text(text),
             ShapeTreeChild::Picture(picture) => picture.set_alt_text(text),
@@ -28971,11 +28958,6 @@ fn apply_owned_change(
     Ok(())
 }
 
-#[cfg(all(test, feature = "render"))]
-thread_local! {
-    static TABLE_GROWTH_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// Whether `table`, its rows grown to fit their text, stays inside its page.
 #[cfg(feature = "render")]
 fn grown_table_fits_page(
@@ -28983,8 +28965,6 @@ fn grown_table_fits_page(
     fonts: &mut FontManager,
     page_number: usize,
 ) -> std::result::Result<bool, oxoffice_pptx_render::RenderInputError> {
-    #[cfg(test)]
-    TABLE_GROWTH_EVALUATIONS.set(TABLE_GROWTH_EVALUATIONS.get() + 1);
     let shape = &table.shape;
     let ResolvedContent::Table(content) = &shape.content else {
         return Ok(false);
@@ -29895,65 +29875,12 @@ struct PreparedRenderAssembly {
     table_styles: Option<CT_TableStyleList>,
 }
 
-#[cfg(all(feature = "render", test))]
-std::thread_local! {
-    static STAGED_PACKAGE_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_RENDER_ASSEMBLY_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_MEDIA_ASSEMBLY_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_LAYOUT_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static PREPARED_FONT_MANAGER_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(feature = "render", test))]
-std::thread_local! {
-    static ACTIVE_RESOLVED_SAMPLE_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static MAX_RESOLVED_SAMPLE_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(feature = "render", test))]
-struct ActiveResolvedSample;
-
-#[cfg(all(feature = "render", test))]
-impl ActiveResolvedSample {
-    fn enter() -> Self {
-        ACTIVE_RESOLVED_SAMPLE_COUNT.with(|active| {
-            let current = active.get() + 1;
-            active.set(current);
-            MAX_RESOLVED_SAMPLE_COUNT.with(|maximum| maximum.set(maximum.get().max(current)));
-        });
-        Self
-    }
-}
-
-#[cfg(all(feature = "render", test))]
-impl Drop for ActiveResolvedSample {
-    fn drop(&mut self) {
-        ACTIVE_RESOLVED_SAMPLE_COUNT.with(|active| active.set(active.get() - 1));
-    }
-}
-
 #[cfg(feature = "render")]
 fn prepare_render_context(
     package: &OpcPackage,
     collect_media_diagnostics: bool,
     font_files: &[oxoffice_layout::FontFile],
 ) -> Result<PreparedRenderAssembly> {
-    #[cfg(test)]
-    PREPARED_RENDER_ASSEMBLY_COUNT.with(|count| count.set(count.get() + 1));
     let presentation_part = package
         .main_document_part()
         .ok_or(Error::MissingMainDocument)?;
@@ -29975,10 +29902,6 @@ fn prepare_render_context(
         .ok_or_else(|| render_failure("presentation relationships are missing"))?;
 
     let mut media = HashMap::new();
-    #[cfg(test)]
-    PREPARED_MEDIA_ASSEMBLY_COUNT.with(|count| count.set(count.get() + 1));
-    #[cfg(test)]
-    PREPARED_FONT_MANAGER_COUNT.with(|count| count.set(count.get() + 1));
     let mut font_manager =
         configured_font_manager(package, &presentation_part, &presentation, font_files)?;
     let mut resolved_slides = Vec::with_capacity(presentation.slide_ids.len());
@@ -30129,8 +30052,6 @@ fn prepare_render_context(
         fonts: font_files.to_vec(),
         metadata: None,
     };
-    #[cfg(test)]
-    PREPARED_LAYOUT_COUNT.with(|count| count.set(count.get() + 1));
     let mut layout = layout_presentation_with_displayed_numbers(
         &input,
         &mut font_manager,
@@ -33789,18 +33710,6 @@ fn assert_same_commit(committed: &Result<Presentation>, through_zip: &Result<Pre
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    static FX260_SLIDE_SCANS: Cell<usize> = const { Cell::new(0) };
-}
-
-fn note_fx260_slide(count: usize) {
-    #[cfg(test)]
-    FX260_SLIDE_SCANS.with(|cell| cell.set(cell.get().saturating_add(count)));
-    #[cfg(not(test))]
-    let _ = count;
-}
-
 fn tree_has_connector(children: &[ShapeTreeChild]) -> bool {
     children.iter().any(|child| match child {
         ShapeTreeChild::Connector(_) => true,
@@ -34235,7 +34144,6 @@ impl Presentation {
         }
         let has_connector = tree_has_connector(&self.owner_data(owner)?.shape_tree.children);
         if has_connector {
-            note_fx260_slide(self.slides.len().max(1));
             let previous = self.owner_data(owner)?.shape_tree.children.clone();
             let mut candidate = self.clone();
             candidate.materialize_owner_geometry(owner, path)?;
@@ -34250,7 +34158,6 @@ impl Presentation {
             *self = candidate;
             return Ok(());
         }
-        note_fx260_slide(1);
         let snapshot = child_at(&self.owner_data(owner)?.shape_tree.children, path)
             .ok_or_else(|| invalid_shape_mutation("shape geometry", "missing physical owner"))?
             .clone();
