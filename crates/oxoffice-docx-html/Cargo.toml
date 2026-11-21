@@ -13,4 +13,5 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+oxoffice-docx-layout = { workspace = true }
 oxoffice-docx-oxml = { workspace = true }

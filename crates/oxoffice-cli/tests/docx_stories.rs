@@ -402,18 +402,15 @@ fn a_comment_added_to_a_copy_is_the_one_difference() {
     );
 }
 
-// Known failure #356: diff matches comments by their order in comments.xml,
-// which Word and LibreOffice rewrite (see the producer-diff snapshots of the
-// contract). When it passes, drop `should_panic` and update the
-// producer-diff snapshots of the contract.
+// Word, Google Docs and LibreOffice all rewrite the order of comments.xml:
+// diff pairs comments by what identifies them, not by that order.
 #[test]
-#[should_panic(expected = "no comment of the Word copy differs")]
 fn comments_a_producer_reordered_are_no_difference() {
     let diff = read_json(&[
         "docx",
         "diff",
         &path_of("authored/contract.docx"),
-        &path_of("word/contract.docx"),
+        &path_of("google/contract.docx"),
         "--json",
     ]);
     let comments = diff["differences"]
@@ -421,10 +418,17 @@ fn comments_a_producer_reordered_are_no_difference() {
         .unwrap()
         .iter()
         .filter(|row| row["story"] == "comment")
+        .map(|row| {
+            (
+                row["change"].as_str().unwrap(),
+                row["text_a"].as_str().unwrap_or(""),
+            )
+        })
         .collect::<Vec<_>>();
-    // Word keeps every comment of the contract, threads and texts unchanged.
     assert!(
-        comments.is_empty(),
-        "no comment of the Word copy differs: {comments:?}"
+        comments.len() == 1
+            && comments[0].0 == "removed"
+            && comments[0].1.starts_with("Check with French counsel"),
+        "only the resolved comment Google drops differs: {comments:?}"
     );
 }

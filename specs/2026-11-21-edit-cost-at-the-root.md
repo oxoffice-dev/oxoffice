@@ -151,10 +151,36 @@ edit.
    highest drawing id in use plus one, the next relationship id above the
    preserved ones, the lowest free bookmark id. Reads match the file only
    because staged commits reopen after each edit. After, an insert takes its
-   value by the same rule when it is made, and the save keeps it, as it
-   keeps the source's. One change to save output: ids added by edits follow
-   the order of the edits, not of the document. The pull requests that change it say so in
-   their body, and the changelog carries it.
+   value by its insert rule (see *The rule* below) when it is made, and the
+   save keeps it, as it keeps the source's. Two changes to save output: ids
+   added by edits follow the order of the edits, not of the document, and
+   keep their value after earlier content is removed; a gained endnotes or
+   glossary part takes `rIdN` (see *Scope*). The pull request that does
+   decision 3 (lot 3a-0a) says so in its body, and the changelog carries it. In detail
+   (amended 2026-11-21, before lot 3a-0):
+   - **Scope**: every id the save renumbers today: bookmark ids, the
+     bookmark ids of a rebuilt table of contents, numbering instance and
+     definition ids, relationship ids of the main part and of the story
+     parts (headers, footers, notes, comments), the relationship ids of the
+     parts a document gains (styles, settings, numbering, footnotes,
+     comments, extended comments), drawing ids, and the names of media parts
+     (`/word/media/imageN`). A gained endnotes or glossary part keeps its
+     provisional relationship id (`rdocxDeferredEndnotes`,
+     `rdocxDeferredGlossary`) in the saved file today; it takes `rIdN` too.
+   - **Removed content**: the save does not compact. An id keeps its value
+     after earlier content is removed. An id a removal frees is taken again
+     only if that removal released it from the registry; otherwise it stays
+     taken until the document is reopened.
+   - **The rule**: where the insert's rule and the save's differed (bookmarks
+     took the lowest free id among the source's only, numbering and
+     relationship ids were numbered from the source's highest), the insert's
+     rule, which is what reads already show after an in-place edit. A part a
+     document gains takes the relationship rule (`rIdN`) when it is
+     reserved, instead of a provisional name.
+   - **Ids a save creates** on the copy it writes (a part a model needs and
+     the package lacks) are allocated at that save, by the same rule. The
+     live document does not hold them, as today, except after `sign` and a
+     save that normalizes a field, which install the copy they wrote.
 4. **Edits say what they touched.** The binding drains the same journal,
    through a `#[doc(hidden)]` facade call as it reaches
    `direct_body_paragraph_facts` today, and updates its handle inventory from
@@ -199,7 +225,9 @@ What moves, and is accepted:
   on saved files and leave every call linear, with one more route to keep in
   step. The decision above removes the routes instead.
 - **No other change to save.** Saving stays linear in the document, as it
-  must, and keeps its checks; decision 3 is its only output change. The guard
+  must, and keeps its checks; decision 3 is its only output change (the
+  order of added ids, their value after a removal, `rIdN` for a gained
+  endnotes or glossary part). The guard
   run once per part write (62 passes per staged save) is worth a later look
   at save time, outside this item.
 - **No PowerPoint work here.** pptx calls pass the scaling gate, but many
@@ -207,8 +235,9 @@ What moves, and is accepted:
   `presentation.rs`). PR 0 runs the pptx scaling test once at 16N as a
   measurement; any growth it shows becomes its own item.
 - **No Rust signature change.** The behaviour changes are the ones above:
-  saveability errors at save, and the id order of added content in saved
-  files.
+  saveability errors at save, and the ids of added content in saved files
+  (in edit order, kept after a removal, `rIdN` for a gained endnotes or
+  glossary part).
 - **No caching layer, no parallelism.** They would hide the slope, not
   remove it.
 
@@ -235,7 +264,7 @@ well as in the facade, when they remove their proof.
 | 0 | **A gate that sees what users hit.** `builders.edit_cost_docx` writes Word's identifiers on every paragraph, run and row; the docx documents go from N and 4N to N and 16N (25 and 400 paragraphs, `LINEAR` 24): on the `scaling` profile a call passes only if its cost at 400 paragraphs stays under 2.5 times its cost at 25 plus 5 ms. `GROWING` re-measured (149 calls on the prototype). A test runs every timed call once, untimed, on a small saved document, so that a debug build puts each of them under the oracle. `docs/DEVELOPMENT.md`, the test and `conftest.py` docstrings, the scaling job's comment in `ci.yml` and the test-suite spec say 16N for docx (pptx stays at 4N). The pptx scaling test is measured once at 16N and the result reported. The full docx scaling set takes about 19 minutes locally instead of 5. | tests | all | none; it joins 68 |
 | 1 | **The journal.** Edits that clone and then match the inventory edit the live model with the journal (decision 1), and the binding updates its handles from it (decision 4); the whole clone and the inventory diff run as debug oracles. | docx facade, docx-py | 62 and the 7 appends | 55 |
 | 2 | **No save comparison.** `publish_owner_candidate` / `publish_block_candidate` decide the no-op on the touched owner and run the element checks; `saves_as` and the block routes run as debug oracles; the calls use the journal. A test document whose body cannot be saved after a typed edit checks the refusals and the save error. | docx-py | 14 (fonts, protection, custom XML, numbering restart, page border, `move_content_control`, `Run.text`) | 14 |
-| 3a | **Structural edits commit in place: body.** First the save keeps the ids edits added (decision 3), with the reopen oracle. Then staged commits edit the live model with the journal, allocate their ids, and stop staging and reopening. Body blocks, tables, sections, replacements, revisions, fragments. | docx facade, docx-py | 30 | 30 |
+| 3a | **Structural edits commit in place: body.** First the save keeps the ids edits added (decision 3), with the reopen oracle (lot 3a-0a), then the registry and the package graph journal the entries an edit reserves instead of being copied (lot 3a-0b, #275). Then staged commits edit the live model with the journal, allocate their ids, and stop staging and reopening. Body blocks, tables, sections, replacements, revisions, fragments. | docx facade, docx-py | 30 | 30 |
 | 3b | Same, notes and comments. | docx facade, docx-py | 10 | 10 |
 | 3c | Same, pictures, charts, hyperlinks, page colour. | docx facade, docx-py | 12 | 12 |
 | 3d | Same, content controls, legacy forms, permissions, mail merge, headers, footers, watermarks, section stories. Form operations check only the controls they change, measured at 25 and 1,000 paragraphs. | docx facade, docx-py | 28 | 28 |

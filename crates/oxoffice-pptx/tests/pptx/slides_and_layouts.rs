@@ -1886,3 +1886,70 @@ fn a_carriage_return_in_a_core_property_survives_a_save() {
         "{xml}"
     );
 }
+
+#[test]
+fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
+    // A deck's application and custom properties parts are patched in place.
+    let custom = |name: &str, pid: i32, text: &str| oxoffice_pptx::CustomProperty {
+        fmtid: "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}".to_owned(),
+        pid,
+        name: Some(name.to_owned()),
+        value: oxoffice_pptx::CustomPropertyValue::Lpwstr(text.to_owned()),
+    };
+    let mut prs = new_deck();
+    let mut app = prs.application_properties().cloned().unwrap_or_default();
+    app.company = Some("Contoso\rFils".to_owned());
+    // Not in the template's app.xml: appended.
+    app.template = Some("t\re".to_owned());
+    prs.set_application_properties(app).unwrap();
+    // The template has an empty <dc:title/> and no description: the empty-tag
+    // and append branches of the core patcher.
+    let mut core = prs.core_properties().cloned().unwrap_or_default();
+    core.title = Some("a\rb".to_owned());
+    core.description = Some("c\rd".to_owned());
+    prs.set_core_properties(core).unwrap();
+    prs.set_custom_property(custom("First", 2, "plain"))
+        .unwrap();
+    let mut prs = reopen(&prs);
+    // The custom part exists now: these go through the patcher.
+    prs.set_custom_property(custom("Tab\tname", 3, "a\r\nb"))
+        .unwrap();
+    prs.set_custom_property(custom("First", 2, "x\ry")).unwrap();
+    let prs = reopen(&prs);
+    assert_eq!(
+        prs.application_properties()
+            .and_then(|app| app.company.as_deref()),
+        Some("Contoso\rFils")
+    );
+    let value = |name: &str| {
+        prs.custom_property(name)
+            .map(|property| property.value.clone())
+    };
+    assert_eq!(
+        value("Tab\tname"),
+        Some(oxoffice_pptx::CustomPropertyValue::Lpwstr(
+            "a\r\nb".to_owned()
+        ))
+    );
+    assert_eq!(
+        value("First"),
+        Some(oxoffice_pptx::CustomPropertyValue::Lpwstr(
+            "x\ry".to_owned()
+        ))
+    );
+    let package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    // Each value is written with a reference, never a raw CR (the template's
+    // own line ends may hold CRs elsewhere in the part).
+    for (part, written) in [
+        ("/docProps/app.xml", "Contoso&#13;Fils"),
+        ("/docProps/app.xml", "t&#13;e"),
+        ("/docProps/core.xml", "a&#13;b"),
+        ("/docProps/core.xml", "c&#13;d"),
+        ("/docProps/custom.xml", "a&#13;\nb"),
+        ("/docProps/custom.xml", "x&#13;y"),
+        ("/docProps/custom.xml", "Tab&#9;name"),
+    ] {
+        let xml = String::from_utf8_lossy(package.get_part(part).unwrap());
+        assert!(xml.contains(written), "{part}: {written} in {xml}");
+    }
+}

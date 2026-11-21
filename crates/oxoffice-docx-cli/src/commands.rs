@@ -1024,10 +1024,15 @@ pub fn diff(file_a: &Path, file_b: &Path, json_output: bool, diff_status: &mut i
     }
     let mut changes = Vec::new();
     for name in names {
-        changes.extend(diff_items(
+        let (items_a, items_b) = (
             stream_items(&streams_a, name),
             stream_items(&streams_b, name),
-        ));
+        );
+        if name == "comments" {
+            changes.extend(diff_comments(&doc_a, items_a, &doc_b, items_b));
+        } else {
+            changes.extend(diff_items(items_a, items_b));
+        }
     }
     let count = |a: bool, b: bool| {
         changes
@@ -1129,6 +1134,8 @@ struct DiffItem {
     story: &'static str,
     location: String,
     text: String,
+    /// The comment this item belongs to, by its index in the comments part.
+    comment: Option<usize>,
 }
 
 /// The items that `diff` compares as one sequence, such as the body, the
@@ -1149,6 +1156,7 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
             story: "body",
             location: (index + 1).to_string(),
             text: paragraph.text(),
+            comment: None,
         })
         .collect();
     let mut streams = vec![DiffStream {
@@ -1171,6 +1179,7 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
                 story: "table_cell",
                 location: format!("table {table_number}, {}", json_path_label(paragraph)),
                 text: paragraph["text"].as_str().unwrap_or_default().to_owned(),
+                comment: None,
             }));
         }
     }
@@ -1352,6 +1361,7 @@ fn other_story_streams(doc: &Document) -> Result<(Vec<DiffStream>, Vec<String>)>
             story: story_name,
             location: location.join(", "),
             text: item.text().unwrap_or_default().to_owned(),
+            comment: (story.kind() == StoryKind::Comment).then(|| story.owner_index()),
         });
     }
     Ok((
@@ -1406,6 +1416,154 @@ fn diff_items(a: &[DiffItem], b: &[DiffItem]) -> Vec<ItemChange> {
         i = next_i + 1;
         j = next_j + 1;
     }
+    changes
+}
+
+/// What identifies a comment across a save: Word and Google Docs write the
+/// comments of a file in another order than the file they opened, Word may
+/// drop the reply links, and Google rewrites the dates and may drop an anchor.
+struct CommentIdentity {
+    author: String,
+    text: String,
+    anchor: String,
+    date: String,
+    /// The author and text of its parent, which survive a save as its own do.
+    parent: Option<(String, String)>,
+}
+
+/// The identity of each comment of `doc`, in the order of its comments part.
+/// The anchor is only a second key, so a file whose anchors cannot be read
+/// is compared without them.
+fn comment_identities(doc: &Document) -> Vec<CommentIdentity> {
+    let comments = doc.comments();
+    let anchors = doc.comment_anchor_snapshot_results().unwrap_or_default();
+    let by_id: HashMap<i32, (String, String)> = comments
+        .iter()
+        .map(|comment| {
+            (
+                comment.id(),
+                (
+                    comment.author().unwrap_or_default().to_owned(),
+                    comment.text(),
+                ),
+            )
+        })
+        .collect();
+    comments
+        .iter()
+        .map(|comment| CommentIdentity {
+            author: comment.author().unwrap_or_default().to_owned(),
+            text: comment.text(),
+            anchor: anchors
+                .get(&comment.id())
+                .and_then(|snapshot| snapshot.as_ref().ok())
+                .and_then(|(_, text)| text.clone())
+                .unwrap_or_default(),
+            date: comment.date().unwrap_or_default().to_owned(),
+            parent: comment
+                .parent_id()
+                .and_then(|parent| by_id.get(&parent).cloned()),
+        })
+        .collect()
+}
+
+/// Pair the comments of two files by what identifies them rather than by
+/// part order, then compare the paragraphs of each pair. A comment matches
+/// one by the same author with the same text first, then one by the same
+/// author on the same anchor text, whose paragraphs show as changed. Among
+/// the candidates of a pass, pairs with the same anchor, then the same date,
+/// then the same parent are taken first, so two equal replies pair with the
+/// one in their own thread. What is left is removed or added whole. Items of
+/// the comments part that belong to no comment, such as the cells of a table
+/// in a comment, are compared in order after them.
+fn diff_comments(
+    doc_a: &Document,
+    items_a: &[DiffItem],
+    doc_b: &Document,
+    items_b: &[DiffItem],
+) -> Vec<ItemChange> {
+    let (comments_a, comments_b) = (comment_identities(doc_a), comment_identities(doc_b));
+    // Items grouped by comment in part order, and the rest.
+    let group = |items: &[DiffItem], count: usize| {
+        let mut owners: Vec<usize> = Vec::new();
+        let mut grouped: HashMap<usize, Vec<DiffItem>> = HashMap::new();
+        let mut rest = Vec::new();
+        for item in items {
+            match item.comment {
+                Some(owner) if owner < count => {
+                    let entry = grouped.entry(owner).or_default();
+                    if entry.is_empty() {
+                        owners.push(owner);
+                    }
+                    entry.push(item.clone());
+                }
+                _ => rest.push(item.clone()),
+            }
+        }
+        (owners, grouped, rest)
+    };
+    let (owners_a, mut grouped_a, rest_a) = group(items_a, comments_a.len());
+    let (owners_b, mut grouped_b, rest_b) = group(items_b, comments_b.len());
+
+    let mut paired_a: HashMap<usize, usize> = HashMap::new();
+    let mut paired_b: HashMap<usize, usize> = HashMap::new();
+    for exact in [true, false] {
+        let key = |identity: &CommentIdentity| -> Option<(String, String)> {
+            if exact {
+                Some((identity.author.clone(), identity.text.clone()))
+            } else {
+                (!identity.anchor.is_empty())
+                    .then(|| (identity.author.clone(), identity.anchor.clone()))
+            }
+        };
+        let mut buckets: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        for &b in owners_b.iter().filter(|b| !paired_b.contains_key(b)) {
+            if let Some(key) = key(&comments_b[b]) {
+                buckets.entry(key).or_default().push(b);
+            }
+        }
+        let mut candidates = Vec::new();
+        for &a in owners_a.iter().filter(|a| !paired_a.contains_key(a)) {
+            let left = &comments_a[a];
+            for &b in key(left)
+                .and_then(|key| buckets.get(&key))
+                .into_iter()
+                .flatten()
+            {
+                let right = &comments_b[b];
+                let score = (
+                    right.anchor == left.anchor,
+                    right.date == left.date,
+                    right.parent == left.parent,
+                );
+                candidates.push((std::cmp::Reverse(score), a, b));
+            }
+        }
+        // The best pairs first, then part order.
+        candidates.sort();
+        for (_, a, b) in candidates {
+            if !paired_a.contains_key(&a) && !paired_b.contains_key(&b) {
+                paired_a.insert(a, b);
+                paired_b.insert(b, a);
+            }
+        }
+    }
+
+    let mut changes = Vec::new();
+    // In the order of the first file, then the comments only the second has.
+    for a in &owners_a {
+        let items = grouped_a.remove(a).unwrap_or_default();
+        match paired_a.get(a) {
+            Some(b) => changes.extend(diff_items(&items, &grouped_b.remove(b).unwrap_or_default())),
+            None => changes.extend(items.into_iter().map(|item| (Some(item), None))),
+        }
+    }
+    for b in &owners_b {
+        if let Some(items) = grouped_b.remove(b) {
+            changes.extend(items.into_iter().map(|item| (None, Some(item))));
+        }
+    }
+    changes.extend(diff_items(&rest_a, &rest_b));
     changes
 }
 

@@ -1,6 +1,1 @@
 added body: "-" -> ""
-added comment: "-" -> "120 days is longer than our standard. Ca"
-added comment: "-" -> "We need the extra month for procurement "
-changed comment: "120 days is longer than our standard. Ca" -> "Bold for emphasis, as agreed on the call"
-removed comment: "We need the extra month for procurement " -> "-"
-removed comment: "Bold for emphasis, as agreed on the call" -> "-"

@@ -285,6 +285,43 @@ fn no_page_of_a_corpus_report_is_blank() {
 }
 
 #[test]
+fn a_table_of_contents_entry_saved_by_libreoffice_keeps_its_title() {
+    // LibreOffice writes the whole entry (number, tab, title, tab, page) as
+    // the result of its PAGEREF; Word writes the page number alone.
+    let entry = |result: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="right" w:pos="9000"/></w:tabs></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">PAGEREF _Toc1 \h</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r>{result}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let heading = r#"<w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Motivation</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#;
+    let libreoffice = entry("<w:t>1.1</w:t><w:tab/><w:t>Motivation</w:t><w:tab/><w:t>7</w:t>");
+    let word = entry("<w:t>7</w:t>");
+    // A level whose entry has no tab stop separates its parts with spaces.
+    let spaced = entry("<w:t xml:space=\"preserve\">1.2 Research questions 9</w:t>");
+    // The entry inside another field's result, closed in the same paragraph.
+    let nested = format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> QUOTE "x" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        entry("<w:t>1.3</w:t><w:tab/><w:t>Scope</w:t><w:tab/><w:t>8</w:t>")
+            .split_once("</w:pPr>")
+            .expect("an entry has paragraph properties")
+            .1
+            .trim_end_matches("</w:p>")
+    );
+    let pdf = pdf_of(&doc_with_body(&format!(
+        "{libreoffice}{word}{spaced}{nested}{heading}"
+    )));
+    let lines: Vec<String> = lines(&pdf.drawn(0))
+        .into_iter()
+        .map(|line| squeeze(&line.text))
+        .collect();
+    assert_eq!(
+        lines[..4],
+        ["1.1Motivation7", "1", "1.2Researchquestions9", "1.3Scope8"],
+        "the LibreOffice entries keep their stored text, the Word one gets the page"
+    );
+}
+
+#[test]
 fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
     let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
@@ -330,6 +367,134 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     assert_eq!(pdf.page_count(), 3);
     assert_eq!(pdf.page_text(1), "After the break");
     assert_eq!(pdf.page_text(2), "Next section");
+}
+
+#[test]
+fn a_page_break_before_a_page_break_before_heading_adds_no_blank_page() {
+    // A paragraph ending in a page break, then a heading with page break
+    // before: one new page, in any script. Hebrew and Japanese text is laid
+    // out by the multilingual path, whose empty end of paragraph is a
+    // segment of its own.
+    for text in ["Body", "שלום", "日本語"] {
+        let doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:t>{text}</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p>"#
+        ));
+        let pdf = pdf_of(&doc);
+        assert_eq!(pdf.page_count(), 2, "{text}");
+        assert_eq!(pdf.page_text(1), "Heading", "{text}");
+    }
+}
+
+#[test]
+fn an_odd_or_even_page_section_starts_on_a_page_of_its_parity() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:pgBorders w:display="firstPage"><w:top w:val="single" w:sz="24" w:space="24" w:color="FF0000"/></w:pgBorders></w:sectPr>"#;
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let text = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    // The section after the break is the last one: its type is in the body's
+    // own section properties, which `doc_with_body` keeps as Word's default,
+    // so the type goes on a section break of its own after it.
+    let pages = |first: &str, kind: &str, numbering: &str| {
+        let next = section.replace("<w:pgSz", &format!(r#"<w:type w:val="{kind}"/><w:pgSz"#));
+        let next = next.replace("</w:sectPr>", &format!("{numbering}</w:sectPr>"));
+        let doc = doc_with_body(&format!(
+            r#"{first}<w:p><w:pPr>{section}</w:pPr></w:p>{}<w:p><w:pPr>{next}</w:pPr></w:p>{}"#,
+            text("Next"),
+            text("Last"),
+        ));
+        let mut doc = doc;
+        doc.set_footer("Footer");
+        let pdf = pdf_of(&reopen(&mut doc));
+        (0..pdf.page_count())
+            .map(|page| pdf.page_text(page).replace("Footer", "").trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let one = text("Body");
+    let two = format!("{}{page_break}{}", text("Body"), text("Two"));
+    // Page 2 is even: an odd-page section skips it, an even-page one takes it.
+    assert_eq!(pages(&one, "oddPage", ""), ["Body", "", "Next", "Last"]);
+    assert_eq!(pages(&one, "evenPage", ""), ["Body", "Next", "Last"]);
+    // Page 3 is odd.
+    assert_eq!(pages(&two, "oddPage", ""), ["Body", "Two", "Next", "Last"]);
+    assert_eq!(
+        pages(&two, "evenPage", ""),
+        ["Body", "Two", "", "Next", "Last"]
+    );
+    // The physical page decides, whatever number the section asks for, as
+    // LibreOffice prints it (Word was not run): an odd section restarting at
+    // 1 or at 2 still skips page 2, an even one restarting at 1 takes it.
+    assert_eq!(
+        pages(&one, "oddPage", r#"<w:pgNumType w:start="1"/>"#),
+        ["Body", "", "Next", "Last"]
+    );
+    assert_eq!(
+        pages(&one, "oddPage", r#"<w:pgNumType w:start="2"/>"#),
+        ["Body", "", "Next", "Last"]
+    );
+    assert_eq!(
+        pages(&one, "evenPage", r#"<w:pgNumType w:start="1"/>"#),
+        ["Body", "Next", "Last"]
+    );
+}
+
+#[test]
+fn the_blank_page_before_an_odd_page_section_draws_nothing() {
+    // The first section has a footer on every page and a red border on its
+    // first page; the blank page that sends the next section to page 3
+    // shows neither.
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:pgBorders w:display="firstPage"><w:top w:val="single" w:sz="24" w:space="24" w:color="FF0000"/><w:bottom w:val="single" w:sz="24" w:space="24" w:color="FF0000"/></w:pgBorders></w:sectPr>"#;
+    let odd = section.replace("<w:pgSz", r#"<w:type w:val="oddPage"/><w:pgSz"#);
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr>{odd}</w:pPr></w:p><w:p><w:r><w:t>Last</w:t></w:r></w:p>"#
+    ));
+    doc.set_footer("Footer");
+    let doc = reopen(&mut doc);
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 4);
+    assert_eq!(pdf.page_text(1), "");
+    let red = |page: usize| {
+        let image = Pixels::decode(&doc.render_page_to_png(page, 72.0).unwrap().expect("page"));
+        image
+            .rgba
+            .chunks(4)
+            .filter(|pixel| pixel[..3] == [0xFF, 0, 0])
+            .count()
+    };
+    assert!(red(0) > 0, "the first page has its border");
+    assert_eq!(red(1), 0, "the blank page has none");
+}
+
+#[test]
+fn the_blank_page_before_an_odd_page_section_has_its_size_and_no_page_colour() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let landscape = r#"<w:sectPr><w:type w:val="oddPage"/><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr>{landscape}</w:pPr></w:p><w:p><w:r><w:t>Last</w:t></w:r></w:p>"#
+    ));
+    // A green page colour on every page.
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let xml = xml.replacen("<w:body>", r#"<w:background w:color="00FF00"/><w:body>"#, 1);
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 4);
+    // The blank page takes the size of the section it comes before.
+    assert_eq!(pdf.page_size(1), (792.0, 612.0));
+    let green = |page: usize| {
+        Pixels::decode(&doc.render_page_to_png(page, 36.0).unwrap().expect("page"))
+            .rgba
+            .chunks(4)
+            .filter(|pixel| pixel[..3] == [0, 0xFF, 0])
+            .count()
+    };
+    assert!(
+        green(0) > 0 && green(2) > 0,
+        "the pages around it are green"
+    );
+    assert_eq!(green(1), 0, "the blank page is not");
 }
 
 #[test]
@@ -1643,11 +1808,17 @@ fn the_thesis_numbers_its_pages_and_keeps_its_landscape_pages_figure_notes_and_o
 
     // The title page has no number, the front matter counts in roman
     // numerals, the chapters from 1 again; odd numbers sit on the right.
+    // The odd-page first chapter starts on a right-hand page, after a blank
+    // page that draws nothing when the front matter ends on one.
     let footer = |page: usize| pages[page].iter().find(|line| line.y < margin);
     assert!(footer(0).is_none(), "{:?}", footer(0));
     let chapter = page_with("Regional distributors keep stock");
+    assert_eq!(chapter % 2, 0, "chapter 1 is on an odd physical page");
     let roman = ["ii", "iii", "iv", "v", "vi", "vii"];
     for page in 1..count {
+        if page + 1 == chapter && pages[page].is_empty() {
+            continue;
+        }
         let (number, value) = match page < chapter {
             true => (roman[page - 1].to_owned(), page + 1),
             false => ((page - chapter + 1).to_string(), page - chapter + 1),

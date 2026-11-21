@@ -66,7 +66,9 @@ pub(super) fn validate_page_field_instruction(
     }
     for switch in &instruction.switches {
         let format = matches!(switch.name.as_str(), "*" | "#");
-        if !format && !(page_ref && matches!(switch.name.as_str(), "h" | "p")) {
+        // `\p` writes "on page N", "above" or "below", which the page
+        // formats do not produce.
+        if !format && !(page_ref && switch.name == "h") {
             return Err(format!("unsupported switch \\{}", switch.name));
         }
         if format && !matches!(switch.argument, Some(FieldArgument::Text(_))) {
@@ -83,6 +85,17 @@ pub(super) fn validate_page_field_instruction(
         }
     }
     Ok(())
+}
+
+/// Whether a PAGEREF result holds more than a page number, and so keeps its
+/// stored display in the layout and on update. LibreOffice writes a whole
+/// table of contents entry (its number, its title and its page, between
+/// tabs or spaces) as the result of the entry's PAGEREF. Word draws that
+/// stored result as it is until its fields are updated, and a page number
+/// alone holds no space or tab.
+#[doc(hidden)]
+pub fn page_reference_keeps_stored_display(cached_result: &str) -> bool {
+    cached_result.contains(char::is_whitespace)
 }
 
 /// Shared bounded page-family policy for layout and saved-cache consumers.

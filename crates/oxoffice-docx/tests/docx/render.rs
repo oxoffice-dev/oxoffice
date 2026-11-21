@@ -784,6 +784,31 @@ fn a_bordered_table_needs_a_rule_a_row_and_a_borderless_one_none() {
 }
 
 #[test]
+fn an_empty_direct_border_container_keeps_the_table_style_borders() {
+    // LibreOffice writes `<w:tblBorders/>` with no edge: the table style's
+    // borders still draw, as they do without it.
+    let rows: String = (1..=3)
+        .map(|row| {
+            format!(
+                "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:r><w:t>Row {row}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect();
+    let drawn = |direct: &str| {
+        let doc = crate::support::doc_with_body(&format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/>{direct}</w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>{rows}</w:tbl><w:p/>"
+        ));
+        horizontal_rules(&draw(&doc).expect("the table draws").pdf, 0)
+    };
+    let styled = drawn("");
+    assert!(styled > 0, "the table style draws borders");
+    assert_eq!(drawn("<w:tblBorders/>"), styled);
+    assert_eq!(drawn("<w:tblBorders></w:tblBorders>"), styled);
+}
+
+#[test]
 fn table_borders_come_from_the_table_style_whatever_its_language() {
     for (file, style) in [
         ("authored/report.docx", "TableGrid"),
