@@ -304,18 +304,30 @@ fn emit_paragraph(
     }
     let quote_prefix = "> ".repeat(outer_quotes);
 
-    if para
+    let continued = if para
         .properties
         .as_ref()
         .is_some_and(|properties| properties.num_id == Some(0))
-        && let Some(level) = para
-            .properties
+    {
+        para.properties
             .as_ref()
             .and_then(|properties| properties.num_ilvl)
-        && let Some(index) = list_levels
-            .iter()
-            .position(|&(current, _, _)| current == level)
-    {
+            .and_then(|level| {
+                list_levels
+                    .iter()
+                    .position(|&(current, _, _)| current == level)
+            })
+    } else if heading_level.is_none() && list_info.is_none() {
+        // A paragraph on a `none` level goes on the item it follows.
+        crate::unmarked_list_level(para, styles, numbering).and_then(|level| {
+            list_levels
+                .iter()
+                .rposition(|&(current, _, _)| current <= level)
+        })
+    } else {
+        None
+    };
+    if let Some(index) = continued {
         let indent = list_levels[index].1;
         let blank_prefix = if quote_prefix.is_empty() && inner_quotes > 0 && compound_quote {
             format!("{}> ", " ".repeat(indent))

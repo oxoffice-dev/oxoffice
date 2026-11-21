@@ -38,8 +38,15 @@ pub(crate) fn emit_body(
                         || crate::has_own_numbering(&p)
                 });
 
+                // A paragraph on a `none` level goes on the item it follows,
+                // and the list stays open around it.
+                let unmarked = list_info.is_none()
+                    && detect_heading_level(p.properties.as_ref(), styles).is_none()
+                    && crate::unmarked_list_level(&p, styles, numbering).is_some()
+                    && out.ends_with("</li>\n");
+
                 // Close lists that are no longer active
-                while let Some(top) = list_stack.last() {
+                while !unmarked && let Some(top) = list_stack.last() {
                     if let Some((_, level)) = &list_info {
                         if *level <= top.level && top.level > 0 {
                             close_list(&mut out, &mut list_stack);
@@ -51,7 +58,12 @@ pub(crate) fn emit_body(
                     }
                 }
 
-                if let Some((is_ordered, level)) = list_info {
+                if unmarked {
+                    out.truncate(out.len() - "</li>\n".len());
+                    out.push_str("<p>");
+                    emit_paragraph_content(&mut out, &p, styles, images, hyperlink_urls, options);
+                    out.push_str("</p></li>\n");
+                } else if let Some((is_ordered, level)) = list_info {
                     // Open new list levels if needed
                     let current_depth = list_stack.len() as u32;
                     if current_depth <= level {

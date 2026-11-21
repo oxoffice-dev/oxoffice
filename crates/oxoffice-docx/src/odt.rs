@@ -1328,17 +1328,7 @@ impl<'a> OdtWriter<'a> {
 
     fn scan_flattened_producer_list_losses(&mut self, num_id: u32, level: u32) -> Result<()> {
         self.scan_numbering_container_losses(num_id)?;
-        let definition = self
-            .document
-            .numbering
-            .as_ref()
-            .and_then(|numbering| numbering.get_abstract_num_for(num_id))
-            .and_then(|abstract_num| {
-                abstract_num
-                    .levels
-                    .iter()
-                    .find(|definition| definition.ilvl == level)
-            });
+        let definition = self.effective_list_level(num_id, level);
         let losses = definition.map_or(
             (false, false, false, false, false, false, false),
             |definition| {

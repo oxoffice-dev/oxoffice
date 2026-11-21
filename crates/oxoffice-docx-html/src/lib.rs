@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document};
-use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering};
+use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_NumberFormat};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Tbl, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::CT_P;
@@ -195,6 +195,19 @@ fn list_level<'a>(
         .or(base.start)
         .unwrap_or(1);
     Some((num_id, ilvl, level, start))
+}
+
+/// The level of a paragraph on a list level that draws no marker (`none`),
+/// as contracts write unnumbered sub-paragraphs. Layout keeps counting the
+/// list around it, so an export keeps the list open and shows it as a
+/// paragraph of the item before it.
+fn unmarked_list_level(
+    paragraph: &CT_P,
+    styles: &CT_Styles,
+    numbering: Option<&CT_Numbering>,
+) -> Option<u32> {
+    let (_, ilvl, level, _) = list_level(paragraph, styles, numbering?)?;
+    (level.num_fmt == Some(ST_NumberFormat::None)).then_some(ilvl)
 }
 
 /// Whether the paragraph sets a numbering id itself, not through its style.

@@ -1037,6 +1037,33 @@ fn exports_leave_a_level_without_marker_out_of_lists() {
 }
 
 #[test]
+fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
+    // Contracts number their clauses and leave the sub-paragraphs unmarked
+    // on a `none` level: layout keeps counting the clauses around them.
+    let (mut doc, id) =
+        single_list(&[ListLevel::decimal(), ListLevel::new(ListNumberFormat::None)]);
+    add_items(&mut doc, id, &[0, 1, 0, 1, 0]);
+    assert_eq!(markers(&doc), ["1.", "", "2.", "", "3."]);
+
+    let markdown = doc.to_markdown();
+    let lines: Vec<&str> = markdown.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        [
+            "1. item 1",
+            "   item 2",
+            "1. item 3",
+            "   item 4",
+            "1. item 5"
+        ],
+        "one list, each sub-paragraph under its clause:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<ol>").count(), 1, "{html}");
+    assert!(html.contains("<li>item 1<p>item 2</p></li>"), "{html}");
+}
+
+#[test]
 fn markdown_starts_a_swapped_in_level_where_layout_does() {
     let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
     let swapped = doc
