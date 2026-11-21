@@ -54,3 +54,4 @@ dependency bumps and documentation.
 | 2026-11-21 | [An independent review before every merge](2026-11-21-independent-review-before-merge.md) | shipped |
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
+| 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
