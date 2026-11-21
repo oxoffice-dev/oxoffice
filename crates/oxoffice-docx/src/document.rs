@@ -22109,10 +22109,15 @@ fn story_text_markup_tags(
     Ok(markup)
 }
 
-/// Escape new story text, writing a tab as `w:tab` and a line feed or a
-/// carriage return as `w:br` between text elements, as `Paragraph::set_text`
-/// does.
+/// Escape new story text, writing a tab as `w:tab` and a line feed, a
+/// carriage return or a Windows line ending as `w:br` between text elements,
+/// as `Paragraph::set_text` does.
 fn story_text_content(value: &str, markup: &StoryTextMarkup) -> Vec<u8> {
+    let value = if value.contains("\r\n") {
+        std::borrow::Cow::Owned(value.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    };
     let mut content = Vec::with_capacity(value.len());
     let mut separators = value
         .chars()

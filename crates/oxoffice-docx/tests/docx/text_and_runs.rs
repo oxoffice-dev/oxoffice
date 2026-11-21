@@ -298,6 +298,26 @@ fn paragraph_text_setter_turns_a_windows_line_ending_into_one_break() {
 }
 
 #[test]
+fn story_text_turns_a_windows_line_ending_into_one_break() {
+    let mut doc = doc_with(&["old"]);
+    let location = doc
+        .story_items(&doc.stories().unwrap()[0])
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the body paragraph")
+        .location()
+        .clone();
+    doc.set_story_text(&location, "c\r\nd").unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        ["c\nd"],
+        "as the paragraph text setter writes it"
+    );
+}
+
+#[test]
 fn paragraph_text_setter_keeps_a_lone_carriage_return_and_doubled_line_endings() {
     let mut doc = doc_with(&["old"]);
     doc.paragraph_mut(0)

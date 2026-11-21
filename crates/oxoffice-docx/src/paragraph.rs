@@ -909,8 +909,8 @@ impl<'a> Paragraph<'a> {
     /// Every run, hyperlink, field, picture, content control, tracked change
     /// and other inline child is replaced by one run without direct
     /// formatting. A tab becomes `w:tab` and a line feed or a carriage return
-    /// becomes `w:br`, as in python-docx, and a Windows line ending (`\r\n`)
-    /// one `w:br`. Empty text leaves no run, like
+    /// becomes `w:br`, as in python-docx. A Windows line ending (`\r\n`) is
+    /// one `w:br`, where python-docx writes two. Empty text leaves no run, like
     /// [`crate::Document::add_paragraph`] with empty text.
     ///
     /// Comment ranges, bookmarks and permission ranges are kept, wherever they
