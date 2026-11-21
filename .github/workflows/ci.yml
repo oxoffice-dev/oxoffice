@@ -85,7 +85,7 @@ jobs:
       # main. This lints every crate and target on Linux, all features on,
       # without them, warnings denied, on every pull request, drafts and
       # stacked ones included: an item under #[cfg(debug_assertions)] used
-      # without that cfg, or code dead without it, fails here
+      # without that cfg, or crate-private code dead without it, fails here
       # (specs/2026-11-21-check-without-debug-assertions.md). It and
       # cargo-deny run even when an earlier step failed, so one push shows
       # every failure.

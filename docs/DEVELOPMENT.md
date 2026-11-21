@@ -256,9 +256,9 @@ merge variant).
   warnings`), on every pull request, drafts and stacked ones included:
   every crate and target on Linux, all features on, warnings denied. The
   first clippy, the WebAssembly check and the build job all compile with
-  debug assertions, so code that compiles only with them (an item under
-  `#[cfg(debug_assertions)]` used or re-exported without the cfg), or that
-  is dead without them, fails there first. Code behind a feature turned
+  debug assertions and pass code that compiles only with them (an item
+  under `#[cfg(debug_assertions)]` used or re-exported without the cfg) or
+  crate-private code that is dead without them; this step fails on it. Code behind a feature turned
   off, or for Windows only, is still checked without debug assertions only
   by the nightly run.
 - **Python tests run in parallel** in the build job (`pytest -n auto`,
