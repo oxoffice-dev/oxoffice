@@ -1,11 +1,17 @@
 //! `oxoffice pptx shapes` lists every shape of a slide, those inside groups
-//! included, depth first in z-order, with the path of each one in `--json`.
+//! included, depth first in z-order, with the path of each one in `--json`;
+//! the deck read commands keep their JSON keys.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use oxoffice_pptx::{Emu, Presentation};
 use serde_json::Value;
+
+#[path = "support/snapshots.rs"]
+mod snapshots;
+
+use snapshots::{assert_keys, corpus};
 
 const INCH: Emu = Emu(914_400);
 
@@ -103,4 +109,30 @@ fn shapes_lists_grouped_shapes_with_their_paths() {
     );
     assert!(!shapes(&path, &["--slide", "0"]).status.success());
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn the_deck_read_commands_keep_their_json_keys() {
+    let decks = ["powerpoint/training.pptx", "google/training.pptx"].map(corpus);
+    let read = |command: &str, deck: &PathBuf| {
+        let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+            .args(["pptx", command])
+            .arg(deck)
+            .arg("--json")
+            .output()
+            .expect("oxoffice runs");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).expect("JSON output")
+    };
+    for command in ["text", "fit", "shapes"] {
+        let outputs = decks
+            .iter()
+            .map(|deck| read(command, deck))
+            .collect::<Vec<_>>();
+        assert_keys(&format!("pptx-{command}"), &outputs);
+    }
 }

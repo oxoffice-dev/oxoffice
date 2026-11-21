@@ -1,6 +1,8 @@
 //! `oxoffice docx count` counts a text by story kind, and `oxoffice docx text
 //! --json` gives the style of the paragraphs of every story, on the Word and
-//! Google Docs files of the corpus.
+//! Google Docs files of the corpus. The read commands keep their JSON keys,
+//! and `oxoffice docx diff` shows what each producer changed in a corpus file
+//! and nothing else.
 
 use std::fs;
 use std::io::Cursor;
@@ -9,6 +11,11 @@ use std::process::{Command, Output};
 
 use oxoffice_opc::OpcPackage;
 use serde_json::Value;
+
+#[path = "support/snapshots.rs"]
+mod snapshots;
+
+use snapshots::{assert_keys, assert_snapshot, corpus, every_copy, snapshot_path};
 
 fn report(producer: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -228,4 +235,203 @@ fn a_header_table_reads_in_place_and_its_story_stays_one_json_entry() {
         .map(|item| item["text"].as_str().unwrap())
         .collect();
     assert_eq!(texts, ["Letterhead", "Confidential"]);
+}
+
+fn oxoffice(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+        .args(args)
+        .output()
+        .expect("oxoffice runs")
+}
+
+fn read_json(args: &[&str]) -> Value {
+    json(&oxoffice(args))
+}
+
+fn path_of(file: &str) -> String {
+    corpus(file).to_str().unwrap().to_owned()
+}
+
+#[test]
+fn the_read_commands_keep_their_json_keys() {
+    let contract = ["word/contract.docx", "google/contract.docx"].map(path_of);
+    let report = path_of("word/report.docx");
+    let text = contract
+        .iter()
+        .chain([&report])
+        .map(|file| read_json(&["docx", "text", file, "--json"]))
+        .collect::<Vec<_>>();
+    assert_keys("docx-text", &text);
+    let revisions = contract
+        .iter()
+        .map(|file| read_json(&["docx", "revision", "list", file, "--json"]))
+        .collect::<Vec<_>>();
+    assert_keys("docx-revision-list", &revisions);
+    let comments = contract
+        .iter()
+        .map(|file| read_json(&["docx", "comment", "list", file, "--json"]))
+        .collect::<Vec<_>>();
+    assert_keys("docx-comment-list", &comments);
+    assert_keys(
+        "docx-layout",
+        &[read_json(&["docx", "layout", &report, "--json"])],
+    );
+    // LibreOffice adds header and footer paragraphs and drops an empty one:
+    // both kinds of row, with and without a side.
+    let diff = read_json(&[
+        "docx",
+        "diff",
+        &path_of("authored/report.docx"),
+        &path_of("libreoffice/report.docx"),
+        "--json",
+    ]);
+    assert!(diff["added"].as_u64().unwrap() > 0 && diff["removed"].as_u64().unwrap() > 0);
+    assert_keys("docx-diff", &[diff]);
+}
+
+/// The families whose producer copies are compared with their source: the
+/// report and the contract on a pull request, every family otherwise.
+fn diffed_families() -> Vec<String> {
+    if !every_copy() {
+        return vec!["report".into(), "contract".into()];
+    }
+    let mut families = fs::read_dir(corpus("authored"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "docx"))
+        .map(|path| path.file_stem().unwrap().to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    families.sort();
+    families
+}
+
+#[test]
+fn a_producer_copy_differs_from_its_source_only_by_what_that_producer_changes() {
+    let mut read = Vec::new();
+    for family in diffed_families() {
+        for producer in ["word", "google", "libreoffice"] {
+            let copy = format!("{producer}/{family}.docx");
+            assert!(
+                corpus(&copy).exists(),
+                "{copy}: every family has this producer's copy"
+            );
+            let diff = read_json(&[
+                "docx",
+                "diff",
+                &path_of(&format!("authored/{family}.docx")),
+                &path_of(&copy),
+                "--json",
+            ]);
+            let short = |text: &Value| {
+                text.as_str()
+                    .map(|text| text.chars().take(40).collect::<String>())
+                    .unwrap_or_else(|| "-".into())
+            };
+            let rows = diff["differences"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{} {}: {:?} -> {:?}",
+                        row["change"].as_str().unwrap(),
+                        row["story"].as_str().unwrap(),
+                        short(&row["text_a"]),
+                        short(&row["text_b"]),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_snapshot(&format!("producer-diff/{producer}-{family}"), &rows);
+            read.push(format!("{producer}-{family}.txt"));
+        }
+    }
+    if every_copy() {
+        // No snapshot is left behind by a copy that went.
+        let mut kept = fs::read_dir(snapshot_path("producer-diff/x").parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        kept.sort();
+        read.sort();
+        assert_eq!(
+            kept, read,
+            "every producer-diff snapshot belongs to a corpus copy"
+        );
+    }
+}
+
+#[test]
+fn a_comment_added_to_a_copy_is_the_one_difference() {
+    let dir =
+        std::env::temp_dir().join(format!("oxoffice-cli-diff-comment-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let source = path_of("google/report.docx");
+    let edited = dir.join("edited.docx");
+    let added = oxoffice(&[
+        "docx",
+        "comment",
+        "add",
+        &source,
+        "--anchor",
+        "Highlights",
+        "--author",
+        "Reviewer",
+        "--text",
+        "Check this figure",
+        "--undated",
+        "--output",
+        edited.to_str().unwrap(),
+    ]);
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let diff = read_json(&["docx", "diff", &source, edited.to_str().unwrap(), "--json"]);
+    let _ = fs::remove_dir_all(&dir);
+    let rows = diff["differences"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{diff}");
+    assert_eq!(
+        (&rows[0]["change"], &rows[0]["story"], &rows[0]["text_b"]),
+        (
+            &serde_json::json!("added"),
+            &serde_json::json!("comment"),
+            &serde_json::json!("Check this figure")
+        ),
+        "{diff}"
+    );
+}
+
+// Known failure #356: diff matches comments by their order in comments.xml,
+// which Word, Google Docs and LibreOffice all rewrite (see the producer-diff
+// snapshots of the contract). When it passes, drop `should_panic` and update
+// the producer-diff snapshots of the contract.
+#[test]
+#[should_panic(expected = "only the resolved comment Google drops differs")]
+fn comments_a_producer_reordered_are_no_difference() {
+    let diff = read_json(&[
+        "docx",
+        "diff",
+        &path_of("authored/contract.docx"),
+        &path_of("google/contract.docx"),
+        "--json",
+    ]);
+    let comments = diff["differences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["story"] == "comment")
+        .map(|row| {
+            (
+                row["change"].as_str().unwrap(),
+                row["text_a"].as_str().unwrap_or(""),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        comments.len() == 1
+            && comments[0].0 == "removed"
+            && comments[0].1.starts_with("Check with French counsel"),
+        "only the resolved comment Google drops differs: {comments:?}"
+    );
 }
