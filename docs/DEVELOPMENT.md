@@ -162,6 +162,9 @@ entry and closes the issue.
   scaling call on Linux only: its pull request ran the three platforms. The
   nightly run (02:23 UTC) and `workflow_dispatch` run every job, every
   scaling call included, on the three platforms.
+- The WebAssembly job also runs the PowerPoint integration tests without
+  the `render` feature, as the WebAssembly bindings build the facade: an
+  edit must not need the rendering crates.
 - **Loop step 6 is the only macOS and Windows check before the nightly
   run.** `main` requires no status check, so nothing stops a merge whose
   macOS or Windows build is red or still queued; such a break shows in the

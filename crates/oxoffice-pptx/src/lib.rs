@@ -91,7 +91,7 @@ use oxoffice_pptx_layout::timeline::{ResolvedTimelineSlide, evaluate_media_playb
 use oxoffice_pptx_layout::{
     ChartResource, FlattenedItem, FlattenedSource, ResolveCtx, ResolvedAutofit, ResolvedContent,
     ResolvedSlide, ResolvedSlideTextDirections, ScopedChartResources, ScopedHyperlinkTargets,
-    ScopedMediaFailures, ScopedMediaIds, inherited_xfrm,
+    ScopedMediaFailures, ScopedMediaIds,
 };
 pub use oxoffice_pptx_oxml::comments::{Comment, CommentAuthor, CommentReply};
 use oxoffice_pptx_oxml::comments::{
@@ -105,6 +105,7 @@ pub use oxoffice_pptx_oxml::diagram::{
     DiagramPoint, DiagramPointKind, DiagramRelationshipIds, DiagramShapeStyle,
 };
 use oxoffice_pptx_oxml::graphic_frame::{CT_GraphicFrame, GraphicDataPayload};
+use oxoffice_pptx_oxml::inheritance::inherited_xfrm;
 use oxoffice_pptx_oxml::namespace::{P_NS, R_NS};
 use oxoffice_pptx_oxml::notes_parts::{CT_HandoutMaster, CT_NotesMaster, CT_NotesSlide};
 pub use oxoffice_pptx_oxml::picture::MediaKind;
@@ -7228,7 +7229,6 @@ impl Presentation {
         target: &ShapeTreeChild,
         operation: &'static str,
     ) -> Result<CT_Transform2D> {
-        #[cfg(feature = "render")]
         if let ShapeOwner::Layout(index) = owner
             && let Some(placeholder) = shape_placeholder(target)
         {
@@ -7239,7 +7239,6 @@ impl Presentation {
                 return Ok(transform.clone());
             }
         }
-        let _ = (owner, target);
         Err(invalid_shape_mutation(
             operation,
             "the part shape has no position and size",
@@ -7247,7 +7246,6 @@ impl Presentation {
     }
 
     /// Materializes a placeholder through the actual part inheritance chain.
-    #[cfg(feature = "render")]
     pub fn materialize_owner_geometry(&mut self, owner: ShapeOwner, path: &[usize]) -> Result<()> {
         if let ShapeOwner::Slide(index) = owner {
             return self.materialize_geometry(index, path);
@@ -9370,7 +9368,6 @@ impl Presentation {
     /// shape's own values. An empty `shape_path` or one that names no shape
     /// is [`Error::InvalidShapeMutation`], as a missing picture is for
     /// [`Self::picture_image`].
-    #[cfg(feature = "render")]
     pub fn effective_geometry(
         &self,
         slide_index: usize,
@@ -9380,7 +9377,6 @@ impl Presentation {
     }
 
     /// Reads the current geometry of a physical slide, layout or master shape.
-    #[cfg(feature = "render")]
     pub fn effective_geometry_at(
         &self,
         owner: ShapeOwner,
@@ -9421,7 +9417,6 @@ impl Presentation {
     /// would make rendering skip the shape. Shapes that are not placeholders,
     /// placeholders with a complete transform and placeholders that inherit
     /// none are left unchanged.
-    #[cfg(feature = "render")]
     pub fn materialize_geometry(&mut self, slide_index: usize, shape_path: &[usize]) -> Result<()> {
         const OPERATION: &str = "materialize geometry";
         let child = self.shape_at(slide_index, shape_path, OPERATION)?.child;
@@ -9465,7 +9460,6 @@ impl Presentation {
     /// slide lacks are not added. The layout may belong to another master,
     /// whose theme and text styles the slide then follows. The change is
     /// staged and publishes only after the staged package reopens.
-    #[cfg(feature = "render")]
     pub fn set_slide_layout(&mut self, slide_index: usize, layout_index: usize) -> Result<()> {
         const OPERATION: &str = "set slide layout";
         self.require_slide_index(slide_index)?;
@@ -9517,7 +9511,6 @@ impl Presentation {
         self.commit_candidate(staged)
     }
 
-    #[cfg(feature = "render")]
     fn shape_at(
         &self,
         slide_index: usize,
@@ -9540,7 +9533,6 @@ impl Presentation {
     }
 
     /// Returns the transform a slide placeholder inherits through its layout.
-    #[cfg(feature = "render")]
     fn inherited_transform(
         &self,
         slide_index: usize,
@@ -9553,7 +9545,6 @@ impl Presentation {
         Ok(inherited_xfrm(placeholder, layout, &master).cloned())
     }
 
-    #[cfg(feature = "render")]
     fn layout_and_master(&self, layout_index: usize) -> Result<(&CT_SlideLayout, CT_SlideMaster)> {
         let record = &self.layouts[layout_index];
         let master_part =
@@ -12738,7 +12729,6 @@ impl Presentation {
 
     /// Fills one selected picture placeholder in place, preserving its owner order.
     /// An unsupported metadata conversion leaves both package and tree unchanged.
-    #[cfg(feature = "render")]
     pub fn fill_picture_placeholder(
         &mut self,
         slide_index: usize,
@@ -21881,7 +21871,6 @@ fn numeric_relationship_id(relationship_id: &str) -> u32 {
 ///
 /// Only placeholders without a transform of their own are touched, and
 /// only when the old layout chain supplied one.
-#[cfg(feature = "render")]
 fn keep_unplaced_placeholder_transforms(
     children: &mut [ShapeTreeChild],
     old: (&CT_SlideLayout, &CT_SlideMaster),
@@ -33815,7 +33804,6 @@ impl Presentation {
         Ok(())
     }
 
-    #[cfg(feature = "render")]
     fn inherited_target_transform(
         &self,
         slide_index: usize,
@@ -33829,19 +33817,6 @@ impl Presentation {
         inherited
             .filter(|transform| transform.offset.is_some() && transform.extent.is_some())
             .ok_or_else(|| invalid_shape_mutation(operation, "the shape has no position and size"))
-    }
-
-    #[cfg(not(feature = "render"))]
-    fn inherited_target_transform(
-        &self,
-        _slide_index: usize,
-        _target: &ShapeTreeChild,
-        operation: &'static str,
-    ) -> Result<CT_Transform2D> {
-        Err(invalid_shape_mutation(
-            operation,
-            "the shape has no position and size of its own",
-        ))
     }
 }
 

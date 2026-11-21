@@ -535,6 +535,38 @@ fn new_shapes_get_ids_unused_on_the_slide_and_keep_a_name_set_by_the_user() {
 }
 
 #[test]
+fn a_placeholder_placed_by_its_layout_moves_and_keeps_the_size_it_inherits() {
+    let mut prs = new_deck();
+    let title_only = (0..prs.layout_count())
+        .find(|&index| prs.layout_name(index) == Some("Title Only"))
+        .expect("the default template has a Title Only layout");
+    prs.add_slide(title_only).unwrap();
+    let title = 0;
+    assert_eq!(shape_at(&prs, 0, title).position(), None);
+    let (_, _, width, height) = prs
+        .effective_geometry(0, &[title])
+        .unwrap()
+        .expect("the layout places the title");
+
+    prs.materialize_geometry(0, &[title]).unwrap();
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(title)
+        .unwrap()
+        .set_position(Emu(IN), Emu(2 * IN))
+        .unwrap();
+
+    let prs = reopen(&prs);
+    let shape = shape_at(&prs, 0, title);
+    assert_eq!(shape.position(), Some((Emu(IN), Emu(2 * IN))));
+    assert_eq!(shape.size(), Some((width, height)));
+    assert_eq!(
+        prs.effective_geometry(0, &[title]).unwrap(),
+        Some((Emu(IN), Emu(2 * IN), width, height))
+    );
+}
+
+#[test]
 fn moving_resizing_rotating_and_flipping_a_shape_survives_a_save() {
     let mut prs = text_box_deck("Moved");
     {

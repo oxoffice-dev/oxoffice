@@ -1223,6 +1223,7 @@ fn a_chart_exports_to_markdown_as_a_data_table() {
 }
 
 #[test]
+#[cfg(feature = "render")]
 fn every_chart_kind_renders_as_a_chart_not_a_placeholder() {
     let source = data(&["1", "2", "3"], &[("Sales", &[3.0, 7.0, 5.0])]);
     for kind in EVERY_KIND {

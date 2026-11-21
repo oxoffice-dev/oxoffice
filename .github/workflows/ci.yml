@@ -85,6 +85,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
+      - name: PowerPoint tests without the render feature
+        run: cargo test -p oxoffice-pptx --no-default-features --features default-template --test pptx
 
   build:
     name: Build and test (${{ matrix.os }})

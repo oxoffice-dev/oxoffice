@@ -37,9 +37,10 @@ crates/
   oxoffice-docx-wasm     WebAssembly bindings
 
   # PresentationML
-  oxoffice-pptx-oxml     the p: types
-  oxoffice-pptx-layout   placeholder inheritance (master, layout, slide),
-                         chart routing, flattening
+  oxoffice-pptx-oxml     the p: types, and which layout and master
+                         placeholders a slide placeholder follows
+  oxoffice-pptx-layout   placeholder inheritance for rendering (master,
+                         layout, slide), chart routing, flattening
   oxoffice-pptx-render   resolved slides to page frames
   oxoffice-pptx          the facade: Presentation, Slide, Shape..., shaped
                          after python-pptx, plus the bundled default.pptx
