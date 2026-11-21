@@ -1170,8 +1170,10 @@ impl<'a> Paragraph<'a> {
         Ok(())
     }
 
-    /// Append a footnote reference run (`<w:footnoteReference w:id="..."/>`).
-    /// The footnote content itself is added via `Document::add_footnote`.
+    /// Append a footnote reference run (`<w:footnoteReference w:id="..."/>`)
+    /// styled `FootnoteReference`, a superscript mark; saving adds that style
+    /// when the document lacks it. The footnote content itself is added via
+    /// `Document::add_footnote`.
     pub fn add_footnote_ref(&mut self, id: i32) {
         use oxoffice_docx_oxml::text::{CT_R, RunContent};
         let mut r = CT_R::new("");
@@ -1179,6 +1181,12 @@ impl<'a> Paragraph<'a> {
             id,
             custom_mark: None,
         }];
+        // Styled as a note mark, as `Document::create_footnote` writes it;
+        // saving adds the style when the document lacks it.
+        r.properties = Some(oxoffice_docx_oxml::properties::CT_RPr {
+            style_id: Some("FootnoteReference".into()),
+            ..Default::default()
+        });
         self.inner.runs.push(r);
     }
 

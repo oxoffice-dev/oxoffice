@@ -31,10 +31,59 @@ fn assert_same_reopen(reopened: &Result<Document>, through_zip: &Result<Document
 }
 
 impl Document {
-    fn ensure_referenced_hyperlink_style(&mut self) -> Result<()> {
-        if self.styles.get_by_id("Hyperlink").is_some() {
+    /// Whether a word part the package holds now, as read or as last saved,
+    /// names the style `id` as a value: the producer's own reference.
+    fn stored_story_parts_name_style(&self, id: &str) -> bool {
+        let needle = format!(r#"val="{id}""#);
+        self.package.parts.iter().any(|(name, bytes)| {
+            name.starts_with("/word/")
+                && name.ends_with(".xml")
+                && !name.ends_with("/styles.xml")
+                && bytes
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes())
+        })
+    }
+
+    /// Add the Hyperlink style and the footnote mark style when a run of
+    /// any story names one the document does not define, as `add_hyperlink`
+    /// and [`crate::Paragraph::add_footnote_ref`] do. The stories are
+    /// scanned once for both.
+    fn ensure_referenced_character_styles(&mut self) -> Result<()> {
+        let mut missing = Vec::new();
+        if self.styles.get_by_id("Hyperlink").is_none() {
+            missing.push((
+                "Hyperlink",
+                StyleBuilder::character("Hyperlink", "Hyperlink").run_properties(CT_RPr {
+                    color: Some("0563C1".into()),
+                    underline: Some(oxoffice_docx_oxml::shared::ST_Underline::Single),
+                    ..Default::default()
+                }),
+            ));
+        }
+        // Without a note, no footnote reference names the mark style. A file
+        // that already names it without defining it (Google Docs does, in its
+        // notes) keeps its styles as written: only a reference this session
+        // added brings the style.
+        if self.styles.get_by_id("FootnoteReference").is_none()
+            && self
+                .footnotes
+                .footnotes
+                .iter()
+                .any(|note| note.note_type == oxoffice_docx_oxml::footnotes::NoteType::Normal)
+            && !self.stored_story_parts_name_style("FootnoteReference")
+        {
+            missing.push((
+                "FootnoteReference",
+                note_reference_style(StoryKind::Footnote),
+            ));
+        }
+        if missing.is_empty() {
             return Ok(());
         }
+        let wanted = missing.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let found = vec![Cell::new(false); wanted.len()];
+        let done = |found: &[Cell<bool>]| found.iter().all(Cell::get);
         let body = self
             .document
             .body
@@ -47,50 +96,54 @@ impl Document {
                 BodyContent::RawXml(_) => None,
             })
             .collect();
-        let mut referenced = owners_reference_hyperlink_style(body);
+        owners_reference_styles(body, &wanted, &found);
         for (rel_id, is_header) in self.header_footer_rel_ids() {
-            if !referenced && let Some(story) = self.load_header_footer(&rel_id, is_header) {
-                referenced = owners_reference_hyperlink_style(
+            if !done(&found)
+                && let Some(story) = self.load_header_footer(&rel_id, is_header)
+            {
+                owners_reference_styles(
                     story
                         .paragraphs
                         .iter()
                         .map(WordXmlOwner::Paragraph)
                         .collect(),
+                    &wanted,
+                    &found,
                 );
             }
         }
-        if !referenced {
-            referenced = owners_reference_hyperlink_style(
+        if !done(&found) {
+            owners_reference_styles(
                 self.footnotes
                     .footnotes
                     .iter()
                     .flat_map(|note| &note.paragraphs)
                     .map(WordXmlOwner::Paragraph)
                     .collect(),
+                &wanted,
+                &found,
             );
         }
-        if !referenced
+        if !done(&found)
             && let Ok(Some(part)) = self.note_part_name(StoryKind::Endnote)
             && let Some(source) = self.package.get_part(&part)
             && let Ok(notes) = oxoffice_docx_oxml::footnotes::CT_Footnotes::from_xml(source)
         {
-            referenced = owners_reference_hyperlink_style(
+            owners_reference_styles(
                 notes
                     .footnotes
                     .iter()
                     .flat_map(|note| &note.paragraphs)
                     .map(WordXmlOwner::Paragraph)
                     .collect(),
+                &wanted,
+                &found,
             );
         }
-        if referenced {
-            self.add_style(
-                StyleBuilder::character("Hyperlink", "Hyperlink").run_properties(CT_RPr {
-                    color: Some("0563C1".into()),
-                    underline: Some(oxoffice_docx_oxml::shared::ST_Underline::Single),
-                    ..Default::default()
-                }),
-            )?;
+        for ((_, style), found) in missing.into_iter().zip(found) {
+            if found.get() {
+                self.add_style(style)?;
+            }
         }
         Ok(())
     }
@@ -131,7 +184,7 @@ impl Document {
         if let Some((_, lineage, _)) = &mut template {
             lineage.finish_preparation();
         }
-        self.ensure_referenced_hyperlink_style()?;
+        self.ensure_referenced_character_styles()?;
         self.preflight_flush_required_bundles()?;
         if let Some((operation, lineage, sources)) = template.as_mut() {
             let mut writer = TemplateMainWriter {

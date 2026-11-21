@@ -412,10 +412,7 @@ fn a_low_level_footnote_and_its_reference_pair_up() {
     assert_eq!(referenced, [id]);
 }
 
-// Fails today: Paragraph::add_footnote_ref writes a reference run without the
-// FootnoteReference style, so Word shows the number full size. Issue: #30
 #[test]
-#[should_panic(expected = "the reference is styled as a note mark")]
 fn a_low_level_reference_is_styled_as_a_note_mark() {
     let mut doc = doc_with(&["Low level"]);
     let id = doc.add_footnote("Typed note");
@@ -427,6 +424,99 @@ fn a_low_level_reference_is_styled_as_a_note_mark() {
         [Some("FootnoteReference".to_owned())],
         "the reference is styled as a note mark"
     );
+}
+
+/// The `w:style` element of `id` in a styles part, if any.
+fn style_element<'a>(styles: &'a str, id: &str) -> Option<&'a str> {
+    let start = styles.find(&format!(r#"w:styleId="{id}""#))?;
+    let start = styles[..start].rfind("<w:style ")?;
+    let end = start + styles[start..].find("</w:style>")? + "</w:style>".len();
+    Some(&styles[start..end])
+}
+
+#[test]
+fn a_low_level_reference_brings_back_a_note_mark_style_the_file_lacks() {
+    // `add_footnote` adds the style and names it on the note's own mark; a
+    // file can still lack both, as a localized Word file names its own.
+    let mut doc = doc_with(&["Low level"]);
+    let id = doc.add_footnote("Typed note");
+    let mut doc = without_note_mark_style(&mut doc);
+    let mut saved = reopen(&mut doc);
+    assert!(saved.style("FootnoteReference").is_none());
+    saved.paragraph_mut(0).unwrap().add_footnote_ref(id);
+    let doc = reopen(&mut saved);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    let style = style_element(&styles, "FootnoteReference").expect("the note mark style");
+    assert!(
+        style.contains(r#"w:vertAlign w:val="superscript""#),
+        "{style}"
+    );
+    assert!(style.contains(r#"w:val="footnote reference""#), "{style}");
+}
+
+/// `doc` saved without the note mark style, in its styles part and on the
+/// marks of its notes.
+fn without_note_mark_style(doc: &mut Document) -> Document {
+    let mut doc = with_part(doc, "/word/footnotes.xml", |xml| {
+        xml.replace(r#"<w:rStyle w:val="FootnoteReference"/>"#, "")
+    });
+    let doc = with_part(&mut doc, "/word/styles.xml", |xml| {
+        let style = style_element(xml, "FootnoteReference").expect("the note mark style");
+        xml.replacen(style, "", 1)
+    });
+    assert!(
+        !doc.part_xml("word/footnotes.xml")
+            .unwrap()
+            .contains("FootnoteReference")
+    );
+    doc
+}
+
+#[test]
+fn a_hyperlink_and_a_note_mark_style_both_come_back_in_one_save() {
+    let mut doc = doc_with(&["Low level"]);
+    let id = doc.add_footnote("Typed note");
+    let mut doc = without_note_mark_style(&mut doc);
+    assert!(doc.style("Hyperlink").is_none());
+    let rel_id = doc.add_hyperlink_relationship("https://example.com/");
+    let mut paragraph = doc.paragraph_mut(0).unwrap();
+    paragraph.add_hyperlink("a link", &rel_id);
+    paragraph.add_footnote_ref(id);
+    let doc = reopen(&mut doc);
+    assert!(doc.style("Hyperlink").is_some());
+    assert!(doc.style("FootnoteReference").is_some());
+}
+
+#[test]
+fn only_the_missing_style_a_run_names_comes_back() {
+    // Both styles are missing and only a hyperlink names one.
+    let mut doc = doc_with(&["Low level"]);
+    doc.add_footnote("Typed note");
+    let mut doc = without_note_mark_style(&mut doc);
+    let rel_id = doc.add_hyperlink_relationship("https://example.com/");
+    doc.paragraph_mut(0)
+        .unwrap()
+        .add_hyperlink("a link", &rel_id);
+    let doc = reopen(&mut doc);
+    assert!(doc.style("Hyperlink").is_some());
+    assert!(doc.style("FootnoteReference").is_none());
+}
+
+#[test]
+fn a_dangling_low_level_reference_adds_no_note_mark_style_without_notes() {
+    let mut doc = doc_with(&["Low level"]);
+    doc.paragraph_mut(0).unwrap().add_footnote_ref(7);
+    let doc = reopen(&mut doc);
+    assert!(doc.style("FootnoteReference").is_none());
+}
+
+#[test]
+fn an_edited_word_file_without_notes_gains_no_note_mark_style() {
+    let mut doc = corpus_doc("word/report.docx");
+    assert!(doc.style("FootnoteReference").is_none());
+    doc.add_paragraph("Added.");
+    let doc = reopen(&mut doc);
+    assert!(doc.style("FootnoteReference").is_none());
 }
 
 // ---- Reading ----
