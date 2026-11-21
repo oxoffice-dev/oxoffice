@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use oxoffice_docx::{
     Alignment, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, Document,
-    RevisionKind, StoryKind,
+    RevisionKind, RunItemRef, StoryKind,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -910,23 +910,33 @@ fn renamed_toc_heading_bookmarks_do_not_block_the_comparison() {
 /// A table of contents as Word writes it, each entry a link to its heading's
 /// `_Toc` bookmark with a page reference field, then the headings, each
 /// followed by its text. Word renames the bookmarks when it rebuilds the
-/// table: here they are `_Toc{base + n}` for the n-th heading.
+/// table: here they are `_Toc{base + n}` for the n-th heading. A section
+/// whose heading is empty is its text alone.
 fn report_with_toc(base: u32, sections: &[(&str, &str)]) -> Document {
     let mut body = String::from(
         r#"<w:p><w:r><w:t>Contents</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-1" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>"#,
     );
-    for (n, (heading, _)) in sections.iter().enumerate() {
+    let headings = sections
+        .iter()
+        .filter(|(heading, _)| !heading.is_empty())
+        .collect::<Vec<_>>();
+    for (n, (heading, _)) in headings.iter().enumerate() {
         let name = format!("_Toc{}", base + n as u32);
         body.push_str(&format!(
             r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:hyperlink w:anchor="{name}"><w:r><w:t>{heading}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF {name} \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>"#
         ));
     }
     body.push_str(r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#);
-    for (n, (heading, text)) in sections.iter().enumerate() {
-        let name = format!("_Toc{}", base + n as u32);
-        body.push_str(&format!(
-            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="{n}" w:name="{name}"/><w:r><w:t>{heading}</w:t></w:r><w:bookmarkEnd w:id="{n}"/></w:p><w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#
-        ));
+    let mut n = 0;
+    for (heading, text) in sections {
+        if !heading.is_empty() {
+            let name = format!("_Toc{}", base + n);
+            body.push_str(&format!(
+                r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="{n}" w:name="{name}"/><w:r><w:t>{heading}</w:t></w:r><w:bookmarkEnd w:id="{n}"/></w:p>"#
+            ));
+            n += 1;
+        }
+        body.push_str(&format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"));
     }
     doc_with_body(&body)
 }
@@ -1117,11 +1127,16 @@ fn a_toc_reference_split_across_runs_keeps_the_refusal() {
         ))
     };
     let mut original = document("_Toc1", false, "Old.");
+    let error = original
+        .compare(&document("_Toc2", true, "New."), AUTHOR, DATE)
+        .unwrap_err();
     assert!(
-        original
-            .compare(&document("_Toc2", true, "New."), AUTHOR, DATE)
-            .is_err()
+        error
+            .to_string()
+            .contains("cannot revise paragraph boundary structures"),
+        "{error}"
     );
+    assert!(original.revisions().is_empty());
     // The same pair with the reference in one run compares.
     let mut doc = redline(
         document("_Toc1", false, "Old."),
@@ -1133,6 +1148,104 @@ fn a_toc_reference_split_across_runs_keeps_the_refusal() {
         link_targets(&copy),
         [("Intro1".to_owned(), Some("Intro".to_owned()))]
     );
+}
+
+#[test]
+fn a_heading_removed_and_another_added_further_down_keep_their_own_bookmarks() {
+    // Scope goes but its text stays, and Outlook comes after that text: the
+    // two headings do not pair, so Outlook takes a name and an id the
+    // original does not hold, rather than Scope's.
+    let sections = [("Intro", "Hello."), ("Scope", "Kept."), ("End", "Bye.")];
+    let original = report_with_toc(1, &sections);
+    let edited = report_with_toc(
+        1,
+        &[
+            ("Intro", "Hello."),
+            ("", "Kept."),
+            ("Outlook", "Next."),
+            ("End", "Bye."),
+        ],
+    );
+    let mut doc = redline(report_with_toc(1, &sections), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_every_entry_links_its_heading(&copy, &["Intro", "Outlook", "End"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original));
+    assert_eq!(bookmark_names(&copy), bookmark_names(&original));
+    assert_every_entry_links_its_heading(&copy, &["Intro", "Scope", "End"]);
+}
+
+/// The instruction of every field of the body, in order.
+fn field_instructions(doc: &Document) -> Vec<String> {
+    let mut instructions = Vec::new();
+    for paragraph in doc.paragraphs() {
+        for run in paragraph.runs() {
+            for item in run.items() {
+                if let RunItemRef::Field(field) = item {
+                    instructions.push(field.instruction().trim().to_owned());
+                }
+            }
+        }
+    }
+    instructions
+}
+
+#[test]
+fn simple_fields_and_hyperlink_fields_follow_a_renamed_toc_bookmark() {
+    let document = |name: &str, text: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGEREF {name} \h "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK \l &quot;{name}&quot; </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+                r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+                r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#,
+            ),
+            name = name,
+            text = text,
+        ))
+    };
+    let mut doc = redline(document("_Toc1", "Old."), &document("_Toc7", "New."));
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy)[2..], ["Intro", "New."]);
+    assert_eq!(bookmark_names(&copy), ["_Toc1"]);
+    assert_eq!(
+        field_instructions(&copy),
+        [r#"PAGEREF _Toc1 \h"#, r#"HYPERLINK \l "_Toc1""#]
+    );
+}
+
+#[test]
+fn a_renamed_toc_bookmark_named_in_another_story_keeps_the_refusal() {
+    // A footnote names the edited bookmark: renaming it in the body alone
+    // would leave that name pointing at nothing.
+    let document = |name: &str, text: &str, note: bool| {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p><w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        ));
+        if note {
+            let location = doc.paragraph_story_location(1).unwrap().unwrap();
+            doc.create_footnote(&location, &format!("See {name}."))
+                .unwrap();
+        }
+        doc
+    };
+    let mut original = document("_Toc1", "Old.", true);
+    let error = original
+        .compare(&document("_Toc7", "New.", true), AUTHOR, DATE)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot revise paragraph boundary structures"),
+        "{error}"
+    );
+    // Without the note naming it, the same pair compares.
+    let mut doc = redline(
+        document("_Toc1", "Old.", false),
+        &document("_Toc7", "New.", false),
+    );
+    assert_eq!(bookmark_names(&accepted(&mut doc)), ["_Toc1"]);
 }
 
 // Fails today: the same footnote, its reference moved to another paragraph,

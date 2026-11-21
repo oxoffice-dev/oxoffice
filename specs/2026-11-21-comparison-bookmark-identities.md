@@ -34,19 +34,24 @@ where they mean the same bookmark, in its main story:
 
 - **Ids.** A bookmark name both versions hold takes the original's id. A
   bookmark only the edited version holds keeps its id, or takes a fresh one
-  when the original uses that id.
-- **Generated names.** The `_Toc` bookmarks of each version are paired by the
-  text of their heading, in order (the comparison's own `align`: longest
-  common sequence, then gaps paired by position). A paired bookmark takes the
-  original's name. An unpaired one keeps its name, or takes a fresh `_Toc` name
-  when the original uses it.
+  when the original uses that id in any story.
+- **Generated names.** The paragraphs of the two main stories are aligned by
+  text (the comparison's own `align`: longest common sequence, then gaps
+  paired by position, after setting the common prefix and suffix aside). A
+  `_Toc` bookmark whose paragraph pairs with one of the original holding as
+  many takes the original's name, in order. An unpaired one keeps its name,
+  or takes a fresh `_Toc` name when the original uses it. Pairing paragraphs
+  rather than headings alone keeps a heading removed in one place from
+  pairing with one added further on, which the comparison deletes and inserts
+  apart.
 - **References follow.** Link anchors, simple field instructions and complex
   field instructions naming a renamed bookmark are rewritten with it, so the
   edited input reads the same.
 
 The guarantee becomes: accepting every revision gives the edited version up
-to its bookmark ids and the names of its paired `_Toc` bookmarks; rejecting
-gives the original exactly. Nothing changes when the identities already
+to its bookmark ids and the names of its `_Toc` bookmarks (paired ones take
+the original's name, unpaired ones whose name the original uses take a fresh
+one); rejecting gives the original exactly. Nothing changes when the identities already
 agree.
 
 Deliberately not done:
@@ -59,16 +64,18 @@ Deliberately not done:
 - LibreOffice's `__RefHeading___Toc` names are not covered yet.
 - Inserting or deleting a paragraph that holds a `w:fldSimple` is still
   refused. `Document::insert_toc` writes its page numbers that way, so adding
-  a heading to such a table of contents still refuses: a separate limitation.
+  a heading to such a table of contents still refuses: a separate limitation
+  (#66, listed in `limitations.json`).
 
 ## Plan
 
 One pull request: the reconciliation in `comparison.rs` (beside the footnote
 custody reconciliation, which does the same for its own markers), behaviour
 tests in `tests/docx/revisions_and_compare.rs` (Word-shaped tables of
-contents with a heading added and with renamed bookmarks, renumbered ids, a
-renamed author bookmark, a split reference that keeps the refusal), and the
-limitation entry removed.
+contents with a heading added, renamed, or removed with another added
+further on, renamed bookmarks, renumbered ids, a renamed author bookmark,
+simple and hyperlink fields that follow, a split reference and a reference
+from another story that keep the refusal), and the limitation entry removed.
 
 ## Outcome
 
