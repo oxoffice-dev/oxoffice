@@ -1669,11 +1669,21 @@ fn emit_form_field<'a>(
                 Vec::new()
             };
             let drawing = state.field_drawings.entry(fragment.field).or_default();
-            drawing.current.extend_from_slice(&current);
-            drawing.other.extend_from_slice(&other);
+            append_drawing(&mut drawing.current, &current);
+            append_drawing(&mut drawing.other, &other);
         }
     }
     state.structure = structure;
+}
+
+/// Append one fragment's drawing to its field's appearance. A content
+/// stream ends without whitespace, so the next fragment's `q` would fuse
+/// with the previous `Q` into an unknown operator.
+fn append_drawing(appearance: &mut Vec<u8>, drawing: &[u8]) {
+    if !appearance.is_empty() && !drawing.is_empty() {
+        appearance.push(b'\n');
+    }
+    appearance.extend_from_slice(drawing);
 }
 
 /// Children drawn in page coordinates under the groups around them, as an

@@ -404,9 +404,24 @@ fn fragments_of_a_field_union_on_its_first_page_and_later_ones_stay_on_the_page(
         "",
         "page 1 keeps nothing"
     );
+    let appearance = read.appearance(read.field("notes"), None);
+    assert_eq!(read.drawn_text(&appearance), "first linesecond line");
+    let operators: Vec<String> = lopdf::content::Content::decode(&appearance)
+        .expect("the appearance parses")
+        .operations
+        .into_iter()
+        .map(|operation| operation.operator)
+        .collect();
+    assert!(
+        operators.iter().all(|operator| matches!(
+            operator.as_str(),
+            "q" | "Q" | "cm" | "rg" | "BT" | "ET" | "Tf" | "Tm" | "TJ" | "Tj" | "gs"
+        )),
+        "every fragment's operators stay apart: {operators:?}"
+    );
     assert_eq!(
-        read.drawn_text(&read.appearance(read.field("notes"), None)),
-        "first linesecond line"
+        operators.iter().filter(|operator| *operator == "q").count(),
+        operators.iter().filter(|operator| *operator == "Q").count()
     );
 }
 
