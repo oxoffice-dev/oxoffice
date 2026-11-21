@@ -2817,3 +2817,123 @@ fn every_producer_copy_of_the_contract_keeps_its_reply_threads() {
         }
     }
 }
+
+/// A review in one person's name on a record co-edited in Word and Google
+/// Docs: comments on a body sentence, a table cell, text inside a content
+/// control and text inside a tracked insertion, and a reply to the open
+/// thread. They read back dated, the reply under its thread, and the other
+/// people's comments, thread, resolved state and tracked changes stay as
+/// they were.
+#[test]
+fn a_review_in_one_name_on_a_co_edited_record_leaves_the_other_people_alone() {
+    crate::support::run_workflow("record-review", &crate::support::record_copies(), |path| {
+        let before = corpus_doc(path);
+        // The thread of the two people: a two-paragraph question and its
+        // answer.
+        let review = review_of(&before);
+        let question = review
+            .iter()
+            .find(|line| line.contains("Which scanner models are affected?"))
+            .unwrap_or_else(|| panic!("{path}: the question: {review:#?}"));
+        assert!(
+            question.contains("we can replace them at the pilot site first")
+                && question.contains("parent None"),
+            "{path}: {question}"
+        );
+        let answer = review
+            .iter()
+            .find(|line| line.contains("Only the older model"))
+            .unwrap_or_else(|| panic!("{path}: the answer: {review:#?}"));
+        assert!(
+            answer.contains("parent Some(\"Which scanner models are affected?"),
+            "{path}: {answer}"
+        );
+        // The resolved comment: Google Docs leaves it out of its export.
+        let resolved = review
+            .iter()
+            .find(|line| line.contains("Confirm the two new sites"));
+        if path.starts_with("word-google/") {
+            assert!(resolved.is_none(), "{path}: {review:#?}");
+        } else {
+            assert!(
+                resolved.is_some_and(|line| line.contains("resolved Some(true)")),
+                "{path}: {review:#?}"
+            );
+        }
+
+        let mut doc = corpus_doc(path);
+        for (anchor, tables_only) in [
+            ("regional warehouses", false),
+            ("Late", true),
+            ("firmware test passing", false),
+            ("closure review", false),
+        ] {
+            doc.add_comment_on_text(
+                anchor,
+                REVIEWER,
+                &format!("Check \"{anchor}\""),
+                TextCommentOptions {
+                    tables_only,
+                    date: CommentDate::At("2026-11-21T10:05:00Z"),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path}: comment on {anchor}: {e}"));
+        }
+        let thread = doc
+            .comments()
+            .iter()
+            .find(|comment| comment.text().starts_with("Which scanner models"))
+            .map(CommentRef::id)
+            .unwrap();
+        doc.reply_to_with_date(
+            thread,
+            REVIEWER,
+            "Confirmed with the supplier.",
+            CommentDate::At("2026-11-21T10:06:00Z"),
+        )
+        .unwrap_or_else(|e| panic!("{path}: reply: {e}"));
+        let doc = reopen(&mut doc);
+
+        // LibreOffice writes no state for a thread's opening comment;
+        // the reply gives it one, open, as Word writes it.
+        let others = |doc: &Document| {
+            let (comments, revisions) = other_reviewers(doc);
+            let comments = comments
+                .into_iter()
+                .map(|line| line.replace("resolved None", "resolved Some(false)"))
+                .collect::<Vec<_>>();
+            (comments, revisions)
+        };
+        assert_eq!(others(&doc), others(&before), "{path}");
+        let mine = review_of(&doc)
+            .into_iter()
+            .filter(|line| line.starts_with(&format!("Some({REVIEWER:?})")))
+            .collect::<Vec<_>>();
+        assert_eq!(mine.len(), 5, "{path}: {mine:#?}");
+        assert!(
+            mine.iter()
+                .all(|line| line.contains("2026-11-21T10:0")
+                    && !line.contains("resolved Some(true)")),
+            "{path}: {mine:#?}"
+        );
+        for anchor in [
+            "regional warehouses",
+            "Late",
+            "firmware test passing",
+            "closure review",
+        ] {
+            assert!(
+                mine.iter().any(|line| line.contains("parent None")
+                    && line.ends_with(&format!("on Some({anchor:?})"))),
+                "{path}: a comment on {anchor}: {mine:#?}"
+            );
+        }
+        assert!(
+            mine.iter()
+                .any(|line| line.contains("Confirmed with the supplier.")
+                    && line.contains("parent Some(\"Which scanner models are affected?")),
+            "{path}: the reply sits under its thread: {mine:#?}"
+        );
+    });
+}

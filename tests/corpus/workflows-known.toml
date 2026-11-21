@@ -65,3 +65,12 @@ file = "google/thesis.docx"
 workflow = "redline"
 issue = 419
 message = "footnotes retained root/special/opaque shell changed"
+
+# Google Docs writes a paragraph mark with empty run properties; the first
+# pass leaves an empty paragraph properties element there, which the second
+# pass removes.
+[[known]]
+file = "word-google/record.docx"
+workflow = "page-numbers"
+issue = 440
+message = "word-google/record.docx: a second pass changes no byte"

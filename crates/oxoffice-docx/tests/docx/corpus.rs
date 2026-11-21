@@ -138,7 +138,8 @@ fn the_manifest_lists_every_corpus_file_within_the_budget() {
 // dropped copy cannot leave a stale entry behind.
 #[test]
 fn every_workflow_known_failure_names_a_walk_and_a_copy_it_reads() {
-    let copies = crate::support::every_thesis_copy();
+    let mut copies = crate::support::every_thesis_copy();
+    copies.extend(crate::support::every_record_copy());
     for (file, workflow, known) in crate::support::workflow_known_failures() {
         assert!(
             crate::support::WORKFLOWS.contains(&workflow.as_str()),

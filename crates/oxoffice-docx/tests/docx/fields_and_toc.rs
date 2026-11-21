@@ -2386,6 +2386,71 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
     });
 }
 
+/// The same pass on a record co-edited in Word and Google Docs, whose
+/// contents sit in a content control and take outline levels (`\u`) next to
+/// a table with a vertically merged cell: the contents list the headings of
+/// levels 1 and 2 (its own title included) with their numbers and pages, a
+/// paragraph of outline level 3 stays out, and a second pass changes no byte.
+#[test]
+fn a_page_number_pass_on_a_co_edited_record_is_stable() {
+    crate::support::run_workflow("page-numbers", &crate::support::record_copies(), |path| {
+        let source = crate::support::workflow_source(path);
+        let pass = |bytes: &[u8]| {
+            let mut doc = Document::from_bytes(bytes).unwrap();
+            let toc = doc
+                .rebuild_toc()
+                .unwrap_or_else(|e| panic!("{path}: rebuild: {e}"));
+            doc.update_layout_backed_fields().unwrap();
+            (toc, doc.to_bytes().unwrap())
+        };
+        let (toc, once) = pass(&source);
+        let (_, twice) = pass(&once);
+        assert!(once == twice, "{path}: a second pass changes no byte");
+
+        let doc = Document::from_bytes(&once).unwrap();
+        let expected = doc
+            .headings()
+            .into_iter()
+            .filter(|(level, _)| *level <= 2)
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>();
+        assert!(
+            expected.contains(&"Impact assessment".to_owned()),
+            "{path}: {expected:?}"
+        );
+        let first = (0..doc.paragraph_count())
+            .find(|&index| doc.paragraph(index).unwrap().text() == "Contents")
+            .unwrap_or_else(|| panic!("{path}: the contents title"));
+        let entries = (first + 1..first + 1 + toc.entry_count)
+            .map(|index| doc.paragraph(index).unwrap().text())
+            .collect::<Vec<_>>();
+        // An entry is the heading's number (none for the contents title),
+        // its text and its page, on tabs.
+        let titles = entries
+            .iter()
+            .map(|entry| {
+                let parts = entry.split('\t').collect::<Vec<_>>();
+                parts[parts.len().saturating_sub(2)]
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(titles, expected, "{path}: {entries:?}");
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.starts_with("Ratings agreed")),
+            "{path}: {entries:?}"
+        );
+        let pages = entries
+            .iter()
+            .map(|entry| entry.rsplit_once('\t').unwrap().1.parse::<u32>().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            pages.windows(2).all(|pair| pair[0] <= pair[1]) && pages.last() > pages.first(),
+            "{path}: {entries:?}"
+        );
+    });
+}
+
 /// A Word TOC field over levels 1 to 3 that also takes outline levels (`\u`),
 /// with one stale entry, followed by `body`.
 fn word_toc_before(body: &str) -> Document {

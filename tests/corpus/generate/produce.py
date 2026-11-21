@@ -1,6 +1,6 @@
 """Open and save the authored corpus files with real producers.
 
-    python3 tests/corpus/generate/produce.py [word] [powerpoint] [libreoffice] [google] [--only family ...]
+    python3 tests/corpus/generate/produce.py [word] [powerpoint] [libreoffice] [google] [word-google] [--only family ...]
 
 Each producer reads files/authored/* and writes files/<producer>/ with the
 same file names, then the manifest is rewritten: the files this run wrote get
@@ -16,7 +16,9 @@ Every producer by default, every family but the pilot (report, deck) unless
 - libreoffice: `soffice --headless`, on any machine.
 - google: an rclone remote (OXOFFICE_CORPUS_RCLONE, default `gdrive:`) uploads
   with conversion to Google Docs and Slides, exports back, and removes the
-  temporary folder. Embedded faces whose licence is not the SIL Open Font
+  temporary folder. `word-google` does the same with the Word copies of the
+  families --only names, into files/word-google/: a file edited in Word, then
+  in Google Docs. Embedded faces whose licence is not the SIL Open Font
   License are dropped from the Docs exports (drop_unlicensed_fonts); Slides
   exports embed no font.
 
@@ -103,9 +105,9 @@ def osascript(script: str, *args: str) -> str:
 PILOT = {"report", "deck"}
 
 
-def sources(extension: str, only: list[str]) -> list[Path]:
+def sources(extension: str, only: list[str], folder: Path = AUTHORED) -> list[Path]:
     chosen = (lambda stem: stem in only) if only else (lambda stem: stem not in PILOT)
-    return [p for p in sorted(AUTHORED.glob(f"*.{extension}")) if chosen(p.stem)]
+    return [p for p in sorted(folder.glob(f"*.{extension}")) if chosen(p.stem)]
 
 
 def through_office(app: str, only: list[str]) -> dict:
@@ -231,12 +233,21 @@ def drop_unlicensed_fonts(path: Path) -> list[str]:
     return dropped
 
 
-def through_google(only: list[str]) -> dict:
+def through_google(only: list[str], route: str = "google") -> dict:
+    """Upload with conversion, export back, remove the temporary folder. The `word-google` route uploads the
+    Word copies (files/word/*.docx) instead of the authored sources, as a file edited in Word then opened in
+    Google Docs; it needs --only, since only some families take that path."""
     remote = os.environ.get("OXOFFICE_CORPUS_RCLONE", "gdrive:") + f"oxoffice-corpus-{uuid.uuid4().hex[:8]}"
-    out = FILES / "google"
+    out = FILES / route
     out.mkdir(exist_ok=True)
+    if route == "word-google":
+        if not only:
+            sys.exit("word-google: name the families with --only")
+        chosen = sources("docx", only, FILES / "word")
+    else:
+        chosen = sources("docx", only) + sources("pptx", only)
     with tempfile.TemporaryDirectory() as staging, tempfile.TemporaryDirectory() as exported:
-        for source in sources("docx", only) + sources("pptx", only):
+        for source in chosen:
             shutil.copy(source, staging)
             (out / source.name).unlink(missing_ok=True)
         try:
@@ -245,9 +256,11 @@ def through_google(only: list[str]) -> dict:
             for path in sorted(Path(exported).iterdir()):
                 shutil.copy(path, out / path.name)
                 dropped = drop_unlicensed_fonts(out / path.name) if path.suffix == ".docx" else []
-                print(f"google: {path.name}" + (f" (dropped {', '.join(dropped)})" if dropped else ""))
+                print(f"{route}: {path.name}" + (f" (dropped {', '.join(dropped)})" if dropped else ""))
         finally:
             subprocess.run(["rclone", "purge", remote], check=False)
+    if route == "word-google":
+        return {("word-google", "docx"): "Google Docs export of the Word copy"}
     return {("google", "docx"): "Google Docs export", ("google", "pptx"): "Google Slides export"}
 
 
@@ -263,8 +276,8 @@ def main() -> None:
             versions |= through_office(producer, only)
         elif producer == "libreoffice":
             versions |= through_libreoffice(only)
-        elif producer == "google":
-            versions |= through_google(only)
+        elif producer in ("google", "word-google"):
+            versions |= through_google(only, producer)
         else:
             sys.exit(f"unknown producer {producer}")
     manifest.update(versions, since=started)

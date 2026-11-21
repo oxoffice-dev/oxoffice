@@ -282,6 +282,23 @@ pub fn every_thesis_copy() -> Vec<String> {
         .collect()
 }
 
+/// The record copies a workflow test walks: the one Word then Google Docs
+/// saved on a pull request, every producer's copy with [`every_copy`].
+pub fn record_copies() -> Vec<String> {
+    let mut copies = every_record_copy();
+    if !every_copy() {
+        copies.truncate(1);
+    }
+    copies
+}
+
+/// Every producer's corpus copy of the record, the co-edited one first.
+pub fn every_record_copy() -> Vec<String> {
+    ["word-google", "word", "libreoffice", "authored"]
+        .map(|producer| format!("{producer}/record.docx"))
+        .to_vec()
+}
+
 /// The bytes of a workflow copy: the small thesis, or a corpus file.
 pub fn workflow_source(copy: &str) -> Vec<u8> {
     if copy == SMALL_THESIS {
@@ -307,7 +324,14 @@ pub fn package_parts(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>
 /// The workflows the tests walk, with the copies each walks under
 /// `OXOFFICE_WORKFLOWS=full`: an entry of `workflows-known.toml` must name
 /// one of them, so that a renamed walk or a dropped copy shows.
-pub const WORKFLOWS: [&str; 3] = ["page-numbers", "redline", "redline-rebuilt-toc"];
+pub const WORKFLOWS: [&str; 6] = [
+    "page-numbers",
+    "redline",
+    "redline-rebuilt-toc",
+    "record-edit",
+    "record-review",
+    "restyle",
+];
 
 /// A corpus copy a workflow test fails on today, from
 /// `tests/corpus/workflows-known.toml`.
