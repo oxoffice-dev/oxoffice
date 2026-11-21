@@ -1070,9 +1070,7 @@ fn a_new_numbered_list_can_be_started_in_a_word_report() {
     );
 }
 
-// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29
 #[test]
-#[should_panic(expected = "left: \"Subscription revenue reached")]
 fn markdown_shows_word_list_paragraphs_as_list_items() {
     let markdown = corpus_doc("word/report.docx").to_markdown();
     let line = |prefix: &str| {
@@ -1089,6 +1087,298 @@ fn markdown_shows_word_list_paragraphs_as_list_items() {
     assert_eq!(
         line("Hire two"),
         "1. Hire two support engineers for the evening shift."
+    );
+}
+
+/// The list element (`<ul>` or `<ol>`) that holds the HTML item showing
+/// `text`: the last list tag opened before it.
+fn html_list_of<'a>(html: &'a str, text: &str) -> &'a str {
+    let at = html
+        .find(text)
+        .unwrap_or_else(|| panic!("no HTML holds {text:?}"));
+    let before = &html[..at];
+    let ul = before.rfind("<ul>");
+    let ol = before.rfind("<ol>");
+    let closed = before.rfind("</ul>").max(before.rfind("</ol>"));
+    match ul.max(ol) {
+        Some(open) if Some(open) > closed => {
+            if ul == Some(open) {
+                "ul"
+            } else {
+                "ol"
+            }
+        }
+        _ => "none",
+    }
+}
+
+#[test]
+fn exports_show_the_report_lists_of_every_producer() {
+    // Word, LibreOffice and python-docx number these paragraphs through
+    // their List Bullet and List Number styles, Google Docs on the paragraphs.
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+        "authored/report.docx",
+    ] {
+        let doc = corpus_doc(name);
+        let markdown = doc.to_markdown();
+        for item in [
+            "- Subscription revenue reached 4.2 million euros, up from 3.7 million.",
+            "- The Lyon warehouse opened on schedule and serves the southern region.",
+            "1. Hire two support engineers for the evening shift.",
+        ] {
+            assert!(
+                markdown.lines().any(|line| line == item),
+                "{name}: Markdown shows {item:?}:\n{markdown}"
+            );
+        }
+        let html = doc.to_html_fragment();
+        assert_eq!(
+            html_list_of(&html, "Subscription revenue reached"),
+            "ul",
+            "{name}"
+        );
+        assert_eq!(
+            html_list_of(&html, "Hire two support engineers"),
+            "ol",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn exports_keep_headings_numbered_through_their_style_as_headings() {
+    // Word numbers its headings by linking the heading styles to a list.
+    let (doc, _) = numbered_headings();
+    let markdown = doc.to_markdown();
+    for line in ["# Introduction", "## Scope", "# Method"] {
+        assert!(
+            markdown.lines().any(|candidate| candidate == line),
+            "Markdown keeps {line:?}:\n{markdown}"
+        );
+    }
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<h1>Introduction</h1>"), "{html}");
+    assert!(html.contains("<h2>Scope</h2>"), "{html}");
+    assert!(!html.contains("<ol>"), "{html}");
+}
+
+#[test]
+fn exports_follow_a_style_numbered_through_its_based_on_chain_or_the_default_style() {
+    let (mut doc, id) = single_list(&[ListLevel::bullet()]);
+    doc.add_style(StyleBuilder::paragraph("Points", "Points"))
+        .unwrap();
+    doc.link_style_to_numbering("Points", id, 0).unwrap();
+    doc.add_style(StyleBuilder::paragraph("SubPoints", "Sub points").based_on("Points"))
+        .unwrap();
+    doc.add_paragraph("inherited point").style("SubPoints");
+    assert_eq!(markers(&doc), ["•"]);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == "- inherited point")
+    );
+    assert_eq!(
+        html_list_of(&doc.to_html_fragment(), "inherited point"),
+        "ul"
+    );
+
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.link_style_to_numbering("Normal", id, 0).unwrap();
+    doc.add_paragraph("default style step");
+    assert_eq!(markers(&doc), ["1."]);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == "1. default style step")
+    );
+}
+
+#[test]
+fn exports_leave_a_level_without_marker_out_of_lists() {
+    let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
+    add_items(&mut doc, id, &[0]);
+    assert_eq!(markers(&doc), [""]);
+    assert!(doc.to_markdown().lines().any(|line| line == "item 1"));
+    assert_eq!(html_list_of(&doc.to_html_fragment(), "item 1"), "none");
+}
+
+#[test]
+fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
+    // Contracts number their clauses and leave the sub-paragraphs unmarked
+    // on a `none` level: layout keeps counting the clauses around them.
+    let (mut doc, id) =
+        single_list(&[ListLevel::decimal(), ListLevel::new(ListNumberFormat::None)]);
+    add_items(&mut doc, id, &[0, 1, 0, 1, 0]);
+    assert_eq!(markers(&doc), ["1.", "", "2.", "", "3."]);
+
+    let markdown = doc.to_markdown();
+    let lines: Vec<&str> = markdown.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        [
+            "1. item 1",
+            "   item 2",
+            "1. item 3",
+            "   item 4",
+            "1. item 5"
+        ],
+        "one list, each sub-paragraph under its clause:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<ol>").count(), 1, "{html}");
+    assert!(html.contains("<li>item 1<p>item 2</p></li>"), "{html}");
+}
+
+#[test]
+fn exports_keep_counting_a_clause_whose_body_text_follows_its_sub_items() {
+    // A clause, its sub-item (a), then body text of the clause on a `none`
+    // level shallower than the sub-item, then the next clause.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::None),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%3."),
+    ]);
+    add_items(&mut doc, id, &[0, 2, 1, 0]);
+    assert_eq!(markers(&doc), ["1.", "a.", "", "2."]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        !markdown.lines().any(|line| line == "item 3"),
+        "the body text stays in the list:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    // One outer list from the first clause to the second.
+    let outer = html.find("<ol>").unwrap();
+    let second = html.find("item 4").unwrap();
+    assert!(
+        !html[outer..second].contains("</ol>\n<p>item 3</p>\n<ol>"),
+        "the outer list does not close around the body text: {html}"
+    );
+    assert_eq!(
+        html.matches("</ol>").count(),
+        html.matches("<ol>").count(),
+        "{html}"
+    );
+    assert!(
+        html[..second].rfind("<ol>").unwrap() < html.find("item 3").unwrap(),
+        "no list opens again before the second clause: {html}"
+    );
+}
+
+#[test]
+fn exports_close_a_list_before_an_unmarked_paragraph_of_another_list() {
+    // A body style linked to a `none` level of another list only borrows its
+    // indent: layout draws it outside the bullet list before it.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let indents = doc
+        .add_numbering_definition(&[ListLevel::new(ListNumberFormat::None)])
+        .unwrap();
+    let indents = doc.add_numbering_instance(indents, &[]).unwrap();
+    add_items(&mut doc, bullets, &[0]);
+    doc.add_paragraph("indented body").numbering(indents, 0);
+    assert_eq!(markers(&doc), ["•", ""]);
+
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.lines().any(|line| line == "indented body"),
+        "a plain paragraph after the list:\n{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("</ul>\n<p>indented body</p>"), "{html}");
+}
+
+#[test]
+fn odt_export_reports_a_definition_start_a_swapped_in_level_does_not_change() {
+    // Layout counts from the definition's start, 3, whatever the swapped-in
+    // level says; ODT resets it, and says so.
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal().start(1))],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    assert_eq!(markers(&doc), ["3."]);
+    let start_diagnostic = |doc: &Document| {
+        doc.to_odt_bytes()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("custom list start value"))
+    };
+    // A start override is counted first: 1 here, which ODT keeps.
+    let (mut overridden, plain) = single_list(&[ListLevel::decimal().start(3)]);
+    let one = overridden
+        .add_numbering_instance(
+            definition_of(&overridden, plain),
+            &[NumberingLevelOverride::new(0).start(1)],
+        )
+        .unwrap();
+    add_items(&mut overridden, one, &[0]);
+    assert_eq!(markers(&overridden), ["1."]);
+    assert!(!start_diagnostic(&overridden), "no false reset diagnostic");
+    let odt = doc.to_odt_bytes().unwrap();
+    assert!(
+        odt.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("custom list start value")),
+        "{:?}",
+        odt.diagnostics
+            .iter()
+            .map(|diagnostic| &diagnostic.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn markdown_starts_a_swapped_in_level_where_layout_does() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::decimal().start(5))],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    let marker = markers(&doc).remove(0);
+    assert!(
+        doc.to_markdown()
+            .lines()
+            .any(|line| line == format!("{marker} item 1")),
+        "Markdown starts at {marker}: {}",
+        doc.to_markdown()
+    );
+}
+
+#[test]
+fn exports_show_the_level_an_instance_swaps_in() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let dashed = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet().level_text("–"))],
+        )
+        .unwrap();
+    add_items(&mut doc, dashed, &[0]);
+    assert_eq!(markers(&doc), ["–"]);
+
+    assert!(doc.to_markdown().lines().any(|line| line == "- item 1"));
+    assert_eq!(html_list_of(&doc.to_html_fragment(), "item 1"), "ul");
+    let odt = doc.to_odt_bytes().unwrap();
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    let (id, _) = reread
+        .paragraph(0)
+        .unwrap()
+        .numbering()
+        .expect("a list item");
+    assert_eq!(
+        reread.numbering_is_bullet(id),
+        Some(true),
+        "the ODT list is a bullet list"
     );
 }
 
