@@ -2462,17 +2462,18 @@ fn a_style_numbered_without_a_level_links_and_unlinks_at_level_zero() {
         "level 0 names the style back"
     );
     assert!(doc.link_style_to_numbering("Listepuces", 1, 2).is_err());
-    // Writing the same numbering with an explicit level changes nothing.
-    doc.set_style(
-        oxoffice_docx::StyleBuilder::paragraph("Listepuces", "List Bullet").paragraph_properties(
-            oxoffice_docx_oxml::properties::CT_PPr {
-                num_id: Some(1),
-                num_ilvl: Some(0),
-                ..Default::default()
-            },
-        ),
-    )
-    .unwrap();
+    // The unlink runs on the style as Word wrote it: no w:ilvl.
+    assert!(
+        !doc.part_xml("word/styles.xml").unwrap()[doc
+            .part_xml("word/styles.xml")
+            .unwrap()
+            .find(r#"w:styleId="Listepuces""#)
+            .unwrap()..]
+            .split("</w:style>")
+            .next()
+            .unwrap()
+            .contains("w:ilvl")
+    );
     doc.unlink_style_from_numbering("Listepuces", 1, 0).unwrap();
     let doc = reopen(&mut doc);
     assert!(
@@ -2560,12 +2561,38 @@ fn a_paragraph_without_a_level_restarts_at_the_level_its_style_gives() {
         ),
     );
     package.set_part(&styles_part, styles.into_bytes());
+    // Level 1 counts in decimal, so that an added item may continue it.
+    let numbering_part = main.replace("document.xml", "numbering.xml");
+    let numbering = String::from_utf8(package.get_part(&numbering_part).unwrap().to_vec()).unwrap();
+    let level = numbering.find(r#"w:ilvl="1""#).unwrap();
+    let format = level + numbering[level..].find("<w:numFmt w:val=\"").unwrap();
+    let end = format + numbering[format..].find("/>").unwrap() + 2;
+    let numbering = format!(
+        r#"{}<w:numFmt w:val="decimal"/>{}"#,
+        &numbering[..format],
+        &numbering[end..]
+    );
+    package.set_part(&numbering_part, numbering.into_bytes());
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
-    let new = doc.restart_numbering(1, 5).unwrap();
+    let new = doc.restart_numbering(2, 5).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(2).unwrap().numbering(), Some((new, 1)));
+    // The restarted item as a producer writes it, without its w:ilvl: an
+    // item added at level 1 still continues the restarted list.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="1"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.add_numbered_list_item("d", 1);
     let doc = reopen(&mut doc);
-    assert_eq!(doc.paragraph(1).unwrap().numbering(), Some((new, 1)));
+    assert_eq!(doc.paragraph(3).unwrap().numbering().unwrap().0, new);
 }
 
 #[test]
@@ -2592,4 +2619,21 @@ fn a_paragraph_numbered_without_a_level_takes_the_indentation_of_level_zero() {
         doc.effective_paragraph_properties(&paragraph).ind_left,
         expected
     );
+}
+
+#[test]
+fn writing_a_style_numbered_without_a_level_at_level_zero_changes_no_numbering() {
+    let mut doc = corpus_doc("word/report.docx");
+    // Word writes List Bullet with a w:numId and no w:ilvl: the same
+    // numbering written with w:ilvl 0 is no numbering change.
+    doc.set_style(
+        oxoffice_docx::StyleBuilder::paragraph("Listepuces", "List Bullet").paragraph_properties(
+            oxoffice_docx_oxml::properties::CT_PPr {
+                num_id: Some(1),
+                num_ilvl: Some(0),
+                ..Default::default()
+            },
+        ),
+    )
+    .unwrap();
 }

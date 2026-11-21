@@ -2286,3 +2286,23 @@ fn a_note_mark_prefers_the_character_style_of_its_built_in_name_to_an_id_of_anot
         "{body}"
     );
 }
+
+#[test]
+fn a_note_mark_style_id_taken_by_a_paragraph_style_is_not_defined_twice() {
+    let mut doc = doc_with(&["Body"]);
+    doc.add_style(oxoffice_docx::StyleBuilder::paragraph(
+        "FootnoteReference",
+        "Custom",
+    ))
+    .unwrap();
+    doc.add_footnote("one");
+    doc.create_footnote_at(&boundary(&doc, 0, 1), "two")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    assert_eq!(
+        styles.matches(r#"w:styleId="FootnoteReference""#).count(),
+        1,
+        "{styles}"
+    );
+}
