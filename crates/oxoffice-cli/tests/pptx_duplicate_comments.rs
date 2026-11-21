@@ -7,6 +7,27 @@ use std::process::Command;
 
 use serde_json::Value;
 
+/// A folder of its own under the system temporary folder: emptied first, so a
+/// file left by an earlier failed run cannot refuse an output, and removed on
+/// drop, a failing assertion included.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("oxoffice-cli-duplicate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch folder");
+        Self(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 fn oxoffice(args: &[&str], paths: &[&Path]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_oxoffice"));
     command.args(args);
@@ -32,9 +53,8 @@ fn comments(path: &Path) -> Vec<Value> {
 
 #[test]
 fn a_duplicated_slide_carries_its_comments_under_fresh_ids() {
-    let dir: PathBuf =
-        std::env::temp_dir().join(format!("oxoffice-cli-duplicate-{}", std::process::id()));
-    fs::create_dir_all(&dir).expect("scratch folder");
+    let scratch = Scratch::new();
+    let dir = &scratch.0;
     let deck =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/files/powerpoint/deck.pptx");
     let (commented, replied, copied) = (
@@ -113,5 +133,4 @@ fn a_duplicated_slide_carries_its_comments_under_fresh_ids() {
         copy[1]["parent_id"], copy[0]["id"],
         "the reply follows its copied thread"
     );
-    let _ = fs::remove_dir_all(&dir);
 }
