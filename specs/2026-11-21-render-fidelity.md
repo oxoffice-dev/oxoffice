@@ -98,16 +98,25 @@ renders, hidden ones included.
 
 **Invariants**, read from the PDF bytes and the PNG pixels, not from the
 layout model (the corpus spec's learning: a test reads what it checks from
-where it can fail):
+where it can fail). Invariant 9 is the one exception: a dropped object leaves
+nothing in the PDF to read, so it reads the renderer's diagnostics.
 
 1. The PDF opens, has as many pages as there are PNGs, and each page has the
    size of its section or of the slide.
-2. No page is empty: every page draws something.
-3. The text is there: every word of the document's visible text, as the
-   facade reads it (every story, accepted view, hidden text left out, field
-   results left out because the render computes them), is drawn somewhere,
-   read back through the PDF's ToUnicode maps. Words are compared as a
-   multiset; CJK text one character at a time.
+2. No page is empty: every docx page draws text or a picture inside its
+   margins, not only its header and footer (what `pdf.rs` calls the body
+   text); a slide is checked through 3 and 7, slide by slide. The blank page
+   of #156 breaks this in every copy of the report: those four files are the
+   first entries of `known.toml`, and the proof that the check catches a real
+   file.
+3. The text is there: every word the render must draw is drawn, read back
+   through the PDF's ToUnicode maps. For docx, the body with its tables, text
+   boxes and content controls, the headers and footers each section uses, the
+   footnotes and endnotes, in the accepted view; hidden text, comments (never
+   drawn) and field results (the render computes them) are left out, and
+   words are compared over the whole document. For pptx, the text of each
+   slide's own shapes, notes left out, found on that slide's page. Words are
+   compared as a multiset; CJK text one character at a time.
 4. The text is inside its page: no glyph box crosses the page edge (0.5 pt).
 5. No glyph is missing: no `.notdef` glyph (the empty box), and every drawn
    glyph maps back to text.
@@ -121,25 +130,30 @@ where it can fail):
    (an equation that could not be rendered, a dropped shape) fails the file.
 
 A file that breaks an invariant today gets an issue and an entry in
-`tests/render/known.toml` (file, check, pages, issue), written by hand. Like
-the rest of the suite, a known failure is strict: once the file passes, the
-test fails until the entry goes.
+`tests/render/known.toml` (file, check, pages, issue), written by hand and
+read by the two test binaries only. Like the rest of the suite, a known
+failure is strict: once the file passes, the test fails until the entry goes.
 
-**Exact baseline.** `tests/render/baseline.json`, written by the test, holds
-for each corpus file its page count and, per page, the SHA-256 of the decoded
-PNG pixels and of the page's inflated PDF content stream, plus one hash of the
-inflated PDF resources (font subsets, ToUnicode maps, images; metadata left
-out). The pixels are what a reader sees; the PDF entries cover the PDF writer,
-a code path of its own (rdocx's reason for its fingerprint). About 150 bytes a
-page: under 200 KB for the corpus, within a budget of 1 MB for `tests/render/`
-without the references, checked by a test.
+**Exact baseline.** `tests/render/baseline/docx.json` and `pptx.json`, each
+written by its own test binary, hold for each corpus file its page count and,
+per page, the SHA-256 of the decoded PNG pixels, of the page's inflated PDF
+content stream and of its link annotations (rectangles and targets), plus,
+per file, one hash of the inflated PDF resources (font subsets, ToUnicode
+maps, images; metadata left out) and one of the outline and the structure
+tree (references resolved). The pixels are what a reader sees; the PDF
+entries cover the PDF writer, a code path of its own (rdocx's reason for its
+fingerprint). Unlike rdocx, the file's bytes are not hashed: a change of
+compression or metadata alone is not a render change, and every other part
+is covered. About 200 bytes a page: under 250 KB for the corpus, within a
+budget of 1 MB for `tests/render/` without the references, checked by a
+test.
 
 - A render that moves fails the test, which names each file, page and entry
   that moved. Because the bytes are the same on every platform, one baseline
   serves Linux, macOS and Windows, and there is no tolerance to tune.
-- `OXOFFICE_RENDER_UPDATE="<reason>" cargo test -p oxoffice-docx --test docx render`
-  (and `-p oxoffice-pptx --test pptx`) rewrites the baseline of the whole
-  corpus and records the reason; an empty reason is refused. The update lands
+- `OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render`
+  (and `-p oxoffice-pptx --test pptx`) rewrites that binary's baseline for the
+  whole corpus and records the reason; an empty reason is refused. The update lands
   in the pull request that changes the render, in a commit of its own whose
   message states the expected change.
 - A test proves the check bites: one changed pixel, and one changed byte of
@@ -149,8 +163,11 @@ without the references, checked by a test.
 (or the render test fails), the Linux build job renders the pages whose hash
 moved twice: with the pull request's wheel (after) and with `main`'s latest
 Linux wheel, the `wheel-linux` artifact the build job already keeps (before;
-kept only when its hash is the one the base expects, otherwise the report says
-that `main` moved). `tests/render/diff.py` (Pillow, already in `ci.txt`)
+kept only when its decoded-pixel hash is the one the base's baseline holds,
+`git show <base>:tests/render/baseline/<format>.json`, otherwise the report
+says that `main` moved). The step runs even when the test step failed
+(`!cancelled()`), and its job needs `actions: read` to fetch another run's
+artifact. `tests/render/diff.py` (Pillow, already in `ci.txt`)
 writes before, after and a picture of the changed pixels in red for each such
 page, uploads them as the `render-diff` artifact, and puts a table in the job
 summary: file, page, share of pixels changed, box of the change. A reviewer
@@ -165,13 +182,18 @@ reads the table on the run page and opens the pictures with
 | Nightly run (02:23 UTC) and `workflow_dispatch` | the whole corpus: 64 files, 1,056 pages | Linux, macOS, Windows | about 4 min of CPU on Linux, 6 on macOS and Windows: 2 to 3 min of wall time, the slowest file about 1.5 min |
 
 These are the render's numbers; the read-back and the invariants come on top
-and are measured by the first pull request, which keeps the subset under
-2 minutes of wall time on Linux or cuts it.
+and are measured by the first pull request. The limit: 2 minutes of wall
+time added to the Linux test step of a pull request.
 
-An environment variable chooses the set: `OXOFFICE_RENDER=subset` (the
-default, also for a local `cargo test`), `full`, or `off`, which the macOS and
-Windows jobs of a pull request set. The nightly run on the three platforms
-then catches a platform that drifts, a day later at most.
+An environment variable chooses the set: `OXOFFICE_RENDER=subset`, `full` or
+`off`. CI sets it: `subset` on Linux for pull requests and pushes to `main`,
+`off` on macOS and Windows for pull requests, `full` on the three platforms
+at night, which then catches a platform that drifts, a day later at most.
+Unset, it means `off`: a plain `cargo test` builds every dependency
+unoptimised, which none of the measurements covers. The local run is
+`OXOFFICE_RENDER=subset cargo test --profile ci -p oxoffice-docx --test docx render`;
+the first pull request measures the test profile and makes `subset` the
+default if it is cheap enough.
 
 Options weighed for the binary, as asked:
 
@@ -182,10 +204,11 @@ Options weighed for the binary, as asked:
 | The `scaling` wheel, in the scaling job | none on Linux | 1.1 to 1.3x | no: a second home for little |
 | A `release` build | a fat-LTO build, minutes on a runner | 9x | no |
 
-Choosing the subset by files touched (rdocx's path filters) is a lever kept
-for later: the subset costs about a minute, and a layout change shows
-anywhere. If the subset passes 3 minutes of wall time on a runner, a path
-filter skips the pptx half when no pptx or shared crate changed.
+If the subset passes the limit, the first lever is the four thesis copies,
+about half of its time (the rest takes 24 s of the 53 s), which then run at
+night only. Choosing files by the crates a pull request touches (rdocx's path
+filters) comes after: a layout change shows anywhere, and pptx is only 7 s of
+the 53 s.
 
 ### Layer B: every night
 
@@ -197,7 +220,10 @@ filter skips the pptx half when no pptx or shared crate changed.
   `tests/corpus/generate/produce.py`, with the rules of the other Office
   routes: every document closed after its export, the app quit even on
   error, 5 minutes at most a file, the frozen pilot exported only when named.
-  Word exports the final view (no markup). They are committed under
+  Word exports the final view (no markup). PowerPoint exports hidden slides
+  too, as ours and LibreOffice's do, when its route allows it; otherwise
+  `references.toml` says so and the scorer leaves hidden slides out on our
+  side (the training deck has one in each copy). They are committed under
   `tests/render/references/word/` and `.../powerpoint/`, since only a Mac can
   make them, with `tests/render/references.toml`: app and version, date, and
   the SHA-256 of the source file, so a reference whose source changed shows
@@ -238,8 +264,9 @@ words are found, 95 % on the same page, 90 % of line starts agree, or the
 visual score is under 0.70. These defaults may move with the calibration, by
 the orchestrator's acceptance of the scoring pull request.
 
-**A gap becomes an issue.** Every gap is either a known failure in
-`tests/render/known.toml`, with its issue, or a new issue. The session that
+**A gap becomes an issue.** Every gap is either a known gap in
+`tests/render/gaps.toml` (file, reference, score, pages, issue; read by the
+scorer only, strict like `known.toml`), or a new issue. The session that
 reads the night opens one issue per cause (for example "a blank page before a
 section break", whatever the files), never the job itself. A gap is filed
 when oxoffice differs from Word or PowerPoint; LibreOffice agreeing with the
@@ -287,9 +314,10 @@ One pull request in CI at a time, each reviewed before its push, two reviews
 at most.
 
 1. This spec, documentation only.
-2. `test(docx)`: layer A for docx: `render.rs`, the baseline, `known.toml`,
-   the update command, the budget test and the proof that the check fails.
-   The pull request measures its CI time.
+2. `test(docx)`: layer A for docx: `render.rs`, its baseline, `known.toml`
+   with issues for what breaks today, the update command, the budget test and
+   the proof that the check fails. The pull request measures its CI time and
+   the test profile.
 3. `test(pptx)`: layer A for pptx. The perf and refactoring sessions hear when
    2 and 3 land.
 4. `ci`: the before and after report and the `OXOFFICE_RENDER` settings, with
@@ -297,8 +325,8 @@ at most.
    today, if the report often finds it gone).
 5. `test(corpus)`: references: `produce.py --export-pdf` run on the Mac,
    `references.toml`, the LibreOffice exporter.
-6. `test(render)`: the scorer, its calibration, the floors, the known gaps
-   and their issues.
+6. `test(render)`: the scorer, its calibration, the floors, `gaps.toml` and
+   its issues.
 7. `ci`: the nightly job, with the CI session.
 8. This spec's outcome, and a "Render tests" section in `docs/DEVELOPMENT.md`.
 
