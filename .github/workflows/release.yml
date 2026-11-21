@@ -250,6 +250,8 @@ jobs:
           merge-multiple: true
       - name: Installers
         run: cp install/install.sh install/install.ps1 dist/
+      - name: Limitations page
+        run: python3 scripts/limitations_doc.py --ref "v$VERSION" -o "dist/oxoffice-$VERSION-limitations.md"
       - name: SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:

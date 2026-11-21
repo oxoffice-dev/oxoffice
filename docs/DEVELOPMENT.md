@@ -141,10 +141,12 @@ neither fails a flat call nor reads as a fix.
 ## Known limitations
 
 A limitation users can hit, with a workaround, goes in
-`crates/oxoffice-cli/limitations.json` with an issue labelled `limitation`,
-then `python3 scripts/limitations_doc.py` regenerates
-[LIMITATIONS.md](LIMITATIONS.md). The pull request that fixes it removes the
-entry and closes the issue.
+`crates/oxoffice-cli/limitations.json` with an issue labelled `limitation`.
+The pull request that fixes it removes the entry and closes the issue.
+`oxoffice limitations` lists them; the release attaches the page built from
+the same file (`scripts/limitations_doc.py`, which lint runs too). Nothing
+to regenerate: `docs/LIMITATIONS.md` is not committed (`-o
+docs/LIMITATIONS.md` writes it for a local look).
 
 ## CI
 

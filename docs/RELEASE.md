@@ -54,6 +54,7 @@ that is not marked latest, which the installers would otherwise pick.
 | `oxoffice-X.Y.Z-cp310-abi3-*.whl` | the Python package with the `oxoffice` command, Python 3.10+ |
 | `oxoffice-X.Y.Z.tar.gz` | the source distribution |
 | `install.sh`, `install.ps1` | the one-line installers of the CLI |
+| `oxoffice-X.Y.Z-limitations.md` | the known limitations of this release, as `oxoffice limitations` lists them |
 | `oxoffice-X.Y.Z.spdx.json` | the SBOM |
 | `SHA256SUMS` | checksums of every asset |
 | `oxoffice-X.Y.Z.provenance.sigstore.json` | the signed build provenance of every asset |

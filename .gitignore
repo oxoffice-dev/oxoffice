@@ -25,3 +25,6 @@ Thumbs.db
 
 # Conda staging
 conda/dist/
+
+# Built at release from crates/oxoffice-cli/limitations.json
+/docs/LIMITATIONS.md
