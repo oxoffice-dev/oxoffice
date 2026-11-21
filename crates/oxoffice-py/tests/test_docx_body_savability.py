@@ -1,6 +1,10 @@
 """docx: a body that a typed edit cannot leave savable (here, one whose w:body declares a namespace) refuses the typed
 inserts before they change it, every time; the other edits leave the refusal to the save. A body that can be saved
-after a typed insert accepts one insert after another."""
+after a typed insert accepts one insert after another, including one that keeps nested namespace owners from its
+source (the declarations of its picture and content controls), on which the answer kept between inserts depends."""
+import re
+import zipfile
+
 import pytest
 import oxoffice.docx as oxdocx
 
@@ -24,7 +28,7 @@ def namespaced(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
-    return edit_cost_docx(tmp_path_factory.mktemp("savability") / "saved.docx", 10)
+    return edit_cost_docx(tmp_path_factory.mktemp("savability") / "saved.docx", 10, picture_side=8)
 
 
 @pytest.mark.parametrize("name", sorted(INSERTS))
@@ -45,6 +49,8 @@ def test_an_edit_that_is_not_an_insert_is_refused_by_the_save(namespaced):
 
 
 def test_typed_inserts_follow_one_another_on_a_savable_body(saved):
+    body = zipfile.ZipFile(saved).read("word/document.xml").split(b"<w:body>")[1]
+    assert re.search(rb"<[A-Za-z0-9]+:[A-Za-z]+ [^>]*xmlns:", body), "the body keeps nested namespace owners"
     doc = oxdocx.Document.open(saved)
     for name in sorted(INSERTS):
         INSERTS[name](doc)

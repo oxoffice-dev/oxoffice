@@ -18540,9 +18540,13 @@ impl PyDocument {
                     PyTable::new(slf.clone_ref(py), path)
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
+                let savable = document.inner.unsavable_body_edit().is_none();
                 document.inner.add_table(rows, cols);
                 debug_assert_eq!(prepared.plan.table, index);
                 document.commit_body_splice(prepared, &publication)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(slot, savable);
                 return Ok(result);
             }
         }
@@ -18752,12 +18756,16 @@ impl PyDocument {
                     PyParagraph::new(slf.clone_ref(py), path)
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
+                let savable = document.inner.unsavable_body_edit().is_none();
                 edit(&mut document.inner.insert_paragraph(index, text));
                 debug_assert_eq!(
                     document.inner.paragraph_index_of_content(index),
                     Some(prepared.plan.paragraph)
                 );
                 document.commit_body_splice(prepared, &publication)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(index, savable);
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
@@ -18831,12 +18839,16 @@ impl PyDocument {
                     PyTable::new(slf.clone_ref(py), path)
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
+                let savable = document.inner.unsavable_body_edit().is_none();
                 document.inner.insert_table(index, rows, cols);
                 debug_assert_eq!(
                     document.inner.content_index_of_table(prepared.plan.table),
                     Some(index)
                 );
                 document.commit_body_splice(prepared, &publication)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(index, savable);
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
@@ -20039,9 +20051,13 @@ impl PyDocument {
                 PyParagraph::new(slf.clone_ref(py), path)
                     .bind_prepared_splice(&document, &prepared)?,
             )?;
+            let savable = document.inner.unsavable_body_edit().is_none();
             edit(&mut document.inner.add_paragraph(text));
             debug_assert_eq!(prepared.plan.paragraph, index);
             document.commit_body_splice(prepared, &publication)?;
+            document
+                .inner
+                .keep_body_savable_after_typed_insert(slot, savable);
             return Ok(result);
         }
         let mut candidate = document.inner.clone_for_staging();

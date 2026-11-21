@@ -4268,6 +4268,24 @@ fn unsafe_nested_namespace_prefix(owners: &[NestedNamespaceOwner]) -> Option<Str
     })
 }
 
+/// Whether `xml` holds an element whose local name is one of `names`.
+fn xml_holds_element_named(xml: &[u8], names: &HashSet<&[u8]>) -> bool {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    loop {
+        match reader.read_event() {
+            Ok(
+                quick_xml::events::Event::Start(element) | quick_xml::events::Event::Empty(element),
+            ) if names.contains(element.local_name().as_ref()) => {
+                return true;
+            }
+            Ok(quick_xml::events::Event::Eof) => return false,
+            // An unreadable block is treated as one that may hold an owner.
+            Err(_) => return true,
+            Ok(_) => {}
+        }
+    }
+}
+
 fn shadowed_namespace_diagnostic(prefix: &str) -> String {
     format!("cannot serialize a modified document with a shadowed `{prefix}` namespace")
 }
@@ -27559,19 +27577,6 @@ impl Document {
         })
     }
 
-    /// Clear layouts derived from the current document state before typed
-    /// content is appended or inserted in the body: a paragraph or a table
-    /// built from typed values. Whether a typed edit of this body can be saved
-    /// ([`Self::unsavable_body_edit`]) depends on the nested namespace owners
-    /// the body keeps from its source and on its namespace declarations. Typed
-    /// content brings neither, so that answer is kept rather than computed
-    /// again over the whole main part at the next edit.
-    fn invalidate_layout_before_typed_insert(&mut self) {
-        let savability = std::mem::take(&mut self.unsavable_body_edit_cache);
-        self.invalidate_layout();
-        self.unsavable_body_edit_cache = savability;
-    }
-
     /// Clear layouts derived from the current document state.
     pub(crate) fn invalidate_layout(&mut self) {
         // Checked body refusal reads this cache. A later typed edit that
@@ -38629,7 +38634,7 @@ impl Document {
 
     /// Add a paragraph with the given text and return a mutable reference.
     pub fn add_paragraph(&mut self, text: &str) -> Paragraph<'_> {
-        self.invalidate_layout_before_typed_insert();
+        self.invalidate_layout();
         self.document
             .body
             .content
@@ -39260,7 +39265,7 @@ impl Document {
     /// Add a table with the specified number of rows and columns.
     /// Returns a mutable reference for further configuration.
     pub fn add_table(&mut self, rows: usize, cols: usize) -> Table<'_> {
-        self.invalidate_layout_before_typed_insert();
+        self.invalidate_layout();
         self.document
             .body
             .content
@@ -39280,6 +39285,44 @@ impl Document {
 
     // ---- Content insertion ----
 
+    /// Record that typed edits of this body can still be saved after the
+    /// typed insert of the block at `slot`, when they could before it
+    /// (`savable_before`), without computing [`Self::unsavable_body_edit`]
+    /// again over the whole main part. That answer depends on the namespace
+    /// declarations of the root and the body and on the nested namespace
+    /// owners the body keeps from its source. A typed block declares no
+    /// namespace, and the owners are told apart by element name and structure
+    /// (`replay_nested_namespace_declarations_in`), so a block that holds no
+    /// element named like an owner cannot change it. Any other block, or a
+    /// main part no longer as it was read, leaves the answer to be computed
+    /// again. The caller makes the insert and any edit of the inserted block
+    /// before it calls this.
+    #[doc(hidden)]
+    pub fn keep_body_savable_after_typed_insert(&mut self, slot: usize, savable_before: bool) {
+        if !savable_before || self.unsavable_body_edit_cache.get().is_some() {
+            return;
+        }
+        let Some(kept) = self.kept_main_part() else {
+            return;
+        };
+        let Some(owners) = kept.nested_namespace_owners() else {
+            return;
+        };
+        let Some(block) = self.document.body.content.get(slot) else {
+            return;
+        };
+        let Ok(xml) = self.document.body_item_xml(block) else {
+            return;
+        };
+        let names = owners
+            .iter()
+            .map(|owner| owner.local_name.as_bytes())
+            .collect::<HashSet<_>>();
+        if !xml_holds_element_named(&xml, &names) {
+            self.unsavable_body_edit_cache = OnceLock::from(None);
+        }
+    }
+
     /// The error a save of this body would return after a typed edit, when the
     /// retained nested owners cannot be replayed or a serializer prefix is
     /// shadowed. `None` is not a general proof that the document is savable.
@@ -39290,13 +39333,17 @@ impl Document {
                 let computed = self.compute_unsavable_body_edit();
                 let _ = self.unsavable_body_edit_cache.set(computed);
             }
-            // A kept answer is the one the whole main part gives now.
+            // A kept answer is the one the whole main part gives now, read
+            // by the full scan, which leaves the block memos as they are.
             #[cfg(debug_assertions)]
-            Some(kept) => assert_eq!(
-                kept,
-                &without_staging_work(|| self.compute_unsavable_body_edit()),
-                "kept unsavable body answer"
-            ),
+            Some(kept) => {
+                let _full_scan = CanonicalBlockProofOff::enter();
+                assert_eq!(
+                    kept,
+                    &without_staging_work(|| self.compute_unsavable_body_edit()),
+                    "kept unsavable body answer"
+                );
+            }
             #[cfg(not(debug_assertions))]
             Some(_) => {}
         }
@@ -39566,7 +39613,7 @@ impl Document {
     /// Panics if `index > content_count()`. (Unlike [`Self::insert_document`]
     /// and [`Self::insert_toc`], which clamp an out-of-range index to the end.)
     pub fn insert_paragraph(&mut self, index: usize, text: &str) -> Paragraph<'_> {
-        self.invalidate_layout_before_typed_insert();
+        self.invalidate_layout();
         self.document
             .body
             .insert_paragraph(index, Self::detached_text_paragraph(text));
@@ -39586,7 +39633,7 @@ impl Document {
     /// Panics if `index > content_count()`. (Unlike [`Self::insert_document`]
     /// and [`Self::insert_toc`], which clamp an out-of-range index to the end.)
     pub fn insert_table(&mut self, index: usize, rows: usize, cols: usize) -> Table<'_> {
-        self.invalidate_layout_before_typed_insert();
+        self.invalidate_layout();
         self.document
             .body
             .insert_table(index, Self::detached_table(rows, cols));
@@ -55790,4 +55837,30 @@ fn validate_document_package(package: OpcPackage) -> Result<ValidationReport> {
         }
     }
     Ok(document_validation_report(errors, warnings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_element_is_found_by_its_local_name_whatever_its_prefix() {
+        let names = HashSet::from([b"hyperlink".as_slice(), b"graphic".as_slice()]);
+        let found = |xml: &str| xml_holds_element_named(xml.as_bytes(), &names);
+        assert!(found(
+            r#"<w:p><w:hyperlink r:id="rId1"><w:r/></w:hyperlink></w:p>"#
+        ));
+        assert!(found(
+            r#"<w:p><w:r><w:drawing><a:graphic/></w:drawing></w:r></w:p>"#
+        ));
+        assert!(found(r#"<p><hyperlink/></p>"#));
+        assert!(!found(
+            r#"<w:p><w:r><w:t>hyperlink graphic</w:t></w:r></w:p>"#
+        ));
+        assert!(!found(r#"<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"#));
+        assert!(
+            found("<w:p><unclosed"),
+            "an unreadable block counts as holding one"
+        );
+    }
 }
