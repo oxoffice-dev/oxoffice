@@ -66,9 +66,9 @@
     "id": "docx-localized-style-ids",
     "format": "docx",
     "area": "styles",
-    "title": "Word files saved in another language: headings and tables of contents find no heading",
-    "symptom": "insert_toc lists nothing, and the Rust headings() and document_outline() are empty, when Word wrote localised style ids such as Titre1",
-    "workaround": "call rebuild_toc() after insert_toc(); find headings through the styles named \"heading N\"",
+    "title": "Word files saved in another language: new comments do not use the file's comment styles",
+    "symptom": "a comment added to a Word file with localised style ids, such as Commentaire, gets new CommentText and CommentReference styles based on Normal, so it does not look like Word's comments",
+    "workaround": "set the new comment's paragraphs and its reference mark to the file's comment styles, the styles named \"annotation text\" and \"annotation reference\"",
     "issue": 27
   },
   {

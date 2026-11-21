@@ -1068,11 +1068,13 @@ fn rebuilding_changes_nothing_without_a_toc_it_supports() {
 
 #[test]
 fn rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings() {
-    // Word for Mac in French names the heading styles Titre1, Titre2.
+    // Word for Mac in French names the heading styles Titre1, Titre2. The
+    // table insert_toc wrote already holds the six headings and their
+    // bookmarks, so the rebuild finds them all and adds none.
     let mut doc = corpus_doc("word/report.docx");
     doc.insert_toc(0, 3).unwrap();
     let report = doc.rebuild_toc().unwrap();
-    assert_eq!((report.entry_count, report.bookmark_count), (6, 6));
+    assert_eq!((report.entry_count, report.bookmark_count), (6, 0));
     let doc = reopen(&mut doc);
     assert_eq!(
         texts(&doc)[1..7],
@@ -1096,9 +1098,7 @@ fn rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings() {
     );
 }
 
-// Fails today: insert_toc finds headings by the English style ids Heading1 to Heading9, so a Word file saved in French gets an empty table. Issue: #27
 #[test]
-#[should_panic(expected = "insert_toc lists the headings of a Word file saved in French")]
 fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {
     let mut doc = corpus_doc("word/report.docx");
     doc.insert_toc(0, 3).unwrap();
@@ -1107,6 +1107,36 @@ fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {
         "1. Highlights\t",
         "insert_toc lists the headings of a Word file saved in French"
     );
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..7],
+        [
+            "1. Highlights\t",
+            "2. Financial overview\t",
+            "3. Operations\t",
+            "3.1 Support\t",
+            "3.2 Next steps\t",
+            "Appendix A. Regional detail\t"
+        ]
+    );
+    // insert_toc indents each level by a quarter inch.
+    let indents: Vec<_> = doc.paragraphs()[1..7]
+        .iter()
+        .map(|paragraph| paragraph.indent_left().map(|indent| indent.to_twips()))
+        .collect();
+    assert_eq!(
+        indents,
+        [None, None, None, Some(360), Some(360), None],
+        "levels"
+    );
+    // Each entry links to the bookmark around its own heading.
+    let expected: Vec<(String, String)> = bookmark_list(&doc)
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("_Toc"))
+        .map(|(name, heading)| (heading, name))
+        .collect();
+    assert_eq!(expected.len(), 6, "one bookmark per heading");
+    assert_eq!(link_anchors(&doc), expected);
 }
 
 #[test]
