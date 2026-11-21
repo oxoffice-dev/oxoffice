@@ -39,12 +39,21 @@ impl Document {
 
     /// Append the content of another document to this document.
     ///
-    /// Copies all body content (paragraphs and tables) from the other document.
-    /// Handles style deduplication and numbering remapping.
+    /// Copies all body content (paragraphs and tables) from the other document
+    /// with what it depends on, as [`Self::import_fragment`] does with
+    /// [`FragmentConflictPolicy::for_insert_document`]: pictures and other
+    /// related parts, link addresses, footnotes, endnotes and comments, and
+    /// fresh bookmark, control and revision ids. The content keeps the
+    /// destination's formatting, as Word's Insert > Text from File does: a
+    /// style the destination defines under the same id and type keeps the destination's
+    /// definition, the source's document defaults are not carried, and lists
+    /// restart. [`Self::import_fragment`] with
+    /// `FragmentConflictPolicy::for_insert_document(Some(policy))` keeps the
+    /// source's formatting instead.
     pub fn append(&mut self, other: &Document) {
         let mut candidate = self.clone_for_staging();
         candidate
-            .append_document_content(other)
+            .import_document_at(None, other)
             .expect("document append preflight failed");
         self.commit_staged_mutation(candidate);
     }
@@ -83,44 +92,46 @@ impl Document {
             .content
             .push(BodyContent::Paragraph(Box::new(p)));
         candidate
-            .append_document_content(other)
+            .import_document_at(None, other)
             .expect("document append-with-break preflight failed");
         self.commit_staged_mutation(candidate);
     }
 
-    /// Insert the content of another document at a specified body index.
+    /// Insert the content of another document at a specified body index, with
+    /// what it depends on, as [`Self::append`] does.
     ///
     /// An `index` past the end is clamped to the end rather than panicking.
     pub fn insert_document(&mut self, index: usize, other: &Document) {
+        self.import_document_at(Some(index), other)
+            .expect("document insertion preflight failed");
+    }
+
+    /// Import the whole body of `other` before direct body item `index`, or at
+    /// the end, with the dependency closure of [`Self::import_fragment`].
+    fn import_document_at(&mut self, index: Option<usize>, other: &Document) -> Result<()> {
         if other.content_count() == 0 {
-            return;
+            return Ok(());
         }
         let start = other
-            .direct_body_item_location(0)
-            .expect("document insertion source preflight failed")
-            .expect("nonempty source body");
+            .direct_body_item_location(0)?
+            .ok_or_else(|| Error::Other("the source body has no first item".to_owned()))?;
         let end = ContentLocation::end(start.story().clone());
-        let fragment = DocumentFragment::from_range(other, &start, &end, false)
-            .expect("document insertion source preflight failed");
-        let index = index.min(self.content_count());
-        let destination = self
-            .direct_body_item_location(index)
-            .expect("document insertion destination preflight failed")
-            .unwrap_or_else(|| {
-                ContentLocation::end(
-                    self.stories()
-                        .expect("document insertion destination stories")
-                        .into_iter()
-                        .find(|story| story.kind() == StoryKind::Body)
-                        .expect("body story"),
-                )
-            });
+        let fragment = DocumentFragment::from_range(other, &start, &end, false)?;
+        let index = index.unwrap_or(usize::MAX).min(self.content_count());
+        let destination = match self.direct_body_item_location(index)? {
+            Some(location) => location,
+            None => ContentLocation::end(
+                self.stories()?
+                    .into_iter()
+                    .find(|story| story.kind() == StoryKind::Body)
+                    .ok_or_else(|| Error::Other("the document has no body story".to_owned()))?,
+            ),
+        };
         self.import_fragment(
             &destination,
             &fragment,
-            FragmentConflictPolicy::for_native_insert_document(None),
+            FragmentConflictPolicy::for_insert_document(None),
         )
-        .expect("document insertion preflight failed");
     }
 
     pub(crate) fn insert_document_fragment_content_staged(
@@ -163,19 +174,6 @@ impl Document {
             reuse_equivalent_numbering,
             source_owned_numbering,
         )
-    }
-
-    fn append_document_content(&mut self, other: &Document) -> Result<()> {
-        self.reserve_merge_bundles(other)?;
-        self.invalidate_layout();
-        self.merge_styles(other)?;
-        let start_idx = self.document.body.content.len();
-        self.document
-            .body
-            .content
-            .extend(other.document.body.content.iter().cloned());
-        self.remap_merged_numbering(other, start_idx, false, false)
-            .map(|_| ())
     }
 
     fn reserve_merge_bundles(&mut self, other: &Document) -> Result<()> {

@@ -28,8 +28,14 @@ pub struct FragmentConflictPolicy {
     reuse_equivalent_numbering: bool,
     reuse_equivalent_related_parts: bool,
     preserve_source_effective_defaults: bool,
-    native_body_only: bool,
+    keep_destination_formatting: bool,
 }
+
+/// Whether [`FragmentConflictPolicy::for_insert_document`] without a policy,
+/// which `Document::append`, `Document::append_with_break` and
+/// `Document::insert_document` use, keeps the destination's formatting (see
+/// [`FragmentConflictPolicy::with_destination_formatting`]).
+const INSERTED_DOCUMENTS_KEEP_DESTINATION_FORMATTING: bool = true;
 
 impl FragmentConflictPolicy {
     /// Reuse equivalent supported dependencies and rename non-equivalent ones.
@@ -39,7 +45,7 @@ impl FragmentConflictPolicy {
             reuse_equivalent_numbering: true,
             reuse_equivalent_related_parts: true,
             preserve_source_effective_defaults: false,
-            native_body_only: false,
+            keep_destination_formatting: false,
         }
     }
 
@@ -50,33 +56,40 @@ impl FragmentConflictPolicy {
             reuse_equivalent_numbering: false,
             reuse_equivalent_related_parts: false,
             preserve_source_effective_defaults: false,
-            native_body_only: false,
+            keep_destination_formatting: false,
         }
     }
 
-    /// Preserve body effective fonts, restarting list instances when policy is omitted.
+    /// The policy of inserting a whole document. Without a policy, lists
+    /// restart and the content keeps the destination's formatting, as Word's
+    /// Insert > Text from File does (see [`Self::with_destination_formatting`]).
+    /// A given policy keeps its choice, and preserves the source's effective
+    /// fonts unless it keeps the destination's formatting.
     pub const fn for_insert_document(policy: Option<Self>) -> Self {
         let mut policy = match policy {
             Some(policy) => policy,
-            None => Self::reuse_equivalent().with_numbering_reuse(false),
+            None => Self::reuse_equivalent()
+                .with_numbering_reuse(false)
+                .with_destination_formatting(INSERTED_DOCUMENTS_KEEP_DESTINATION_FORMATTING),
         };
         policy.preserve_source_effective_defaults = true;
-        policy.native_body_only = false;
         policy
     }
 
-    pub(crate) const fn for_native_insert_document(policy: Option<Self>) -> Self {
-        let mut policy = Self::for_insert_document(policy);
-        policy.native_body_only = true;
-        policy
+    /// Select whether the imported content takes the destination's look, as
+    /// Word's Insert > Text from File does: a style the destination defines
+    /// under the same id and type keeps the destination's definition, and the source's
+    /// document defaults are not carried into the content. Otherwise a style
+    /// with the same id and a different definition is imported under a new id.
+    pub const fn with_destination_formatting(mut self, keep: bool) -> Self {
+        self.keep_destination_formatting = keep;
+        self
     }
 
+    /// Read when used, so `with_destination_formatting` may come before or
+    /// after `for_insert_document`.
     pub(crate) const fn preserves_source_effective_defaults(self) -> bool {
-        self.preserve_source_effective_defaults
-    }
-
-    pub(crate) const fn native_body_only(self) -> bool {
-        self.native_body_only
+        self.preserve_source_effective_defaults && !self.keep_destination_formatting
     }
 
     /// Select whether equivalent style definitions are reused.
@@ -107,6 +120,10 @@ impl FragmentConflictPolicy {
 
     pub(crate) const fn reuse_related_parts(self) -> bool {
         self.reuse_equivalent_related_parts
+    }
+
+    pub(crate) const fn keeps_destination_formatting(self) -> bool {
+        self.keep_destination_formatting
     }
 }
 
