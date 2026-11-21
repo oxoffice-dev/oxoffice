@@ -1,0 +1,12 @@
+{
+  "file": "authored/minutes.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "6cd47cb9e52750dce2412f38e8949b0d366b288401da7e061ae3dbe3e1958dc3",
+  "outline_and_tags": "d290e0002c9831591ca7a78778d5c77b617db676953801b7a4259b70721cb9b2",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "ccaa0ef08bcbb6cdaa276aebe946a0b0ce6d5853a35e3081c26c3ae4a607c084", "content": "e90c49e41229d953f99d4465d5b6b4936daf5fad467d8dc5c531a867422a4f04", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "0d5d66ee1e92ddbbd94f1e69405d0a3077ccf4efceaab6c7214a8e8762f21a1a", "content": "a45f57d10a9dc6b6aa6a73f8a025655a81f00b2d4143dc8ebe0efd9cd8725cef", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "f501827c6fef20950e41b7db433305e1e8ce5b53922232940c4ff85c86f6521d", "content": "80908e480af85fce115dd94f90561ccd53809d5ed318df2b254ee8a98d0e5f74", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+  ]
+}

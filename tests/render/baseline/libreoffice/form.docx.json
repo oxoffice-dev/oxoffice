@@ -1,0 +1,10 @@
+{
+  "file": "libreoffice/form.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "88f0831742a967c3e86c80935128732d9f81e94c9747d9a1aff7e49aaa13b882",
+  "outline_and_tags": "2e028eb43f119b04abe38f197daf94010f3bbef82970e3df255f71d89b0dbda8",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "f05a597d0f585ddc1917788eb86887068d2c3831e0af396519b59f860a4b9409", "content": "1d12259e6fd43cd8b44593ee6d169c099e79cbc8ac98f0d124427e7abbf9fc2b", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+  ]
+}

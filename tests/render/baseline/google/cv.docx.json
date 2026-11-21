@@ -1,0 +1,10 @@
+{
+  "file": "google/cv.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "42eb96f6ea7dfed23438646ae3888e24a0b0ae099c0b68680c6c89e8998e46b0",
+  "outline_and_tags": "32e362064388fd12db4b224a44ace8bd5f213a11991f3440b439c3f015694afb",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "3924d38fdd9f8fd0e950a904a8f0f509afd10a1d91bf184a16f7a0cf699d8068", "content": "6b7caa032377f268616cee2e1dc455f5a33d495c52aa1270152beb7eff8466bd", "annotations": "d24f855d2cf79a3a1029982021fab02dbda9a1f1bc86fe41195e459381f59d39", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "file": "google/form.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "5a54ce0ab1214cbfd1b49b6a6a63daa1144a445ab86f279ee1c4938b8846789c",
+  "outline_and_tags": "cfea9e123caad0936a74c0c039a39c78bb6ed5def7cf1ed616f115d305536096",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "7b17bae72f4b49699078e5992fa031d802ef8cf08eb62933fb590da7f5373f7f", "content": "e55ed172617d4b1df49f3c455aa68296ec879c80b7802674053667e8b9442b76", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+  ]
+}

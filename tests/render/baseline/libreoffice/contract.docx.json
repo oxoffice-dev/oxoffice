@@ -1,0 +1,12 @@
+{
+  "file": "libreoffice/contract.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "dfeb20d8425354a20d3de6e658cc66a653c4828e09e37625f5da6191dfaca95d",
+  "outline_and_tags": "c4897ee43eec911f85483ae8cd976ed84adc2678d63e738e62102642bc3bb8db",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "1ac55413ced4500edbc9080d1175e97db3ffd94ab29a0d1eb041428d5570b687", "content": "002530553845dc9f8546e4bf663ad979d603eeecbf4d9d340cfec91c8601791d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
+    {"page": 2, "pixels": "46f8738f574ed9a7b9d2d67ad1a459f3af7b62cf8bdaca9b6d033c59a619a3c4", "content": "605f1659fd70014426672873cb2599b8cc24b1972886dea3e7b364410ee480e9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
+    {"page": 3, "pixels": "1d15b514feb0413a8250c681f1d2c37d37c8c41c79c1a25a83e10ed30c10d77c", "content": "9cf903201e40e44faf2955f7010b3f79a1c24c978bd2b13e09fe1b847c5edb08", "annotations": "954f716d1c5bde7a3827590d62ad81d2139a9d190d2f3c68ba89f9a6a1158f2b", "dictionary": "1ef65fa789b8f45a1caeab080a9c6d44082d18c0f8dd0263eb7d061ae4e89a9d"}
+  ]
+}
