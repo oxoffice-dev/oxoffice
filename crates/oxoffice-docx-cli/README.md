@@ -80,6 +80,8 @@ oxoffice docx comment add report.docx --start-paragraph 0 --start-run 0 \
   --date 2026-09-13T12:00:00Z -o commented.docx
 oxoffice docx comment add report.docx --anchor 'target words' --occurrence 1 \
   --author Reviewer --text 'Check this' -o commented.docx
+oxoffice docx comment add report.docx --anchor 'Churn' --tables-only \
+  --author Reviewer --text 'Check this figure' -o commented.docx
 oxoffice docx revision accept reviewed.docx --author Reviewer -o accepted.docx
 oxoffice docx compare original.docx edited.docx --author Reviewer \
   --timestamp 2026-09-13T12:00:00Z -o redline.docx
@@ -97,7 +99,8 @@ crosses the edge of an inline content control, is refused. In place of the
 four range flags, `--anchor TEXT` comments on the zero-based `--occurrence`
 (default 0) of a literal, case-sensitive text of the main story, through body
 paragraphs, tables and block content controls, and splits the runs at both
-ends of the match. A text that does not occur, an occurrence past the last
+ends of the match. `--tables-only` counts only the matches in table cells,
+nested tables included. A text that does not occur, an occurrence past the last
 match, and a match that cannot be anchored exactly exit unsuccessfully without
 creating the output. Comment replies,
 resolution, and removal select a decimal comment id. Comment `add` and `reply`

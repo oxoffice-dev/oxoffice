@@ -23537,6 +23537,34 @@ pub(crate) fn visit_body_paragraphs_mut(
     }
 }
 
+/// Visit the paragraphs of the body's table cells in document order, nested
+/// tables, tables inside block controls and controls around rows or cells
+/// included, as [`visit_body_paragraphs_mut`] reaches them.
+pub(crate) fn visit_body_table_paragraphs_mut(
+    content: &mut [BodyContent],
+    visitor: &mut impl FnMut(&mut CT_P),
+) {
+    for item in content {
+        match item {
+            BodyContent::Table(table) => visit_table_mut(table, visitor),
+            BodyContent::ContentControl(control) => visit_sdt_tables_mut(control, visitor),
+            BodyContent::Paragraph(_) | BodyContent::RawXml(_) => {}
+        }
+    }
+}
+
+fn visit_sdt_tables_mut(control: &mut CT_Sdt, visitor: &mut impl FnMut(&mut CT_P)) {
+    for item in &mut control.content {
+        match item {
+            SdtContent::Table(table) => visit_table_mut(table, visitor),
+            SdtContent::Row(row) => visit_row_mut(row, visitor),
+            SdtContent::Cell(cell) => visit_cell_mut(cell, visitor),
+            SdtContent::ContentControl(nested) => visit_sdt_tables_mut(nested, visitor),
+            SdtContent::Paragraph(_) | SdtContent::Run(_) | SdtContent::RawXml(_) => {}
+        }
+    }
+}
+
 fn visit_paragraph_mut(paragraph: &mut CT_P, visitor: &mut impl FnMut(&mut CT_P)) {
     visitor(paragraph);
     for (_, _, _, control) in &mut paragraph.content_controls {

@@ -17595,10 +17595,11 @@ impl PyDocument {
     }
 
     /// Comment on the `occurrence`-th match of `anchor`, counted from zero,
-    /// in the main story. Matching is case-sensitive, non-overlapping and
-    /// within one paragraph. A match whose range would also show other text,
-    /// such as a field result, raises.
-    #[pyo3(signature = (anchor, *, author, text, occurrence = 0, initials = None, date = None, undated = false))]
+    /// in the main story, or among the matches in table cells only with
+    /// `tables_only`. Matching is case-sensitive, non-overlapping and within
+    /// one paragraph. A match whose range would also show other text, such as
+    /// a field result, raises.
+    #[pyo3(signature = (anchor, *, author, text, occurrence = 0, tables_only = false, initials = None, date = None, undated = false))]
     #[allow(clippy::too_many_arguments)]
     fn add_comment_on_text(
         &mut self,
@@ -17606,6 +17607,7 @@ impl PyDocument {
         author: &str,
         text: &str,
         occurrence: usize,
+        tables_only: bool,
         initials: Option<&str>,
         date: Option<&str>,
         undated: bool,
@@ -17614,7 +17616,17 @@ impl PyDocument {
         let date = comment_date(date, undated)?;
         let mut candidate = self.inner.clone_for_staging();
         let id = candidate
-            .add_comment_on_text(anchor, occurrence, author, initials, text, date)
+            .add_comment_on_text(
+                anchor,
+                author,
+                text,
+                oxoffice_docx::TextCommentOptions {
+                    occurrence,
+                    tables_only,
+                    initials,
+                    date,
+                },
+            )
             .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(
             py,

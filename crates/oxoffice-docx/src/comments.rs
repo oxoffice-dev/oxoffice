@@ -15,7 +15,9 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
 use quick_xml::reader::NsReader;
 
-use crate::document::{CommentParagraphValue, visit_body_paragraphs_mut};
+use crate::document::{
+    CommentParagraphValue, visit_body_paragraphs_mut, visit_body_table_paragraphs_mut,
+};
 use crate::{ContentLocation, Document, Error, Result};
 
 #[cfg(test)]
@@ -130,6 +132,21 @@ impl CommentDate<'_> {
             Self::Undated => Ok(None),
         }
     }
+}
+
+/// Which match [`Document::add_comment_on_text`] anchors its comment on, and
+/// what the comment carries besides its author and text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextCommentOptions<'a> {
+    /// The match to anchor on, counted from zero in document order.
+    pub occurrence: usize,
+    /// Count only the matches in the paragraphs of table cells, nested
+    /// tables included.
+    pub tables_only: bool,
+    /// The author's initials.
+    pub initials: Option<&'a str>,
+    /// The comment's date, now by default.
+    pub date: CommentDate<'a>,
 }
 
 /// A stable insertion point between runs in a checked story paragraph.
@@ -931,7 +948,7 @@ impl Document {
         candidate.flush_to_package()?;
         let replies = candidate.anchored_thread_replies(id)?;
         let reference = candidate.remove_comment_source_for_move(&selected)?;
-        candidate.anchor_existing_comment_on_text(id, anchor, occurrence)?;
+        candidate.anchor_existing_comment_on_text(id, anchor, occurrence, false)?;
         candidate.restore_comment_reference_run(id, reference)?;
         candidate.move_replies_with_root(id, &replies)?;
         candidate.flush_to_package()?;
@@ -1788,36 +1805,41 @@ impl Document {
         Ok(id)
     }
 
-    /// Add a comment on the `occurrence`-th match of `anchor`, counted from
-    /// zero, in the main story.
+    /// Add a comment on a match of `anchor` in the main story, the
+    /// `options.occurrence`-th counted from zero, among the matches in the
+    /// paragraphs of table cells only with `options.tables_only`.
     ///
     /// Matches are case-sensitive and non-overlapping, in document order
-    /// through body paragraphs, tables and block content controls, and one
-    /// match never spans two paragraphs. They are found in the literal run
-    /// text that [`Document::split_run`] offsets count, so tabs and breaks
-    /// have no width. The runs at both ends of the match are split and the
-    /// comment is anchored on the runs between the splits as
-    /// [`Self::add_comment`] anchors a run range, dated as `date` says. A
-    /// missing occurrence or a match that cannot
-    /// be anchored exactly is an error and leaves the document unchanged. A
-    /// match is not exact when its range would also show text that the
-    /// literal text leaves out, such as the result of a field between two of
-    /// its runs. Each line of `text` becomes one paragraph of the comment.
+    /// through body paragraphs, tables (nested ones included) and block
+    /// content controls, and one match never spans two paragraphs. They are
+    /// found in the literal run text that [`Document::split_run`] offsets
+    /// count, so tabs and breaks have no width. The runs at both ends of the
+    /// match are split and the comment is anchored on the runs between the
+    /// splits as [`Self::add_comment`] anchors a run range, dated as
+    /// `options.date` says, with `options.initials`. The anchor is read back
+    /// on a copy before anything is published: a missing occurrence or a
+    /// match that cannot be anchored exactly is an error and leaves the
+    /// document unchanged. A match is not exact when its range would also
+    /// show text that the literal text leaves out, such as the result of a
+    /// field between two of its runs. Each line of `text` becomes one
+    /// paragraph of the comment.
     pub fn add_comment_on_text(
         &mut self,
         anchor: &str,
-        occurrence: usize,
         author: &str,
-        initials: Option<&str>,
         text: &str,
-        date: CommentDate<'_>,
+        options: TextCommentOptions<'_>,
     ) -> Result<i32> {
-        reject_non_xml_comment(author, initials, text)?;
-        let date = date.resolve()?;
-        let date = date.as_deref();
+        reject_non_xml_comment(author, options.initials, text)?;
+        let date = options.date.resolve()?;
         let mut candidate = self.clone_for_staging();
-        let id = candidate
-            .add_comment_on_text_staged(anchor, occurrence, author, initials, text, date)?;
+        let id = candidate.add_comment_on_text_staged(
+            anchor,
+            &options,
+            author,
+            text,
+            date.as_deref(),
+        )?;
         candidate.flush_dirty_related_story_models()?;
         self.commit_staged_mutation(candidate);
         Ok(id)
@@ -1826,9 +1848,8 @@ impl Document {
     fn add_comment_on_text_staged(
         &mut self,
         anchor: &str,
-        occurrence: usize,
+        options: &TextCommentOptions<'_>,
         author: &str,
-        initials: Option<&str>,
         text: &str,
         date: Option<&str>,
     ) -> Result<i32> {
@@ -1842,8 +1863,8 @@ impl Document {
         self.ensure_comment_relationships()?;
         let mut identifiers = self.identifiers.clone();
         let id = identifiers.reserve_comment_id()?;
-        self.anchor_existing_comment_on_text(id, anchor, occurrence)?;
-        self.push_comment_definition(id, author, initials, text, date)?;
+        self.anchor_existing_comment_on_text(id, anchor, options.occurrence, options.tables_only)?;
+        self.push_comment_definition(id, author, options.initials, text, date)?;
         self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
@@ -1852,18 +1873,25 @@ impl Document {
 
     // Shared existing literal finder and checked splitter. Moving a comment
     // supplies its identity directly and never allocates a temporary thread.
+    // `tables_only` searches only the paragraphs of table cells.
     fn anchor_existing_comment_on_text(
         &mut self,
         id: i32,
         anchor: &str,
         occurrence: usize,
+        tables_only: bool,
     ) -> Result<()> {
         if anchor.is_empty() {
             return Err(Error::Other("comment anchor text must not be empty".into()));
         }
         let mut remaining = occurrence;
         let mut anchored = None;
-        visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
+        let visit = if tables_only {
+            visit_body_table_paragraphs_mut
+        } else {
+            visit_body_paragraphs_mut
+        };
+        visit(&mut self.document.body.content, &mut |paragraph| {
             if anchored.is_some() {
                 return;
             }
@@ -1899,8 +1927,13 @@ impl Document {
             // Every paragraph was searched, so `remaining` counts past them all.
             let found = occurrence - remaining;
             let times = if found == 1 { "time" } else { "times" };
+            let scope = if tables_only {
+                "the table cells of the main story"
+            } else {
+                "the main story"
+            };
             Error::Other(format!(
-                "comment anchor text {anchor:?} has no occurrence {occurrence}: it occurs {found} {times} in the main story"
+                "comment anchor text {anchor:?} has no occurrence {occurrence}: it occurs {found} {times} in {scope}"
             ))
         })??;
         // Read actual namespace scopes after the mutable walk releases its borrow.
