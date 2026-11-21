@@ -307,10 +307,7 @@ fn headings_export_at_the_level_their_style_or_outline_level_gives() {
     assert_eq!(read_markdown(&doc.to_markdown()), expected);
 }
 
-// Fails today: Markdown writes a paragraph at outline level 9 (body text), such
-// as Word's TOC Heading, as a level-6 heading. Issue: #261
 #[test]
-#[should_panic(expected = "a body-text paragraph is written as a Markdown heading")]
 fn a_paragraph_at_the_body_text_outline_level_is_not_a_markdown_heading() {
     // The French Word report names its TOC Heading style, outline level 9,
     // "En-ttedetabledesmatires".
@@ -493,9 +490,7 @@ fn markdown_escapes_specials_so_a_commonmark_reader_reads_back_the_text() {
     assert_eq!(read_markdown(&markdown), expected, "{markdown}");
 }
 
-// Fails today: Markdown writes `&copy;` as it is, so a reader shows ©. Issue: #259
 #[test]
-#[should_panic(expected = "reads an entity reference written as text as another character")]
 fn markdown_escapes_an_entity_reference_written_as_text() {
     let line = "&copy; 2026, &#42; and &amp;";
     let doc = reopen(&mut doc_with(&[line]));
@@ -505,13 +500,12 @@ fn markdown_escapes_an_entity_reference_written_as_text() {
         [Read::Paragraph(line.to_owned())],
         "a CommonMark reader reads an entity reference written as text as another character: \
          {markdown:?}"
-    );
+    ); // An `&` that starts no reference is left as it is.
+    let plain = reopen(&mut doc_with(&["R&D & sales"])).to_markdown();
+    assert_eq!(plain.trim_end(), "R&D & sales");
 }
 
-// Fails today: a paragraph that starts with a tab or four spaces is written
-// as it is, so a reader takes it for an indented code block. Issue: #259
 #[test]
-#[should_panic(expected = "a paragraph that starts with a tab is read as a code block")]
 fn a_paragraph_starting_with_a_tab_stays_a_paragraph_in_markdown() {
     let doc = reopen(&mut doc_with(&[
         "\tIndented by a tab",
@@ -1019,28 +1013,37 @@ fn markdown_tables_take_the_first_row_as_header_and_escape_cell_text() {
     assert_eq!(rows[2], ["*x*", "`y`"]);
 }
 
-// Fails today: Markdown writes "(nested table)" in place of a nested table and
-// reports nothing. Issue: #263
 #[test]
-#[should_panic(expected = "the nested table's text is missing from the Markdown")]
 fn markdown_keeps_the_text_of_a_nested_table() {
     let mut doc = Document::new();
     {
         let mut table = doc.add_table(1, 2);
         table.cell(0, 0).unwrap().set_text("Supported codes");
-        table
-            .cell(0, 1)
-            .unwrap()
-            .add_table(1, 1)
-            .cell(0, 0)
-            .unwrap()
-            .set_text("EAN-13");
+        let mut cell = table.cell(0, 1).unwrap();
+        let mut nested = cell.add_table(2, 2);
+        for (row, texts) in [["EAN-13", "13 digits"], ["UPC-A", "12 digits"]]
+            .iter()
+            .enumerate()
+        {
+            for (column, text) in texts.iter().enumerate() {
+                nested.cell(row, column).unwrap().set_text(text);
+            }
+        }
     }
     let doc = reopen(&mut doc);
-    assert_eq!(html_texts(&doc.to_html_fragment(), "td td"), ["EAN-13"]);
-    let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
-    assert!(
-        markdown.contains("EAN-13") || !diagnostics.is_empty(),
+    assert_eq!(
+        html_texts(&doc.to_html_fragment(), "td td"),
+        ["EAN-13", "13 digits", "UPC-A", "12 digits"]
+    );
+    // GFM has no nested tables: the nested table's rows go into the cell,
+    // each on a line of its own.
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        read_markdown(&markdown),
+        [Read::Table(vec![vec![
+            "Supported codes".to_owned(),
+            "EAN-13 13 digits<br>UPC-A 12 digits".to_owned()
+        ]])],
         "the nested table's text is missing from the Markdown: {markdown}"
     );
 }

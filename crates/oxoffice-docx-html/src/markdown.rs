@@ -145,8 +145,10 @@ fn leave_quoted_list(out: &mut String, list_levels: &mut Vec<(u32, usize, u32)>,
 fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32> {
     let ppr = ppr?;
 
+    // Outline level 9 is body text, the level of Word's TOC Heading style:
+    // no heading.
     if let Some(lvl) = ppr.outline_lvl {
-        return Some(lvl + 1);
+        return (lvl < 9).then_some(lvl + 1);
     }
 
     let style_id = ppr.style_id.as_deref()?;
@@ -161,7 +163,7 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
         && let Some(spr) = &style.ppr
         && let Some(lvl) = spr.outline_lvl
     {
-        return Some(lvl + 1);
+        return (lvl < 9).then_some(lvl + 1);
     }
 
     None
@@ -251,6 +253,8 @@ fn emit_paragraph(
             .unwrap_or(0);
         let fence = "`".repeat((length + 1).max(3));
         text = format!("{fence}\n{code}\n{fence}");
+    } else if heading_level.is_none() && list_info.is_none() {
+        text = keep_leading_whitespace(&text);
     }
     let inner_quotes = container_path
         .rsplit('l')
@@ -450,6 +454,22 @@ fn quote_owner<'a>(id: Option<&str>, styles: &'a CT_Styles) -> Option<&'a str> {
             .split('.')
             .all(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())))
     .then_some(owner)
+}
+
+/// CommonMark drops the whitespace a paragraph line starts with, and reads
+/// four columns of it as an indented code block. Written as a character
+/// reference, the first whitespace character of a line keeps the line's
+/// whitespace and the paragraph. A line of whitespace alone is left.
+fn keep_leading_whitespace(text: &str) -> String {
+    text.split('\n')
+        .map(|line| match line.chars().next() {
+            Some(first @ (' ' | '\t')) if !line.trim().is_empty() => {
+                format!("&#{};{}", u32::from(first), &line[1..])
+            }
+            _ => line.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn escape_block_starts(text: &str) -> String {
@@ -686,6 +706,45 @@ fn push_escaped(text: &mut String, character: char) {
     text.push(character);
 }
 
+/// Append document text as `push_escaped` does, escaping as well an `&` that
+/// starts a character reference, which a reader would turn into another
+/// character. A reference split across two runs is not seen.
+fn push_escaped_text(out: &mut String, text: &str) {
+    for (index, character) in text.char_indices() {
+        push_escaped_at(out, text, index, character);
+    }
+}
+
+/// `push_escaped` for the character at `index` of `text`, with the `&` of a
+/// character reference escaped.
+fn push_escaped_at(out: &mut String, text: &str, index: usize, character: char) {
+    if character == '&' && starts_character_reference(&text[index + 1..]) {
+        out.push('\\');
+    }
+    push_escaped(out, character);
+}
+
+/// Whether `rest`, the text after an `&`, starts as a character reference
+/// does: a name, `#` and decimal digits, or `#x` and hexadecimal digits,
+/// then `;`.
+fn starts_character_reference(rest: &str) -> bool {
+    let Some(end) = rest.find(';') else {
+        return false;
+    };
+    let body = &rest[..end];
+    match body.strip_prefix('#') {
+        Some(number) => match number.strip_prefix(['x', 'X']) {
+            Some(hex) => (1..=6).contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit()),
+            None => (1..=7).contains(&number.len()) && number.bytes().all(|b| b.is_ascii_digit()),
+        },
+        None => {
+            (1..=32).contains(&body.len())
+                && body.starts_with(|c: char| c.is_ascii_alphabetic())
+                && body.bytes().all(|b| b.is_ascii_alphanumeric())
+        }
+    }
+}
+
 /// Collect the text of a single run as formatted pieces.
 fn collect_run_pieces(
     run: &CT_R,
@@ -738,9 +797,7 @@ fn collect_run_pieces(
     for content in &run.content {
         match content {
             RunContent::Text(t) | RunContent::DeletedText(t) => {
-                for character in t.text.chars() {
-                    push_escaped(&mut raw, character);
-                }
+                push_escaped_text(&mut raw, &t.text);
             }
             RunContent::Drawing(drawing) => {
                 let picture = drawing
@@ -757,9 +814,7 @@ fn collect_run_pieces(
                     && let Some(image) = images.get(relationship)
                 {
                     let mut alt = String::new();
-                    for character in description.unwrap_or("").chars() {
-                        push_escaped(&mut alt, character);
-                    }
+                    push_escaped_text(&mut alt, description.unwrap_or(""));
                     raw.push_str(&format!(
                         "![{alt}](data:{};base64,{})",
                         image.content_type,
@@ -788,7 +843,7 @@ fn collect_run_pieces(
                 for (text, properties) in field.cached_display_segments() {
                     let field_marks = marks.overlay(properties);
                     let mut display = String::new();
-                    for character in text.chars() {
+                    for (index, character) in text.char_indices() {
                         match character {
                             '\t' => display.push('\t'),
                             '\n' | '\u{000b}' => {
@@ -803,7 +858,7 @@ fn collect_run_pieces(
                                 pieces.push((PAGE_BREAK.to_owned(), Marks::default()));
                                 pieces.push((String::new(), Marks::default()));
                             }
-                            character => push_escaped(&mut display, character),
+                            character => push_escaped_at(&mut display, text, index, character),
                         }
                     }
                     push_piece(pieces, &display, field_marks);
@@ -1209,8 +1264,26 @@ fn collect_cell_text(
                 }
             }
             Block::Table(table) if table.accepted_view_removes() => {}
-            Block::Table(_) => {
-                parts.push("(nested table)".to_string());
+            // GFM has no nested tables: a nested table's rows go into the
+            // cell, each on a line of its own.
+            Block::Table(table) => {
+                let rows: Vec<String> = table
+                    .rows()
+                    .into_iter()
+                    .filter(|row| !row.accepted_view_removes())
+                    .map(|row| {
+                        row.cells()
+                            .into_iter()
+                            .map(|cell| collect_cell_text(cell, styles, hyperlink_urls, images))
+                            .filter(|text| !text.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .filter(|row| !row.is_empty())
+                    .collect();
+                if !rows.is_empty() {
+                    parts.push(rows.join("<br>"));
+                }
             }
         }
     }
@@ -1221,11 +1294,11 @@ fn collect_cell_text(
 fn emit_chart_table(out: &mut String, chart: &crate::ChartTable) {
     let escaped = |text: &str| {
         let mut result = String::new();
-        for ch in text.chars() {
+        for (index, ch) in text.char_indices() {
             if ch == '|' {
                 result.push('\\');
             }
-            push_escaped(&mut result, ch);
+            push_escaped_at(&mut result, text, index, ch);
         }
         result.replace('\n', "<br>").replace('\r', "")
     };
