@@ -120,11 +120,11 @@ grows, and a deck refused at open when one of its parts holds a control characte
 | Lists and numbering | ✅ | ⚠️ | ✅ | a list numbered through its style cannot be restarted |
 | Tables | ✅ | ✅ | ✅ | merges, borders, shading, nested tables |
 | Sections, headers and footers | ✅ | ⚠️ | ✅ | the document-wide header or footer setter reaches the last section only |
-| Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind |
+| Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind, and removing a note leaves its custom mark |
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
 | Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields and final tables; writing your own edits as tracked changes is on the [roadmap](ROADMAP.md) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
-| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect; a value set over a control's prompt keeps the prompt's style, controls in headers are not reached, and a date control in Word's long format cannot be set yet; fillable PDF fields are coming |
+| Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect; a value set over a control's prompt keeps the prompt's style, a block control's text reads as one line, the tag setters and the listing miss controls in headers, and a date control in Word's long format cannot be set yet; fillable PDF fields are coming |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
@@ -139,7 +139,7 @@ grows, and a deck refused at open when one of its parts holds a control characte
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a removed slide leaves its charts and legacy comments in the file, and sections do not follow moved slides yet |
+| Slides | ✅ | ⚠️ | ✅ | add, duplicate, import, move, hide, sections; a removed slide leaves its charts and legacy comments in the file, and sections do not follow added, imported or moved slides yet |
 | Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
 | Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
 | Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
