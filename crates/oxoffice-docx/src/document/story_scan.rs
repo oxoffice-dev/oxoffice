@@ -240,7 +240,8 @@ fn push_complex_field_instruction(
     let modeled_instruction = stack.last().is_some_and(|frame| {
         !frame.opaque
             && frame.namespace == StoryNamespace::Word
-            && frame.local_name.as_ref() == b"instrText"
+            // Word writes the code of a deleted field in delInstrText.
+            && matches!(frame.local_name.as_ref(), b"instrText" | b"delInstrText")
     });
     if modeled_instruction
         && let Some(field) = fields.last_mut()

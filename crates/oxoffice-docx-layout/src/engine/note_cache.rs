@@ -84,9 +84,20 @@ pub(super) fn stored_note_cache_runs(
     let prepared = field.cached_result_owner_projection().map_err(|error| {
         LayoutError::Layout(format!("stored field preparation failed: {error}"))
     })?;
+    // Deleted text is not part of a field's display, so the stored result of
+    // a field inside a deletion draws from the runs it was read from.
+    let cached_runs = field.cached_result_runs().or_else(|| {
+        field.cached_result_physical_runs().filter(|runs| {
+            runs.iter().any(|run| {
+                run.content
+                    .iter()
+                    .any(|content| matches!(content, RunContent::DeletedText(_)))
+            })
+        })
+    });
     let runs = if let Some(paragraph) = &prepared {
         project_paragraph_runs(paragraph, view)
-    } else if let Some(runs) = field.cached_result_runs() {
+    } else if let Some(runs) = cached_runs {
         runs.iter()
             .enumerate()
             .map(|(boundary, run)| ProjectedRun {
@@ -121,8 +132,7 @@ pub(super) fn stored_note_cache_runs(
             .map(|path| paragraph.accepted_run(&path).expect("fresh accepted path"))
             .collect::<Vec<_>>()
     } else {
-        field
-            .cached_result_runs()
+        cached_runs
             .expect("borrowed cache selected")
             .iter()
             .collect()
