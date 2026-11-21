@@ -92,6 +92,10 @@ pub struct FontRecord {
     pitch_raw_inner: Option<Vec<u8>>,
     raw_attributes: Vec<(String, String)>,
     raw_children: Vec<(usize, Vec<u8>)>,
+    /// Set when the record is read: a child kept in `raw_children` names a
+    /// relationship. Only the relationships of modelled embedded faces are
+    /// cleaned up after the record, so removing it would leave this one.
+    raw_children_name_relationship: bool,
 }
 
 impl FontRecord {
@@ -110,7 +114,15 @@ impl FontRecord {
             pitch_raw_inner: None,
             raw_attributes: Vec::new(),
             raw_children: Vec::new(),
+            raw_children_name_relationship: false,
         }
+    }
+
+    /// Keep a child this model does not read, verbatim at `slot`.
+    fn retain_child(&mut self, slot: usize, raw: Vec<u8>, relationship_prefixes: &[String]) {
+        self.raw_children_name_relationship |=
+            raw_xml_names_relationship(&raw, relationship_prefixes);
+        self.raw_children.push((slot, raw));
     }
 }
 
@@ -313,7 +325,12 @@ impl FontTable {
         self.fonts.push(font);
     }
 
-    /// Check whether deleting a record can retain every unowned source payload.
+    /// Check whether deleting a record leaves nothing behind it. The record
+    /// goes whole, so the children it keeps verbatim (the `w:panose1`,
+    /// `w:charset`, `w:notTrueType` and `w:sig` Word writes on every record,
+    /// or unknown ones) go with it, unless one names a relationship: only the
+    /// relationships of modelled embedded faces are cleaned up after it.
+    /// Retained attributes and opaque embedded faces are still refused.
     pub fn can_remove_font(&self, name: &str) -> Result<bool> {
         let mut matches = self.fonts.iter().filter(|font| font.name == name);
         let Some(font) = matches.next() else {
@@ -321,6 +338,11 @@ impl FontTable {
         };
         if matches.next().is_some() {
             return Err(OxmlError::InvalidValue("ambiguous font record".to_owned()));
+        }
+        if font.raw_children_name_relationship {
+            return Err(OxmlError::InvalidValue(
+                "cannot remove a font record whose retained XML names a relationship".to_owned(),
+            ));
         }
         let namespace_only = |attributes: &[(String, String)]| {
             attributes
@@ -339,10 +361,6 @@ impl FontTable {
             .into_iter()
             .flatten()
             .any(|raw| !raw.iter().all(u8::is_ascii_whitespace))
-            || font
-                .raw_children
-                .iter()
-                .any(|(_, raw)| !raw.iter().all(u8::is_ascii_whitespace))
         {
             return Err(OxmlError::InvalidValue(
                 "cannot remove opaque font record payload".to_owned(),
@@ -497,7 +515,7 @@ fn read_font(
                 }
                 let raw = capture_element(reader, &child)?;
                 let Some(raw_inner) = explicit_element_trivia(&raw)? else {
-                    font.raw_children.push((slot.unwrap_or(boundary), raw));
+                    font.retain_child(slot.unwrap_or(boundary), raw, &relationship_prefixes);
                     buffer.clear();
                     continue;
                 };
@@ -510,7 +528,7 @@ fn read_font(
                     &namespace_prefixes_at(&child, &extension_prefixes, RDOCX_FONT_NS)?,
                     Some(raw_inner),
                 )? {
-                    font.raw_children.push((slot.unwrap_or(boundary), raw));
+                    font.retain_child(slot.unwrap_or(boundary), raw, &relationship_prefixes);
                 }
             }
             Event::Empty(child) => {
@@ -529,8 +547,11 @@ fn read_font(
                     &namespace_prefixes_at(&child, &extension_prefixes, RDOCX_FONT_NS)?,
                     None,
                 )? {
-                    font.raw_children
-                        .push((slot.unwrap_or(boundary), capture_empty_element(&child)?));
+                    font.retain_child(
+                        slot.unwrap_or(boundary),
+                        capture_empty_element(&child)?,
+                        &relationship_prefixes,
+                    );
                 }
             }
             event @ (Event::Text(_)
@@ -818,6 +839,51 @@ fn raw_xml_mentions_value(raw: &[u8], value: &str) -> bool {
             _ => {}
         }
         buffer.clear();
+    }
+}
+
+/// Whether retained XML names a relationship: an attribute in the
+/// relationships namespace (`r:id`, `r:embed`...) at any depth, such as the
+/// `r:id` of an embedded face inside `mc:AlternateContent`.
+/// `relationship_prefixes` are the prefixes bound to that namespace around
+/// it. XML that does not read back counts as naming one.
+fn raw_xml_names_relationship(raw: &[u8], relationship_prefixes: &[String]) -> bool {
+    let mut reader = Reader::from_reader(raw);
+    let mut scopes = vec![relationship_prefixes.to_vec()];
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        let (element, opens) = match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(element)) => (element, true),
+            Ok(Event::Empty(element)) => (element, false),
+            Ok(Event::End(_)) => {
+                scopes.pop();
+                continue;
+            }
+            Ok(Event::Eof) => return false,
+            Err(_) => return true,
+            Ok(_) => continue,
+        };
+        let inherited = scopes.last().map_or(&[][..], Vec::as_slice);
+        let Ok(scope) = namespace_prefixes_at(&element, inherited, R_NS) else {
+            return true;
+        };
+        for attribute in element.attributes() {
+            let Ok(attribute) = attribute else {
+                return true;
+            };
+            let key = attribute.key.as_ref();
+            if let Some(separator) = key.iter().position(|byte| *byte == b':')
+                && scope
+                    .iter()
+                    .any(|prefix| prefix.as_bytes() == &key[..separator])
+            {
+                return true;
+            }
+        }
+        if opens {
+            scopes.push(scope);
+        }
     }
 }
 
