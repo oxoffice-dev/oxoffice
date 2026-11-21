@@ -641,12 +641,20 @@ fn a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
             long.trim_end(),
         ),
     ];
+    // A list number in a bidi paragraph: Word's default list indent, the
+    // number at 18 pt from the right margin, its text at 36 pt, as the
+    // following lines.
+    let numbered = format!(
+        r#"<w:p><w:pPr><w:bidi/><w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t>1.</w:t></w:r><w:r><w:rPr><w:rtl/></w:rPr><w:tab/><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+        long.trim_end()
+    );
     let mut body = String::new();
     for (_, ppr, text) in cases {
         body.push_str(&format!(
             r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#
         ));
     }
+    body.push_str(&numbered);
     let pdf = pdf_of(&doc_with_body(&body));
     let lines = lines(&pdf.drawn(0));
     let (left, right) = (72.0, 540.0);
@@ -694,6 +702,43 @@ fn a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
     let first = &lines[8 + justified.len()];
     assert!(near(first.right, right - 36.0), "first line: {first:?}");
     assert!(near(lines[9 + justified.len()].right, right), "second line");
+    // The numbered paragraph: the number at the hanging indent, its text
+    // and the next line at the left (start) indent.
+    let page = pdf.page_count() - 1;
+    let drawn = pdf.drawn(page);
+    let lines = self::lines(&drawn);
+    // The number "1." may be drawn as two pieces, the digit and the stop.
+    let number = drawn
+        .iter()
+        .rfind(|piece| piece.text == "1")
+        .unwrap_or_else(|| panic!("the list number: {drawn:#?}"));
+    let on_its_line = |piece: &&Drawn| (piece.y - number.y).abs() < 0.5;
+    let is_number = |piece: &&Drawn| matches!(piece.text.trim(), "1" | "." | "1.");
+    let number_end = drawn
+        .iter()
+        .filter(on_its_line)
+        .filter(is_number)
+        .map(|piece| piece.end)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        near(number_end, right - 18.0),
+        "the number ends at {number_end:.1}"
+    );
+    let first_text = drawn
+        .iter()
+        .filter(on_its_line)
+        .filter(|piece| !is_number(piece) && !piece.text.trim().is_empty())
+        .map(|piece| piece.end)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        near(first_text, right - 36.0),
+        "text after the number ends at {first_text:.1}"
+    );
+    let next = lines
+        .iter()
+        .find(|line| line.y < number.y - 0.5)
+        .expect("a second numbered line");
+    assert!(near(next.right, right - 36.0), "{next:?}");
 }
 
 // Word and LibreOffice align a right-to-left paragraph on the right margin,

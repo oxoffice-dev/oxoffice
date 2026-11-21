@@ -1,9 +1,0 @@
-{
-  "id": "docx-pdf-rtl-cjk",
-  "format": "docx",
-  "area": "pdf",
-  "title": "PDF text: right-to-left paragraphs start at the left margin, CJK text is drawn as boxes by default",
-  "symptom": "a right-to-left paragraph is drawn against the left margin, and Chinese, Japanese and Korean glyphs are empty boxes with the default render options",
-  "workaround": "none for right-to-left paragraphs (an explicit right alignment would move them left in Word and LibreOffice); for CJK, pass a CJK font file (Rust to_pdf_with_fonts, or to_pdfa_with_fonts_deterministic for PDF/A; Python to_pdf(fonts=...) or font_dir=...; CLI convert --font-dir) or turn system fonts on (Rust to_pdf_with_options with use_system_fonts, Python to_pdf(system_fonts=True), CLI convert --system-fonts); none for PDF/A in Python and the CLI",
-  "issue": 157
-}

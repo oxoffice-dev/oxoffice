@@ -2137,6 +2137,9 @@ impl Engine {
         diagnostics.extend(oxoffice_layout::missing_glyph_diagnostics(
             &result.pages,
             &result.fonts,
+            "render with system fonts (CLI --system-fonts, Python system_fonts=True, Rust \
+             RenderOptions::with_system_fonts) on a machine with a font for it, or pass a font \
+             file (CLI --font-dir, Python fonts= or font_dir=, Rust to_pdf_with_fonts)",
         ));
         result.diagnostics = diagnostics;
         self.last_picture_draw_owners = media.picture_draw_owners_since(0);

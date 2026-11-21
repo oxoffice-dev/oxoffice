@@ -364,15 +364,21 @@ pub fn layout_presentation_with_displayed_numbers(
         input.metadata.clone(),
         Vec::new(),
     );
-    diagnostics.extend(font_manager.current_font_diagnostics().iter().cloned());
+    // Font facts stay last: exporters split them off by count.
     diagnostics.extend(oxoffice_layout::missing_glyph_diagnostics(
         &layout.pages,
         &layout.fonts,
+        MISSING_GLYPH_WAY_OUT,
     ));
+    diagnostics.extend(font_manager.current_font_diagnostics().iter().cloned());
     layout.diagnostics = diagnostics;
     Ok(layout)
 }
 
+/// How a deck gets a font for text drawn as empty boxes: presentations take
+/// font files, not system fonts.
+pub const MISSING_GLYPH_WAY_OUT: &str = "pass a font file for it (CLI --font-dir, Python fonts= or \
+     font_dir=, Rust to_pdf_with_diagnostics with font files)";
 /// Names where a text layout failure happened, outermost first, so a deck
 /// that cannot be laid out points at the slide and shape to fix.
 fn text_layout_context(error: RenderInputError, prefix: &str) -> RenderInputError {

@@ -139,9 +139,17 @@ fn text_drawn_as_empty_boxes_is_named_with_the_way_out() {
                 line.contains("Chinese, Japanese or Korean ideograph (Han) text has no glyph")
             })
             .unwrap_or_else(|| panic!("{family}: {stderr}"));
+        // A Word render can take system fonts; a deck takes font files only.
+        let way_out = match family {
+            "docx" => "--system-fonts",
+            _ => "--font-dir",
+        };
         assert!(
-            han.contains("drawn as empty boxes") && han.contains("--system-fonts"),
+            han.contains("drawn as empty boxes") && han.contains(way_out),
             "{family}: {han}"
         );
+        if family == "pptx" {
+            assert!(!han.contains("--system-fonts"), "{han}");
+        }
     }
 }

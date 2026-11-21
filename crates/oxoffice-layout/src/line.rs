@@ -910,8 +910,14 @@ impl LineState {
         let x = self.start + self.width;
         let line_end = self.start + self.available;
         let margin = params.available_width;
+        // At the right edge, the first line starts at the left indent, so the
+        // number's stop is the hanging indent past it.
         let hanging = (params.ind_hanging > 0.0).then_some(TabStop {
-            pos_pt: params.ind_left,
+            pos_pt: if params.first_line_at_right {
+                params.ind_left + params.ind_hanging
+            } else {
+                params.ind_left
+            },
             align: TabAlign::Left,
             leader: None,
         });

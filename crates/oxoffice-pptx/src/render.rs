@@ -1560,6 +1560,23 @@ fn validate_export_png_pages(pages: &[std::sync::Arc<PageFrame>], dpi: f64) -> R
     Ok(())
 }
 
+/// The export's text drawn as empty boxes, named once over all its pages
+/// (a slide's text is drawn again in its preview on its notes page), in
+/// place of what the deck's own layout said.
+#[cfg(feature = "render")]
+fn with_export_missing_glyphs(mut result: LayoutResult) -> LayoutResult {
+    let missing = oxoffice_layout::missing_glyph_diagnostics(
+        &result.pages,
+        &result.fonts,
+        oxoffice_pptx_render::MISSING_GLYPH_WAY_OUT,
+    );
+    result
+        .diagnostics
+        .retain(|diagnostic| !diagnostic.message.contains("is drawn as empty boxes"));
+    result.diagnostics.extend(missing);
+    result
+}
+
 #[cfg(feature = "render")]
 fn append_export_font_facts(
     diagnostics: &mut Vec<oxoffice_layout::Diagnostic>,
@@ -1707,7 +1724,7 @@ fn render_notes_pages(
             &mut diagnostics,
         )?;
         let preview = assembly.layout.pages[slide_index].as_ref();
-        let mut page = render_export_surface(
+        let page = render_export_surface(
             &export_package,
             &page_source,
             common,
@@ -1723,7 +1740,7 @@ fn render_notes_pages(
             &mut assembly.font_manager,
             assembly.table_styles.as_ref(),
         )?;
-        diagnostics.append(&mut page.1);
+        diagnostics.extend(page.1);
         append_export_font_facts(&mut diagnostics, &mut seen_font_facts, &page.2);
         pages.push(std::sync::Arc::new(page.0));
     }
@@ -1734,7 +1751,7 @@ fn render_notes_pages(
         Vec::new(),
     );
     result.diagnostics = diagnostics;
-    Ok(result)
+    Ok(with_export_missing_glyphs(result))
 }
 
 #[cfg(feature = "render")]
@@ -1907,7 +1924,7 @@ fn render_handout_pages(
     let mut seen_font_facts = assembly.font_manager.current_font_diagnostics().to_vec();
     for page_index in 0..page_count {
         let common = compose_handout_common(&handout_master, page_index + 1)?;
-        let (mut base, mut page_diagnostics, page_font_facts) = render_export_surface(
+        let (mut base, page_diagnostics, page_font_facts) = render_export_surface(
             package,
             &handout_master_part,
             common,
@@ -1923,7 +1940,7 @@ fn render_handout_pages(
             &mut assembly.font_manager,
             assembly.table_styles.as_ref(),
         )?;
-        diagnostics.append(&mut page_diagnostics);
+        diagnostics.extend(page_diagnostics);
         append_export_font_facts(&mut diagnostics, &mut seen_font_facts, &page_font_facts);
         let start = page_index * capacity;
         let end = (start + capacity).min(assembly.layout.pages.len());
@@ -1951,7 +1968,7 @@ fn render_handout_pages(
         Vec::new(),
     );
     result.diagnostics = diagnostics;
-    Ok(result)
+    Ok(with_export_missing_glyphs(result))
 }
 
 #[cfg(feature = "render")]

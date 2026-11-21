@@ -788,6 +788,24 @@ fn a_control_in_a_right_to_left_paragraph_takes_only_its_text() {
     );
 }
 
+// Word reads left and right as start and end in a right-to-left paragraph,
+// and so does the field's alignment.
+#[test]
+fn a_control_in_a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
+    for (jc, expected) in [
+        ("left", oxoffice_layout::FieldAlignment::Right),
+        ("start", oxoffice_layout::FieldAlignment::Right),
+        ("right", oxoffice_layout::FieldAlignment::Left),
+        ("end", oxoffice_layout::FieldAlignment::Left),
+    ] {
+        let doc = doc_with_body(&format!(
+            r#"<w:p><w:pPr><w:bidi/><w:jc w:val="{jc}"/></w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">שם: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:p>"#
+        ));
+        let layout = doc.layout_with_options(fillable()).unwrap();
+        assert_eq!(layout.layout.form_fields[0].alignment, expected, "jc={jc}");
+    }
+}
+
 #[test]
 fn a_check_box_widget_covers_its_symbol_and_draws_its_other_state() {
     fn check_box(elements: &[PositionedElement]) -> Option<&oxoffice_layout::FormFieldFragment> {

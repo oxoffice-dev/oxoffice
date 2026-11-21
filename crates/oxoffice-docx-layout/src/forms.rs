@@ -1120,15 +1120,15 @@ fn paragraph_alignment(input: &crate::input::LayoutInput, paragraph: &CT_P) -> F
     if let Some(direct) = &paragraph.properties {
         properties.merge_from(direct);
     }
+    // Left and right are start and end in a right-to-left paragraph, as for
+    // its text (`convert::paragraph_alignment`).
     let right_to_left = properties.bidi == Some(true);
-    match properties.jc {
-        Some(ST_Jc::Center) => FieldAlignment::Center,
-        Some(ST_Jc::Right) => FieldAlignment::Right,
-        Some(ST_Jc::Left) => FieldAlignment::Left,
-        Some(ST_Jc::End) if !right_to_left => FieldAlignment::Right,
-        Some(ST_Jc::End) => FieldAlignment::Left,
-        _ if right_to_left => FieldAlignment::Right,
-        _ => FieldAlignment::Left,
+    match (properties.jc, right_to_left) {
+        (Some(ST_Jc::Center), _) => FieldAlignment::Center,
+        (Some(ST_Jc::Right | ST_Jc::End), false) => FieldAlignment::Right,
+        (Some(ST_Jc::Right | ST_Jc::End), true) => FieldAlignment::Left,
+        (_, true) => FieldAlignment::Right,
+        (_, false) => FieldAlignment::Left,
     }
 }
 

@@ -11,9 +11,13 @@ use crate::output::{Diagnostic, FontData, FontId, PageFrame, PositionedElement, 
 ///
 /// The bundled fonts cover Latin, Greek, Cyrillic, Arabic, Hebrew,
 /// Devanagari and Thai, and only a few characters of Chinese, Japanese and
-/// Korean: the message names the script and the way out, system fonts or a
-/// font file of the caller's.
-pub fn missing_glyph_diagnostics(pages: &[Arc<PageFrame>], fonts: &[FontData]) -> Vec<Diagnostic> {
+/// Korean: the message names the script and ends with `way_out`, how the
+/// caller's family gets a font for it (system fonts, a font file).
+pub fn missing_glyph_diagnostics(
+    pages: &[Arc<PageFrame>],
+    fonts: &[FontData],
+    way_out: &str,
+) -> Vec<Diagnostic> {
     let faces: HashMap<FontId, &FontData> = fonts.iter().map(|font| (font.id, font)).collect();
     let mut parsed: HashMap<FontId, Option<ttf_parser::Face<'_>>> = HashMap::new();
     let mut missing: BTreeMap<&'static str, BTreeSet<char>> = BTreeMap::new();
@@ -55,16 +59,13 @@ pub fn missing_glyph_diagnostics(pages: &[Arc<PageFrame>], fonts: &[FontData]) -
         .map(|(script, characters)| {
             let sample: String = characters.iter().take(3).collect();
             let count = match characters.len() {
-                1 => "1 character".to_owned(),
-                count => format!("{count} characters"),
+                1 => "1 distinct character".to_owned(),
+                count => format!("{count} distinct characters"),
             };
             Diagnostic {
                 message: format!(
                     "{script} text has no glyph in the fonts used and is drawn as empty boxes \
-                     ({count}, such as \"{sample}\"): render with system fonts (CLI \
-                     --system-fonts, Python system_fonts=True, Rust \
-                     RenderOptions::with_system_fonts) on a machine with a font for it, or \
-                     pass a font file"
+                     ({count}, such as \"{sample}\"): {way_out}"
                 ),
             }
         })
@@ -72,14 +73,22 @@ pub fn missing_glyph_diagnostics(pages: &[Arc<PageFrame>], fonts: &[FontData]) -
 }
 
 /// Whether a character is drawn with a glyph of its own: not white space,
-/// a control or a zero-width format character.
+/// a control, a zero-width format character, a variation selector or a
+/// combining mark (which a font may draw composed with its base).
 fn draws_a_glyph(character: char) -> bool {
     !character.is_whitespace()
         && !character.is_control()
         && !matches!(
             character,
-            '\u{00ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}'
-                | '\u{2066}'..='\u{2069}' | '\u{feff}'
+            '\u{00ad}'
+                | '\u{0300}'..='\u{036f}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{fe00}'..='\u{fe0f}'
+                | '\u{feff}'
+                | '\u{e0100}'..='\u{e01ef}'
         )
 }
 

@@ -856,3 +856,31 @@ fn a_table_drawn_without_its_borders_is_reported() {
     });
     assert_eq!(found, [(Check::Tables, 3)]);
 }
+
+#[test]
+fn a_deck_names_its_text_drawn_as_boxes_once_with_the_font_file_way_out() {
+    let deck = crate::support::corpus_deck("powerpoint/multilingual.pptx");
+    let han = |messages: &[oxoffice_layout::Diagnostic]| -> Vec<String> {
+        messages
+            .iter()
+            .map(|diagnostic| diagnostic.message.clone())
+            .filter(|message| {
+                message.starts_with("Chinese, Japanese or Korean ideograph (Han) text has no glyph")
+            })
+            .collect()
+    };
+    let (_, slides) = deck.to_pdf_with_diagnostics(&[]).unwrap();
+    // The notes pages draw each slide again in their preview: the export
+    // still names the boxes once, over all its pages.
+    let (_, notes) = deck.to_notes_pdf_with_diagnostics(&[]).unwrap();
+    for (export, messages) in [("slides", &slides), ("notes", &notes)] {
+        let found = han(messages);
+        assert_eq!(found.len(), 1, "{export}: {messages:#?}");
+        assert!(found[0].contains("--font-dir"), "{export}: {}", found[0]);
+        assert!(
+            !found[0].contains("--system-fonts"),
+            "{export}: {}",
+            found[0]
+        );
+    }
+}
