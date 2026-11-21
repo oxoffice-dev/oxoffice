@@ -122,10 +122,7 @@ def test_a_string_date_is_refused(package, field):
         setattr(doc.core_properties, field, "2026-11-21T10:00:00Z")
 
 
-@pytest.mark.parametrize("package", [
-    oxdocx,
-    pytest.param(oxpptx, marks=pytest.mark.xfail(strict=True, reason="#303: PowerPoint keeps an empty date element")),
-], ids=["docx", "pptx"])
+@BOTH
 @pytest.mark.parametrize("field", FIELDS)
 def test_none_removes_a_date(package, field):
     doc = with_stored_date(package, field, "2026-11-21T10:00:00Z")

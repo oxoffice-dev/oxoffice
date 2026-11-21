@@ -29,7 +29,29 @@ impl Presentation {
     }
 
     /// Changes known core fields while retaining every unowned imported byte.
-    pub fn set_core_properties(&mut self, properties: CoreProperties) -> Result<()> {
+    pub fn set_core_properties(&mut self, mut properties: CoreProperties) -> Result<()> {
+        // An empty value reads back as no value: it removes the property.
+        for value in [
+            &mut properties.title,
+            &mut properties.creator,
+            &mut properties.subject,
+            &mut properties.description,
+            &mut properties.keywords,
+            &mut properties.last_modified_by,
+            &mut properties.created,
+            &mut properties.modified,
+            &mut properties.category,
+            &mut properties.content_status,
+            &mut properties.identifier,
+            &mut properties.language,
+            &mut properties.last_printed,
+            &mut properties.revision,
+            &mut properties.version,
+        ] {
+            if value.as_deref() == Some("") {
+                *value = None;
+            }
+        }
         // An unchanged field keeps the bytes the file wrote, so only a value
         // the file does not hold is refused.
         let held = self
@@ -645,11 +667,13 @@ fn patch_application_properties(
             ));
         }
         if let Some((_, _, start, end)) = matches.first() {
-            edits.push((
-                *start,
-                *end,
-                edit_property_text(&source[*start..*end], after.as_deref())?,
-            ));
+            // A removed value removes its element: an empty count or flag is
+            // not a valid value.
+            let retained = match &after {
+                Some(value) => edit_property_text(&source[*start..*end], Some(value))?,
+                None => Vec::new(),
+            };
+            edits.push((*start, *end, retained));
         } else if let Some(value) = after {
             append.extend(
                 format!(
@@ -1032,7 +1056,12 @@ pub(crate) fn patch_core_properties(
             format!("<{prefix}:{name} xmlns:{prefix}=\"{uri}\"{typed}>{}</{prefix}:{name}>", oxoffice_core::xml::escape_text(value)).into_bytes()
         }).unwrap_or_default();
         if let Some((_, _, start, end)) = matches.first() {
-            let retained = edit_property_text(&source[*start..*end], after.as_deref())?;
+            // A removed value removes its element: an empty W3CDTF date or
+            // revision is not a valid value.
+            let retained = match after {
+                Some(value) => edit_property_text(&source[*start..*end], Some(value))?,
+                None => Vec::new(),
+            };
             edits.push((*start, *end, retained));
         } else {
             append.extend(replacement);
