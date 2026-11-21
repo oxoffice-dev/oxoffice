@@ -39,7 +39,9 @@ on the work. The repository is public, so this costs time, not money.
 - `workflow_dispatch` runs everything, like `main`.
 - `main` is unchanged: every job on the three platforms, every scaling call.
   (Superseded in part by [nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md):
-  a push to `main` now times the scaling calls on Linux only.)
+  a push to `main` now times the scaling calls on Linux only; and by
+  [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md):
+  a push to `main` now builds and tests on Linux only.)
 
 Per push: 8 jobs become 6 for a ready pull request into `main`, 3 for a
 draft or a stacked one.

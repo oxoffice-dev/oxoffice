@@ -158,10 +158,15 @@ entry and closes the issue.
   draft builds and tests on Linux, macOS and Windows and times the QUICK
   scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
   A draft, or one whose base is another branch, runs lint, WebAssembly and
-  the Linux build only. A push to `main` builds and tests on the three
-  platforms and times every scaling call on Linux. The nightly run (02:23 UTC)
-  and `workflow_dispatch` run every job, every scaling call included, on the
-  three platforms.
+  the Linux build only. A push to `main` builds, tests and times every
+  scaling call on Linux only: its pull request ran the three platforms. The
+  nightly run (02:23 UTC) and `workflow_dispatch` run every job, every
+  scaling call included, on the three platforms.
+- **`main` keeps one run waiting.** A run of `main` in progress always
+  finishes; a newer push replaces the run that waits (concurrency group
+  `ci-main`), so a burst of merges builds the first commit and the last. A
+  failure first seen on `main` may come from a commit whose run was
+  replaced: find it like a red nightly run, below.
 - **A red nightly run is a red `main`.** Look at it with
   `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
   (or fixes it) the same day; a release waits for a green nightly run (see

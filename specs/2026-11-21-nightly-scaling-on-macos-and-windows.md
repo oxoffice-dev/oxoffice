@@ -25,7 +25,8 @@ of work.
   request into `main`.
 
 Not here: the merge queue and a single pending run of `main`, which come
-with their own spec.
+with their own spec (the second:
+[main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md)).
 
 ## Outcome
 
