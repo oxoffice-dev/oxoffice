@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -564,7 +564,7 @@ impl CT_LineProperties {
         if let Some(cap) = self.cap {
             start.push_attribute(("cap", cap.as_str()));
         }
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         if self.fill.is_none()
             && self.dash.is_none()
             && self.join.is_none()
@@ -913,12 +913,6 @@ fn capture_raw_attributes(
         raw.push((name, value));
     }
     Ok(raw)
-}
-
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
 }
 
 fn invalid(start: &BytesStart<'_>, attribute: &[u8], value: String) -> LineError {

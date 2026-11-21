@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::xml::{local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -517,7 +517,7 @@ impl CT_ShapeProperties {
     /// Writes shape properties under the caller's required root name.
     pub fn write_xml_as<W: Write>(&self, writer: &mut Writer<W>, name: &str) -> Result<()> {
         let mut start = BytesStart::new(name);
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         if self.transform.is_none()
             && self.custom_geometry.is_none()
             && self.preset_geometry.is_none()
@@ -927,12 +927,6 @@ fn capture_raw_attributes(start: &BytesStart<'_>) -> Result<Vec<(String, String)
         raw.push((name, value));
     }
     Ok(raw)
-}
-
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
 }
 
 fn element_name(element: &BytesStart<'_>) -> String {
