@@ -1,5 +1,7 @@
 //! Inserting, finding and removing body content, and whether the body still saves after an edit.
 
+use std::collections::BTreeSet;
+
 use super::*;
 
 impl Document {
@@ -159,7 +161,7 @@ impl Document {
         )
     }
 
-    fn refuse_unsavable_body_edit(&self) -> Result<()> {
+    pub(super) fn refuse_unsavable_body_edit(&self) -> Result<()> {
         match self.unsavable_body_edit() {
             Some(reason) => Err(Error::Other(reason.to_owned())),
             None => Ok(()),
@@ -855,7 +857,8 @@ impl Document {
         self.try_remove_content(index).unwrap_or(false)
     }
 
-    /// Remove a direct body child and its wholly owned comment threads.
+    /// Remove a direct body child and its wholly owned comment threads, and
+    /// the footnotes and endnotes nothing else references after it goes.
     /// Partial comment cuts and unprovable companion ownership fail atomically.
     pub fn try_remove_content(&mut self, index: usize) -> Result<bool> {
         if index >= self.document.body.content.len() {
@@ -867,19 +870,117 @@ impl Document {
             return Ok(true);
         }
         let mut candidate = self.clone_for_staging();
-        let referenced_before = xml_attribute_values(&candidate.document.to_xml()?)?;
+        let before = candidate.document.to_xml()?;
+        let referenced_before = xml_attribute_values(&before)?;
         candidate.document.body.remove(index);
-        let referenced_after = xml_attribute_values(&candidate.document.to_xml()?)?;
+        let after = candidate.document.to_xml()?;
+        let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
         candidate.release_unreferenced_images(&owner, &referenced_before, &referenced_after);
+        candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(true)
     }
 
+    /// The main part as a save would write it now: the model flushed first.
+    pub(crate) fn main_part_snapshot(&mut self) -> Result<Vec<u8>> {
+        self.flush_to_package()?;
+        Ok(self
+            .package
+            .get_part(&self.doc_part_name)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default())
+    }
+
+    /// Remove the footnotes and endnotes the main part referenced `before`
+    /// a cut and nothing references `after` it, neither the main part nor a
+    /// header or footer, as Word does when it deletes the text holding their
+    /// marks. No reference to them is left, so the main part keeps its
+    /// cut: a notes part that loses notes is rewritten once, and the
+    /// pictures only those notes showed go with them. A note whose id its
+    /// part holds twice stays, a reference to an id the part does not hold
+    /// is passed over, and a part whose notes cannot be matched one to one
+    /// with its owners keeps all of them.
+    pub(crate) fn remove_unreferenced_notes(&mut self, before: &[u8], after: &[u8]) -> Result<()> {
+        let referenced = note_reference_ids_in(before)?;
+        if referenced.is_empty() {
+            return Ok(());
+        }
+        let mut kept = note_reference_ids_in(after)?;
+        for (rel_id, is_header) in self.header_footer_rel_ids() {
+            if let Some(part) = self.header_footer_part_name(&rel_id, is_header)
+                && let Some(xml) = self.package.get_part(&part)
+            {
+                let story = note_reference_ids_in(xml)?;
+                kept.footnotes.extend(story.footnotes);
+                kept.endnotes.extend(story.endnotes);
+            }
+        }
+        let gone = NoteReferenceIds {
+            footnotes: &referenced.footnotes - &kept.footnotes,
+            endnotes: &referenced.endnotes - &kept.endnotes,
+        };
+        if gone.is_empty() {
+            return Ok(());
+        }
+        self.flush_to_package()?;
+        for (kind, ids) in [
+            (StoryKind::Footnote, &gone.footnotes),
+            (StoryKind::Endnote, &gone.endnotes),
+        ] {
+            if ids.is_empty() {
+                continue;
+            }
+            let Some(part_name) = self.note_part_name(kind)? else {
+                continue;
+            };
+            let Some(xml) = self.package.get_part(&part_name) else {
+                continue;
+            };
+            // Normal notes in part order, matched to their owners in the
+            // same order, as `note_story` matches them.
+            let normal = oxoffice_docx_oxml::footnotes::CT_Footnotes::from_xml(xml)?
+                .footnotes
+                .iter()
+                .filter(|note| note.note_type == oxoffice_docx_oxml::footnotes::NoteType::Normal)
+                .map(|note| note.id)
+                .collect::<Vec<_>>();
+            let owners = scan_story_owners(xml, kind)?
+                .into_iter()
+                .filter(|owner| owner.kind == kind)
+                .collect::<Vec<_>>();
+            if owners.len() != normal.len() {
+                continue;
+            }
+            let mut ranges = Vec::new();
+            for &id in ids {
+                let mut matching = normal.iter().enumerate().filter(|(_, note)| **note == id);
+                if let (Some((index, _)), None) = (matching.next(), matching.next()) {
+                    ranges.push(owners[index].full.clone());
+                }
+            }
+            if ranges.is_empty() {
+                continue;
+            }
+            ranges.sort_by_key(|range| range.start);
+            let mut notes_xml = xml.to_vec();
+            for range in ranges.into_iter().rev() {
+                notes_xml.drain(range);
+            }
+            // Pictures only the removed notes showed go with them.
+            let referenced_before = xml_attribute_values(xml)?;
+            let referenced_after = xml_attribute_values(&notes_xml)?;
+            self.release_unreferenced_images(&part_name, &referenced_before, &referenced_after);
+            set_story_source_xml(self, &part_name, notes_xml)?;
+        }
+        Ok(())
+    }
+
     /// Remove the half-open direct body range `[start, end)`.
     ///
+    /// The footnotes and endnotes nothing else references afterwards go too.
     /// An empty range removes nothing and returns 0. A reversed or
     /// out-of-bounds range returns an error and leaves the document unchanged.
     /// The call does not walk into tables.
@@ -900,16 +1001,85 @@ impl Document {
             return Ok(end - start);
         }
         let mut candidate = self.clone_for_staging();
-        let referenced_before = xml_attribute_values(&candidate.document.to_xml()?)?;
+        let before = candidate.document.to_xml()?;
+        let referenced_before = xml_attribute_values(&before)?;
         for index in (start..end).rev() {
             candidate.document.body.remove(index);
         }
-        let referenced_after = xml_attribute_values(&candidate.document.to_xml()?)?;
+        let after = candidate.document.to_xml()?;
+        let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
         candidate.release_unreferenced_images(&owner, &referenced_before, &referenced_after);
+        candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(end - start)
     }
+}
+
+/// The footnote and endnote ids some references name.
+#[derive(Default)]
+struct NoteReferenceIds {
+    footnotes: BTreeSet<i32>,
+    endnotes: BTreeSet<i32>,
+}
+
+impl NoteReferenceIds {
+    fn is_empty(&self) -> bool {
+        self.footnotes.is_empty() && self.endnotes.is_empty()
+    }
+}
+
+/// The ids every `w:footnoteReference` and `w:endnoteReference` of a part
+/// names, however deep it sits: in a tracked change, a content control, a
+/// text box or unmodelled XML.
+fn note_reference_ids_in(xml: &[u8]) -> Result<NoteReferenceIds> {
+    let mut reader = NsReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut ids = NoteReferenceIds::default();
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("note reference scan failed: {error}")))?;
+        let (start, footnote) = match &event {
+            Event::Start(start) | Event::Empty(start) if word_element(&namespace) => {
+                match start.local_name().as_ref() {
+                    b"footnoteReference" => (start, true),
+                    b"endnoteReference" => (start, false),
+                    _ => {
+                        buffer.clear();
+                        continue;
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        for attribute in start.attributes() {
+            let attribute = attribute.map_err(|error| {
+                Error::Other(format!("note reference attribute scan failed: {error}"))
+            })?;
+            let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+            if word_element(&namespace) && local.as_ref() == b"id" {
+                let value = attribute
+                    .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                    .map_err(|error| {
+                        Error::Other(format!("note reference ID is invalid: {error}"))
+                    })?;
+                if let Ok(id) = value.parse::<i32>() {
+                    if footnote {
+                        ids.footnotes.insert(id);
+                    } else {
+                        ids.endnotes.insert(id);
+                    }
+                }
+            }
+        }
+        buffer.clear();
+    }
+    Ok(ids)
 }

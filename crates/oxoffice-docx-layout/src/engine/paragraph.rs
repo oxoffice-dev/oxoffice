@@ -424,13 +424,7 @@ fn layout_paragraph_with_source_and_table(
         .map(|pitch| pitch.to_pt())
         .filter(|pitch| *pitch > 0.0);
 
-    // Parse shading color
-    let shading = effective_ppr
-        .shading
-        .as_ref()
-        .and_then(|shd| shd.fill.as_ref())
-        .filter(|f| f != &"auto")
-        .map(|f| Color::from_hex(f));
+    let shading = effective_ppr.shading.as_deref().and_then(shading_color);
     // Text in the automatic colour contrasts with the fill behind it, the
     // paragraph's own or else the cell's.
     let automatic_color = automatic_text_color(shading.or(cell_shading));
@@ -529,12 +523,17 @@ fn layout_paragraph_with_source_and_table(
                 ) {
                     push_unique_diagnostic(diagnostics, message);
                 }
+                // The number takes the fill of its level's run properties,
+                // as a run does, and automatic ink contrasts with it.
+                let marker_fill = run_fill(&marker_rpr);
                 let color = marker_rpr
                     .color
                     .as_ref()
                     .filter(|c| c.as_str() != "auto")
                     .map(|c| Color::from_hex(c))
-                    .unwrap_or(automatic_color);
+                    .unwrap_or_else(|| {
+                        marker_fill.map_or(automatic_color, |fill| automatic_text_color(Some(fill)))
+                    });
 
                 // The level's run properties affect numbering ink, not the
                 // counter or paragraph heading. The suffix keeps its normal
@@ -574,7 +573,7 @@ fn layout_paragraph_with_source_and_table(
                         underline: None,
                         strike: false,
                         dstrike: false,
-                        highlight: None,
+                        highlight: marker_fill,
                         baseline_offset: 0.0,
                         hyperlink_url: None,
                         field_kind: None,
@@ -623,7 +622,7 @@ fn layout_paragraph_with_source_and_table(
                             underline: None,
                             strike: false,
                             dstrike: false,
-                            highlight: None,
+                            highlight: marker_fill,
                             baseline_offset: 0.0,
                             hyperlink_url: None,
                             field_kind: None,
@@ -974,16 +973,20 @@ fn layout_paragraph_with_source_and_table(
             word_font_slot_for_text(&run_text, effective_rpr.font_hint.as_deref()),
         );
 
+        // The run's own fill, drawn behind its text, and the automatic
+        // colour that contrasts with it.
+        let highlight = run_fill(&effective_rpr);
+        let run_automatic_color =
+            highlight.map_or(automatic_color, |fill| automatic_text_color(Some(fill)));
         // Resolve color: theme color takes priority over literal color value
         let (color, underline) = tracked_marks(
             &projected,
             input.revision_style,
-            resolve_run_color(&effective_rpr, input.theme.as_ref(), automatic_color),
+            resolve_run_color(&effective_rpr, input.theme.as_ref(), run_automatic_color),
             convert::underline(effective_rpr.underline),
         );
         let strike = projected.force_strike || effective_rpr.strike.unwrap_or(false);
         let dstrike = effective_rpr.dstrike.unwrap_or(false);
-        let highlight = effective_rpr.highlight.and_then(highlight_to_color);
 
         // Superscript/subscript handling
         let mut baseline_offset = 0.0;
@@ -1487,16 +1490,22 @@ fn layout_paragraph_with_source_and_table(
                             input.theme.as_ref(),
                             word_font_slot_for_text(value, segment_rpr.font_hint.as_deref()),
                         );
+                        let segment_highlight = run_fill(&segment_rpr);
+                        let segment_automatic_color = segment_highlight
+                            .map_or(automatic_color, |fill| automatic_text_color(Some(fill)));
                         let (segment_color, segment_underline) = tracked_marks(
                             &projected,
                             input.revision_style,
-                            resolve_run_color(&segment_rpr, input.theme.as_ref(), automatic_color),
+                            resolve_run_color(
+                                &segment_rpr,
+                                input.theme.as_ref(),
+                                segment_automatic_color,
+                            ),
                             convert::underline(segment_rpr.underline),
                         );
                         let segment_strike =
                             projected.force_strike || segment_rpr.strike.unwrap_or(false);
                         let segment_dstrike = segment_rpr.dstrike.unwrap_or(false);
-                        let segment_highlight = segment_rpr.highlight.and_then(highlight_to_color);
                         let mut segment_baseline_offset = 0.0;
                         if let Some(vertical) = segment_rpr.vert_align.as_deref() {
                             match vertical {

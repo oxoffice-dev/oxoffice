@@ -395,8 +395,9 @@ fn raw_is_last_rendered_page_break(raw_xml: &[u8]) -> bool {
     local == NAME
 }
 
-/// Underline style for runs.
+/// Underline style for runs: every `w:u` value of the spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnderlineStyle {
     None,
     Single,
@@ -406,6 +407,16 @@ pub enum UnderlineStyle {
     Dash,
     Wave,
     Words,
+    DotDash,
+    DotDotDash,
+    DottedHeavy,
+    DashedHeavy,
+    DashLong,
+    DashLongHeavy,
+    DashDotHeavy,
+    DashDotDotHeavy,
+    WavyHeavy,
+    WavyDouble,
 }
 
 impl UnderlineStyle {
@@ -419,11 +430,22 @@ impl UnderlineStyle {
             Self::Thick => 6,
             Self::Dash => 7,
             Self::Wave => 11,
+            Self::DotDash => 9,
+            Self::DotDotDash => 10,
+            Self::DottedHeavy => 20,
+            Self::DashedHeavy => 23,
+            Self::DashDotHeavy => 25,
+            Self::DashDotDotHeavy => 26,
+            Self::WavyHeavy => 27,
+            Self::DashLong => 39,
+            Self::WavyDouble => 43,
+            Self::DashLongHeavy => 55,
         }
     }
 }
 
-fn underline_from_code(code: i32) -> Option<ST_Underline> {
+/// The `w:u` value of a Word `WdUnderline` code, the one language bindings use.
+pub fn underline_from_code(code: i32) -> Option<ST_Underline> {
     match code {
         0 => Some(ST_Underline::None),
         1 => Some(ST_Underline::Single),
@@ -435,6 +457,15 @@ fn underline_from_code(code: i32) -> Option<ST_Underline> {
         9 => Some(ST_Underline::DotDash),
         10 => Some(ST_Underline::DotDotDash),
         11 => Some(ST_Underline::Wave),
+        // Word's WdUnderline values for the heavy and long styles.
+        20 => Some(ST_Underline::DottedHeavy),
+        23 => Some(ST_Underline::DashedHeavy),
+        25 => Some(ST_Underline::DashDotHeavy),
+        26 => Some(ST_Underline::DashDotDotHeavy),
+        27 => Some(ST_Underline::WavyHeavy),
+        39 => Some(ST_Underline::DashLong),
+        43 => Some(ST_Underline::WavyDouble),
+        55 => Some(ST_Underline::DashLongHeavy),
         _ => None,
     }
 }
@@ -451,6 +482,14 @@ fn underline_to_code(value: ST_Underline) -> i32 {
         ST_Underline::DotDash => 9,
         ST_Underline::DotDotDash => 10,
         ST_Underline::Wave => 11,
+        ST_Underline::DottedHeavy => 20,
+        ST_Underline::DashedHeavy => 23,
+        ST_Underline::DashDotHeavy => 25,
+        ST_Underline::DashDotDotHeavy => 26,
+        ST_Underline::WavyHeavy => 27,
+        ST_Underline::DashLong => 39,
+        ST_Underline::WavyDouble => 43,
+        ST_Underline::DashLongHeavy => 55,
     }
 }
 

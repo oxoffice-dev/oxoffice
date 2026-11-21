@@ -144,48 +144,6 @@ pub(super) fn body_index_argument(
     })
 }
 
-pub(crate) fn checked_section_length(
-    value: Option<&Bound<'_, PyAny>>,
-    name: &str,
-) -> PyResult<Option<i64>> {
-    value
-        .map(|value| {
-            if value.is_instance_of::<PyBool>() {
-                return Err(PyTypeError::new_err(format!(
-                    "{name} must be an integer EMU length, not bool"
-                )));
-            }
-            value.extract::<i64>()
-        })
-        .transpose()
-}
-
-// Public update_section has an explicit-unit contract. Other consumers of
-// checked_section_length, including live Section setters, keep their EMU API.
-pub(super) fn checked_update_section_length(
-    py: Python<'_>,
-    value: Option<&Bound<'_, PyAny>>,
-    name: &str,
-) -> PyResult<Option<i64>> {
-    if let Some(value) = value
-        && !value.is_instance_of::<pyo3::types::PyInt>()
-    {
-        return Err(PyTypeError::new_err(format!(
-            "{name} requires Length or zero; use Twips or Emu"
-        )));
-    }
-    let emu = checked_section_length(value, name)?;
-    if let Some(value) = value
-        && emu != Some(0)
-        && !value.is_instance(&py.import("oxoffice.docx.shared")?.getattr("Length")?)?
-    {
-        return Err(PyValueError::new_err(format!(
-            "update_section {name} nonzero geometry requires explicit Length; use Twips(1440) or Emu(value)"
-        )));
-    }
-    Ok(emu)
-}
-
 /// A section length the caller gave, its explicit value, or its layout default.
 pub(super) fn given_or_current_length(
     given: Option<i64>,

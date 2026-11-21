@@ -142,13 +142,17 @@ impl Document {
     }
 
     /// Delete one logical grid column without publishing partial topology.
+    /// The footnotes and endnotes only the removed cells referenced go too.
     pub fn delete_table_column(&mut self, table_index: usize, index: usize) -> Result<()> {
         let mut candidate = self.clone_for_staging();
+        let before = candidate.document.to_xml()?;
         let table = candidate
             .table_mut(table_index)
             .ok_or_else(|| Error::Other(format!("table index {table_index} is out of range")))?
             .inner;
         crate::table::remove_grid_column(table, index)?;
+        let after = candidate.document.to_xml()?;
+        candidate.remove_unreferenced_notes(&before, &after)?;
         let part_name = candidate.doc_part_name.clone();
         candidate.reconcile_cut_table_bookmarks(self, &part_name)?;
         candidate.reconcile_comment_removal(self)?;
@@ -254,8 +258,10 @@ impl Document {
     /// vertical merge that continues below, the next row becomes its start.
     /// Preserved table children stay at their original logical boundaries.
     /// The document is unchanged on error.
+    /// The footnotes and endnotes only the removed cells referenced go too.
     pub fn remove_table_row(&mut self, table_index: usize, row_index: usize) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
+        let before = candidate.document.to_xml()?;
         let table = candidate
             .table_mut(table_index)
             .ok_or_else(|| Error::Other(format!("table index {table_index} is out of range")))?
@@ -292,6 +298,8 @@ impl Document {
         }
         table.rows.remove(row_index);
         validate_table_topology(table)?;
+        let after = candidate.document.to_xml()?;
+        candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -299,6 +307,7 @@ impl Document {
     }
 
     /// Delete a logical column in one checked related table and publish once.
+    /// The footnotes and endnotes only the removed cells referenced go too.
     #[doc(hidden)]
     pub fn delete_story_table_column(
         &mut self,
@@ -306,9 +315,20 @@ impl Document {
         column: usize,
     ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
+        // Only the main part holds note references.
+        let in_main = location.story().part_name() == candidate.doc_part_name;
+        let before = if in_main {
+            candidate.main_part_snapshot()?
+        } else {
+            Vec::new()
+        };
         let mut table = candidate.story_table_model(location)?;
         crate::table::remove_grid_column(&mut table, column)?;
         candidate.replace_story_content(location, ContentFragment::table(table)?)?;
+        if in_main {
+            let after = candidate.main_part_snapshot()?;
+            candidate.remove_unreferenced_notes(&before, &after)?;
+        }
         candidate.reconcile_cut_table_bookmarks(self, location.story().part_name())?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -350,6 +370,7 @@ impl Document {
     }
 
     /// Remove one row from a checked related table while preserving owned boundaries.
+    /// The footnotes and endnotes only the removed cells referenced go too.
     #[doc(hidden)]
     pub fn remove_story_table_row(
         &mut self,
@@ -357,6 +378,13 @@ impl Document {
         row_index: usize,
     ) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
+        // Only the main part holds note references.
+        let in_main = location.story().part_name() == candidate.doc_part_name;
+        let before = if in_main {
+            candidate.main_part_snapshot()?
+        } else {
+            Vec::new()
+        };
         let mut table = candidate.story_table_model(location)?;
         if row_index >= table.rows.len() {
             return Err(Error::Other(
@@ -390,6 +418,11 @@ impl Document {
         table.rows.remove(row_index);
         validate_table_topology(&table)?;
         candidate.replace_story_content(location, ContentFragment::table(table)?)?;
+        if in_main {
+            let after = candidate.main_part_snapshot()?;
+            candidate.remove_unreferenced_notes(&before, &after)?;
+        }
+        candidate.reconcile_comment_removal(self)?;
         self.commit_staged_mutation(candidate);
         Ok(true)
     }
@@ -440,6 +473,7 @@ impl Document {
             source_story_kind: None,
             source_owner_index: None,
             namespace_scope,
+            relationships: Vec::new(),
         };
         let freshened = freshen_content_fragment_identities(self, &fragment)?;
         let closed = close_content_fragment_namespaces(&freshened, &fragment.namespace_scope)?;

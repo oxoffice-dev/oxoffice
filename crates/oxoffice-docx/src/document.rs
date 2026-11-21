@@ -161,6 +161,7 @@ use headers_footers::{
     header_footer_story_has_expected_root, header_type_index, materialize_header_footer_inheritance,
 };
 use media::chart_with_workbook_relationship;
+pub use numbering::{ListItemKind, NumberingJournal};
 pub use replace::ReplacementCountMismatch;
 
 mod drawing_xml;
@@ -185,7 +186,7 @@ use identifiers::{
     IdentifierDefinition, IdentifierXmlCategory, frame_drawings_are_absent,
     identifier_xml_is_well_formed, read_child_canonical_facts, relationship_owner_identity,
     reserve_lowest_i32, reserve_part_from_set, reserve_relationship_from_cursor, reserve_u32,
-    scan_identifier_definitions, split_relationship_ids_at_head,
+    reserve_u32_or_lowest_free, scan_identifier_definitions, split_relationship_ids_at_head,
 };
 pub(crate) use main_part::{CommentParagraphRead, CommentParagraphValue};
 use main_part::{
@@ -255,11 +256,12 @@ use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context
 use fragment_checks::{
     WordXmlOwner, content_fragment_for_insertion, fragment_content_boundary, fragment_uses_w14,
     freshen_content_fragment_identities, insert_story_fragment, physical_table_cell_owner,
-    reject_section_owning_content_fragment, serialize_content_fragment, standalone_body_item_span,
-    story_owner_content_end, story_owner_content_end_in, validate_element_owner_relationships,
-    validate_element_xml_identity_change, validate_fragment_block_item,
-    validate_fragment_relationships, validate_serialized_block_content_control,
-    validated_content_boundary, validated_direct_content_item, xml_1_0_whitespace,
+    referenced_relationships, reject_section_owning_content_fragment, serialize_content_fragment,
+    standalone_body_item_span, story_owner_content_end, story_owner_content_end_in,
+    validate_element_owner_relationships, validate_element_xml_identity_change,
+    validate_fragment_block_item, validate_fragment_relationships,
+    validate_serialized_block_content_control, validated_content_boundary,
+    validated_direct_content_item, without_w14_identities, xml_1_0_whitespace,
 };
 pub(crate) use fragment_checks::{
     close_content_fragment_namespaces, package_authoritative_body_fragment,
@@ -405,6 +407,10 @@ pub struct ContentFragment {
     source_story_kind: Option<StoryKind>,
     source_owner_index: Option<usize>,
     namespace_scope: BTreeMap<String, String>,
+    /// The relationships of its source part that the fragment references, as
+    /// they were where it was taken (empty when it was built, not taken), so
+    /// that an insertion where those ids name something else is refused.
+    relationships: Vec<(oxoffice_opc::relationship::Relationship, Option<u64>)>,
 }
 
 /// An owned story range and the package dependencies it can reach.
@@ -912,6 +918,11 @@ pub struct Document {
     pub(crate) comments_extended_owned: bool,
     /// Embedded identities whose retained signature evidence is known invalid.
     pub(crate) embedded_invalidated_signatures: HashSet<(String, String)>,
+    /// Image relationships (owner part, id) that `remove_content_at` left
+    /// unreferenced. They stay until the document is written, so a removed
+    /// fragment can be inserted again; the output drops those still
+    /// unreferenced then, with their media when nothing else reaches it.
+    pub(crate) freed_image_relationships: Vec<(String, String)>,
     /// Whether retained package signature evidence is known invalid.
     pub(crate) package_signatures_invalidated: bool,
     /// The file this document was opened from, canonical, which `save`
@@ -1696,6 +1707,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
+            freed_image_relationships: Vec::new(),
             package_signatures_invalidated: false,
             source_path: None,
             glossary: None,

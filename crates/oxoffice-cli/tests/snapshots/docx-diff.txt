@@ -1,0 +1,16 @@
+added
+changed
+differences
+differences[].change
+differences[].location_a
+differences[].location_b
+differences[].story
+differences[].text_a
+differences[].text_b
+file_a
+file_b
+not_compared
+removed
+revision_view
+schema
+scope

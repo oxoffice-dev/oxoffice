@@ -1,0 +1,2 @@
+removed body: "" -> "-"
+changed footer: "SC-40 User and Maintenance Manual, versi" -> "SC-40 User and Maintenance Manual, versi"

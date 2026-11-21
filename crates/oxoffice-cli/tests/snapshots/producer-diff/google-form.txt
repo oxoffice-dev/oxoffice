@@ -1,0 +1,2 @@
+changed body: " I confirm that the information in this " -> "☐ I confirm that the information in this"
+changed table_cell: " Yes" -> "☒ Yes"

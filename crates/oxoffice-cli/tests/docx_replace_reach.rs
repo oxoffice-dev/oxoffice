@@ -140,6 +140,38 @@ fn replace_map_names_the_pair_left_out_of_reach() {
 }
 
 #[test]
+fn replace_map_with_a_wrong_count_writes_nothing_and_leaves_the_input_as_it_was() {
+    let scratch = Scratch::new("count");
+    let input = scratch.split_report("google");
+    let before = fs::read(&input).unwrap();
+    let map = scratch.0.join("pairs.json");
+    fs::write(
+        &map,
+        r#"[{"placeholder": "ACME plain", "value": "Globex plain", "expect": 1},
+            {"placeholder": "Northwind", "value": "Southwind", "expect": 7}]"#,
+    )
+    .unwrap();
+    let output = scratch.0.join("out.docx");
+    let refused = oxoffice(&[
+        "docx",
+        "replace",
+        input.to_str().unwrap(),
+        "--map",
+        map.to_str().unwrap(),
+        "-o",
+        output.to_str().unwrap(),
+    ]);
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("pair 1: expected 7 replacement(s) of \"Northwind\", found 1"),
+        "{stderr}"
+    );
+    assert!(!output.exists(), "the first pair is not published alone");
+    assert_eq!(fs::read(&input).unwrap(), before);
+}
+
+#[test]
 fn allow_unreached_is_refused_with_regex() {
     let scratch = Scratch::new("regex");
     let input = scratch.split_report("word");

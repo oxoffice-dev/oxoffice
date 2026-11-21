@@ -598,7 +598,8 @@ impl PyColumn {
     }
 
     #[setter]
-    fn set_width(&self, py: Python<'_>, width: i64) -> PyResult<()> {
+    fn set_width(&self, py: Python<'_>, width: &Bound<'_, PyAny>) -> PyResult<()> {
+        let width = crate::required_length(width, "Column.width", crate::LengthUnit::Emu)?;
         validate_path(py, &self.presentation.borrow(py), &self.path, "column", "")?;
         let column = cell_index(&self.path)
             .ok_or_else(|| PyIndexError::new_err("column index is missing"))?;
@@ -838,7 +839,8 @@ impl PyRow {
     /// Sets the row height and keeps the table frame height equal to the sum
     /// of its rows.
     #[setter]
-    fn set_height(&self, py: Python<'_>, height: i64) -> PyResult<()> {
+    fn set_height(&self, py: Python<'_>, height: &Bound<'_, PyAny>) -> PyResult<()> {
+        let height = crate::required_length(height, "Row.height", crate::LengthUnit::Emu)?;
         validate_path(py, &self.presentation.borrow(py), &self.path, "row", "")?;
         let row =
             row_index(&self.path).ok_or_else(|| PyIndexError::new_err("row index is missing"))?;
@@ -1180,7 +1182,8 @@ impl PyCell {
     }
 
     #[setter]
-    fn set_margin_left(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_left(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "Cell.margin_left", crate::LengthUnit::Emu)?;
         self.set_margin(py, |margins| &mut margins.0, value)
     }
 
@@ -1190,7 +1193,8 @@ impl PyCell {
     }
 
     #[setter]
-    fn set_margin_right(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_right(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "Cell.margin_right", crate::LengthUnit::Emu)?;
         self.set_margin(py, |margins| &mut margins.1, value)
     }
 
@@ -1200,7 +1204,8 @@ impl PyCell {
     }
 
     #[setter]
-    fn set_margin_top(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_top(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "Cell.margin_top", crate::LengthUnit::Emu)?;
         self.set_margin(py, |margins| &mut margins.2, value)
     }
 
@@ -1210,7 +1215,8 @@ impl PyCell {
     }
 
     #[setter]
-    fn set_margin_bottom(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_bottom(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "Cell.margin_bottom", crate::LengthUnit::Emu)?;
         self.set_margin(py, |margins| &mut margins.3, value)
     }
 

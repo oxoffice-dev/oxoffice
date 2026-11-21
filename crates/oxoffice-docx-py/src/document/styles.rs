@@ -132,20 +132,10 @@ impl StyleFormatting {
             } else {
                 value.extract::<i32>()?
             };
-            use oxoffice_docx_oxml::shared::ST_Underline;
-            properties.underline = Some(match code {
-                0 => ST_Underline::None,
-                1 => ST_Underline::Single,
-                2 => ST_Underline::Words,
-                3 => ST_Underline::Double,
-                4 => ST_Underline::Dotted,
-                6 => ST_Underline::Thick,
-                7 => ST_Underline::Dash,
-                9 => ST_Underline::DotDash,
-                10 => ST_Underline::DotDotDash,
-                11 => ST_Underline::Wave,
-                _ => return Err(PyValueError::new_err("unsupported underline style")),
-            });
+            properties.underline = Some(
+                oxoffice_docx::underline_from_code(code)
+                    .ok_or_else(|| PyValueError::new_err("unsupported underline style"))?,
+            );
         }
         Ok(Some(properties))
     }
@@ -317,9 +307,16 @@ impl StyleFormatting {
             }
         }
         if let Some(value) = &self.tab_stops {
-            let entries = value.bind(py).extract::<Vec<(i64, i32, Option<i32>)>>()?;
+            let entries = value
+                .bind(py)
+                .extract::<Vec<(Bound<'_, PyAny>, i32, Option<i32>)>>()?;
             let mut tabs = Vec::with_capacity(entries.len());
             for (position, alignment, leader) in entries {
+                let position = crate::required_length(
+                    &position,
+                    &format!("{}(tab_stops)", self.method),
+                    crate::LengthUnit::Twips,
+                )?;
                 use oxoffice_docx_oxml::{ST_TabJc, ST_TabLeader};
                 let val = match crate::formatting::tab_alignment_from_int(alignment)? {
                     oxoffice_docx::TabAlignment::Left => ST_TabJc::Left,

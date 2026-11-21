@@ -1,0 +1,2 @@
+added body: "-" -> ""
+changed footer: "Page 1 of 1" -> "Page  of "

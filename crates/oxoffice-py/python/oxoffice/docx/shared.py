@@ -9,7 +9,14 @@ def _truncating_division(value: int, divisor: int) -> int:
 
 
 class Length(int):
-    """An integer length measured in English Metric Units (EMU)."""
+    """An integer length measured in English Metric Units (EMU).
+
+    Every EMU length argument takes a Length as given, or a bare int as EMU. A
+    bare int that would round to zero in the unit the property is stored in,
+    twips or half-points, is refused, and so are bool and float. line_spacing,
+    where a bare number is a line multiple, and border sizes, in eighths of a
+    point, are not EMU length arguments.
+    """
 
     _EMUS_PER_INCH = 914400
     _EMUS_PER_CM = 360000

@@ -8,6 +8,8 @@ use oxoffice_docx::{
     Twips,
 };
 use oxoffice_docx_oxml::shared::ST_Jc;
+use oxoffice_opc::OpcPackage;
+use std::io::Cursor;
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
 
@@ -819,6 +821,75 @@ fn epub_draws_a_localised_heading_7_as_a_level_6_heading() {
     assert!(tag.starts_with("<h6"), "a level-6 heading, not {tag:?}");
 }
 
+/// The content documents of an EPUB but its navigation, joined.
+fn epub_chapters(epub: &[u8]) -> String {
+    zip_names(epub)
+        .iter()
+        .filter(|name| name.ends_with(".xhtml") && !name.ends_with("nav.xhtml"))
+        .filter_map(|name| zip_entry(epub, name))
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+        .collect()
+}
+
+/// The start tag of the first element whose text begins with `text`, a
+/// document title left out.
+fn start_tag_before<'a>(xhtml: &'a str, text: &str) -> &'a str {
+    xhtml
+        .match_indices(text)
+        .map(|(at, _)| &xhtml[xhtml[..at].rfind('<').unwrap()..at])
+        .find(|tag| !tag.starts_with("<title"))
+        .unwrap_or_else(|| panic!("{text:?} is exported"))
+}
+
+#[test]
+fn epub_keeps_the_heading_and_anchor_of_a_localised_heading_without_outline_level_in_a_list() {
+    // A style made with StyleBuilder has no outline level, where Word writes
+    // one into its built-in heading styles: the built-in name alone decides.
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Titre2", "heading 2"))
+        .unwrap();
+    doc.add_paragraph("Before.");
+    doc.add_numbered_list_item("Numbered heading", 0)
+        .style("Titre2");
+    doc.add_numbered_list_item("Numbered item", 0);
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters = epub_chapters(&epub.bytes);
+    let tag = start_tag_before(&chapters, "Numbered heading");
+    assert!(tag.starts_with("<h2"), "a level-2 heading, not {tag:?}");
+    let anchor = tag
+        .split("id=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("the heading has an anchor: {tag:?}"));
+    let nav = String::from_utf8(zip_entry(&epub.bytes, "EPUB/nav.xhtml").unwrap()).unwrap();
+    let link = start_tag_before(&nav, "Numbered heading");
+    assert!(
+        link.contains(&format!("#{anchor}\"")),
+        "the navigation links the heading: {link:?}\n{nav}"
+    );
+}
+
+#[test]
+fn epub_reports_a_localised_heading_7_without_outline_level_drawn_at_level_6() {
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Titre7", "heading 7"))
+        .unwrap();
+    doc.add_paragraph("Deep heading").style("Titre7");
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters = epub_chapters(&epub.bytes);
+    let tag = start_tag_before(&chapters, "Deep heading");
+    assert!(tag.starts_with("<h6"), "a level-6 heading, not {tag:?}");
+    let messages: Vec<&str> = epub
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages.contains(&"heading level above 6 was reduced to level 6 during EPUB export"),
+        "{messages:?}"
+    );
+}
+
 #[test]
 fn headings_are_found_in_the_word_and_google_reports_alike() {
     assert_eq!(
@@ -1028,6 +1099,96 @@ fn a_style_inherits_from_its_base_and_follows_later_changes_to_it() {
 }
 
 #[test]
+fn removing_either_side_of_an_unused_linked_pair_removes_both() {
+    let mut doc = corpus_doc("word/report.docx");
+    assert_eq!(
+        doc.style("Titre7").unwrap().linked_style(),
+        Some("Titre7Car")
+    );
+    assert!(doc.remove_style("Titre7").unwrap());
+    assert!(doc.remove_style("Titre8Car").unwrap());
+    let reopened = reopen(&mut doc);
+    for id in ["Titre7", "Titre7Car", "Titre8", "Titre8Car"] {
+        assert!(reopened.style(id).is_none(), "{id}");
+    }
+    assert!(reopened.style("Titre9").is_some());
+    assert!(reopened.style("Titre9Car").is_some());
+    assert!(!doc.remove_style("Titre7Car").unwrap());
+}
+
+#[test]
+fn a_linked_pair_stays_while_anything_outside_it_names_either_side() {
+    let mut doc = corpus_doc("word/report.docx");
+    // Body paragraphs use Titre1, and the TOC heading style is based on it.
+    let error = doc.remove_style("Titre1Car").unwrap_err();
+    assert!(
+        error.to_string().contains("'Titre1' is referenced by "),
+        "{error}"
+    );
+    assert!(doc.style("Titre1Car").is_some());
+
+    doc.add_style(StyleBuilder::character("Strong7", "Strong 7").based_on("Titre7Car"))
+        .unwrap();
+    let error = doc.remove_style("Titre7").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("'Titre7Car' is referenced by style 'Strong7'"),
+        "{error}"
+    );
+    assert!(doc.style("Titre7").is_some());
+    assert!(doc.style("Titre7Car").is_some());
+}
+
+#[test]
+fn a_style_that_links_to_another_goes_alone_when_the_other_does_not_link_back() {
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::character("Kept", "Kept"))
+        .unwrap();
+    // The facade links both ways, so the one-way link is written as a file
+    // could hold it.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec())
+        .unwrap()
+        .replace(
+            "</w:styles>",
+            r#"<w:style w:type="paragraph" w:styleId="OneWay"><w:name w:val="One Way"/><w:link w:val="Kept"/></w:style></w:styles>"#,
+        );
+    package.set_part("/word/styles.xml", styles.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    assert_eq!(doc.style("OneWay").unwrap().linked_style(), Some("Kept"));
+    assert_eq!(doc.style("Kept").unwrap().linked_style(), None);
+    // The one-way link is a use of Kept.
+    let error = doc.remove_style("Kept").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("'Kept' is referenced by style 'OneWay'"),
+        "{error}"
+    );
+    assert!(doc.style("OneWay").is_some());
+    assert!(doc.remove_style("OneWay").unwrap());
+    assert!(doc.style("Kept").is_some());
+}
+
+#[test]
+fn removing_a_style_releases_the_numbering_level_that_names_it_back() {
+    // Word's List Bullet 3 points at instance 3, whose level 0 names it back.
+    let mut doc = corpus_doc("word/report.docx");
+    let numbering = |doc: &Document| doc.part_xml("word/numbering.xml").unwrap();
+    assert!(numbering(&doc).contains(r#"<w:pStyle w:val="Listepuces3"/>"#));
+    let levels = numbering(&doc).matches("<w:lvl ").count();
+    assert!(doc.remove_style("Listepuces3").unwrap());
+    let doc = reopen(&mut doc);
+    assert!(doc.style("Listepuces3").is_none());
+    assert!(!numbering(&doc).contains(r#"w:val="Listepuces3""#));
+    assert_eq!(numbering(&doc).matches("<w:lvl ").count(), levels);
+    assert!(numbering(&doc).contains(r#"<w:pStyle w:val="Listenumros3"/>"#));
+}
+
+#[test]
 fn linking_a_paragraph_style_to_a_character_style_links_both_ways() {
     let mut doc = Document::new();
     doc.add_style(StyleBuilder::character("NoteChar", "Note Char").bold(true))
@@ -1043,9 +1204,7 @@ fn linking_a_paragraph_style_to_a_character_style_links_both_ways() {
     doc.validate_style_graph().unwrap();
     assert_eq!(doc.style("Note").unwrap().linked_style(), Some("NoteChar"));
     assert_eq!(doc.style("NoteChar").unwrap().linked_style(), Some("Note"));
-    // A linked style cannot go while its partner names it.
-    assert!(doc.remove_style("NoteChar").is_err());
-
+    // Cleared, the link no longer ties the two styles.
     doc.set_style(StyleBuilder::paragraph("Note", "Note").clear_linked_style())
         .unwrap();
     assert_eq!(doc.style("Note").unwrap().linked_style(), None);

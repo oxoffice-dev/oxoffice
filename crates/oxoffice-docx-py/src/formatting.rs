@@ -5,7 +5,10 @@ use pyo3::types::PyAny;
 
 use crate::document::PyDocument;
 use crate::paragraph::{ParagraphLocation, paragraph_location};
-use crate::{color_hex, color_object, enum_object, length_object, stale_to_pyerr};
+use crate::{
+    LengthUnit, color_hex, color_object, enum_object, length_argument, length_object,
+    required_length, stale_to_pyerr,
+};
 
 type BorderSnapshot = (String, Option<u32>, Option<Py<PyAny>>);
 
@@ -44,37 +47,27 @@ pub(crate) fn require_auto_line_spacing(value: &Bound<'_, PyAny>) -> PyResult<f6
     Ok(multiple)
 }
 
-// These two Word spacing properties share EMU storage but have different signs.
+// These two Word spacing properties share twip storage but have different signs.
 fn checked_spacing_length(
-    py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,
     name: &str,
     signed: bool,
 ) -> PyResult<Option<oxoffice_docx::Length>> {
-    value.map(|value| {
-        if value.is_instance_of::<pyo3::types::PyBool>()
-            || !value.is_instance_of::<pyo3::types::PyInt>()
-        {
-            return Err(PyTypeError::new_err(format!(
-                "{name} requires integer EMU or Length, not bool or other types; use Pt, Twips or Emu"
-            )));
-        }
-        let emu = value.extract::<i64>()?;
-        let twips = emu / 635;
-        let explicit = value.is_instance(&py.import("oxoffice.docx.shared")?.getattr("Length")?)?;
-        if emu != 0 && twips == 0 && !explicit {
-            return Err(PyValueError::new_err(format!(
-                "{name} bare integer EMU would store zero twips; use Pt, Twips or explicit Emu"
-            )));
-        }
-        if !signed && emu < 0 {
-            return Err(PyValueError::new_err(format!("{name} must be nonnegative; use Pt or Twips")));
-        }
-        i32::try_from(twips).map_err(|_| PyValueError::new_err(format!(
-            "{name} exceeds signed twip range; use a representable Pt, Twips or Emu Length"
-        )))?;
-        Ok(oxoffice_docx::Length::emu(emu))
-    }).transpose()
+    length_argument(value, name, LengthUnit::Twips)?
+        .map(|emu| {
+            if !signed && emu < 0 {
+                return Err(PyValueError::new_err(format!(
+                    "{name} must be nonnegative; use Pt or Twips"
+                )));
+            }
+            i32::try_from(emu / 635).map_err(|_| {
+                PyValueError::new_err(format!(
+                    "{name} exceeds signed twip range; use a representable Pt, Twips or Emu Length"
+                ))
+            })?;
+            Ok(oxoffice_docx::Length::emu(emu))
+        })
+        .transpose()
 }
 
 pub(crate) fn tab_alignment_from_int(value: i32) -> PyResult<oxoffice_docx::TabAlignment> {
@@ -179,7 +172,10 @@ pub(crate) fn alignment_to_int(value: oxoffice_docx::Alignment) -> i32 {
 
 fn checked_underline_code(value: i32) -> PyResult<i32> {
     match value {
-        0 | 1 | 2 | 3 | 4 | 6 | 7 | 9 | 10 | 11 => Ok(value),
+        // Word's WdUnderline values, heavy and long styles included.
+        0 | 1 | 2 | 3 | 4 | 6 | 7 | 9 | 10 | 11 | 20 | 23 | 25 | 26 | 27 | 39 | 43 | 55 => {
+            Ok(value)
+        }
         _ => Err(PyValueError::new_err("unsupported underline style")),
     }
 }
@@ -606,7 +602,7 @@ impl PyFont {
         py: Python<'_>,
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let value = checked_spacing_length(py, value, "Font.character_spacing", true)?;
+        let value = checked_spacing_length(value, "Font.character_spacing", true)?;
         self.apply(py, FontUpdate::CharacterSpacing(value))
     }
 
@@ -630,17 +626,16 @@ impl PyFont {
 
     #[setter]
     fn set_size(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        let points = value.map(|value| -> PyResult<f64> {
-            if value.is_instance_of::<pyo3::types::PyBool>() {
-                return Err(PyTypeError::new_err("font.size rejects bool as EMU; use oxoffice.docx.shared.Pt(12)"));
-            }
-            let emu = value.extract::<i64>()?;
-            let points = oxoffice_docx::Length::emu(emu).to_pt();
-            if emu != 0 && (points * 2.0) as u32 == 0 {
-                return Err(PyValueError::new_err("font.size bare int is EMU; Word stores 0.5 point steps; use oxoffice.docx.shared.Pt(12) or a Length at least Pt(0.5)"));
-            }
-            Ok(points)
-        }).transpose()?;
+        let points = length_argument(value, "Font.size", LengthUnit::HalfPoints)?
+            .map(|emu| {
+                if emu < 0 || u32::try_from(emu / 6350).is_err() {
+                    return Err(PyValueError::new_err(
+                        "Font.size must fit nonnegative half-points",
+                    ));
+                }
+                Ok(oxoffice_docx::Length::emu(emu).to_pt())
+            })
+            .transpose()?;
         self.apply(py, FontUpdate::Size(points))
     }
 
@@ -1151,10 +1146,15 @@ impl PyTabStops {
     fn add_tab_stop(
         &self,
         py: Python<'_>,
-        position: i64,
+        position: &Bound<'_, PyAny>,
         alignment: i32,
         leader: Option<i32>,
     ) -> PyResult<PyTabStop> {
+        let position = required_length(
+            position,
+            "TabStops.add_tab_stop(position)",
+            LengthUnit::Twips,
+        )?;
         let position = i32::try_from(position / 635)
             .map(oxoffice_docx::Length::twips)
             .map_err(|_| {
@@ -1416,7 +1416,8 @@ impl PyParagraphFormat {
     }
 
     #[setter]
-    fn set_space_before(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_space_before(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = length_argument(value, "ParagraphFormat.space_before", LengthUnit::Twips)?;
         self.apply(
             py,
             ParagraphUpdate::SpaceBefore(value.map(oxoffice_docx::Length::emu)),
@@ -1433,7 +1434,7 @@ impl PyParagraphFormat {
 
     #[setter]
     fn set_space_after(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        let value = checked_spacing_length(py, value, "ParagraphFormat.space_after", false)?;
+        let value = checked_spacing_length(value, "ParagraphFormat.space_after", false)?;
         self.apply(py, ParagraphUpdate::SpaceAfter(value))
     }
 
@@ -1446,7 +1447,8 @@ impl PyParagraphFormat {
     }
 
     #[setter]
-    fn set_left_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_left_indent(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = length_argument(value, "ParagraphFormat.left_indent", LengthUnit::Twips)?;
         self.apply(
             py,
             ParagraphUpdate::LeftIndent(value.map(oxoffice_docx::Length::emu)),
@@ -1462,7 +1464,8 @@ impl PyParagraphFormat {
     }
 
     #[setter]
-    fn set_right_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_right_indent(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = length_argument(value, "ParagraphFormat.right_indent", LengthUnit::Twips)?;
         self.apply(
             py,
             ParagraphUpdate::RightIndent(value.map(oxoffice_docx::Length::emu)),
@@ -1478,7 +1481,16 @@ impl PyParagraphFormat {
     }
 
     #[setter]
-    fn set_first_line_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_first_line_indent(
+        &self,
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let value = length_argument(
+            value,
+            "ParagraphFormat.first_line_indent",
+            LengthUnit::Twips,
+        )?;
         self.apply(
             py,
             ParagraphUpdate::FirstLineIndent(value.map(oxoffice_docx::Length::emu)),

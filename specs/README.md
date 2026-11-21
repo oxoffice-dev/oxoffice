@@ -71,3 +71,4 @@ dependency bumps and documentation.
 | 2026-11-21 | [Python core property dates and shared helpers](2026-11-21-python-core-property-dates-and-shared-helpers.md) | accepted |
 | 2026-11-21 | [Embedded content and signatures in oxoffice-opc](2026-11-21-embedded-content-and-signatures-in-opc.md) | accepted |
 | 2026-11-21 | [Consumer workflows: the suite checks what a first user does](2026-11-21-consumer-workflows.md) | accepted |
+| 2026-11-21 | [One rule for every Python length argument](2026-11-21-one-rule-for-python-length-arguments.md) | accepted |

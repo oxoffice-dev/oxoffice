@@ -1279,11 +1279,8 @@ pub(super) fn validate_element_owner_relationships(
     Ok(())
 }
 
-pub(super) fn validate_fragment_relationships(
-    document: &Document,
-    destination: &StoryId,
-    fragment: &ContentFragment,
-) -> Result<()> {
+/// The relationship ids the fragment's XML names, in order.
+fn fragment_relationship_ids(fragment: &ContentFragment) -> Result<Vec<String>> {
     let inherited = fragment
         .namespace_scope
         .iter()
@@ -1296,7 +1293,55 @@ pub(super) fn validate_fragment_relationships(
             (name, namespace.clone())
         })
         .collect::<Vec<_>>();
-    let relationship_ids = xml_relationship_ids_in_order_with_bindings(&fragment.xml, &inherited)?;
+    xml_relationship_ids_in_order_with_bindings(&fragment.xml, &inherited)
+}
+
+/// The relationships of `story`'s part that the fragment names, as they are
+/// now, for a fragment taken from that story, each internal one with a digest
+/// of its target part's bytes.
+pub(super) fn referenced_relationships(
+    document: &Document,
+    story: &StoryId,
+    fragment: &ContentFragment,
+) -> Result<Vec<(oxoffice_opc::relationship::Relationship, Option<u64>)>> {
+    let ids = fragment_relationship_ids(fragment)?;
+    let Some(relationships) = document.package.get_part_rels(&story.part_name) else {
+        return Ok(Vec::new());
+    };
+    Ok(ids
+        .iter()
+        .filter_map(|id| relationships.get_by_id(id))
+        .map(|relationship| {
+            let digest = relationship_target_digest(document, &story.part_name, relationship);
+            (relationship.clone(), digest)
+        })
+        .collect())
+}
+
+/// A digest of an internal relationship's target part, which a save may
+/// rename but does not change.
+fn relationship_target_digest(
+    document: &Document,
+    owner: &str,
+    relationship: &oxoffice_opc::relationship::Relationship,
+) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    if !relationship_is_internal(relationship) {
+        return None;
+    }
+    let part = OpcPackage::resolve_rel_target(owner, &relationship.target);
+    let bytes = document.package.get_part(&part)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+pub(super) fn validate_fragment_relationships(
+    document: &Document,
+    destination: &StoryId,
+    fragment: &ContentFragment,
+) -> Result<()> {
+    let relationship_ids = fragment_relationship_ids(fragment)?;
     if relationship_ids.is_empty() {
         return Ok(());
     }
@@ -1315,10 +1360,44 @@ pub(super) fn validate_fragment_relationships(
             ))
         })?;
     for id in relationship_ids {
-        if relationships.get_by_id(&id).is_none() {
+        let Some(relationship) = relationships.get_by_id(&id) else {
+            // A taken fragment may come from another document; hand-written XML
+            // names a wrong id.
+            let hint = if fragment.relationships.is_empty() {
+                ""
+            } else {
+                "; move content between documents with DocumentFragment::from_range and \
+                 import_fragment"
+            };
             return Err(Error::Other(format!(
-                "content fragment references missing relationship {id} in {}",
+                "content fragment references missing relationship {id} in {}{hint}",
                 destination.part_name
+            )));
+        };
+        // A fragment taken from another document, or from another part,
+        // names that part's relationships: the same id may name another link
+        // or part here. An internal target can be renamed by a save, so its
+        // bytes are compared; an external target is compared whole.
+        if let Some((source, digest)) = fragment
+            .relationships
+            .iter()
+            .find(|(source, _)| source.id == id)
+            && (source.rel_type != relationship.rel_type
+                || relationship_is_internal(source) != relationship_is_internal(relationship)
+                || (!relationship_is_internal(source) && source.target != relationship.target)
+                || (relationship_is_internal(source)
+                    && *digest
+                        != relationship_target_digest(
+                            document,
+                            &destination.part_name,
+                            relationship,
+                        )))
+        {
+            return Err(Error::Other(format!(
+                "content fragment relationship {id} names {} where it was taken and {} in {}; \
+                 move content between documents with DocumentFragment::from_range and \
+                 import_fragment",
+                source.target, relationship.target, destination.part_name
             )));
         }
     }
@@ -1336,6 +1415,43 @@ pub(super) fn content_fragment_for_insertion(
     } else {
         close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)
     }
+}
+
+/// `xml` without the `w14:paraId` and `w14:textId` of its paragraphs and
+/// rows, whatever the prefix bound to the w14 namespace, in the fragment or in
+/// `scope`. Only start tags of `p` and `tr` are edited.
+pub(super) fn without_w14_identities(xml: &[u8], scope: &BTreeMap<String, String>) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(xml) else {
+        return xml.to_vec();
+    };
+    if !text.contains("paraId") && !text.contains("textId") {
+        return xml.to_vec();
+    }
+    let mut prefixes: Vec<String> = scope
+        .iter()
+        .filter(|(_, namespace)| namespace.as_str() == W14_NAMESPACE)
+        .map(|(prefix, _)| prefix.clone())
+        .collect();
+    let declared = regex::Regex::new(r#"xmlns:([A-Za-z_][\w.-]*)\s*=\s*["']([^"']*)["']"#)
+        .expect("a valid pattern");
+    for capture in declared.captures_iter(text) {
+        if &capture[2] == W14_NAMESPACE && !prefixes.contains(&capture[1].to_owned()) {
+            prefixes.push(capture[1].to_owned());
+        }
+    }
+    let mut result = text.to_owned();
+    for prefix in prefixes.iter().filter(|prefix| !prefix.is_empty()) {
+        let attribute = regex::Regex::new(&format!(
+            r#"(<(?:[A-Za-z_][\w.-]*:)?(?:p|tr)\b[^>]*?)\s{}:(?:paraId|textId)\s*=\s*(?:"[^"]*"|'[^']*')"#,
+            regex::escape(prefix)
+        ))
+        .expect("a valid pattern");
+        // A tag holds both attributes: replace until none is left.
+        while attribute.is_match(&result) {
+            result = attribute.replace_all(&result, "$1").into_owned();
+        }
+    }
+    result.into_bytes()
 }
 
 pub(super) fn freshen_content_fragment_identities(

@@ -385,6 +385,10 @@ impl Document {
         reject_section_owning_content_fragment(&fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
+        // The same fragment can be inserted twice: its paragraph and row ids
+        // (w14:paraId, w14:textId) go, as clone_content drops them, and Word
+        // gives new ones.
+        let fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
         let mut updated = source_xml;
         insert_story_fragment(&mut updated, &owner, boundary, fragment_xml)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;
@@ -546,6 +550,11 @@ impl Document {
     }
 
     /// Remove one checked direct child and return it as an owned fragment.
+    ///
+    /// A picture the removal leaves unreferenced stays in the package until
+    /// the next write or signature, which drops it if nothing names it then:
+    /// until a signature the fragment can be inserted again (cut and paste);
+    /// a write drops it from the bytes written only.
     pub fn remove_content_at(&mut self, location: &ContentLocation) -> Result<ContentFragment> {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
@@ -569,18 +578,40 @@ impl Document {
                 "cannot remove the final required table-cell paragraph".to_owned(),
             ));
         }
-        let fragment = ContentFragment {
+        let mut fragment = ContentFragment {
             kind: item.kind,
             xml: source_xml[item.full.clone()].to_vec(),
             source_part_name: Some(part_name.clone()),
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
             namespace_scope,
+            relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &location.story, &fragment)?;
+        fragment.relationships = referenced_relationships(&candidate, &location.story, &fragment)?;
         let mut updated = source_xml;
         updated.drain(item.full);
+        // The fragment's pictures go at the next write if nothing names them
+        // then (it may be inserted again before).
+        let images: Vec<&str> = fragment
+            .relationships
+            .iter()
+            .filter(|(relationship, _)| {
+                relationship.rel_type == rel_types::IMAGE && relationship_is_internal(relationship)
+            })
+            .map(|(relationship, _)| relationship.id.as_str())
+            .collect();
+        if !images.is_empty() {
+            let referenced = xml_attribute_values(&updated)?;
+            for id in images {
+                let entry = (part_name.clone(), id.to_owned());
+                if !referenced.contains(id) && !candidate.freed_image_relationships.contains(&entry)
+                {
+                    candidate.freed_image_relationships.push(entry);
+                }
+            }
+        }
         set_story_source_xml(&mut candidate, &part_name, updated)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -609,8 +640,11 @@ impl Document {
             source_story_kind: Some(source_location.story.kind),
             source_owner_index: Some(source_location.story.owner_index),
             namespace_scope: story_namespace_scope_at(&source_xml, source_item.full.start)?,
+            relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
+        fragment.relationships =
+            referenced_relationships(&candidate, &source_location.story, &fragment)?;
 
         let (destination_source, destination_owner) =
             candidate.story_source_and_owner(&destination.story)?;
@@ -664,6 +698,7 @@ impl Document {
             source_story_kind: Some(source_location.story.kind),
             source_owner_index: Some(source_location.story.owner_index),
             namespace_scope: story_namespace_scope_at(&source_xml, source_item.full.start)?,
+            relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &destination.story, &fragment)?;
