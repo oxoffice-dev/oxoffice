@@ -15,8 +15,8 @@ How work lands in oxoffice. Short on purpose.
    tests, next, a few short bullets each, readable at a glance. Long notes,
    tables and measurements go in a `<details>` block. Issues follow the same
    shape.
-5. **Independent review**, posted on the pull request, then fix the findings
-   (see [Independent review](#independent-review)).
+5. **Independent review**, posted on the pull request, then answer every
+   finding (see [Independent review](#independent-review)).
 6. **CI green**, squash merge. The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so

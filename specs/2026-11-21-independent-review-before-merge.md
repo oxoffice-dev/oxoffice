@@ -67,7 +67,7 @@ convention.
 ## Outcome
 
 - Shipped in #23, itself reviewed that way: a first review (one major, four
-  minor), the fixes, a review of the delta.
+  minor), then two delta reviews (minor findings only), each answered.
 - An agent reviewer is sometimes refused the right to comment on GitHub by
   the permission system; whoever launched it then posts its report as is.
 
