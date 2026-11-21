@@ -37,10 +37,3 @@ file = "google/thesis.docx"
 workflow = "redline-rebuilt-toc"
 issue = 66
 message = "comparison cannot track a whole paragraph's simple field"
-
-# Google's copy refuses the footnote the new version adds before its equation.
-[[known]]
-file = "google/thesis.docx"
-workflow = "redline"
-issue = 419
-message = "footnotes retained root/special/opaque shell changed"
