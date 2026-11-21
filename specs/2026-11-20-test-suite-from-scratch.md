@@ -114,6 +114,9 @@ a manifest: producer and version, features it carries, licence, size.
 - Ported from rdocx-skills with the same protocol and thresholds:
   `crates/oxoffice-py/tests/test_{docx,pptx}_scaling.py`, 259 docx and 248
   pptx calls, plus the check that every mutating call of the stubs is timed.
+  Since #22, a call outside the band it is expected in (under 2.5 times, or
+  1.5 to 6 times for a call that still grows) is measured again, a growing
+  call included: one load spike on `main` read as a fix and failed the run.
 - **Timings need a build without debug assertions.** In the `ci` profile the
   debug checks compare every edit with a copy of the whole document, so every
   call grows: 148 docx and 122 pptx calls went over 2.5 times, and pptx
