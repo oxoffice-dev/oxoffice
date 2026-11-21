@@ -6,7 +6,7 @@ use quick_xml::{Reader, Writer, XmlVersion};
 use crate::error::{OxmlError, Result};
 use crate::namespace::{R_NS, W_NS};
 use crate::properties::{is_word_attribute, is_word_element, word_prefixes_at};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty_element, capture_event};
 
 const RDOCX_FONT_NS: &str = "urn:rdocx:font-embedding:1";
 const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
@@ -243,7 +243,7 @@ impl FontTable {
                 | Event::DocType(_)
                 | Event::GeneralRef(_)) => table
                     .raw_children
-                    .push((table.fonts.len(), capture_leaf_event(event)?)),
+                    .push((table.fonts.len(), capture_event(event)?)),
                 Event::End(end)
                     if is_word_element(end.name().as_ref(), b"fonts", &root_prefixes) =>
                 {
@@ -603,9 +603,7 @@ fn read_font(
             | Event::PI(_)
             | Event::Decl(_)
             | Event::DocType(_)
-            | Event::GeneralRef(_)) => font
-                .raw_children
-                .push((boundary, capture_leaf_event(event)?)),
+            | Event::GeneralRef(_)) => font.raw_children.push((boundary, capture_event(event)?)),
             Event::End(end) if is_word_element(end.name().as_ref(), b"font", &prefixes) => break,
             Event::Eof => return Err(OxmlError::MissingElement("w:font end".to_owned())),
             _ => {}
@@ -845,12 +843,6 @@ fn emit_raw(writer: &mut Writer<Vec<u8>>, raw: &[(usize, Vec<u8>)], position: us
     for (_, bytes) in raw.iter().filter(|(at, _)| *at == position) {
         writer.get_mut().extend_from_slice(bytes);
     }
-}
-
-fn capture_leaf_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(event.into_owned())?;
-    Ok(writer.into_inner())
 }
 
 fn raw_attributes_mention(attributes: &[(String, String)], value: &str) -> bool {
