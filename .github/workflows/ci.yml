@@ -1,8 +1,12 @@
 name: CI
 
-# Every pull request and every push to main, on Linux, macOS and Windows: a
-# platform-only failure (paths, line endings) shows before the merge. The jobs
-# run in parallel, so Windows, the slowest, bounds the wait.
+# Every push to main, and every pull request that is ready and targets main,
+# builds and tests on Linux, macOS and Windows: a platform-only failure (paths,
+# line endings) shows before the merge. The jobs run in parallel, so Windows,
+# the slowest, bounds the wait. A draft, or a pull request stacked on another
+# branch, runs lint, WebAssembly and Linux only; it gets the full run once it
+# is marked ready or rebased onto main. See
+# specs/2026-11-21-lighter-ci-on-pull-requests.md.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
@@ -14,6 +18,7 @@ on:
     branches: [main]
     paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   workflow_dispatch:
 
@@ -67,7 +72,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Three platforms unless this is a draft or a pull request stacked on
+        # another branch.
+        os: ${{ fromJSON((github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,14 +113,16 @@ jobs:
 
   # The scaling tests time every mutating call at N and 4N. They need a build
   # without debug assertions (the `scaling` profile), built here beside the
-  # `ci` one so that pull requests wait no longer. Pull requests time the
-  # QUICK set, main every call.
+  # `ci` one so that pull requests wait no longer. A ready pull request into
+  # main times the QUICK set on Linux; main times every call on the three
+  # platforms. Drafts and stacked pull requests skip it.
   scaling:
     name: Scaling (${{ matrix.os }})
+    if: github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
