@@ -65,8 +65,15 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
-      - name: Limitations page renders
-        run: python3 scripts/limitations_doc.py > /dev/null
+      # The page is built at release: a rebase that keeps an old copy of it
+      # (git add instead of git rm on the conflict) fails here.
+      - name: Limitations page renders and is not committed
+        run: |
+          python3 scripts/limitations_doc.py > /dev/null
+          if [ -n "$(git ls-files docs/LIMITATIONS.md)" ]; then
+            echo "::error file=docs/LIMITATIONS.md::built at release, not committed: git rm docs/LIMITATIONS.md"
+            exit 1
+          fi
       - name: Wheel licence files match the root ones
         run: cmp LICENSE crates/oxoffice-py/LICENSE && cmp NOTICE crates/oxoffice-py/NOTICE
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings

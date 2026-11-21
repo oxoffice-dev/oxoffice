@@ -245,7 +245,9 @@ request is the judge, and a call that stays linear for another reason gets a
 line in that pull request. The pull request that empties `GROWING` removes
 the limitation of #6 from `limitations.json`, 3d the one of #7, and the
 first after which the Python replacement costs what the CLI does (measured
-from PR 1 on) the one of #5, each with `docs/LIMITATIONS.md` regenerated.
+from PR 1 on) the one of #5 (the limitations page is built at release since
+2026-11-21: nothing to regenerate, see
+[the limitations page is built at release](2026-11-21-limitations-page-built-at-release.md)).
 
 Order with the other work of ROADMAP items 1b and 2:
 

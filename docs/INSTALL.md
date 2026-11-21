@@ -72,6 +72,8 @@ Every [release](https://github.com/oxoffice-dev/oxoffice/releases) carries:
 - `oxoffice-<version>-cp310-abi3-<platform>.whl`: the Python wheels
 - `oxoffice-<version>.tar.gz`: the source distribution
 - `install.sh`, `install.ps1`: the one-line installers
+- `oxoffice-<version>-limitations.md`: the known limitations of that version
+  (the installed build lists them too: `oxoffice limitations`)
 - `oxoffice-<version>.spdx.json`: the SBOM
 - `SHA256SUMS` and `oxoffice-<version>.provenance.sigstore.json`
 

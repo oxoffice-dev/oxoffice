@@ -27,6 +27,10 @@ its own list.
   to write a file, such as the ignored `docs/LIMITATIONS.md` for a local
   look). Lint still runs it, so an entry the page cannot render fails CI;
   the Rust tests of `oxoffice limitations` keep checking the entries.
+- Lint also fails when `docs/LIMITATIONS.md` is tracked again: branches
+  that edited the page get a modify/delete conflict once, resolved with
+  `git rm docs/LIMITATIONS.md`, and `.gitignore` cannot stop a `git add`.
+- The release step fails when the page it wrote is empty or missing.
 - `oxoffice limitations` stays the source users are pointed to.
 
 There is no documentation site yet; when there is one, it builds the page
@@ -37,7 +41,8 @@ the same way.
 One pull request: the script, the lint step, the release step and asset
 table, `.gitignore`, `docs/DEVELOPMENT.md`, and rule 8 of `CLAUDE.md` (its
 new wording approved by the maintainer on 2026-11-21). Checked by running
-the script as lint and the release do, and by the next release dry run.
+the script as lint and the release do, and by the next release dry run from
+`main` after the merge (a dry run takes the script from `main`).
 
 ## Links
 
