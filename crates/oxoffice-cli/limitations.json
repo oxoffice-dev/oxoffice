@@ -75,8 +75,8 @@
     "id": "docx-inherited-headers",
     "format": "docx",
     "area": "headers",
-    "title": "Document header and footer calls ignore the headers a section inherits",
-    "symptom": "the Rust header_text() and footer_text() return None when the last section inherits its header, and set_header() changes the last section only",
+    "title": "Setting the document header or footer changes the last section only",
+    "symptom": "set_header() and set_footer() give the last section its own header or footer, so the earlier sections it inherited from keep the old one",
     "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python document.section(i).header",
     "issue": 28
   },
