@@ -1,12 +1,12 @@
 //! HTML element generation from OXML types.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx_oxml::document::CT_Body;
 use oxoffice_docx_oxml::numbering::CT_Numbering;
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_Jc;
-use oxoffice_docx_oxml::styles::CT_Styles;
+use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, VMerge};
 use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
@@ -263,19 +263,36 @@ fn emit_paragraph(
     out.push_str(&format!("</{tag}>\n"));
 }
 
-/// ` dir="rtl"` for a right-to-left paragraph (`w:bidi`, its own or its
-/// style's), so that a browser lays it out right to left; empty otherwise.
+/// ` dir="rtl"` for a right-to-left paragraph, so that a browser lays it out
+/// right to left; empty otherwise. `w:bidi` is read as layout resolves it:
+/// the paragraph's own, its style's (the default paragraph style when it
+/// names none) through `basedOn`, then the document defaults.
 fn direction_attribute(para: &CT_P, styles: &CT_Styles) -> &'static str {
-    let properties = para.properties.as_ref();
-    let bidi = properties
-        .and_then(|properties| properties.bidi)
+    let direct = para.properties.as_ref();
+    let mut bidi = direct.and_then(|properties| properties.bidi);
+    let mut style_id = direct
+        .and_then(|properties| properties.style_id.as_deref())
         .or_else(|| {
-            properties
-                .and_then(|properties| properties.style_id.as_deref())
-                .and_then(|id| styles.get_by_id(id))
-                .and_then(|style| style.ppr.as_ref())
-                .and_then(|properties| properties.bidi)
+            styles
+                .get_default(StyleType::Paragraph)
+                .map(|style| style.style_id.as_str())
         });
+    let mut seen = HashSet::new();
+    while bidi.is_none()
+        && let Some(id) = style_id
+        && seen.insert(id)
+        && let Some(style) = styles.get_by_id(id)
+    {
+        bidi = style.ppr.as_ref().and_then(|properties| properties.bidi);
+        style_id = style.based_on.as_deref();
+    }
+    let bidi = bidi.or_else(|| {
+        styles
+            .doc_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.ppr.as_ref())
+            .and_then(|properties| properties.bidi)
+    });
     if bidi == Some(true) {
         " dir=\"rtl\""
     } else {

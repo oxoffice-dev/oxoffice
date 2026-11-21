@@ -2987,7 +2987,7 @@ impl<'a> TableRef<'a> {
 
     /// Whether explicit table borders draw a line: an edge set to `nil` or
     /// `none` does not count, as for paragraphs; an edge the model keeps as
-    /// raw XML (a diagonal) does.
+    /// raw XML (a diagonal) counts whatever its value.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties
@@ -3376,7 +3376,7 @@ impl<'a> CellRef<'a> {
 
     /// Whether explicit cell borders draw a line: an edge set to `nil` or
     /// `none` does not count, as for paragraphs; an edge the model keeps as
-    /// raw XML (a diagonal) does.
+    /// raw XML (a diagonal) counts whatever its value.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties

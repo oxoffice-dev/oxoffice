@@ -11,7 +11,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use oxoffice_docx::paragraph::ParagraphRef;
 use oxoffice_docx::run::RunRef;
 use oxoffice_docx::{
-    BreakKind, ChartData, ChartKind, Document, HtmlImageResource, Length, PictureOptions, StoryKind,
+    BreakKind, CT_PPr, ChartData, ChartKind, Document, HtmlImageResource, Length, PictureOptions,
+    StoryKind, StyleBuilder,
 };
 use oxoffice_docx_oxml::table::VMerge;
 use oxoffice_opc::OpcPackage;
@@ -595,6 +596,61 @@ fn a_body_text_paragraph_takes_no_numbering_from_its_style_in_markdown() {
         Read::Paragraph("Contents".to_owned()),
         "{:?}",
         markdown.lines().next()
+    );
+}
+
+#[test]
+fn a_described_picture_has_one_alt_attribute_in_epub() {
+    let mut doc = Document::new();
+    let body = body_story(&doc);
+    doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("A red dot")))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let epub = doc.to_epub_bytes().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
+    let mut images = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+        let mut xhtml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xhtml).unwrap();
+        images.extend(xhtml.match_indices("<img").map(|(at, _)| {
+            let end = xhtml[at..].find('>').unwrap() + at;
+            xhtml[at..=end].to_owned()
+        }));
+    }
+    assert_eq!(images.len(), 1, "{images:?}");
+    assert_eq!(images[0].matches(" alt=").count(), 1, "{}", images[0]);
+    assert!(images[0].contains("alt=\"A red dot\""), "{}", images[0]);
+}
+
+#[test]
+fn a_paragraph_right_to_left_through_its_style_chain_keeps_its_direction_in_html() {
+    let mut doc = Document::new();
+    let right_to_left = CT_PPr {
+        bidi: Some(true),
+        ..CT_PPr::default()
+    };
+    doc.add_style(StyleBuilder::paragraph("Arabic", "Arabic").paragraph_properties(right_to_left))
+        .unwrap();
+    doc.add_style(StyleBuilder::paragraph("ArabicQuote", "Arabic quote").based_on("Arabic"))
+        .unwrap();
+    doc.add_paragraph("نص").style("ArabicQuote");
+    let doc = reopen(&mut doc);
+    let html = doc.to_html_fragment();
+    assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
+
+    // `start` follows the direction rather than meaning left.
+    let doc = reopen(&mut doc_with_body(
+        r#"<w:p><w:pPr><w:bidi/><w:jc w:val="start"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+    ));
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains("<p dir=\"rtl\" style=\"text-align:start\">x</p>"),
+        "{html}"
     );
 }
 
