@@ -6890,12 +6890,14 @@ fn render_paragraph_lines(
                 PositionedElement::Text(run) if run.text.is_empty() && run.glyph_ids.is_empty() => {
                     continue;
                 }
-                PositionedElement::Text(_) | PositionedElement::MultilingualText(_) => {
-                    Some(structure_id)
+                // A link belongs to its paragraph, so a tagged PDF nests its
+                // `/Link` element there.
+                PositionedElement::Text(_)
+                | PositionedElement::MultilingualText(_)
+                | PositionedElement::LinkAnnotation { .. } => Some(structure_id),
+                PositionedElement::MarkedContent { .. } | PositionedElement::FormField(_) => {
+                    continue;
                 }
-                PositionedElement::MarkedContent { .. }
-                | PositionedElement::LinkAnnotation { .. }
-                | PositionedElement::FormField(_) => continue,
                 _ => None,
             };
             let detached =

@@ -1582,6 +1582,65 @@ fn the_links_of_a_libreoffice_letter_cover_their_text() {
     }
 }
 
+#[test]
+fn every_link_of_a_libreoffice_letter_is_tagged_in_its_paragraph() {
+    let pdf = pdf_of(&corpus_doc("libreoffice/letter.docx"));
+    let root = pdf.dict(pdf.catalog().get(b"StructTreeRoot").expect("tagged"));
+    let nums = pdf
+        .dict(root.get(b"ParentTree").expect("ParentTree"))
+        .get(b"Nums")
+        .and_then(Object::as_array)
+        .expect("Nums");
+    let mut tagged = 0;
+    for (page, page_id) in pdf.page_ids().into_iter().enumerate() {
+        let annotations = pdf.doc.get_page_annotations(page_id).expect("annotations");
+        for annotation in annotations {
+            if annotation.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Link") {
+                continue;
+            }
+            let key = annotation
+                .get(b"StructParent")
+                .and_then(Object::as_i64)
+                .unwrap_or_else(|_| panic!("an untagged link on page {page}"));
+            let entry = nums
+                .chunks(2)
+                .find(|pair| pair[0].as_i64().ok() == Some(key))
+                .expect("a parent tree entry for the link");
+            let element = pdf.dict(&entry[1]);
+            assert_eq!(
+                element.get(b"S").and_then(Object::as_name).ok(),
+                Some(&b"Link"[..])
+            );
+            let objr = match pdf.resolve(element.get(b"K").expect("Link kids")) {
+                Object::Array(kids) => pdf.dict(&kids[0]),
+                kid => kid.as_dict().expect("OBJR"),
+            };
+            let target = pdf
+                .doc
+                .get_object(
+                    objr.get(b"Obj")
+                        .and_then(Object::as_reference)
+                        .expect("Obj"),
+                )
+                .and_then(Object::as_dict)
+                .expect("annotation");
+            assert_eq!(
+                target, annotation,
+                "the Link element points at its annotation"
+            );
+            let parent = pdf.dict(element.get(b"P").expect("parent"));
+            assert_eq!(
+                parent.get(b"S").and_then(Object::as_name).ok(),
+                Some(&b"P"[..])
+            );
+            tagged += 1;
+        }
+    }
+    assert!(tagged >= 3, "the letter's three links are tagged: {tagged}");
+    // The PDF/UA claim holds: every link is tagged.
+    assert!(pdf.xmp().is_some_and(|xmp| xmp.contains("pdfuaid:part")));
+}
+
 // ---- Fonts and scripts ----
 
 #[test]

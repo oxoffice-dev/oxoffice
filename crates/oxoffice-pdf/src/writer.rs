@@ -18,7 +18,7 @@ use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use crate::font::{self, PreparedFont};
 use crate::forms;
 use crate::image;
-use crate::structure::{PreparedStructure, has_content_stream_output};
+use crate::structure::{PreparedStructure, TaggedLink, has_content_stream_output};
 use crate::{PdfConformance, conformance};
 
 struct AlphaEntry {
@@ -594,6 +594,36 @@ pub(crate) fn write_pdf_impl(
         tagged.is_some(),
         &mut alloc,
     );
+    // Tagged links take the parent tree keys after the pages' and widgets'.
+    let mut tagged_links = Vec::new();
+    let mut link_keys: HashMap<(usize, usize), i32> = HashMap::new();
+    if tagged.is_some() {
+        let widget_count = forms
+            .as_ref()
+            .map_or(0, |forms| forms.tagged_widgets().len());
+        let mut next_key = (layout.pages.len() + widget_count) as i32;
+        for (page_idx, page) in layout.pages.iter().enumerate() {
+            let (mut elem_idx, mut ordinal) = (0, 0);
+            walk(&page.elements, &mut |element, _| {
+                let current_idx = elem_idx;
+                elem_idx += 1;
+                if let PositionedElement::LinkAnnotation { .. } = element {
+                    if let Some(&annotation) = annotation_refs.get(&(page_idx, current_idx)) {
+                        tagged_links.push(TaggedLink {
+                            page_index: page_idx,
+                            ordinal,
+                            annotation,
+                            element: alloc(),
+                            key: next_key,
+                        });
+                        link_keys.insert((page_idx, current_idx), next_key);
+                        next_key += 1;
+                    }
+                    ordinal += 1;
+                }
+            });
+        }
+    }
 
     // ── Write catalog ────────────────────────────────────────────────
     {
@@ -925,12 +955,11 @@ pub(crate) fn write_pdf_impl(
         });
 
         if let Some(forms) = forms.as_ref() {
-            let before = page_annotations.len();
             page_annotations.extend(forms.widgets_on(page_idx));
-            // Tagged pages tab through their fields in structure order.
-            if tagged.is_some() && page_annotations.len() > before {
-                page_dict.tab_order(TabOrder::StructureOrder);
-            }
+        }
+        // Tagged pages tab through their links and fields in structure order.
+        if tagged.is_some() && !page_annotations.is_empty() {
+            page_dict.tab_order(TabOrder::StructureOrder);
         }
         if !page_annotations.is_empty() {
             page_dict.annotations(page_annotations.iter().copied());
@@ -961,6 +990,11 @@ pub(crate) fn write_pdf_impl(
                 annot.border(0.0, 0.0, 0.0, None);
                 if profile.is_some() {
                     annot.flags(AnnotationFlags::PRINT);
+                }
+                // A tagged link is described for assistive technology.
+                if let Some(&key) = link_keys.get(&(page_idx, current_idx)) {
+                    annot.struct_parent(key);
+                    annot.contents(TextStr(url));
                 }
                 annot
                     .action()
@@ -1001,7 +1035,7 @@ pub(crate) fn write_pdf_impl(
             .as_ref()
             .map(forms::FormPlan::tagged_widgets)
             .unwrap_or_default();
-        tagged.write(&mut pdf, &page_ids, &widgets);
+        tagged.write(&mut pdf, &page_ids, &widgets, &tagged_links);
     }
 
     pdf.finish()
