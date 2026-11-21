@@ -72,8 +72,8 @@ code is one dense job, size alone is not a reason.
   - `use super::*;` at the top of each child;
   - `mod`, `use` and explicit re-export lines in the parent, so every path
     (`crate::x::Y`, public `oxoffice_*::x::Y`) still resolves;
-  - visibility widened to `pub(super)` (or `pub(crate)` below a crate root),
-    fields included, where the compiler asks;
+  - visibility widened to `pub(super)`, fields included, where the compiler
+    asks (below a crate root, `pub(super)` reaches the crate);
   - a one-line `//!` doc at the top of each new file.
 - **No rename, no reordering inside an item**, and no new explicit import of
   a helper whose name exists elsewhere with another meaning (`local_name`,
@@ -92,12 +92,16 @@ code is one dense job, size alone is not a reason.
     every changed `.rs` file into units: each item, with its attributes and
     doc comments, and each `impl` item, tied to its block's header and
     attributes. Both revisions must hold the same units, as token sequences.
-    It sets aside `pub(super)`, whitespace, trailing commas and the
-    `mod`/`use super::*` wiring of new files. It checks the parent's re-export
+    It sets aside whitespace, trailing commas, `pub(super)` in new files and
+    their `mod`/`use super::*` wiring. It checks the parent's re-export
     lines: no attribute, no rename, no glob, each name at its old visibility.
-    It flags a moved item still named where no explicit import brings it.
-    Name resolution in unchanged files is left to the compiler and the
-    review;
+    A moved item still named in its parent or a sibling without an explicit
+    import fails, unless every item there that names it binds it locally.
+    Left to the compiler and the review: name resolution in unchanged files,
+    code moved into an existing file or out of another module than the
+    parent, a moved private method that shares a trait method's name, loose
+    comments moving inside an item, and children gated by `#[cfg]` (refused
+    by the script, so the pptx `render/` split is checked by hand);
   - for Word layout code, which no test renders: the corpus rendered to PDF
     and PNG with the CLI before and after, bytes compared.
 

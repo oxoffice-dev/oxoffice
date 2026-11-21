@@ -11,19 +11,22 @@ Every `.rs` file the range adds, deletes or changes is read whole at BASE and at
 
 BASE and HEAD must hold the same units, in any order and any file; within a unit, order counts. Set aside:
 
-- `pub(super)`, so an item or field may be widened to it (from a child, the reach of a private item of the parent);
+- `pub(super)` in added files, so a moved item or field may be widened to it (from a child, the reach a private
+  item of the parent had);
 - whitespace, and trailing commas outside one-element tuples, so rustfmt may reflow a line;
 - `//!` docs and `use super::*;` in added files;
 - `mod x;` in a parent, read from its code, for each added file `x.rs` it declares.
 
 The `use x::...` lines of a parent are checked, not set aside: no attribute, no rename, only names `x` defines, each
 at the visibility it had before. A public path no longer re-exported fails; a crate path is reported. A moved item
-still named in its parent or a new sibling without an explicit import fails, or is reported when that file also binds
-a local of the same name.
+still named in its parent or a new sibling without an explicit import fails, unless every item there that names it
+also binds it locally (a parameter, a local, a field), which is only reported.
 
 Added files may not hold a `macro_rules!` or a `super::`/`self::` path, whose meaning depends on where they sit.
-Not covered, and left to the compiler and the review: name resolution in files the range does not change, and code
-moved into a file that already existed. Exit 1 and print what differs otherwise.
+Not covered, and left to the compiler and the review: name resolution in files the range does not change; code moved
+into a file that already existed, or out of a module other than the parent; a moved private method whose name a trait
+method shares; loose comments moving inside an item; and children gated by `#[cfg]`, which are refused and checked by
+hand. Exit 1 and print what differs otherwise.
 """
 
 import re
@@ -113,7 +116,8 @@ def normalise(tokens: list[tuple[str, str]], new_file: bool = False) -> list[tup
             if not (new_file and text.startswith("//!")):
                 out.append((kind, " ".join(text.split())))
         elif (
-            text == "pub"
+            new_file
+            and text == "pub"
             and i + 2 < len(tokens)
             and tokens[i + 1] == ("code", "(")
             and tokens[i + 2][1] == "super"
@@ -272,12 +276,24 @@ class File:
             t for n, t in enumerate(code)
             if IDENT.fullmatch(t) and not (n > 0 and code[n - 1] == "." and (n < 2 or code[n - 2] != "."))
         )
-        # names this file also binds locally: a use of them may be the local binding
-        self.bound = {
-            code[n + 1]
-            for n in range(len(code) - 1)
-            if code[n] in ("let", "mut", "for", "|") and IDENT.fullmatch(code[n + 1])
-        } | {code[n] for n in range(len(code) - 2) if IDENT.fullmatch(code[n]) and code[n + 1] == ":" and code[n + 2] != ":"}
+        # names used by an item that does not also bind them (as a local, a parameter or a field): such a use
+        # can only reach an item, so a moved item still named that way must be imported
+        self.unbound = Counter()
+        for start, _, kind, end in items(tokens, 0, len(tokens)):
+            if kind == "impl":
+                brace = next(k for k in range(start, end) if tokens[k] == ("code", "{"))
+                parts = [(s_, e_) for s_, _, _, e_ in items(tokens, brace + 1, end - 1)]
+            else:
+                parts = [(start, end)]
+            for s_, e_ in parts:
+                part = [t for k, t in tokens[s_:e_] if k == "code"]
+                binds = {part[n + 1] for n in range(len(part) - 1)
+                         if part[n] in ("let", "mut", "for", "|") and IDENT.fullmatch(part[n + 1])}
+                binds |= {part[n] for n in range(len(part) - 2)
+                          if IDENT.fullmatch(part[n]) and part[n + 1] == ":" and part[n + 2] != ":"}
+                used = {t for n, t in enumerate(part)
+                        if IDENT.fullmatch(t) and not (n > 0 and part[n - 1] == "." and (n < 2 or part[n - 2] != "."))}
+                self.unbound.update(used - binds)
         for start, body, kind, end in items(tokens, 0, len(tokens)):
             raw, loose = attached(tokens[start:end])
             for comment in normalise(loose, new_file):
@@ -427,10 +443,10 @@ def main() -> int:
                 for user in users:
                     message = (f"{child_path}: {name} moved here but is still named in {user} without an explicit "
                                "import: check what it resolves to there")
-                    if name in after[user].bound:
-                        notes.append(message + " (it also binds a local of that name)")
-                    else:
+                    if after[user].unbound[name]:
                         errors.append(message)
+                    else:
+                        notes.append(message + " (every item there that names it also binds it locally)")
 
     for e in errors:
         print(f"error: {e}")
@@ -445,6 +461,8 @@ def main() -> int:
 
 def describe(unit) -> str:
     tokens = unit[-1] if unit[0] != "impl empty" else unit[1]
+    if unit[0] == "comment":
+        tokens = [tokens]
     text = " ".join(t for _, t in tokens)
     return f"[{unit[0]}] " + (text[:160] + " ..." if len(text) > 160 else text)
 
