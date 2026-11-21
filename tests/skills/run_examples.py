@@ -43,6 +43,8 @@ def main() -> int:
         blocks = [(lang, textwrap.dedent(code)) for _, lang, code in fenced]
         others = sorted({lang or "(no language)" for lang, _ in blocks if lang not in ("python", "bash")})
         others += ["~~~"] if re.search(r"^[ \t]*~~~", text, re.M) else []
+        if len(re.findall(r"^[ \t]*```", text, re.M)) != 2 * len(fenced):   # a fence closed at another indent
+            others += ["unpaired fence"]
         if not blocks or others:
             print(f"{name}: {len(blocks)} blocks, fences that do not run: {others or 'none'}")
             failed += 1

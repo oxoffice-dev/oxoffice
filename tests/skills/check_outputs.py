@@ -63,6 +63,9 @@ for name in ("toc.docx", "fields.docx"):
     entries = [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs if re.fullmatch(r"TOC\d", q.style or "")]
     assert len(entries) > 3 and all(s.split("\t")[-1].isdigit() for s in entries)
     assert toc_links(name) == (len(entries), len(entries), len(entries)), (name, toc_links(name), len(entries))
+page = lambda name: next(q.text.split("\t")[-1] for q in oxoffice.docx.Document.open(d / name).paragraphs
+                         if q.text.startswith("Access arrangements\t"))
+assert int(page("fields.docx")) == int(page("toc.docx")) + 1   # update_layout_backed_fields followed the page break
 styled = next(q for q in oxoffice.docx.Document.open(d / "styled.docx").paragraphs if q.text.startswith("The overall condition index"))
 assert (styled.style, styled.paragraph_format.space_after, styled.paragraph_format.keep_with_next) == ("Caption", oxoffice.docx.Pt(12), True)
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cli.docx").comments] == [("about 12 mm", "Which reference?")]
