@@ -186,7 +186,7 @@ fn has(xml: &str, element: &str) -> bool {
 }
 
 /// A new document holding the paragraph "Intro" then one empty block rich
-/// text control with tag `tag`, alias "Typed", id 1 and a content lock.
+/// text control with tag `tag`, alias "Typed" and id 1.
 fn doc_with_control(tag: &str) -> Document {
     let mut doc = doc_with(&["Intro"]);
     let end = ContentLocation::end(body(&doc));
@@ -194,7 +194,6 @@ fn doc_with_control(tag: &str) -> Document {
         &end,
         ContentControlSpec {
             alias: Some("Typed".to_owned()),
-            lock: Some(ContentControlLock::ContentLocked),
             ..spec(Block, SdtType::RichText, tag)
         },
     )
@@ -569,7 +568,12 @@ fn every_kind_is_typed_onto_a_shell_and_keeps_its_tag_alias_id_and_lock() {
         ),
         (ContentControlTypePayload::Group, SdtType::Group),
     ] {
-        let mut doc = typed_control("typed", payload);
+        let mut doc = doc_with_control("typed");
+        let location = control_at(&doc, &body(&doc), "typed");
+        doc.set_content_control_lock(&location, Some(ContentControlLock::ContentLocked))
+            .unwrap();
+        let location = control_at(&doc, &body(&doc), "typed");
+        doc.set_content_control_type(&location, payload).unwrap();
         let doc = reopen(&mut doc);
         let control = &doc.content_controls()[0];
         assert_eq!(control.control_type(), Some(kind));
@@ -841,6 +845,7 @@ fn values_by_alias_and_from_a_map_prefer_the_tag() {
             .unwrap(),
         2
     );
+    let mut doc = reopen(&mut doc);
     assert_eq!(texts(&doc), ["Lyon", "Lyon", "old"]);
 
     let values: HashMap<String, String> =
@@ -948,18 +953,21 @@ fn a_date_is_given_in_iso_form_and_shown_in_the_control_format() {
         );
         assert_eq!(val(&properties, "w:dateFormat").as_deref(), Some(format));
     }
+}
 
-    // The corpus form shows its dates in the long British form Word offers
-    // ("d MMMM yyyy"), which the setter does not write: it refuses rather
-    // than show the date in another form.
+// Fails today: the long date format Word offers ("d MMMM yyyy", the corpus
+// form's) is refused with "unsupported or missing date format". Issue: #149
+#[test]
+#[should_panic(expected = "a long date control takes a date")]
+fn a_date_control_in_words_long_format_takes_a_date() {
     let mut doc = corpus_doc("authored/form.docx");
-    let before = doc.to_bytes().unwrap();
-    let error = doc
-        .set_content_control_value_by_tag("date_of_incorporation", "2015-01-02")
-        .unwrap_err();
-    assert!(error.to_string().contains("date format"), "{error}");
-    assert_eq!(doc.to_bytes().unwrap(), before);
-    assert_eq!(value(&doc, "date_of_incorporation"), "17 March 2014");
+    let result = doc.set_content_control_value_by_tag("date_of_incorporation", "2015-01-02");
+    assert!(
+        result.is_ok(),
+        "a long date control takes a date: {result:?}"
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(value(&doc, "date_of_incorporation"), "2 January 2015");
 }
 
 #[test]
@@ -984,6 +992,7 @@ fn a_list_value_is_one_of_its_items_chosen_by_display_text_or_value() {
                 .unwrap(),
             1
         );
+        let mut doc = reopen(&mut doc);
         assert_eq!(value(&doc, "country"), "France", "{payload:?}");
         assert_eq!(
             doc.set_content_control_value_by_tag("country", "Spain")
@@ -1199,30 +1208,28 @@ fn a_repeating_section_repeats_its_item_and_keeps_the_last_one() {
     doc.repeat_content_control(&location).unwrap();
     let mut doc = reopen(&mut doc);
 
-    // The section's content became its first item, and the repeat a second one.
+    // The section's content became its first item, and the repeat a second
+    // one. The section's own text() is not checked: it leaves nested controls
+    // out (#147).
+    let found = listed(&doc);
+    let kinds: Vec<_> = found
+        .iter()
+        .map(|(tag, id, kind, _)| (tag.clone(), *id, *kind))
+        .collect();
     assert_eq!(
-        listed(&doc),
+        kinds,
         [
             (
-                Some("lines".into()),
+                Some("lines".to_owned()),
                 Some(1),
-                Some(SdtType::RepeatingSection),
-                "".into()
+                Some(SdtType::RepeatingSection)
             ),
-            (
-                None,
-                Some(2),
-                Some(SdtType::RepeatingSectionItem),
-                "Line item".into()
-            ),
-            (
-                None,
-                Some(3),
-                Some(SdtType::RepeatingSectionItem),
-                "Line item".into()
-            ),
+            (None, Some(2), Some(SdtType::RepeatingSectionItem)),
+            (None, Some(3), Some(SdtType::RepeatingSectionItem)),
         ]
     );
+    assert_eq!(found[1].3, "Line item");
+    assert_eq!(found[2].3, "Line item");
     assert_eq!(texts(&doc), ["Line item", "Line item"]);
 
     let items = |doc: &Document| -> Vec<ContentLocation> {
@@ -1717,12 +1724,12 @@ fn the_thesis_table_of_contents_is_a_document_part_control_in_both_producers() {
                 .all(|c| c.control_type() == Some(SdtType::DocumentPartObject) && c.tag().is_none()),
             "{name}"
         );
+        // The entries, without pinning how text() joins the control's
+        // paragraphs (#147).
         let toc = controls[0].text();
-        assert!(
-            toc.starts_with("Contents1\tIntroduction\t1"),
-            "{name}: {toc}"
-        );
-        assert!(toc.contains("Literature review"), "{name}: {toc}");
+        for entry in ["Contents", "Introduction\t1", "Literature review"] {
+            assert!(toc.contains(entry), "{name}: {entry} in {toc}");
+        }
         let xml = doc.part_xml("word/document.xml").unwrap();
         assert_eq!(
             val(&xml, "w:docPartGallery").as_deref(),
@@ -1765,3 +1772,4 @@ fn a_control_added_to_word_and_google_files_survives_a_save() {
         assert_eq!(after[1..], before[1..], "{name}: the rest is untouched");
     }
 }
+
