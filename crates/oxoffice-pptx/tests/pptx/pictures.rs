@@ -320,9 +320,7 @@ fn bytes_that_are_not_an_image_are_refused_and_change_nothing() {
     assert_eq!(prs.to_bytes().unwrap(), before);
 }
 
-// Fails today: with both sides given, add_picture stores any bytes as an image part without checking them. Issue: #42
 #[test]
-#[should_panic(expected = "bytes that are not an image were added as a picture")]
 fn bytes_that_are_not_an_image_are_refused_even_with_both_sides_given() {
     let mut prs = blank_deck(1);
     let size = Some(Emu(INCH));
@@ -337,6 +335,131 @@ fn bytes_that_are_not_an_image_are_refused_even_with_both_sides_given() {
         }
         Err(error) => assert!(matches!(error, Error::UnsupportedPicture { .. }), "{error}"),
     }
+}
+
+#[test]
+fn every_editors_deck_takes_an_image_with_both_sides_given_and_refuses_other_bytes() {
+    let size = Some(Emu(INCH));
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#;
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let before = prs.to_bytes().unwrap();
+        let refused = match prs.add_picture(
+            1,
+            b"%PDF-1.7 not an image",
+            "a.png",
+            Emu(0),
+            Emu(0),
+            size,
+            size,
+        ) {
+            Ok(_) => panic!("{name}: bytes that are not an image were added"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(refused, Error::UnsupportedPicture { .. }),
+            "{name}: {refused}"
+        );
+        assert_eq!(prs.to_bytes().unwrap(), before, "{name}");
+
+        prs.add_picture(
+            1,
+            &png(10, 4, [0, 120, 250]),
+            "chart.png",
+            Emu(0),
+            Emu(0),
+            size,
+            size,
+        )
+        .unwrap();
+        prs.add_picture(1, svg, "logo.svg", Emu(0), Emu(0), size, size)
+            .unwrap();
+        let prs = reopen(&prs);
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
+}
+
+#[test]
+fn tiff_and_wmf_go_through_with_both_sides_and_a_compressed_metafile_does_not() {
+    let size = Some(Emu(INCH));
+    let mut prs = blank_deck(1);
+    let tiff = b"II*\0\x08\0\0\0\0\0\0\0";
+    let mut wmf = b"\xd7\xcd\xc6\x9a".to_vec();
+    wmf.extend_from_slice(&[0; 18]);
+    for (bytes, name) in [(&tiff[..], "scan.tif"), (&wmf[..], "logo.wmf")] {
+        prs.add_picture(0, bytes, name, Emu(0), Emu(0), size, size)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+    // A .wmz is a gzip stream, not a metafile the sniffer knows.
+    let refused =
+        match prs.add_picture(0, b"\x1f\x8b\x08\0", "logo.wmz", Emu(0), Emu(0), size, size) {
+            Ok(_) => panic!("a compressed metafile was added"),
+            Err(error) => error,
+        };
+    assert!(
+        matches!(refused, Error::UnsupportedPicture { .. }),
+        "{refused}"
+    );
+}
+
+#[test]
+fn an_odp_picture_a_deck_cannot_hold_is_dropped_with_a_diagnostic() {
+    use std::io::{Read, Write};
+    let mut source = blank_deck(1);
+    source
+        .add_picture(
+            0,
+            &png(10, 4, [0, 120, 250]),
+            "chart.png",
+            Emu(0),
+            Emu(0),
+            None,
+            None,
+        )
+        .unwrap();
+    let odp = source.to_odp_bytes().unwrap().bytes;
+    // Swap the picture for a LibreOffice metafile, which no sniffer knows.
+    let mut archive = zip::ZipArchive::new(Cursor::new(odp)).unwrap();
+    let mut rewritten = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let mut swapped = 0;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name.starts_with("Pictures/") {
+            bytes = b"VCLMTF\x01\x00 a StarView metafile".to_vec();
+            swapped += 1;
+        }
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        rewritten.start_file(name, options).unwrap();
+        rewritten.write_all(&bytes).unwrap();
+    }
+    assert_eq!(swapped, 1, "the ODP holds the picture");
+    let odp = rewritten.finish().unwrap().into_inner();
+
+    let read = Presentation::from_odp_bytes(&odp).unwrap();
+
+    assert_eq!(read.presentation.len(), 1);
+    assert_eq!(read.presentation.slide(0).unwrap().shapes().count(), 0);
+    let dropped: Vec<_> = read
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.path.as_str(), diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        dropped,
+        [(
+            "slides/0/objects/0",
+            "ODP image in a format a presentation cannot hold was dropped"
+        )]
+    );
 }
 
 #[test]

@@ -21678,13 +21678,15 @@ fn picture_dimensions(
     width: Option<Emu>,
     height: Option<Emu>,
 ) -> Result<(Emu, Emu)> {
-    if let (Some(width), Some(height)) = (width, height) {
-        return Ok((width, height));
-    }
+    // The bytes are checked even when both sides are given, as every other
+    // picture path checks them.
     if ImageFormat::sniff(image_data).is_none() {
         return Err(Error::UnsupportedPicture {
             filename: image_filename.to_owned(),
         });
+    }
+    if let (Some(width), Some(height)) = (width, height) {
+        return Ok((width, height));
     }
     let info = probe(image_data).ok_or_else(|| Error::UnavailablePictureDimensions {
         filename: image_filename.to_owned(),
