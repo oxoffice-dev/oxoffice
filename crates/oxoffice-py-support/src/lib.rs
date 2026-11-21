@@ -1,5 +1,7 @@
 //! Shared path, revision, and unit support for Python OOXML bindings.
 
+pub mod core_properties;
+
 use smallvec::SmallVec;
 use thiserror::Error;
 

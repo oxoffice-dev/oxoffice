@@ -56,11 +56,17 @@ Today, on main 78f44de:
   - No silent wrong instant in a new API: the shared conversion reads the right instant or `None`, never a shifted
     time. Fractional seconds are accepted and dropped, and an offset after them is applied. Parity with python-docx
     is not required.
+    - The value is trimmed of XML whitespace first, as the W3CDTF schema types collapse it.
+    - An offset must be exactly `±hh:mm`, with hours 00-23 and minutes 00-59. `Z` may also be lowercase.
+    - The one accepted exception: a date and time without `Z` or an offset is taken as UTC, as python-docx and the
+      old copy do. It has no zone to apply.
   - This is a breaking change for Python callers: `feat(pptx)!` with a `BREAKING CHANGE:` footer. The footer names
-    the three properties, their new types, the `TypeError` on `str`, and the loss of fractional seconds.
-- **The conversion moves to `oxoffice-py-support`** (a `dates` module), unchanged apart from that case, together with
-  the property text limit (`CORE_TEXT_LIMIT`, 255 characters). Both bindings call it. One conversion means the two
-  packages cannot drift again.
+    the three properties, their new types, the `TypeError` on `str`, the loss of fractional seconds, a stored value
+    that is not a readable W3CDTF date reading `None` instead of its text, and `author` reading `""` when absent
+    (below).
+- **The conversion moves to `oxoffice-py-support`** (a `core_properties` module), with that tail rule rewritten,
+  together with the property text limit (`CORE_TEXT_LIMIT`, 255 characters). Both bindings call it. One conversion
+  means the two packages cannot drift again.
 - **`normalize_index` and `checked_font_input` move to `oxoffice-py-support` as they are.**
 - **`public_error` and `stale_to_pyerr` move with the package as a parameter.** The shared helper takes the module
   name (`"oxoffice.docx"` or `"oxoffice.pptx"`), so each package keeps raising its own classes.
@@ -71,19 +77,18 @@ Today, on main 78f44de:
   each package keeps raising its own class. **The three type-dependent font helpers follow item 21.**
 - **Not done here:**
   - the Rust facades and the CLI, which keep W3CDTF text: only Python changes;
-  - comment dates;
-  - `author`'s `None`, unless the user decides otherwise (open question below).
+  - comment dates.
 
 ## Plan
 
 Each step is reviewed on the local branch before its one push.
 
 1. `feat(pptx)!: core property dates are datetime objects`
-   - Touches `oxoffice-py-support` (a new `dates` module, the conversion moved from the Word binding),
+   - Touches `oxoffice-py-support` (a new `core_properties` module, the conversion moved from the Word binding),
      `oxoffice-pptx-py` (`presentation.rs`), the `oxoffice/pptx/_native.pyi` stub, the Python tests, and
      `docs/ARCHITECTURE.md` (py-support gains the dates).
    - It does not touch the Word binding, whose `document.rs` and `lib.rs` belong to wave 3. Until step 2, Word keeps
-     its own copy of the conversion, which has the same text.
+     its own copy of the conversion, the old tail rule.
    - Tests (behaviour, through the facade), run on both packages with the same answers, so the two copies cannot
      drift before step 2:
      - a W3CDTF date written by PowerPoint reads as the right UTC `datetime`, with and without an offset;
@@ -92,8 +97,10 @@ Each step is reviewed on the local branch before its one push.
      - an unreadable stored date reads as `None`;
      - a `str` raises `TypeError`;
      - `None` removes the property.
-   - Word keeps its wrong reading of that one case until step 2. The test that runs the cases on both packages marks it
-     as a strict known failure on Word, citing #249, so it flips to a pass the day Word is fixed.
+   - Word keeps its old reading until step 2. The test that runs the cases on both packages marks each case where Word
+     still differs as a strict known failure on Word, citing #249, so it flips to a pass the day Word is fixed.
+   - Removing a date leaves an empty element in PowerPoint's `core.xml` (#303, the facade's writer). The test marks
+     it as a strict known failure on PowerPoint.
    - `test_pptx_scaling.py` passes `datetime` values.
    - It waits until item 15 (debug work counters) is done with pptx-py `presentation.rs` and py-support `lib.rs`;
      its first pull request, #211, edits py-support `lib.rs`.
@@ -102,7 +109,14 @@ Each step is reviewed on the local branch before its one push.
    - Drops the Word copy of the conversion and both bindings' copies of `normalize_index`, `checked_font_input`,
      `public_error`, `stale_to_pyerr` and `collect_caller_fonts`.
    - Adds a test on both packages: a stale handle and a package error raise that package's own class.
-   - Closes #249: Word reads the fractional-seconds-and-offset case right, and its known failure mark goes.
+   - Closes #249, and its known failure marks go. Word's readings change, all toward the right instant or `None`:
+     - an offset that is not exactly `±hh:mm` after the seconds (`+0200`, `+02`, `+2:00`), or out of range
+       (`+00:60`): shifted before, `None` after;
+     - an empty fraction (`.`, `.Z`): read before, `None` after;
+     - leading whitespace, and a six-character ending that does not start with a sign (`.1234Z`, `.12345`): `None`
+       before, the right instant after;
+     - an offset after fractional seconds: shifted before, right after.
+   - The PR names these changes, since a `refactor` title alone would hide them.
 3. After item 21: `checked_font_kind`, `checked_font_license` and `font_kind_name` move to `oxoffice-py-support`, with
    item 21's shared types.
 
@@ -110,18 +124,11 @@ Each step is reviewed on the local branch before its one push.
 (`plugin/skills/pptx/references/python-api.md`, `SKILL.md`). Its update goes with the release that ships step 1, as a
 follow-up there.
 
-## Open question (the user's decision)
+## `author` (decided)
 
-`oxoffice.pptx.CoreProperties.author` reads `None` when absent, where `oxoffice.docx` and every other text property
-read `""`.
-
-- **Option A, align:** read `""` in step 1, in the same breaking change.
-  - What breaks: a caller that tests `author is None` sees `""` and takes the other branch.
-  - Callers migrate once, and the two packages agree.
-- **Option B, keep `None`:** nothing breaks; the difference stays.
-
-**Recommendation: A**, so that one release carries one migration. It widens the user's decision, so it needs the
-user's yes. Without it, step 1 leaves `author` as it is.
+`oxoffice.pptx.CoreProperties.author` read `None` when absent, where `oxoffice.docx` and every other text property
+read `""`. The user chose to align (option A, 2026-11-21): step 1 makes it read `""`, in the same breaking change, so
+callers migrate once. A caller that tested `author is None` now sees `""`.
 
 ## Links
 

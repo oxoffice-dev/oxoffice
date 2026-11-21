@@ -4,6 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxoffice_py_support::RevisionCounter;
+use oxoffice_py_support::core_properties::{
+    CORE_TEXT_LIMIT, datetime_to_w3cdtf, w3cdtf_to_datetime,
+};
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -640,9 +643,6 @@ impl PyCustomProperties {
 
 type CoreField = fn(&mut oxoffice_pptx::CoreProperties) -> &mut Option<String>;
 
-/// The longest text python-docx accepts for a core property.
-const CORE_TEXT_LIMIT: usize = 255;
-
 #[pyclass(name = "CoreProperties")]
 pub struct PyCoreProperties {
     presentation: Py<PyPresentation>,
@@ -688,13 +688,33 @@ impl PyCoreProperties {
         }
         self.write(py, field, value)
     }
+
+    fn date(&self, py: Python<'_>, field: CoreField) -> PyResult<Option<Py<PyAny>>> {
+        match self.read(py, field) {
+            Some(value) => w3cdtf_to_datetime(py, &value),
+            None => Ok(None),
+        }
+    }
+
+    fn set_date(
+        &self,
+        py: Python<'_>,
+        field: CoreField,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let value = value
+            .filter(|value| !value.is_none())
+            .map(datetime_to_w3cdtf)
+            .transpose()?;
+        self.write(py, field, value)
+    }
 }
 
 #[pymethods]
 impl PyCoreProperties {
     #[getter]
-    fn author(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.creator)
+    fn author(&self, py: Python<'_>) -> String {
+        self.text(py, |properties| &mut properties.creator)
     }
     #[setter]
     fn set_author(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
@@ -725,12 +745,12 @@ impl PyCoreProperties {
         self.set_text(py, |properties| &mut properties.content_status, value)
     }
     #[getter]
-    fn created(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.created)
+    fn created(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.date(py, |properties| &mut properties.created)
     }
     #[setter]
-    fn set_created(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        self.write(py, |properties| &mut properties.created, value)
+    fn set_created(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_date(py, |properties| &mut properties.created, value)
     }
     #[getter]
     fn identifier(&self, py: Python<'_>) -> String {
@@ -765,20 +785,20 @@ impl PyCoreProperties {
         self.set_text(py, |properties| &mut properties.last_modified_by, value)
     }
     #[getter]
-    fn last_printed(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.last_printed)
+    fn last_printed(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.date(py, |properties| &mut properties.last_printed)
     }
     #[setter]
-    fn set_last_printed(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        self.write(py, |properties| &mut properties.last_printed, value)
+    fn set_last_printed(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_date(py, |properties| &mut properties.last_printed, value)
     }
     #[getter]
-    fn modified(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.modified)
+    fn modified(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.date(py, |properties| &mut properties.modified)
     }
     #[setter]
-    fn set_modified(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        self.write(py, |properties| &mut properties.modified, value)
+    fn set_modified(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_date(py, |properties| &mut properties.modified, value)
     }
     #[getter]
     fn revision(&self, py: Python<'_>) -> i64 {
