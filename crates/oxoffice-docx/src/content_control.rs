@@ -3425,7 +3425,8 @@ fn embed_matches(reader: &NsReader<&[u8]>, element: &BytesStart<'_>, rel_id: &st
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         let relationships =
             matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == REL_NS.as_bytes());
-        if relationships && local.as_ref() == b"embed" {
+        // A linked picture names its relationship with `r:link`.
+        if relationships && matches!(local.as_ref(), b"embed" | b"link") {
             let value = attribute
                 .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
                 .map_err(|error| {
