@@ -986,6 +986,42 @@ fn a_raw_carriage_return_in_saved_chart_text_reads_as_a_line_feed() {
     assert_eq!(chart(&saved, 0, id).1.categories[0], "North\ncoast");
 }
 
+#[test]
+fn a_chart_title_and_cdata_chart_text_with_raw_line_ends_read_as_line_feeds() {
+    let mut prs = blank_deck(1);
+    let id = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    let xml = only_chart_xml(&prs);
+    let titled = xml.replacen(
+        "<c:chart>",
+        "<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Q1\r\nresults</a:t></a:r>\
+         <a:r><a:t><![CDATA[ and\r\nmore]]></a:t></a:r></a:p></c:rich></c:tx>\
+         <c:overlay val=\"0\"/></c:title>",
+        1,
+    );
+    assert_ne!(titled, xml, "the chart part has a chart element");
+    assert_eq!(
+        oxoffice_chart::chart_plain_title(titled.as_bytes())
+            .unwrap()
+            .as_deref(),
+        Some("Q1\nresults and\nmore")
+    );
+
+    let mut package = saved_package(&prs);
+    let part = package
+        .parts
+        .keys()
+        .find(|name| name.starts_with("/ppt/charts/") && name.ends_with(".xml"))
+        .cloned()
+        .unwrap();
+    let cached = xml.replace("<c:v>North</c:v>", "<c:v><![CDATA[North\r\ncoast]]></c:v>");
+    assert_ne!(cached, xml, "the cache names the category");
+    package.set_part(&part, cached.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(chart(&prs, 0, id).1.categories[0], "North\ncoast");
+}
+
 // --- Copies, groups ----------------------------------------------------------
 
 #[test]

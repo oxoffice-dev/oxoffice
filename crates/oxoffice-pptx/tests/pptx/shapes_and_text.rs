@@ -1144,6 +1144,28 @@ fn a_raw_carriage_return_in_a_saved_run_reads_as_a_line_feed_and_stays_one_after
 }
 
 #[test]
+fn raw_line_ends_in_cdata_run_text_read_as_line_feeds() {
+    let prs = text_box_deck("Dear reader,");
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            "Dear reader,</a:t>",
+            "<![CDATA[Dear reader,\r\nWelcome\rin]]></a:t>",
+            1,
+        );
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    assert_eq!(
+        run_texts(shape_at(&prs, 0, 0))[0][0],
+        "Dear reader,\nWelcome\nin"
+    );
+}
+
+#[test]
 fn wrap_autofit_anchor_and_insets_survive_a_save_and_can_be_cleared() {
     let mut prs = text_box_deck("Framed");
     {
