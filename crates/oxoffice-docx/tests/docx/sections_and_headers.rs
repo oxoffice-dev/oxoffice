@@ -896,3 +896,120 @@ fn changing_the_landscape_margins_of_a_google_report_survives_a_save() {
     );
     assert_eq!(header(&doc, 1).as_deref(), Some(REPORT_HEADER));
 }
+
+/// The main part of a saved package.
+fn main_part(bytes: &[u8]) -> Vec<u8> {
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes.to_vec()))
+        .expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    package.get_part(&part).expect("main part").to_vec()
+}
+
+/// A document with a default, a first-page and an even-page header, whose
+/// final section lists the header references in `order`, as other
+/// producers write them.
+fn headers_listed(order: &[&str]) -> Vec<u8> {
+    let mut doc = Document::new();
+    doc.add_paragraph("Body.");
+    doc.set_header("Default header");
+    doc.set_first_page_header("First header");
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let main = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&main).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    // An even-page header: a copy of the default one, under its own part.
+    let reference = |kind: &str| {
+        let start = xml
+            .find(&format!(r#"<w:headerReference w:type="{kind}""#))
+            .unwrap_or_else(|| panic!("{kind} header reference"));
+        let end = start + xml[start..].find("/>").expect("reference end") + 2;
+        (start..end, xml[start..end].to_owned())
+    };
+    let (_, default) = reference("default");
+    let default_id = default
+        .split(r#"r:id=""#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("default header relationship")
+        .to_owned();
+    let rels = package
+        .get_part_rels(&main)
+        .expect("main part relationships");
+    let target = rels
+        .items
+        .iter()
+        .find(|relationship| relationship.id == default_id)
+        .expect("default header relationship")
+        .target
+        .clone();
+    let default_part = format!("/word/{target}");
+    let header_type = rels
+        .items
+        .iter()
+        .find(|relationship| relationship.id == default_id)
+        .expect("default header relationship")
+        .rel_type
+        .clone();
+    let header = package
+        .get_part(&default_part)
+        .expect("default header part")
+        .to_vec();
+    package.set_part("/word/headerEven.xml", header);
+    package.content_types.add_override(
+        "/word/headerEven.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+    );
+    package
+        .get_or_create_part_rels(&main)
+        .add_with_id("rIdEven", &header_type, "headerEven.xml");
+    let even = r#"<w:headerReference w:type="even" r:id="rIdEven"/>"#.to_owned();
+    let (first_range, first) = reference("first");
+    let (default_range, _) = reference("default");
+    let mut listed = String::new();
+    for kind in order {
+        listed.push_str(match *kind {
+            "default" => &default,
+            "first" => &first,
+            "even" => &even,
+            other => panic!("unknown header type {other}"),
+        });
+    }
+    let (from, to) = (
+        first_range.start.min(default_range.start),
+        first_range.end.max(default_range.end),
+    );
+    let xml = format!("{}{listed}{}", &xml[..from], &xml[to..]);
+    package.set_part(&main, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    out.into_inner()
+}
+
+#[test]
+fn an_untouched_document_keeps_the_header_order_libreoffice_writes() {
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(main_part(&doc.to_bytes().unwrap()), main_part(&bytes));
+}
+
+#[test]
+fn an_untouched_document_keeps_the_header_order_python_docx_writes() {
+    let bytes = headers_listed(&["first", "default"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(main_part(&doc.to_bytes().unwrap()), main_part(&bytes));
+}
+
+#[test]
+fn an_edited_document_keeps_the_header_order_it_was_read_in() {
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    doc.add_paragraph("Added.");
+    let xml = String::from_utf8(main_part(&doc.to_bytes().unwrap())).unwrap();
+    let order = ["even", "default", "first"].map(|kind| {
+        xml.find(&format!(r#"w:type="{kind}""#))
+            .expect("reference kept")
+    });
+    assert!(order[0] < order[1] && order[1] < order[2], "{xml}");
+}

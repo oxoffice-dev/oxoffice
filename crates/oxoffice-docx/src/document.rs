@@ -8123,18 +8123,16 @@ impl Parsed {
     }
 }
 
+/// Whether every header and footer reference of a section keeps a relationship
+/// read with the document. Those keep the order they were read in, whatever
+/// it is: LibreOffice writes `even, default, first`, python-docx can write
+/// `first, default`.
 fn section_references_are_canonical(section: &CT_SectPr, preserved: &HashSet<String>) -> bool {
     section
         .header_refs
         .iter()
         .chain(&section.footer_refs)
         .all(|reference| preserved.contains(&reference.rel_id))
-        && section
-            .header_refs
-            .is_sorted_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type))
-        && section
-            .footer_refs
-            .is_sorted_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type))
 }
 
 enum ChartPackageSource<'a> {
@@ -25709,7 +25707,17 @@ impl Document {
             } else {
                 None
             };
-        if let Some(section) = &mut self.document.body.sect_pr {
+        let preserved_relationships = self
+            .identifiers
+            .preserved_relationship_ids
+            .get(&owner_identity)
+            .cloned()
+            .unwrap_or_default();
+        // References read with the document keep their order; a section with
+        // a new one is written in the default, first, even order.
+        if let Some(section) = &mut self.document.body.sect_pr
+            && !section_references_are_canonical(section, &preserved_relationships)
+        {
             section
                 .header_refs
                 .sort_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type));
@@ -25717,12 +25725,6 @@ impl Document {
                 .footer_refs
                 .sort_by_key(|reference| hdr_ftr_type_order(reference.hdr_ftr_type));
         }
-        let preserved_relationships = self
-            .identifiers
-            .preserved_relationship_ids
-            .get(&owner_identity)
-            .cloned()
-            .unwrap_or_default();
         let authored_bundle_relationships = self
             .identifiers
             .authored_bundle_relationship_ids
