@@ -183,9 +183,9 @@
     "id": "pptx-producer-tables",
     "format": "pptx",
     "area": "tables",
-    "title": "Tables merged by LibreOffice cannot be split, and Google tables cannot lose columns down to one",
-    "symptom": "split fails with \"merge origin does not have a valid continuation rectangle\"; remove_column fails with \"table frame size must remain positive\"",
-    "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame; to split, give the covered cells the origin's spans in the table XML (Rust replace_table_xml_at, Python table element replace_xml)",
+    "title": "Google tables cannot lose columns down to one",
+    "symptom": "remove_column fails with \"table frame size must remain positive\"",
+    "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame",
     "issue": 44
   }
 ]

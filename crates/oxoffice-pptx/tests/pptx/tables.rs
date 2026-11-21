@@ -837,6 +837,115 @@ fn removing_the_first_row_or_column_of_a_merge_hands_it_on_with_its_text() {
     assert!((0..2).all(|row| (0..2).all(|column| is_plain(&table, row, column))));
 }
 
+/// A 3x3 table whose top-left 2x2 block is merged as LibreOffice Impress
+/// 26.2 saves it: the covered cells of the top row and of the left column
+/// carry spans of 1, where python-pptx and this facade repeat the origin's
+/// spans there.
+fn table_merged_by_libreoffice() -> String {
+    let cell = |attributes: &str, text: &str| {
+        let paragraph = if text.is_empty() {
+            "<a:p/>".to_owned()
+        } else {
+            format!("<a:p><a:r><a:t>{text}</a:t></a:r></a:p>")
+        };
+        format!(
+            r#"<a:tc{attributes}><a:txBody><a:bodyPr/><a:lstStyle/>{paragraph}</a:txBody><a:tcPr/></a:tc>"#
+        )
+    };
+    let rows = [
+        [
+            cell(r#" gridSpan="2" rowSpan="2""#, "merged"),
+            cell(r#" hMerge="1" rowSpan="1""#, ""),
+            cell("", "c"),
+        ],
+        [
+            cell(r#" vMerge="1" gridSpan="1""#, ""),
+            cell(r#" vMerge="1" hMerge="1""#, ""),
+            cell("", "f"),
+        ],
+        [cell("", "g"), cell("", "h"), cell("", "i")],
+    ];
+    let rows: String = rows
+        .iter()
+        .map(|cells| format!(r#"<a:tr h="457200">{}</a:tr>"#, cells.concat()))
+        .collect();
+    format!(
+        r#"<a:tbl xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:tblPr/><a:tblGrid>{}</a:tblGrid>{rows}</a:tbl>"#,
+        r#"<a:gridCol w="914400"/>"#.repeat(3)
+    )
+}
+
+#[test]
+fn a_block_merged_by_libreoffice_can_be_split() {
+    let mut prs = deck_with_table(3, 3);
+    prs.replace_table_xml_at(ShapeOwner::Slide(0), &[0], &table_merged_by_libreoffice())
+        .unwrap();
+    let mut prs = reopen(&prs);
+    {
+        let table = table(&prs, 0, 0);
+        let origin = table.cell(0, 0).unwrap();
+        assert_eq!((origin.span_height(), origin.span_width()), (2, 2));
+        assert!((0..2).all(|row| (0..2).all(
+            |column| (row, column) == (0, 0) || table.cell(row, column).unwrap().is_spanned()
+        )));
+    }
+
+    table_mut(&mut prs, 0, 0)
+        .cell_mut(0, 0)
+        .unwrap()
+        .split()
+        .unwrap();
+
+    let prs = reopen(&prs);
+    let table = table(&prs, 0, 0);
+    assert!((0..3).all(|row| (0..3).all(|column| is_plain(&table, row, column))));
+    assert_eq!(table.cell(0, 0).unwrap().text(), "merged");
+}
+
+#[test]
+fn a_merged_block_whose_covered_cell_names_another_span_is_not_split() {
+    // A covered cell may say 1, or repeat the origin's span in the top row
+    // (rowSpan) and in the left column (gridSpan); anything else is refused,
+    // an interior cell repeating either span included.
+    for (covered, broken) in [
+        (
+            r#"<a:tc hMerge="1" rowSpan="1">"#,
+            r#"<a:tc hMerge="1" rowSpan="3">"#,
+        ),
+        (
+            r#"<a:tc vMerge="1" gridSpan="1">"#,
+            r#"<a:tc vMerge="1" gridSpan="3">"#,
+        ),
+        (
+            r#"<a:tc vMerge="1" hMerge="1">"#,
+            r#"<a:tc vMerge="1" hMerge="1" rowSpan="2">"#,
+        ),
+        (
+            r#"<a:tc vMerge="1" hMerge="1">"#,
+            r#"<a:tc vMerge="1" hMerge="1" gridSpan="2">"#,
+        ),
+    ] {
+        let table = table_merged_by_libreoffice().replacen(covered, broken, 1);
+        let mut prs = deck_with_table(3, 3);
+        prs.replace_table_xml_at(ShapeOwner::Slide(0), &[0], &table)
+            .unwrap();
+        let mut prs = reopen(&prs);
+        let before = prs.to_bytes().unwrap();
+
+        let refused = table_mut(&mut prs, 0, 0)
+            .cell_mut(0, 0)
+            .unwrap()
+            .split()
+            .unwrap_err();
+
+        assert!(
+            refused.to_string().contains("continuation rectangle"),
+            "{broken}: {refused}"
+        );
+        assert_eq!(prs.to_bytes().unwrap(), before, "{broken}");
+    }
+}
+
 // Table style.
 
 #[test]
@@ -1291,73 +1400,6 @@ fn a_duplicated_slide_gets_its_own_copy_of_the_table() {
 }
 
 // Known failures.
-
-/// A 3x3 table whose top-left 2x2 block is merged as LibreOffice Impress
-/// 26.2 saves it: the covered cells of the top row and of the left column
-/// carry spans of 1, where python-pptx and this facade repeat the origin's
-/// spans there.
-fn table_merged_by_libreoffice() -> String {
-    let cell = |attributes: &str, text: &str| {
-        let paragraph = if text.is_empty() {
-            "<a:p/>".to_owned()
-        } else {
-            format!("<a:p><a:r><a:t>{text}</a:t></a:r></a:p>")
-        };
-        format!(
-            r#"<a:tc{attributes}><a:txBody><a:bodyPr/><a:lstStyle/>{paragraph}</a:txBody><a:tcPr/></a:tc>"#
-        )
-    };
-    let rows = [
-        [
-            cell(r#" gridSpan="2" rowSpan="2""#, "merged"),
-            cell(r#" hMerge="1" rowSpan="1""#, ""),
-            cell("", "c"),
-        ],
-        [
-            cell(r#" vMerge="1" gridSpan="1""#, ""),
-            cell(r#" vMerge="1" hMerge="1""#, ""),
-            cell("", "f"),
-        ],
-        [cell("", "g"), cell("", "h"), cell("", "i")],
-    ];
-    let rows: String = rows
-        .iter()
-        .map(|cells| format!(r#"<a:tr h="457200">{}</a:tr>"#, cells.concat()))
-        .collect();
-    format!(
-        r#"<a:tbl xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:tblPr/><a:tblGrid>{}</a:tblGrid>{rows}</a:tbl>"#,
-        r#"<a:gridCol w="914400"/>"#.repeat(3)
-    )
-}
-
-// Fails today: split wants the covered cells of the top row and left column to repeat the origin's spans, and LibreOffice writes 1 there. Issue: #44
-#[test]
-#[should_panic(expected = "merge origin does not have a valid continuation rectangle")]
-fn a_block_merged_by_libreoffice_can_be_split() {
-    let mut prs = deck_with_table(3, 3);
-    prs.replace_table_xml_at(ShapeOwner::Slide(0), &[0], &table_merged_by_libreoffice())
-        .unwrap();
-    let mut prs = reopen(&prs);
-    {
-        let table = table(&prs, 0, 0);
-        let origin = table.cell(0, 0).unwrap();
-        assert_eq!((origin.span_height(), origin.span_width()), (2, 2));
-        assert!((0..2).all(|row| (0..2).all(
-            |column| (row, column) == (0, 0) || table.cell(row, column).unwrap().is_spanned()
-        )));
-    }
-
-    table_mut(&mut prs, 0, 0)
-        .cell_mut(0, 0)
-        .unwrap()
-        .split()
-        .unwrap();
-
-    let prs = reopen(&prs);
-    let table = table(&prs, 0, 0);
-    assert!((0..3).all(|row| (0..3).all(|column| is_plain(&table, row, column))));
-    assert_eq!(table.cell(0, 0).unwrap().text(), "merged");
-}
 
 // Fails today: removing a column moves the frame edge by its width, and Google's 3,000,000 EMU frame around a 7,315,200 EMU grid would go negative. Issue: #44
 #[test]
