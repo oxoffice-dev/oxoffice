@@ -622,9 +622,7 @@ fn a_hidden_slide_stays_hidden_after_a_save_and_in_its_duplicate() {
     assert_eq!(hidden, [false, false, true, false, false]);
 }
 
-// Fails today: duplicate_slide refuses a slide with modern comments. Issue: #39
 #[test]
-#[should_panic(expected = "slides with modern comments require caller-supplied fresh comment ids")]
 fn a_slide_with_comments_can_be_duplicated() {
     let author = "{6E7B2A10-1111-4A5B-9C3D-000000000001}";
     let comment = "{6E7B2A10-2222-4A5B-9C3D-000000000002}";
