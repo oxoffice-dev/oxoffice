@@ -1,13 +1,12 @@
 {
   "file": "google/report.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
-  "resources": "16b53f413269eeea9c6356daae6a2b8367b91f660a00c6c3d9eeeaffc0d43a19",
-  "outline_and_tags": "fa138f5f4260c939d0336fcf041c86f76fec7cc23030649711db6d62050bca2d",
+  "reason": "a page break just before a next-page section break adds no blank page (#156): the four reports lose their empty page 3",
+  "resources": "024d102c4088c7bdea5df44f5728be1f8aec4e10729006cee517ac28a8d6f751",
+  "outline_and_tags": "68268de1c02416e5b8aa2585cae58047ea717a896c802bf7f77823e6b1d71608",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
     {"page": 1, "pixels": "91fd3e67749dfa4c1797c6f8babf25f9f71d674a6ab4748e712362bdbc18ea58", "content": "bfc826a63a11ce3965ead45ebddc22ce871ec1974fa40a8830acfc8e6526b99e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "514194beba46c7cfcb6d04c7b17d8b158ea95e7bdba7f19d688ea04093605f44", "content": "4d90ef69ed6636e5ca99c34a404f032148a8bc8eb08e9bafd2b28dddc2f2fead", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
-    {"page": 3, "pixels": "5a73e499168526e41e6f00e2c11083415458d1ca4558e7ca329d3c45bc7cd80d", "content": "26755a25d69d7e1b65a7ffb73697cde1f916beb699e520516e3417599bbacf29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "1ef65fa789b8f45a1caeab080a9c6d44082d18c0f8dd0263eb7d061ae4e89a9d"},
-    {"page": 4, "pixels": "c1e5f0ceeb6be43a9979c0afe7de0389054bf9f20dd9d7cfbc1dc3430f290476", "content": "e73c2483a205a2e418d7aa1fac64c3d1a318c2fa016fc5536d4871cef1e3c10c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "2900e17b69b334546b63b7309cbccba9badba40491da76101f71d7b4e5e8c2e0"}
+    {"page": 3, "pixels": "c1e5f0ceeb6be43a9979c0afe7de0389054bf9f20dd9d7cfbc1dc3430f290476", "content": "e73c2483a205a2e418d7aa1fac64c3d1a318c2fa016fc5536d4871cef1e3c10c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "905d56677498fc1c8cce2f815e1bcb4a4911deb71c46b84c544b2c35f67a9be6"}
   ]
 }

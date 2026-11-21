@@ -9,30 +9,6 @@
 # entry is updated or goes.
 
 [[known]]
-file = "authored/report.docx"
-check = "empty-page"
-pages = [3]
-issue = 156
-
-[[known]]
-file = "google/report.docx"
-check = "empty-page"
-pages = [3]
-issue = 156
-
-[[known]]
-file = "libreoffice/report.docx"
-check = "empty-page"
-pages = [3]
-issue = 156
-
-[[known]]
-file = "word/report.docx"
-check = "empty-page"
-pages = [3]
-issue = 156
-
-[[known]]
 file = "libreoffice/thesis.docx"
 check = "text"
 pages = [0]
