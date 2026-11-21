@@ -4,20 +4,26 @@
 
 Every `.rs` file the range adds, deletes or changes is read whole at BASE and at HEAD and cut into units:
 
-- each top-level item, with its attributes and the comments before it, as one token sequence;
+- each top-level item, with its attributes and doc comments, as one token sequence;
 - each item of an `impl` block, paired with that block's header and attributes, so methods may be regrouped into new
-  blocks of the same header but not moved to another type or out of a `cfg`.
+  blocks of the same header but not moved to another type or out of a `cfg`;
+- each loose comment (`//`, `/* */`, `//!`), which may end up before another item.
 
-BASE and HEAD must hold the same units, in any order and any file. Within a unit, order counts. The only edits a split
-may make are set aside:
+BASE and HEAD must hold the same units, in any order and any file; within a unit, order counts. Set aside:
 
-- restricted visibility (`pub(crate)`, `pub(super)`, `pub(in ...)`), so an item or field may be widened;
-- whitespace and trailing commas, so rustfmt may reflow a line;
-- `//!` module docs;
-- the wiring of a new child module `x` (a file the range adds next to its parent `y.rs`, at `y/x.rs`): `mod x;` and
-  `use x::...;` in the parent, at any visibility, and `use super::*;` at the top of the child.
+- `pub(super)`, so an item or field may be widened to it (from a child, the reach of a private item of the parent);
+- whitespace, and trailing commas outside one-element tuples, so rustfmt may reflow a line;
+- `//!` docs and `use super::*;` in added files;
+- `mod x;` in a parent, read from its code, for each added file `x.rs` it declares.
 
-Every other `use` and `mod` declaration is a unit like the others. Exit 1 and print what differs otherwise.
+The `use x::...` lines of a parent are checked, not set aside: no attribute, no rename, only names `x` defines, each
+at the visibility it had before. A public path no longer re-exported fails; a crate path is reported. A moved item
+still named in its parent or a new sibling without an explicit import fails, or is reported when that file also binds
+a local of the same name.
+
+Added files may not hold a `macro_rules!` or a `super::`/`self::` path, whose meaning depends on where they sit.
+Not covered, and left to the compiler and the review: name resolution in files the range does not change, and code
+moved into a file that already existed. Exit 1 and print what differs otherwise.
 """
 
 import re
@@ -89,6 +95,9 @@ def lex(text: str) -> list[tuple[str, str]]:
         elif (m := IDENT.match(text, i)) is not None:
             tokens.append(("code", m.group(0)))
             i = m.end()
+        elif text.startswith(("&&", "||"), i):  # `a && b` is not `a & &b`
+            tokens.append(("code", text[i : i + 2]))
+            i += 2
         else:
             tokens.append(("code", c))
             i += 1
@@ -107,7 +116,8 @@ def normalise(tokens: list[tuple[str, str]], new_file: bool = False) -> list[tup
             text == "pub"
             and i + 2 < len(tokens)
             and tokens[i + 1] == ("code", "(")
-            and tokens[i + 2][1] in ("crate", "super", "self", "in")
+            and tokens[i + 2][1] == "super"
+            and tokens[i + 3] == ("code", ")")
         ):
             depth, i = 0, i + 1
             while True:
@@ -212,6 +222,17 @@ NAMED_ITEM = ("fn", "struct", "enum", "type", "const", "static", "trait", "union
 RESERVED = {"crate", "self", "super", "std", "core", "alloc"}
 
 
+def attached(tokens):
+    """Split an item's tokens into the item with its doc comments, and its loose comments (`//`, `/* */`, `//!`).
+
+    A doc comment documents its item and stays with it; a loose comment may end up before another item."""
+    item, loose = [], []
+    for kind, text in tokens:
+        doc = text.startswith(("///", "/**")) and not text.startswith(("////", "/***"))
+        (loose if kind == "comment" and not doc else item).append((kind, text))
+    return item, loose
+
+
 def visibility(tokens) -> str:
     """`pub`, `pub(crate)`, `pub(super)`... or `` for the item whose tokens start at its first code token."""
     code = [t for k, t in tokens if k == "code"]
@@ -243,41 +264,82 @@ class File:
     """One side of one file: its units, its named top-level items and its wiring lines."""
 
     def __init__(self, path: str, text: str, children: set[str], new_file: bool):
-        self.path, self.units, self.names, self.wiring, self.errors = path, Counter(), {}, [], []
+        self.path, self.units, self.names, self.kinds, self.wiring, self.errors = path, Counter(), {}, {}, [], []
         tokens = lex(text)
+        code = [t for k, t in tokens if k == "code"]
+        # names used outside a field or method access (`a.b`), but `..b` is a use of `b`
         self.idents = Counter(
-            t for n, (k, t) in enumerate(tokens) if k == "code" and IDENT.fullmatch(t) and (n == 0 or tokens[n - 1][1] != ".")
+            t for n, t in enumerate(code)
+            if IDENT.fullmatch(t) and not (n > 0 and code[n - 1] == "." and (n < 2 or code[n - 2] != "."))
         )
+        # names this file also binds locally: a use of them may be the local binding
+        self.bound = {
+            code[n + 1]
+            for n in range(len(code) - 1)
+            if code[n] in ("let", "mut", "for", "|") and IDENT.fullmatch(code[n + 1])
+        } | {code[n] for n in range(len(code) - 2) if IDENT.fullmatch(code[n]) and code[n + 1] == ":" and code[n + 2] != ":"}
         for start, body, kind, end in items(tokens, 0, len(tokens)):
-            raw = tokens[start:end]
+            raw, loose = attached(tokens[start:end])
+            for comment in normalise(loose, new_file):
+                self.units[("comment", comment)] += 1
             code = [t for k, t in raw if k == "code"]
             if kind == "impl":
                 brace = next(k for k in range(body, end) if tokens[k] == ("code", "{"))
-                header = tuple(normalise([t for t in tokens[start:brace] if t[0] != "comment"]))
-                comments = tuple(normalise([t for t in tokens[start:body] if t[0] == "comment"], new_file))
-                if comments:
-                    self.units[("impl comments", header, comments)] += 1
+                header_tokens, _ = attached(tokens[start:brace])
+                header = tuple(normalise([t for t in header_tokens if t[0] != "comment"]))
+                docs = tuple(normalise([t for t in header_tokens if t[0] == "comment"], new_file))
+                if docs:
+                    self.units[("impl docs", header, docs)] += 1
                 inner = items(tokens, brace + 1, end - 1)
                 if not inner:
                     self.units[("impl empty", header)] += 1
                 for s_, _, _, e_ in inner:
-                    self.units[("impl item", header, tuple(normalise(tokens[s_:e_], new_file)))] += 1
+                    item_tokens, item_loose = attached(tokens[s_:e_])
+                    for comment in normalise(item_loose, new_file):
+                        self.units[("comment", comment)] += 1
+                    self.units[("impl item", header, tuple(normalise(item_tokens, new_file)))] += 1
                 continue
             if new_file and code == ["use", "super", ":", ":", "*", ";"]:
                 continue
             if kind == "mod" and code[:1] == ["mod"] and len(code) == 3 and code[1] in children:
                 continue
+            if new_file and kind == "macro" and code[:1] == ["macro_rules"]:
+                self.errors.append(f"{path}: a macro_rules! moved here, where its textual scope differs")
+            if new_file and any(code[n] in ("super", "self") and code[n + 1 : n + 3] == [":", ":"]
+                                for n in range(len(code) - 2)):
+                self.errors.append(f"{path}: moved code with a relative path (super:: or self::): {' '.join(code)[:120]}")
             if kind == "use":
                 use_at = code.index("use")
                 if code[use_at + 1] in children:
-                    if code[0] == "#" or "as" in code:
-                        self.errors.append(f"{path}: wiring with an attribute or a rename: {' '.join(code)}")
+                    if code[0] == "#" or "as" in code or "*" in code:
+                        self.errors.append(f"{path}: wiring with an attribute, a rename or a glob: {' '.join(code)}")
                     self.wiring.append((code[: use_at], code[use_at + 1], [t for t in code[use_at + 2 :] if IDENT.fullmatch(t)]))
                     continue
             name = item_name(raw, kind)
             if name is not None:
                 self.names[name] = visibility(tokens[body:end])
+                self.kinds[name] = kind
             self.units[(kind, tuple(normalise(raw, new_file)))] += 1
+
+
+def declared_modules(text: str) -> set[str]:
+    """The `mod x;` declarations of a file, read from its code tokens (comments and literals cannot fake one)."""
+    tokens = lex(text)
+    return {
+        name
+        for start, body, kind, end in items(tokens, 0, len(tokens))
+        if kind == "mod"
+        for code in [[t for k, t in tokens[body:end] if k == "code"]]
+        if len(code) == 3 and code[0] == "mod" and code[2] == ";"
+        for name in [code[1]]
+    }
+
+
+def child_path_of(parent: str, child: str) -> str:
+    """The file of module `child` declared in `parent`."""
+    p = PurePosixPath(parent)
+    folder = p.parent if p.name in ("lib.rs", "main.rs", "mod.rs") else p.with_suffix("")
+    return str(folder / f"{child}.rs")
 
 
 def main() -> int:
@@ -298,12 +360,16 @@ def main() -> int:
     children: dict[str, set[str]] = {}
     errors = []
     for path in sorted(added):
-        child = PurePosixPath(path)
-        if child.suffix != ".rs":
+        if not path.endswith(".rs"):
             continue
+        child = PurePosixPath(path)
+        child = child.with_name(child.name[:-3] + ".rs") if child.suffix != ".rs" else child
         parent = str(child.parent) + ".rs"
-        text = read(head, parent) or ""
-        if child.stem in RESERVED or not re.search(rf"^mod {child.stem};$", text, re.M):
+        if read(head, parent) is None:  # a module of a crate root or of a mod.rs
+            parent = next((str(child.parent / root) for root in ("lib.rs", "main.rs", "mod.rs")
+                           if read(head, str(child.parent / root)) is not None), parent)
+        declared = declared_modules(read(head, parent) or "")
+        if not IDENT.fullmatch(child.name[:-3]) or child.name[:-3] in RESERVED or child.name[:-3] not in declared:
             errors.append(f"{path}: added but not declared as `mod {child.stem};` in {parent}")
             continue
         children.setdefault(parent, set()).add(child.stem)
@@ -331,7 +397,7 @@ def main() -> int:
         for vis_tokens, child, listed in f.wiring:
             vis = "".join(vis_tokens)
             for name in listed:
-                child_file = after.get(str(PurePosixPath(parent).with_suffix("")) + f"/{child}.rs")
+                child_file = after.get(child_path_of(parent, child))
                 if child_file is None or name not in child_file.names:
                     errors.append(f"{parent}: re-exports {child}::{name}, which {child}.rs does not define")
                     continue
@@ -341,7 +407,7 @@ def main() -> int:
                     errors.append(f"{parent}: {name} was `{was or 'private'}` here, re-exported as `{vis or 'private'}`")
                 imported[name] = child
         for child in names:
-            child_file = after[str(PurePosixPath(parent).with_suffix("")) + f"/{child}.rs"]
+            child_file = after[child_path_of(parent, child)]
             for name in child_file.names:
                 was = home_before.get((parent, name))
                 if name in imported or was is None:
@@ -352,15 +418,19 @@ def main() -> int:
                     notes.append(f"{parent}: crate path {name} is no longer re-exported (nothing in the crate names it)")
         # a moved item still named in the parent or a sibling must come through the parent's explicit import
         for child in names:
-            child_path = str(PurePosixPath(parent).with_suffix("")) + f"/{child}.rs"
+            child_path = child_path_of(parent, child)
             for name in after[child_path].names:
                 if name in imported or (parent, name) not in home_before:
                     continue
-                users = [p for p in [parent] + [str(PurePosixPath(parent).with_suffix("")) + f"/{c}.rs" for c in names]
-                         if p != child_path and after[p].idents[name]]
-                if users:
-                    errors.append(f"{child_path}: {name} moved here but is still named in {', '.join(users)} "
-                                  "without an explicit import: check what it resolves to there")
+                users = [p for p in [parent] + [child_path_of(parent, c) for c in names]
+                         if p != child_path and name not in after[p].names and after[p].idents[name]]
+                for user in users:
+                    message = (f"{child_path}: {name} moved here but is still named in {user} without an explicit "
+                               "import: check what it resolves to there")
+                    if name in after[user].bound:
+                        notes.append(message + " (it also binds a local of that name)")
+                    else:
+                        errors.append(message)
 
     for e in errors:
         print(f"error: {e}")

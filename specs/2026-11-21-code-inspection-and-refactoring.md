@@ -88,13 +88,16 @@ code is one dense job, size alone is not a reason.
     `default-template` alone, `render` alone, one release build);
   - the existing tests;
   - `git diff --color-moved=dimmed-zebra`;
-  - `scripts/check_pure_move.py`, added with the first split (#51): every
-    changed `.rs` file is read whole at both revisions, and both sides must
-    hold the same code tokens, comments and literals once `use` and `mod`
-    declarations, `//!` docs, restricted visibility (`pub(crate)`,
-    `pub(super)`, `pub(in ...)`) and `impl` headers are set aside. An `impl`
-    header may only be added if it already exists. Whitespace is ignored, so
-    rustfmt may reflow a line;
+  - `scripts/check_pure_move.py`, added with the first split (#51). It cuts
+    every changed `.rs` file into units: each item, with its attributes and
+    doc comments, and each `impl` item, tied to its block's header and
+    attributes. Both revisions must hold the same units, as token sequences.
+    It sets aside `pub(super)`, whitespace, trailing commas and the
+    `mod`/`use super::*` wiring of new files. It checks the parent's re-export
+    lines: no attribute, no rename, no glob, each name at its old visibility.
+    It flags a moved item still named where no explicit import brings it.
+    Name resolution in unchanged files is left to the compiler and the
+    review;
   - for Word layout code, which no test renders: the corpus rendered to PDF
     and PNG with the CLI before and after, bytes compared.
 
