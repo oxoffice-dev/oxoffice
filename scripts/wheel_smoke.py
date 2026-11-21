@@ -134,9 +134,9 @@ def run_on_windows_thread(run, size):
 def fits(corpus, kib):
     """Whether the work completes on a `kib` KiB thread stack, in a new process. A stack overflow kills that process;
     an exit status of 1 is a Python error, which stops the measure with its traceback."""
-    command = [sys.executable, "-I", __file__, str(corpus), "--thread-stack", str(kib)]
-    environment = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    probe = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", env=environment)
+    # -X utf8 makes the probe write UTF-8 even on Windows; -I ignores PYTHONIOENCODING.
+    command = [sys.executable, "-I", "-X", "utf8", __file__, str(corpus), "--thread-stack", str(kib)]
+    probe = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace")
     if probe.returncode == 1:
         raise SystemExit(f"the probe on a {kib} KiB stack failed with an error, not an overflow:\n{probe.stderr}")
     return probe.returncode == 0

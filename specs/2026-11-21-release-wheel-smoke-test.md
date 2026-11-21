@@ -89,9 +89,11 @@ Not done here:
   832 with Windows' rounding), Linux x86_64 816, Linux aarch64 816, macOS
   arm64 800, macOS x86_64 816. No patch release was needed for the stack.
 - Plan step 2 was done anyway, as #47 (`CT_TextListStyle` levels boxed).
-  With it on `main` (dry runs 44857139602 and 44864662766): Windows x64
-  448 KiB, Linux x86_64 384, Linux aarch64 416, macOS arm64 368, macOS
-  x86_64 368.
+  With it on `main` (dry run 44864662766, the final script but for the
+  probe's UTF-8 flag): Windows x64 448 KiB, Linux x86_64 416, Linux aarch64
+  416, macOS arm64 400, macOS x86_64 400. The dry runs used the 8-file corpus;
+  on the 36-file corpus of the merge, a local Linux x86_64 release wheel also
+  needs 416 KiB, and the whole check takes about 3 minutes there.
 - Still open: the tag is pushed before the checks (`docs/RELEASE.md` says to
   dry run first and how to recover), and a dry run does not check the
   version the wheels carry.
