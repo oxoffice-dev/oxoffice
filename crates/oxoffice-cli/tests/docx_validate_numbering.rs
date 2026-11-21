@@ -11,8 +11,7 @@ use oxoffice_opc::OpcPackage;
 fn validate_warns_about_a_dangling_numbering_reference_and_passes_the_file() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/corpus/files/word/contract.docx");
-    let mut package =
-        OpcPackage::from_reader(Cursor::new(std::fs::read(source).unwrap())).unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(std::fs::read(source).unwrap())).unwrap();
     let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
     let at = xml.find("<w:numId w:val=\"").expect("a numbered paragraph");
     let end = at + xml[at..].find("/>").unwrap() + 2;
