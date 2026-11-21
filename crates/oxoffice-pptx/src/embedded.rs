@@ -526,10 +526,7 @@ impl Presentation {
         let mut package = staged.staged_package(true)?;
         persist_invalidated_package_signature(&mut package, package_signatures_invalidated)?;
         let mut output = Cursor::new(Vec::new());
-        // This write is the embedded transaction's ZIP publication. Count it
-        // before `write_to` so an error still counts, and do not count the
-        // following read.
-        crate::note_embedded_zip_write();
+        // This write is the embedded transaction's ZIP publication.
         package.write_to(&mut output)?;
         let mut reopened = Self::from_bytes(output.get_ref())?;
         // Finite XML diagnostics remain report-only for unrelated embedded edits.

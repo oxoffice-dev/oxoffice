@@ -4,45 +4,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxoffice_py_support::RevisionCounter;
-#[cfg(debug_assertions)]
-use std::cell::Cell;
+use oxoffice_py_support::core_properties::{
+    CORE_TEXT_LIMIT, datetime_to_w3cdtf, w3cdtf_to_datetime,
+};
 
-// Debug builds, which the binding tests use, count the owner inventory work.
-#[cfg(debug_assertions)]
-thread_local! {
-    static FX260_PPT_VISITS: Cell<usize> = const { Cell::new(0) };
-}
-
-pub(crate) fn note_fx260_ppt(count: usize) {
-    #[cfg(debug_assertions)]
-    FX260_PPT_VISITS.with(|cell| cell.set(cell.get().saturating_add(count)));
-    #[cfg(not(debug_assertions))]
-    let _ = count;
-}
-
-#[cfg(debug_assertions)]
-fn fx260_ppt_visits() -> usize {
-    FX260_PPT_VISITS.with(|cell| cell.get())
-}
-
-/// Debug builds only: the owner inventory work counted since the previous
-/// call, so that the Python tests can compare decks of N and 4N slides.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_inventory_work")]
-pub(crate) fn inventory_work() -> usize {
-    FX260_PPT_VISITS.with(|cell| cell.replace(0))
-}
-
-/// Debug builds only: the work staging and reopening packages did since the
-/// previous call, as parts parsed, slide and notes parts serialized, media
-/// hashed and packages written as a ZIP.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_commit_work")]
-pub(crate) fn commit_work() -> [usize; 4] {
-    oxoffice_pptx::take_commit_work()
-}
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyList, PyString, PyTuple};
@@ -678,9 +643,6 @@ impl PyCustomProperties {
 
 type CoreField = fn(&mut oxoffice_pptx::CoreProperties) -> &mut Option<String>;
 
-/// The longest text python-docx accepts for a core property.
-const CORE_TEXT_LIMIT: usize = 255;
-
 #[pyclass(name = "CoreProperties")]
 pub struct PyCoreProperties {
     presentation: Py<PyPresentation>,
@@ -726,13 +688,33 @@ impl PyCoreProperties {
         }
         self.write(py, field, value)
     }
+
+    fn date(&self, py: Python<'_>, field: CoreField) -> PyResult<Option<Py<PyAny>>> {
+        match self.read(py, field) {
+            Some(value) => w3cdtf_to_datetime(py, &value),
+            None => Ok(None),
+        }
+    }
+
+    fn set_date(
+        &self,
+        py: Python<'_>,
+        field: CoreField,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let value = value
+            .filter(|value| !value.is_none())
+            .map(datetime_to_w3cdtf)
+            .transpose()?;
+        self.write(py, field, value)
+    }
 }
 
 #[pymethods]
 impl PyCoreProperties {
     #[getter]
-    fn author(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.creator)
+    fn author(&self, py: Python<'_>) -> String {
+        self.text(py, |properties| &mut properties.creator)
     }
     #[setter]
     fn set_author(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
@@ -763,12 +745,12 @@ impl PyCoreProperties {
         self.set_text(py, |properties| &mut properties.content_status, value)
     }
     #[getter]
-    fn created(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.created)
+    fn created(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.date(py, |properties| &mut properties.created)
     }
     #[setter]
-    fn set_created(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        self.write(py, |properties| &mut properties.created, value)
+    fn set_created(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_date(py, |properties| &mut properties.created, value)
     }
     #[getter]
     fn identifier(&self, py: Python<'_>) -> String {
@@ -803,20 +785,20 @@ impl PyCoreProperties {
         self.set_text(py, |properties| &mut properties.last_modified_by, value)
     }
     #[getter]
-    fn last_printed(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.last_printed)
+    fn last_printed(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.date(py, |properties| &mut properties.last_printed)
     }
     #[setter]
-    fn set_last_printed(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        self.write(py, |properties| &mut properties.last_printed, value)
+    fn set_last_printed(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_date(py, |properties| &mut properties.last_printed, value)
     }
     #[getter]
-    fn modified(&self, py: Python<'_>) -> Option<String> {
-        self.read(py, |properties| &mut properties.modified)
+    fn modified(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.date(py, |properties| &mut properties.modified)
     }
     #[setter]
-    fn set_modified(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        self.write(py, |properties| &mut properties.modified, value)
+    fn set_modified(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_date(py, |properties| &mut properties.modified, value)
     }
     #[getter]
     fn revision(&self, py: Python<'_>) -> i64 {
@@ -2741,7 +2723,6 @@ impl PartOwners {
     }
 
     fn index(&mut self, index: usize) {
-        note_fx260_ppt(1);
         let owner = &self.owners[index];
         let body = matches!(owner.address.physical, PhysicalOwner::TextBody { .. });
         self.by_path
@@ -2836,7 +2817,6 @@ impl OwnerParts {
         layout_index: Option<usize>,
         body: bool,
     ) -> Option<&LiveOwner> {
-        note_fx260_ppt(1);
         let part = self.part(OwnerPart::of(path))?;
         let key = (smallvec::SmallVec::from_slice(path), layout_index, body);
         part.owners.get(*part.by_path.get(&key)?)
@@ -3005,15 +2985,6 @@ pub(crate) struct PreparedOwners {
     /// The generations this edit retires or replaces, in preparation order.
     #[cfg(debug_assertions)]
     retired: Vec<u64>,
-}
-
-/// Runs a debug-only cross-check without counting its work.
-#[cfg(debug_assertions)]
-fn without_work_count<T>(run: impl FnOnce() -> T) -> T {
-    let visits = fx260_ppt_visits();
-    let result = run();
-    FX260_PPT_VISITS.with(|cell| cell.set(visits));
-    result
 }
 
 /// Debug builds check that carrying parts over prepares what walking every
@@ -3218,7 +3189,6 @@ fn slide_owner_addresses(
     index: usize,
     out: &mut Vec<OwnerAddress>,
 ) -> PyResult<()> {
-    let start = out.len();
     let slide = inner
         .slide(index)
         .ok_or_else(|| PyValueError::new_err("slide owner is absent"))?;
@@ -3239,7 +3209,6 @@ fn slide_owner_addresses(
             out,
         )?;
     }
-    note_fx260_ppt(out.len() - start);
     Ok(())
 }
 
@@ -3249,7 +3218,6 @@ fn master_owner_addresses(
     inner: &oxoffice_pptx::Presentation,
     out: &mut Vec<OwnerAddress>,
 ) -> PyResult<()> {
-    let start = out.len();
     for index in 0..inner.layout_count() {
         // Originating layout parts provide physical ownership independently of order.
         let part = inner
@@ -3316,7 +3284,6 @@ fn master_owner_addresses(
             }
         }
     }
-    note_fx260_ppt(out.len() - start);
     Ok(())
 }
 
@@ -3430,7 +3397,6 @@ impl PyPresentation {
         let Some(generation) = captured.owner_generation() else {
             return Some(captured.clone());
         };
-        note_fx260_ppt(1);
         let owner = self.owners.owner(generation)?;
         let mut path = captured.clone();
         let end = match &owner.address.physical {
@@ -3571,7 +3537,6 @@ impl PyPresentation {
                 let shape = owners
                     .iter()
                     .find(|owner| {
-                        note_fx260_ppt(1);
                         owner.address.path == segs
                             && matches!(owner.address.physical, PhysicalOwner::Shape { .. })
                     })
@@ -3820,10 +3785,10 @@ impl PyPresentation {
         // parts over prepares exactly what walking every part prepares.
         #[cfg(debug_assertions)]
         if carried.masters || carried.slides.iter().any(Option::is_some) {
-            let walked = without_work_count(|| {
+            let walked = {
                 let none = CarriedParts::none(candidate);
                 self.prepare_parts(candidate, operation, preserved, &none, changed)
-            });
+            };
             assert_same_preparation(&prepared, &walked);
         }
         prepared
@@ -3955,7 +3920,6 @@ impl PyPresentation {
         let mut retained_ends = Vec::new();
         for (_, _, list) in &old_parts {
             for proof in list.iter() {
-                note_fx260_ppt(1);
                 if !seen.insert(proof.generation) {
                     return Err(fail("duplicate owner survival proof"));
                 }
@@ -4313,7 +4277,6 @@ impl PyPresentation {
         &self,
         operation: &'static str,
     ) -> PyResult<oxoffice_py_support::PreparedRevision> {
-        note_fx260_ppt(1);
         self.revisions
             .prepare_scopes(operation, &[], &[])
             .map_err(oxoffice_py_support::revision_to_pyerr)
@@ -4353,7 +4316,6 @@ impl PyPresentation {
         // is bound after successful append, before installing these owners.
         let shape_id = None;
         let kind = oxoffice_pptx::ShapeKind::Shape;
-        note_fx260_ppt(1);
         let slide_identity = PartIdentity::Slide(slide_id);
         let shape_path = smallvec![PathSeg::Slide(slide_index), PathSeg::Shape(shape_index)];
         let mut paragraph_path = shape_path.clone();
@@ -4535,7 +4497,6 @@ impl PyPresentation {
         shape_owner_addresses(shape, slide.clone(), path.segs.clone(), &mut addresses)?;
         let mut indices = Vec::with_capacity(addresses.len());
         for address in addresses {
-            note_fx260_ppt(1);
             let body = matches!(address.physical, PhysicalOwner::TextBody { .. });
             let key = (address.path, address.layout_index, body);
             let index = *owners
@@ -4551,7 +4512,6 @@ impl PyPresentation {
         }
         let mut retired = Vec::new();
         for &index in &indices {
-            note_fx260_ppt(1);
             let owner = &owners.owners[index];
             if index != selected {
                 retired.push(owner.owner.clone());
@@ -4570,7 +4530,6 @@ impl PyPresentation {
         let updates = indices
             .into_iter()
             .map(|index| {
-                note_fx260_ppt(1);
                 let mut owner = owners.owners[index].clone();
                 if index != selected {
                     owner.owner = revision
@@ -4613,7 +4572,6 @@ impl PyPresentation {
             .part_mut(prepared.part)
             .expect("prepared shape part");
         for (index, owner) in prepared.updates {
-            note_fx260_ppt(1);
             self.owners
                 .by_generation
                 .remove(&owners.owners[index].owner.generation());
@@ -4854,7 +4812,7 @@ impl PyPresentation {
         }
         let proofs = self.matched_footer_owners(candidate, changed.clone(), &next);
         #[cfg(debug_assertions)]
-        without_work_count(|| self.assert_footer_owners(candidate, &carried, &changed, &proofs))?;
+        self.assert_footer_owners(candidate, &carried, &changed, &proofs)?;
         proofs
     }
 
@@ -5496,64 +5454,9 @@ pub(crate) fn collect_caller_fonts<'py>(
     font_dir: Option<PathBuf>,
     font_dirs: Option<Bound<'py, PyAny>>,
 ) -> PyResult<Option<Vec<oxoffice_layout::FontFile>>> {
-    if fonts.is_none() && font_dir.is_none() && font_dirs.is_none() {
-        return Ok(None);
-    }
-    if font_dir.is_some() && font_dirs.is_some() {
-        return Err(PyValueError::new_err(
-            "font_dir and font_dirs cannot be supplied together",
-        ));
-    }
-    let explicit = fonts
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(family, data)| oxoffice_layout::FontFile {
-            family,
-            data: data.as_bytes().to_vec(),
-        })
-        .collect::<Vec<_>>();
-    let directories = match font_dirs {
-        Some(paths) => {
-            if paths.is_instance_of::<PyString>() || paths.is_instance_of::<PyBytes>() {
-                return Err(PyTypeError::new_err(
-                    "font_dirs must be a sequence of paths, not a scalar string or bytes",
-                ));
-            }
-            paths
-                .extract::<Vec<PathBuf>>()
-                .map_err(|_| PyTypeError::new_err("font_dirs must be a sequence of paths"))?
-        }
-        None => font_dir.into_iter().collect(),
-    };
-    py.detach(|| {
-        for directory in &directories {
-            let metadata = std::fs::metadata(directory).map_err(|error| {
-                std::io::Error::new(
-                    error.kind(),
-                    format!("font directory {}: {error}", directory.display()),
-                )
-            })?;
-            if !metadata.is_dir() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotADirectory,
-                    format!("font directory {} is not a directory", directory.display()),
-                ));
-            }
-        }
-        Ok::<_, std::io::Error>(())
+    oxoffice_py_support::fonts::collect_caller_fonts(py, fonts, font_dir, font_dirs, |error| {
+        pptx_value_to_pyerr(py, error.to_string())
     })
-    .map_err(PyErr::from)?;
-    let selected = py
-        .detach(|| {
-            let mut selected = Vec::new();
-            for directory in directories {
-                selected.extend(oxoffice_layout::FontFile::from_dir(&directory)?);
-            }
-            selected.extend(explicit);
-            Ok::<_, oxoffice_layout::LayoutError>(selected)
-        })
-        .map_err(|error| pptx_value_to_pyerr(py, error.to_string()))?;
-    Ok((!selected.is_empty()).then_some(selected))
 }
 
 /// Caller authorization is required independently of the font's own fsType bits.
@@ -5581,85 +5484,7 @@ impl PyFontEmbeddingLicense {
     }
 }
 
-fn checked_font_input(font: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    use std::io::Read;
-    const LIMIT: usize = 64 * 1024 * 1024;
-    let copy = |source: &[u8]| -> PyResult<Vec<u8>> {
-        if source.len() > LIMIT {
-            return Err(PyValueError::new_err("font exceeds 64 MiB input bound"));
-        }
-        let mut data = Vec::new();
-        data.try_reserve_exact(source.len()).map_err(|_| {
-            pyo3::exceptions::PyMemoryError::new_err("font input allocation failed")
-        })?;
-        data.extend_from_slice(source);
-        Ok(data)
-    };
-    if let Ok(bytes) = font.cast::<PyBytes>() {
-        return copy(bytes.as_bytes());
-    }
-    if let Ok(path) = font.extract::<PathBuf>() {
-        let file = std::fs::File::open(path)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
-        if file
-            .metadata()
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?
-            .len()
-            > LIMIT as u64
-        {
-            return Err(PyValueError::new_err("font exceeds 64 MiB input bound"));
-        }
-        let mut data = Vec::new();
-        let mut input = file.take((LIMIT + 1) as u64);
-        let mut chunk = [0u8; 8192];
-        loop {
-            let count = input
-                .read(&mut chunk)
-                .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
-            if count == 0 {
-                break;
-            }
-            if count > LIMIT - data.len() {
-                return Err(PyValueError::new_err("font exceeds 64 MiB input bound"));
-            }
-            data.try_reserve_exact(count).map_err(|_| {
-                pyo3::exceptions::PyMemoryError::new_err("font input allocation failed")
-            })?;
-            data.extend_from_slice(&chunk[..count]);
-        }
-        return Ok(data);
-    }
-    let read = font.getattr("read").map_err(|_| {
-        PyTypeError::new_err("font must be bytes, a filesystem path or a binary reader")
-    })?;
-    let mut data = Vec::new();
-    loop {
-        let remaining = LIMIT - data.len();
-        let value = read.call1(((remaining + 1).min(8192),))?;
-        let bytes = value
-            .cast::<PyBytes>()
-            .map_err(|_| PyTypeError::new_err("font reader must return bytes"))?;
-        let chunk = bytes.as_bytes();
-        if chunk.is_empty() {
-            return Ok(data);
-        }
-        if chunk.len() > remaining {
-            return Err(PyValueError::new_err("font exceeds 64 MiB input bound"));
-        }
-        let needed = data.len() + chunk.len();
-        if needed > data.capacity() {
-            let capacity = data
-                .capacity()
-                .saturating_mul(2)
-                .clamp(8192, LIMIT)
-                .max(needed);
-            data.try_reserve_exact(capacity - data.len()).map_err(|_| {
-                pyo3::exceptions::PyMemoryError::new_err("font input allocation failed")
-            })?;
-        }
-        data.extend_from_slice(chunk);
-    }
-}
+use oxoffice_py_support::fonts::checked_font_input;
 
 fn font_kind_name(kind: oxoffice_pptx::EmbeddedFontKind) -> &'static str {
     match kind {

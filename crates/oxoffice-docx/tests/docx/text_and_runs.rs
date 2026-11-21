@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 
 use oxoffice_docx::{
-    BreakKind, Document, ParagraphItemRef, ParagraphRef, ReplacementCountMismatch, RunFontSlot,
-    RunItemRef, StoryKind, UnderlineStyle,
+    BreakKind, Document, FieldEvaluationContext, HdrFtrType, ParagraphItemRef, ParagraphRef,
+    ReplaceOptions, ReplacementCountMismatch, RunFontSlot, RunItemRef, StoryItemKind, StoryKind,
+    UnderlineStyle,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -143,6 +144,67 @@ fn superscript_subscript_and_underline_styles_survive_a_save() {
     // Codes are the ones language bindings use: 3 double, 11 wave.
     assert_eq!(paragraph.run(4).unwrap().underline_code_value(), Some(3));
     assert_eq!(paragraph.run(5).unwrap().underline_code_value(), Some(11));
+}
+
+#[test]
+fn heavy_and_long_underline_styles_are_read_and_kept() {
+    // The heavy and long values of ST_Underline, with the WdUnderline code
+    // bindings use.
+    for (value, code) in [
+        ("dottedHeavy", 20),
+        ("dashedHeavy", 23),
+        ("dashDotHeavy", 25),
+        ("dashDotDotHeavy", 26),
+        ("wavyHeavy", 27),
+        ("dashLong", 39),
+        ("wavyDouble", 43),
+        ("dashLongHeavy", 55),
+    ] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:rPr><w:u w:val="{value}"/></w:rPr><w:t>styled</w:t></w:r></w:p>"#
+        ));
+        let paragraph = doc.paragraph(0).unwrap();
+        let run = paragraph.run(0).unwrap();
+        assert!(run.is_underline(), "{value}");
+        assert_eq!(run.underline_code_value(), Some(code), "{value}");
+        assert!(doc.to_html_fragment().contains("<u>"), "{value} in HTML");
+        let reopened = reopen(&mut doc);
+        let xml = reopened.part_xml("word/document.xml").unwrap();
+        assert!(
+            xml.contains(&format!(r#"w:u w:val="{value}""#)),
+            "{value}: {xml}"
+        );
+    }
+    // Through the typed style.
+    let mut doc = Document::new();
+    doc.add_paragraph("")
+        .add_run("double wave")
+        .underline_style(UnderlineStyle::WavyDouble);
+    let reopened = reopen(&mut doc);
+    assert_eq!(
+        reopened
+            .paragraph(0)
+            .unwrap()
+            .run(0)
+            .unwrap()
+            .underline_code_value(),
+        Some(43)
+    );
+    // And through the binding's code.
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_run("long");
+    doc.paragraph_mut(0)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_underline_code_value(Some(39));
+    let reopened = reopen(&mut doc);
+    assert!(
+        reopened
+            .part_xml("word/document.xml")
+            .unwrap()
+            .contains(r#"w:u w:val="dashLong""#)
+    );
 }
 
 #[test]
@@ -344,9 +406,7 @@ fn paragraph_text_setter_keeps_a_lone_carriage_return_and_doubled_line_endings()
     assert_eq!(texts(&doc), ["a\nb\n\nc\n\nd"]);
 }
 
-// Fails today: text reading drops `w:noBreakHyphen` and `w:ptab`, which Word shows as a hyphen and a tab. Issue: #26
 #[test]
-#[should_panic(expected = "a non-breaking hyphen and a positional tab read as text")]
 fn paragraph_text_shows_non_breaking_hyphens_and_positional_tabs() {
     let doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t>"#,
@@ -358,6 +418,189 @@ fn paragraph_text_shows_non_breaking_hyphens_and_positional_tabs() {
         matches!(text.as_str(), "co-op\tpage 2" | "co\u{2011}op\tpage 2"),
         "a non-breaking hyphen and a positional tab read as text: {text:?}"
     );
+}
+
+#[test]
+fn a_search_finds_and_replaces_text_across_a_non_breaking_hyphen_and_a_positional_tab() {
+    let body = concat!(
+        r#"<w:p><w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t>"#,
+        r#"<w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/>"#,
+        r#"<w:t>page 2</w:t></w:r></w:p>"#,
+    );
+    let mut doc = doc_with_body(body);
+    assert_eq!(
+        doc.replace_text("coop", "X"),
+        0,
+        "the hyphen is part of the text"
+    );
+    assert_eq!(doc.replace_text("co-op", "cooperative"), 1);
+    assert_eq!(doc.replace_text("\tpage", " page"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["cooperative page 2"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        !xml.contains("noBreakHyphen") && !xml.contains("w:ptab"),
+        "the matched hyphen and tab go: {xml}"
+    );
+    // The runs read them too, and so does a cell holding them.
+    let doc = doc_with_body(body);
+    let run_text: String = doc
+        .paragraph(0)
+        .unwrap()
+        .runs()
+        .map(|run| run.text())
+        .collect();
+    assert_eq!(run_text, "co-op\tpage 2");
+    let doc = doc_with_body(&format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{body}</w:tc></w:tr></w:tbl>"#
+    ));
+    let table = doc.table(0).unwrap();
+    assert_eq!(table.cell(0, 0).unwrap().text(), "co-op\tpage 2");
+}
+
+#[test]
+fn counting_and_checked_replacement_see_non_breaking_hyphens_and_positional_tabs() {
+    let mut doc =
+        doc_with_body(r#"<w:p><w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t></w:r></w:p>"#);
+    assert_eq!(doc.count_text("co-op").unwrap(), [(StoryKind::Body, 1)]);
+    assert!(doc.count_text("coop").unwrap().is_empty());
+    // "coop" is not in the document, so nothing is left out of reach.
+    assert_eq!(
+        doc.try_replace_all_checked(&[("coop", "X", None)], ReplaceOptions::default())
+            .unwrap(),
+        Ok(vec![0])
+    );
+    assert_eq!(
+        doc.try_replace_all_checked(&[("co-op", "partner", None)], ReplaceOptions::default())
+            .unwrap(),
+        Ok(vec![1])
+    );
+    assert_eq!(texts(&doc), ["partner"]);
+}
+
+#[test]
+fn a_footer_positional_tab_reads_as_a_tab_and_goes_with_a_new_text() {
+    // Word's built-in footers put the page number after a right-aligned
+    // positional tab.
+    let mut doc = doc_with(&["body"]);
+    doc.set_raw_footer_with_images(
+        concat!(
+            r#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            r#"<w:p><w:r><w:t>Confidential</w:t>"#,
+            r#"<w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/>"#,
+            r#"<w:t>Page 1</w:t></w:r></w:p></w:ftr>"#,
+        )
+        .as_bytes()
+        .to_vec(),
+        &[],
+        HdrFtrType::Default,
+    );
+    let footer = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Footer)
+        .expect("the footer is a story");
+    let paragraph = doc
+        .story_items(&footer)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::Paragraph)
+        .expect("the footer has a paragraph");
+    assert_eq!(
+        paragraph.text().unwrap().as_deref(),
+        Some("Confidential\tPage 1")
+    );
+    let location = paragraph.location().clone();
+    assert_eq!(
+        doc.count_text("Confidential\tPage").unwrap(),
+        [(StoryKind::Footer, 1)]
+    );
+    doc.set_story_text(&location, "Draft").unwrap();
+    let doc = reopen(&mut doc);
+    let footer = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Footer)
+        .unwrap();
+    let text = doc
+        .story_items(&footer)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::Paragraph)
+        .unwrap()
+        .text()
+        .unwrap();
+    assert_eq!(text.as_deref(), Some("Draft"));
+    let xml = doc
+        .part_xml(footer.part_name().trim_start_matches('/'))
+        .unwrap();
+    assert!(
+        !xml.contains("ptab"),
+        "the tab goes with the old text: {xml}"
+    );
+}
+
+#[test]
+fn a_simple_field_result_keeps_its_non_breaking_hyphen() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:fldSimple w:instr=" DOCPROPERTY Title ">"#,
+        r#"<w:r><w:rPr><w:b/></w:rPr><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t></w:r>"#,
+        r#"</w:fldSimple></w:p>"#,
+    ));
+    assert_eq!(texts(&doc), ["co-op"]);
+    let paragraph = doc.paragraph(0).unwrap();
+    let results: Vec<String> = paragraph
+        .runs()
+        .flat_map(|run| {
+            run.items()
+                .filter_map(|item| match item {
+                    RunItemRef::Field(field) => Some(field.cached_result().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(results, ["co-op"], "the field result reads the hyphen too");
+}
+
+#[test]
+fn an_updated_field_result_drops_the_old_non_breaking_hyphen() {
+    for body in [
+        concat!(
+            r#"<w:p><w:fldSimple w:instr=" DOCPROPERTY Title ">"#,
+            r#"<w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t></w:r>"#,
+            r#"</w:fldSimple></w:p>"#,
+        ),
+        concat!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+            r#"<w:r><w:instrText xml:space="preserve"> DOCPROPERTY Title </w:instrText></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+            r#"<w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        ),
+    ] {
+        let mut doc = doc_with_body(body);
+        assert_eq!(texts(&doc), ["co-op"]);
+        doc.set_title("Partner");
+        doc.update_fields(&FieldEvaluationContext::default())
+            .unwrap();
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["Partner"], "{body}");
+    }
+}
+
+#[test]
+fn a_paragraph_holding_a_non_breaking_hyphen_and_a_positional_tab_lays_out() {
+    // The layout counts each as one character of the run text.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t>"#,
+        r#"<w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/>"#,
+        r#"<w:t>page 2</w:t></w:r></w:p>"#,
+    ));
+    let result = doc.layout().expect("the document lays out");
+    assert_eq!(result.layout.pages.len(), 1);
 }
 
 #[test]

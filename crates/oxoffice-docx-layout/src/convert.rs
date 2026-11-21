@@ -77,6 +77,14 @@ pub(crate) fn underline(value: Option<ST_Underline>) -> Option<Underline> {
         ST_Underline::DotDash => Some(Underline::DotDash),
         ST_Underline::DotDotDash => Some(Underline::DotDotDash),
         ST_Underline::Wave => Some(Underline::Wave),
+        // Drawn with the nearest stroke the layout has; the weight is lost.
+        ST_Underline::DottedHeavy => Some(Underline::Dotted),
+        ST_Underline::DashedHeavy | ST_Underline::DashLong | ST_Underline::DashLongHeavy => {
+            Some(Underline::Dash)
+        }
+        ST_Underline::DashDotHeavy => Some(Underline::DotDash),
+        ST_Underline::DashDotDotHeavy => Some(Underline::DotDotDash),
+        ST_Underline::WavyHeavy | ST_Underline::WavyDouble => Some(Underline::Wave),
     })
 }
 
@@ -130,7 +138,12 @@ pub(crate) fn line_break_params(
         available_width,
         ind_left: properties.ind_left.map_or(0.0, |value| value.to_pt()),
         ind_right: properties.ind_right.map_or(0.0, |value| value.to_pt()),
-        ind_first_line: properties.ind_first_line.map_or(0.0, |value| value.to_pt()),
+        // Word ignores `w:firstLine` when `w:hanging` is there, even at 0.
+        ind_first_line: if properties.ind_hanging.is_some() {
+            0.0
+        } else {
+            properties.ind_first_line.map_or(0.0, |value| value.to_pt())
+        },
         ind_hanging: properties.ind_hanging.map_or(0.0, |value| value.to_pt()),
         tab_stops: properties
             .tabs

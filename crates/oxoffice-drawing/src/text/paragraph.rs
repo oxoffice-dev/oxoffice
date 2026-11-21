@@ -3,7 +3,9 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
-use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
+use oxoffice_core::xml::{
+    escape_attribute_value, escape_text, local_name, matches_local_name, push_escaped_attribute,
+};
 use oxoffice_core::xml_text::resolve_entity;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
@@ -1309,7 +1311,9 @@ impl TextHyperlink {
         push_optional_attr(&mut start, "invalidUrl", self.invalid_url.as_deref());
         push_optional_attr(&mut start, "action", self.action.as_deref());
         push_optional_attr(&mut start, "tgtFrame", self.target_frame.as_deref());
-        push_optional_attr(&mut start, "tooltip", self.tooltip.as_deref());
+        if let Some(tooltip) = self.tooltip.as_deref() {
+            push_escaped_attribute(&mut start, "tooltip", tooltip);
+        }
         push_optional_bool(&mut start, "history", self.history);
         push_optional_bool(&mut start, "highlightClick", self.highlight_click);
         push_optional_bool(&mut start, "endSnd", self.end_sound);
@@ -1447,7 +1451,7 @@ impl TextHyperlink {
                     } else {
                         key.as_str()
                     };
-                    body.push_str(&format!(" {key}=\"{}\"", quick_xml::escape::escape(value)));
+                    body.push_str(&format!(" {key}=\"{}\"", escape_attribute_value(value)));
                 }
             } else {
                 body.push_str(token);
@@ -1463,7 +1467,7 @@ impl TextHyperlink {
                 } else {
                     name.as_str()
                 };
-                body.push_str(&format!(" {key}=\"{}\"", quick_xml::escape::escape(value)));
+                body.push_str(&format!(" {key}=\"{}\"", escape_attribute_value(value)));
             }
         }
         for (prefix, uri) in self

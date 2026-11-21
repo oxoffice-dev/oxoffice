@@ -1,5 +1,8 @@
 //! Shared path, revision, and unit support for Python OOXML bindings.
 
+pub mod core_properties;
+pub mod fonts;
+
 use smallvec::SmallVec;
 use thiserror::Error;
 
@@ -816,4 +819,38 @@ pub fn signature_report_to_py(
     }
     result.set_item("issues", issues)?;
     Ok(result.unbind())
+}
+
+/// A Python index (negative counts from the end) checked against `len`.
+pub fn normalize_index(index: isize, len: usize, kind: &str) -> PyResult<usize> {
+    let normalized = if index < 0 {
+        len as isize + index
+    } else {
+        index
+    };
+    if normalized < 0 || normalized >= len as isize {
+        return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+            "{kind} index out of range"
+        )));
+    }
+    Ok(normalized as usize)
+}
+
+/// The public exception class `class_name` of the Python package `module` (`oxoffice.docx` or `oxoffice.pptx`).
+pub fn public_exception_type<'py>(
+    py: Python<'py>,
+    module: &str,
+    class_name: &str,
+) -> PyResult<Bound<'py, pyo3::types::PyType>> {
+    py.import(module)
+        .and_then(|module| module.getattr(class_name))
+        .and_then(|class| class.cast_into::<pyo3::types::PyType>().map_err(Into::into))
+}
+
+/// An error of the public class `class_name` of `module`, or a `RuntimeError` when the class cannot be found.
+pub fn public_error(py: Python<'_>, module: &str, class_name: &str, message: String) -> PyErr {
+    match public_exception_type(py, module, class_name) {
+        Ok(class) => PyErr::from_type(class, (message,)),
+        Err(_) => pyo3::exceptions::PyRuntimeError::new_err(message),
+    }
 }

@@ -1837,7 +1837,7 @@ impl<'a> XmlTree<'a> {
             }
             if matches!(
                 element.local.as_str(),
-                "t" | "delText" | "tab" | "br" | "cr"
+                "t" | "delText" | "tab" | "ptab" | "noBreakHyphen" | "br" | "cr"
             ) {
                 let visible = head.is_none_or(|active| {
                     (if active < base {
@@ -1850,7 +1850,8 @@ impl<'a> XmlTree<'a> {
                 });
                 if visible {
                     match element.local.as_str() {
-                        "tab" => output.push('\t'),
+                        "tab" | "ptab" => output.push('\t'),
+                        "noBreakHyphen" => output.push('-'),
                         "br" | "cr" => output.push('\n'),
                         _ => output.push_str(&element.snapshot_scalar),
                     }

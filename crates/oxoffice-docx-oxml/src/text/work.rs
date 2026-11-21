@@ -1331,7 +1331,6 @@ impl WordOperationWork {
             template_current_inputs: HashSet::new(),
             retained_inputs: HashSet::new(),
             stored_inputs: HashSet::new(),
-            formatting_inputs: HashSet::new(),
             original_current_inputs: HashSet::new(),
             original_source_ranges: Default::default(),
             field_origins: Default::default(),
@@ -1655,47 +1654,6 @@ impl WordOperationWork {
         self.constructor_allowance = constructor_allowance;
         output.allowance = allowance;
         output.emitted = emitted;
-        Ok(())
-    }
-
-    /// Register only formatting positively selected from the frozen current
-    /// run. The producer supplies the owner before cloning. A later candidate
-    /// or repeated publication cannot register that owner's input a second time.
-    pub(crate) fn register_model_result_properties(&mut self, paragraph: &CT_P) -> Result<()> {
-        for run in &paragraph.runs {
-            let Some(properties) = run.properties.as_ref() else {
-                continue;
-            };
-            if !run.content.iter().any(|content| {
-                matches!(content, RunContent::Field(field)
-                    if matches!(field.source.as_ref(), FieldSource::New { .. })
-                        && field.typed_cache().is_none()
-                        && field.new_result_runs().is_none())
-            }) {
-                continue;
-            }
-            let owner = std::ptr::from_ref(properties) as usize;
-            if self.formatting_inputs.contains(&owner) {
-                continue;
-            }
-            let added = properties.selected_input_work()?;
-            let allowance = self
-                .constructor_allowance
-                .checked_add(added)
-                .ok_or_else(|| {
-                    OxmlError::InvalidValue("normalization affected-source work overflow".into())
-                })?;
-            let mut output = self
-                .normalized_output
-                .lock()
-                .expect("normalization ledger poisoned");
-            let output_allowance = output.allowance.checked_add(added).ok_or_else(|| {
-                OxmlError::InvalidValue("normalization affected-source work overflow".into())
-            })?;
-            self.formatting_inputs.insert(owner);
-            self.constructor_allowance = allowance;
-            output.allowance = output_allowance;
-        }
         Ok(())
     }
 
@@ -2279,46 +2237,6 @@ impl WordOperationWork {
             output: Arc::clone(&self.normalized_output),
             word_capture: self.template_word_capture.clone(),
         }
-    }
-
-    /// Actual copied Field ranges are output demand independently of whether
-    /// another consumer has activated an input allowance. This grants no input.
-    pub(crate) fn reserve_publication_copy(&self, bytes: usize) -> Result<()> {
-        let mut emission = self.field_xml_emission();
-        emission.enabled = true;
-        emission.reserve_inner_xml(bytes)?;
-        Ok(())
-    }
-
-    /// Emit the finite import scalar through the existing full escape policy.
-    /// The actual owner determines demand, never the global input-enabled flag.
-    pub(crate) fn produce_imported_xml(
-        &self,
-        value: &str,
-        escape: bool,
-        field: bool,
-    ) -> Result<Vec<u8>> {
-        if self.resource_refused() {
-            return Err(self.writer_error(OxmlError::InvalidValue(
-                "normalized result exceeds its preflight source work".into(),
-            )));
-        }
-        let length = if escape {
-            escaped_source_len(value)?
-        } else {
-            value.len()
-        };
-        if field {
-            self.reserve_publication_copy(length)?;
-        }
-        let mut bytes = Vec::with_capacity(length);
-        if escape {
-            append_escaped_source(&mut bytes, value);
-        } else {
-            bytes.extend_from_slice(value.as_bytes());
-        }
-        debug_assert_eq!(bytes.len(), length);
-        Ok(bytes)
     }
 
     pub(super) fn reserve_inner_xml(&self, bytes: usize) -> Result<bool> {

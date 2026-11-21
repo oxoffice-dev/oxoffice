@@ -2,6 +2,34 @@
 
 use super::*;
 
+/// The list a list item joins, as [`Document::begin_list_item`] finds or
+/// starts it.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListItemKind {
+    /// The first list whose first level is a bullet.
+    Bullet,
+    /// The decimal list the last restarted item at that level goes on, or
+    /// the first decimal list.
+    Numbered,
+}
+
+/// What an in-place numbering edit replaced: the numbering model and its
+/// part name, and the package graph and identifier registry, where the edit
+/// reserves the numbering part and its identifiers. The package graph shares
+/// its part bytes, so keeping it costs the parts and relationships, not the
+/// content. [`Document::undo_numbering_edit`] puts it back, so that a call
+/// whose later step fails leaves the document as it was; dropping it keeps
+/// the edit.
+#[doc(hidden)]
+pub struct NumberingJournal {
+    package: OpcPackage,
+    identifiers: DocumentIdentifiers,
+    numbering: Option<CT_Numbering>,
+    numbering_part_name: Option<String>,
+    package_signatures_invalidated: bool,
+}
+
 impl Document {
     /// Whether the first level of the given numbering instance renders as
     /// bullets (true) or numbers (false), with the replacement level the
@@ -210,6 +238,253 @@ impl Document {
 }
 
 impl Document {
+    /// The numbering instance identifiers that content names, whether an
+    /// instance defines them or not: the typed paragraphs of the body, with
+    /// the raw XML they keep (where drawings and text boxes are) and the raw
+    /// blocks of the body, the typed notes and comments, and the header,
+    /// footer, endnote and glossary parts, which the package holds as they
+    /// are. It reads the live models, not a serialization, so a copy that a
+    /// save left in the package never counts.
+    pub(super) fn content_numbering_instance_ids(&self) -> HashSet<u32> {
+        fn named(ids: &mut HashSet<u32>, paragraph: &CT_P) {
+            if let Some(id) = paragraph
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.num_id)
+            {
+                ids.insert(id);
+            }
+            for (_, raw) in &paragraph.extra_xml {
+                raw_numbering_instance_ids(raw, ids);
+            }
+            for raw in paragraph.runs.iter().flat_map(|run| &run.extra_xml) {
+                raw_numbering_instance_ids(raw, ids);
+            }
+        }
+        let mut ids = HashSet::new();
+        visit_body_paragraphs(&self.document.body.content, false, &mut |paragraph| {
+            named(&mut ids, paragraph);
+        });
+        for item in &self.document.body.content {
+            if let BodyContent::RawXml(raw) = item {
+                raw_numbering_instance_ids(raw, &mut ids);
+            }
+        }
+        for paragraph in self
+            .footnotes
+            .footnotes
+            .iter()
+            .flat_map(|note| &note.paragraphs)
+        {
+            named(&mut ids, paragraph);
+        }
+        for paragraph in self
+            .comments
+            .iter()
+            .flat_map(|comments| &comments.comments)
+            .flat_map(|comment| &comment.paragraphs)
+        {
+            named(&mut ids, paragraph);
+        }
+        let typed = [
+            Some(&self.doc_part_name),
+            self.footnotes_part_name.as_ref(),
+            self.comments_part_name
+                .as_ref()
+                .filter(|_| self.comments.is_some()),
+        ];
+        for part_name in self.word_story_part_names() {
+            if typed.contains(&Some(&part_name)) {
+                continue;
+            }
+            if let Some(properties) = self
+                .package
+                .get_part(&part_name)
+                .and_then(|bytes| xml_paragraph_numbering_properties(bytes).ok())
+            {
+                ids.extend(properties.iter().filter_map(|properties| properties.num_id));
+            }
+        }
+        ids
+    }
+
+    /// Reserve a numbering instance identifier that no instance holds and no
+    /// content names, so that a new instance never numbers content that names
+    /// a list the document does not define. On a document whose content
+    /// names only defined instances, this is the identifier the registry
+    /// alone gives.
+    fn reserve_unnamed_numbering_instance_id(&mut self) -> Result<u32> {
+        let mut occupied = self.identifiers.numbering_instance_ids.clone();
+        occupied.extend(self.content_numbering_instance_ids());
+        let id = reserve_u32_or_lowest_free(&mut occupied, 1, "numbering instance")?;
+        self.identifiers.numbering_instance_ids.insert(id);
+        Ok(id)
+    }
+
+    /// Keep what a numbering edit is about to replace.
+    fn numbering_journal(&self) -> NumberingJournal {
+        NumberingJournal {
+            package: self.package.clone(),
+            identifiers: self.identifiers.clone(),
+            numbering: self.numbering.clone(),
+            numbering_part_name: self.numbering_part_name.clone(),
+            package_signatures_invalidated: self.package_signatures_invalidated,
+        }
+    }
+
+    /// Put back what an in-place numbering edit replaced, and drop the layout
+    /// derived from the edited numbering.
+    #[doc(hidden)]
+    pub fn undo_numbering_edit(&mut self, journal: NumberingJournal) {
+        self.package = journal.package;
+        self.identifiers = journal.identifiers;
+        self.numbering = journal.numbering;
+        self.numbering_part_name = journal.numbering_part_name;
+        self.package_signatures_invalidated = journal.package_signatures_invalidated;
+        self.drop_numbering_layout();
+    }
+
+    /// Drop the layout derived from the numbering. A numbering edit changes
+    /// neither the typed body nor the main part, so the kept answer of
+    /// [`Self::unsavable_body_edit`] stays.
+    fn drop_numbering_layout(&mut self) {
+        self.layout_cache
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        self.deterministic_layout_cache
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
+
+    /// Run `edit`, an addition to the numbering part, on this document, and
+    /// return its value with the journal that undoes it. A refusal or a
+    /// panic is undone at once. A success leaves what a staged commit
+    /// leaves: a signed package records a package mutation and the layout
+    /// derived from the numbering is dropped.
+    ///
+    /// Debug builds run `edit` on a staged clone too and compare, and check
+    /// that the edit left no numbering reference of the content unresolved
+    /// that was not already, the check an addition no longer runs. `edit` is
+    /// `Fn` for that second run.
+    fn edit_numbering_journaled<T: Clone + PartialEq + std::fmt::Debug>(
+        &mut self,
+        edit: impl Fn(&mut Self) -> Result<T>,
+    ) -> Result<(T, NumberingJournal)> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let journal = self.numbering_journal();
+        let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(self))) {
+            Ok(result) => result,
+            Err(panic) => {
+                self.undo_numbering_edit(journal);
+                std::panic::resume_unwind(panic)
+            }
+        };
+        #[cfg(debug_assertions)]
+        let outcome = result.as_ref().cloned().map_err(ToString::to_string);
+        let result = match result {
+            Ok(value) => {
+                self.package_signatures_invalidated |=
+                    self.package.package_rels.items.iter().any(|relationship| {
+                        relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
+                    }) && (journal.package_signatures_invalidated
+                        || crate::embedded::synchronized_package_mutation_invalidates_signature(
+                            &journal.package,
+                            &self.package,
+                        ));
+                self.drop_numbering_layout();
+                Ok((value, journal))
+            }
+            Err(error) => {
+                self.undo_numbering_edit(journal);
+                Err(error)
+            }
+        };
+        #[cfg(debug_assertions)]
+        self.assert_numbering_edit_matches_staged(before, &edit, outcome);
+        result
+    }
+
+    /// [`Self::edit_numbering_journaled`], keeping the edit.
+    fn edit_numbering<T: Clone + PartialEq + std::fmt::Debug>(
+        &mut self,
+        edit: impl Fn(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.edit_numbering_journaled(edit)
+            .map(|(value, _kept)| value)
+    }
+
+    /// Debug proof that an in-place numbering edit left what the staged edit
+    /// leaves, or refused with its error and left the document as it was,
+    /// and that it left the numbering references of the content that do not
+    /// resolve as they were: it neither resolves one (a new instance never
+    /// takes an identifier content names) nor leaves another unresolved.
+    /// When neither document's content can be serialized, its references
+    /// cannot be read, and the save reports that content.
+    #[cfg(debug_assertions)]
+    fn assert_numbering_edit_matches_staged<T: PartialEq + std::fmt::Debug>(
+        &self,
+        before: Self,
+        edit: &impl Fn(&mut Self) -> Result<T>,
+        outcome: std::result::Result<T, String>,
+    ) {
+        let mut staged = before.clone_for_staging();
+        let staged_outcome = edit(&mut staged);
+        let expected = match (outcome, staged_outcome) {
+            (Ok(direct), Ok(value)) => {
+                assert_eq!(
+                    direct, value,
+                    "in-place numbering edit returned another value"
+                );
+                let mut committed = before.clone_for_staging();
+                staged.invalidate_layout();
+                committed.commit_staged_mutation(staged);
+                committed
+            }
+            (Err(direct), Err(staged)) => {
+                assert_eq!(
+                    direct,
+                    staged.to_string(),
+                    "in-place numbering edit refused otherwise"
+                );
+                before.clone_for_staging()
+            }
+            (Ok(_), Err(staged)) => panic!("in-place numbering edit hid the staged error {staged}"),
+            (Err(direct), Ok(_)) => panic!("in-place numbering edit refused with {direct}"),
+        };
+        assert!(
+            expected.package.same_package_as(&self.package),
+            "in-place numbering edit left another package graph"
+        );
+        assert_eq!(
+            expected.identifiers, self.identifiers,
+            "in-place numbering edit left another identifier registry"
+        );
+        assert_eq!(expected.numbering, self.numbering);
+        assert_eq!(expected.numbering_part_name, self.numbering_part_name);
+        assert_eq!(
+            expected.package_signatures_invalidated,
+            self.package_signatures_invalidated
+        );
+        match (
+            before.dangling_numbering_references(),
+            self.dangling_numbering_references(),
+        ) {
+            (Ok(was), Ok(is)) => assert_eq!(
+                was, is,
+                "a numbering addition changed which references of the content resolve"
+            ),
+            (Err(_), Err(_)) => {}
+            (was, is) => panic!(
+                "numbering references readable before {} and after {}",
+                was.is_ok(),
+                is.is_ok()
+            ),
+        }
+    }
+
     /// Add a bullet list item at the given indentation level (0-based).
     ///
     /// If no bullet list definition exists yet, one is created automatically.
@@ -219,66 +494,12 @@ impl Document {
             .expect("the historical infallible list helper requires a valid document and level")
     }
 
-    /// Checked counterpart. Invalid text, levels and package graphs leave the document unchanged.
+    /// Checked counterpart. Invalid text and levels leave the document
+    /// unchanged, and so does a numbering graph that is not valid or a list
+    /// that has no such level. Content that already names a missing list is
+    /// left as it is: the item checks the reference it makes.
     pub fn try_add_bullet_list_item(&mut self, text: &str, level: u32) -> Result<Paragraph<'_>> {
-        if level > 8 {
-            return Err(Error::Other(
-                "list level must be between 0 and 8".to_owned(),
-            ));
-        }
-        oxoffice_core::xml::reject_non_xml_characters("text", text)?;
-        self.validate_numbering_graph()?;
-        let mut candidate = self.clone_for_staging();
-        candidate.reserve_numbering_bundle()?;
-        candidate.invalidate_layout();
-        // Find or create a bullet list numId
-        let existing = candidate.numbering.as_ref().and_then(|numbering| {
-            numbering.nums.iter().find(|n| {
-                numbering
-                    .get_abstract_num_for(n.num_id)
-                    .map(|a| {
-                        a.levels.first().and_then(|l| l.num_fmt.as_ref())
-                            == Some(&oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet)
-                    })
-                    .unwrap_or(false)
-            })
-        });
-        let num_id = if let Some(existing) = existing {
-            existing.num_id
-        } else {
-            let (abstract_id, num_id) = candidate.identifiers.reserve_numbering_ids()?;
-            candidate.ensure_numbering().add_list_with_ids(
-                &[(
-                    oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet,
-                    Some(1),
-                )],
-                abstract_id,
-                num_id,
-            )
-        };
-
-        let mut p = CT_P::new();
-        if !text.is_empty() {
-            p.add_run(text);
-        }
-        let ppr = CT_PPr {
-            num_id: Some(num_id),
-            num_ilvl: Some(level),
-            ..Default::default()
-        };
-        p.properties = Some(ppr);
-
-        candidate
-            .document
-            .body
-            .content
-            .push(BodyContent::Paragraph(Box::new(p)));
-        candidate.validate_numbering_graph()?;
-        self.commit_staged_mutation(candidate);
-        match self.document.body.content.last_mut().unwrap() {
-            BodyContent::Paragraph(p) => Ok(Paragraph { inner: p }),
-            _ => unreachable!(),
-        }
+        self.add_list_item(ListItemKind::Bullet, text, level)
     }
 
     /// Add a numbered list item at the given indentation level (0-based).
@@ -290,47 +511,157 @@ impl Document {
             .expect("the historical infallible list helper requires a valid document and level")
     }
 
-    /// Checked counterpart. Invalid text, levels and package graphs leave the document unchanged.
+    /// Checked counterpart, refusing as [`Self::try_add_bullet_list_item`] does.
     pub fn try_add_numbered_list_item(&mut self, text: &str, level: u32) -> Result<Paragraph<'_>> {
         self.try_add_numbered_list_item_with_restart(text, level, false)
     }
 
     /// Checked numbered authoring with persisted explicit restart continuation.
+    ///
+    /// A restart gives the item an instance of its own through
+    /// [`Self::restart_numbering`], which checks every numbering reference of
+    /// the content.
     pub fn try_add_numbered_list_item_with_restart(
         &mut self,
         text: &str,
         level: u32,
         restart: bool,
     ) -> Result<Paragraph<'_>> {
+        if restart {
+            let mut candidate = self.clone_for_staging();
+            let (num_id, _kept) = candidate.begin_list_item(ListItemKind::Numbered, text, level)?;
+            candidate.append_body_paragraph(Self::list_item_paragraph(text, num_id, level));
+            let index = candidate.paragraph_count() - 1;
+            candidate.restart_numbering(index, 1)?;
+            candidate.validate_numbering_graph()?;
+            self.commit_staged_mutation(candidate);
+            return match self.document.body.content.last_mut() {
+                Some(BodyContent::Paragraph(p)) => Ok(Paragraph { inner: p }),
+                _ => unreachable!("the list item is the last body child"),
+            };
+        }
+        self.add_list_item(ListItemKind::Numbered, text, level)
+    }
+
+    /// A list item without a restart: its numbering half, then its paragraph
+    /// appended in place. The body could take a typed edit before, so it keeps
+    /// that answer, as the typed inserts do.
+    fn add_list_item(
+        &mut self,
+        kind: ListItemKind,
+        text: &str,
+        level: u32,
+    ) -> Result<Paragraph<'_>> {
+        let (num_id, _kept) = self.begin_list_item(kind, text, level)?;
+        let slot = self.content_count();
+        self.append_body_paragraph(Self::list_item_paragraph(text, num_id, level));
+        self.keep_body_savable_after_typed_insert(slot, true);
+        match self.document.body.content.last_mut() {
+            Some(BodyContent::Paragraph(p)) => Ok(Paragraph { inner: p }),
+            _ => unreachable!("the list item is the last body child"),
+        }
+    }
+
+    /// The numbering half of a list item, in place: join the document's
+    /// bullet or numbered list, or start one, and return the instance the
+    /// item's paragraph names with the journal that undoes this half.
+    ///
+    /// It refuses, leaving the document unchanged, a level over 8, text XML
+    /// cannot carry, a body a typed edit cannot leave savable (as the typed
+    /// inserts refuse it), a numbering graph that is not valid, and a list
+    /// that has no such level. It does not read the content's other
+    /// numbering references: an addition cannot leave one unresolved, and a
+    /// new list takes an identifier no content names. The paragraph is
+    /// [`Self::list_item_paragraph`], appended by the caller.
+    #[doc(hidden)]
+    pub fn begin_list_item(
+        &mut self,
+        kind: ListItemKind,
+        text: &str,
+        level: u32,
+    ) -> Result<(u32, NumberingJournal)> {
         if level > 8 {
             return Err(Error::Other(
                 "list level must be between 0 and 8".to_owned(),
             ));
         }
         oxoffice_core::xml::reject_non_xml_characters("text", text)?;
-        self.validate_numbering_graph()?;
-        let mut candidate = self.clone_for_staging();
-        candidate.reserve_numbering_bundle()?;
-        candidate.invalidate_layout();
-        // Find or create a numbered list numId
-        let existing = candidate.numbering.as_ref().and_then(|numbering| {
-            numbering.nums.iter().find(|instance| {
-                numbering
-                    .get_abstract_num_for(instance.num_id)
-                    .is_some_and(|definition| {
-                        definition
-                            .levels
-                            .first()
-                            .and_then(|value| value.num_fmt.as_ref())
-                            == Some(&ST_NumberFormat::Decimal)
-                    })
-                    && !matches!(
-                        candidate.effective_numbering_format(instance.num_id, level),
-                        Some("bullet" | "none")
-                    )
-            })
+        self.refuse_unsavable_body_edit()?;
+        self.validate_numbering_model()?;
+        self.edit_numbering_journaled(|document| {
+            document.reserve_numbering_bundle()?;
+            let num_id = match kind {
+                ListItemKind::Bullet => document.bullet_list_instance()?,
+                ListItemKind::Numbered => document.numbered_list_instance(level)?,
+            };
+            document.validate_numbering_model()?;
+            match document.numbering_reference_error(num_id, level) {
+                Some(error) => Err(error),
+                None => Ok(num_id),
+            }
+        })
+    }
+
+    /// The first instance whose definition's first level is a bullet, or a
+    /// new nine-level bullet list.
+    fn bullet_list_instance(&mut self) -> Result<u32> {
+        let existing = self.numbering.as_ref().and_then(|numbering| {
+            numbering
+                .nums
+                .iter()
+                .find(|n| {
+                    numbering
+                        .get_abstract_num_for(n.num_id)
+                        .map(|a| {
+                            a.levels.first().and_then(|l| l.num_fmt.as_ref())
+                                == Some(&oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet)
+                        })
+                        .unwrap_or(false)
+                })
+                .map(|instance| instance.num_id)
         });
-        let continuation = candidate
+        if let Some(num_id) = existing {
+            return Ok(num_id);
+        }
+        let abstract_id = self.identifiers.reserve_abstract_numbering_id()?;
+        let num_id = self.reserve_unnamed_numbering_instance_id()?;
+        Ok(self.ensure_numbering().add_list_with_ids(
+            &[(
+                oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet,
+                Some(1),
+            )],
+            abstract_id,
+            num_id,
+        ))
+    }
+
+    /// The instance of the last body paragraph at `level` whose decimal
+    /// level restarts, so that the list it restarted goes on; else the first
+    /// decimal instance whose `level` is not a bullet; else a new nine-level
+    /// numbered list.
+    fn numbered_list_instance(&mut self, level: u32) -> Result<u32> {
+        let existing = self.numbering.as_ref().and_then(|numbering| {
+            numbering
+                .nums
+                .iter()
+                .find(|instance| {
+                    numbering
+                        .get_abstract_num_for(instance.num_id)
+                        .is_some_and(|definition| {
+                            definition
+                                .levels
+                                .first()
+                                .and_then(|value| value.num_fmt.as_ref())
+                                == Some(&ST_NumberFormat::Decimal)
+                        })
+                        && !matches!(
+                            self.effective_numbering_format(instance.num_id, level),
+                            Some("bullet" | "none")
+                        )
+                })
+                .map(|instance| instance.num_id)
+        });
+        let continuation = self
             .document
             .body
             .content
@@ -345,13 +676,13 @@ impl Document {
                 if properties.num_ilvl != Some(level) {
                     return None;
                 }
-                let instance = candidate
+                let instance = self
                     .numbering
                     .as_ref()?
                     .nums
                     .iter()
                     .find(|n| n.num_id == id)?;
-                (candidate
+                (self
                     .effective_numbering_format(id, level)
                     .is_some_and(|name| name == "decimal")
                     && instance
@@ -361,50 +692,51 @@ impl Document {
                 .then_some(id)
             })
             .next();
-        let num_id = if let Some(id) = continuation {
-            id
-        } else if let Some(existing) = existing {
-            existing.num_id
-        } else {
-            let (abstract_id, num_id) = candidate.identifiers.reserve_numbering_ids()?;
-            candidate.ensure_numbering().add_list_with_ids(
-                &[(
-                    oxoffice_docx_oxml::numbering::ST_NumberFormat::Decimal,
-                    Some(1),
-                )],
-                abstract_id,
-                num_id,
-            )
-        };
-
-        let mut p = CT_P::new();
-        if !text.is_empty() {
-            p.add_run(text);
+        if let Some(id) = continuation {
+            return Ok(id);
         }
-        let ppr = CT_PPr {
+        if let Some(num_id) = existing {
+            return Ok(num_id);
+        }
+        let abstract_id = self.identifiers.reserve_abstract_numbering_id()?;
+        let num_id = self.reserve_unnamed_numbering_instance_id()?;
+        Ok(self.ensure_numbering().add_list_with_ids(
+            &[(
+                oxoffice_docx_oxml::numbering::ST_NumberFormat::Decimal,
+                Some(1),
+            )],
+            abstract_id,
+            num_id,
+        ))
+    }
+
+    /// The paragraph of a list item: `text` in one run, numbered by `num_id`
+    /// at `level`.
+    #[doc(hidden)]
+    pub fn list_item_paragraph(text: &str, num_id: u32, level: u32) -> CT_P {
+        let mut p = Self::detached_text_paragraph(text);
+        p.properties = Some(CT_PPr {
             num_id: Some(num_id),
             num_ilvl: Some(level),
             ..Default::default()
-        };
-        p.properties = Some(ppr);
-
-        candidate
-            .document
-            .body
-            .content
-            .push(BodyContent::Paragraph(Box::new(p)));
-        if restart {
-            let index = candidate.paragraph_count() - 1;
-            candidate.restart_numbering(index, 1)?;
-        }
-        candidate.validate_numbering_graph()?;
-        self.commit_staged_mutation(candidate);
-        match self.document.body.content.last_mut().unwrap() {
-            BodyContent::Paragraph(p) => Ok(Paragraph { inner: p }),
-            _ => unreachable!(),
-        }
+        });
+        p
     }
 
+    /// Append `paragraph` to the body, as [`Self::add_paragraph`] appends its
+    /// own.
+    #[doc(hidden)]
+    pub fn append_body_paragraph(&mut self, paragraph: CT_P) -> Paragraph<'_> {
+        self.invalidate_layout();
+        self.document
+            .body
+            .content
+            .push(BodyContent::Paragraph(Box::new(paragraph)));
+        match self.document.body.content.last_mut() {
+            Some(BodyContent::Paragraph(p)) => Paragraph { inner: p },
+            _ => unreachable!("the paragraph was just appended"),
+        }
+    }
     /// Restart one current direct-body numbered paragraph without changing its peers.
     pub fn restart_numbering(&mut self, paragraph: usize, start: u32) -> Result<u32> {
         if self.content_index_of_paragraph(paragraph).is_none() {
@@ -501,40 +833,42 @@ impl Document {
         {
             return 0;
         }
-        let mut candidate = self.clone_for_staging();
-        candidate
-            .reserve_numbering_bundle()
-            .expect("an in-memory document can allocate a numbering part");
-        candidate.invalidate_layout();
         let formats: Vec<(ST_NumberFormat, Option<u32>)> = levels
             .iter()
             .take(9)
             .map(|level| (level.format.to_st(), level.start))
             .collect();
-        let (abstract_id, num_id) = candidate
-            .identifiers
-            .reserve_numbering_ids()
-            .expect("an in-memory document cannot exhaust numbering identifiers");
-        let num_id = candidate
-            .ensure_numbering()
-            .add_list_with_ids(&formats, abstract_id, num_id);
-        if let Some(definition) = candidate.numbering.as_mut().and_then(|numbering| {
-            numbering
-                .abstract_nums
-                .iter_mut()
-                .find(|definition| definition.abstract_num_id == abstract_id)
-        }) {
-            for (level, value) in levels.iter().take(9).enumerate() {
-                let existing = &definition.levels[level];
-                definition.levels[level] = merge_list_level(existing, value)
-                    .expect("list level was validated before staged allocation");
+        self.edit_numbering(|document| {
+            document
+                .reserve_numbering_bundle()
+                .expect("an in-memory document can allocate a numbering part");
+            let abstract_id = document
+                .identifiers
+                .reserve_abstract_numbering_id()
+                .expect("an in-memory document cannot exhaust numbering identifiers");
+            let num_id = document
+                .reserve_unnamed_numbering_instance_id()
+                .expect("an in-memory document cannot exhaust numbering identifiers");
+            let num_id =
+                document
+                    .ensure_numbering()
+                    .add_list_with_ids(&formats, abstract_id, num_id);
+            if let Some(definition) = document.numbering.as_mut().and_then(|numbering| {
+                numbering
+                    .abstract_nums
+                    .iter_mut()
+                    .find(|definition| definition.abstract_num_id == abstract_id)
+            }) {
+                for (level, value) in levels.iter().take(9).enumerate() {
+                    let existing = &definition.levels[level];
+                    definition.levels[level] = merge_list_level(existing, value)
+                        .expect("list level was validated before staged allocation");
+                }
             }
-        }
-        if candidate.validate_numbering_graph().is_err() {
-            return 0;
-        }
-        self.commit_staged_mutation(candidate);
-        num_id
+            document.validate_numbering_model()?;
+            Ok(num_id)
+        })
+        .unwrap_or(0)
     }
 
     /// Inspect all abstract numbering definitions in package order.
@@ -649,6 +983,10 @@ impl Document {
     }
 
     /// Create an abstract numbering definition and return its identifier.
+    ///
+    /// It checks the numbering graph, not the numbering references of the
+    /// content, which an addition cannot leave unresolved: content that
+    /// already names a missing list does not refuse it.
     pub fn add_numbering_definition(&mut self, levels: &[ListLevel]) -> Result<u32> {
         validate_numbering_level_slice(levels)?;
         let authored = levels
@@ -656,17 +994,16 @@ impl Document {
             .enumerate()
             .map(|(level, value)| ct_level_from_list(level as u32, value))
             .collect::<Result<Vec<_>>>()?;
-        let mut candidate = self.clone_for_staging();
-        candidate.reserve_numbering_bundle()?;
-        let id = candidate.identifiers.reserve_abstract_numbering_id()?;
-        let mut definition = CT_AbstractNum::new(id);
-        definition.multi_level_type = Some("hybridMultilevel".to_owned());
-        definition.levels = authored;
-        candidate.ensure_numbering().push_abstract_num(definition);
-        candidate.validate_numbering_graph()?;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(id)
+        self.edit_numbering(|document| {
+            document.reserve_numbering_bundle()?;
+            let id = document.identifiers.reserve_abstract_numbering_id()?;
+            let mut definition = CT_AbstractNum::new(id);
+            definition.multi_level_type = Some("hybridMultilevel".to_owned());
+            definition.levels = authored.clone();
+            document.ensure_numbering().push_abstract_num(definition);
+            document.validate_numbering_model()?;
+            Ok(id)
+        })
     }
 
     /// Replace the modeled levels of an existing abstract definition.
@@ -750,40 +1087,42 @@ impl Document {
     }
 
     /// Create a numbering instance for an existing definition.
+    ///
+    /// It checks the numbering graph, not the numbering references of the
+    /// content, as [`Self::add_numbering_definition`] does.
     pub fn add_numbering_instance(
         &mut self,
         definition_id: u32,
         overrides: &[NumberingLevelOverride],
     ) -> Result<u32> {
-        let mut candidate = self.clone_for_staging();
-        candidate.reserve_numbering_bundle()?;
-        let numbering = candidate.ensure_numbering();
-        if !numbering
-            .abstract_nums
-            .iter()
-            .any(|definition| definition.abstract_num_id == definition_id)
-        {
-            return Err(Error::Other(format!(
-                "numbering definition {definition_id} does not exist"
-            )));
-        }
-        let level_overrides = overrides
-            .iter()
-            .map(numbering_override_from_public)
-            .collect::<Result<Vec<_>>>()?;
-        let id = candidate.identifiers.reserve_numbering_instance_id()?;
-        candidate.ensure_numbering().push_num(CT_Num {
-            num_id: id,
-            abstract_num_id: definition_id,
-            abstract_num_id_raw: None,
-            level_overrides,
-            extra_xml: Vec::new(),
-            extra_attributes: Vec::new(),
-        });
-        candidate.validate_numbering_graph()?;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(id)
+        self.edit_numbering(|document| {
+            document.reserve_numbering_bundle()?;
+            let numbering = document.ensure_numbering();
+            if !numbering
+                .abstract_nums
+                .iter()
+                .any(|definition| definition.abstract_num_id == definition_id)
+            {
+                return Err(Error::Other(format!(
+                    "numbering definition {definition_id} does not exist"
+                )));
+            }
+            let level_overrides = overrides
+                .iter()
+                .map(numbering_override_from_public)
+                .collect::<Result<Vec<_>>>()?;
+            let id = document.reserve_unnamed_numbering_instance_id()?;
+            document.ensure_numbering().push_num(CT_Num {
+                num_id: id,
+                abstract_num_id: definition_id,
+                abstract_num_id_raw: None,
+                level_overrides,
+                extra_xml: Vec::new(),
+                extra_attributes: Vec::new(),
+            });
+            document.validate_numbering_model()?;
+            Ok(id)
+        })
     }
 
     /// Replace the definition and overrides used by an existing instance.
@@ -897,8 +1236,18 @@ impl Document {
         Ok(true)
     }
 
-    /// Validate the complete typed numbering graph.
+    /// Validate the complete typed numbering graph: definitions, instances,
+    /// the styles linked to them, and every numbering reference of the
+    /// content, which this reads from every story part.
     pub fn validate_numbering_graph(&self) -> Result<()> {
+        self.validate_numbering_model()?;
+        self.validate_content_numbering_references()
+    }
+
+    /// The numbering graph without the content: definitions, instances and
+    /// the styles linked to them. It reads the numbering and styles models,
+    /// not the stories.
+    fn validate_numbering_model(&self) -> Result<()> {
         let numbering = self.numbering.as_ref();
         let Some(numbering) = numbering else {
             for style in &self.styles.styles {
@@ -914,12 +1263,6 @@ impl Document {
                         style.style_id
                     )));
                 }
-            }
-            let live_references = self.document_numbering_references()?;
-            if let Some((num_id, level)) = live_references.first() {
-                return Err(Error::Other(format!(
-                    "document content references missing numbering instance {num_id} at level {level}"
-                )));
             }
             return Ok(());
         };
@@ -1108,33 +1451,71 @@ impl Document {
                 }
             }
         }
-        let live_references = self.document_numbering_references()?;
-        for (num_id, level) in live_references {
-            let instance = numbering
-                .nums
-                .iter()
-                .find(|instance| instance.num_id == num_id)
-                .ok_or_else(|| {
-                    Error::Other(format!(
-                        "document content references missing numbering instance {num_id} at level {level}"
-                    ))
-                })?;
-            let definition = numbering
-                .abstract_nums
-                .iter()
-                .find(|definition| definition.abstract_num_id == instance.abstract_num_id)
-                .expect("numbering instances were validated above");
-            if !definition
-                .levels
-                .iter()
-                .any(|candidate| candidate.ilvl == level)
-            {
-                return Err(Error::Other(format!(
-                    "document content references numbering instance {num_id} at missing level {level}"
-                )));
+        Ok(())
+    }
+
+    /// Every numbering reference of the content resolves: its instance
+    /// exists and the instance's definition has the level. This reads every
+    /// story part, so only an edit that can leave a reference unresolved runs
+    /// it: removing or redefining an instance, linking a style. An addition
+    /// checks the reference it makes, with [`Self::numbering_reference_error`].
+    fn validate_content_numbering_references(&self) -> Result<()> {
+        for (num_id, level) in self.document_numbering_references()? {
+            if let Some(error) = self.numbering_reference_error(num_id, level) {
+                return Err(error);
             }
         }
         Ok(())
+    }
+
+    /// Why a numbering reference to `num_id` at `level` does not resolve, or
+    /// `None` when it does.
+    fn numbering_reference_error(&self, num_id: u32, level: u32) -> Option<Error> {
+        let missing = || {
+            Error::Other(format!(
+                "document content references missing numbering instance {num_id} at level {level}"
+            ))
+        };
+        let Some(numbering) = self.numbering.as_ref() else {
+            return Some(missing());
+        };
+        let Some(instance) = numbering
+            .nums
+            .iter()
+            .find(|instance| instance.num_id == num_id)
+        else {
+            return Some(missing());
+        };
+        let Some(definition) = numbering
+            .abstract_nums
+            .iter()
+            .find(|definition| definition.abstract_num_id == instance.abstract_num_id)
+        else {
+            return Some(Error::Other(format!(
+                "numbering instance {num_id} references missing definition {}",
+                instance.abstract_num_id
+            )));
+        };
+        (!definition
+            .levels
+            .iter()
+            .any(|candidate| candidate.ilvl == level))
+        .then(|| {
+            Error::Other(format!(
+                "document content references numbering instance {num_id} at missing level {level}"
+            ))
+        })
+    }
+
+    /// The numbering references of the content that do not resolve, for the
+    /// debug oracle of the numbering additions.
+    #[cfg(debug_assertions)]
+    fn dangling_numbering_references(&self) -> Result<std::collections::BTreeSet<(u32, u32)>> {
+        Ok(self
+            .document_numbering_references()?
+            .into_iter()
+            .filter(|(num_id, level)| self.numbering_reference_error(*num_id, *level).is_some())
+            .collect())
     }
 
     fn document_numbering_references(&self) -> Result<Vec<(u32, u32)>> {
@@ -1533,5 +1914,30 @@ impl Document {
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
         Ok(())
+    }
+}
+
+/// The values of the `numId` elements in raw XML read without its namespace
+/// context, so an element of that name in any namespace counts: a superset,
+/// which is what keeping identifiers out of an allocation needs.
+fn raw_numbering_instance_ids(raw: &[u8], ids: &mut HashSet<u32>) {
+    // `str::find` runs the optimized search of `core`, so that the raw XML a
+    // body keeps on every paragraph and run costs little to read.
+    let Ok(mut rest) = std::str::from_utf8(raw) else {
+        return;
+    };
+    while let Some(at) = rest.find("numId") {
+        let tag = &rest[at + 5..];
+        let end = tag.find('>').unwrap_or(tag.len());
+        if let Some(value) = tag[..end]
+            .find("val=")
+            .and_then(|position| tag[..end].get(position + 5..))
+        {
+            let digits = value.bytes().take_while(u8::is_ascii_digit).count();
+            if let Ok(id) = value[..digits].parse::<u32>() {
+                ids.insert(id);
+            }
+        }
+        rest = &tag[end..];
     }
 }

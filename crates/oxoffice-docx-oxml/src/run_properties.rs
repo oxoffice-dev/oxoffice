@@ -632,207 +632,6 @@ impl RunMeasurement {
 }
 
 impl CT_RPr {
-    /// Retained formatting records positively selected by the containing field
-    /// writer. This measures stored input, never serialized output bytes.
-    pub(crate) fn selected_input_work(&self) -> Result<usize> {
-        let mut bytes = 0usize;
-        let mut add = |length: usize| -> Result<()> {
-            bytes = bytes.checked_add(length).ok_or_else(|| {
-                OxmlError::InvalidValue("normalization affected-source work overflow".into())
-            })?;
-            Ok(())
-        };
-        for raw in &self.revision_xml {
-            add(raw.len())?;
-        }
-        for revision in &self.revision_markers {
-            add(revision.retained_source_len())?;
-        }
-        if let Some(change) = &self.change {
-            add(change.retained_source_len())?;
-        }
-        if let Some(raw) = self
-            .border
-            .as_ref()
-            .and_then(|border| border.source_xml.as_ref())
-        {
-            add(raw.len())?;
-        }
-        // These are retained name/value records, not raw lexical XML and not
-        // semantic current namespace facts. In particular, an unused xmlns
-        // record cannot receive the affine current-value multiplier.
-        for attributes in [
-            Some(&self.font_extra_attributes),
-            Some(&self.color_extra_attributes),
-            Some(&self.language_extra_attributes),
-            self.shading.as_ref().map(|value| &value.extra_attributes),
-            self.border.as_ref().map(|value| &value.extra_attributes),
-            self.fit_text.as_ref().map(|value| &value.extra_attributes),
-            self.east_asian_layout
-                .as_ref()
-                .map(|value| &value.extra_attributes),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            for (name, value) in attributes {
-                add(name.len())?;
-                add(value.len())?;
-            }
-        }
-        let current = self.selected_current_bytes()?;
-        crate::text::retained_owner_work(bytes, &[], current)
-    }
-
-    fn selected_current_bytes(&self) -> Result<usize> {
-        let mut total = 0usize;
-        let mut add = |bytes: usize| -> Result<()> {
-            total = total.checked_add(bytes).ok_or_else(|| {
-                OxmlError::InvalidValue("normalization affected-source work overflow".into())
-            })?;
-            Ok(())
-        };
-        for value in [
-            &self.style_id,
-            &self.font_ascii,
-            &self.font_hansi,
-            &self.font_east_asia,
-            &self.font_cs,
-            &self.font_ascii_theme,
-            &self.font_hansi_theme,
-            &self.font_east_asia_theme,
-            &self.font_cs_theme,
-            &self.font_hint,
-            &self.color,
-            &self.color_theme,
-            &self.vert_align,
-            &self.language,
-            &self.language_east_asia,
-            &self.language_bidi,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            add(value.len())?;
-        }
-        // Toggle writers use one canonical 0/1 byte, including val-less true.
-        for value in [
-            self.bold,
-            self.bold_cs,
-            self.italic,
-            self.italic_cs,
-            self.strike,
-            self.dstrike,
-            self.caps,
-            self.small_caps,
-            self.vanish,
-            self.outline,
-            self.shadow,
-            self.emboss,
-            self.imprint,
-            self.no_proof,
-            self.snap_to_grid,
-            self.web_hidden,
-            self.complex_script,
-            self.spec_vanish,
-            self.office_math,
-            self.rtl,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let _ = value;
-            add(1)?;
-        }
-        let mut number = itoa::Buffer::new();
-        for value in [
-            self.sz.map(|value| i64::from(value.0)),
-            self.sz_cs.map(|value| i64::from(value.0)),
-            self.spacing.map(|value| i64::from(value.0)),
-            self.width_scale.map(i64::from),
-            self.position.map(i64::from),
-            self.kern.map(|value| i64::from(value.0)),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            add(number.format(value).len())?;
-        }
-        // Tint and shade writers use exactly two hexadecimal digits.
-        for _ in [self.color_theme_tint, self.color_theme_shade]
-            .into_iter()
-            .flatten()
-        {
-            add(2)?;
-        }
-        for value in [
-            self.underline.map(|value| value.to_str()),
-            self.highlight.map(|value| value.to_str()),
-            self.effect.as_ref().map(|value| value.as_str()),
-            self.emphasis_mark.as_ref().map(|value| value.as_str()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            add(value.len())?;
-        }
-        if let Some(shading) = &self.shading {
-            add(shading.val.len())?;
-            for value in [
-                &shading.color,
-                &shading.fill,
-                &shading.theme_color,
-                &shading.theme_fill,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                add(value.len())?;
-            }
-            for _ in [
-                shading.theme_tint,
-                shading.theme_shade,
-                shading.theme_fill_tint,
-                shading.theme_fill_shade,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                add(2)?;
-            }
-        }
-        if let Some(border) = &self.border {
-            add(border.val.to_str().len())?;
-            for value in [border.sz, border.space].into_iter().flatten() {
-                add(number.format(value).len())?;
-            }
-            if let Some(color) = &border.color {
-                add(color.len())?;
-            }
-        }
-        if let Some(fit) = &self.fit_text {
-            add(number.format(fit.val.0).len())?;
-            if let Some(id) = fit.id {
-                add(number.format(id).len())?;
-            }
-        }
-        if let Some(layout) = &self.east_asian_layout {
-            if let Some(id) = layout.id {
-                add(number.format(id).len())?;
-            }
-            for _ in [layout.combine, layout.vert, layout.vert_compress]
-                .into_iter()
-                .flatten()
-            {
-                add(1)?;
-            }
-            if let Some(brackets) = &layout.combine_brackets {
-                add(brackets.len())?;
-            }
-        }
-        Ok(total)
-    }
-
     /// Resolve qualified solid text fill retained as opaque source.
     /// Other extension representations retain their source without being guessed.
     pub fn solid_text_fill(&self) -> Option<(String, f64)> {
@@ -1013,28 +812,36 @@ impl CT_RPr {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
-                            let val = std::str::from_utf8(&attr.value)?.to_string();
-                            if is_word_attribute(key, b"ascii", &prefixes) {
-                                rpr.font_ascii = Some(val);
-                            } else if is_word_attribute(key, b"hAnsi", &prefixes) {
-                                rpr.font_hansi = Some(val);
-                            } else if is_word_attribute(key, b"eastAsia", &prefixes) {
-                                rpr.font_east_asia = Some(val);
-                            } else if is_word_attribute(key, b"cs", &prefixes) {
-                                rpr.font_cs = Some(val);
-                            } else if is_word_attribute(key, b"asciiTheme", &prefixes) {
-                                rpr.font_ascii_theme = Some(val);
-                            } else if is_word_attribute(key, b"hAnsiTheme", &prefixes) {
-                                rpr.font_hansi_theme = Some(val);
-                            } else if is_word_attribute(key, b"eastAsiaTheme", &prefixes) {
-                                rpr.font_east_asia_theme = Some(val);
-                            } else if is_word_attribute(key, b"cstheme", &prefixes) {
-                                rpr.font_cs_theme = Some(val);
-                            } else if is_word_attribute(key, b"hint", &prefixes) {
-                                rpr.font_hint = Some(val);
+                            let field = [
+                                (b"ascii".as_slice(), &mut rpr.font_ascii),
+                                (b"hAnsi", &mut rpr.font_hansi),
+                                (b"eastAsia", &mut rpr.font_east_asia),
+                                (b"cs", &mut rpr.font_cs),
+                                (b"asciiTheme", &mut rpr.font_ascii_theme),
+                                (b"hAnsiTheme", &mut rpr.font_hansi_theme),
+                                (b"eastAsiaTheme", &mut rpr.font_east_asia_theme),
+                                (b"cstheme", &mut rpr.font_cs_theme),
+                                (b"hint", &mut rpr.font_hint),
+                            ]
+                            .into_iter()
+                            .find(|(local, _)| is_word_attribute(key, local, &prefixes));
+                            if let Some((_, field)) = field {
+                                // A modelled value is written escaped, so it
+                                // is read unescaped: `A&amp;B` names A&B. It
+                                // is not normalized: the writer keeps a tab.
+                                let raw = std::str::from_utf8(&attr.value)?;
+                                let value = quick_xml::escape::unescape(raw).map_err(|error| {
+                                    OxmlError::InvalidValue(format!(
+                                        "w:rFonts attribute {raw:?}: {error}"
+                                    ))
+                                })?;
+                                *field = Some(value.into_owned());
                             } else {
-                                rpr.font_extra_attributes
-                                    .push((std::str::from_utf8(key)?.to_owned(), val));
+                                // Kept as written, and written back as is.
+                                rpr.font_extra_attributes.push((
+                                    std::str::from_utf8(key)?.to_owned(),
+                                    std::str::from_utf8(&attr.value)?.to_owned(),
+                                ));
                             }
                         }
                     } else if let Some(bold) = empty_bold_value(e, &prefixes)? {

@@ -207,11 +207,15 @@ fn emit_paragraph(
     let numbering = input.numbering.as_ref();
     let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
-    let mut heading_level = detect_heading_level(para.properties.as_ref(), styles);
+    let detected_level = detect_heading_level(para.properties.as_ref(), styles);
     // A heading numbered through its style, as Word numbers its headings,
     // stays a heading; only its own numbering makes it a list item.
     let list_info = detect_list(para, styles, numbering)
-        .filter(|_| heading_level.is_none() || crate::has_own_numbering(para));
+        .filter(|_| detected_level.is_none() || crate::has_own_numbering(para));
+    // Outline level 9 (level 10 here) is body text, the level of Word's TOC
+    // Heading style: written as a paragraph, which, as in HTML, takes no
+    // numbering from its style either.
+    let mut heading_level = detected_level.filter(|&level| level < 10);
 
     // Collect inline text for the paragraph
     let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries);
@@ -251,6 +255,8 @@ fn emit_paragraph(
             .unwrap_or(0);
         let fence = "`".repeat((length + 1).max(3));
         text = format!("{fence}\n{code}\n{fence}");
+    } else if heading_level.is_none() && list_info.is_none() {
+        text = keep_leading_whitespace(&text);
     }
     let inner_quotes = container_path
         .rsplit('l')
@@ -317,7 +323,7 @@ fn emit_paragraph(
                     .iter()
                     .position(|&(current, _, _)| current == level)
             })
-    } else if heading_level.is_none() && list_info.is_none() {
+    } else if detected_level.is_none() && list_info.is_none() {
         // A paragraph on a `none` level goes on the open item of its list at
         // its level or above.
         crate::unmarked_list_level(para, styles, numbering).and_then(|(num_id, level)| {
@@ -450,6 +456,41 @@ fn quote_owner<'a>(id: Option<&str>, styles: &'a CT_Styles) -> Option<&'a str> {
             .split('.')
             .all(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())))
     .then_some(owner)
+}
+
+/// CommonMark drops the whitespace a paragraph line starts with, and reads
+/// four columns of it as an indented code block. Written as a character
+/// reference, the first whitespace character of a line keeps the line's
+/// whitespace and the paragraph. Two line breaks in a row leave a line of
+/// spaces after a line of text, which a reader takes for a blank line that
+/// ends the paragraph: it is written as a backslash hard break, or with its
+/// first character as a reference when it holds more than the break.
+fn keep_leading_whitespace(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let last = lines.len() - 1;
+    let mut written: Vec<String> = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        let blank = !line.is_empty() && line.bytes().all(|byte| byte == b' ' || byte == b'\t');
+        let after_text = written
+            .last()
+            .is_some_and(|previous| !previous.trim().is_empty());
+        let first = line.chars().next();
+        let out = match first {
+            Some(first @ (' ' | '\t')) if !blank => {
+                format!("&#{};{}", u32::from(first), &line[1..])
+            }
+            Some(first) if blank && index < last && after_text && line.ends_with("  ") => {
+                if *line == "  " {
+                    "\\".to_owned()
+                } else {
+                    format!("&#{};{}", u32::from(first), &line[1..])
+                }
+            }
+            _ => (*line).to_owned(),
+        };
+        written.push(out);
+    }
+    written.join("\n")
 }
 
 fn escape_block_starts(text: &str) -> String {
@@ -650,8 +691,10 @@ fn push_inline_segment(out: &mut String, pieces: &[(String, Marks)], link: Optio
 /// destination and an unbalanced parenthesis ends the link, so those are
 /// percent-encoded or escaped.
 fn push_link_destination(out: &mut String, url: &str) {
-    for character in url.chars() {
+    for (index, character) in url.char_indices() {
         match character {
+            // A reader decodes a character reference in a destination too.
+            '&' if starts_character_reference(&url[index + 1..]) => out.push_str("\\&"),
             ' ' => out.push_str("%20"),
             character if character.is_ascii_control() => {
                 out.push_str(&format!("%{:02X}", u32::from(character)));
@@ -672,8 +715,34 @@ fn push_piece(pieces: &mut Vec<(String, Marks)>, text: &str, marks: Marks) {
         return;
     }
     match pieces.last_mut() {
-        Some((last, last_marks)) if !last.is_empty() && *last_marks == marks => last.push_str(text),
+        Some((last, last_marks)) if !last.is_empty() && *last_marks == marks => {
+            escape_reference_across(last, text);
+            last.push_str(text);
+        }
         _ => pieces.push((text.to_owned(), marks)),
+    }
+}
+
+/// Runs with the same formatting are written as one text, so a character
+/// reference split across them (Word splits runs around a word it flags)
+/// becomes one there: escape the `&` it starts with, at the end of `last`.
+fn escape_reference_across(last: &mut String, next: &str) {
+    // A reference body is at most 32 bytes, so its `&` is among the last 33.
+    let from = last.len().saturating_sub(33);
+    let Some(at) = last.as_bytes()[from..]
+        .iter()
+        .rposition(|&byte| byte == b'&')
+        .map(|index| index + from)
+    else {
+        return;
+    };
+    let backslashes = last.as_bytes()[..at]
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte == b'\\')
+        .count();
+    if backslashes % 2 == 0 && starts_character_reference(&format!("{}{next}", &last[at + 1..])) {
+        last.insert(at, '\\');
     }
 }
 
@@ -684,6 +753,53 @@ fn push_escaped(text: &mut String, character: char) {
         text.push('\\');
     }
     text.push(character);
+}
+
+/// Append document text as `push_escaped` does, escaping as well an `&` that
+/// starts a character reference, which a reader would turn into another
+/// character.
+fn push_escaped_text(out: &mut String, text: &str) {
+    for (index, character) in text.char_indices() {
+        push_escaped_at(out, text, index, character);
+    }
+}
+
+/// `push_escaped` for the character at `index` of `text`, with the `&` of a
+/// character reference escaped.
+fn push_escaped_at(out: &mut String, text: &str, index: usize, character: char) {
+    if character == '&' && starts_character_reference(&text[index + 1..]) {
+        out.push('\\');
+    }
+    push_escaped(out, character);
+}
+
+/// Whether `rest`, the text after an `&`, starts as a character reference
+/// does: a name, `#` and decimal digits, or `#x` and hexadecimal digits,
+/// then `;`. A reference body is at most 32 bytes, so only that far is
+/// read.
+fn starts_character_reference(rest: &str) -> bool {
+    let bytes = rest.as_bytes();
+    match bytes.iter().take(33).position(|&byte| byte == b';') {
+        Some(end) => {
+            let body = &bytes[..end];
+            match body.strip_prefix(b"#") {
+                Some(number) => match number.strip_prefix(b"x").or(number.strip_prefix(b"X")) {
+                    Some(hex) => {
+                        (1..=6).contains(&hex.len()) && hex.iter().all(u8::is_ascii_hexdigit)
+                    }
+                    None => {
+                        (1..=7).contains(&number.len()) && number.iter().all(u8::is_ascii_digit)
+                    }
+                },
+                None => {
+                    (1..=32).contains(&body.len())
+                        && body[0].is_ascii_alphabetic()
+                        && body.iter().all(u8::is_ascii_alphanumeric)
+                }
+            }
+        }
+        None => false,
+    }
 }
 
 /// Collect the text of a single run as formatted pieces.
@@ -738,9 +854,7 @@ fn collect_run_pieces(
     for content in &run.content {
         match content {
             RunContent::Text(t) | RunContent::DeletedText(t) => {
-                for character in t.text.chars() {
-                    push_escaped(&mut raw, character);
-                }
+                push_escaped_text(&mut raw, &t.text);
             }
             RunContent::Drawing(drawing) => {
                 let picture = drawing
@@ -757,9 +871,7 @@ fn collect_run_pieces(
                     && let Some(image) = images.get(relationship)
                 {
                     let mut alt = String::new();
-                    for character in description.unwrap_or("").chars() {
-                        push_escaped(&mut alt, character);
-                    }
+                    push_escaped_text(&mut alt, description.unwrap_or(""));
                     raw.push_str(&format!(
                         "![{alt}](data:{};base64,{})",
                         image.content_type,
@@ -788,7 +900,7 @@ fn collect_run_pieces(
                 for (text, properties) in field.cached_display_segments() {
                     let field_marks = marks.overlay(properties);
                     let mut display = String::new();
-                    for character in text.chars() {
+                    for (index, character) in text.char_indices() {
                         match character {
                             '\t' => display.push('\t'),
                             '\n' | '\u{000b}' => {
@@ -803,7 +915,7 @@ fn collect_run_pieces(
                                 pieces.push((PAGE_BREAK.to_owned(), Marks::default()));
                                 pieces.push((String::new(), Marks::default()));
                             }
-                            character => push_escaped(&mut display, character),
+                            character => push_escaped_at(&mut display, text, index, character),
                         }
                     }
                     push_piece(pieces, &display, field_marks);
@@ -1111,14 +1223,23 @@ fn emit_table(
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut max_cols = 0;
 
+    let limit = crate::emitter::grid_limit(tbl);
     // Rows and cells that content controls wrap are written in place.
     for row in tbl
         .rows()
         .into_iter()
         .filter(|row| !row.accepted_view_removes())
     {
+        // GFM cannot span: a cell spanning several grid columns, or the
+        // columns a row omits before its first cell, leave empty cells, so
+        // that every cell stays in its grid column.
         let mut cells: Vec<String> = Vec::new();
-        for cell in row.cells() {
+        let ranges = crate::emitter::grid_ranges(row, limit);
+        for (cell, &(start, _)) in row.cells().into_iter().zip(&ranges) {
+            // Starts clamped to the table's width can repeat: only grow.
+            if cells.len() < start {
+                cells.resize(start, String::new());
+            }
             let text = collect_cell_text(cell, styles, hyperlink_urls, images);
             cells.push(text);
         }
@@ -1148,15 +1269,18 @@ fn emit_table(
 
     // Emit separator
     out.push('|');
-    let header_cells = tbl
+    // Each column takes the alignment of the header cell that starts there.
+    let header = tbl
         .rows()
         .into_iter()
-        .find(|row| !row.accepted_view_removes())
-        .map(|row| row.cells())
-        .unwrap_or_default();
+        .find(|row| !row.accepted_view_removes());
+    let header_cells = header.map(|row| row.cells()).unwrap_or_default();
+    let header_ranges = header.map_or_else(Vec::new, |row| crate::emitter::grid_ranges(row, limit));
     for column in 0..max_cols {
-        let alignment = header_cells
-            .get(column)
+        let alignment = header_ranges
+            .iter()
+            .position(|&(start, _)| start == column)
+            .and_then(|index| header_cells.get(index))
             .and_then(|cell| cell.paragraphs().first().copied())
             .and_then(|paragraph| paragraph.properties.as_ref())
             .and_then(|properties| properties.jc);
@@ -1209,8 +1333,26 @@ fn collect_cell_text(
                 }
             }
             Block::Table(table) if table.accepted_view_removes() => {}
-            Block::Table(_) => {
-                parts.push("(nested table)".to_string());
+            // GFM has no nested tables: a nested table's rows go into the
+            // cell, each on a line of its own, its cells between pipes.
+            Block::Table(table) => {
+                let rows: Vec<String> = table
+                    .rows()
+                    .into_iter()
+                    .filter(|row| !row.accepted_view_removes())
+                    .map(|row| {
+                        row.cells()
+                            .into_iter()
+                            .map(|cell| collect_cell_text(cell, styles, hyperlink_urls, images))
+                            .filter(|text| !text.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" \\| ")
+                    })
+                    .filter(|row| !row.is_empty())
+                    .collect();
+                if !rows.is_empty() {
+                    parts.push(rows.join("<br>"));
+                }
             }
         }
     }
@@ -1221,11 +1363,11 @@ fn collect_cell_text(
 fn emit_chart_table(out: &mut String, chart: &crate::ChartTable) {
     let escaped = |text: &str| {
         let mut result = String::new();
-        for ch in text.chars() {
+        for (index, ch) in text.char_indices() {
             if ch == '|' {
                 result.push('\\');
             }
-            push_escaped(&mut result, ch);
+            push_escaped_at(&mut result, text, index, ch);
         }
         result.replace('\n', "<br>").replace('\r', "")
     };

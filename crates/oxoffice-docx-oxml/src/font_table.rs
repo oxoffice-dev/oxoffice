@@ -96,6 +96,11 @@ pub struct FontRecord {
     /// relationship. Only the relationships of modelled embedded faces are
     /// cleaned up after the record, so removing it would leave this one.
     raw_children_name_relationship: bool,
+    /// The slots of the `w:altName`, `w:family`, `w:pitch` and embedded face
+    /// elements kept in `raw_children` because the model cannot read them
+    /// (no `w:val`, or an element inside). They read as
+    /// unset, so setting one would write the element a second time.
+    kept_field_slots: Vec<usize>,
 }
 
 impl FontRecord {
@@ -115,7 +120,41 @@ impl FontRecord {
             raw_attributes: Vec::new(),
             raw_children: Vec::new(),
             raw_children_name_relationship: false,
+            kept_field_slots: Vec::new(),
         }
+    }
+
+    /// Whether an attribute this record keeps, at any depth and in any
+    /// namespace, has the value `value`. Its modelled faces' relationship ids
+    /// are fields, not kept attributes.
+    fn mentions_value(&self, value: &str) -> bool {
+        raw_attributes_mention(&self.raw_attributes, value)
+            || raw_attributes_mention(&self.alternate_name_raw_attributes, value)
+            || raw_attributes_mention(&self.family_raw_attributes, value)
+            || raw_attributes_mention(&self.pitch_raw_attributes, value)
+            || self
+                .embedded_fonts
+                .iter()
+                .any(|embedded| raw_attributes_mention(&embedded.raw_attributes, value))
+            || self
+                .raw_children
+                .iter()
+                .any(|(_, raw)| raw_xml_mentions_value(raw, value))
+    }
+
+    /// Keep a child this model does not read, verbatim at its schema slot,
+    /// or after the last known child when it has none.
+    fn retain_field_or_child(
+        &mut self,
+        slot: Option<usize>,
+        boundary: usize,
+        raw: Vec<u8>,
+        relationship_prefixes: &[String],
+    ) {
+        if let Some(field @ (0 | 3 | 5 | 7..=10)) = slot {
+            self.kept_field_slots.push(field);
+        }
+        self.retain_child(slot.unwrap_or(boundary), raw, relationship_prefixes);
     }
 
     /// Keep a child this model does not read, verbatim at `slot`.
@@ -331,6 +370,8 @@ impl FontTable {
     /// or unknown ones) go with it, unless one names a relationship: only the
     /// relationships of modelled embedded faces are cleaned up after it.
     /// Retained attributes and opaque embedded faces are still refused.
+    /// `Document::remove_font` also refuses when the kept XML names, in another
+    /// namespace, a relationship nothing else would use after the record.
     pub fn can_remove_font(&self, name: &str) -> Result<bool> {
         let mut matches = self.fonts.iter().filter(|font| font.name == name);
         let Some(font) = matches.next() else {
@@ -411,6 +452,52 @@ impl FontTable {
                     "cannot clear the {field} of font {name}: it holds unmodelled XML"
                 )));
             }
+        }
+        Ok(())
+    }
+
+    /// Check whether `set_font` can set these fields of the record named
+    /// `name`. A field whose element the record keeps verbatim reads as
+    /// unset; setting it would write a second element, which a reader then
+    /// refuses as out of order, so it is refused.
+    pub fn can_set_font_fields(
+        &self,
+        name: &str,
+        alternate_name: bool,
+        family: bool,
+        pitch: bool,
+    ) -> Result<()> {
+        let Some(font) = self.fonts.iter().find(|font| font.name == name) else {
+            return Ok(());
+        };
+        for (set, slot, field) in [
+            (alternate_name, 0, "alternate name"),
+            (family, 3, "family"),
+            (pitch, 5, "pitch"),
+        ] {
+            if set && font.kept_field_slots.contains(&slot) {
+                return Err(OxmlError::InvalidValue(format!(
+                    "cannot set the {field} of font {name}: the file keeps that element in a form the model does not read"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Check whether `embed_font` can give the record named `name` a face of
+    /// this kind: a face element of that kind kept as written reads as no
+    /// face, so a new one would be a second element, which is refused.
+    pub fn can_embed_font(&self, name: &str, kind: FontFaceKind) -> Result<()> {
+        if self
+            .fonts
+            .iter()
+            .find(|font| font.name == name)
+            .is_some_and(|font| font.kept_field_slots.contains(&kind.slot()))
+        {
+            return Err(OxmlError::InvalidValue(format!(
+                "cannot embed the {} face of font {name}: the file keeps that element in a form the model does not read",
+                kind.local_name()
+            )));
         }
         Ok(())
     }
@@ -502,25 +589,27 @@ impl FontTable {
             .count()
     }
 
+    /// Whether the record named `name` keeps an attribute whose value is
+    /// `value`, at any depth and in any namespace, besides its modelled faces'
+    /// relationship ids: the test the cleanup after a removal applies to keep
+    /// a relationship.
+    pub fn record_mentions_value(&self, name: &str, value: &str) -> bool {
+        self.fonts
+            .iter()
+            .filter(|font| font.name == name)
+            .any(|font| font.mentions_value(value))
+    }
+
     pub fn retained_raw_mentions_relationship(&self, relationship_id: &str) -> bool {
         raw_attributes_mention(&self.raw_attributes, relationship_id)
             || self
                 .raw_children
                 .iter()
                 .any(|(_, raw)| raw_xml_mentions_value(raw, relationship_id))
-            || self.fonts.iter().any(|font| {
-                raw_attributes_mention(&font.raw_attributes, relationship_id)
-                    || raw_attributes_mention(&font.alternate_name_raw_attributes, relationship_id)
-                    || raw_attributes_mention(&font.family_raw_attributes, relationship_id)
-                    || raw_attributes_mention(&font.pitch_raw_attributes, relationship_id)
-                    || font.embedded_fonts.iter().any(|embedded| {
-                        raw_attributes_mention(&embedded.raw_attributes, relationship_id)
-                    })
-                    || font
-                        .raw_children
-                        .iter()
-                        .any(|(_, raw)| raw_xml_mentions_value(raw, relationship_id))
-            })
+            || self
+                .fonts
+                .iter()
+                .any(|font| font.mentions_value(relationship_id))
     }
 }
 
@@ -558,7 +647,7 @@ fn read_font(
                 }
                 let raw = capture_element(reader, &child)?;
                 let Some(raw_inner) = explicit_element_trivia(&raw)? else {
-                    font.retain_child(slot.unwrap_or(boundary), raw, &relationship_prefixes);
+                    font.retain_field_or_child(slot, boundary, raw, &relationship_prefixes);
                     buffer.clear();
                     continue;
                 };
@@ -571,7 +660,7 @@ fn read_font(
                     &namespace_prefixes_at(&child, &extension_prefixes, RDOCX_FONT_NS)?,
                     Some(raw_inner),
                 )? {
-                    font.retain_child(slot.unwrap_or(boundary), raw, &relationship_prefixes);
+                    font.retain_field_or_child(slot, boundary, raw, &relationship_prefixes);
                 }
             }
             Event::Empty(child) => {
@@ -590,8 +679,9 @@ fn read_font(
                     &namespace_prefixes_at(&child, &extension_prefixes, RDOCX_FONT_NS)?,
                     None,
                 )? {
-                    font.retain_child(
-                        slot.unwrap_or(boundary),
+                    font.retain_field_or_child(
+                        slot,
+                        boundary,
                         capture_empty_element(&child)?,
                         &relationship_prefixes,
                     );

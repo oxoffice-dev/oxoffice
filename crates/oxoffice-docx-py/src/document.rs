@@ -87,7 +87,7 @@ mod owner_locations;
 mod owner_pieces;
 mod publication;
 
-pub(crate) use body_splice::{BodySplice, PreparedBodySplice, SplicedBodyItem};
+pub(crate) use body_splice::{BodySplice, PreparedBodySplice, SplicedBodyItem, StagedAppend};
 use inventory_matches::{
     append_word_owners_with_states, indexed_inventory_matches, property_owner_key,
     relocated_property_owners, word_owners_with_states,

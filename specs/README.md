@@ -59,6 +59,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [A check without debug assertions on every pull request](2026-11-21-check-without-debug-assertions.md) | shipped |
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
+| 2026-11-21 | [Edit cost: publishing the one block an edit touched](2026-11-21-edit-cost-one-block-publication.md) | accepted |
 | 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
 | 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | shipped |
 | 2026-11-21 | [Comparison: bookmark ids and generated TOC names are no change](2026-11-21-comparison-bookmark-identities.md) | shipped |
@@ -69,3 +70,4 @@ dependency bumps and documentation.
 | 2026-11-21 | [The limitations page is built at release](2026-11-21-limitations-page-built-at-release.md) | accepted |
 | 2026-11-21 | [Python core property dates and shared helpers](2026-11-21-python-core-property-dates-and-shared-helpers.md) | accepted |
 | 2026-11-21 | [Embedded content and signatures in oxoffice-opc](2026-11-21-embedded-content-and-signatures-in-opc.md) | accepted |
+| 2026-11-21 | [Consumer workflows: the suite checks what a first user does](2026-11-21-consumer-workflows.md) | accepted |

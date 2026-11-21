@@ -23,7 +23,8 @@ crates/
   oxoffice-chart         ChartML model and renderer, for Word and PowerPoint
   oxoffice-sml           minimal SpreadsheetML writer for chart workbooks
   oxoffice-cli-support   shared CLI pieces: ranges, JSON output, paths
-  oxoffice-py-support    shared PyO3 pieces: errors, lengths, colours
+  oxoffice-py-support    shared PyO3 pieces: errors, indexes, lengths, colours, core property
+                         dates, caller fonts
 
   # WordprocessingML
   oxoffice-docx-oxml     the w: types and OfficeMath

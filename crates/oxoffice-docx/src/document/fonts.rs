@@ -375,6 +375,12 @@ impl Document {
                 {
                     return Ok(());
                 }
+                table.can_set_font_fields(
+                    &font.name,
+                    font.alternate_name.is_some(),
+                    font.family.is_some(),
+                    font.pitch.is_some(),
+                )?;
                 table.can_clear_font_fields(
                     &font.name,
                     record.alternate_name.is_some() && font.alternate_name.is_none(),
@@ -389,11 +395,12 @@ impl Document {
             .as_mut()
             .expect("font-table mutation candidate has a model")
             .set_font(font.name, font.alternate_name, font.family, font.pitch);
-        candidate
-            .font_table
-            .as_ref()
-            .expect("font-table mutation candidate has a model")
-            .to_xml()?;
+        font_table_reads_back(
+            candidate
+                .font_table
+                .as_ref()
+                .expect("font-table mutation candidate has a model"),
+        )?;
         candidate.font_table_dirty = true;
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
@@ -412,6 +419,30 @@ impl Document {
         else {
             return Ok(None);
         };
+        // The cleanup after the record removes only its modelled faces'
+        // relationships, so one its kept XML names another way must still be
+        // used by the rest of the table once the record is gone.
+        let named = self
+            .font_table_part_name
+            .as_deref()
+            .and_then(|part| self.package.get_part_rels(part))
+            .map(|relationships| {
+                relationships
+                    .items
+                    .iter()
+                    .filter(|relationship| {
+                        !record
+                            .embedded_fonts
+                            .iter()
+                            .any(|face| face.relationship_id == relationship.id)
+                            && self.font_table.as_ref().is_some_and(|table| {
+                                table.record_mentions_value(name, &relationship.id)
+                            })
+                    })
+                    .map(|relationship| relationship.id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let removed = self.project_font_records(&[record])?.remove(0);
         let mut candidate = self.font_table_mutation_candidate()?;
         let references = candidate
@@ -421,6 +452,19 @@ impl Document {
             .remove_font(name)
             .expect("font record existed before staging")
             .embedded_fonts;
+        let table = candidate
+            .font_table
+            .as_ref()
+            .expect("font-table mutation candidate has a model");
+        if let Some(orphan) = named.iter().find(|id| {
+            table.embedded_relationship_reference_count(id) == 0
+                && !table.retained_raw_mentions_relationship(id)
+        }) {
+            return Err(oxoffice_docx_oxml::OxmlError::InvalidValue(format!(
+                "cannot remove a font record whose retained XML names a relationship: font {name} names {orphan}, which nothing else in the font table uses"
+            ))
+            .into());
+        }
         for reference in references {
             candidate.remove_embedded_font_part(&reference)?;
         }
@@ -498,6 +542,7 @@ impl Document {
             .find(|font| font.name == font_name)
             .unwrap();
         let kind = FontFaceKind::from(embedded.kind);
+        table.can_embed_font(font_name, kind)?;
         let existing = font
             .embedded_fonts
             .iter()
@@ -616,11 +661,12 @@ impl Document {
         if !can_reuse_existing && let Some(existing) = &existing {
             candidate.remove_embedded_font_part(existing)?;
         }
-        candidate
-            .font_table
-            .as_ref()
-            .expect("font-table mutation candidate has a model")
-            .to_xml()?;
+        font_table_reads_back(
+            candidate
+                .font_table
+                .as_ref()
+                .expect("font-table mutation candidate has a model"),
+        )?;
         if candidate.settings_part_name.is_some() && candidate.settings.is_none() {
             return Err(Error::Other("cannot mutate unmodeled settings".to_owned()));
         }
@@ -949,4 +995,16 @@ fn has_consistent_sfnt_header(data: &[u8]) -> bool {
     search_range == expected_search_range
         && entry_selector == expected_selector
         && range_shift == expected_range_shift
+}
+
+/// Refuse an edit whose font table the next open could not read back: it
+/// would come back unmodelled, with every record out of reach.
+fn font_table_reads_back(table: &FontTable) -> Result<()> {
+    FontTable::from_xml(&table.to_xml()?)
+        .map(|_| ())
+        .map_err(|error| {
+            Error::Other(format!(
+                "the edited font table would not read back: {error}"
+            ))
+        })
 }

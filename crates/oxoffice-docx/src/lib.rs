@@ -72,17 +72,18 @@ pub use document::{
     DrawingHorizontalAlignment, DrawingHorizontalRelativeFrom, DrawingVerticalAlignment,
     DrawingVerticalRelativeFrom, DrawingWrap, EmbeddedFont, EmbeddedFontKind, FontDefinition,
     FontEmbeddingLicense, FragmentConflictPolicy, HeaderFooterKind, ImageInfo,
-    ImageWatermarkOptions, IssueSeverity, LinkInfo, ListLevel, ListLevelRestart, ListLevelSuffix,
-    ListNumberFormat, NoteFamily, NoteNumberFormat, NotePlacement, NotePolicy, NoteRestart,
-    NoteSpecialRecord, NumberedOutlineNode, NumberingDefinition, NumberingDefinitionLevel,
-    NumberingFormat, NumberingInstance, NumberingLevel, NumberingLevelOverride, OutlineNode,
-    PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RenderOptions, ReplaceOptions,
-    ReplacementCountMismatch, ReplacementRefusal, Section, SectionRef, SectionStory, StoryError,
-    StoryId, StoryItemKind, StoryItemRef, StoryItemSnapshot, StoryKind, StoryParagraph, StoryText,
-    StoryTextItem, TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport,
-    TextWatermarkOptions, UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef,
-    ValidationFinding, ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass,
-    derive_font_key, validate_document_bytes, validate_document_file,
+    ImageWatermarkOptions, IssueSeverity, LinkInfo, ListItemKind, ListLevel, ListLevelRestart,
+    ListLevelSuffix, ListNumberFormat, NoteFamily, NoteNumberFormat, NotePlacement, NotePolicy,
+    NoteRestart, NoteSpecialRecord, NumberedOutlineNode, NumberingDefinition,
+    NumberingDefinitionLevel, NumberingFormat, NumberingInstance, NumberingJournal, NumberingLevel,
+    NumberingLevelOverride, OutlineNode, PictureAnchor, PictureCrop, PictureOccurrence,
+    PictureOptions, RenderOptions, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal,
+    Section, SectionRef, SectionStory, StoryError, StoryId, StoryItemKind, StoryItemRef,
+    StoryItemSnapshot, StoryKind, StoryParagraph, StoryText, StoryTextItem, TextBoxDirection,
+    TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions, UncheckedReplacement,
+    UnreachedReplacement, UnsupportedXmlRef, ValidationFinding, ValidationReport,
+    ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
+    validate_document_bytes, validate_document_file,
 };
 pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,
@@ -163,7 +164,7 @@ pub use rtf::{RtfDiagnostic, RtfReadResult, RtfWriteResult};
 pub use run::{
     BreakKind, DrawingKind, DrawingRef, DrawingRelationshipKind, FieldDisplaySegmentRef, FieldKind,
     FieldRef, LegacyHorizontalRuleRef, Run, RunFontSlot, RunItemRef, RunProperties, RunRef,
-    UnderlineStyle,
+    UnderlineStyle, underline_from_code,
 };
 pub use style::{ConditionalTableStyle, Style, StyleBuilder};
 pub use svg::{SvgDiagnostic, SvgRenderResult};

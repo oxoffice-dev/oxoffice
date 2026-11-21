@@ -28,6 +28,10 @@ use crate::units::Twips;
 #[derive(Clone, Copy)]
 pub(crate) enum TableScalar {
     Measurement,
+    /// A `CT_TblWidth` `w:w`: an integer, a percent or a universal measure.
+    Width,
+    /// A cell margin `w:w`: an integer or a universal measure, not a percent.
+    MarginWidth,
     Unsigned,
     PositiveSpan,
     Merge,
@@ -35,11 +39,10 @@ pub(crate) enum TableScalar {
 impl TableScalar {
     pub(crate) fn for_names(element: &[u8], attribute: &[u8]) -> Option<Self> {
         match (element, attribute) {
-            (
-                b"tblW" | b"tblInd" | b"tblCellSpacing" | b"tcW" | b"wBefore" | b"wAfter"
-                | b"gridCol",
-                b"w",
-            )
+            (b"tblW" | b"tblInd" | b"tblCellSpacing" | b"tcW" | b"wBefore" | b"wAfter", b"w") => {
+                Some(Self::Width)
+            }
+            (b"gridCol", b"w")
             | (
                 b"tblpPr",
                 b"leftFromText" | b"rightFromText" | b"topFromText" | b"bottomFromText" | b"tblpX"
@@ -79,6 +82,8 @@ impl TableScalar {
             Self::Measurement => {
                 parse_integer_measurement::<i32>(element, attribute, value).map(|_| ())
             }
+            Self::Width => parse_measurement_or_percent(element, attribute, value).map(|_| ()),
+            Self::MarginWidth => parse_margin_width(element, attribute, value).map(|_| ()),
             Self::Unsigned | Self::PositiveSpan => self.unsigned(value).map(|_| ()),
             Self::Merge => Self::merge(Some(value)).map(|_| ()),
         }
@@ -413,6 +418,22 @@ impl CT_TblBorders {
             && self.inside_v.is_none()
             && self.extra_xml.is_empty()
     }
+
+    /// Whether a modelled edge set here draws a line: one set to `nil` or
+    /// `none` draws none.
+    pub fn draws_an_edge(&self) -> bool {
+        [
+            &self.top,
+            &self.bottom,
+            &self.left,
+            &self.right,
+            &self.inside_h,
+            &self.inside_v,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|edge| !edge.val.is_none())
+    }
 }
 
 /// Table cell margin (a single edge width).
@@ -430,7 +451,7 @@ impl CT_TblCellMar {
             let attr = attr?;
             if is_word_attribute(attr.key.as_ref(), b"w", word_prefixes) {
                 let value = std::str::from_utf8(&attr.value)?;
-                let val = parse_integer_measurement(e.name().as_ref(), attr.key.as_ref(), value)?;
+                let val = parse_margin_width(e.name().as_ref(), attr.key.as_ref(), value)?;
                 return Ok(Some(Twips(val)));
             }
         }
@@ -576,16 +597,21 @@ impl CT_TblWidth {
     fn from_xml_attrs_with_prefixes(e: &BytesStart, word_prefixes: &[String]) -> Result<Self> {
         let mut w = 0;
         let mut width_type = "dxa".to_string();
+        let mut spelled_type = None;
 
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
             let val = std::str::from_utf8(&attr.value)?;
             if is_word_attribute(key, b"w", word_prefixes) {
-                w = parse_integer_measurement(e.name().as_ref(), key, val)?;
+                (w, spelled_type) = parse_measurement_or_percent(e.name().as_ref(), key, val)?;
             } else if is_word_attribute(key, b"type", word_prefixes) {
                 width_type = val.to_string();
             }
+        }
+        // A percent or a unit spelled in `w:w` says what the number is.
+        if let Some(spelled_type) = spelled_type {
+            width_type = spelled_type.to_owned();
         }
 
         Ok(CT_TblWidth { w, width_type })
@@ -759,6 +785,103 @@ pub struct CT_TblPPr {
     pub tbl_p_x_spec: Option<AnchorAlignH>,
     pub tbl_p_y: Option<Twips>,
     pub tbl_p_y_spec: Option<ST_YAlign>,
+}
+
+/// Read a `w:w` of `ST_MeasurementOrPercent`: an integer (twips or
+/// fiftieths of a percent, as `w:type` says), a percent such as `"33.3%"`,
+/// or a universal measure such as `"2in"`. The last two also give the type
+/// they imply, `pct` or `dxa`, and are stored in those units.
+fn parse_measurement_or_percent(
+    element: &[u8],
+    attribute: &[u8],
+    value: &str,
+) -> Result<(i32, Option<&'static str>)> {
+    // Twips per unit, as numerator over denominator.
+    const UNITS: [(&str, i128, i128); 6] = [
+        ("in", 1440, 1),
+        ("cm", 144000, 254),
+        ("mm", 14400, 254),
+        ("pt", 20, 1),
+        ("pc", 240, 1),
+        ("pi", 240, 1),
+    ];
+    let spelled = value
+        .strip_suffix('%')
+        .map(|number| (number, 50, 1, "pct"))
+        .or_else(|| {
+            UNITS.iter().find_map(|(unit, numerator, denominator)| {
+                value
+                    .strip_suffix(unit)
+                    .map(|number| (number, *numerator, *denominator, "dxa"))
+            })
+        });
+    let Some((number, numerator, denominator, width_type)) = spelled else {
+        return Ok((parse_integer_measurement(element, attribute, value)?, None));
+    };
+    let scaled = scaled_decimal(number, numerator, denominator).ok_or_else(|| {
+        OxmlError::InvalidValue(format!(
+            "{}/@{} {value:?} is not a measurement or a percent",
+            String::from_utf8_lossy(element),
+            String::from_utf8_lossy(attribute),
+        ))
+    })?;
+    Ok((scaled, Some(width_type)))
+}
+
+/// Read a cell margin `w:w`: twips, written as an integer or a universal
+/// measure. A margin is kept in twips, so a percent is refused.
+fn parse_margin_width(element: &[u8], attribute: &[u8], value: &str) -> Result<i32> {
+    match parse_measurement_or_percent(element, attribute, value)? {
+        (_, Some("pct")) => Err(OxmlError::InvalidValue(format!(
+            "{}/@{} {value:?}: a cell margin cannot be a percent",
+            String::from_utf8_lossy(element),
+            String::from_utf8_lossy(attribute),
+        ))),
+        (twips, _) => Ok(twips),
+    }
+}
+
+/// `-?[0-9]+(\.[0-9]+)?` times `numerator / denominator`, rounded half away
+/// from zero in decimal arithmetic from the first eighteen fraction digits,
+/// if it fits an `i32`.
+fn scaled_decimal(number: &str, numerator: i128, denominator: i128) -> Option<i32> {
+    let (negative, unsigned) = match number.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, number),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (unsigned.contains('.') && fraction.is_empty())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    // The smallest scale is 20 twips a point, so eleven whole digits never
+    // fit an i32; with eighteen fraction digits the products stay well
+    // inside an i128, and checked arithmetic refuses anything else.
+    let whole = whole.trim_start_matches('0');
+    let fraction = &fraction[..fraction.len().min(18)];
+    if whole.len() > 10 {
+        return None;
+    }
+    // "0", "00" or "-0" leave no digit once the zeros are trimmed.
+    let digits = format!("{whole}{fraction}");
+    let digits: i128 = if digits.is_empty() {
+        0
+    } else {
+        digits.parse().ok()?
+    };
+    let scale = 10i128
+        .checked_pow(fraction.len() as u32)?
+        .checked_mul(denominator)?;
+    let product = digits.checked_mul(numerator)?;
+    let rounded = product
+        .checked_mul(2)?
+        .checked_add(scale)?
+        .checked_div(scale.checked_mul(2)?)?;
+    let signed = if negative { -rounded } else { rounded };
+    i32::try_from(signed).ok()
 }
 
 #[allow(non_snake_case)]

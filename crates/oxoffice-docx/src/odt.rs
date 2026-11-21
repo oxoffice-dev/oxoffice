@@ -29,7 +29,16 @@ use crate::document::{ExportItem, body_export_items};
 use crate::paragraph::{Alignment, Paragraph};
 use crate::revision::{raw_is_typed_revision, revision_removes_text};
 use crate::run::Run;
-use crate::{Document, Error, Length, ListLevel, PackageReadLimits, Result};
+use crate::{Document, Error, Length, ListLevel, ListNumberFormat, PackageReadLimits, Result};
+
+/// What a list level of an ODT list style draws in front of its paragraphs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListMarker {
+    Bullet,
+    Number,
+    /// A numbered level with an empty number format: it counts and draws nothing.
+    Unnumbered,
+}
 
 const OFFICE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const TEXT_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
@@ -667,11 +676,8 @@ impl<'a> OdtWriter<'a> {
                 "line-spacing rule without line spacing was dropped during ODT export",
             )?;
         }
-        if [Some(effective), paragraph.properties.as_ref()]
-            .into_iter()
-            .flatten()
-            .any(|properties| properties.num_ilvl.is_some() && properties.num_id.is_none())
-        {
+        // A direct level whose list comes from the style is not dropped.
+        if effective.num_ilvl.is_some() && effective.num_id.is_none() {
             self.diagnose(
                 &format!("{path}/pPr/numPr/ilvl"),
                 "numbering level without a numbering id was dropped during ODT export",
@@ -685,8 +691,8 @@ impl<'a> OdtWriter<'a> {
             })
         {
             self.diagnose(
-                &format!("{path}/pPr/ind/hanging"),
-                "hanging indent was dropped because first-line indent takes precedence during ODT export",
+                &format!("{path}/pPr/ind/firstLine"),
+                "first-line indent was dropped because hanging indent takes precedence during ODT export",
             )?;
         }
         if [Some(effective), paragraph.properties.as_ref()]
@@ -1433,25 +1439,24 @@ impl<'a> OdtWriter<'a> {
         for (num_id, name) in list_styles {
             write!(output, "<text:list-style style:name=\"{name}\">").unwrap();
             for level in 0..9_u32 {
-                if self.list_level_is_bullet(
+                // A `none` level is a numbered level that draws nothing: the
+                // count of the levels around it goes on.
+                let element = match self.list_level_marker(
                     num_id,
                     level,
                     &format!("numbering[{num_id}]/level[{level}]"),
                 )? {
-                    write!(
-                        output,
-                        "<text:list-level-style-bullet text:level=\"{}\" text:bullet-char=\"•\"/>",
-                        level + 1
-                    )
-                    .unwrap();
-                } else {
-                    write!(
-                        output,
-                        "<text:list-level-style-number text:level=\"{}\" style:num-format=\"1\"/>",
-                        level + 1
-                    )
-                    .unwrap();
-                }
+                    ListMarker::Bullet => "list-level-style-bullet text:bullet-char=\"•\"",
+                    ListMarker::Number => "list-level-style-number style:num-format=\"1\"",
+                    ListMarker::Unnumbered => "list-level-style-number style:num-format=\"\"",
+                };
+                let (name, attributes) = element.split_once(' ').unwrap_or((element, ""));
+                write!(
+                    output,
+                    "<text:{name} text:level=\"{}\" {attributes}/>",
+                    level + 1
+                )
+                .unwrap();
             }
             output.push_str("</text:list-style>");
         }
@@ -1723,7 +1728,7 @@ impl<'a> OdtWriter<'a> {
         Ok(())
     }
 
-    fn list_level_is_bullet(&mut self, num_id: u32, level: u32, path: &str) -> Result<bool> {
+    fn list_level_marker(&mut self, num_id: u32, level: u32, path: &str) -> Result<ListMarker> {
         let abstract_num = self
             .document
             .numbering
@@ -1733,6 +1738,7 @@ impl<'a> OdtWriter<'a> {
         let (
             is_bullet,
             is_decimal,
+            is_unnumbered,
             has_other_format,
             start,
             suffix,
@@ -1743,21 +1749,28 @@ impl<'a> OdtWriter<'a> {
             retained_xml,
         ) = level_definition.map_or(
             (
-                false, false, false, 1, false, false, false, false, false, false,
+                false, false, false, false, 1, false, false, false, false, false, false,
             ),
             |definition| {
                 let format = definition.num_fmt.as_ref();
+                let unnumbered = matches!(format, Some(ST_NumberFormat::None));
                 (
                     matches!(format, Some(ST_NumberFormat::Bullet)),
                     matches!(format, Some(ST_NumberFormat::Decimal)),
+                    unnumbered,
                     format.is_some()
                         && !matches!(
                             format,
-                            Some(ST_NumberFormat::Bullet | ST_NumberFormat::Decimal)
+                            Some(
+                                ST_NumberFormat::Bullet
+                                    | ST_NumberFormat::Decimal
+                                    | ST_NumberFormat::None
+                            )
                         ),
                     self.list_start(num_id, level),
                     definition.suffix.is_some(),
-                    definition.lvl_text.is_some(),
+                    // A level that draws no marker loses no marker text.
+                    definition.lvl_text.is_some() && !unnumbered,
                     definition.lvl_jc.is_some(),
                     definition.ppr.is_some() || definition.ppr_raw.is_some(),
                     definition.rpr.is_some() || definition.rpr_raw.is_some(),
@@ -1803,10 +1816,13 @@ impl<'a> OdtWriter<'a> {
             }
         }
         if is_bullet {
-            return Ok(true);
+            return Ok(ListMarker::Bullet);
+        }
+        if is_unnumbered {
+            return Ok(ListMarker::Unnumbered);
         }
         if is_decimal {
-            return Ok(false);
+            return Ok(ListMarker::Number);
         }
         if level_is_used && has_other_format {
             self.diagnose(
@@ -1814,7 +1830,7 @@ impl<'a> OdtWriter<'a> {
                 "non-decimal numbering format was exported as decimal ODT list",
             )?;
         }
-        Ok(false)
+        Ok(ListMarker::Number)
     }
 
     fn manifest_xml(&self) -> String {
@@ -2122,15 +2138,16 @@ fn paragraph_style_xml(properties: &CT_PPr) -> String {
             write!(output, " fo:{name}=\"{}pt\"", twips_points(value.0)).unwrap();
         }
     }
-    if let Some(value) = properties.ind_first_line {
-        write!(output, " fo:text-indent=\"{}pt\"", twips_points(value.0)).unwrap();
-    } else if let Some(value) = properties.ind_hanging {
+    // Word ignores `w:firstLine` when `w:hanging` is there.
+    if let Some(value) = properties.ind_hanging {
         write!(
             output,
             " fo:text-indent=\"{}pt\"",
             twips_points(value.0.saturating_neg())
         )
         .unwrap();
+    } else if let Some(value) = properties.ind_first_line {
+        write!(output, " fo:text-indent=\"{}pt\"", twips_points(value.0)).unwrap();
     }
     if let Some(value) = properties.line_spacing {
         match properties.line_rule.as_deref() {
@@ -2385,7 +2402,6 @@ fn paragraph_properties_have_unsupported(properties: &CT_PPr) -> bool {
     properties.style_id.is_some()
         || properties.jc == Some(ST_Jc::Distribute)
         || (properties.line_rule.is_some() && properties.line_spacing.is_none())
-        || (properties.num_ilvl.is_some() && properties.num_id.is_none())
         || (properties.ind_first_line.is_some() && properties.ind_hanging.is_some())
         || properties.before_autospacing.is_some()
         || properties.after_autospacing.is_some()
@@ -3320,7 +3336,7 @@ struct Importer<'a> {
     styles: HashMap<(String, String), StyleDef>,
     defaults: HashMap<String, EffectiveStyle>,
     resolved: HashMap<(String, String), EffectiveStyle>,
-    list_kinds: HashMap<String, Vec<bool>>,
+    list_kinds: HashMap<String, Vec<ListMarker>>,
     fonts: HashMap<String, String>,
     document: Document,
     diagnostics: Vec<OdtDiagnostic>,
@@ -3443,7 +3459,7 @@ impl<'a> Importer<'a> {
             }
         } else if node.is(TEXT_NS, "list-style") {
             let name = required_attr(node, STYLE_NS, "name", part)?.to_string();
-            let mut levels = vec![false; 9];
+            let mut levels = vec![ListMarker::Number; 9];
             for level in node.elements() {
                 let index = level
                     .attr(Some(TEXT_NS), "level")
@@ -3452,9 +3468,14 @@ impl<'a> Importer<'a> {
                     .saturating_sub(1)
                     .min(8);
                 if level.is(TEXT_NS, "list-level-style-bullet") {
-                    levels[index] = true;
+                    levels[index] = ListMarker::Bullet;
                 } else if level.is(TEXT_NS, "list-level-style-number") {
-                    levels[index] = false;
+                    // An empty number format draws nothing (ODF 19.500).
+                    levels[index] = if level.attr(Some(STYLE_NS), "num-format") == Some("") {
+                        ListMarker::Unnumbered
+                    } else {
+                        ListMarker::Number
+                    };
                 }
             }
             self.list_kinds.insert(name, levels);
@@ -3630,18 +3651,16 @@ impl<'a> Importer<'a> {
         let levels = style_name
             .and_then(|name| self.list_kinds.get(name))
             .cloned()
-            .unwrap_or_else(|| vec![true; 9]);
+            .unwrap_or_else(|| vec![ListMarker::Bullet; 9]);
         if style_name.is_some_and(|name| !self.list_kinds.contains_key(name)) {
             self.diagnostic(path, "missing ODT list style, using bullets")?;
         }
         let definitions: Vec<ListLevel> = levels
             .iter()
-            .map(|bullet| {
-                if *bullet {
-                    ListLevel::bullet()
-                } else {
-                    ListLevel::decimal()
-                }
+            .map(|marker| match marker {
+                ListMarker::Bullet => ListLevel::bullet(),
+                ListMarker::Number => ListLevel::decimal(),
+                ListMarker::Unnumbered => ListLevel::new(ListNumberFormat::None),
             })
             .collect();
         let num_id = self.document.add_list_definition(&definitions);

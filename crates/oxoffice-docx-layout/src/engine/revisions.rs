@@ -455,7 +455,11 @@ pub(super) fn projected_content_char_starts(run: &CT_R) -> Vec<usize> {
             RunContent::Field(field) => field
                 .effective_projected_text()
                 .map_or(0, |text| text.chars().count()),
-            RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => 1,
+            RunContent::SpecialCharacter(
+                SpecialCharacter::CarriageReturn
+                | SpecialCharacter::NoBreakHyphen
+                | SpecialCharacter::PositionalTab { .. },
+            ) => 1,
             RunContent::FootnoteRef { custom_mark, .. }
             | RunContent::EndnoteRef { custom_mark, .. } => {
                 custom_mark.as_ref().map_or(0, |mark| mark.chars().count())

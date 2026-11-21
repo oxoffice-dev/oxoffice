@@ -75,6 +75,43 @@ or wants to merge it runs that review or asks for one.
 
 See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
+## Issues and fixes
+
+Finish what you start.
+
+- **Fix the class, not the instance.** Before the review, look for the same
+  defect in sibling places (the other attributes the same helper reads, the
+  other setters with the same gap, the same escape in another reader, the
+  other package) and fix them in the same pull request, each with its test.
+- **A pull request closes its issue.** It says `Closes #N` when it fixes
+  all of it. What a fix still leaves stays in the same issue: the pull
+  request says `Refs #N`, the issue is updated with what remains, and
+  closed when all of it is done. A minor review finding is fixed in the
+  pull request when the fix is cheap, answered when it is not a defect, and
+  becomes a new issue only when it is a different defect the pull request
+  cannot carry: at most one per pull request. A major is fixed unless the
+  maintainer waives it (see [Independent review](#independent-review)).
+- **One root cause, one issue.** When several issues share a cause (an
+  escape, a measurement parser, a text decoder), open one issue for the
+  cause, link the others to it, and fix the cause.
+- **Every issue says how bad it is and who meets it**: a severity label
+  (`S1 data loss`, `S2 wrong result`, `S3 rare or workaround`, `S4 polish`),
+  an area label (`area: docx`, `area: pptx`, `area: render`,
+  `area: python`, `area: ci`) and a "Seen with" line (which producer, which
+  kind of file, which system). Search for an existing issue first. The bug report form
+  (`.github/ISSUE_TEMPLATE/bug.yml`) asks for what happens, what it was seen
+  with, what was expected and, if known, an issue with the same cause;
+  labels are set at triage. An issue opened with `gh issue create
+  --body-file` skips the form: give it the same `###` headings (What
+  happens, Seen with, Expected, Same cause as).
+- **Order of work**: S1 at once, S2 next, S3 and S4 in batches by module,
+  one pull request per batch, never one pull request per trivial issue.
+- **Test rounds are scheduled, not continuous.** A round that finds bugs
+  faster than they are fixed waits for the fix queue; the workflows of real
+  consumers decide what is tested first.
+- **Measure**: issues opened and closed per hour, open issues by severity,
+  follow-up issues per pull request (target: fewer than one in three).
+
 ## Conventional commits
 
 ```
@@ -144,15 +181,16 @@ neither fails a flat call nor reads as a fix.
 
 ## Render tests
 
-The `render` module of the docx test binary renders every Word file of the
-corpus as `convert` and `render` do, with the bundled fonts, and checks two
-things (see [the spec](../specs/2026-11-21-render-fidelity.md)). The pieces
-that depend on no facade (the PDF reader, the hashes, the baseline files and
-the checks) live in the dev-only crate `oxoffice-render-test`.
+The `render` modules of the docx and pptx test binaries render every file
+of the corpus as `convert` and `render` do, with the bundled fonts, and
+check two things (see [the spec](../specs/2026-11-21-render-fidelity.md)).
+What they share (the PDF reader, the hashes, the baseline files and the
+checks) lives in the dev-only crate `oxoffice-render-test`.
 
 - **Invariants**, read from the PDF and the page images: page sizes in the
-  order of the sections, no page with only its header and footer, every
-  word drawn and inside its page, no empty-box glyph, no text over text,
+  order of the sections (one page of the slide size per slide), no page
+  with only its header and footer, every word drawn and inside its page (a
+  slide's words on its own page), no empty-box glyph, no text over text,
   every picture and table border drawn, no diagnostic but those known to
   change nothing drawn. What fails today is listed in
   `tests/render/known.toml` with its issue, and an entry fails the test once
@@ -167,6 +205,7 @@ the checks) live in the dev-only crate `oxoffice-render-test`.
 ```bash
 OXOFFICE_RENDER=subset cargo test --profile ci -p oxoffice-docx --test docx render   # check
 OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render
+# the same with -p oxoffice-pptx --test pptx for the decks
 ```
 
 `OXOFFICE_RENDER` is `subset` (the corpus without its `long-*` files),

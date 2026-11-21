@@ -1,0 +1,17 @@
+schema
+slides
+slides[].id
+slides[].shapes
+slides[].shapes[].depth
+slides[].shapes[].id
+slides[].shapes[].kind
+slides[].shapes[].name
+slides[].shapes[].path
+slides[].shapes[].position
+slides[].shapes[].position.left_emu
+slides[].shapes[].position.top_emu
+slides[].shapes[].size
+slides[].shapes[].size.height_emu
+slides[].shapes[].size.width_emu
+slides[].shapes[].text
+slides[].slide

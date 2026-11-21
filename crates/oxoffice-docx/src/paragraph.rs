@@ -1641,11 +1641,10 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Set first line indent in place. It replaces a hanging indent: Word
-    /// honours only one of the two.
+    /// honours only one of the two. A negative length is a hanging indent,
+    /// stored as `w:hanging` since `w:firstLine` cannot be negative.
     pub fn set_first_line_indent(&mut self, length: Length) {
-        let ppr = self.ensure_ppr();
-        ppr.ind_first_line = Some(length.as_twips());
-        ppr.ind_hanging = None;
+        self.set_signed_first_line_indent_value(Some(length));
     }
 
     /// Set or clear the signed first-line indentation.
@@ -2064,6 +2063,16 @@ impl<'a> Paragraph<'a> {
     /// first-line indent: Word honours only one of the two.
     pub fn set_hanging_indent_value(&mut self, length: Option<Length>) {
         if length.is_none() && self.inner.properties.is_none() {
+            return;
+        }
+        // `w:hanging` cannot be negative: a negative hanging indent is a
+        // first-line indent.
+        if let Some(length) = length
+            && length.to_twips() < 0
+        {
+            self.set_signed_first_line_indent_value(Some(Length::twips(
+                length.to_twips().saturating_neg(),
+            )));
             return;
         }
         let ppr = self.ensure_ppr();
@@ -3264,13 +3273,14 @@ impl<'a> ParagraphRef<'a> {
     }
 
     /// Get signed first-line indentation, negative for hanging indentation.
+    ///
+    /// When a paragraph holds both, the hanging indent wins, as in Word.
     pub fn first_line_indent(&self) -> Option<Length> {
         let ppr = self.inner.properties.as_ref()?;
-        if let Some(twips) = ppr.ind_first_line {
-            return Some(Length::twips(twips.0));
+        if let Some(twips) = ppr.ind_hanging {
+            return Some(Length::twips(twips.0.saturating_neg()));
         }
-        ppr.ind_hanging
-            .map(|twips| Length::twips(twips.0.saturating_neg()))
+        ppr.ind_first_line.map(|twips| Length::twips(twips.0))
     }
 
     /// Get an iterator over immutable accepted-view run references, the runs
@@ -3328,7 +3338,8 @@ impl<'a> ParagraphRef<'a> {
             .map(|inner| ParagraphBorderRef { inner })
     }
 
-    /// Count direct paragraph border edges.
+    /// Count the direct paragraph border edges that draw a line: an edge set
+    /// to `nil` or `none` is not counted, as [`Self::has_borders`] does.
     pub fn border_count(&self) -> usize {
         let Some(borders) = self
             .inner
@@ -3349,6 +3360,7 @@ impl<'a> ParagraphRef<'a> {
         ]
         .into_iter()
         .flatten()
+        .filter(|edge| !edge.val.is_none())
         .count()
     }
 

@@ -20,6 +20,45 @@ pub(super) fn stored_note_cache_runs(
         paint_scope: 0,
     });
     let locked = inherited_locked || field.locked() == Some(true);
+    // A legacy checkbox draws the box of its state, whatever result it
+    // stores, and a drop-down that stores no result its selected entry:
+    // nested in another field's result, or deleted in the tracked view. The
+    // box is drawn on the page only: navigation text, which passes no input,
+    // keeps the checkbox's text. A drop-down's entry is text, and navigation
+    // text reads it too.
+    let drawn = super::paragraph::drawn_legacy_checkbox(field)
+        .filter(|_| input.is_some())
+        .or_else(|| super::paragraph::drawn_legacy_dropdown(field));
+    if let Some(drawn) = drawn {
+        let mut run = CT_R::new(drawn);
+        // The formatting of its stored result, else of the run opening it,
+        // as at the top level.
+        run.properties = field
+            .cached_result_runs()
+            .and_then(|runs| runs.first())
+            .and_then(|first| first.properties.clone())
+            .or_else(|| field.begin_run_properties())
+            .or_else(|| inherited.cloned());
+        if let Some(oxoffice_docx_oxml::text::LegacyCheckBoxSize::HalfPoints(size)) = field
+            .legacy_form
+            .as_ref()
+            .and_then(|data| data.checkbox_size)
+        {
+            let size = oxoffice_docx_oxml::HalfPoint(u32::try_from(size).unwrap_or(u32::MAX));
+            let properties = run.properties.get_or_insert_with(Default::default);
+            properties.sz = Some(size);
+            properties.sz_cs = Some(size);
+        }
+        return Ok(vec![StoredFieldRun {
+            occurrence,
+            run,
+            force_underline: false,
+            force_strike: false,
+            revision: None,
+            source,
+            field_kind: None,
+        }]);
+    }
     let field_kind = if cached_child && !locked && source.is_some() {
         let instruction = field.effective_instruction();
         if validate_page_field_instruction(&instruction).is_err() {

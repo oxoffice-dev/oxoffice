@@ -12,6 +12,7 @@ use oxoffice_docx::{
     RevisionView, StoryItemKind, StoryKind, StoryRunPosition,
 };
 use oxoffice_docx_oxml::shared::ST_PageOrientation;
+use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf, Picture};
 
 use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, texts};
@@ -267,11 +268,9 @@ fn each_section_keeps_its_page_size_and_orientation() {
     }
 }
 
-// Fails today: a page break followed by a next-page section break leaves a
-// blank page; Word (Pages = 3 in the Word file) and LibreOffice print 3 pages.
-// Issue: #156
+// Word (Pages = 3 in the Word file) and LibreOffice print each report on 3
+// pages, though it ends its first section with a page break.
 #[test]
-#[should_panic(expected = "draws only its header and footer")]
 fn no_page_of_a_corpus_report_is_blank() {
     for producer in PRODUCERS {
         let pdf = pdf_of(&corpus_doc(&format!("{producer}/report.docx")));
@@ -283,6 +282,107 @@ fn no_page_of_a_corpus_report_is_blank() {
             );
         }
     }
+}
+
+#[test]
+fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First section</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2, "the section break starts the page");
+    assert_eq!(pdf.page_text(0), "First section");
+    assert_eq!(pdf.page_text(1), "Second section");
+
+    // Before a continuous section, which shares the page, the break keeps
+    // its page.
+    let continuous = section.replace("<w:pgSz", r#"<w:type w:val="continuous"/><w:pgSz"#);
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First page</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second page</w:t></w:r></w:p><w:p><w:pPr>{continuous}</w:pPr></w:p><w:p><w:r><w:t>Third page</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 3);
+    assert_eq!(pdf.page_text(0), "First page");
+    assert_eq!(pdf.page_text(1), "Second page");
+    assert_eq!(pdf.page_text(2), "Third page");
+
+    // A section printing its endnotes at its end, with none to print, drops
+    // the break too.
+    let endnotes_at_end = section.replace(
+        "<w:pgSz",
+        r#"<w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr><w:pgSz"#,
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First section</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{endnotes_at_end}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    assert_eq!(pdf.page_text(1), "Second section");
+
+    // Text after the page break, in the same section, still goes to the next
+    // page, then the section break starts a third one.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>After the break</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 3);
+    assert_eq!(pdf.page_text(1), "After the break");
+    assert_eq!(pdf.page_text(2), "Next section");
+}
+
+#[test]
+fn a_page_break_at_the_foot_of_a_full_page_before_a_section_break_stays_there() {
+    // Lines of exactly 12 pt with no spacing: 53 of them leave room for one
+    // more on a Letter page with one-inch margins.
+    let exact =
+        r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="exact"/></w:pPr>"#;
+    let filler: String = (1..=53)
+        .map(|line| format!("<w:p>{exact}<w:r><w:t>Line {line}</w:t></w:r></w:p>"))
+        .collect();
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let doc = doc_with_body(&format!(
+        r#"{filler}<w:p>{exact}<w:r><w:t>Last line</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    assert!(
+        pdf.page_text(0).ends_with("Last line"),
+        "{}",
+        pdf.page_text(0)
+    );
+    assert_eq!(pdf.page_text(1), "Next section");
+
+    // The space after the last line, Normal's in a Word document, would end
+    // below the foot: it goes with the break.
+    let spaced = exact.replace(r#"w:after="0""#, r#"w:after="160""#);
+    let doc = doc_with_body(&format!(
+        r#"{filler}<w:p>{spaced}<w:r><w:t>Last line</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    assert_eq!(pdf.page_text(1), "Next section");
+
+    // With line numbers, what follows the break gets no number: the last
+    // number is the last line's, drawn once.
+    let numbered = section.replace("</w:sectPr>", r#"<w:lnNumType w:countBy="1"/></w:sectPr>"#);
+    let doc = doc_with_body(&format!(
+        r#"{filler}<w:p>{exact}<w:r><w:t>Last line</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{numbered}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    let numbers: Vec<String> = lines(&pdf.drawn(0))
+        .into_iter()
+        .filter(|line| line.text.chars().all(|c| c.is_ascii_digit()))
+        .map(|line| line.text)
+        .collect();
+    assert_eq!(
+        numbers.last().map(String::as_str),
+        Some("54"),
+        "{numbers:?}"
+    );
+    assert_eq!(numbers.len(), 54, "{numbers:?}");
 }
 
 // ---- Where text lands ----
@@ -1191,6 +1291,117 @@ fn the_same_document_converts_to_the_same_bytes() {
     let saved = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     assert!(saved == plain, "save_pdf wrote other bytes");
+}
+
+/// How many pixels of `rgb` the 72 DPI image of page 0 holds inside the box
+/// of the drawn text `text`, from its baseline to its font size above it.
+fn pixels_in_text_box(doc: &Document, text: &str, rgb: [u8; 3]) -> usize {
+    let pdf = pdf_of(doc);
+    let piece = pdf
+        .drawn(0)
+        .into_iter()
+        .find(|piece| piece.text.contains(text))
+        .unwrap_or_else(|| panic!("{text} is drawn"));
+    let image = Pixels::decode(&doc.render_page_to_png(0, 72.0).unwrap().expect("page 0"));
+    let height = f64::from(image.height);
+    let mut count = 0;
+    for y in (height - piece.y - piece.size * 0.7) as u32..(height - piece.y) as u32 {
+        for x in piece.x as u32..piece.end as u32 {
+            let at = ((y * image.width + x) * 4) as usize;
+            if image.rgba[at..at + 3] == rgb {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_run_shading_is_drawn_behind_its_text() {
+    let run = |fill: &str, text: &str| {
+        format!(
+            r#"<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="{fill}"/></w:rPr><w:t xml:space="preserve">{text} </w:t></w:r>"#
+        )
+    };
+    // Word's pale green, red and grey cell styles applied to text, then a
+    // highlight over a shading, and a dark fill under automatic text.
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{}{}{}<w:r><w:rPr><w:highlight w:val="yellow"/><w:shd w:val="clear" w:fill="C6EFCE"/></w:rPr><w:t xml:space="preserve">Both </w:t></w:r>{}</w:p>"#,
+        run("C6EFCE", "Done"),
+        run("FFC7CE", "Late"),
+        run("E7E6E6", "Open"),
+        run("1F3864", "Dark"),
+    ));
+    for (text, rgb) in [
+        ("Done", [0xC6, 0xEF, 0xCE]),
+        ("Late", [0xFF, 0xC7, 0xCE]),
+        ("Open", [0xE7, 0xE6, 0xE6]),
+        ("Dark", [0x1F, 0x38, 0x64]),
+    ] {
+        assert!(
+            pixels_in_text_box(&doc, text, rgb) > 20,
+            "{text} has its fill behind it"
+        );
+    }
+    // Word draws the highlight over the shading.
+    assert!(pixels_in_text_box(&doc, "Both", [0xFF, 0xFF, 0x00]) > 20);
+    assert_eq!(pixels_in_text_box(&doc, "Both", [0xC6, 0xEF, 0xCE]), 0);
+    // Automatic text turns white on a dark fill, as on a dark paragraph.
+    assert!(pixels_in_text_box(&doc, "Dark", [0xFF, 0xFF, 0xFF]) > 0);
+    assert_eq!(pixels_in_text_box(&doc, "Dark", [0, 0, 0]), 0);
+}
+
+#[test]
+fn a_solid_or_percentage_shading_paints_its_pattern_colour() {
+    // A solid pattern paints its foreground colour, a percentage mixes it
+    // into the fill: 25 % black over white is (191, 191, 191).
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:shd w:val="solid" w:color="C00000" w:fill="FFFFFF"/></w:pPr><w:r><w:t>Paragraph</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="000000" w:fill="FFFFFF"/></w:rPr><w:t>Quarter</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="solid" w:color="00B050" w:fill="auto"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct12" w:color="000000" w:fill="FFFFFF"/></w:rPr><w:t>Eighth</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:shd w:val="clear" w:fill="FF00FF"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Table</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p/>"#,
+        r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/><w:shd w:val="clear" w:fill="00FFFF"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Styled</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p/>"#,
+    ));
+    assert!(pixels_in_text_box(&doc, "Paragraph", [0xC0, 0x00, 0x00]) > 20);
+    assert!(pixels_in_text_box(&doc, "Quarter", [191, 191, 191]) > 20);
+    assert!(pixels_in_text_box(&doc, "Cell", [0x00, 0xB0, 0x50]) > 20);
+    // pct12 stands for 12.5 %: 255 * 0.875 is 223.
+    assert!(pixels_in_text_box(&doc, "Eighth", [223, 223, 223]) > 20);
+    // The table's own shading fills a cell that has none.
+    assert!(pixels_in_text_box(&doc, "Table", [0xFF, 0x00, 0xFF]) > 20);
+    // So does it under a table style, over the style's own.
+    assert!(pixels_in_text_box(&doc, "Styled", [0x00, 0xFF, 0xFF]) > 20);
+}
+
+#[test]
+fn a_list_number_takes_the_shading_of_its_level() {
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("Item", 0);
+    let mut package = oxoffice_opc::OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap()))
+        .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    // At 24 pt the number shows ink pixels of its own colour.
+    let shading = r#"<w:sz w:val="48"/><w:shd w:val="clear" w:color="auto" w:fill="0000FF"/>"#;
+    let level = xml.find(r#"<w:lvl w:ilvl="0""#).expect("level 0");
+    let end = level + xml[level..].find("</w:lvl>").expect("level end");
+    let xml = match xml[level..end].find("<w:rPr>") {
+        Some(at) => {
+            let at = level + at + "<w:rPr>".len();
+            format!("{}{shading}{}", &xml[..at], &xml[at..])
+        }
+        None => format!("{}<w:rPr>{shading}</w:rPr>{}", &xml[..end], &xml[end..]),
+    };
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    assert!(pixels_in_text_box(&doc, "1.", [0, 0, 0xFF]) > 10);
+    // Its automatic ink contrasts with the dark fill.
+    assert!(pixels_in_text_box(&doc, "1.", [0xFF, 0xFF, 0xFF]) > 0);
+    assert_eq!(pixels_in_text_box(&doc, "1.", [0, 0, 0]), 0);
 }
 
 #[test]

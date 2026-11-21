@@ -9,15 +9,16 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
 use oxoffice_docx::{
-    ChartData, ChartKind, Document, DrawingHorizontalAlignment, DrawingHorizontalRelativeFrom,
-    DrawingKind, DrawingVerticalAlignment, DrawingVerticalRelativeFrom, DrawingWrap, Error,
-    HdrFtrType, HeaderFooterKind, ImageWatermarkOptions, LegendPosition, LegendSettings, Length,
-    PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RunItemRef, StoryId, StoryKind,
+    ChartData, ChartKind, ContentControlTypePayload, Document, DrawingHorizontalAlignment,
+    DrawingHorizontalRelativeFrom, DrawingKind, DrawingVerticalAlignment,
+    DrawingVerticalRelativeFrom, DrawingWrap, Error, HdrFtrType, HeaderFooterKind,
+    ImageWatermarkOptions, LegendPosition, LegendSettings, Length, PictureAnchor, PictureCrop,
+    PictureOccurrence, PictureOptions, RunItemRef, StoryId, StoryItemKind, StoryKind,
     StoryRunPosition, TextBoxDirection, TextBoxOptions, TextWatermarkOptions,
 };
-use oxoffice_opc::OpcPackage;
+use oxoffice_opc::{OpcPackage, Relationship};
 
-use crate::support::{corpus_root, doc_with, reopen, texts};
+use crate::support::{corpus_root, doc_with, doc_with_body, reopen, texts};
 
 const EMU_PER_INCH: i64 = 914_400;
 const IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
@@ -151,6 +152,17 @@ fn header_story(doc: &Document) -> StoryId {
         .clone()
 }
 
+/// The texts of the paragraphs of a story, in order: a picture paragraph
+/// reads as an empty line.
+fn story_lines(doc: &Document, story: &StoryId) -> Vec<String> {
+    doc.story_items(story)
+        .unwrap()
+        .iter()
+        .filter(|item| item.kind() == StoryItemKind::Paragraph)
+        .map(|item| item.text().unwrap().unwrap_or_default())
+        .collect()
+}
+
 /// The pictures of the headers, in order.
 fn header_pictures(doc: &Document) -> Vec<PictureOccurrence> {
     doc.pictures()
@@ -233,6 +245,86 @@ fn paragraph_with(doc: &Document, kind: DrawingKind) -> usize {
             })
         })
         .unwrap_or_else(|| panic!("no paragraph shows a {kind:?} drawing"))
+}
+
+/// The root of a raw header or footer part (`w:hdr` or `w:ftr`) holding
+/// `children`, with the namespaces a picture paragraph needs.
+fn raw_story(root: &str, children: &str) -> Vec<u8> {
+    format!(
+        concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+            r#" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+            r#" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#,
+            r#" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#,
+            r#" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+            "{children}</w:{root}>"
+        ),
+        root = root,
+        children = children
+    )
+    .into_bytes()
+}
+
+/// A paragraph holding one inline picture of `cx` by `cy` EMU whose blip
+/// names `relationship`, as a template's header holds it.
+fn raw_picture_paragraph(relationship: &str, id: u32, cx: i64, cy: i64) -> String {
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">"#,
+            r#"<wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="Picture {id}"/>"#,
+            r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+            r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="{id}" name="Picture {id}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+            r#"<pic:blipFill><a:blip r:embed="{relationship}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"#,
+            r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
+            r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+        ),
+        relationship = relationship,
+        id = id,
+        cx = cx,
+        cy = cy
+    )
+}
+
+/// Where the linked picture of `doc_with_linked_picture` points, as Word
+/// writes a picture inserted with "Link to File".
+const LINKED_ADDRESS: &str = "file:///C:/Images/logo.png";
+
+/// A document whose first paragraph reads "Logos: ", then shows a one-inch
+/// picture linked to `LINKED_ADDRESS` (no media part), then reads " end".
+fn doc_with_linked_picture() -> Document {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Logos: </w:t></w:r><w:r><w:drawing>"#,
+        r#"<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#,
+        r#" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/>"#,
+        r#"<wp:docPr id="1" name="Linked logo"/>"#,
+        r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+        r#"<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+        r#"<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+        r#"<pic:nvPicPr><pic:cNvPr id="1" name="logo.png"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+        r#"<pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+        r#" r:link="rIdLinked"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"#,
+        r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>"#,
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
+        r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve"> end</w:t></w:r></w:p>"#
+    ))
+    .to_bytes()
+    .expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(doc)).expect("package opens");
+    package
+        .get_or_create_part_rels("/word/document.xml")
+        .items
+        .push(Relationship {
+            id: "rIdLinked".into(),
+            rel_type: IMAGE.into(),
+            target: LINKED_ADDRESS.into(),
+            target_mode: Some("External".into()),
+        });
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document with a linked picture opens")
 }
 
 /// The values of one attribute in XML, in document order: `values(xml, "r:embed")`.
@@ -722,6 +814,221 @@ fn a_picture_inserted_after_a_paragraph_lands_right_after_it() {
 }
 
 #[test]
+fn a_floating_picture_inserted_after_a_picture_of_its_paragraph_is_the_occurrence_returned() {
+    let (logo, seal, stamp) = (png(2, 2, 11), png(3, 3, 22), png(4, 4, 33));
+    let description = "Company seal & <stamp>, شعار, 印章";
+    let mut doc = Document::new();
+    doc.add_paragraph("Logos: ").add_run(" end");
+    let position = |doc: &Document, run_index| StoryRunPosition {
+        location: doc.paragraph_story_location(0).unwrap().unwrap(),
+        run_index,
+    };
+    doc.insert_picture_at(
+        &position(&doc, 1),
+        &logo,
+        "logo.png",
+        Some(Length::inches(1.0)),
+        Some(Length::inches(1.0)),
+    )
+    .unwrap();
+    // A picture after the insertion point, so the new one is neither the
+    // paragraph's first nor its last.
+    doc.insert_picture_at(
+        &position(&doc, 2),
+        &stamp,
+        "stamp.png",
+        Some(Length::inches(0.5)),
+        Some(Length::inches(0.5)),
+    )
+    .unwrap();
+    let options = PictureOptions {
+        name: Some("Seal".into()),
+        description: Some(description.into()),
+        title: Some("Seal \"2026\"".into()),
+        anchor: Some(PictureAnchor {
+            horizontal_offset: Length::pt(12.0),
+            wrap: DrawingWrap::Square,
+            ..floating()
+        }),
+        ..sized(Length::inches(1.5), Length::inches(0.75))
+    };
+    // Run 2 is the boundary right after the logo's run.
+    let returned = doc
+        .insert_picture_with_options_at(
+            &position(&doc, 2),
+            &seal,
+            "seal.png",
+            Some(Length::inches(1.5)),
+            Some(Length::inches(0.75)),
+            Some(options),
+        )
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 3);
+    assert_eq!(
+        returned, pictures[1],
+        "the occurrence returned is the one saved"
+    );
+    assert_eq!(returned.location, pictures[0].location, "one paragraph");
+    assert_eq!(returned.ordinal, 1);
+    assert_eq!(returned.bytes, seal);
+    assert!(returned.anchored);
+    assert_eq!(returned.name.as_deref(), Some("Seal"));
+    assert_eq!(returned.description.as_deref(), Some(description));
+    assert_eq!(returned.title.as_deref(), Some("Seal \"2026\""));
+    assert_eq!((returned.width, returned.height), (1_371_600, 685_800));
+    assert_eq!(
+        (pictures[0].bytes.as_slice(), pictures[0].anchored),
+        (logo.as_slice(), false)
+    );
+    assert_eq!(
+        shown(&doc, 0),
+        [
+            "Logos: ",
+            "[Image inline 914400x914400]",
+            "[Image floating 1371600x685800]",
+            "[Image inline 457200x457200]",
+            " end"
+        ]
+    );
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images("word/document.xml"), [logo, seal, stamp]);
+    let anchor = element(&saved.xml("word/document.xml"), "wp:anchor").to_owned();
+    for expected in [
+        r#"<wp:positionH relativeFrom="column"><wp:posOffset>152400</wp:posOffset></wp:positionH>"#,
+        "<wp:wrapSquare ",
+    ] {
+        assert!(anchor.contains(expected), "{expected} is not in {anchor}");
+    }
+}
+
+#[test]
+fn a_linked_picture_keeps_its_address_through_a_save() {
+    let mut doc = doc_with_linked_picture();
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].external_url.as_deref(), Some(LINKED_ADDRESS));
+    assert_eq!(pictures[0].media_part_name, None);
+
+    let saved = Saved::of(&mut doc);
+    let relationship = saved
+        .package
+        .get_part_rels("/word/document.xml")
+        .and_then(|relationships| relationships.get_by_id("rIdLinked"))
+        .cloned()
+        .expect("the link's relationship is saved");
+    assert_eq!(relationship.target_mode.as_deref(), Some("External"));
+    assert!(
+        relationship.target == LINKED_ADDRESS,
+        "the linked picture lost its address in the save: {}",
+        relationship.target
+    );
+    assert!(saved.media().is_empty());
+}
+
+#[test]
+fn a_picture_inserted_after_a_linked_picture_is_the_occurrence_returned() {
+    let seal = png(3, 3, 23);
+    let mut doc = doc_with_linked_picture();
+    let returned = doc
+        .insert_picture_with_options_at(
+            &StoryRunPosition {
+                location: doc.paragraph_story_location(0).unwrap().unwrap(),
+                run_index: 2,
+            },
+            &seal,
+            "seal.png",
+            Some(Length::inches(1.0)),
+            Some(Length::inches(1.0)),
+            Some(PictureOptions {
+                description: Some("Seal".into()),
+                ..sized(Length::inches(1.0), Length::inches(1.0))
+            }),
+        )
+        .unwrap();
+    assert!(
+        returned.external_url.is_none() && returned.bytes == seal,
+        "the occurrence returned is not the picture inserted: {:?} {:?}",
+        returned.external_url,
+        returned.description
+    );
+    let doc = reopen(&mut doc);
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 2);
+    assert_eq!(returned, pictures[1]);
+    assert_eq!(returned.ordinal, 1);
+    assert_eq!(returned.description.as_deref(), Some("Seal"));
+    assert!(pictures[0].external_url.is_some(), "the link stays first");
+}
+
+#[test]
+fn a_floating_picture_with_alt_text_inserted_after_a_header_paragraph_reads_back_where_returned() {
+    let logo = png(4, 2, 33);
+    let mut doc = doc_with(&["Body"]);
+    doc.set_raw_header_with_images(
+        raw_story(
+            "hdr",
+            "<w:p><w:r><w:t>Northwind</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p>",
+        ),
+        &[],
+        HdrFtrType::Default,
+    );
+    let header = header_story(&doc);
+    let first = doc.story_items(&header).unwrap()[0].location().clone();
+    let options = PictureOptions {
+        description: Some("Northwind logo".into()),
+        title: Some("Logo".into()),
+        anchor: Some(PictureAnchor {
+            horizontal_relative_from: DrawingHorizontalRelativeFrom::Margin,
+            horizontal_alignment: Some(DrawingHorizontalAlignment::Right),
+            behind_text: true,
+            ..floating()
+        }),
+        ..sized(Length::inches(1.0), Length::inches(0.5))
+    };
+    let returned = doc
+        .insert_picture_to_story_with_options(
+            &header,
+            Some(&first),
+            &logo,
+            "logo.png",
+            Some(Length::inches(1.0)),
+            Some(Length::inches(0.5)),
+            Some(options),
+        )
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+
+    let pictures = header_pictures(&doc);
+    assert_eq!(pictures.len(), 1);
+    let picture = &pictures[0];
+    assert_eq!(
+        picture.location, returned,
+        "the location returned holds the picture"
+    );
+    assert_eq!(picture.bytes, logo);
+    assert!(picture.anchored);
+    assert_eq!(picture.description.as_deref(), Some("Northwind logo"));
+    assert_eq!(picture.title.as_deref(), Some("Logo"));
+    assert_eq!((picture.width, picture.height), (914_400, 457_200));
+    let header = header_story(&doc);
+    assert_eq!(story_lines(&doc, &header), ["Northwind", "", "Second line"]);
+    let part = header.part_name().to_owned();
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images(&part), [logo]);
+    let anchor = element(&saved.xml(&part), "wp:anchor").to_owned();
+    for expected in [
+        r#"<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>"#,
+        r#"behindDoc="1""#,
+    ] {
+        assert!(anchor.contains(expected), "{expected} is not in {anchor}");
+    }
+    assert!(saved.relationships("word/document.xml", IMAGE).is_empty());
+}
+
+#[test]
 fn a_picture_in_a_table_cell_reads_back_from_its_cell() {
     let image = png(2, 2, 70);
     let mut doc = doc_with(&["Above"]);
@@ -816,6 +1123,175 @@ fn a_header_picture_is_replaced_through_its_header_story() {
     let saved = Saved::of(&mut doc);
     let media: Vec<_> = saved.media().into_values().collect();
     assert_eq!(media, [new_logo.as_slice()], "the old logo is gone");
+}
+
+// ---- Header and footer image calls ----
+
+#[test]
+fn a_first_page_header_image_shows_on_the_first_page_only() {
+    let cover = png(6, 3, 44);
+    let mut doc = doc_with(&["Body"]);
+    doc.set_header("Every page");
+    doc.set_first_page_header_image(
+        &cover,
+        "cover.png",
+        Length::inches(2.0),
+        Length::inches(1.0),
+    );
+    let mut doc = reopen(&mut doc);
+
+    assert_eq!(doc.section(0).unwrap().different_first_page(), Some(true));
+    let first = doc
+        .section_story(0, HeaderFooterKind::Header, HdrFtrType::First)
+        .unwrap()
+        .expect("a first-page header");
+    let pictures = header_pictures(&doc);
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].location.story(), first.story());
+    assert_eq!(pictures[0].bytes, cover);
+    assert_eq!(
+        (pictures[0].width, pictures[0].height),
+        (1_828_800, 914_400)
+    );
+    assert_eq!(doc.header_text().as_deref(), Some("Every page"));
+    let first_part = first.story().part_name().to_owned();
+    let default_part = header_story(&doc).part_name().to_owned();
+    assert_ne!(first_part, default_part);
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images(&first_part), [cover]);
+    assert!(saved.shown_images(&default_part).is_empty());
+    assert!(saved.relationships("word/document.xml", IMAGE).is_empty());
+}
+
+#[test]
+fn a_header_image_with_a_background_shades_its_paragraph() {
+    let banner = png(8, 1, 55);
+    let mut doc = doc_with(&["Body"]);
+    doc.set_header_image_with_background(
+        &banner,
+        "banner.png",
+        Length::inches(6.0),
+        Length::inches(0.75),
+        "1F3864",
+    );
+    let mut doc = reopen(&mut doc);
+
+    let pictures = header_pictures(&doc);
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].bytes, banner);
+    assert_eq!(
+        (pictures[0].width, pictures[0].height),
+        (5_486_400, 685_800)
+    );
+    let part = header_story(&doc).part_name().to_owned();
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images(&part), [banner]);
+    // No reader gives a header paragraph's shading back.
+    let xml = saved.xml(&part);
+    let shading = element(&xml, "w:pPr");
+    assert!(shading.contains(r#"w:fill="1F3864""#), "{shading}");
+    assert_eq!(values(&xml, "w:fill"), ["1F3864"]);
+}
+
+#[test]
+fn a_raw_header_shows_each_given_image_through_its_own_relationships() {
+    let (logo, seal, new_logo) = (png(2, 2, 66), png(3, 3, 77), png(4, 4, 88));
+    let header = raw_story(
+        "hdr",
+        &format!(
+            "{}<w:p><w:r><w:t>Northwind</w:t></w:r></w:p>{}",
+            raw_picture_paragraph("rId1", 1, 914_400, 914_400),
+            raw_picture_paragraph("rId2", 2, 457_200, 457_200)
+        ),
+    );
+    let mut doc = doc_with(&["Body"]);
+    doc.set_raw_header_with_images(
+        header,
+        &[("rId1", &logo, "logo.png"), ("rId2", &seal, "seal.png")],
+        HdrFtrType::Default,
+    );
+    let mut doc = reopen(&mut doc);
+
+    assert_eq!(
+        story_lines(&doc, &header_story(&doc)),
+        ["", "Northwind", ""]
+    );
+    let pictures: Vec<_> = header_pictures(&doc)
+        .into_iter()
+        .map(|picture| (picture.bytes, picture.width))
+        .collect();
+    assert_eq!(pictures, [(logo.clone(), 914_400), (seal.clone(), 457_200)]);
+    let part = header_story(&doc).part_name().to_owned();
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images(&part), [logo, seal]);
+
+    // The header part of the reopened document relates rId1 already: the new
+    // header's rId1 takes another id, in its XML too, and shows its own image.
+    assert!(
+        saved.relationships(&part, IMAGE).contains_key("rId1"),
+        "rId1 is taken in {part}"
+    );
+    let header = raw_story("hdr", &raw_picture_paragraph("rId1", 1, 914_400, 457_200));
+    doc.set_raw_header_with_images(
+        header,
+        &[("rId1", &new_logo, "logo.png")],
+        HdrFtrType::Default,
+    );
+    let mut doc = reopen(&mut doc);
+
+    let pictures = header_pictures(&doc);
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].bytes, new_logo);
+    let part = header_story(&doc).part_name().to_owned();
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images(&part), [new_logo]);
+}
+
+#[test]
+fn a_raw_footer_shows_each_given_image_through_its_own_relationships() {
+    let (signature, stamp) = (png(5, 1, 99), png(2, 2, 111));
+    let footer = raw_story(
+        "ftr",
+        &format!(
+            "<w:p><w:r><w:t>Signed</w:t></w:r></w:p>{}{}",
+            raw_picture_paragraph("rIdSignature", 1, 2_286_000, 457_200),
+            raw_picture_paragraph("rId7", 2, 457_200, 457_200)
+        ),
+    );
+    let mut doc = doc_with(&["Body"]);
+    doc.set_raw_footer_with_images(
+        footer,
+        &[
+            ("rId7", &stamp, "stamp.png"),
+            ("rIdSignature", &signature, "signature.png"),
+        ],
+        HdrFtrType::Default,
+    );
+    let mut doc = reopen(&mut doc);
+
+    let footer = doc
+        .section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .unwrap()
+        .expect("a default footer")
+        .story()
+        .clone();
+    assert_eq!(story_lines(&doc, &footer), ["Signed", "", ""]);
+    let pictures = doc.pictures().unwrap();
+    let in_footer: Vec<_> = pictures
+        .iter()
+        .filter(|picture| picture.location.story().kind() == StoryKind::Footer)
+        .map(|picture| (picture.bytes.clone(), picture.width))
+        .collect();
+    assert_eq!(
+        in_footer,
+        [(signature.clone(), 2_286_000), (stamp.clone(), 457_200)]
+    );
+    assert_eq!(pictures.len(), 2, "no picture elsewhere");
+    assert_eq!(pictures[0].location.story(), &footer);
+    let part = footer.part_name().to_owned();
+    let saved = Saved::of(&mut doc);
+    assert_eq!(saved.shown_images(&part), [signature, stamp]);
+    assert!(saved.relationships("word/document.xml", IMAGE).is_empty());
 }
 
 // ---- Replacing and resizing ----
@@ -1442,10 +1918,7 @@ fn chart_data_that_cannot_be_drawn_is_refused_without_a_change() {
     assert!(doc.charts().unwrap().is_empty());
 }
 
-// Fails today: images() lists a chart as an image whose relationship ID is
-// empty. Issue: #186
 #[test]
-#[should_panic(expected = "images() lists a drawing that shows no picture")]
 fn the_image_list_leaves_out_charts() {
     let data = ChartData {
         categories: vec!["a".into()],
@@ -1951,4 +2424,178 @@ fn the_manual_chart_keeps_its_data_when_its_legend_moves() {
         assert!(!embeddings(&source).is_empty(), "{producer}");
         assert_eq!(embeddings(&saved), embeddings(&source), "{producer}");
     });
+}
+
+const LINKED_IMAGE: &str = "file:///C:/Images/logo.png";
+
+/// `bytes` with the first picture of `part` linked ("Link to File"): its
+/// blip names an External image relationship with `r:link`, and its media
+/// part is gone. Returns the bytes and the linked relationship id.
+fn link_first_picture(bytes: Vec<u8>, part: &str) -> (Vec<u8>, String) {
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let start = xml.find("r:embed=\"").unwrap() + "r:embed=\"".len();
+    let embedded = xml[start..start + xml[start..].find('"').unwrap()].to_owned();
+    let relationships = package.get_part_rels_mut(part).unwrap();
+    let media = relationships.get_by_id(&embedded).unwrap().target.clone();
+    relationships
+        .items
+        .retain(|relationship| relationship.id != embedded);
+    let linked = relationships.add_external(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        LINKED_IMAGE,
+    );
+    package.remove_part(&OpcPackage::resolve_rel_target(part, &media));
+    package.set_part(
+        part,
+        xml.replace(
+            &format!("r:embed=\"{embedded}\""),
+            &format!("r:link=\"{linked}\""),
+        )
+        .into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    (out.into_inner(), linked)
+}
+
+/// A document whose only picture is linked.
+fn linked_picture_document() -> Document {
+    let mut doc = Document::new();
+    doc.add_paragraph("Logo ");
+    doc.add_picture(
+        &png(2, 2, 9),
+        "logo.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    let (bytes, _) = link_first_picture(doc.to_bytes().unwrap(), "/word/document.xml");
+    Document::from_bytes(&bytes).unwrap()
+}
+
+/// The External image relationships of `part` in `bytes`.
+fn external_image_targets_of(bytes: &[u8], part: &str) -> Vec<String> {
+    let package = OpcPackage::from_reader(Cursor::new(bytes.to_vec())).unwrap();
+    package
+        .get_part_rels(part)
+        .unwrap()
+        .items
+        .iter()
+        .filter(|relationship| {
+            relationship.rel_type.ends_with("/image")
+                && relationship.target_mode.as_deref() == Some("External")
+        })
+        .map(|relationship| relationship.target.clone())
+        .collect()
+}
+
+fn external_image_targets(bytes: &[u8]) -> Vec<String> {
+    external_image_targets_of(bytes, "/word/document.xml")
+}
+
+#[test]
+fn a_linked_picture_keeps_its_address_through_a_save_after_an_edit() {
+    let mut doc = linked_picture_document();
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].external_url.as_deref(), Some(LINKED_IMAGE));
+    // An untouched save, then a save after an edit elsewhere.
+    let bytes = doc.to_bytes().unwrap();
+    assert_eq!(external_image_targets(&bytes), [LINKED_IMAGE]);
+    doc.add_paragraph("After");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        external_image_targets(&doc.to_bytes().unwrap()),
+        [LINKED_IMAGE]
+    );
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures[0].external_url.as_deref(), Some(LINKED_IMAGE));
+    assert_eq!(pictures[0].media_part_name, None);
+}
+
+#[test]
+fn a_linked_header_picture_keeps_its_address_when_its_header_is_edited() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_header("Northwind");
+    let header = header_story(&doc);
+    doc.add_picture_to_story(
+        &header,
+        &png(2, 2, 9),
+        "logo.png",
+        Length::inches(1.0),
+        Length::inches(0.5),
+    )
+    .unwrap();
+    let part = header.part_name().to_owned();
+    let (bytes, _) = link_first_picture(doc.to_bytes().unwrap(), &part);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    // Edit the header: its part and its relationships are written again.
+    let header = header_story(&doc);
+    doc.add_picture_to_story(
+        &header,
+        &png(3, 3, 50),
+        "second.png",
+        Length::inches(1.0),
+        Length::inches(0.5),
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    let header_part = header_story(&doc).part_name().to_owned();
+    let bytes = doc.to_bytes().unwrap();
+    assert_eq!(
+        external_image_targets_of(&bytes, &header_part),
+        [LINKED_IMAGE]
+    );
+    let linked: Vec<_> = header_pictures(&doc)
+        .into_iter()
+        .filter_map(|picture| picture.external_url)
+        .collect();
+    assert_eq!(linked, [LINKED_IMAGE]);
+}
+
+#[test]
+fn a_picture_control_takes_the_linked_picture_it_holds() {
+    let mut doc = Document::new();
+    doc.add_picture(
+        &png(2, 2, 9),
+        "logo.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let start = main.rfind("<w:p>").or_else(|| main.rfind("<w:p ")).unwrap();
+    let end = main[start..].find("</w:p>").unwrap() + start + "</w:p>".len();
+    let wrapped = format!(
+        "{}<w:sdt><w:sdtPr><w:tag w:val=\"logo\"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+        &main[..start],
+        &main[start..end],
+        &main[end..]
+    );
+    package.set_part("/word/document.xml", wrapped.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let (bytes, linked) = link_first_picture(out.into_inner(), "/word/document.xml");
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    let location = doc
+        .story_item_snapshots()
+        .unwrap()
+        .into_iter()
+        .find(|item| {
+            item.location().item_kind() == StoryItemKind::ContentControl && item.is_direct_child()
+        })
+        .map(|item| item.location().clone())
+        .expect("the control");
+    doc.set_content_control_type(
+        &location,
+        ContentControlTypePayload::Picture {
+            relationship_id: linked,
+        },
+    )
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.pictures().unwrap()[0].external_url.as_deref(),
+        Some(LINKED_IMAGE)
+    );
 }

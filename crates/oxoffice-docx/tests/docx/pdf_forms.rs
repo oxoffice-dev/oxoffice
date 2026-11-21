@@ -253,8 +253,8 @@ const CORPUS_FORM_CONTROLS: [&str; 14] = [
 
 /// The legacy form fields of the Word-shaped corpus form, after its
 /// `contact_person` control. LibreOffice's copy keeps them in a shape the
-/// model does not read as fields (#139). Its `PaymentTerms` drop-down draws
-/// nothing today (#170), so it stays static and says so.
+/// model does not read as fields (#139). Its `PaymentTerms` drop-down stores
+/// no result, as Word saves one, and draws its selected entry.
 const CORPUS_LEGACY_FIELDS: [&str; 6] = [
     "BankName",
     "IBAN",
@@ -292,15 +292,7 @@ fn the_corpus_forms_export_their_controls_as_fields() {
             .map(|diagnostic| &diagnostic.message)
             .filter(|message| message.contains("stays static"))
             .collect();
-        if name.starts_with("authored/") {
-            assert_eq!(
-                said,
-                ["form control \"PaymentTerms\" stays static: what it draws could not be gathered"],
-                "{name}: only the drop-down #170 leaves blank"
-            );
-        } else {
-            assert!(said.is_empty(), "{name}: {said:?}");
-        }
+        assert!(said.is_empty(), "{name}: {said:?}");
         let without = doc.layout_with_options(RenderOptions::default()).unwrap();
         assert_eq!(
             drawing(&with_fields.layout.pages),
@@ -1336,8 +1328,8 @@ fn legacy(id: u32, name: &str, data: &str, instruction: &str, result: Option<&st
 
 /// A legacy form shaped as Word saves it: a text field with help text and a
 /// maximum length, a check box, a drop-down, a disabled field, a computed
-/// date and an empty text field. The drop-down stores its result, which
-/// Word does not write: one with none draws nothing today (#170).
+/// date and an empty text field. The drop-down stores its result; the
+/// corpus form's has none, as Word saves it.
 fn legacy_form() -> Document {
     let company = legacy(
         0,

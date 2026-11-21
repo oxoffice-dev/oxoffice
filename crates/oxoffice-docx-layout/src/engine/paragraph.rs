@@ -126,6 +126,9 @@ fn computed_layout_field(
     if let Some(glyph) = drawn_legacy_checkbox(field) {
         return (Some(glyph.to_owned()), None);
     }
+    if let Some(entry) = drawn_legacy_dropdown(field) {
+        return (Some(entry.to_owned()), None);
+    }
     let (computed_value, field_kind) = if field.locked() == Some(true) {
         (None, None)
     } else {
@@ -136,12 +139,27 @@ fn computed_layout_field(
 
 /// The box a legacy checkbox draws from its state, as Word does whatever
 /// result it stores: ☒ when checked, ☐ when not.
-fn drawn_legacy_checkbox(field: &oxoffice_docx_oxml::text::Field) -> Option<&'static str> {
+pub(super) fn drawn_legacy_checkbox(
+    field: &oxoffice_docx_oxml::text::Field,
+) -> Option<&'static str> {
     let data = field.legacy_form.as_ref()?;
     let oxoffice_docx_oxml::text::LegacyFormFieldValue::Checked(checked) = data.value else {
         return None;
     };
     Some(if checked { "\u{2612}" } else { "\u{2610}" })
+}
+
+/// The entry a legacy drop-down that stores no result draws: its selected
+/// one, as Word draws it. Word saves drop-downs that way.
+pub(super) fn drawn_legacy_dropdown(field: &oxoffice_docx_oxml::text::Field) -> Option<&str> {
+    let data = field.legacy_form.as_ref()?;
+    let oxoffice_docx_oxml::text::LegacyFormFieldValue::SelectedIndex(index) = data.value else {
+        return None;
+    };
+    if !field.effective_display().is_empty() {
+        return None;
+    }
+    data.choices.get(index).map(String::as_str)
 }
 
 /// The fields of a paragraph's physical runs in source order, nested fields
@@ -169,30 +187,6 @@ pub(crate) fn source_fields(para: &CT_P) -> Vec<&oxoffice_docx_oxml::text::Field
         collect(field, &mut fields);
     }
     fields
-}
-
-/// Lay out a single paragraph into a ParagraphBlock.
-pub fn layout_paragraph(
-    para: &CT_P,
-    available_width: f64,
-    styles: &CT_Styles,
-    input: &LayoutInput,
-    media: &MediaRegistry,
-    fm: &mut FontManager,
-    num_state: &mut NumberingState,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<ParagraphBlock> {
-    layout_paragraph_with_source(
-        para,
-        available_width,
-        styles,
-        input,
-        media,
-        fm,
-        num_state,
-        diagnostics,
-        None,
-    )
 }
 
 /// Lay out one paragraph on a section character grid.
@@ -224,39 +218,6 @@ pub(crate) fn layout_paragraph_with_grid(
         None,
         None,
         doc_grid,
-        false,
-        None,
-    )
-    .map(|(block, _)| block)
-}
-
-pub(crate) fn layout_paragraph_with_source(
-    para: &CT_P,
-    available_width: f64,
-    styles: &CT_Styles,
-    input: &LayoutInput,
-    media: &MediaRegistry,
-    fm: &mut FontManager,
-    num_state: &mut NumberingState,
-    diagnostics: &mut Vec<Diagnostic>,
-    source_node: Option<SourceNodeId>,
-) -> Result<ParagraphBlock> {
-    layout_paragraph_with_source_and_table(
-        para,
-        available_width,
-        styles,
-        input,
-        media,
-        fm,
-        num_state,
-        diagnostics,
-        source_node,
-        source_node,
-        None,
-        None,
-        None,
-        None,
-        None,
         false,
         None,
     )
@@ -463,13 +424,7 @@ fn layout_paragraph_with_source_and_table(
         .map(|pitch| pitch.to_pt())
         .filter(|pitch| *pitch > 0.0);
 
-    // Parse shading color
-    let shading = effective_ppr
-        .shading
-        .as_ref()
-        .and_then(|shd| shd.fill.as_ref())
-        .filter(|f| f != &"auto")
-        .map(|f| Color::from_hex(f));
+    let shading = effective_ppr.shading.as_deref().and_then(shading_color);
     // Text in the automatic colour contrasts with the fill behind it, the
     // paragraph's own or else the cell's.
     let automatic_color = automatic_text_color(shading.or(cell_shading));
@@ -568,12 +523,17 @@ fn layout_paragraph_with_source_and_table(
                 ) {
                     push_unique_diagnostic(diagnostics, message);
                 }
+                // The number takes the fill of its level's run properties,
+                // as a run does, and automatic ink contrasts with it.
+                let marker_fill = run_fill(&marker_rpr);
                 let color = marker_rpr
                     .color
                     .as_ref()
                     .filter(|c| c.as_str() != "auto")
                     .map(|c| Color::from_hex(c))
-                    .unwrap_or(automatic_color);
+                    .unwrap_or_else(|| {
+                        marker_fill.map_or(automatic_color, |fill| automatic_text_color(Some(fill)))
+                    });
 
                 // The level's run properties affect numbering ink, not the
                 // counter or paragraph heading. The suffix keeps its normal
@@ -613,7 +573,7 @@ fn layout_paragraph_with_source_and_table(
                         underline: None,
                         strike: false,
                         dstrike: false,
-                        highlight: None,
+                        highlight: marker_fill,
                         baseline_offset: 0.0,
                         hyperlink_url: None,
                         field_kind: None,
@@ -662,7 +622,7 @@ fn layout_paragraph_with_source_and_table(
                             underline: None,
                             strike: false,
                             dstrike: false,
-                            highlight: None,
+                            highlight: marker_fill,
                             baseline_offset: 0.0,
                             hyperlink_url: None,
                             field_kind: None,
@@ -1013,16 +973,20 @@ fn layout_paragraph_with_source_and_table(
             word_font_slot_for_text(&run_text, effective_rpr.font_hint.as_deref()),
         );
 
+        // The run's own fill, drawn behind its text, and the automatic
+        // colour that contrasts with it.
+        let highlight = run_fill(&effective_rpr);
+        let run_automatic_color =
+            highlight.map_or(automatic_color, |fill| automatic_text_color(Some(fill)));
         // Resolve color: theme color takes priority over literal color value
         let (color, underline) = tracked_marks(
             &projected,
             input.revision_style,
-            resolve_run_color(&effective_rpr, input.theme.as_ref(), automatic_color),
+            resolve_run_color(&effective_rpr, input.theme.as_ref(), run_automatic_color),
             convert::underline(effective_rpr.underline),
         );
         let strike = projected.force_strike || effective_rpr.strike.unwrap_or(false);
         let dstrike = effective_rpr.dstrike.unwrap_or(false);
-        let highlight = effective_rpr.highlight.and_then(highlight_to_color);
 
         // Superscript/subscript handling
         let mut baseline_offset = 0.0;
@@ -1435,10 +1399,13 @@ fn layout_paragraph_with_source_and_table(
                         })
                     });
                     let stored_segments = field.effective_display_field_segments();
-                    // A legacy checkbox without formatted result runs takes the
-                    // formatting of the run that opens it.
-                    let checkbox_properties =
-                        drawn_legacy_checkbox(field).and_then(|_| field.begin_run_properties());
+                    // A legacy checkbox, or a drop-down that stores no result,
+                    // takes the formatting of the run that opens it when it has
+                    // no formatted result runs.
+                    let drawn_form_properties = (drawn_legacy_checkbox(field).is_some()
+                        || drawn_legacy_dropdown(field).is_some())
+                    .then(|| field.begin_run_properties())
+                    .flatten();
                     let segments: Vec<(
                         Cow<'_, str>,
                         Option<&CT_RPr>,
@@ -1447,7 +1414,7 @@ fn layout_paragraph_with_source_and_table(
                         let stored_properties = stored_segments
                             .first()
                             .and_then(|(_, properties, _)| *properties)
-                            .or(checkbox_properties.as_ref());
+                            .or(drawn_form_properties.as_ref());
                         vec![(Cow::Borrowed(value), stored_properties, field)]
                     } else {
                         stored_segments
@@ -1523,16 +1490,22 @@ fn layout_paragraph_with_source_and_table(
                             input.theme.as_ref(),
                             word_font_slot_for_text(value, segment_rpr.font_hint.as_deref()),
                         );
+                        let segment_highlight = run_fill(&segment_rpr);
+                        let segment_automatic_color = segment_highlight
+                            .map_or(automatic_color, |fill| automatic_text_color(Some(fill)));
                         let (segment_color, segment_underline) = tracked_marks(
                             &projected,
                             input.revision_style,
-                            resolve_run_color(&segment_rpr, input.theme.as_ref(), automatic_color),
+                            resolve_run_color(
+                                &segment_rpr,
+                                input.theme.as_ref(),
+                                segment_automatic_color,
+                            ),
                             convert::underline(segment_rpr.underline),
                         );
                         let segment_strike =
                             projected.force_strike || segment_rpr.strike.unwrap_or(false);
                         let segment_dstrike = segment_rpr.dstrike.unwrap_or(false);
-                        let segment_highlight = segment_rpr.highlight.and_then(highlight_to_color);
                         let mut segment_baseline_offset = 0.0;
                         if let Some(vertical) = segment_rpr.vert_align.as_deref() {
                             match vertical {

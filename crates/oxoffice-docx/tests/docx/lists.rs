@@ -891,6 +891,308 @@ fn a_paragraph_on_a_missing_list_fails_validation_but_saves_unnumbered() {
     assert_eq!(markers(&doc), [""]);
 }
 
+#[test]
+fn content_on_a_missing_list_does_not_refuse_list_additions_and_saves_as_it_was() {
+    // Word opens a paragraph numbered by a list the file does not define, or
+    // at a level its list does not have, and shows it without a number. An
+    // addition checks the reference it makes, not the ones already there.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.add_paragraph("no such list").numbering(42, 3);
+    doc.add_paragraph("no such level").numbering(id, 5);
+
+    let definition = doc
+        .add_numbering_definition(&[ListLevel::decimal().start(7)])
+        .unwrap();
+    let instance = doc.add_numbering_instance(definition, &[]).unwrap();
+    let bullets = doc.add_list_definition(&[ListLevel::bullet()]);
+    assert_ne!(bullets, 0);
+    doc.try_add_bullet_list_item("bullet", 0).unwrap();
+    doc.try_add_numbered_list_item("number", 0).unwrap();
+    doc.add_paragraph("seventh").numbering(instance, 0);
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(
+        error.contains("missing numbering instance 42 at level 3"),
+        "{error}"
+    );
+
+    let numbering = |doc: &Document| -> Vec<(u32, u32)> {
+        doc.paragraphs()
+            .iter()
+            .map(|p| p.numbering().expect("every paragraph is numbered"))
+            .collect()
+    };
+    assert_eq!(
+        numbering(&doc),
+        [(42, 3), (id, 5), (bullets, 0), (id, 0), (instance, 0)]
+    );
+
+    // The save renumbers the lists the edits added, in document order, and
+    // keeps the identifier no list defines.
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        [
+            "no such list",
+            "no such level",
+            "bullet",
+            "number",
+            "seventh"
+        ]
+    );
+    let saved = numbering(&doc);
+    assert_eq!(saved[0], (42, 3));
+    assert_eq!((saved[1].1, saved[3]), (5, (saved[1].0, 0)));
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(
+        error.contains("missing numbering instance 42 at level 3"),
+        "{error}"
+    );
+    let markers = markers(&doc);
+    assert_eq!(markers[..2], ["", ""]);
+    assert!(!markers[2].is_empty(), "{markers:?}");
+    assert_eq!(markers[3..], ["1.", "7."]);
+}
+
+#[test]
+fn a_new_list_never_takes_the_identifier_content_names_for_a_missing_list() {
+    // "orphan" names list 1, which the document does not define: a new list
+    // that took identifier 1 would number it, in reads and in the saved file.
+    let mut doc = doc_with(&["orphan"]);
+    doc.paragraph_mut(0).unwrap().set_numbering(1, 0);
+    doc.try_add_bullet_list_item("item", 0).unwrap();
+    let bullets = doc.paragraph(1).unwrap().numbering().unwrap().0;
+    assert_ne!(bullets, 1);
+    assert_eq!(markers(&doc), ["", "•"]);
+
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((1, 0)));
+    assert_ne!(doc.paragraph(1).unwrap().numbering().unwrap().0, 1);
+    assert_eq!(markers(&doc), ["", "•"]);
+}
+
+#[test]
+fn a_new_list_skips_an_identifier_named_inside_raw_content() {
+    // An element of another vocabulary holds a paragraph on list 1, which the
+    // document does not define: the body keeps it as raw XML.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["first"]).to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let raw = concat!(
+        r#"<x:box xmlns:x="urn:example:x"><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/>"#,
+        r#"<w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>boxed</w:t></w:r></w:p></x:box>"#
+    );
+    let at = xml
+        .find("<w:sectPr")
+        .expect("the body ends with its section");
+    let xml = format!("{}{raw}{}", &xml[..at], &xml[at..]);
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    doc.try_add_bullet_list_item("item", 0).unwrap();
+    let item = doc.paragraph_count() - 1;
+    assert_ne!(doc.paragraph(item).unwrap().numbering().unwrap().0, 1);
+    let saved = doc.to_bytes().unwrap();
+    let xml = OpcPackage::from_reader(Cursor::new(saved))
+        .unwrap()
+        .get_part("/word/document.xml")
+        .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(xml.matches(r#"<w:numId w:val="1"/>"#).count(), 1, "{xml}");
+}
+
+#[test]
+fn a_new_instance_skips_the_identifier_after_the_defined_ones_when_content_names_it() {
+    // Lists 1 to 3 are defined and "orphan" names list 4, the next one.
+    let (mut doc, first) = single_list(&[ListLevel::decimal()]);
+    let definition = definition_of(&doc, first);
+    for _ in 0..2 {
+        doc.add_numbering_instance(definition, &[]).unwrap();
+    }
+    doc.add_paragraph("orphan").numbering(4, 0);
+    let added = doc.add_numbering_instance(definition, &[]).unwrap();
+    assert_eq!(added, 5);
+    doc.add_paragraph("item").numbering(added, 0);
+    assert_eq!(markers(&doc), ["", "1."]);
+
+    let doc = reopen(&mut doc);
+    let saved: Vec<_> = doc.paragraphs().iter().map(|p| p.numbering()).collect();
+    assert_eq!(saved[0], Some((4, 0)));
+    assert_ne!(saved[1].unwrap().0, 4);
+    assert_eq!(markers(&doc), ["", "1."]);
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(error.contains("missing numbering instance 4"), "{error}");
+}
+
+#[test]
+fn list_items_are_refused_on_a_body_a_typed_edit_cannot_leave_savable() {
+    // The w:body element declares a namespace of its own, as some producers
+    // write it: the body saves as it was opened, and a typed edit of it
+    // cannot be saved, so the typed inserts refuse at the call.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["first"]).to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let xml = xml.replacen("<w:body>", r#"<w:body xmlns:x="urn:example:x">"#, 1);
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+
+    for numbered in [false, true, false] {
+        let result = if numbered {
+            doc.try_add_numbered_list_item("item", 0).map(|_| ())
+        } else {
+            doc.try_add_bullet_list_item("item", 0).map(|_| ())
+        };
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("shadowed `x` namespace"), "{error}");
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.numbering_instances().is_empty());
+}
+
+#[test]
+fn an_addition_to_an_instance_on_a_missing_definition_is_refused_without_a_change() {
+    // Instance 1 names definition 5, which the numbering part lacks, and a
+    // paragraph is numbered by instance 1.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.add_paragraph("item").numbering(id, 0);
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    let definition = definition_of(&doc, id);
+    let xml = xml.replacen(
+        &format!(r#"<w:abstractNumId w:val="{definition}"/>"#),
+        r#"<w:abstractNumId w:val="5"/>"#,
+        1,
+    );
+    package.set_part("/word/numbering.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+
+    let error = doc
+        .add_numbering_definition(&[ListLevel::decimal()])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("references missing definition 5"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn saving_twice_renumbers_the_added_lists_alike() {
+    // The first save writes list 2 as 1 into the package while the live body
+    // keeps 2. That package copy must not count as content naming list 1 at
+    // the next save.
+    let mut doc = Document::new();
+    let first = doc.add_list_definition(&[ListLevel::decimal()]);
+    let second = doc.add_list_definition(&[ListLevel::bullet()]);
+    assert!(doc.remove_numbering_instance(first).unwrap());
+    doc.add_paragraph("item").numbering(second, 0);
+    doc.add_table(1, 1);
+    assert!(doc.try_remove_content(doc.content_count() - 1).unwrap());
+
+    let once = doc.to_bytes().unwrap();
+    let twice = doc.to_bytes().unwrap();
+    assert_eq!(once, twice);
+    let doc = Document::from_bytes(&twice).unwrap();
+    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((1, 0)));
+    assert_eq!(markers(&doc), ["•"]);
+}
+
+#[test]
+fn content_on_the_last_identifier_does_not_exhaust_the_lists_identifiers() {
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.add_paragraph("orphan").numbering(u32::MAX, 0);
+    let added = doc
+        .add_numbering_instance(definition_of(&doc, id), &[])
+        .unwrap();
+    assert!(added != id && added != u32::MAX, "{added}");
+    doc.add_paragraph("item").numbering(added, 0);
+
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((u32::MAX, 0)));
+    assert_eq!(markers(&doc), ["", "1."]);
+}
+
+#[test]
+fn a_refused_numbering_addition_leaves_no_numbering_part_behind() {
+    // The addition reserves the numbering part, its relationship and its
+    // content type before it finds the definition missing.
+    let mut doc = doc_with(&["text"]);
+    let before = doc.to_bytes().unwrap();
+    let error = doc.add_numbering_instance(99, &[]).unwrap_err().to_string();
+    assert!(
+        error.contains("numbering definition 99 does not exist"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.numbering_instances().is_empty());
+}
+
+#[test]
+fn a_list_item_undone_before_its_paragraph_is_added_leaves_no_list_behind() {
+    use oxoffice_docx::ListItemKind;
+
+    let mut doc = doc_with(&["text"]);
+    let before = doc.to_bytes().unwrap();
+    for kind in [ListItemKind::Bullet, ListItemKind::Numbered] {
+        let (num_id, journal) = doc.begin_list_item(kind, "item", 2).unwrap();
+        assert_eq!(doc.numbering_instance(num_id).unwrap().id, num_id);
+        doc.undo_numbering_edit(journal);
+        assert!(doc.numbering_instances().is_empty(), "{kind:?}");
+        assert_eq!(doc.to_bytes().unwrap(), before, "{kind:?}");
+    }
+}
+
+#[test]
+fn an_edit_that_would_leave_content_on_a_missing_list_is_refused_without_a_change() {
+    let (mut doc, id) = single_list(&[ListLevel::decimal(), ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0, 1]);
+    let shallow = doc
+        .add_numbering_definition(&[ListLevel::decimal()])
+        .unwrap();
+    let (mut bullets, bullet) = single_list(&[ListLevel::bullet()]);
+    let before = doc.to_bytes().unwrap();
+    let bullets_before = bullets.to_bytes().unwrap();
+
+    // Another definition without the level an item uses.
+    let error = doc
+        .update_numbering_instance(id, shallow, &[])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(&format!("numbering instance {id} at missing level 1")),
+        "{error}"
+    );
+    // A list item at a level the list it joins does not have.
+    let error = doc
+        .try_add_numbered_list_item("deeper", 4)
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(&format!("numbering instance {id} at missing level 4")),
+        "{error}"
+    );
+    let error = bullets
+        .try_add_bullet_list_item("deeper", 4)
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(&format!("numbering instance {bullet} at missing level 4")),
+        "{error}"
+    );
+    assert_eq!(bullets.to_bytes().unwrap(), bullets_before);
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
 // Lists of the corpus reports.
 
 #[test]
@@ -1218,6 +1520,19 @@ fn exports_show_the_report_lists_of_every_producer() {
                 "{name}: Markdown shows {item:?}:\n{markdown}"
             );
         }
+        // RTF keeps them too, read back as lists.
+        let rtf = doc.to_rtf_bytes().unwrap();
+        let reread = Document::from_rtf_bytes(&rtf.bytes).unwrap().document;
+        let reread_markdown = reread.to_markdown();
+        for item in [
+            "- Subscription revenue reached 4.2 million euros, up from 3.7 million.",
+            "1. Hire two support engineers for the evening shift.",
+        ] {
+            assert!(
+                reread_markdown.lines().any(|line| line == item),
+                "{name}: RTF keeps {item:?}:\n{reread_markdown}"
+            );
+        }
         let html = doc.to_html_fragment();
         assert_eq!(
             html_list_of(&html, "Subscription revenue reached"),
@@ -1281,6 +1596,133 @@ fn exports_follow_a_style_numbered_through_its_based_on_chain_or_the_default_sty
 }
 
 #[test]
+fn rtf_export_numbers_lists_as_layout_does() {
+    let rtf_markers = |doc: &Document| {
+        let rtf = doc.to_rtf_bytes().unwrap();
+        markers(&Document::from_rtf_bytes(&rtf.bytes).unwrap().document)
+    };
+    // Through the style chain, as Word's List Bullet and List Number set it.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.add_style(StyleBuilder::paragraph("Steps", "Steps"))
+        .unwrap();
+    doc.link_style_to_numbering("Steps", id, 0).unwrap();
+    doc.add_style(StyleBuilder::paragraph("SubSteps", "Sub steps").based_on("Steps"))
+        .unwrap();
+    doc.add_paragraph("first step").style("Steps");
+    doc.add_paragraph("second step").style("SubSteps");
+    // A direct numId 0 takes the style's list off.
+    doc.add_paragraph("third step").style("Steps");
+    doc.add_paragraph("not a step").style("Steps");
+    doc.paragraph_mut(3).unwrap().set_numbering(0, 0);
+    assert_eq!(markers(&doc), ["1.", "2.", "3.", ""]);
+    assert_eq!(rtf_markers(&doc), ["1.", "2.", "3.", ""]);
+    let diagnostics = doc.to_rtf_bytes().unwrap().diagnostics;
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("without numbering id")),
+        "{diagnostics:?}"
+    );
+
+    // A paragraph with no pPr at all, numbered through the default style.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.link_style_to_numbering("Normal", id, 0).unwrap();
+    doc.add_paragraph("default style step");
+    assert_eq!(rtf_markers(&doc), ["1."]);
+
+    // The level an instance swaps in, and an instance's start override.
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet().level_text("–"))],
+        )
+        .unwrap();
+    let restarted = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).start(7)],
+        )
+        .unwrap();
+    add_items(&mut doc, swapped, &[0]);
+    add_items(&mut doc, restarted, &[0]);
+    let expected = markers(&doc);
+    assert_eq!(expected, ["–", "7."]);
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(rtf.contains(r"\levelstartat7"), "{rtf}");
+    assert_eq!(rtf_markers(&doc)[1], "7.", "{rtf}");
+    // The swapped-in level is a bullet (\levelnfc23), not the definition's
+    // number that starts at 3.
+    let first_list = &rtf[rtf.find(r"{\list").unwrap()..];
+    let first_list = &first_list[..first_list.find(r"\listid").unwrap()];
+    assert!(first_list.contains(r"\levelnfc23"), "{rtf}");
+    let swapped_marker = rtf_markers(&doc).remove(0);
+    assert!(
+        !swapped_marker.is_empty() && !swapped_marker.ends_with('.'),
+        "{swapped_marker:?}: {rtf}"
+    );
+}
+
+#[test]
+fn exports_keep_a_direct_level_on_the_list_of_its_style() {
+    // Word writes a sub-clause as its style's list with a direct w:ilvl and
+    // no w:numId: the level is not dropped.
+    let (mut doc, id) = single_list(&[ListLevel::decimal(), ListLevel::decimal()]);
+    doc.add_style(StyleBuilder::paragraph("Clauses", "Clauses"))
+        .unwrap();
+    doc.link_style_to_numbering("Clauses", id, 0).unwrap();
+    doc.add_paragraph("clause").style("Clauses");
+    doc.add_paragraph("sub clause").style("Clauses");
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let style = r#"<w:pStyle w:val="Clauses"/>"#;
+    let second = xml.rfind(style).expect("the sub clause's style");
+    let xml = format!(
+        "{}{style}<w:numPr><w:ilvl w:val=\"1\"/></w:numPr>{}",
+        &xml[..second],
+        &xml[second + style.len()..]
+    );
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let rtf = doc.to_rtf_bytes().unwrap();
+    let text = String::from_utf8(rtf.bytes.clone()).unwrap();
+    assert!(text.contains(r"\ilvl1"), "{text}");
+    let odt = doc.to_odt_bytes().unwrap();
+    let messages: Vec<&str> = rtf
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .chain(
+            odt.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str()),
+        )
+        .collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("without a numbering id")
+                || message.contains("without numbering id")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn rtf_reads_a_font_named_with_unicode_characters() {
+    // LibreOffice's "ＭＳ ゴシック" comes as \u characters between bytes.
+    let rtf = br"{\rtf1\ansi{\fonttbl{\f0 A\u-211?B\u-205? C;}}\f0 x\par}";
+    let doc = Document::from_rtf_bytes(rtf).unwrap().document;
+    assert_eq!(
+        doc.paragraph(0).unwrap().run(0).unwrap().font_name(),
+        Some("AＭBＳ C")
+    );
+}
+
+#[test]
 fn exports_leave_a_level_without_marker_out_of_lists() {
     let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
     add_items(&mut doc, id, &[0]);
@@ -1314,6 +1756,21 @@ fn exports_keep_a_list_open_around_its_unmarked_sub_paragraphs() {
     let html = doc.to_html_fragment();
     assert_eq!(html.matches("<ol>").count(), 1, "{html}");
     assert!(html.contains("<li>item 1<p>item 2</p></li>"), "{html}");
+
+    // ODT writes the `none` level as a numbered level with no number, so
+    // LibreOffice draws nothing on the sub-paragraphs and keeps counting.
+    let odt = doc.to_odt_bytes().unwrap();
+    let messages: Vec<&str> = odt
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        !messages.iter().any(|message| message.contains("decimal")),
+        "a none level is not exported as a decimal level: {messages:?}"
+    );
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    assert_eq!(markers(&reread), ["1.", "", "2.", "", "3."]);
 }
 
 #[test]

@@ -713,6 +713,131 @@ fn table_style_alignment_width_layout_and_caption_survive_a_save() {
 }
 
 #[test]
+fn table_widths_written_as_a_percent_or_with_a_unit_open_and_read_back() {
+    // ISO/IEC 29500 lets w:w be a percent or a universal measure; the
+    // spelled form says the type, whatever w:type holds.
+    let body = concat!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="33.3%" w:type="pct"/><w:tblInd w:w="0.5in" w:type="dxa"/>"#,
+        r#"<w:tblCellSpacing w:w="2pt" w:type="pct"/><w:tblCellMar><w:left w:w="0.25cm" w:type="dxa"/></w:tblCellMar>"#,
+        r#"</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:trPr><w:wBefore w:w="0.29%" w:type="pct"/><w:wAfter w:w="-1pc" w:type="dxa"/></w:trPr>"#,
+        r#"<w:tc><w:tcPr><w:tcW w:w="50%" w:type="dxa"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    let mut doc = doc_with_body(body);
+    let table = doc.table(0).expect("the table");
+    assert_eq!(table.width_mode(), Some(TableWidth::Percentage(33.3)));
+    assert_eq!(table.indent(), Some(Length::twips(720)));
+    assert_eq!(
+        table.cell_spacing(),
+        Some(TableWidth::Fixed(Length::twips(40)))
+    );
+    let row = table.row(0).expect("the row");
+    // Half a fiftieth rounds away from zero, in exact decimal arithmetic.
+    assert_eq!(row.width_before(), Some(TableWidth::Percentage(0.3)));
+    assert_eq!(
+        row.width_after(),
+        Some(TableWidth::Fixed(Length::twips(-240)))
+    );
+
+    // A rewrite stores them as Word does: fiftieths of a percent and twips.
+    doc.table_mut(0)
+        .expect("the table")
+        .set_alignment(Alignment::Center);
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").expect("the body");
+    for written in [
+        r#"<w:tblW w:w="1665" w:type="pct"/>"#,
+        r#"<w:tblInd w:w="720" w:type="dxa"/>"#,
+        r#"<w:tblCellSpacing w:w="40" w:type="dxa"/>"#,
+        r#"<w:left w:w="142" w:type="dxa"/>"#,
+        r#"<w:wBefore w:w="15" w:type="pct"/>"#,
+        r#"<w:tcW w:w="2500" w:type="pct"/>"#,
+    ] {
+        assert!(xml.contains(written), "{written}: {xml}");
+    }
+
+    // A zero spelled with a unit or a percent reads as zero.
+    for (spelled, read) in [
+        (
+            r#"<w:tblW w:w="0%" w:type="pct"/>"#,
+            TableWidth::Percentage(0.0),
+        ),
+        (
+            r#"<w:tblW w:w="0pt" w:type="dxa"/>"#,
+            TableWidth::Fixed(Length::twips(0)),
+        ),
+        (
+            r#"<w:tblW w:w="00cm" w:type="dxa"/>"#,
+            TableWidth::Fixed(Length::twips(0)),
+        ),
+        (
+            r#"<w:tblW w:w="-0pt" w:type="dxa"/>"#,
+            TableWidth::Fixed(Length::twips(0)),
+        ),
+    ] {
+        let zero = doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr>{spelled}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
+        ));
+        assert_eq!(zero.table(0).unwrap().width_mode(), Some(read), "{spelled}");
+    }
+
+    // Inside a block content control the table is read the same way.
+    let doc = doc_with_body(&format!(
+        "<w:sdt><w:sdtPr><w:tag w:val=\"rows\"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt><w:p/>",
+        body.trim_end_matches("<w:p/>")
+    ));
+    assert_eq!(doc.content_controls().len(), 1);
+    assert_eq!(
+        doc.table(0).expect("the table in the control").width_mode(),
+        Some(TableWidth::Percentage(33.3))
+    );
+}
+
+#[test]
+fn a_malformed_table_width_or_a_percent_cell_margin_is_refused() {
+    for (element, refused) in [
+        (r#"<w:tblW w:w="%" w:type="pct"/>"#, "%"),
+        (r#"<w:tblW w:w="1e2%" w:type="pct"/>"#, "1e2%"),
+        (r#"<w:tblW w:w="5.%" w:type="pct"/>"#, "5.%"),
+        (r#"<w:tblW w:w=".5in" w:type="dxa"/>"#, ".5in"),
+        (r#"<w:tblW w:w="+5%" w:type="pct"/>"#, "+5%"),
+        (
+            r#"<w:tblW w:w="999999999999999.999999999999999999cm" w:type="dxa"/>"#,
+            "999999999999999.999999999999999999cm",
+        ),
+        (
+            r#"<w:tblW w:w="118153599625325855.369227294247141741in" w:type="dxa"/>"#,
+            "118153599625325855.369227294247141741in",
+        ),
+        (
+            r#"<w:tblCellMar><w:left w:w="5%" w:type="pct"/></w:tblCellMar>"#,
+            "5%",
+        ),
+    ] {
+        let body = format!(
+            r#"<w:tbl><w:tblPr>{element}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
+        );
+        let bytes = Document::new().to_bytes().expect("new document saves");
+        let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes))
+            .expect("package opens");
+        let part = package.main_document_part().expect("main part");
+        let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen("<w:body>", &format!("<w:body>{body}"), 1);
+        package.set_part(&part, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("package writes");
+        let error = match Document::from_bytes(&out.into_inner()) {
+            Ok(_) => panic!("{element} opened"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            error.contains(&format!("{refused:?}")),
+            "{element}: {error}"
+        );
+    }
+}
+
+#[test]
 fn a_table_width_of_33_point_3_percent_reads_back_as_written() {
     let mut doc = Document::new();
     doc.add_table(1, 1)
@@ -750,6 +875,34 @@ fn table_percentages_round_to_the_nearest_fiftieth_through_both_setters() {
             );
         }
     }
+}
+
+#[test]
+fn the_unchecked_percentage_setter_keeps_to_what_word_writes() {
+    for (percent, stored) in [
+        (150.0, 100.0),
+        (-5.0, 0.0),
+        (f64::INFINITY, 100.0),
+        (f64::NEG_INFINITY, 0.0),
+    ] {
+        let mut doc = Document::new();
+        doc.add_table(1, 1).set_width_pct(percent);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.table(0).unwrap().width_mode(),
+            Some(TableWidth::Percentage(stored)),
+            "{percent}"
+        );
+    }
+    // NaN names no width: the one already set stays.
+    let mut doc = Document::new();
+    doc.add_table(1, 1).set_width_pct(40.0);
+    doc.table_mut(0).unwrap().set_width_pct(f64::NAN);
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.table(0).unwrap().width_mode(),
+        Some(TableWidth::Percentage(40.0))
+    );
 }
 
 #[test]
@@ -1467,5 +1620,45 @@ fn a_row_added_beside_empty_properties_writes_none() {
             "<w:tr><w:trPr/><w:tc><w:tcPr/><w:p/></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc></w:tr>"
         ),
         "{xml}"
+    );
+}
+
+#[test]
+fn table_and_cell_edges_set_to_nil_or_none_draw_no_border() {
+    let table = |borders: &str, cell_borders: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblBorders>{borders}</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders>{cell_borders}</w:tcBorders></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        )
+    };
+    let undrawn = table(
+        r#"<w:top w:val="nil"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideH w:val="nil"/>"#,
+        r#"<w:top w:val="nil"/><w:bottom w:val="none"/>"#,
+    );
+    let drawn = table(
+        r#"<w:top w:val="nil"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#,
+        r#"<w:top w:val="nil"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#,
+    );
+
+    let doc = doc_with_body(&undrawn);
+    let table_ref = doc.table(0).unwrap();
+    assert!(!table_ref.has_borders(), "nil and none edges only");
+    assert!(!table_ref.cell(0, 0).unwrap().has_borders());
+    assert!(
+        !doc.to_html_fragment().contains("border:"),
+        "{}",
+        doc.to_html_fragment()
+    );
+
+    let doc = doc_with_body(&drawn);
+    let table_ref = doc.table(0).unwrap();
+    assert!(table_ref.has_borders(), "one drawn edge among nil ones");
+    assert!(table_ref.cell(0, 0).unwrap().has_borders());
+    assert_eq!(
+        doc.to_html_fragment()
+            .matches("border:1px solid #000")
+            .count(),
+        2,
+        "{}",
+        doc.to_html_fragment()
     );
 }

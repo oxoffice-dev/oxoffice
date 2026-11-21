@@ -1,0 +1,12 @@
+revisions
+revisions[].author
+revisions[].id
+revisions[].kind
+revisions[].story
+revisions[].story.kind
+revisions[].story.owner_index
+revisions[].story.part_name
+revisions[].text
+revisions[].timestamp
+schema
+scope

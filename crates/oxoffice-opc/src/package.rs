@@ -1,8 +1,6 @@
 //! OPC Package reader and writer for ZIP-based OOXML packages.
 
 use std::borrow::Cow;
-#[cfg(debug_assertions)]
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -352,10 +350,6 @@ impl OpcPackage {
                 .any(|data| data.len() >= u32::MAX as usize)
         {
             let mut bytes = std::io::Cursor::new(Vec::new());
-            // Count the fallback write even when `write_to` returns an error.
-            // Other `write_to` callers count themselves. The fast path below
-            // does not call this note.
-            note_reread_zip_write();
             self.write_to(&mut bytes)?;
             bytes.set_position(0);
             return Self::from_reader(bytes);
@@ -908,28 +902,6 @@ fn deterministic_part_key<'a, T>(
         .keys()
         .filter(|candidate| has_part_identity(candidate, &identity))
         .min()
-}
-
-/// Debug-only note invoked once immediately before `reread`'s fallback
-/// `write_to`. The note runs when that write returns an error. It does not
-/// run on the fast path and it does not run for any other `write_to` caller.
-/// `None` clears the note. The note must not call `reread`.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn set_reread_zip_note(note: Option<fn()>) {
-    REREAD_ZIP_NOTE.set(note);
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static REREAD_ZIP_NOTE: Cell<Option<fn()>> = const { Cell::new(None) };
-}
-
-fn note_reread_zip_write() {
-    #[cfg(debug_assertions)]
-    if let Some(note) = REREAD_ZIP_NOTE.get() {
-        note();
-    }
 }
 
 /// Whether a write stores the part or relationship owner `name` under a ZIP

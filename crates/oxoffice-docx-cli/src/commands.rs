@@ -19,15 +19,9 @@ use oxoffice_docx::{
 };
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
-use oxoffice_docx_oxml::namespace::{MC_NS, W_NS};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::{CT_P, CT_R};
-use oxoffice_opc::relationship::rel_types;
-use quick_xml::XmlVersion;
 use quick_xml::escape::escape;
-use quick_xml::events::{BytesStart, Event};
-use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
 use serde_json::{Value, json};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -191,7 +185,7 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
                 BodyContent::RawXml(_) => {}
             }
         }
-        let stories = readable_stories(file, &doc);
+        let stories = readable_stories(&doc);
         // Without the other stories the record covers the main story only.
         let scope = if stories.is_some() {
             "all-supported-stories"
@@ -211,8 +205,16 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
             }
             None => HashMap::new(),
         };
-        let stories = stories
-            .unwrap_or_default()
+        // One entry per story, its items in story order, although the stories
+        // come in reading order, where a table or a text box splits a story.
+        let mut grouped: Vec<StoryText> = Vec::new();
+        for story in stories.unwrap_or_default() {
+            match grouped.iter_mut().find(|known| known.story == story.story) {
+                Some(known) => known.items.extend(story.items),
+                None => grouped.push(story),
+            }
+        }
+        let stories = grouped
             .iter()
             .map(|story| {
                 let items = story
@@ -300,88 +302,32 @@ struct StoryText {
 /// relationship to a missing part, does not cost the body. The view prints
 /// one warning on stderr, naming the part when it can, and lists no other
 /// story. `validate` reports the same part as an error.
-fn readable_stories(file: &Path, doc: &Document) -> Option<Vec<StoryText>> {
-    let error = match other_stories(doc) {
-        Ok(stories) => return Some(stories),
-        Err(error) => error,
-    };
-    let malformed = oxoffice_opc::OpcPackage::open(file)
-        .ok()
-        .and_then(|package| malformed_story_part(&package));
-    eprintln!(
-        "Warning: other stories left out: {}",
-        malformed.unwrap_or_else(|| error.to_string())
-    );
-    None
-}
-
-/// Name the first story part of the main document that is not well-formed
-/// XML, with the reason.
-fn malformed_story_part(package: &oxoffice_opc::OpcPackage) -> Option<String> {
-    let doc_part = package.main_document_part()?;
-    let rels = package.get_part_rels(&doc_part)?;
-    rels.items
-        .iter()
-        .filter(|rel| {
-            rel.target_mode.as_deref() != Some("External")
-                && STORY_RELATIONSHIPS.contains(&rel.rel_type.as_str())
-        })
-        .find_map(|rel| {
-            let part_name = oxoffice_opc::OpcPackage::resolve_rel_target(&doc_part, &rel.target);
-            let detail = xml_style_references(package.get_part(&part_name)?).err()?;
-            Some(format!("part {part_name} is not well-formed XML: {detail}"))
-        })
-}
-
-/// The relationships from the main document to its other story parts.
-const STORY_RELATIONSHIPS: [&str; 5] = [
-    rel_types::HEADER,
-    rel_types::FOOTER,
-    rel_types::FOOTNOTES,
-    rel_types::ENDNOTES,
-    rel_types::COMMENTS,
-];
-
-/// Read every story but the main body and its table cells, which the body
-/// view already covers, in [`Document::stories`] order.
-///
-/// Only the direct items of a story are read, so the text of an inline
-/// control or a field is not repeated after its paragraph. A table is left
-/// out because each of its cells is a table-cell story of its own.
-fn other_stories(doc: &Document) -> Result<Vec<StoryText>> {
-    let mut main_part = None;
-    let mut stories: Vec<StoryText> = Vec::new();
-    for item in doc.story_item_snapshots()? {
-        let story = item.location().story();
-        if story.kind() == StoryKind::Body {
-            main_part = Some(story.part_name().to_owned());
-            continue;
-        }
-        if story.kind() == StoryKind::TableCell && main_part.as_deref() == Some(story.part_name()) {
-            continue;
-        }
-        if stories.last().is_none_or(|last| &last.story != story) {
-            stories.push(StoryText {
-                story: story.clone(),
-                items: Vec::new(),
-            });
-        }
-        let kind = match item.location().item_kind() {
-            StoryItemKind::Paragraph => "paragraph",
-            StoryItemKind::ContentControl => "content_control",
-            _ => continue,
-        };
-        if item.is_direct_child()
-            && let Some(last) = stories.last_mut()
-        {
-            last.items.push((
-                item.location().index_path().to_vec(),
-                kind,
-                item.text().unwrap_or_default().to_owned(),
-            ));
+fn readable_stories(doc: &Document) -> Option<Vec<StoryText>> {
+    match doc.other_story_texts() {
+        Ok(stories) => Some(
+            stories
+                .into_iter()
+                .map(|story| StoryText {
+                    story: story.story,
+                    items: story
+                        .items
+                        .into_iter()
+                        .map(|item| {
+                            let kind = match item.kind {
+                                StoryItemKind::ContentControl => "content_control",
+                                _ => "paragraph",
+                            };
+                            (item.index_path, kind, item.text)
+                        })
+                        .collect(),
+                })
+                .collect(),
+        ),
+        Err(reason) => {
+            eprintln!("Warning: other stories left out: {reason}");
+            None
         }
     }
-    Ok(stories)
 }
 
 /// Group the texts of the stories by package part, each part labelled with
@@ -946,7 +892,7 @@ pub fn convert(
         }
         "html" => {
             let (mut html, diagnostics) = doc.to_html_with_diagnostics();
-            if let Some(stories) = readable_stories(file, &doc) {
+            if let Some(stories) = readable_stories(&doc) {
                 push_html_stories(&mut html, &stories);
             }
             stage_and_publish(&[(output_path.clone(), html.into_bytes())], force)?;
@@ -956,7 +902,7 @@ pub fn convert(
         }
         "md" | "markdown" => {
             let (mut md, diagnostics) = doc.to_markdown_with_diagnostics();
-            if let Some(stories) = readable_stories(file, &doc) {
+            if let Some(stories) = readable_stories(&doc) {
                 push_markdown_stories(&mut md, &stories);
             }
             stage_and_publish(&[(output_path.clone(), md.into_bytes())], force)?;
@@ -2672,98 +2618,6 @@ fn print_validation_report(file: &Path, errors: &[String], warnings: &[String]) 
         }
     }
     Ok(())
-}
-
-/// Read `xml` as one well-formed element tree and return the paragraph,
-/// character, and table style ids it names. The ids inside a tracked property
-/// change are left out, because they record the formatting before the change,
-/// and so are those inside `mc:Fallback`, which Word does not read. An empty
-/// id names no style.
-fn xml_style_references(xml: &[u8]) -> std::result::Result<Vec<(&'static str, String)>, String> {
-    let mut reader = NsReader::from_reader(xml);
-    // One entry per open element: whether its style ids are left out.
-    let mut open = Vec::new();
-    let mut roots = 0usize;
-    let mut references = Vec::new();
-    let mut buffer = Vec::new();
-    loop {
-        let (namespace, event) = match reader.read_resolved_event_into(&mut buffer) {
-            Ok(read) => read,
-            Err(error) => return Err(format!("{error} at byte {}", reader.error_position())),
-        };
-        let is_word =
-            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes());
-        let is_compatibility =
-            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == MC_NS.as_bytes());
-        match event {
-            Event::Start(ref element) | Event::Empty(ref element) => {
-                if open.is_empty() {
-                    roots += 1;
-                    if roots > 1 {
-                        return Err("the part has more than one root element".to_owned());
-                    }
-                }
-                let local_name = element.local_name();
-                let kind = match local_name.as_ref() {
-                    b"pStyle" => Some("paragraph"),
-                    b"rStyle" => Some("character"),
-                    b"tblStyle" => Some("table"),
-                    _ => None,
-                };
-                if let Some(kind) = kind.filter(|_| is_word && !open.contains(&true))
-                    && let Some(style_id) = word_value(&reader, element)?
-                    && !style_id.is_empty()
-                {
-                    references.push((kind, style_id));
-                }
-                if matches!(event, Event::Start(_)) {
-                    open.push(
-                        (is_word && local_name.as_ref().ends_with(b"PrChange"))
-                            || (is_compatibility && local_name.as_ref() == b"Fallback"),
-                    );
-                }
-            }
-            Event::End(_) => {
-                open.pop();
-            }
-            Event::Text(text) if open.is_empty() && !text.iter().all(u8::is_ascii_whitespace) => {
-                return Err("the part has text outside its root element".to_owned());
-            }
-            Event::CData(_) if open.is_empty() => {
-                return Err("the part has CDATA outside its root element".to_owned());
-            }
-            Event::Eof if roots == 0 => return Err("the part has no root element".to_owned()),
-            Event::Eof if !open.is_empty() => {
-                return Err(format!(
-                    "the part ends inside {} unclosed element(s)",
-                    open.len()
-                ));
-            }
-            Event::Eof => return Ok(references),
-            _ => {}
-        }
-        buffer.clear();
-    }
-}
-
-/// Return the `w:val` attribute of a WordprocessingML element.
-fn word_value(
-    reader: &NsReader<&[u8]>,
-    element: &BytesStart<'_>,
-) -> std::result::Result<Option<String>, String> {
-    for attribute in element.attributes() {
-        let attribute = attribute.map_err(|error| error.to_string())?;
-        let (namespace, local_name) = reader.resolver().resolve_attribute(attribute.key);
-        if matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
-            && local_name.as_ref() == b"val"
-        {
-            let value = attribute
-                .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
-                .map_err(|error| error.to_string())?;
-            return Ok(Some(value.into_owned()));
-        }
-    }
-    Ok(None)
 }
 
 /// Parse a `NAME=VALUE` assignment, splitting at the first `=`.
