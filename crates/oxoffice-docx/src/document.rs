@@ -292,10 +292,10 @@ pub(crate) use story_scopes::{story_namespace_ancestors_at, story_namespace_scop
 pub(crate) use story_source_edits::set_story_source_xml;
 use story_source_edits::{
     append_story_fragments_to_root, append_story_sources_to_root,
-    decoded_story_namespace_declaration, missing_note_specials, owners_reference_hyperlink_style,
-    remove_note_references, serialized_footnote_fragment, serialized_note_fragment,
-    serialized_note_fragment_in, set_story_source_xml_in, story_word_prefix_for_scope,
-    update_story_namespace_scope,
+    decoded_story_namespace_declaration, missing_note_specials, note_reference_style,
+    owners_reference_styles, remove_note_references, serialized_footnote_fragment,
+    serialized_note_fragment, serialized_note_fragment_in, set_story_source_xml_in,
+    story_word_prefix_for_scope, update_story_namespace_scope,
 };
 pub(crate) use story_text::paragraph_heading_level;
 use story_text::{

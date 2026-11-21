@@ -3057,12 +3057,26 @@ fn an_endnote_the_original_holds_unreferenced_compares_while_endnotes_are_ignore
     // The original keeps the endnote but lost its reference; the edited
     // version references it again, and the ignored story supplies it.
     let mut original = doc_with_endnotes(&[0]);
-    original
-        .paragraph_mut(0)
-        .unwrap()
-        .set_text("Claim one.")
+    // set_text keeps a note mark, so the reference is cut out of the file.
+    let original = {
+        let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(
+            original.to_bytes().unwrap(),
+        ))
         .unwrap();
-    let original = reopen(&mut original);
+        let main = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+        let reference = xml.find("<w:endnoteReference").unwrap();
+        let start = xml[..reference]
+            .rfind("<w:r>")
+            .max(xml[..reference].rfind("<w:r "))
+            .unwrap();
+        let end = reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len();
+        let xml = format!("{}{}", &xml[..start], &xml[end..]);
+        package.set_part(&main, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        Document::from_bytes(&out.into_inner()).unwrap()
+    };
     assert_eq!(endnote_paragraphs(&original), Vec::<usize>::new());
     let edited = doc_with_endnotes(&[0]);
     let id = (1..10)
