@@ -15,12 +15,33 @@ How work lands in oxoffice. Short on purpose.
    tests, next, a few short bullets each, readable at a glance. Long notes,
    tables and measurements go in a `<details>` block. Issues follow the same
    shape.
-5. **CI green**, review, squash merge. The squash commit takes the title, so
+5. **Independent review**, posted on the pull request, then fix the findings
+   (see [Independent review](#independent-review)).
+6. **CI green**, squash merge. The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
-6. **Update** `docs/` when a structural fact changes, and the spec's status
+7. **Update** `docs/` when a structural fact changes, and the spec's status
    and Learnings when it ships.
+
+## Independent review
+
+Every pull request is reviewed before it is merged by someone who did not
+write it: a fresh agent given only the pull request, its branch and its spec,
+never the author's reasoning, or a person. Whoever works on the pull request
+or wants to merge it runs that review or asks for one.
+
+- The reviewer posts its findings on the pull request in one comment, major
+  and minor, each with `file:line`, the defect and a failure scenario, or
+  says it found nothing.
+- The author fixes them, or answers in the thread why one is not a defect. A
+  major finding is fixed unless the maintainer waives it. A substantial fix
+  gets a new review of what changed.
+- It looks for wrong behaviour and missed cases first, then tests that would
+  pass with the feature broken, Rust, CLI and Python disagreeing, unsafe CI
+  changes. Documentation and pure code moves get a light review.
+
+See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
 ## Conventional commits
 

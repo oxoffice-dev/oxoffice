@@ -51,3 +51,4 @@ dependency bumps and documentation.
 | 2026-11-20 | [Skill helpers move into the library](2026-11-20-skill-helpers-in-the-library.md) | accepted |
 | 2026-11-20 | [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md) | shipped |
 | 2026-11-21 | [Corpus at scale and behaviour tests by area](2026-11-21-corpus-at-scale-and-behaviour-tests.md) | accepted |
+| 2026-11-21 | [An independent review before every merge](2026-11-21-independent-review-before-merge.md) | accepted |
