@@ -759,6 +759,15 @@ impl Engine {
                             written_tb_rl_band: sect_pr.text_direction.as_deref() == Some("tbRl"),
                             continuous: sect_pr.section_type
                                 == Some(oxoffice_docx_oxml::shared::ST_SectionType::Continuous),
+                            parity: match sect_pr.section_type {
+                                Some(oxoffice_docx_oxml::shared::ST_SectionType::OddPage) => {
+                                    Some(paginator::SectionParity::Odd)
+                                }
+                                Some(oxoffice_docx_oxml::shared::ST_SectionType::EvenPage) => {
+                                    Some(paginator::SectionParity::Even)
+                                }
+                                _ => None,
+                            },
                             blocks: std::mem::take(&mut current_blocks),
                             modern_footnote_layout: input.modern_footnote_layout,
                             footnote_layout_like_word8: input.footnote_layout_like_word8,
@@ -864,6 +873,15 @@ impl Engine {
             written_tb_rl_band: final_sect_pr.text_direction.as_deref() == Some("tbRl"),
             continuous: final_sect_pr.section_type
                 == Some(oxoffice_docx_oxml::shared::ST_SectionType::Continuous),
+            parity: match final_sect_pr.section_type {
+                Some(oxoffice_docx_oxml::shared::ST_SectionType::OddPage) => {
+                    Some(paginator::SectionParity::Odd)
+                }
+                Some(oxoffice_docx_oxml::shared::ST_SectionType::EvenPage) => {
+                    Some(paginator::SectionParity::Even)
+                }
+                _ => None,
+            },
             blocks: current_blocks,
             modern_footnote_layout: input.modern_footnote_layout,
             footnote_layout_like_word8: input.footnote_layout_like_word8,

@@ -726,12 +726,20 @@ pub(crate) struct WordLineNumberStyle {
     pub kerning: bool,
 }
 
+/// The parity of the page an odd-page or even-page section starts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SectionParity {
+    Odd,
+    Even,
+}
+
 pub(crate) struct SharedSection {
     pub line_number_style: Option<WordLineNumberStyle>,
     pub written_tb_rl_band: bool,
     pub modern_footnote_layout: bool,
     pub footnote_layout_like_word8: bool,
     pub continuous: bool,
+    pub parity: Option<SectionParity>,
     pub blocks: Vec<SharedLayoutBlock>,
     pub geometry: PageGeometry,
     pub header_footer: Option<HeaderFooterContent>,
@@ -1313,6 +1321,47 @@ pub(crate) fn paginate_shared_sections(
                 }
             }
             section_end_last_page = result.pages.last().map(|page| page.page_number);
+        }
+        // An odd-page or even-page section starts on a page of its parity:
+        // when both the number it asks for (its own start, or the one it
+        // continues) and the physical page it would take have the other
+        // parity, this group ends with a blank page, as Word and LibreOffice
+        // print it: no header, footer, border or line number, only the page.
+        if let Some(next) = sections.get(group_end)
+            && let Some(parity) = next.parity
+        {
+            let continued = result.pages.last().map_or(section_page_number, |page| {
+                page.displayed_page_number.saturating_add(1)
+            });
+            let physical = page_offset + result.pages.len() + 1;
+            let wrong = |number: usize| (number % 2 == 1) != (parity == SectionParity::Odd);
+            if wrong(next.page_number_start.unwrap_or(continued)) && wrong(physical) {
+                let geometry = PageGeometry {
+                    page_borders: None,
+                    column_separator: false,
+                    ..boundary.geometry.clone()
+                };
+                let mut blank = paginate_with_media_recorded::<SharedLayoutBlock>(
+                    &[],
+                    geometry,
+                    None,
+                    None,
+                    false,
+                    boundary.footnotes_beneath_text,
+                    boundary.written_tb_rl_band,
+                    None,
+                    fm,
+                    media,
+                    notes,
+                    physical,
+                    continued,
+                    None,
+                );
+                section_end_last_page = blank.pages.last().map(|page| page.page_number);
+                result.paint.policies.append(&mut blank.paint.policies);
+                result.paint.boundaries.append(&mut blank.paint.boundaries);
+                result.pages.append(&mut blank.pages);
+            }
         }
         for (offset, member) in sections[section_index..group_end].iter().enumerate() {
             let body_indices = member

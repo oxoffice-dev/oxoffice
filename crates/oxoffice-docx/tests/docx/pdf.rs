@@ -333,6 +333,101 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
 }
 
 #[test]
+fn a_page_break_before_a_page_break_before_heading_adds_no_blank_page() {
+    // A paragraph ending in a page break, then a heading with page break
+    // before: one new page, in any script. Hebrew and Japanese text is laid
+    // out by the multilingual path, whose empty end of paragraph is a
+    // segment of its own.
+    for text in ["Body", "שלום", "日本語"] {
+        let doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:t>{text}</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p>"#
+        ));
+        let pdf = pdf_of(&doc);
+        assert_eq!(pdf.page_count(), 2, "{text}");
+        assert_eq!(pdf.page_text(1), "Heading", "{text}");
+    }
+}
+
+#[test]
+fn an_odd_or_even_page_section_starts_on_a_page_of_its_parity() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:pgBorders w:display="firstPage"><w:top w:val="single" w:sz="24" w:space="24" w:color="FF0000"/></w:pgBorders></w:sectPr>"#;
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let text = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    // The section after the break is the last one: its type is in the body's
+    // own section properties, which `doc_with_body` keeps as Word's default,
+    // so the type goes on a section break of its own after it.
+    let pages = |first: &str, kind: &str, numbering: &str| {
+        let next = section.replace("<w:pgSz", &format!(r#"<w:type w:val="{kind}"/><w:pgSz"#));
+        let next = next.replace("</w:sectPr>", &format!("{numbering}</w:sectPr>"));
+        let doc = doc_with_body(&format!(
+            r#"{first}<w:p><w:pPr>{section}</w:pPr></w:p>{}<w:p><w:pPr>{next}</w:pPr></w:p>{}"#,
+            text("Next"),
+            text("Last"),
+        ));
+        let mut doc = doc;
+        doc.set_footer("Footer");
+        let pdf = pdf_of(&reopen(&mut doc));
+        (0..pdf.page_count())
+            .map(|page| pdf.page_text(page).replace("Footer", "").trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let one = text("Body");
+    let two = format!("{}{page_break}{}", text("Body"), text("Two"));
+    // Page 2 is even: an odd-page section skips it, an even-page one takes it.
+    assert_eq!(pages(&one, "oddPage", ""), ["Body", "", "Next", "Last"]);
+    assert_eq!(pages(&one, "evenPage", ""), ["Body", "Next", "Last"]);
+    // Page 3 is odd.
+    assert_eq!(pages(&two, "oddPage", ""), ["Body", "Two", "Next", "Last"]);
+    assert_eq!(
+        pages(&two, "evenPage", ""),
+        ["Body", "Two", "", "Next", "Last"]
+    );
+    // A section that restarts its numbering at 1 keeps it, with no blank
+    // page, as LibreOffice draws the Word thesis.
+    assert_eq!(
+        pages(&one, "oddPage", r#"<w:pgNumType w:start="1"/>"#),
+        ["Body", "Next", "Last"]
+    );
+    // A start of the wrong parity on a page of the wrong parity gets one, and
+    // an even start 1 on the even page 2 none, as LibreOffice draws them.
+    assert_eq!(
+        pages(&one, "oddPage", r#"<w:pgNumType w:start="2"/>"#),
+        ["Body", "", "Next", "Last"]
+    );
+    assert_eq!(
+        pages(&one, "evenPage", r#"<w:pgNumType w:start="1"/>"#),
+        ["Body", "Next", "Last"]
+    );
+}
+
+#[test]
+fn the_blank_page_before_an_odd_page_section_draws_nothing() {
+    // The first section has a footer on every page and a red border on its
+    // first page; the blank page that sends the next section to page 3
+    // shows neither.
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:pgBorders w:display="firstPage"><w:top w:val="single" w:sz="24" w:space="24" w:color="FF0000"/><w:bottom w:val="single" w:sz="24" w:space="24" w:color="FF0000"/></w:pgBorders></w:sectPr>"#;
+    let odd = section.replace("<w:pgSz", r#"<w:type w:val="oddPage"/><w:pgSz"#);
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr>{odd}</w:pPr></w:p><w:p><w:r><w:t>Last</w:t></w:r></w:p>"#
+    ));
+    doc.set_footer("Footer");
+    let doc = reopen(&mut doc);
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 4);
+    assert_eq!(pdf.page_text(1), "");
+    let red = |page: usize| {
+        let image = Pixels::decode(&doc.render_page_to_png(page, 72.0).unwrap().expect("page"));
+        image
+            .rgba
+            .chunks(4)
+            .filter(|pixel| pixel[..3] == [0xFF, 0, 0])
+            .count()
+    };
+    assert!(red(0) > 0, "the first page has its border");
+    assert_eq!(red(1), 0, "the blank page has none");
+}
+
+#[test]
 fn a_page_break_at_the_foot_of_a_full_page_before_a_section_break_stays_there() {
     // Lines of exactly 12 pt with no spacing: 53 of them leave room for one
     // more on a Letter page with one-inch margins.
