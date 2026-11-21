@@ -5,7 +5,7 @@ use std::ops::Range;
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::units::Emu;
-use oxoffice_core::xml::{local_name, matches_local_name};
+use oxoffice_core::xml::{local_name, matches_local_name, xml_ncname_is_valid};
 use oxoffice_core::xml_text::read_element_text;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -964,45 +964,15 @@ fn namespace_attribute_name(prefix: &str) -> Result<String> {
             "xmlns cannot be used as an inherited namespace prefix".to_owned(),
         ));
     }
-    let mut chars = prefix.chars();
-    let Some(first) = chars.next() else {
+    if prefix.is_empty() {
         return Ok("xmlns".to_owned());
-    };
-    if !is_ncname_start(first) || !chars.all(is_ncname_continue) {
+    }
+    if !xml_ncname_is_valid(prefix) {
         return Err(OxmlError::InvalidValue(format!(
             "invalid inherited namespace prefix {prefix}"
         )));
     }
     Ok(format!("xmlns:{prefix}"))
-}
-
-fn is_ncname_start(value: char) -> bool {
-    matches!(
-        value,
-        'A'..='Z'
-            | '_'
-            | 'a'..='z'
-            | '\u{C0}'..='\u{D6}'
-            | '\u{D8}'..='\u{F6}'
-            | '\u{F8}'..='\u{2FF}'
-            | '\u{370}'..='\u{37D}'
-            | '\u{37F}'..='\u{1FFF}'
-            | '\u{200C}'..='\u{200D}'
-            | '\u{2070}'..='\u{218F}'
-            | '\u{2C00}'..='\u{2FEF}'
-            | '\u{3001}'..='\u{D7FF}'
-            | '\u{F900}'..='\u{FDCF}'
-            | '\u{FDF0}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{EFFFF}'
-    )
-}
-
-fn is_ncname_continue(value: char) -> bool {
-    is_ncname_start(value)
-        || matches!(
-            value,
-            '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}'
-        )
 }
 
 #[allow(clippy::too_many_arguments)]

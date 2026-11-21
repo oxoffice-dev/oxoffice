@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Range;
 
-use oxoffice_core::xml::{XmlLexicalError, validate_strict_xml_1_0};
+use oxoffice_core::xml::{XmlLexicalError, validate_strict_xml_1_0, xml_ncname_is_valid};
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::{Relationship, rel_types};
 use quick_xml::XmlVersion;
@@ -2060,41 +2060,6 @@ fn mc_qname_list_is_valid(
         required_ignorable.is_none_or(|ignorable| ignorable.contains(&namespace))
             && ((wildcard_allowed && local == "*") || xml_ncname_is_valid(local))
     })
-}
-
-fn xml_ncname_is_valid(value: &str) -> bool {
-    let mut characters = value.chars();
-    characters.next().is_some_and(xml_ncname_start_character)
-        && characters.all(xml_ncname_character)
-}
-
-fn xml_ncname_start_character(character: char) -> bool {
-    matches!(
-        character,
-        'A'..='Z'
-            | '_'
-            | 'a'..='z'
-            | '\u{00C0}'..='\u{00D6}'
-            | '\u{00D8}'..='\u{00F6}'
-            | '\u{00F8}'..='\u{02FF}'
-            | '\u{0370}'..='\u{037D}'
-            | '\u{037F}'..='\u{1FFF}'
-            | '\u{200C}'..='\u{200D}'
-            | '\u{2070}'..='\u{218F}'
-            | '\u{2C00}'..='\u{2FEF}'
-            | '\u{3001}'..='\u{D7FF}'
-            | '\u{F900}'..='\u{FDCF}'
-            | '\u{FDF0}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{EFFFF}'
-    )
-}
-
-fn xml_ncname_character(character: char) -> bool {
-    xml_ncname_start_character(character)
-        || matches!(
-            character,
-            '-' | '.' | '0'..='9' | '\u{00B7}' | '\u{0300}'..='\u{036F}' | '\u{203F}'..='\u{2040}'
-        )
 }
 
 fn run_child_is_schema_positioned(nodes: &[OpenNode]) -> bool {

@@ -399,7 +399,8 @@ fn validate_xml_name(name: &[u8]) -> std::result::Result<(), XmlLexicalError> {
     }
 }
 
-fn xml_ncname_is_valid(value: &str) -> bool {
+/// Whether `value` is an XML namespace `NCName`: a name without a colon.
+pub fn xml_ncname_is_valid(value: &str) -> bool {
     let mut characters = value.chars();
     characters.next().is_some_and(xml_ncname_start_character)
         && characters.all(xml_ncname_character)
