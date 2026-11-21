@@ -11,12 +11,21 @@ impl PyContentFragment {
 }
 #[pymethods]
 impl PyFragmentConflictPolicy {
+    /// Reuse equivalent dependencies and rename different ones. A default
+    /// character, table or numbering style under an id the destination lacks
+    /// (Word's localized Policepardfaut) takes the destination's default. A
+    /// default paragraph style does when it is that default under another id;
+    /// a different one is imported under its own id, no longer a default: the
+    /// styles based on it and the text that names it keep its look, text that
+    /// names no style takes the destination's default paragraph style.
     #[staticmethod]
     fn reuse_equivalent() -> Self {
         Self {
             inner: oxoffice_docx::FragmentConflictPolicy::reuse_equivalent(),
         }
     }
+    /// A fresh destination identity for every dependency, except a default
+    /// style, which takes the destination's default as reuse_equivalent says.
     #[staticmethod]
     fn rename_all() -> Self {
         Self {

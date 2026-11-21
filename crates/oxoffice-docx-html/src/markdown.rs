@@ -20,7 +20,7 @@ pub(crate) fn emit_markdown(
     equations: &dyn EquationWriter,
 ) -> String {
     let styles = &input.styles;
-    let hyperlink_urls = &input.hyperlink_urls;
+    let hyperlink_urls = &crate::Links::new(&input.hyperlink_urls, &input.document.body);
     let images = &input.images;
     let mut out = String::new();
     // The open list levels, each with the column its item text starts at.
@@ -70,7 +70,7 @@ pub(crate) fn emit_markdown(
                     &p,
                     &boundaries,
                     input,
-                    equations,
+                    (equations, hyperlink_urls),
                     counted,
                     &mut list_levels,
                 );
@@ -200,12 +200,12 @@ fn emit_paragraph(
     para: &CT_P,
     boundaries: &[usize],
     input: &HtmlInput,
-    equations: &dyn EquationWriter,
+    // The equation writer and the link targets.
+    (equations, hyperlink_urls): (&dyn EquationWriter, &crate::Links<'_>),
     counted: Counted,
     list_levels: &mut Vec<MarkdownList>,
 ) {
     let styles = &input.styles;
-    let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
     let detected_level = detect_heading_level(para.properties.as_ref(), styles);
     // A heading numbered through its style, as Word numbers its headings,
@@ -644,34 +644,32 @@ impl Marks {
 fn collect_paragraph_text(
     para: &CT_P,
     styles: &CT_Styles,
-    hyperlink_urls: &HashMap<String, String>,
+    hyperlink_urls: &crate::Links<'_>,
     images: &HashMap<String, ImageData>,
     boundaries: &[usize],
     equations: &dyn EquationWriter,
 ) -> String {
     let mut out = String::new();
 
+    // The bookmarks a link targets, read before the accepted view drops
+    // the markers, written as inline HTML anchors.
+    let anchors = crate::bookmark_anchors(para, &hyperlink_urls.bookmarks);
+    let anchor_html = |boundary: usize| {
+        anchors
+            .iter()
+            .filter(|(at, _)| *at == boundary)
+            .map(|(_, name)| format!("<a id=\"{}\"></a>", crate::sanitize::escape_html_attr(name)))
+            .collect::<String>()
+    };
+
     // The runs the text readers read, those of content controls, tracked
     // insertions, smart tags and custom XML included, deleted ones left out.
     let (view, projected_boundaries) = para.accepted_view_with_field_owners();
     let para = &view;
 
-    // Build hyperlink map
-    let mut hyperlink_map: HashMap<usize, &str> = HashMap::new();
-    for hl in &para.hyperlinks {
-        // Markdown renderers turn `[text](javascript:...)` into a live link too,
-        // so the same scheme allowlist applies here.
-        if let Some(rel_id) = &hl.rel_id
-            && let Some(url) = hyperlink_urls
-                .get(rel_id)
-                .map(String::as_str)
-                .and_then(crate::sanitize::safe_url)
-        {
-            for i in hl.run_start..hl.run_end {
-                hyperlink_map.insert(i, url);
-            }
-        }
-    }
+    // Markdown renderers turn `[text](javascript:...)` into a live link too,
+    // so the same scheme allowlist applies here.
+    let hyperlink_map = crate::hyperlink_targets(para, hyperlink_urls);
 
     // Consecutive runs in the same link are written as one link, and the
     // formatting inside and outside each link is rendered as a whole.
@@ -682,12 +680,18 @@ fn collect_paragraph_text(
         if boundaries.contains(&run_idx) || projected_boundaries.contains(&run_idx) {
             pieces.push((String::new(), Marks::default()));
         }
+        let anchor = anchor_html(run_idx);
+        if !anchor.is_empty() {
+            push_inline(&mut out, &pieces, current_link);
+            pieces.clear();
+            out.push_str(&anchor);
+        }
         if let Some(math) = equations_latex(para, run_idx, equations) {
             push_inline(&mut out, &pieces, current_link);
             pieces.clear();
             out.push_str(&math);
         }
-        let in_link = hyperlink_map.get(&run_idx).copied();
+        let in_link = hyperlink_map.get(&run_idx).map(String::as_str);
         if in_link != current_link {
             push_inline(&mut out, &pieces, current_link);
             pieces.clear();
@@ -696,6 +700,7 @@ fn collect_paragraph_text(
         collect_run_pieces(run, styles, images, &mut pieces);
     }
     push_inline(&mut out, &pieces, current_link);
+    out.push_str(&anchor_html(para.runs.len()));
     if let Some(math) = equations_latex(para, para.runs.len(), equations) {
         out.push_str(&math);
     }
@@ -1294,7 +1299,7 @@ fn emit_table(
     out: &mut String,
     tbl: &CT_Tbl,
     styles: &CT_Styles,
-    hyperlink_urls: &HashMap<String, String>,
+    hyperlink_urls: &crate::Links<'_>,
     images: &HashMap<String, ImageData>,
     equations: &dyn EquationWriter,
 ) {
@@ -1396,7 +1401,7 @@ fn emit_table(
 fn collect_cell_text(
     cell: &oxoffice_docx_oxml::table::CT_Tc,
     styles: &CT_Styles,
-    hyperlink_urls: &HashMap<String, String>,
+    hyperlink_urls: &crate::Links<'_>,
     images: &HashMap<String, ImageData>,
     equations: &dyn EquationWriter,
 ) -> String {

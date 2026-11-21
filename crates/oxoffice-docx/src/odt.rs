@@ -350,7 +350,11 @@ impl<'a> OdtWriter<'a> {
                 .ok_or_else(|| odt_error(None, 0, "ODT output exceeds the row limit"))?;
             self.reserve_output(128)?;
             let row_path = format!("{path}/row[{row_index}]");
-            if row.properties.is_some() {
+            if row
+                .properties
+                .as_ref()
+                .is_some_and(|properties| !properties.carries_nothing())
+            {
                 self.diagnose(
                     &format!("{row_path}/trPr"),
                     "table-row properties were dropped during ODT export",
@@ -1374,8 +1378,16 @@ impl<'a> OdtWriter<'a> {
                     definition.suffix.is_some(),
                     definition.lvl_text.is_some(),
                     definition.lvl_jc.is_some(),
-                    definition.ppr.is_some() || definition.ppr_raw.is_some(),
-                    definition.rpr.is_some() || definition.rpr_raw.is_some(),
+                    definition
+                        .ppr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.ppr_raw.is_some(),
+                    definition
+                        .rpr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.rpr_raw.is_some(),
                     !definition.extra_xml.is_empty() || !definition.extra_attributes.is_empty(),
                 )
             },
@@ -1774,8 +1786,16 @@ impl<'a> OdtWriter<'a> {
                     // A level that draws no marker loses no marker text.
                     definition.lvl_text.is_some() && !unnumbered,
                     definition.lvl_jc.is_some(),
-                    definition.ppr.is_some() || definition.ppr_raw.is_some(),
-                    definition.rpr.is_some() || definition.rpr_raw.is_some(),
+                    definition
+                        .ppr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.ppr_raw.is_some(),
+                    definition
+                        .rpr
+                        .as_ref()
+                        .is_some_and(|properties| !properties.carries_nothing())
+                        || definition.rpr_raw.is_some(),
                     !definition.extra_xml.is_empty() || !definition.extra_attributes.is_empty(),
                 )
             },
@@ -2415,7 +2435,10 @@ fn paragraph_properties_have_unsupported(properties: &CT_PPr) -> bool {
         || properties.borders.is_some()
         || properties.tabs.is_some()
         || properties.shading.is_some()
-        || properties.rpr.is_some()
+        || properties
+            .rpr
+            .as_ref()
+            .is_some_and(|properties| !properties.carries_nothing())
         || properties.sect_pr.is_some()
         || properties.numbering_revision.is_some()
         || !properties.numbering_revision_xml.is_empty()

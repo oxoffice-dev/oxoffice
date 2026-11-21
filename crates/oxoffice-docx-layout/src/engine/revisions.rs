@@ -117,7 +117,9 @@ enum ProjectedParagraphOwner<'a> {
     },
 }
 
-fn paragraph_revision_raw_order(para: &CT_P, boundary: usize, slot: usize) -> RawOrder {
+/// Where a paragraph-level tracked change sits among the raw children at
+/// its run boundary: a change inside a hyperlink orders by the hyperlink.
+pub(crate) fn paragraph_revision_raw_order(para: &CT_P, boundary: usize, slot: usize) -> RawOrder {
     let Some(index) = hyperlink_revision_index(slot) else {
         return RawOrder::Raw(slot);
     };
@@ -367,6 +369,19 @@ fn project_revision_runs<'a>(
     }
 }
 
+/// Whether an inline item draws nothing: an empty run, or the zero-width
+/// marker of a bookmark target. Word opens no line for it.
+pub(super) fn draws_nothing(item: &InlineItem) -> bool {
+    let text = match item {
+        InlineItem::Text(segment) | InlineItem::HyphenatedText { segment, .. } => {
+            segment.text.as_str()
+        }
+        InlineItem::MultilingualText(segment) => segment.text(),
+        _ => return false,
+    };
+    text.chars().all(|ch| ch == '\u{2060}')
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_equations_before_order(
     paragraph: &CT_P,
@@ -379,6 +394,7 @@ pub(super) fn push_equations_before_order(
     color: Color,
     available_width: f64,
     math_properties: Option<&oxoffice_docx_oxml::math::MathProperties>,
+    display_break: &mut Option<usize>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     while let Some((equation_boundary, raw_before, equation)) = paragraph.equations.get(*cursor) {
@@ -404,9 +420,14 @@ pub(super) fn push_equations_before_order(
             &source_path,
             diagnostics,
         )?;
+        // A display equation stands on a line of its own: it ends the line
+        // of what it follows, if that draws anything.
         if display
-            && !inline_items.is_empty()
-            && !matches!(inline_items.last(), Some(InlineItem::LineBreak))
+            && inline_items
+                .iter()
+                .rev()
+                .take_while(|item| !matches!(item, InlineItem::LineBreak))
+                .any(|item| !draws_nothing(item))
         {
             inline_items.push(InlineItem::LineBreak);
         }
@@ -414,9 +435,11 @@ pub(super) fn push_equations_before_order(
             width: measured.width,
             height: measured.height(),
             baseline: Some(measured.ascent),
+            math: true,
             group: measured.group,
         });
         if display {
+            *display_break = Some(inline_items.len());
             inline_items.push(InlineItem::LineBreak);
         }
         *cursor += 1;
@@ -429,7 +452,13 @@ pub(super) fn projected_paragraph_text(para: &CT_P, view: RevisionView) -> Resul
     for projected in project_paragraph_runs(para, view) {
         for content in &projected.run.content {
             if let RunContent::Field(field) = content {
-                for stored in stored_note_cache_runs(field, None, view, None, false, None, false)? {
+                let deleted = matches!(
+                    projected.revision,
+                    Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
+                );
+                for stored in
+                    stored_note_cache_runs(field, None, view, None, false, deleted, None, false)?
+                {
                     text.push_str(&stored.run.text());
                 }
             } else {

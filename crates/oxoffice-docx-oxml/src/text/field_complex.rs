@@ -213,7 +213,11 @@ fn complex_field_events(
                         if before == events.len() {
                             events.push(ComplexFieldEvent::Raw(index));
                         }
-                    } else if is_word_element(root.name().as_ref(), b"instrText", &prefixes) {
+                    } else if is_word_element(root.name().as_ref(), b"instrText", &prefixes)
+                        // Word writes the field code of a deleted field in
+                        // delInstrText: it is still that field's instruction.
+                        || is_word_element(root.name().as_ref(), b"delInstrText", &prefixes)
+                    {
                         events.push(ComplexFieldEvent::Instruction(
                             crate::xml_text::read_element_text(&mut source, root.name()),
                         ));
@@ -2982,7 +2986,9 @@ fn field_span_child_kind(element: &BytesStart<'_>, word_prefixes: &[String]) -> 
     if is_word_element(name.as_ref(), b"rPr", word_prefixes) {
         return FieldSpanChild::Properties;
     }
-    if is_word_element(name.as_ref(), b"instrText", word_prefixes) {
+    if is_word_element(name.as_ref(), b"instrText", word_prefixes)
+        || is_word_element(name.as_ref(), b"delInstrText", word_prefixes)
+    {
         return FieldSpanChild::FieldMarker;
     }
     if !is_word_element(name.as_ref(), b"fldChar", word_prefixes) {
@@ -3377,5 +3383,57 @@ fn remap_complex_field_boundaries(
             remap(&mut absolute);
             *boundary = absolute.saturating_sub(hyperlink.run_start);
         }
+    }
+}
+
+#[cfg(test)]
+mod deleted_field_tests {
+    use super::*;
+
+    /// The fields of every deletion of a Word paragraph, as the tracked view
+    /// reads them.
+    fn deleted_fields(body: &str) -> Vec<Field> {
+        let xml = format!(
+            r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{body}</w:p>"#
+        );
+        let paragraph = CT_P::from_xml_fragment(xml.as_bytes()).unwrap();
+        let mut fields = Vec::new();
+        for (_, _, revision) in &paragraph.revisions {
+            let mut revision = revision.clone();
+            let content = revision.physical_content_paragraph_mut().unwrap();
+            for run in content.into_iter().flat_map(|content| &content.runs) {
+                fields.extend(run.content.iter().filter_map(|item| match item {
+                    RunContent::Field(field) => Some(field.clone()),
+                    _ => None,
+                }));
+            }
+        }
+        fields
+    }
+
+    #[test]
+    fn a_field_deleted_in_word_reads_its_code_from_its_deleted_instruction_text() {
+        // Word writes the code of a deleted field in w:delInstrText, here split
+        // over two runs, and its result in w:delText.
+        let body = r#"<w:del w:id="1" w:author="Ada" w:date="2026-01-01T00:00:00Z"><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r w:rsidDel="00A1B2C3"><w:delInstrText xml:space="preserve"> FORMCHECKBOX </w:delInstrText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="separate"/></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="end"/></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="begin"/></w:r><w:r w:rsidDel="00A1B2C3"><w:delInstrText xml:space="preserve"> PA</w:delInstrText></w:r><w:r w:rsidDel="00A1B2C3"><w:delInstrText xml:space="preserve">GE </w:delInstrText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="separate"/></w:r><w:r w:rsidDel="00A1B2C3"><w:delText>3</w:delText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
+        let read: Vec<_> = deleted_fields(body)
+            .iter()
+            .map(|field| {
+                (
+                    field.effective_instruction_text(),
+                    field.legacy_form.as_ref().map(|form| form.value.clone()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                (
+                    "FORMCHECKBOX".to_owned(),
+                    Some(LegacyFormFieldValue::Checked(true))
+                ),
+                ("PAGE".to_owned(), None),
+            ]
+        );
     }
 }

@@ -7694,6 +7694,7 @@ pub(crate) fn story_table_rows(
                     width: table.table_width,
                     height: row.height,
                     baseline: Some(row.height),
+                    math: false,
                     group: GroupElement {
                         transform: Transform::IDENTITY,
                         clip: None,

@@ -1346,6 +1346,10 @@ fn hyperlink_text_takes_run_formatting_and_the_hyperlink_style() {
     assert_eq!(link_run.text(), "our site");
     assert_eq!(link_run.bold_value(), Some(true));
     assert_eq!(link_run.style_id(), Some("Hyperlink"));
+    assert!(
+        doc.style("Hyperlink").is_some(),
+        "the save defines the style"
+    );
     assert_eq!(doc.links()[0].url.as_deref(), Some("https://example.com/"));
 }
 

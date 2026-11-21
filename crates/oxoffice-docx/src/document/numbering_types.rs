@@ -1171,6 +1171,9 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
     let mut depth = 0_usize;
     let mut paragraphs = Vec::new();
     let mut result = Vec::new();
+    // Open `mc:AlternateContent` elements: their depth and whether a branch
+    // of each was read.
+    let mut alternates: Vec<(usize, bool)> = Vec::new();
     loop {
         let (namespace, event) = reader
             .read_resolved_event_into(&mut buffer)
@@ -1182,6 +1185,37 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
                     ResolveResult::Bound(value)
                         if value.as_ref() == WORD_NAMESPACE.as_bytes()
                 );
+                // Word writes each text box twice, in `mc:Choice` and in
+                // `mc:Fallback`: its paragraphs are read once, from the
+                // first branch of each `mc:AlternateContent`.
+                let markup = matches!(
+                    namespace,
+                    ResolveResult::Bound(value)
+                        if value.as_ref() == oxoffice_docx_oxml::namespace::MC_NS.as_bytes()
+                );
+                if markup && element.local_name().as_ref() == b"AlternateContent" {
+                    alternates.push((depth, false));
+                }
+                let branch =
+                    markup && matches!(element.local_name().as_ref(), b"Choice" | b"Fallback");
+                let read_before = branch
+                    && alternates
+                        .last()
+                        .is_some_and(|(at, read)| *at + 1 == depth && *read);
+                if branch
+                    && let Some((at, read)) = alternates.last_mut()
+                    && *at + 1 == depth
+                {
+                    *read = true;
+                }
+                if read_before {
+                    let end = element.to_end().into_owned();
+                    reader
+                        .read_to_end_into(end.name(), &mut Vec::new())
+                        .map_err(|error| Error::Other(error.to_string()))?;
+                    buffer.clear();
+                    continue;
+                }
                 let local_name = element.local_name();
                 if is_word && local_name.as_ref() == b"p" {
                     paragraphs.push(ParagraphState {
@@ -1209,6 +1243,17 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
                     ResolveResult::Bound(value)
                         if value.as_ref() == WORD_NAMESPACE.as_bytes()
                 );
+                // An empty branch is the branch read: what follows is not.
+                if matches!(
+                    namespace,
+                    ResolveResult::Bound(value)
+                        if value.as_ref() == oxoffice_docx_oxml::namespace::MC_NS.as_bytes()
+                ) && matches!(element.local_name().as_ref(), b"Choice" | b"Fallback")
+                    && let Some((at, read)) = alternates.last_mut()
+                    && *at + 1 == depth
+                {
+                    *read = true;
+                }
                 let local_name = element.local_name();
                 if is_word && local_name.as_ref() == b"p" {
                     result.push(CT_PPr::default());
@@ -1218,6 +1263,9 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
             }
             Event::End(ref element) => {
                 depth = depth.saturating_sub(1);
+                if alternates.last().is_some_and(|(at, _)| *at == depth) {
+                    alternates.pop();
+                }
                 let is_word = matches!(
                     namespace,
                     ResolveResult::Bound(value)
@@ -1283,4 +1331,114 @@ pub(super) fn xml_references_numbering_instance(xml: &[u8], id: u32) -> Result<b
         }
         buffer.clear();
     }
+}
+
+/// The numbering and styles of a glossary document (`word/glossary/`),
+/// which resolves its paragraphs' numbering against its own parts, not the
+/// main document's.
+pub(super) struct GlossaryNumbering {
+    pub(super) part_names: Vec<String>,
+    pub(super) numbering: Option<CT_Numbering>,
+    pub(super) styles: CT_Styles,
+    /// Glossary documents whose numbering or styles could not be read.
+    pub(super) skipped: Vec<String>,
+}
+
+impl Document {
+    /// The glossary documents of the package with their own numbering and
+    /// styles, read from the package as it is.
+    pub(super) fn glossary_numbering(&self) -> Result<GlossaryNumbering> {
+        let mut glossary = GlossaryNumbering {
+            part_names: Vec::new(),
+            numbering: None,
+            styles: CT_Styles::default(),
+            skipped: Vec::new(),
+        };
+        let Some(relationships) = self.package.get_part_rels(&self.doc_part_name) else {
+            return Ok(glossary);
+        };
+        for relationship in relationships.items.iter().filter(|relationship| {
+            relationship_is_internal(relationship)
+                && relationship.rel_type == rel_types::GLOSSARY_DOCUMENT
+        }) {
+            let part_name =
+                OpcPackage::resolve_rel_target(&self.doc_part_name, &relationship.target);
+            if let Some(owned) = self.package.get_part_rels(&part_name) {
+                for owned in owned
+                    .items
+                    .iter()
+                    .filter(|owned| relationship_is_internal(owned))
+                {
+                    let target = OpcPackage::resolve_rel_target(&part_name, &owned.target);
+                    let Some(bytes) = self.package.get_part(&target) else {
+                        continue;
+                    };
+                    // A glossary part that cannot be read leaves the
+                    // glossary out of the checks, as before it had scopes.
+                    if owned.rel_type == rel_types::NUMBERING {
+                        let Ok(numbering) = CT_Numbering::from_xml(bytes) else {
+                            glossary.skipped.push(part_name.clone());
+                            continue;
+                        };
+                        glossary.numbering = Some(numbering);
+                    } else if owned.rel_type == rel_types::STYLES {
+                        let Ok(styles) = CT_Styles::from_xml(bytes) else {
+                            glossary.skipped.push(part_name.clone());
+                            continue;
+                        };
+                        glossary.styles = styles;
+                    }
+                }
+            }
+            glossary.part_names.push(part_name);
+        }
+        Ok(glossary)
+    }
+}
+
+/// The numbering instance and level a paragraph with direct properties
+/// `direct` is numbered at, resolved against `numbering` and `styles`:
+/// direct numbering, then the paragraph style's, the level of a style a
+/// definition links last. `None` when it is not numbered.
+pub(super) fn effective_numbering_reference(
+    numbering: Option<&CT_Numbering>,
+    styles: &CT_Styles,
+    direct: &CT_PPr,
+) -> Option<(u32, u32)> {
+    let style_id = direct.style_id.as_deref().or_else(|| {
+        styles
+            .get_default(StyleType::Paragraph)
+            .map(|style| style.style_id.as_str())
+    });
+    let inherited = style::resolve_paragraph_properties(style_id, styles);
+    let num_id = direct.num_id.or(inherited.num_id).filter(|id| *id != 0)?;
+    let level = direct
+        .num_ilvl
+        .or(inherited.num_ilvl)
+        .or_else(|| numbering_level_for_style(numbering, styles, num_id, style_id))
+        .unwrap_or(0);
+    Some((num_id, level))
+}
+
+/// The level of definition `num_id` that names `style_id` or a style it is
+/// based on as its paragraph style.
+pub(super) fn numbering_level_for_style(
+    numbering: Option<&CT_Numbering>,
+    styles: &CT_Styles,
+    num_id: u32,
+    style_id: Option<&str>,
+) -> Option<u32> {
+    let definition = numbering?.get_abstract_num_for(num_id)?;
+    let mut style_id = style_id?;
+    for _ in 0..styles.styles.len() {
+        if let Some(level) = definition
+            .levels
+            .iter()
+            .find(|level| level.p_style.as_deref() == Some(style_id))
+        {
+            return Some(level.ilvl);
+        }
+        style_id = styles.get_by_id(style_id)?.based_on.as_deref()?;
+    }
+    None
 }

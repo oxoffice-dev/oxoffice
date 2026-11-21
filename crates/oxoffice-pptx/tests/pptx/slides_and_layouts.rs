@@ -1868,8 +1868,111 @@ fn section_entry_data_that_leans_on_its_old_section_is_left_behind_on_a_move() {
 }
 
 #[test]
+fn setting_core_properties_keeps_a_bad_character_the_file_held_and_refuses_a_new_one() {
+    // Another producer wrote a character reference XML 1.0 forbids. The
+    // core part is patched field by field, so the untouched field keeps the
+    // file's bytes; a new value with such a character is refused by name.
+    let mut prs = Presentation::from_bytes(&saved_with_reference()).unwrap();
+    let mut core = prs.core_properties().cloned().expect("core properties");
+    core.subject = Some("bell\u{7}".to_owned());
+    let message = prs
+        .set_core_properties(core.clone())
+        .expect_err("a new bad value is refused")
+        .to_string();
+    assert!(
+        message.contains("core property subject") && message.contains("U+0007"),
+        "{message}"
+    );
+    core.subject = None;
+    core.title = Some("Q3".to_owned());
+    prs.set_core_properties(core)
+        .expect("the untouched field is the file's");
+    let saved = prs.to_bytes().expect("it saves");
+    let package = OpcPackage::from_reader(Cursor::new(saved.clone())).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/docProps/core.xml").unwrap());
+    assert!(xml.contains("J&#11;Doe") && xml.contains(">Q3<"), "{xml}");
+    let mut prs = Presentation::from_bytes(&saved).unwrap();
+    let core = prs.core_properties().unwrap();
+    assert_eq!(core.last_modified_by.as_deref(), Some("J\u{b}Doe"));
+    // The mutable model goes through the same patch at the save.
+    prs.core_properties_mut().category = Some("Plans".to_owned());
+    let saved = prs.to_bytes().expect("it saves after a mutable edit");
+    let package = OpcPackage::from_reader(Cursor::new(saved)).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/docProps/core.xml").unwrap());
+    assert!(
+        xml.contains("J&#11;Doe") && xml.contains(">Plans<"),
+        "{xml}"
+    );
+    // A value the patch cannot express exactly is written whole, as before,
+    // and the character the file held goes.
+    prs.core_properties_mut().title = Some(String::new());
+    let prs = Presentation::from_bytes(&prs.to_bytes().expect("an empty value saves")).unwrap();
+    let core = prs.core_properties().unwrap();
+    assert_eq!(core.category.as_deref(), Some("Plans"));
+    assert_eq!(core.last_modified_by.as_deref(), Some("JDoe"));
+    // So is a part holding a duplicate element.
+    let mut package = OpcPackage::from_reader(Cursor::new(saved_with_reference())).unwrap();
+    let xml = String::from_utf8(package.get_part("/docProps/core.xml").unwrap().to_vec()).unwrap();
+    let xml = xml.replace(
+        "<dc:title>Deck</dc:title>",
+        "<dc:title>Deck</dc:title><dc:creator>A</dc:creator><dc:creator>B</dc:creator>",
+    );
+    package.set_part("/docProps/core.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    prs.core_properties_mut().creator = Some("C".to_owned());
+    let prs = Presentation::from_bytes(&prs.to_bytes().expect("a duplicate saves")).unwrap();
+    assert_eq!(prs.core_properties().unwrap().creator.as_deref(), Some("C"));
+    // A bad value set through the mutable model is refused by name by the
+    // next set_core_properties, which compares with the part.
+    let mut prs = Presentation::from_bytes(&saved_with_reference()).unwrap();
+    prs.core_properties_mut().title = Some("a\u{7}".to_owned());
+    let mut core = prs.core_properties().cloned().unwrap();
+    core.category = Some("Plans".to_owned());
+    let message = prs
+        .set_core_properties(core)
+        .expect_err("refused")
+        .to_string();
+    assert!(message.contains("core property title"), "{message}");
+}
+
+#[test]
+fn a_core_part_without_its_package_relationship_is_not_taken_over() {
+    // Both the setter and the save refuse to adopt a part nothing points at.
+    let mut package = OpcPackage::from_reader(Cursor::new(saved_with_reference())).unwrap();
+    package
+        .package_rels
+        .items
+        .retain(|relationship| !relationship.rel_type.ends_with("/core-properties"));
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert!(prs.core_properties().is_none());
+    let core = oxoffice_pptx::CoreProperties {
+        title: Some("Q3".to_owned()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        prs.set_core_properties(core),
+        Err(Error::CorePropertiesPartCollision { .. })
+    ));
+}
+
+/// A new deck whose core part holds a title and a `lastModifiedBy` with a
+/// character reference XML 1.0 forbids, as another producer wrote it.
+fn saved_with_reference() -> Vec<u8> {
+    let mut package = OpcPackage::from_reader(Cursor::new(new_deck().to_bytes().unwrap())).unwrap();
+    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Deck</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
+    package.set_part("/docProps/core.xml", core.as_bytes().to_vec());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    bytes.into_inner()
+}
+
+#[test]
 fn a_carriage_return_in_a_core_property_survives_a_save() {
-    // The core properties part is written whole at the save.
+    // A new deck's core part is patched at the save, field by field.
     let mut prs = new_deck();
     prs.core_properties_mut().title = Some("first\rsecond".to_owned());
     prs.core_properties_mut().description = Some("one\r\ntwo".to_owned());
@@ -1952,4 +2055,43 @@ fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
         let xml = String::from_utf8_lossy(package.get_part(part).unwrap());
         assert!(xml.contains(written), "{part}: {written} in {xml}");
     }
+}
+
+#[test]
+fn a_removed_property_removes_its_element() {
+    // A new deck's own core part writes no empty element either.
+    let mut prs = new_deck();
+    prs.core_properties_mut().created = Some(String::new());
+    let saved = saved_part_text(&prs, "/docProps/core.xml").unwrap();
+    assert!(!saved.contains("created"), "{saved}");
+
+    let mut prs = new_deck();
+    let mut core = prs.core_properties().cloned().unwrap_or_default();
+    core.created = Some("2026-01-01T00:00:00Z".to_owned());
+    core.title = Some("Plan".to_owned());
+    prs.set_core_properties(core).unwrap();
+    let mut prs = reopen(&prs);
+    let mut core = prs.core_properties().cloned().unwrap();
+    core.created = None;
+    // An empty value reads back as no value: it removes the property too.
+    core.title = Some(String::new());
+    prs.set_core_properties(core).unwrap();
+    let saved = saved_part_text(&reopen(&prs), "/docProps/core.xml").unwrap();
+    // An empty W3CDTF date is not a valid date: the element goes.
+    assert!(
+        !saved.contains("created") && !saved.contains("title"),
+        "{saved}"
+    );
+
+    let mut prs = corpus_deck("authored/deck.pptx");
+    let mut app = prs.application_properties().unwrap().clone();
+    assert!(app.slides.is_some() && app.company.is_some(), "{app:?}");
+    app.slides = None;
+    app.company = None;
+    prs.set_application_properties(app).unwrap();
+    let saved = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(
+        !saved.contains("<Slides>") && !saved.contains("Company"),
+        "{saved}"
+    );
 }

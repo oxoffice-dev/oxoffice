@@ -1,13 +1,13 @@
 {
   "file": "authored/paper.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
-  "resources": "a838625ee4f8d78b504685b9dbcdaccfd0a049f2a4985934d3bc33fc95312c6d",
-  "outline_and_tags": "d8d635724de083e0ec2db653b307ebd2f1f6b4d379d21d30b349471feb135569",
+  "reason": "display equations take one line as tall as themselves, as in Word (#156): no empty line after them, no default space above, auto spacing scales the text only; the Word and authored theses go from 26 to 25 pages",
+  "resources": "7a28777bcb94ac1605c5ef1b89ac052b4d197b1e56048e0cdb8461c9892578ed",
+  "outline_and_tags": "68d296b3d6333065e9ff832961330cdd994d5801f5936abf3fbe756960c4494c",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
     {"page": 1, "pixels": "6c26a1a41e8f800d122fd505f5ccc0e40ffad09002e8978a1346135d244ca7a5", "content": "d1a8539f97062a55b8076a02358c939829816cdd3a08b90ff5d71fd4fdd9accb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "60daa84e2d037fb0bf93105280979b6c662f5b98766f5db44f454bbc153b74a2", "content": "dd7e3de86e956ee2e35f5f1c4c27cf7368353af0ac3219b5335c8ff438890e5e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "90fea5f027f3d473893f9d18b80dbe0546c75204778f0117b5a3e203a88b8ef9", "content": "0a972c8a4686758ee92802573d5754cbba25239c438f67d03cd803c9a47f00c3", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
+    {"page": 2, "pixels": "f6ad236cb6dfb2437fb150360fe0537e67911138bf24f23f8bdb12c95bf350c4", "content": "c4bacd64dea49f047e1896aa562b8bebcc02c371fdbfc55222be5eea640736f1", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "490f859d88531e1a327b80a7e5148aaccbc913e823872ff7b6d14e17b72cb440", "content": "f532901caa38f9bc8b2b2b2819935b88920d050f45209e465b2a1033b826be5f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
     {"page": 4, "pixels": "76e1b3fd8c2b323985402fed303cedc866216b5239eb20378f124b718ca689d4", "content": "a73ff154d6a79048f7de42bb2dd80330a5ad7996231ba3742278e219892de738", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
   ]
 }

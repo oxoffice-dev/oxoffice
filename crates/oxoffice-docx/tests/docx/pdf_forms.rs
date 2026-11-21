@@ -1517,8 +1517,8 @@ fn legacy_fields_draw_exactly_what_the_static_layout_draws() {
 }
 
 /// A legacy text field inside a tracked deletion, its instruction and result
-/// in plain runs, so the model reads it as a field. Word writes `delInstrText`
-/// there, which the model does not read as a field at all (checked below).
+/// in plain runs. Word writes `delInstrText` and `delText` there (checked
+/// below): the model reads both shapes as the same field.
 const DELETED_LEGACY: &str = r#"<w:del w:id="90" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Old"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Old value</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
 
 #[test]
@@ -1540,7 +1540,7 @@ fn a_legacy_field_in_a_tracked_deletion_is_no_field_and_says_so() {
     let layout = doc.layout_with_options(fillable()).unwrap();
     assert_eq!(field_names(&layout.layout), ["notes"]);
 
-    // Word's own shape of a deleted field is no field to begin with.
+    // Word's own shape of a deleted field says so too.
     let word_shape = DELETED_LEGACY
         .replace("w:instrText", "w:delInstrText")
         .replace("<w:t>Old value</w:t>", "<w:delText>Old value</w:delText>");
@@ -1549,6 +1549,10 @@ fn a_legacy_field_in_a_tracked_deletion_is_no_field_and_says_so() {
     ));
     let layout = doc.layout_with_options(fillable()).unwrap();
     assert!(field_names(&layout.layout).is_empty());
+    assert_eq!(
+        diagnostics_about(&layout.layout, "Old"),
+        ["form field \"Old\" stays static: a tracked change deletes it"]
+    );
 }
 
 #[test]
@@ -1686,4 +1690,122 @@ fn a_legacy_field_inside_another_field_stays_static_and_says_so() {
         .filter(|diagnostic| diagnostic.message.contains("\"Nested\" stays static"))
         .count();
     assert_eq!(said, 1);
+}
+
+fn named_values(doc: &Document) -> Vec<(String, String)> {
+    doc.layout_with_options(fillable())
+        .unwrap()
+        .layout
+        .form_fields
+        .iter()
+        .map(|field| match &field.kind {
+            FormFieldKind::Text { value, .. } => (field.name.clone(), value.clone()),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn controls_inside_a_container_follow_document_order_through_its_tracked_changes() {
+    // A tracked insertion inside the container comes before a later
+    // control: the repeated name goes to the later one.
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="person"/><w:richText/></w:sdtPr><w:sdtContent><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:ins><w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Doe</w:t></w:r></w:sdtContent></w:sdt></w:sdtContent></w:sdt></w:p>"#,
+    );
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Jane".to_owned()),
+            ("name_2".to_owned(), "Doe".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_control_in_a_tracked_change_inside_a_hyperlink_follows_document_order() {
+    let doc = doc_with_body(
+        r#"<w:p><w:hyperlink w:anchor="top"><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:ins></w:hyperlink><w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Doe</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Jane".to_owned()),
+            ("name_2".to_owned(), "Doe".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_control_whose_text_is_only_a_tracked_insertion_follows_a_legacy_field_before_it() {
+    let first = legacy(
+        0,
+        "First",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("one"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{first}<w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="late"/><w:text/></w:sdtPr><w:sdtContent><w:ins w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>two</w:t></w:r></w:ins></w:sdtContent></w:sdt></w:p>"#
+    ));
+    assert_eq!(names_of(&doc), ["First", "late"]);
+}
+
+/// The fields' names with the value each shows, or the kind of a field
+/// that is not text.
+fn names_and_values(doc: &Document) -> Vec<(String, String)> {
+    doc.layout_with_options(fillable())
+        .unwrap()
+        .layout
+        .form_fields
+        .iter()
+        .map(|field| match &field.kind {
+            FormFieldKind::Text { value, .. } => (field.name.clone(), value.clone()),
+            other => (field.name.clone(), format!("{other:?}")),
+        })
+        .collect()
+}
+
+#[test]
+fn an_empty_control_after_a_tracked_insertion_in_a_container_takes_the_later_name() {
+    // The empty control has no run: it orders by the controls listed
+    // before it, the inserted one included.
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="person"/><w:richText/></w:sdtPr><w:sdtContent><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt></w:ins><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let named = names_and_values(&doc);
+    assert_eq!(
+        named[0],
+        ("name".to_owned(), "Jane".to_owned()),
+        "{named:?}"
+    );
+}
+
+#[test]
+fn an_empty_control_before_a_drawn_one_takes_the_first_name() {
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:t xml:space="preserve">Label </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="F"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt><w:sdt><w:sdtPr><w:tag w:val="F"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>x</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let named = names_and_values(&doc);
+    assert_eq!(named[1], ("F_2".to_owned(), "x".to_owned()), "{named:?}");
+}
+
+#[test]
+fn a_legacy_field_that_wraps_beside_text_says_form_field() {
+    let words = "wrapping words ".repeat(30);
+    let field = legacy(
+        0,
+        "Beside",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some(&words),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Label: </w:t></w:r>{field}<w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = diagnostics_about(&layout.layout, "Beside");
+    assert_eq!(
+        said,
+        ["form field \"Beside\": other text on its lines sits under its box"]
+    );
 }

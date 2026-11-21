@@ -1933,6 +1933,10 @@ impl Default for CT_Styles {
     }
 }
 
+/// The rank of `w:rsid` among the children of a style kept in
+/// `CT_Style::extra_xml`: the editing session that last saved the style.
+pub const STYLE_RSID_RANK: u8 = 19;
+
 fn style_child_rank(name: &[u8], word_prefixes: &[String]) -> u8 {
     let local = name.rsplit(|byte| *byte == b':').next().unwrap_or(name);
     if !is_word_element(name, local, word_prefixes) {
@@ -1954,7 +1958,7 @@ fn style_child_rank(name: &[u8], word_prefixes: &[String]) -> u8 {
         b"personal" => 12,
         b"personalCompose" => 13,
         b"personalReply" => 14,
-        b"rsid" => 19,
+        b"rsid" => STYLE_RSID_RANK,
         b"pPr" => 20,
         b"rPr" => 21,
         b"tblPr" => 22,

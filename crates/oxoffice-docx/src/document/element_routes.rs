@@ -15,6 +15,7 @@ impl Document {
     ///
     /// The item kind, physical story and surrounding bytes remain unchanged.
     /// Relationship-bearing content must already belong to this story part.
+    /// The footnotes and endnotes only the replaced content referenced go too.
     pub fn replace_story_content(
         &mut self,
         location: &ContentLocation,
@@ -64,6 +65,8 @@ impl Document {
             _ => None,
         };
         let replacement = content_fragment_for_insertion(&candidate, &location.story, &fragment)?;
+        // Replaced main-part content takes the notes only it referenced.
+        let before = (part_name == candidate.doc_part_name).then(|| source_xml.clone());
         let mut xml = source_xml;
         if let Some(ranges) = paired {
             let mut edits = Vec::with_capacity(ranges.len());
@@ -82,7 +85,11 @@ impl Document {
             let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
             xml.splice(item_range, replacement);
         }
+        let after = before.as_ref().map(|_| xml.clone());
         set_story_source_xml(&mut candidate, &part_name, xml)?;
+        if let (Some(before), Some(after)) = (before, after) {
+            candidate.remove_unreferenced_notes(&before, &after)?;
+        }
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -145,8 +152,14 @@ impl Document {
 
         let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
 
+        // Replaced main-part content takes the notes only it referenced.
+        let before = (part_name == candidate.doc_part_name).then(|| xml.clone());
         xml.splice(item.full, replacement);
+        let after = before.as_ref().map(|_| xml.clone());
         set_story_source_xml(&mut candidate, &part_name, xml)?;
+        if let (Some(before), Some(after)) = (before, after) {
+            candidate.remove_unreferenced_notes(&before, &after)?;
+        }
 
         candidate.reconcile_comment_removal(self)?;
 

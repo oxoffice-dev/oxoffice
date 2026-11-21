@@ -570,7 +570,12 @@ impl Engine {
                         && path.len() == 1
                         && input.document.body.accepted_paragraph_joins_next(path[0])
                         && para.equations.is_empty()
-                        && para.bookmark_markers.is_empty() =>
+                        && para.bookmark_markers.is_empty()
+                        && {
+                            let block_bookmarks = input.block_bookmarks();
+                            let (before, after) = block_bookmarks.markers(para);
+                            before.is_empty() && after.is_empty()
+                        } =>
                 {
                     if !accepted_paragraph_is_blank(para) {
                         carried = Some(match carried.take() {
@@ -2203,7 +2208,15 @@ impl Engine {
         // block would not carry.
         let form = crate::forms::body_form_paragraph(input, source_node);
         let form_block = form.is_some_and(|paragraph| paragraph.block);
-        if !paragraph_is_cache_safe(paragraph, styles) || excluded_owner || form_block {
+        // A bookmark marker between blocks belongs to this paragraph too.
+        let block_markers = input.block_bookmarks();
+        let (block_before, block_after) = block_markers.markers(paragraph);
+        let block_bookmarks = !block_before.is_empty() || !block_after.is_empty();
+        if !paragraph_is_cache_safe(paragraph, styles)
+            || block_bookmarks
+            || excluded_owner
+            || form_block
+        {
             // Traversal-sensitive content can change generated state consumed
             // by later blocks. The conservative boundary is the first such
             // block, after which no retained block is read in this layout.

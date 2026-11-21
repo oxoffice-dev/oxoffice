@@ -263,35 +263,44 @@ pub(super) fn missing_note_specials(
     Ok(additions)
 }
 
-pub(super) fn owners_reference_hyperlink_style(mut pending: Vec<WordXmlOwner<'_>>) -> bool {
-    fn styled(run: &CT_R) -> bool {
-        run.properties
+/// Marks in `found` each character style of `wanted` that a run of these
+/// owners, or of the revisions they hold, uses; stops once every one is.
+pub(super) fn owners_reference_styles(
+    mut pending: Vec<WordXmlOwner<'_>>,
+    wanted: &[&str],
+    found: &[Cell<bool>],
+) {
+    let mark = |run: &CT_R| {
+        if let Some(style) = run
+            .properties
             .as_ref()
             .and_then(|properties| properties.style_id.as_deref())
-            == Some("Hyperlink")
-    }
-    fn revision_styled(revision: &CT_Revision) -> bool {
-        if let Some(paragraph) = revision.content_paragraph() {
-            return paragraph.source_runs().into_iter().any(styled);
+            && let Some(index) = wanted.iter().position(|id| *id == style)
+        {
+            found[index].set(true);
         }
-        matches!(revision.content(), oxoffice_docx_oxml::revision::RevisionContent::Runs(runs) if runs.iter().any(styled))
-            || revision
-                .nested_revisions()
-                .iter()
-                .any(|(_, nested)| revision_styled(nested))
+    };
+    fn revision_runs(revision: &CT_Revision, mark: &dyn Fn(&CT_R)) {
+        if let Some(paragraph) = revision.content_paragraph() {
+            paragraph.source_runs().into_iter().for_each(mark);
+            return;
+        }
+        if let oxoffice_docx_oxml::revision::RevisionContent::Runs(runs) = revision.content() {
+            runs.iter().for_each(mark);
+        }
+        for (_, nested) in revision.nested_revisions().iter() {
+            revision_runs(nested, mark);
+        }
     }
     while let Some(owner) = pending.pop() {
+        if found.iter().all(Cell::get) {
+            return;
+        }
         match owner {
             WordXmlOwner::Paragraph(paragraph) => {
-                if paragraph.source_runs().into_iter().any(styled) {
-                    return true;
-                }
+                paragraph.source_runs().into_iter().for_each(&mark);
             }
-            WordXmlOwner::Run(run) => {
-                if styled(run) {
-                    return true;
-                }
-            }
+            WordXmlOwner::Run(run) => mark(run),
             WordXmlOwner::Table(table) => {
                 pending.extend(table.rows.iter().map(WordXmlOwner::Row));
                 pending.extend(
@@ -317,12 +326,8 @@ pub(super) fn owners_reference_hyperlink_style(mut pending: Vec<WordXmlOwner<'_>
                 }));
             }
             WordXmlOwner::Control(control) => {
-                if control
-                    .revisions()
-                    .iter()
-                    .any(|(_, revision)| revision_styled(revision))
-                {
-                    return true;
+                for (_, revision) in control.revisions().iter() {
+                    revision_runs(revision, &mark);
                 }
                 for item in &control.content {
                     match item {
@@ -342,7 +347,19 @@ pub(super) fn owners_reference_hyperlink_style(mut pending: Vec<WordXmlOwner<'_>
             }
         }
     }
-    false
+}
+
+/// The superscript mark style of a footnote or an endnote reference.
+pub(super) fn note_reference_style(kind: StoryKind) -> StyleBuilder {
+    let (id, name) = if kind == StoryKind::Endnote {
+        ("EndnoteReference", "endnote reference")
+    } else {
+        ("FootnoteReference", "footnote reference")
+    };
+    StyleBuilder::character(id, name).run_properties(CT_RPr {
+        vert_align: Some("superscript".into()),
+        ..Default::default()
+    })
 }
 
 pub(super) fn serialized_note_fragment(

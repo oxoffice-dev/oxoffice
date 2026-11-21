@@ -671,6 +671,12 @@ impl Document {
     }
 
     /// Convert the document to a complete HTML document string.
+    ///
+    /// The export holds the body only: comments, footnotes, endnotes,
+    /// headers and footers are left out (`oxoffice docx convert -t html|md`
+    /// appends them after the body). Equations are written as MathML in
+    /// HTML and LaTeX in Markdown, internal links point at an anchor on
+    /// their bookmark.
     pub fn to_html(&self) -> String {
         self.to_html_with_diagnostics().0
     }
@@ -700,6 +706,12 @@ impl Document {
     }
 
     /// Convert to an HTML fragment without the document wrapper.
+    ///
+    /// The export holds the body only: comments, footnotes, endnotes,
+    /// headers and footers are left out (`oxoffice docx convert -t html|md`
+    /// appends them after the body). Equations are written as MathML in
+    /// HTML and LaTeX in Markdown, internal links point at an anchor on
+    /// their bookmark.
     pub fn to_html_fragment(&self) -> String {
         self.to_html_fragment_with_diagnostics().0
     }
@@ -720,6 +732,12 @@ impl Document {
     }
 
     /// Convert to Markdown.
+    ///
+    /// The export holds the body only: comments, footnotes, endnotes,
+    /// headers and footers are left out (`oxoffice docx convert -t html|md`
+    /// appends them after the body). Equations are written as MathML in
+    /// HTML and LaTeX in Markdown, internal links point at an anchor on
+    /// their bookmark.
     pub fn to_markdown(&self) -> String {
         self.to_markdown_with_diagnostics().0
     }
@@ -1563,6 +1581,7 @@ impl Document {
         }
 
         let mut input = LayoutInput {
+            block_bookmarks: Default::default(),
             form_fields: false,
             form_paragraphs: None,
             sequence_snapshot: None,
