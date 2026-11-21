@@ -482,12 +482,6 @@ pub(crate) fn write_pdf_impl(
     prepared_fonts: BTreeMap<FontId, PreparedFont>,
 ) -> Vec<u8> {
     let mut pdf = Pdf::new();
-    if profile.is_some() {
-        pdf.set_file_id((
-            conformance::FILE_IDENTIFIER.to_vec(),
-            conformance::FILE_IDENTIFIER.to_vec(),
-        ));
-    }
 
     // ── Reference ID allocation ──────────────────────────────────────
     let mut next_id = 1;
@@ -595,6 +589,11 @@ pub(crate) fn write_pdf_impl(
         &mut alloc,
     );
 
+    let language = layout
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.language.as_deref());
+
     // ── Write catalog ────────────────────────────────────────────────
     {
         let mut cat = pdf.catalog(catalog_id);
@@ -605,13 +604,18 @@ pub(crate) fn write_pdf_impl(
         if let Some(tagged) = tagged.as_ref() {
             cat.pair(Name(b"StructTreeRoot"), tagged.root_ref);
             cat.mark_info().marked(true).suspects(false);
-            cat.lang(TextStr("und"));
+            cat.lang(TextStr(language.unwrap_or("und")));
             cat.viewer_preferences().display_doc_title(true);
             if let Some(metadata_id) = metadata_id {
                 cat.metadata(metadata_id);
             }
-        } else if let Some(metadata_id) = metadata_id {
-            cat.metadata(metadata_id);
+        } else {
+            if let Some(language) = language {
+                cat.lang(TextStr(language));
+            }
+            if let Some(metadata_id) = metadata_id {
+                cat.metadata(metadata_id);
+            }
         }
         if let Some(forms) = forms.as_ref() {
             forms.write_catalog_entry(&mut cat);
@@ -667,20 +671,6 @@ pub(crate) fn write_pdf_impl(
         info.producer(TextStr("oxoffice"));
     }
 
-    if let Some(metadata_id) = metadata_id {
-        let xmp = if let Some(profile) = profile {
-            conformance::archival_xmp(layout, profile, declares_pdfua)
-        } else {
-            let title = layout
-                .metadata
-                .as_ref()
-                .and_then(|meta| meta.title.as_deref())
-                .unwrap_or("Untitled document");
-            accessibility_xmp(title)
-        };
-        pdf.metadata(metadata_id, &xmp).finish();
-    }
-
     if let Some(icc_profile_id) = icc_profile_id {
         let mut icc = pdf.icc_profile(icc_profile_id, conformance::SRGB2014);
         icc.n(3);
@@ -715,6 +705,9 @@ pub(crate) fn write_pdf_impl(
         if prepared.font_data.synthetic_italic {
             base_name.push_str("-SyntheticItalic");
         }
+        // A subset font's name starts with six capital letters and a plus
+        // sign (ISO 32000-1, 9.6.4), here taken from the subset's digest.
+        let base_name = format!("{}+{base_name}", subset_tag(&prepared.subset_bytes));
 
         // Type0 font (composite font)
         let mut type0 = pdf.type0_font(type0_ref);
@@ -1004,7 +997,34 @@ pub(crate) fn write_pdf_impl(
         tagged.write(&mut pdf, &page_ids, &widgets);
     }
 
+    // The file identifier is a digest of everything written so far, so two
+    // documents get different identifiers and one document always the same.
+    // The metadata stream, which carries it, comes last.
+    let file_id = file_identifier(pdf.as_bytes());
+    if let Some(metadata_id) = metadata_id {
+        let xmp = if let Some(profile) = profile {
+            conformance::archival_xmp(layout, profile, declares_pdfua, &file_id)
+        } else {
+            let title = layout
+                .metadata
+                .as_ref()
+                .and_then(|meta| meta.title.as_deref())
+                .unwrap_or("Untitled document");
+            accessibility_xmp(title)
+        };
+        pdf.metadata(metadata_id, &xmp).finish();
+    }
+    pdf.set_file_id((file_id.to_vec(), file_id.to_vec()));
     pdf.finish()
+}
+
+/// The first 16 bytes of the SHA-256 digest of `bytes`.
+fn file_identifier(bytes: &[u8]) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    let mut id = [0; 16];
+    id.copy_from_slice(&digest[..16]);
+    id
 }
 
 fn layout_uses_notdef(layout: &LayoutResult) -> bool {
@@ -2249,6 +2269,16 @@ fn set_color_space(img: &mut pdf_writer::writers::ImageXObject<'_>, cs: &str) {
             img.color_space().device_rgb();
         }
     }
+}
+
+/// Six capital letters naming a font subset, from the digest of its bytes.
+fn subset_tag(subset: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(subset)
+        .iter()
+        .take(6)
+        .map(|byte| char::from(b'A' + byte % 26))
+        .collect()
 }
 
 /// Create a sanitized PostScript font name.

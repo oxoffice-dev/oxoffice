@@ -689,6 +689,9 @@ pub struct DocumentMetadata {
     pub keywords: Option<String>,
     /// Creator application.
     pub creator: Option<String>,
+    /// The document's main language as a BCP 47 tag (`en-US`), written as
+    /// the PDF catalog's `/Lang`; `None` when the document does not say.
+    pub language: Option<String>,
 }
 
 /// An outline/bookmark entry for PDF generation.

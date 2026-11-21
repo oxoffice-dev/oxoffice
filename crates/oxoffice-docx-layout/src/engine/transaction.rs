@@ -1989,12 +1989,17 @@ impl Engine {
         let mut retained_pages = restart_record_eligible.then(|| pages.clone());
 
         // Convert core properties to document metadata
-        let metadata = input.core_properties.as_ref().map(|cp| DocumentMetadata {
-            title: cp.title.clone(),
-            author: cp.creator.clone(),
-            subject: cp.subject.clone(),
-            keywords: cp.keywords.clone(),
-            creator: Some("oxoffice".to_string()),
+        let language = document_language(&input.styles);
+        let metadata = (input.core_properties.is_some() || language.is_some()).then(|| {
+            let cp = input.core_properties.as_ref();
+            DocumentMetadata {
+                title: cp.and_then(|cp| cp.title.clone()),
+                author: cp.and_then(|cp| cp.creator.clone()),
+                subject: cp.and_then(|cp| cp.subject.clone()),
+                keywords: cp.and_then(|cp| cp.keywords.clone()),
+                creator: Some("oxoffice".to_string()),
+                language,
+            }
         });
 
         if restart_record_eligible
@@ -2683,4 +2688,28 @@ impl Engine {
         self.pending_header_footer_cache_bytes += entry.bytes;
         pending.push_back(entry);
     }
+}
+
+/// The document's main language, as Word reads it: the language of the
+/// default paragraph style, else of the document defaults (`w:lang/@w:val`).
+fn document_language(styles: &CT_Styles) -> Option<String> {
+    let language = |rpr: Option<&CT_RPr>| {
+        rpr.and_then(|rpr| rpr.language.as_deref())
+            .map(str::trim)
+            .filter(|language| !language.is_empty())
+            .map(str::to_owned)
+    };
+    language(
+        styles
+            .get_default(oxoffice_docx_oxml::styles::StyleType::Paragraph)
+            .and_then(|style| style.rpr.as_ref()),
+    )
+    .or_else(|| {
+        language(
+            styles
+                .doc_defaults
+                .as_ref()
+                .and_then(|defaults| defaults.rpr.as_ref()),
+        )
+    })
 }
