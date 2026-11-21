@@ -666,7 +666,7 @@ fn a_display_equation_alone_in_its_paragraph_takes_one_line() {
         tight("Plain one"),
         tight("Plain two"),
         // A bookmark a PAGEREF targets leaves a marker after the equation,
-        // or before it with an empty run.
+        // or before it (the empty run beside it makes no item).
         tight("Marked before"),
         format!(
             r#"<w:p>{TIGHT}<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>C=x</m:t></m:r></m:oMath></m:oMathPara><w:bookmarkStart w:id="7" w:name="equation"/><w:bookmarkEnd w:id="7"/></w:p>"#
@@ -743,35 +743,61 @@ fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
 // Word 16.115 scales the text of an equation line by proportional spacing,
 // not the equation: at 1.15 lines, "Before" to "After" around a display sum
 // grows by 7.75 and 8.22 pt (6 pt after, plus 15 % of a Cambria 11 line), as
-// it does around a one-line "C=x" (8.0 and 8.0).
+// it does around a one-line "C=x" (8.0 and 8.0), and around a line holding
+// an inline fraction by 7.74 and 7.98.
 #[test]
 fn proportional_spacing_scales_the_text_of_an_equation_line_not_the_equation() {
-    let double =
-        r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="480" w:lineRule="auto"/></w:pPr>"#;
+    let spaced =
+        r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="276" w:lineRule="auto"/></w:pPr>"#;
+    let inline = |ppr: &str| {
+        format!(
+            r#"<w:p>{ppr}<w:r><w:t xml:space="preserve">Ratio </w:t></w:r><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath><w:r><w:t xml:space="preserve"> inline</w:t></w:r></w:p>"#
+        )
+    };
     let body = [
         tight("Single before"),
         display_equation(TIGHT, SUM),
         tight("Single after"),
-        tight("Double before"),
-        display_equation(double, SUM),
-        tight("Double after"),
+        tight("Spaced before"),
+        display_equation(spaced, SUM),
+        tight("Spaced after"),
+        tight("Inline single before"),
+        inline(TIGHT),
+        tight("Inline single after"),
+        tight("Inline spaced before"),
+        inline(spaced),
+        tight("Inline spaced after"),
         tight("Plain one"),
         tight("Plain two"),
     ]
     .concat();
     let pdf = pdf_of(&doc_with_body(&body));
     let line = baseline_step(&pdf, "Plain one", "Plain two");
-    let single = baseline_step(&pdf, "Single before", "Single after");
-    let double = baseline_step(&pdf, "Double before", "Double after");
-    assert!(
-        single > 2.0 * line + 10.0,
-        "the sum is taller than a line: {single:.2} pt"
-    );
-    assert!(
-        (double - single - line).abs() < 1.0,
-        "double spacing adds {:.2} pt to the sum's line, one text line is {line:.2}",
-        double - single
-    );
+    for (shape, single, spaced) in [
+        (
+            "display sum",
+            ("Single before", "Single after"),
+            ("Spaced before", "Spaced after"),
+        ),
+        (
+            "inline fraction",
+            ("Inline single before", "Inline single after"),
+            ("Inline spaced before", "Inline spaced after"),
+        ),
+    ] {
+        let single = baseline_step(&pdf, single.0, single.1);
+        let spaced = baseline_step(&pdf, spaced.0, spaced.1);
+        assert!(
+            single > 2.0 * line + 8.0,
+            "the {shape} is taller than a line: {single:.2} pt"
+        );
+        assert!(
+            (spaced - single - 0.15 * line).abs() < 0.4,
+            "1.15 lines add {:.2} pt to the {shape}'s line, 15 % of a text line is {:.2}",
+            spaced - single,
+            0.15 * line
+        );
+    }
 }
 
 // Word 16.115 adds no space for m:preSp and m:postSp around a display
@@ -789,6 +815,12 @@ fn math_pre_and_post_spacing_add_nothing_around_a_display_equation() {
         let doc = with_math_settings(
             &body,
             &format!(r#"{display_defaults}<m:preSp m:val="240"/><m:postSp m:val="120"/>"#),
+        );
+        assert_eq!(
+            doc.math_properties()
+                .map(|properties| (properties.pre_spacing, properties.post_spacing)),
+            Some((Some(240), Some(120))),
+            "the spacing is read"
         );
         let spaced = baseline_step(&pdf_of(&doc), "Before", "After");
         assert!(
