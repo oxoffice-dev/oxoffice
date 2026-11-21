@@ -107,7 +107,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "conne
 [[file]]
 path = "google/contract.docx"
 producer = "Google Docs export"
-size = 17609
+size = 17640
 features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
@@ -329,8 +329,8 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "conne
 [[file]]
 path = "word/contract.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 38122
-features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid", "paraId"]
+size = 37863
+features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
 path = "word/cv.docx"
