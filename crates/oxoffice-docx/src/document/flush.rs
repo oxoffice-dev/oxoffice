@@ -96,78 +96,50 @@ impl Document {
         Ok(false)
     }
 
-    /// Restore live numbering immediately after writing its package projection.
+    /// Write the main part, then the numbering part. Every id keeps its
+    /// value; a numbering the document was read without is written with its
+    /// definitions and instances in id order, as the save always wrote it.
     fn flush_numbering_emission(
         &mut self,
         template: Option<&mut TemplateMainWriter<'_, '_>>,
-    ) -> Result<(HashMap<u32, u32>, HashMap<u32, u32>)> {
-        let numbering = self.numbering.clone();
-        let abstract_ids = self.identifiers.abstract_numbering_ids.clone();
-        let instance_ids = self.identifiers.numbering_instance_ids.clone();
-        let mut body_ids = Vec::new();
-        visit_body_paragraphs(&self.document.body.content, false, &mut |paragraph| {
-            body_ids.push(
-                paragraph
-                    .properties
-                    .as_ref()
-                    .and_then(|properties| properties.num_id),
-            );
-        });
-        // Scoped template packages are private live-model staging inputs.
-        // Their main Source and numbering definitions must share that space.
-        // Final public publication still takes the ordinary canonical path.
-        let (abstract_map, instance_map) = if template.is_some() {
-            (HashMap::new(), HashMap::new())
-        } else {
-            self.canonicalize_numbering_ids()?
+    ) -> Result<()> {
+        let in_template = template.is_some();
+        self.flush_document_to_package_in(template)?;
+        let Some(mut emitted) = self.numbering.clone() else {
+            return Ok(());
         };
-        let result = (|| {
-            self.flush_document_to_package_in(template)?;
-            // Serialize numbering definitions if we have any
-            if let Some(numbering_xml) = self
-                .numbering
-                .as_ref()
-                .map(CT_Numbering::to_xml)
-                .transpose()?
-            {
-                let numbering_part_name = self.numbering_part_name.clone();
-                let numbering_part = self
-                    .reserve_document_part_bundle(
-                        numbering_part_name.as_deref(),
-                        DEFAULT_NUMBERING_PART,
-                        rel_types::NUMBERING,
-                        NUMBERING_CONTENT_TYPE,
-                    )
-                    .map_err(|error| {
-                        Error::Other(format!("numbering relationship allocation failed: {error}"))
-                    })?;
-                self.numbering_part_name = Some(numbering_part.clone());
-                let numbering_changed = self
-                    .package
-                    .get_part(&numbering_part)
-                    .and_then(|xml| CT_Numbering::from_xml(xml).ok())
-                    .as_ref()
-                    != self.numbering.as_ref();
-                if numbering_changed {
-                    self.package.set_part(&numbering_part, numbering_xml);
-                }
-            }
-
-            Ok(())
-        })();
-        self.numbering = numbering;
-        self.identifiers.abstract_numbering_ids = abstract_ids;
-        self.identifiers.numbering_instance_ids = instance_ids;
-        let mut body_ids = body_ids.into_iter();
-        visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
-            let original = body_ids
-                .next()
-                .expect("publication preserves paragraph inventory");
-            if let Some(properties) = &mut paragraph.properties {
-                properties.num_id = original;
-            }
-        });
-        result.map(|()| (abstract_map, instance_map))
+        if !in_template
+            && self.identifiers.preserved_abstract_numbering_ids.is_empty()
+            && self.identifiers.preserved_numbering_instance_ids.is_empty()
+        {
+            emitted
+                .abstract_nums
+                .sort_by_key(|definition| definition.abstract_num_id);
+            emitted.nums.sort_by_key(|instance| instance.num_id);
+        }
+        let numbering_xml = emitted.to_xml()?;
+        let numbering_part_name = self.numbering_part_name.clone();
+        let numbering_part = self
+            .reserve_document_part_bundle(
+                numbering_part_name.as_deref(),
+                DEFAULT_NUMBERING_PART,
+                rel_types::NUMBERING,
+                NUMBERING_CONTENT_TYPE,
+            )
+            .map_err(|error| {
+                Error::Other(format!("numbering relationship allocation failed: {error}"))
+            })?;
+        self.numbering_part_name = Some(numbering_part.clone());
+        let numbering_changed = self
+            .package
+            .get_part(&numbering_part)
+            .and_then(|xml| CT_Numbering::from_xml(xml).ok())
+            .as_ref()
+            != Some(&emitted);
+        if numbering_changed {
+            self.package.set_part(&numbering_part, numbering_xml);
+        }
+        Ok(())
     }
 
     /// Write the in-memory document/styles back into the OPC package parts.
@@ -179,8 +151,7 @@ impl Document {
         &mut self,
         mut template: Option<&mut TemplateMainWriter<'_, '_>>,
     ) -> Result<()> {
-        let (abstract_map, instance_map) =
-            self.flush_numbering_emission(template.as_deref_mut())?;
+        self.flush_numbering_emission(template.as_deref_mut())?;
 
         // Unchanged proved styles share their model and source bytes through staging.
         let styles_part_name = self.styles_part_name.clone();
@@ -376,8 +347,6 @@ impl Document {
             }
         }
 
-        self.published_abstract_by_live = abstract_map;
-        self.published_instance_by_live = instance_map;
         Ok(())
     }
 

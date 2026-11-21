@@ -194,19 +194,6 @@ pub(super) fn authored_doc_pr_edits(
     Ok(edits)
 }
 
-pub(super) fn apply_shared_template_source_edits(
-    operation: &mut oxoffice_docx_oxml::document::ScopedWordOperation<'_>,
-    source: Arc<oxoffice_docx_oxml::document::ScopedWordSource>,
-    edits: Vec<(usize, usize, Vec<u8>)>,
-) -> Result<Arc<oxoffice_docx_oxml::document::ScopedWordSource>> {
-    if edits.is_empty() {
-        return Ok(source);
-    }
-    Ok(Arc::new(apply_borrowed_template_source_edits(
-        operation, &source, edits,
-    )?))
-}
-
 pub(crate) fn apply_template_source_edits(
     operation: &mut oxoffice_docx_oxml::document::ScopedWordOperation<'_>,
     source: oxoffice_docx_oxml::document::ScopedWordSource,
@@ -236,12 +223,6 @@ pub(super) fn apply_borrowed_template_source_edits(
     }
     pieces.push((Some(source), at..source.as_bytes().len(), &[][..]));
     Ok(operation.compose_sources(&pieces)?)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AuthoredMainDrawing {
-    Modeled,
-    Nested,
 }
 
 /// Outermost drawings in order. A scan error keeps the drawings completed
@@ -387,62 +368,6 @@ pub(super) fn drawing_occurrences(xml: &[u8]) -> (Vec<DrawingOccurrence>, Option
     }
 }
 
-type AuthoredDrawingSlot = (AuthoredMainDrawing, Range<usize>, u32);
-pub(super) type AuthoredDrawingSlots = Vec<AuthoredDrawingSlot>;
-
-pub(super) fn select_authored_drawing_slots(
-    drawings: &[DrawingOccurrence],
-    error: Option<Error>,
-    modeled_ids: &[u32],
-    nested_image_relationship_ids: &HashSet<String>,
-) -> Result<AuthoredDrawingSlots> {
-    let mut modeled_remaining = HashMap::new();
-    for id in modeled_ids {
-        *modeled_remaining.entry(*id).or_insert(0usize) += 1;
-    }
-    let mut ordered = Vec::new();
-    for drawing in drawings {
-        let nested = drawing
-            .embeds
-            .iter()
-            .any(|id| nested_image_relationship_ids.contains(id));
-        let Some((id, span)) = drawing.doc_pr.clone() else {
-            if nested {
-                return Err(Error::Other(
-                    "authored picture has no wp:docPr identity".to_owned(),
-                ));
-            }
-            continue;
-        };
-        if nested {
-            ordered.push((AuthoredMainDrawing::Nested, span, id));
-        } else if let Some(remaining) = modeled_remaining.get_mut(&id)
-            && *remaining > 0
-        {
-            *remaining -= 1;
-            ordered.push((AuthoredMainDrawing::Modeled, span, id));
-        }
-    }
-    if let Some(error) = error {
-        return Err(error);
-    }
-    if modeled_remaining.values().any(|remaining| *remaining != 0) {
-        return Err(Error::Other(
-            "authored drawing occurrences changed during source-order allocation".to_owned(),
-        ));
-    }
-    Ok(ordered)
-}
-
-pub(super) fn authored_drawing_slots_in_source_order(
-    xml: &[u8],
-    modeled_ids: &[u32],
-    nested_image_relationship_ids: &HashSet<String>,
-) -> Result<AuthoredDrawingSlots> {
-    let (drawings, error) = drawing_occurrences(xml);
-    select_authored_drawing_slots(&drawings, error, modeled_ids, nested_image_relationship_ids)
-}
-
 pub(super) fn drawing_ids_in_xml(xml: &[u8]) -> Result<HashSet<u32>> {
     let mut reader = NsReader::from_reader(xml);
     let mut buffer = Vec::new();
@@ -504,7 +429,6 @@ pub(super) fn relationship_ids_by_blocks(
     blocks: Option<&MainPartBlocks>,
     bindings: &[(String, String)],
 ) -> Result<Vec<String>> {
-    let blocks = offered_canonical_blocks(blocks);
     if let Some(ids) = blocks.and_then(|blocks| blocks.proved_relationship_ids(xml, bindings)) {
         #[cfg(debug_assertions)]
         {
@@ -518,57 +442,6 @@ pub(super) fn relationship_ids_by_blocks(
         return Ok(ids);
     }
     xml_relationship_ids_in_order_with_bindings(xml, bindings)
-}
-
-pub(super) fn authored_drawing_slots_by_blocks(
-    xml: &[u8],
-    blocks: Option<&MainPartBlocks>,
-    modeled_ids: &[u32],
-    nested_image_relationship_ids: &HashSet<String>,
-) -> Result<AuthoredDrawingSlots> {
-    let blocks = offered_canonical_blocks(blocks);
-    if let Some(slots) = blocks.and_then(|blocks| {
-        blocks.proved_drawing_slots(xml, modeled_ids, nested_image_relationship_ids)
-    }) {
-        #[cfg(debug_assertions)]
-        {
-            let scanned = authored_drawing_slots_in_source_order(
-                xml,
-                modeled_ids,
-                nested_image_relationship_ids,
-            );
-            let shown = |result: &Result<AuthoredDrawingSlots>| match result {
-                Ok(slots) => format!("{slots:?}"),
-                Err(error) => error.to_string(),
-            };
-            assert_eq!(
-                shown(&slots),
-                shown(&scanned),
-                "drawing-slot proof disagrees with a whole scan"
-            );
-        }
-        return slots;
-    }
-    authored_drawing_slots_in_source_order(xml, modeled_ids, nested_image_relationship_ids)
-}
-
-pub(super) fn drawing_ids_by_blocks(
-    xml: &[u8],
-    blocks: Option<&MainPartBlocks>,
-) -> Option<HashSet<u32>> {
-    let blocks = offered_canonical_blocks(blocks);
-    if let Some(ids) = blocks.and_then(|blocks| blocks.proved_drawing_ids(xml)) {
-        #[cfg(debug_assertions)]
-        {
-            assert_eq!(
-                drawing_ids_in_xml(xml).ok().as_ref(),
-                Some(&ids),
-                "drawing-id proof disagrees with a whole scan"
-            );
-        }
-        return Some(ids);
-    }
-    drawing_ids_in_xml(xml).ok()
 }
 
 pub(crate) fn remap_xml_relationship_ids(

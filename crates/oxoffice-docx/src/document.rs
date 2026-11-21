@@ -185,17 +185,16 @@ pub(crate) use identifiers::part_name_identity;
 use identifiers::{
     IdentifierDefinition, IdentifierXmlCategory, frame_drawings_are_absent,
     identifier_xml_is_well_formed, read_child_canonical_facts, relationship_owner_identity,
-    reserve_lowest_i32, reserve_part_from_set, reserve_relationship_from_cursor, reserve_u32,
-    reserve_u32_or_lowest_free, scan_identifier_definitions, split_relationship_ids_at_head,
+    reserve_u32, reserve_u32_or_lowest_free, scan_identifier_definitions,
+    split_relationship_ids_at_head,
 };
 pub(crate) use main_part::{CommentParagraphRead, CommentParagraphValue};
 use main_part::{
     EmptyNamespaceChildProof, FrameIdentifierProof, FrameNamespacePolicyEmpty,
     IdentifierChildProof, NamespaceFrameSpans, NamespaceSpanProof, ParsedChild,
-    ScopedChildCorrespondence, StandaloneParagraphValue, block_proofs_enabled,
-    full_direct_body_item_location, holds_field_words, offered_canonical_blocks,
-    picture_free_span_kind, producer_scoped_normalization_seed, root_start_tag, scan_body_block,
-    scan_body_children, scoped_children_correspond, scoped_normalization_context,
+    ScopedChildCorrespondence, StandaloneParagraphValue, full_direct_body_item_location,
+    holds_field_words, picture_free_span_kind, producer_scoped_normalization_seed, root_start_tag,
+    scan_body_block, scan_body_children, scoped_children_correspond, scoped_normalization_context,
     scoped_normalization_reuse_allowed, single_frame_body, story_control_paragraphs,
     story_owner_item, story_owner_items,
 };
@@ -224,19 +223,15 @@ pub use unsupported_xml::UnsupportedXmlRef;
 use unsupported_xml::{
     inherited_namespace, typed_numbering_leaf_has_unmodeled, xml_bytes_are_whitespace,
 };
-use xml_ids::{
-    AuthoredDrawingSlots, AuthoredMainDrawing, apply_borrowed_template_source_edits,
-    apply_shared_template_source_edits, authored_doc_pr_edits, authored_drawing_slots_by_blocks,
-    authored_drawing_slots_in_source_order, authored_relationship_ids_in_source_order,
-    drawing_ids_by_blocks, drawing_ids_in_xml, drawing_occurrences, relationship_ids_by_blocks,
-    relationship_remap_edits, relationship_xml_from_replayed,
-    remap_xml_relationship_ids_with_bindings, rewrite_authored_doc_pr_ids,
-    select_authored_drawing_slots, story_attribute_value_span, xml_attribute_values,
-    xml_relationship_ids_in_collection_range, xml_relationship_ids_in_order_with_bindings,
-};
 pub(crate) use xml_ids::{
     apply_template_source_edits, remap_xml_relationship_ids, unique_drawing_id_edits,
     uniquify_drawing_ids_in_xml, xml_relationship_ids_in_order,
+};
+use xml_ids::{
+    authored_doc_pr_edits, authored_relationship_ids_in_source_order, drawing_ids_in_xml,
+    drawing_occurrences, relationship_ids_by_blocks, relationship_xml_from_replayed,
+    rewrite_authored_doc_pr_ids, story_attribute_value_span, xml_attribute_values,
+    xml_relationship_ids_in_collection_range, xml_relationship_ids_in_order_with_bindings,
 };
 
 mod edited_paragraph;
@@ -305,12 +300,12 @@ use story_text::{
 };
 pub(crate) use story_xml::comment_namespace_source_boundaries;
 use story_xml::{
-    StoryNamespace, StorySdtContext, canonical_retained_main_part, changed_story_namespace_scope,
-    comment_move_source_edits, comment_reference_run_span, field_instruction_has_name,
-    modeled_story_child, scoped_proof_marker, scoped_proof_sentinel, story_element_end,
-    story_element_sdt_context, story_frame_local_name, story_namespace,
-    story_range_paragraph_spans, story_range_paragraph_spans_from_inventory, story_sdt_context,
-    story_word_prefixes_at, word_element, xml_decodes,
+    StoryNamespace, StorySdtContext, changed_story_namespace_scope, comment_move_source_edits,
+    comment_reference_run_span, field_instruction_has_name, modeled_story_child,
+    scoped_proof_marker, scoped_proof_sentinel, story_element_end, story_element_sdt_context,
+    story_frame_local_name, story_namespace, story_range_paragraph_spans,
+    story_range_paragraph_spans_from_inventory, story_sdt_context, story_word_prefixes_at,
+    word_element, xml_decodes,
 };
 use template_programs::{
     paired_scoped_edits, paired_scoped_ranges, prepare_template_source_programs,
@@ -329,11 +324,13 @@ use walkers::{
     close_typed_story_drawing_namespaces, collect_relationship_ids, insert_html_content_into_cell,
     modeled_main_cell_route, modeled_main_cell_routes, nth_cell_in_control, nth_cell_in_table,
     nth_paragraph_in_body, nth_table_in_body, nth_table_in_body_ref, physical_table_cells,
-    push_control_text, push_paragraph_line, push_table_text, visit_authored_drawings,
-    visit_authored_drawings_mut, visit_cell,
+    push_control_text, push_paragraph_line, push_table_text, visit_authored_drawings_mut,
+    visit_cell,
 };
 
 mod canonicalize;
+#[cfg(debug_assertions)]
+use canonicalize::IdentifierSummary;
 mod element_routes;
 mod flush;
 mod fragment_sources;
@@ -583,26 +580,17 @@ pub(crate) struct DocumentIdentifiers {
     content_type_overrides: HashSet<String>,
     authored_content_type_defaults: HashSet<String>,
     preserved_relationship_ids: HashMap<String, HashSet<String>>,
-    preserved_bookmark_ids: HashSet<i32>,
     preserved_comment_ids: HashSet<i32>,
     preserved_drawing_ids: HashSet<u32>,
     preserved_abstract_numbering_ids: HashSet<u32>,
     preserved_numbering_instance_ids: HashSet<u32>,
     preserved_part_names: HashSet<String>,
-    authored_bookmark_ids: HashSet<i32>,
     authored_comment_ids: HashSet<i32>,
     authored_toc_bookmark_ids: HashSet<i32>,
     authored_bookmark_names: HashSet<String>,
     authored_story_parts: HashSet<String>,
     authored_story_relationship_ids: HashMap<String, HashSet<String>>,
     authored_nested_story_relationship_ids: HashMap<String, HashSet<String>>,
-    authored_nested_story_drawing_ids: HashMap<String, HashSet<u32>>,
-    authored_bundle_relationship_ids: HashMap<String, HashSet<String>>,
-    provisional_relationship_ids: HashMap<String, HashSet<String>>,
-    /// Main-part relationship ids named outside the body model: imported XML
-    /// not inserted yet, or an id returned to a caller. Staging keeps each id
-    /// until the main story references it or the id leaves the registry.
-    pending_relationship_ids: HashMap<String, HashSet<String>>,
     /// Definitions read from each identifier part. A later scan replays a
     /// part only when its bytes and categories still match. This is the
     /// current scan, not a history of earlier ones.
@@ -651,12 +639,6 @@ fn place_story_reference(references: &mut Vec<HdrFtrRef>, reference: HdrFtrRef) 
 struct DrawingOccurrence {
     doc_pr: Option<(u32, Range<usize>)>,
     embeds: Vec<String>,
-}
-
-/// Restores the previous switch on return and on unwind.
-#[cfg(debug_assertions)]
-struct CanonicalBlockProofOff {
-    previous: bool,
 }
 
 enum DrawingMut<'a> {
@@ -846,8 +828,6 @@ pub struct Document {
     pub(crate) styles: Arc<CT_Styles>,
     styles_part_cache: Option<StylesPartCache>,
     pub(crate) numbering: Option<CT_Numbering>,
-    published_abstract_by_live: HashMap<u32, u32>,
-    published_instance_by_live: HashMap<u32, u32>,
     /// Boxed, because debug builds keep many copies of `Document` on deep
     /// stacks, and the fifteen-field model would otherwise grow every one.
     pub(crate) core_properties: Option<Box<CoreProperties>>,
@@ -969,15 +949,6 @@ struct Parsed {
     nested_namespace_owners: OnceLock<Option<Vec<NestedNamespaceOwner>>>,
     /// Actual source reads for this opening, independently of writer reuse.
     source_blocks: OnceLock<Option<MainPartBlocks>>,
-    unchanged_main_part: OnceLock<Option<UnchangedMainPart>>,
-}
-
-/// Main-part reads taken while canonicalizing a part with nothing to renumber.
-#[derive(Clone, PartialEq)]
-struct UnchangedMainPart {
-    xml: Vec<u8>,
-    body_namespace_bindings: Vec<(String, String)>,
-    drawing_ids: Option<HashSet<u32>>,
 }
 
 impl Parsed {
@@ -1002,7 +973,6 @@ impl Parsed {
             initial_writer_blocks: None,
             nested_namespace_owners: OnceLock::new(),
             source_blocks: OnceLock::new(),
-            unchanged_main_part: OnceLock::new(),
         }
     }
 
@@ -1089,18 +1059,6 @@ pub(crate) fn relationship_is_internal(
     relationship: &oxoffice_opc::relationship::Relationship,
 ) -> bool {
     matches!(relationship.target_mode.as_deref(), None | Some("Internal"))
-}
-
-fn bundle_relationship_order(rel_type: &str) -> Option<u8> {
-    match rel_type {
-        rel_types::STYLES => Some(0),
-        rel_types::SETTINGS => Some(1),
-        rel_types::NUMBERING => Some(2),
-        rel_types::FOOTNOTES => Some(3),
-        rel_types::COMMENTS => Some(4),
-        crate::comments::COMMENTS_EXTENDED_REL_TYPE => Some(5),
-        _ => None,
-    }
 }
 
 /// Compare an already initialized retained read without warming its shared cache.
@@ -1358,9 +1316,6 @@ struct CanonicalChildFacts {
     tail: Arc<Vec<u8>>,
     bound_relationship_ids: Vec<String>,
     plain_relationship_ids: Vec<String>,
-    /// `doc_pr` spans are relative to this child's bytes.
-    drawings: Vec<DrawingOccurrence>,
-    drawing_ids: HashSet<u32>,
 }
 
 /// Canonical facts tied to one immutable document phase, never retained.
@@ -1628,8 +1583,6 @@ impl Document {
             styles,
             styles_part_cache,
             numbering: None,
-            published_abstract_by_live: HashMap::new(),
-            published_instance_by_live: HashMap::new(),
             core_properties,
             application_properties,
             custom_properties: None,

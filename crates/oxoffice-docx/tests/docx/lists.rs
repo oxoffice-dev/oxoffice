@@ -1085,10 +1085,9 @@ fn an_addition_to_an_instance_on_a_missing_definition_is_refused_without_a_chang
 }
 
 #[test]
-fn saving_twice_renumbers_the_added_lists_alike() {
-    // The first save writes list 2 as 1 into the package while the live body
-    // keeps 2. That package copy must not count as content naming list 1 at
-    // the next save.
+fn saving_twice_writes_the_added_lists_alike_with_their_ids() {
+    // The second list keeps the id it was given, in the body and in both
+    // saves; the removed first list's id is not reused.
     let mut doc = Document::new();
     let first = doc.add_list_definition(&[ListLevel::decimal()]);
     let second = doc.add_list_definition(&[ListLevel::bullet()]);
@@ -1101,7 +1100,7 @@ fn saving_twice_renumbers_the_added_lists_alike() {
     let twice = doc.to_bytes().unwrap();
     assert_eq!(once, twice);
     let doc = Document::from_bytes(&twice).unwrap();
-    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((1, 0)));
+    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((second, 0)));
     assert_eq!(markers(&doc), ["•"]);
 }
 

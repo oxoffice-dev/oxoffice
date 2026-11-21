@@ -1398,6 +1398,8 @@ fn the_text_report_lists_the_body_then_each_story_part_under_its_label() {
 
     let stories = doc.stories().unwrap();
     let kinds: Vec<_> = stories.iter().map(StoryId::kind).collect();
+    // The comments part was added before the footnotes part, so its
+    // relationship comes first: ids follow the order of the edits.
     assert_eq!(
         kinds,
         [
@@ -1406,8 +1408,8 @@ fn the_text_report_lists_the_body_then_each_story_part_under_its_label() {
             StoryKind::TableCell,
             StoryKind::Header,
             StoryKind::Footer,
-            StoryKind::Footnote,
             StoryKind::Comment,
+            StoryKind::Footnote,
         ]
     );
     let part = |kind| story(&doc, kind).part_name().to_owned();
@@ -1418,12 +1420,12 @@ fn the_text_report_lists_the_body_then_each_story_part_under_its_label() {
             "Body one\nBody two\nleft\tright\t\n\
              --- header ({}) ---\nHead line\n\
              --- footer ({}) ---\nFoot line\n\
-             --- footnote ({}) ---\n Note text\n\
-             --- comment ({}) ---\nLook here\n",
+             --- comment ({}) ---\nLook here\n\
+             --- footnote ({}) ---\n Note text\n",
             part(StoryKind::Header),
             part(StoryKind::Footer),
-            part(StoryKind::Footnote),
             part(StoryKind::Comment),
+            part(StoryKind::Footnote),
         )
     );
     assert_eq!(
@@ -1452,8 +1454,8 @@ fn the_text_report_lists_the_body_then_each_story_part_under_its_label() {
         [
             (StoryKind::Header, item("Head line")),
             (StoryKind::Footer, item("Foot line")),
-            (StoryKind::Footnote, item(" Note text")),
             (StoryKind::Comment, item("Look here")),
+            (StoryKind::Footnote, item(" Note text")),
         ]
     );
 }

@@ -1287,9 +1287,11 @@ impl Document {
             .main_body_scans
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let blocks =
-            offered_canonical_blocks(scans.serialized.as_ref().or(self.main_part_blocks.as_ref()))
-                .map_or(&[][..], |record| record.blocks.as_slice());
+        let blocks = scans
+            .serialized
+            .as_ref()
+            .or(self.main_part_blocks.as_ref())
+            .map_or(&[][..], |record| record.blocks.as_slice());
         CommentParagraphRead::from_blocks(&self.doc_part_name, blocks)
     }
 

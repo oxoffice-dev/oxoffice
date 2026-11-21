@@ -83,9 +83,7 @@ impl Document {
         ) {
             return Some(shadowed_namespace_diagnostic(&prefix));
         }
-        if block_proofs_enabled()
-            && let Some(result) = self.proved_unsavable_body_edit(xml)
-        {
+        if let Some(result) = self.proved_unsavable_body_edit(xml) {
             return result;
         }
         if let Some(reason) = replay_unsavable_body_edit(xml, &self.document) {

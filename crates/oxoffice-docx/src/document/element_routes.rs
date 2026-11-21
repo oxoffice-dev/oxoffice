@@ -448,10 +448,11 @@ impl Document {
                 .main_body_scans
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut models = offered_canonical_blocks(
-                scans.serialized.as_ref().or(self.main_part_blocks.as_ref()),
-            )
-            .filter(|record| record.blocks.len() == current.len());
+            let mut models = scans
+                .serialized
+                .as_ref()
+                .or(self.main_part_blocks.as_ref())
+                .filter(|record| record.blocks.len() == current.len());
             let staged_origin = same_opening
                 && models.is_some_and(|record| {
                     kept.initial_writer_blocks

@@ -1351,7 +1351,8 @@ impl<'a> Paragraph<'a> {
     pub(crate) fn add_picture(&mut self, rel_id: &str, width: Length, height: Length) -> &mut CT_R {
         use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
 
-        let inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        let mut inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        inline.doc_pr_id_unallocated = true;
         let drawing = CT_Drawing::inline(inline);
         let mut run = CT_R::new("");
         run.content = vec![RunContent::Drawing(drawing)];

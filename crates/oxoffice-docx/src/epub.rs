@@ -2770,6 +2770,7 @@ fn render_drawing_projection(drawing: &CT_Drawing) -> CT_Drawing {
         name: None,
         source_rect: None,
         raw_xml: None,
+        doc_pr_id_unallocated: false,
     })
 }
 
