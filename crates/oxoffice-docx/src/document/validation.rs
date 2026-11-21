@@ -1104,7 +1104,12 @@ fn validate_document_package(package: OpcPackage) -> Result<ValidationReport> {
         }
     }
 
-    warnings.extend(dangling_numbering_warnings(&doc)?);
+    match dangling_numbering_warnings(&doc) {
+        Ok(found) => warnings.extend(found),
+        Err(error) => warnings.push(format!(
+            "numbering references could not be checked: {error}"
+        )),
+    }
     Ok(document_validation_report(errors, warnings))
 }
 
@@ -1112,14 +1117,19 @@ fn validate_document_package(package: OpcPackage) -> Result<ValidationReport> {
 /// document does not define, or at a level its definition does not have.
 /// Word opens such a file and shows the paragraph without a number. The
 /// reference is resolved as `Document::validate_numbering_graph` resolves it:
-/// direct numbering, then the paragraph style's.
+/// direct numbering, then the paragraph style's. `doc` was just opened, so its
+/// story parts are the bytes being validated. A part two relationships share
+/// is read once, and the glossary, which has its own numbering, is left out.
 fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
-    let mut candidate = doc.clone_for_staging();
-    candidate.flush_to_package()?;
-    let numbering = candidate.numbering.as_ref();
+    let numbering = doc.numbering.as_ref();
     let mut warnings = Vec::new();
-    for part_name in candidate.word_story_part_names() {
-        let Some(xml) = candidate
+    let mut seen = HashSet::new();
+    for part_name in doc.word_story_part_names() {
+        if part_name.starts_with("/word/glossary/") || !seen.insert(part_name_identity(&part_name))
+        {
+            continue;
+        }
+        let Some(xml) = doc
             .package
             .get_part(&part_name)
             .filter(|bytes| identifier_xml_is_well_formed(bytes))
@@ -1128,13 +1138,12 @@ fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
         };
         for direct in xml_paragraph_numbering_properties(xml)? {
             let style_id = direct.style_id.as_deref().or_else(|| {
-                candidate
-                    .styles
+                doc.styles
                     .get_default(StyleType::Paragraph)
                     .map(|style| style.style_id.as_str())
             });
-            let mut effective = style::resolve_paragraph_properties(style_id, &candidate.styles);
-            candidate.apply_effective_numbering(&mut effective, Some(&direct), style_id);
+            let mut effective = style::resolve_paragraph_properties(style_id, &doc.styles);
+            doc.apply_effective_numbering(&mut effective, Some(&direct), style_id);
             let Some(num_id) = effective.num_id.filter(|num_id| *num_id != 0) else {
                 continue;
             };
@@ -1152,24 +1161,89 @@ fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
                 ));
                 continue;
             };
-            let has_level = numbering
-                .abstract_nums
-                .iter()
-                .find(|definition| definition.abstract_num_id == instance.abstract_num_id)
-                .is_some_and(|definition| {
-                    definition
-                        .levels
-                        .iter()
-                        .any(|candidate| candidate.ilvl == level)
-                });
-            if !has_level {
-                warnings.push(format!(
-                    "a paragraph in {part_name} is numbered at level {level} of numbering \
-                     instance {num_id}, a level its definition does not have: Word shows it \
-                     without a number"
-                ));
+            match definition_levels(numbering, &doc.styles, instance.abstract_num_id) {
+                None => warnings.push(format!(
+                    "a paragraph in {part_name} is numbered by numbering instance {num_id}, \
+                     whose definition {} the document does not define: Word shows it \
+                     without a number",
+                    instance.abstract_num_id
+                )),
+                Some(levels) if !levels.iter().any(|candidate| candidate.ilvl == level) => {
+                    warnings.push(format!(
+                        "a paragraph in {part_name} is numbered at level {level} of numbering \
+                         instance {num_id}, a level its definition does not have: Word shows \
+                         it without a number"
+                    ));
+                }
+                Some(_) => {}
             }
         }
     }
     Ok(warnings)
+}
+
+/// The levels of numbering definition `abstract_num_id`. A definition without
+/// levels that names a numbering style (`w:numStyleLink`), as Word writes a
+/// list that uses a list style, takes the levels of the definition that
+/// style's numbering instance uses. `None` when a definition, style or
+/// instance on the way is missing.
+fn definition_levels<'a>(
+    numbering: &'a oxoffice_docx_oxml::numbering::CT_Numbering,
+    styles: &oxoffice_docx_oxml::styles::CT_Styles,
+    abstract_num_id: u32,
+) -> Option<&'a [oxoffice_docx_oxml::numbering::CT_Lvl]> {
+    let mut id = abstract_num_id;
+    // A list style links once in Word; the bound stops a cycle of links.
+    for _ in 0..8 {
+        let definition = numbering
+            .abstract_nums
+            .iter()
+            .find(|definition| definition.abstract_num_id == id)?;
+        let link = definition
+            .levels
+            .is_empty()
+            .then(|| num_style_link(&definition.extra_xml))
+            .flatten();
+        let Some(link) = link else {
+            return Some(&definition.levels);
+        };
+        let num_id = styles
+            .get_by_id(&link)
+            .filter(|style| style.style_type == StyleType::Numbering)
+            .and_then(|style| style.ppr.as_ref()?.num_id)?;
+        id = numbering
+            .nums
+            .iter()
+            .find(|instance| instance.num_id == num_id)?
+            .abstract_num_id;
+    }
+    None
+}
+
+/// The style a definition's raw `w:numStyleLink` child names.
+fn num_style_link(raw_children: &[(usize, Vec<u8>)]) -> Option<String> {
+    raw_children.iter().find_map(|(_, raw)| {
+        let mut reader = quick_xml::Reader::from_reader(raw.as_slice());
+        let mut buffer = Vec::new();
+        match reader.read_event_into(&mut buffer).ok()? {
+            quick_xml::events::Event::Empty(element) | quick_xml::events::Event::Start(element)
+                if element.local_name().as_ref() == b"numStyleLink" =>
+            {
+                element.attributes().flatten().find_map(|attribute| {
+                    (attribute.key.local_name().as_ref() == b"val")
+                        .then(|| {
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .ok()
+                                .map(|value| value.into_owned())
+                        })
+                        .flatten()
+                })
+            }
+            _ => None,
+        }
+    })
 }

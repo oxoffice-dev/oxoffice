@@ -1609,26 +1609,58 @@ fn every_report_text_holds_its_header_footer_and_comment_after_the_body() {
     }
 }
 
+const ONE_LEVEL_NUMBERING: &str = r#"<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>"#;
+
 /// A document whose numbering part defines numbering instance 1 with level 0
 /// only, and whose body holds `body`.
 fn doc_with_one_level_numbering(body: &str) -> Vec<u8> {
+    doc_with_numbering(body, Some(ONE_LEVEL_NUMBERING), "")
+}
+
+/// A document whose body holds `body`, whose numbering part holds
+/// `numbering` (none when `None`), and whose styles part also holds `styles`.
+fn doc_with_numbering(body: &str, numbering: Option<&str>, styles: &str) -> Vec<u8> {
     let bytes = doc_with_body(body).to_bytes().unwrap();
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
-    if !package.contains_part("/word/numbering.xml") {
-        package.get_or_create_part_rels("/word/document.xml").add(
-            oxoffice_opc::relationship::rel_types::NUMBERING,
-            "numbering.xml",
+    if let Some(numbering) = numbering {
+        let numbering = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{numbering}</w:numbering>"#
         );
-        package.content_types.add_override(
-            "/word/numbering.xml",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
-        );
+        if !package.contains_part("/word/numbering.xml") {
+            package.get_or_create_part_rels("/word/document.xml").add(
+                oxoffice_opc::relationship::rel_types::NUMBERING,
+                "numbering.xml",
+            );
+            package.content_types.add_override(
+                "/word/numbering.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+            );
+        }
+        package.set_part("/word/numbering.xml", numbering.into_bytes());
+    } else {
+        assert!(!package.contains_part("/word/numbering.xml"));
     }
-    package.set_part("/word/numbering.xml", numbering.as_bytes().to_vec());
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let at = xml.rfind("</w:styles>").unwrap();
+    package.set_part(
+        "/word/styles.xml",
+        format!("{}{styles}{}", &xml[..at], &xml[at..]).into_bytes(),
+    );
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     out.into_inner()
+}
+
+/// The validation warnings of `bytes` that say Word shows a paragraph without
+/// a number.
+fn numbering_warnings(bytes: &[u8]) -> Vec<String> {
+    validate_document_bytes(bytes)
+        .unwrap()
+        .findings
+        .into_iter()
+        .filter(|finding| finding.message.contains("Word shows it without a number"))
+        .map(|finding| finding.message)
+        .collect()
 }
 
 fn numbered(text: &str, num_id: u32, level: u32) -> String {
@@ -1694,4 +1726,99 @@ fn numbered_contracts_of_every_producer_have_no_dangling_numbering_reference() {
             .collect::<Vec<_>>();
         assert!(dangling.is_empty(), "{name}: {dangling:?}");
     }
+}
+
+#[test]
+fn validation_follows_a_list_style_link_and_does_not_warn() {
+    // Word writes a list that uses a list style as a definition holding only
+    // w:numStyleLink; the levels are those of the definition the style uses.
+    let numbering = r#"<w:abstractNum w:abstractNumId="0"><w:styleLink w:val="MyList"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2."/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:numStyleLink w:val="MyList"/></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>"#;
+    let styles = r#"<w:style w:type="numbering" w:styleId="MyList"><w:name w:val="My List"/><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:style>"#;
+    let body = [
+        numbered("first", 2, 0),
+        numbered("second", 2, 1),
+        numbered("missing", 2, 4),
+    ]
+    .concat();
+    let warnings = numbering_warnings(&doc_with_numbering(&body, Some(numbering), styles));
+    assert_eq!(
+        warnings,
+        [
+            "a paragraph in /word/document.xml is numbered at level 4 of numbering instance 2, \
+          a level its definition does not have: Word shows it without a number"
+        ],
+        "only the level the linked definition lacks"
+    );
+}
+
+#[test]
+fn validation_resolves_numbering_through_the_paragraph_style_and_skips_number_zero() {
+    let styles = r#"<w:style w:type="paragraph" w:styleId="Dangling"><w:name w:val="Dangling"/><w:pPr><w:numPr><w:numId w:val="42"/></w:numPr></w:pPr></w:style>"#;
+    let body = format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Dangling"/></w:pPr><w:r><w:t>styled</w:t></w:r></w:p>{}{}"#,
+        numbered("not numbered", 0, 0),
+        numbered("fine", 1, 0),
+    );
+    let warnings = numbering_warnings(&doc_with_numbering(
+        &body,
+        Some(ONE_LEVEL_NUMBERING),
+        styles,
+    ));
+    assert_eq!(
+        warnings,
+        [
+            "a paragraph in /word/document.xml is numbered by numbering instance 42, which the \
+          document does not define: Word shows it without a number"
+        ]
+    );
+}
+
+#[test]
+fn validation_warns_without_a_numbering_part_and_for_a_missing_definition() {
+    let warnings = numbering_warnings(&doc_with_numbering(&numbered("orphan", 5, 0), None, ""));
+    assert_eq!(
+        warnings,
+        [
+            "a paragraph in /word/document.xml is numbered by numbering instance 5, which the \
+          document does not define: Word shows it without a number"
+        ]
+    );
+    let numbering =
+        format!(r#"{ONE_LEVEL_NUMBERING}<w:num w:numId="3"><w:abstractNumId w:val="9"/></w:num>"#);
+    let warnings = numbering_warnings(&doc_with_numbering(
+        &numbered("x", 3, 0),
+        Some(&numbering),
+        "",
+    ));
+    assert_eq!(
+        warnings,
+        [
+            "a paragraph in /word/document.xml is numbered by numbering instance 3, whose \
+          definition 9 the document does not define: Word shows it without a number"
+        ]
+    );
+}
+
+#[test]
+fn validation_warns_about_a_dangling_numbering_reference_in_a_header() {
+    let bytes = corpus_bytes("word/report.docx");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let header = String::from_utf8(package.get_part("/word/header1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            "<w:pPr><w:pStyle w:val=\"En-tte\"/>",
+            "<w:pPr><w:pStyle w:val=\"En-tte\"/><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"4242\"/></w:numPr>",
+            1,
+        );
+    assert!(header.contains("4242"), "the header is numbered");
+    package.set_part("/word/header1.xml", header.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    assert_eq!(
+        numbering_warnings(&out.into_inner()),
+        [
+            "a paragraph in /word/header1.xml is numbered by numbering instance 4242, which the \
+          document does not define: Word shows it without a number"
+        ]
+    );
 }
