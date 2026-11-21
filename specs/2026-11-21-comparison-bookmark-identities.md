@@ -37,8 +37,8 @@ where they mean the same bookmark, in its main story:
   when the original uses that id in any story.
 - **Generated names.** The blocks of the two bodies pair as the comparison
   pairs them (signatures, longest common sequence, then each gap by kind),
-  the signatures read without the generated bookmarks, as the comparison will
-  read them once the names agree. A `_Toc` bookmark of a body paragraph that
+  the signatures read without the generated bookmarks and without the ids of
+  the others, as the comparison will read them once the identities agree. A `_Toc` bookmark of a body paragraph that
   pairs with one of the original holding as many takes the original's name,
   in order. An unpaired body heading keeps its name, or takes a fresh `_Toc`
   name when the original uses it; a nested one (table, text box) keeps its
@@ -47,7 +47,11 @@ where they mean the same bookmark, in its main story:
   on, and leaves a heading whose bookmark did not change as it is.
 - **References follow.** Link anchors, simple field instructions and complex
   field instructions naming a renamed bookmark are rewritten with it, so the
-  edited input reads the same.
+  edited input reads the same. A link to another file (`r:id`, or a
+  `HYPERLINK` with a target) names that file's bookmark and stays as it is.
+- **Checked.** The comparison pairs the rewritten blocks again; if it pairs
+  a renamed heading with another one than the pairing did, the edited input
+  stays as it is, so a wrong pairing can only keep the old refusal.
 
 The guarantee becomes: accepting every revision gives the edited version up
 to its bookmark ids and the names of its `_Toc` bookmarks (paired ones take
