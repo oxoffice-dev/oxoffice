@@ -1,4 +1,4 @@
-//! `oxoffice limitations` lists every entry of limitations.json, filters by
+//! `oxoffice limitations` lists every entry of `limitations/`, filters by
 //! format, and every entry carries what an agent needs to act on it.
 
 use std::collections::BTreeSet;
@@ -41,6 +41,31 @@ fn every_limitation_has_an_id_a_format_a_workaround_and_an_issue() {
             "{id}: no issue number"
         );
     }
+}
+
+#[test]
+fn the_listing_holds_every_file_of_the_directory_in_file_name_order() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("limitations");
+    // No directory is no limitation.
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map(|listing| {
+            listing
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .filter(|name| name.ends_with(".json") && !name.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+    // File names, not ids: `a-b.json` sorts before `a.json`.
+    names.sort();
+    let stems: Vec<String> = names
+        .iter()
+        .map(|name| name.trim_end_matches(".json").to_owned())
+        .collect();
+    let ids: Vec<String> = limitations(&[])
+        .iter()
+        .map(|entry| entry["id"].as_str().expect("id").to_owned())
+        .collect();
+    assert_eq!(ids, stems);
 }
 
 #[test]

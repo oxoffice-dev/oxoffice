@@ -1,0 +1,9 @@
+{
+  "id": "pptx-stale-document-metadata",
+  "format": "pptx",
+  "area": "metadata",
+  "title": "Document metadata goes stale after slides are added, duplicated, imported, retitled, hidden or edited",
+  "symptom": "docProps/app.xml keeps its old slide, notes and hidden-slide counts and title lists (refreshed only on slide removal, and not when the source-preserving patch cannot edit app.xml, one outside its namespace for example), Words and Paragraphs are never recounted, core.xml keeps its title, and the package thumbnail keeps the first slide as it was saved",
+  "workaround": "set the counts and the title through the document properties before saving (Rust set_application_properties and set_core_properties, Python prs.app_properties and prs.core_properties); for the title lists and the thumbnail, add a slide and remove it again, which drops both and recounts (Rust remove_application_properties also drops the title lists, with the rest of app.xml)",
+  "issue": 103
+}

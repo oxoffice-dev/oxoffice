@@ -3,8 +3,9 @@ name: Release
 # Manual only. Give the version, the workflow does the rest:
 #   1. sets the version, regenerates CHANGELOG.md, commits and tags vX.Y.Z
 #   2. builds the `oxoffice` binary and the Python wheels for every platform
-#   3. publishes a GitHub release with every artifact, the installers, an SBOM,
-#      SHA256SUMS and a signed build provenance attestation covering them all
+#   3. publishes a GitHub release with every artifact, the installers, the
+#      known limitations page, an SBOM, SHA256SUMS and a signed build
+#      provenance attestation covering them all
 #   4. publishes the wheels and the sdist to PyPI and the conda packages to
 #      prefix.dev, both through trusted publishers
 # With dry_run, it builds the commit main points at when its first job starts,
@@ -73,8 +74,8 @@ jobs:
       - name: Commit and tag
         id: commit
         run: |
-          # The commit of main this run started from: a dry run builds it in
-          # every job, while main may move during the run.
+          # The commit main points at when this job starts: a dry run builds
+          # it in every job, while main may move during the run.
           base="$(git rev-parse HEAD)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -250,6 +251,10 @@ jobs:
           merge-multiple: true
       - name: Installers
         run: cp install/install.sh install/install.ps1 dist/
+      - name: Limitations page
+        run: |
+          python3 scripts/limitations_doc.py --ref "v$VERSION" -o "dist/oxoffice-$VERSION-limitations.md"
+          test -s "dist/oxoffice-$VERSION-limitations.md"
       - name: SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:

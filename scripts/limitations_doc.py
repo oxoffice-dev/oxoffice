@@ -1,27 +1,33 @@
-"""Generate docs/LIMITATIONS.md from crates/oxoffice-cli/limitations.json.
+"""Render the known limitations page from crates/oxoffice-cli/limitations/, one <id>.json per entry.
 
-    python3 scripts/limitations_doc.py           # write the page
-    python3 scripts/limitations_doc.py --check   # exit 1 when the page is out of date (CI)
+    python3 scripts/limitations_doc.py                          # print the page (lint runs this)
+    python3 scripts/limitations_doc.py -o docs/LIMITATIONS.md   # write it, for a local look (git ignores it)
+    python3 scripts/limitations_doc.py --ref v0.2.0 -o page.md  # the release asset, linking the entries at its tag
+
+The page is not committed: the release attaches it, built for its tag. `oxoffice limitations` gives each build its
+own list.
 """
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / "crates/oxoffice-cli/limitations.json"
-PAGE = ROOT / "docs/LIMITATIONS.md"
-ISSUES = "https://github.com/oxoffice-dev/oxoffice/issues"
+SOURCE = ROOT / "crates/oxoffice-cli/limitations"
+REPOSITORY = "https://github.com/oxoffice-dev/oxoffice"
+ISSUES = f"{REPOSITORY}/issues"
 
 
-def render() -> str:
-    entries = json.loads(SOURCE.read_text(encoding="utf-8"))
+def render(ref: str) -> str:
+    # The files and the order of the build script: file name order, hidden files skipped.
+    files = sorted((p for p in SOURCE.glob("*.json") if not p.name.startswith(".")), key=lambda p: p.name)
+    entries = [json.loads(p.read_text(encoding="utf-8")) for p in files]
     lines = [
         "# Known limitations",
         "",
-        "What this version of oxoffice cannot do yet, and what to do instead. Generated from",
-        "[`crates/oxoffice-cli/limitations.json`](../crates/oxoffice-cli/limitations.json) by",
-        "`scripts/limitations_doc.py`. The installed build gives the same list:",
+        f"What oxoffice {ref} cannot do yet, and what to do instead. Generated from",
+        f"[`crates/oxoffice-cli/limitations/`]({REPOSITORY}/tree/{ref}/crates/oxoffice-cli/limitations) by",
+        "`scripts/limitations_doc.py`. The installed build gives its own list:",
         "",
         "```bash",
         "oxoffice limitations [docx|pptx] [--json]",
@@ -42,12 +48,15 @@ def render() -> str:
 
 
 def main() -> None:
-    page = render()
-    if "--check" in sys.argv:
-        if not PAGE.exists() or PAGE.read_text(encoding="utf-8") != page:
-            sys.exit("docs/LIMITATIONS.md is out of date: run python3 scripts/limitations_doc.py")
-        return
-    PAGE.write_text(page, encoding="utf-8")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--ref", default="main", help="the tag or branch the page describes and links to")
+    parser.add_argument("-o", "--output", type=Path, help="write the page there instead of printing it")
+    args = parser.parse_args()
+    page = render(args.ref)
+    if args.output:
+        args.output.write_text(page, encoding="utf-8")
+    else:
+        print(page, end="")
 
 
 if __name__ == "__main__":

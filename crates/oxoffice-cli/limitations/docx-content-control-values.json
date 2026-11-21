@@ -1,0 +1,9 @@
+{
+  "id": "docx-content-control-values",
+  "format": "docx",
+  "area": "forms",
+  "title": "Content control values keep the prompt's style, and text() glues a block control's paragraphs",
+  "symptom": "a value set on a control showing its prompt stays greyed out in Word, a line feed shows as a space, extra paragraphs stay empty, a combo box refuses free text, and text() runs paragraphs together",
+  "workaround": "read a block control's paragraphs one by one with story_paragraphs: they are the entries whose location path is [i, 0], [i, 1]..., i being the control's index in story_items (index_path in Python)",
+  "issue": 147
+}

@@ -1,0 +1,9 @@
+{
+  "id": "docx-text-hyphens-and-positional-tabs",
+  "format": "docx",
+  "area": "text",
+  "title": "Non-breaking hyphens and positional tabs are missing from paragraph text",
+  "symptom": "Paragraph text and text search skip w:noBreakHyphen and w:ptab, so \"co-op\" written with a non-breaking hyphen reads \"coop\", a search for \"co-op\" finds nothing, and replacing \"coop\" leaves the hyphen after the replacement",
+  "workaround": "search for the text on each side of the hyphen or positional tab",
+  "issue": 26
+}

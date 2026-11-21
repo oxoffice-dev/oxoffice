@@ -1,0 +1,9 @@
+{
+  "id": "docx-edit-cost-grows",
+  "format": "docx",
+  "area": "performance",
+  "title": "Edits cost more as the document grows, most on files saved by Word or Google Docs",
+  "symptom": "Run.text, Paragraph.text, add_run, Table.add_row, remove_content and notes cost the whole body: tens of milliseconds per call, up to seconds on long reports",
+  "workaround": "batch the edits, or build the content aside and insert it once",
+  "issue": 6
+}

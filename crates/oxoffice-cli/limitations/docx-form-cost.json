@@ -1,0 +1,9 @@
+{
+  "id": "docx-form-cost",
+  "format": "docx",
+  "area": "forms",
+  "title": "Form operations cost seconds on long documents",
+  "symptom": "about 0.1 s at 25 paragraphs, 3 to 9 s at 1,000",
+  "workaround": "pass every rule in one call",
+  "issue": 7
+}
