@@ -628,41 +628,23 @@ impl WordSourceMap {
                 .iter()
                 .filter_map(|window| window.clipped(self, range.clone()))
                 .collect(),
-            publication_owned: self.publication_owned[self.publication_owned.partition_point(
-                |owned| {
-                    #[cfg(test)]
-                    PUBLICATION_OWNED_RANGE_PROBES.set(PUBLICATION_OWNED_RANGE_PROBES.get() + 1);
-                    owned.end <= range.start
-                },
-            )..]
+            publication_owned: self.publication_owned[self
+                .publication_owned
+                .partition_point(|owned| owned.end <= range.start)..]
                 .iter()
-                .take_while(|owned| {
-                    #[cfg(test)]
-                    PUBLICATION_OWNED_RANGE_PROBES.set(PUBLICATION_OWNED_RANGE_PROBES.get() + 1);
-                    owned.start < range.end
-                })
+                .take_while(|owned| owned.start < range.end)
                 .filter_map(|owned| {
-                    #[cfg(test)]
-                    PUBLICATION_OWNED_RANGE_PROBES.set(PUBLICATION_OWNED_RANGE_PROBES.get() + 1);
                     let start = range.start.max(owned.start);
                     let end = range.end.min(owned.end);
                     (start < end).then(|| start - range.start..end - range.start)
                 })
                 .collect(),
-            ordinary_owned: self.ordinary_owned[self.ordinary_owned.partition_point(|owned| {
-                #[cfg(test)]
-                PUBLICATION_OWNED_RANGE_PROBES.set(PUBLICATION_OWNED_RANGE_PROBES.get() + 1);
-                owned.end <= range.start
-            })..]
+            ordinary_owned: self.ordinary_owned[self
+                .ordinary_owned
+                .partition_point(|owned| owned.end <= range.start)..]
                 .iter()
-                .take_while(|owned| {
-                    #[cfg(test)]
-                    PUBLICATION_OWNED_RANGE_PROBES.set(PUBLICATION_OWNED_RANGE_PROBES.get() + 1);
-                    owned.start < range.end
-                })
+                .take_while(|owned| owned.start < range.end)
                 .filter_map(|owned| {
-                    #[cfg(test)]
-                    PUBLICATION_OWNED_RANGE_PROBES.set(PUBLICATION_OWNED_RANGE_PROBES.get() + 1);
                     let start = range.start.max(owned.start);
                     let end = range.end.min(owned.end);
                     (start < end).then(|| start - range.start..end - range.start)
@@ -1121,22 +1103,6 @@ impl std::io::BufRead for WordXmlInput<'_> {
     }
 }
 
-#[cfg(test)]
-type AdmissionLocalTrace = Vec<(bool, Vec<u8>)>;
-
-#[cfg(test)]
-std::thread_local! {
-    static ADMISSION_LOCAL_TEST_TRACE: std::cell::RefCell<Option<AdmissionLocalTrace>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-type ContextWeightTrace = Vec<(u8, usize)>;
-
-#[cfg(test)]
-std::thread_local! {
-    static CONTEXT_WEIGHT_TEST_TRACE: std::cell::RefCell<Option<ContextWeightTrace>> = const { std::cell::RefCell::new(None) };
-}
-
 struct WordNamespaceBinding {
     uri: Vec<u8>,
     depth: usize,
@@ -1174,12 +1140,6 @@ fn restore_namespace_depths(
 ) {
     for (prefix, previous) in undo.into_iter().rev() {
         *copy_scope_weight = None;
-        #[cfg(test)]
-        CONTEXT_WEIGHT_TEST_TRACE.with_borrow_mut(|trace| {
-            if let Some(trace) = trace {
-                trace.push((b'I', 0));
-            }
-        });
         if let Some(previous) = previous {
             depths.insert(prefix, previous);
         } else {
@@ -1282,31 +1242,6 @@ pub(crate) enum WordOwner<'a> {
     Revision(&'a CT_Revision),
     Drawing(&'a crate::drawing::CT_Drawing),
     Anchor(&'a crate::drawing::CT_Anchor),
-}
-
-#[cfg(test)]
-thread_local! {
-    pub(crate) static MODEL_GUARD_OWNER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static MODEL_LAST_ROOT_MAXIMA: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
-    pub(crate) static MODEL_SUMMARY_OWNER_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static MODEL_REFERENCE_OWNER_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static MODEL_REFERENCE_FIELD_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_FIELD_GUARD_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Namespaces retained by the capture planning pool. An intern hit does
-    /// not increment it, and neither does physical declaration decoding or
-    /// expanded record construction. The count is the number of distinct
-    /// planning namespaces, not a constant and not one copy per owner.
-    pub(crate) static ORIGINAL_CAPTURE_PLANNING_URI_COPIES: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
-    static CAPTURE_DECLARATION_LENGTH_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static CAPTURE_NAMESPACE_SCOPE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static CAPTURE_NAMESPACE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static CAPTURE_NAMESPACE_HISTORY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static CONTROL_SOURCE_OCCURRENCES_TAKEN: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
-    static PUBLICATION_OWNED_RANGE_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static DRAWING_METADATA_OWNER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static CONSTRUCTOR_QUALIFICATION_EVENTS: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
 }
 
 impl<'a> WordOwner<'a> {
@@ -1513,8 +1448,6 @@ pub(crate) fn word_model_children_maxima(
     while let Some(step) = pending.pop() {
         match step {
             ModelAdmissionStep::Enter(owner, cost, tables) => {
-                #[cfg(test)]
-                MODEL_GUARD_OWNER_VISITS.set(MODEL_GUARD_OWNER_VISITS.get() + 1);
                 let key = owner.key();
                 let completed = match summaries.get(&key) {
                     Some(Some(summary)) => Some(*summary),
@@ -1538,14 +1471,6 @@ pub(crate) fn word_model_children_maxima(
                 let cost = word_owner_cost(cost, local.0)?;
                 let tables = checked_model_table_depth(tables, local.1)?;
                 if completed.is_none() {
-                    #[cfg(test)]
-                    {
-                        MODEL_SUMMARY_OWNER_ENTRIES.set(MODEL_SUMMARY_OWNER_ENTRIES.get() + 1);
-                        if matches!(owner, WordOwner::Field(_)) {
-                            ORDERED_DIAGNOSTIC_FIELD_GUARD_VISITS
-                                .set(ORDERED_DIAGNOSTIC_FIELD_GUARD_VISITS.get() + 1);
-                        }
-                    }
                     summaries.insert(key, None);
                 }
                 let children = owner.resource_children();
@@ -1606,8 +1531,6 @@ pub(crate) fn word_model_children_maxima(
         maxima.0 = maxima.0.max(summary.0);
         maxima.1 = maxima.1.max(summary.1);
     }
-    #[cfg(test)]
-    MODEL_LAST_ROOT_MAXIMA.set(maxima);
     Ok(maxima)
 }
 
@@ -1644,10 +1567,6 @@ impl CaptureDeclarations {
         self.prefixes.push(prefix);
         self.namespaces.push(namespace);
         self.indices.entry(hash).or_default().push(index);
-        #[cfg(test)]
-        ORIGINAL_CAPTURE_PLANNING_URI_COPIES.with(|copies| {
-            copies.set(copies.get().saturating_add(1));
-        });
         Ok(index)
     }
 
@@ -1845,8 +1764,6 @@ fn capture_declaration_bytes(
     prefix: &str,
     namespace: &str,
 ) -> std::result::Result<usize, &'static str> {
-    #[cfg(test)]
-    CAPTURE_DECLARATION_LENGTH_EVALUATIONS.set(CAPTURE_DECLARATION_LENGTH_EVALUATIONS.get() + 1);
     let mut bytes = 9usize;
     if !prefix.is_empty() {
         bytes = bytes
@@ -1972,8 +1889,6 @@ fn original_capture_binding(
     prefix: &str,
     namespace_state: &CaptureNamespaceState,
 ) -> Option<(u32, usize)> {
-    #[cfg(test)]
-    CAPTURE_NAMESPACE_LOOKUPS.set(CAPTURE_NAMESPACE_LOOKUPS.get() + 1);
     namespace_state
         .histories
         .get(prefix)
@@ -2135,8 +2050,6 @@ fn original_capture_word_name(
     let Some(prefix) = prefix else {
         return false;
     };
-    #[cfg(test)]
-    CAPTURE_NAMESPACE_LOOKUPS.set(CAPTURE_NAMESPACE_LOOKUPS.get() + 1);
     namespace_state
         .histories
         .get(prefix)
@@ -2305,14 +2218,8 @@ fn effective_run_frame_binding(
     owner_depth: usize,
     namespace_state: &CaptureNamespaceState,
 ) -> Option<(u32, usize)> {
-    #[cfg(test)]
-    CAPTURE_NAMESPACE_LOOKUPS.set(CAPTURE_NAMESPACE_LOOKUPS.get() + 1);
     let history = namespace_state.histories.get(prefix)?;
-    let end = history.partition_point(|binding| {
-        #[cfg(test)]
-        CAPTURE_NAMESPACE_HISTORY_COMPARISONS.set(CAPTURE_NAMESPACE_HISTORY_COMPARISONS.get() + 1);
-        binding.depth <= owner_depth
-    });
+    let end = history.partition_point(|binding| binding.depth <= owner_depth);
     history
         .get(end.checked_sub(1)?)
         .map(|binding| (binding.index, binding.depth))
@@ -3256,9 +3163,6 @@ impl<'a> ControlSourceCursor<'a> {
         if occurrence.owner != owner {
             return None;
         }
-        #[cfg(test)]
-        CONTROL_SOURCE_OCCURRENCES_TAKEN
-            .with_borrow_mut(|taken| taken.push(occurrence.source_span.start));
         let children = Self {
             occurrences: self.occurrences,
             next: self.next + 1,
@@ -3706,8 +3610,6 @@ fn qualify_constructor_failures(
         if let Some(active) = &mut selector {
             active.reusable &= reader.decoder() == selector_decoder;
         }
-        #[cfg(test)]
-        CONSTRUCTOR_QUALIFICATION_EVENTS.set(CONSTRUCTOR_QUALIFICATION_EVENTS.get() + 1);
         match event {
             Event::Start(ref start) | Event::Empty(ref start) => {
                 let empty = matches!(event, Event::Empty(_));
@@ -3739,9 +3641,6 @@ fn qualify_constructor_failures(
                     original_capture_word_name(start.name().as_ref(), false, namespace_state, pool);
                 if collect_selectors {
                     if let Some(active) = &mut selector {
-                        #[cfg(test)]
-                        crate::text::SIMPLE_SELECTOR_FOLD_EVENTS
-                            .set(crate::text::SIMPLE_SELECTOR_FOLD_EVENTS.get() + 1);
                         active.element(
                             local.as_ref(),
                             word,
@@ -3758,9 +3657,6 @@ fn qualify_constructor_failures(
                         && word
                         && local.as_ref() == b"fldSimple"
                     {
-                        #[cfg(test)]
-                        crate::text::SIMPLE_SELECTOR_FOLD_EVENTS
-                            .set(crate::text::SIMPLE_SELECTOR_FOLD_EVENTS.get() + 1);
                         selector = Some(DirectSimpleSelectorFold {
                             opening: start_offset..reader.buffer_position() as usize,
                             result_start: reader.buffer_position() as usize,
@@ -3814,8 +3710,6 @@ fn qualify_constructor_failures(
                 if primitive_context_stable && doc_pr {
                     let mut owner = drawing_owner;
                     while let Some(index) = owner {
-                        #[cfg(test)]
-                        DRAWING_METADATA_OWNER_VISITS.set(DRAWING_METADATA_OWNER_VISITS.get() + 1);
                         if frames[index].drawing_metadata_opening.is_some() {
                             break;
                         }
@@ -4524,22 +4418,18 @@ fn qualify_constructor_failures(
                 }
             }
             Event::End(ref end) => {
-                if let Some(active) = &mut selector {
-                    #[cfg(test)]
-                    crate::text::SIMPLE_SELECTOR_FOLD_EVENTS
-                        .set(crate::text::SIMPLE_SELECTOR_FOLD_EVENTS.get() + 1);
-                    if active.end(scopes.len(), reader.buffer_position() as usize) {
-                        let active = selector.take().expect("completed selector owner");
-                        let owner_start = active.opening.start;
-                        if active.reusable {
-                            failures.simple_selectors.push(SimpleSelectorOccurrence {
-                                opening: active.opening,
-                                whole: owner_start..reader.buffer_position() as usize,
-                                ordered: active.ordered,
-                                result: active.result_start - owner_start
-                                    ..start_offset - owner_start,
-                            });
-                        }
+                if let Some(active) = &mut selector
+                    && active.end(scopes.len(), reader.buffer_position() as usize)
+                {
+                    let active = selector.take().expect("completed selector owner");
+                    let owner_start = active.opening.start;
+                    if active.reusable {
+                        failures.simple_selectors.push(SimpleSelectorOccurrence {
+                            opening: active.opening,
+                            whole: owner_start..reader.buffer_position() as usize,
+                            ordered: active.ordered,
+                            result: active.result_start - owner_start..start_offset - owner_start,
+                        });
                     }
                 }
                 if let Some(opening) = frames.last().and_then(|frame| frame.ruby_property_opening) {
@@ -8960,12 +8850,6 @@ fn admit_word_input_classified(
     constructors: std::sync::Arc<ConstructorFailures>,
 ) -> WordSourceResult<AdmittedWordSource> {
     debug_assert!(consumed_owner.is_none_or(|owner| matches!(owner, b"p" | b"r")));
-    #[cfg(test)]
-    CONTEXT_WEIGHT_TEST_TRACE.with_borrow_mut(|trace| {
-        if let Some(trace) = trace {
-            trace.push((b'B', 0));
-        }
-    });
     let (source, duplicate_context_bytes) = admission_envelope(prefixes)?;
     let source_start = source.len();
     let mut source_chunks = vec![source.as_slice()];
@@ -9027,12 +8911,6 @@ fn admit_word_input_classified(
                                 "reserved XML namespace binding".into(),
                             )));
                         }
-                        #[cfg(test)]
-                        CONTEXT_WEIGHT_TEST_TRACE.with_borrow_mut(|trace| {
-                            if let Some(trace) = trace {
-                                trace.push((b'I', 0));
-                            }
-                        });
                         copy_scope_weight = None;
                         let previous = namespace_depths.insert(
                             prefix.clone(),
@@ -9357,20 +9235,8 @@ fn admit_word_input_classified(
                 let copy_fact =
                     copy_owner || stack.last().is_some_and(|frame| frame.admitted) && !admitted;
                 let copy_scope_bytes = if let Some(bytes) = copy_scope_weight {
-                    #[cfg(test)]
-                    CONTEXT_WEIGHT_TEST_TRACE.with_borrow_mut(|trace| {
-                        if let Some(trace) = trace {
-                            trace.push((b'H', 0));
-                        }
-                    });
                     bytes
                 } else {
-                    #[cfg(test)]
-                    CONTEXT_WEIGHT_TEST_TRACE.with_borrow_mut(|trace| {
-                        if let Some(trace) = trace {
-                            trace.push((b'F', 0));
-                        }
-                    });
                     let bytes = namespace_depths
                         .iter()
                         .try_fold(0usize, |sum, (prefix, binding)| {
@@ -9390,29 +9256,6 @@ fn admit_word_input_classified(
                     copy_scope_weight = Some(bytes);
                     bytes
                 };
-                #[cfg(test)]
-                CONTEXT_WEIGHT_TEST_TRACE.with_borrow_mut(|trace| {
-                    if let Some(trace) = trace {
-                        // This reference is cfgtest-only and never part of
-                        // the separately built public work meter.
-                        let expected =
-                            namespace_depths
-                                .iter()
-                                .try_fold(0usize, |sum, (prefix, binding)| {
-                                    let marker = if decoded_namespace_is(&binding.uri, W_NS) {
-                                        prefix.len()
-                                    } else {
-                                        0
-                                    };
-                                    sum.checked_add(prefix.len())
-                                        .and_then(|sum| sum.checked_add(binding.uri.len()))
-                                        .and_then(|sum| sum.checked_add(2))
-                                        .and_then(|sum| sum.checked_add(marker))
-                                });
-                        assert_eq!(Some(copy_scope_bytes), expected);
-                        trace.push((b'V', copy_scope_bytes));
-                    }
-                });
                 let next_copy_depth =
                     copy_depth
                         .checked_add(usize::from(copy_owner))
@@ -9508,13 +9351,6 @@ fn admit_word_input_classified(
                             }
                         },
                     });
-                    #[cfg(test)]
-                    ADMISSION_LOCAL_TEST_TRACE.with_borrow_mut(|trace| {
-                        if let Some(trace) = trace {
-                            let local: &[u8] = stack.last().unwrap().local.as_ref();
-                            trace.push((true, local.to_vec()));
-                        }
-                    });
                     controls += usize::from(control);
                     path_cost = next_cost;
                 } else {
@@ -9527,13 +9363,6 @@ fn admit_word_input_classified(
             }
             Event::End(_) => {
                 if let Some(frame) = stack.pop() {
-                    #[cfg(test)]
-                    ADMISSION_LOCAL_TEST_TRACE.with_borrow_mut(|trace| {
-                        if let Some(trace) = trace {
-                            let local: &[u8] = frame.local.as_ref();
-                            trace.push((false, local.to_vec()));
-                        }
-                    });
                     if frame.copy_fact {
                         let visits = stack
                             .last()

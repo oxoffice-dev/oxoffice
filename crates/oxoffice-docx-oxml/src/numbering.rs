@@ -2447,11 +2447,6 @@ fn merge_direct_tab_attributes<'e>(
             content.extend_from_slice(&raw[range]);
         }
         let start = BytesStart::from_content(std::str::from_utf8(&content)?.to_owned(), name.len());
-        #[cfg(test)]
-        if content.len() >= 4096 {
-            crate::text::WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS
-                .set(crate::text::WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS.get() + 1);
-        }
         crate::text::FieldXmlStart::from_start(start, None)?
     };
     let (generated, _) = first_element_start(generated)?;

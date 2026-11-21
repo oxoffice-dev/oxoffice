@@ -315,12 +315,6 @@ pub(crate) fn has_foreign_attributes(element: &BytesStart<'_>) -> Result<bool> {
     Ok(false)
 }
 
-#[cfg(test)]
-thread_local! {
-    pub(crate) static RUBY_PROPERTY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static RUBY_PROPERTY_LANGUAGE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// Actual property scalar outcome, shared with source constructor qualification.
 /// Started children reach this only after their complete capture succeeds.
 pub(crate) enum RubyPropertyChild {
@@ -335,8 +329,6 @@ pub(crate) enum RubyPropertyChild {
 
 impl RubyPropertyChild {
     pub(crate) fn read(element: &BytesStart<'_>, prefixes: &[String]) -> Result<Self> {
-        #[cfg(test)]
-        RUBY_PROPERTY_READS.set(RUBY_PROPERTY_READS.get() + 1);
         let name = element.name();
         let name = name.as_ref();
         Ok(if is_word_element(name, b"rubyAlign", prefixes) {
@@ -357,12 +349,7 @@ impl RubyPropertyChild {
                 .unwrap_or(Self::Raw)
         } else if is_word_element(name, b"lid", prefixes) {
             get_word_val_attr(element, prefixes)?
-                .map(|value| {
-                    #[cfg(test)]
-                    RUBY_PROPERTY_LANGUAGE_BYTES
-                        .set(RUBY_PROPERTY_LANGUAGE_BYTES.get() + value.len());
-                    Self::Language(value)
-                })
+                .map(Self::Language)
                 .unwrap_or(Self::Raw)
         } else if is_word_element(name, b"dirty", prefixes) {
             Self::Dirty(parse_word_toggle(element, prefixes)?)

@@ -357,13 +357,6 @@ pub(crate) fn validate_word_owner_fragment(xml: &[u8], root: &[u8], checked: boo
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    pub(crate) static SIMPLE_SELECTOR_FOLD_EVENTS: Cell<usize> = const { Cell::new(0) };
-    pub(crate) static SIMPLE_SELECTOR_REUSES: Cell<usize> = const { Cell::new(0) };
-    pub(crate) static SIMPLE_SELECTOR_SCANS: Cell<usize> = const { Cell::new(0) };
-}
-
 static NEXT_FIELD_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
 
 const ROOT_ATTRIBUTES_ELEMENT: &[u8] = b"rdocxRootAttributes";
@@ -378,8 +371,6 @@ pub(crate) const ROOT_WP_BINDING: u8 = 4;
 thread_local! {
     static ROOT_BINDINGS: Cell<u8> = const { Cell::new(0) };
     static EMITTED_BINDINGS: RefCell<Option<Rc<EmittedBindings>>> = const { RefCell::new(None) };
-    #[cfg(test)]
-    static RUN_METADATA_VISITS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Keep part-root guarantees in scope only while that part is serialized.
@@ -2128,8 +2119,6 @@ impl Field {
         while let Some(step) = pending.pop() {
             match step {
                 FieldCloneStep::Enter(field, frozen) => {
-                    #[cfg(test)]
-                    FIELD_CLONE_OCCURRENCES.set(FIELD_CLONE_OCCURRENCES.get() + 1);
                     let children = field.owned_clone_children();
                     let frozen_children = frozen.map(Field::owned_clone_children);
                     let same_slots = frozen_children
@@ -2363,36 +2352,6 @@ struct OrderedNormalizationPlan<'a> {
     requested: &'a str,
     source_context: Vec<(&'a str, &'a str)>,
 }
-
-#[cfg(test)]
-thread_local! {
-    static PARSER_FIELD_SOURCE_ASSEMBLIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static FIELD_RESULT_LEAF_ACTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static FIELD_RESULT_TEXT_COPY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static FIELD_CLONE_OCCURRENCES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static ORDERED_SIMPLE_SOURCE_COWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static FIELD_SOURCE_EDIT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static WORD_LEGACY_VALUE_EVENT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_TEXT_ESCAPE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_VALUE_EVENT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_FONT_EVENT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_COLOR_EVENT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_BOLD_EVENT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WORD_COMPOUND_EVENT_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static FIELD_GROUP_SOURCE_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static FIELD_GROUP_SOURCE_GROWTHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static COMPLETE_RESULT_QUALIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static COMPLETE_RESULT_TRANSFER_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-#[cfg(test)]
-thread_local! { static FIELD_PUBLICATION_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-#[cfg(test)]
-thread_local! { pub(crate) static PARSED_RUN_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-#[cfg(test)]
-thread_local! { static NORMALIZATION_SUMMARY_FIELD_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-#[cfg(test)]
-thread_local! { static NORMALIZATION_REFERENCE_FIELD_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn initial_field_work_base(
     raw_bytes: usize,
@@ -5572,11 +5531,6 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
             OxmlError::InvalidValue("normalized event payload length overflow".into())
         })?;
         self.start.push_attribute((name, value));
-        #[cfg(test)]
-        if value.len() >= 4096 {
-            WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS
-                .set(WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS.get() + 1);
-        }
         Ok(())
     }
 
@@ -5677,11 +5631,6 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
         })?;
         self.start
             .push_attribute((format!("{prefix}:{local}").as_str(), value));
-        #[cfg(test)]
-        if value.len() >= 4096 {
-            WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS
-                .set(WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS.get() + 1);
-        }
         Ok(())
     }
 
@@ -5742,11 +5691,6 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
         content.push_str(name);
         for part in attributes {
             content.push_str(part);
-        }
-        #[cfg(test)]
-        if attributes.iter().any(|part| part.len() >= 4096) {
-            WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS
-                .set(WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS.get() + 1);
         }
         Ok(Self {
             start: BytesStart::from_content(content, name.len()),
@@ -5946,23 +5890,6 @@ impl FieldXmlEmission {
         for (name, value) in attributes.iter().flatten() {
             element.push_attribute((format!("{prefix}:{name}").as_str(), *value));
         }
-        #[cfg(test)]
-        if local == "rFonts" {
-            WORD_FONT_EVENT_MATERIALIZATIONS.set(WORD_FONT_EVENT_MATERIALIZATIONS.get() + 1);
-        }
-        #[cfg(test)]
-        match local {
-            "color" => {
-                WORD_COLOR_EVENT_MATERIALIZATIONS.set(WORD_COLOR_EVENT_MATERIALIZATIONS.get() + 1)
-            }
-            "b" => WORD_BOLD_EVENT_MATERIALIZATIONS.set(WORD_BOLD_EVENT_MATERIALIZATIONS.get() + 1),
-            _ => {}
-        }
-        #[cfg(test)]
-        if matches!(local, "bdr" | "shd" | "fitText" | "eastAsianLayout") {
-            WORD_COMPOUND_EVENT_MATERIALIZATIONS
-                .set(WORD_COMPOUND_EVENT_MATERIALIZATIONS.get() + 1);
-        }
         let _transport = prepaid
             .then(|| self.prepaid_xml_transport(element.as_ref()))
             .transpose()?;
@@ -6029,8 +5956,6 @@ impl FieldXmlEmission {
         let prepaid = self.reserve_inner_xml(length)?;
         let mut element = BytesStart::new(format!("{prefix}:{local}"));
         element.push_attribute((format!("{prefix}:val").as_str(), value));
-        #[cfg(test)]
-        WORD_VALUE_EVENT_MATERIALIZATIONS.set(WORD_VALUE_EVENT_MATERIALIZATIONS.get() + 1);
         let _transport = prepaid
             .then(|| self.prepaid_xml_transport(element.as_ref()))
             .transpose()?;
@@ -6095,8 +6020,6 @@ impl FieldXmlEmission {
         append_escaped_source(&mut output, value);
         let text = String::from_utf8(output).expect("escaping preserves UTF-8");
         let event = BytesText::from_escaped(text);
-        #[cfg(test)]
-        WORD_TEXT_ESCAPE_MATERIALIZATIONS.set(WORD_TEXT_ESCAPE_MATERIALIZATIONS.get() + 1);
         let _transport = prepaid
             .then(|| self.prepaid_xml_transport(event.as_ref()))
             .transpose()?;
@@ -6579,28 +6502,7 @@ impl Field {
                 "prepared field source scope".into(),
             ));
         };
-        let copy_work =
-            crate::document::admit_word_xml(&owner.normalized_xml, word_prefixes, Some(b"p"))?;
-        // unwrap_or_clone can copy an entire owned paragraph on an otherwise
-        // unchanged read. Its admitted source work is separate from refresh.
-        if Arc::strong_count(&owner.paragraph) > 1 {
-            #[cfg(test)]
-            {
-                ORDERED_DIAGNOSTIC_PROJECTION_COPY_WORK.set(
-                    ORDERED_DIAGNOSTIC_PROJECTION_COPY_WORK
-                        .get()
-                        .checked_add(copy_work.1)
-                        .expect("projection copy work overflow"),
-                );
-                ORDERED_DIAGNOSTIC_PROJECTION_COPIES.set(
-                    ORDERED_DIAGNOSTIC_PROJECTION_COPIES
-                        .get()
-                        .checked_add(1)
-                        .expect("projection copy counter overflow"),
-                );
-            }
-            let _ = copy_work;
-        }
+        crate::document::admit_word_xml(&owner.normalized_xml, word_prefixes, Some(b"p"))?;
         let mut paragraph = Arc::unwrap_or_clone(owner.paragraph);
         crate::revision::prepare_semantic_paragraph_projection(&mut paragraph)?;
         Ok(Some(paragraph))
@@ -6674,13 +6576,6 @@ impl Field {
     ) -> Result<Self> {
         let normalization_work = plan.work;
         let field_changes = plan.field_changes;
-        #[cfg(test)]
-        let phase_before = (
-            ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS.get(),
-            crate::revision::ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS.get(),
-        );
-        #[cfg(test)]
-        let mut own_constructions = 0usize;
         let source_context = Some(plan.source_context.as_slice());
         let mut candidate = self.clone();
         work.template_generated_field_cache(&mut candidate)?;
@@ -6736,29 +6631,11 @@ impl Field {
                     "ordered field source scope".into(),
                 ));
             };
-            #[cfg(test)]
-            let construction_before = (
-                ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS.get(),
-                crate::revision::ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS.get(),
-            );
             let mapped = crate::document::WordFieldInput::produced(
                 output_map.clone(),
                 Arc::clone(&work.field_origins),
             );
             let mut normalized = parse_ordered_field_result(&xml, word_prefixes, Some(&mapped))?;
-            #[cfg(test)]
-            {
-                own_constructions = ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS
-                    .get()
-                    .checked_sub(construction_before.0)
-                    .and_then(|count| {
-                        crate::revision::ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS
-                            .get()
-                            .checked_sub(construction_before.1)
-                            .and_then(|revisions| count.checked_add(revisions))
-                    })
-                    .expect("normalization construction observation overflow");
-            }
             retain_ordered_field_source_identities_in(
                 paragraph,
                 &mut normalized,
@@ -6784,42 +6661,6 @@ impl Field {
         owner
             .paragraph
             .append_ordered_comment_ranges(&mut 0, &mut candidate.parsed_cached_comment_ranges);
-        #[cfg(test)]
-        {
-            let constructed = own_constructions;
-            let phase_constructions = ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS
-                .get()
-                .checked_sub(phase_before.0)
-                .and_then(|count| {
-                    crate::revision::ORDERED_DIAGNOSTIC_REVISION_PARSE_CALLS
-                        .get()
-                        .checked_sub(phase_before.1)
-                        .and_then(|revisions| count.checked_add(revisions))
-                })
-                .expect("normalization whole-phase construction counter overflow");
-            assert!(
-                phase_constructions <= normalization_work,
-                "whole normalization exceeded preflight affected-source work"
-            );
-            ORDERED_DIAGNOSTIC_NORMALIZATION_PHASE_CONSTRUCTIONS.set(phase_constructions);
-            ORDERED_DIAGNOSTIC_NORMALIZATION_PHASE_WORK.set(normalization_work);
-            assert!(
-                constructed <= normalization_work,
-                "normalization construction exceeded preflight affected source"
-            );
-            ORDERED_DIAGNOSTIC_NORMALIZATION_WORK.set(
-                ORDERED_DIAGNOSTIC_NORMALIZATION_WORK
-                    .get()
-                    .checked_add(normalization_work)
-                    .expect("normalization work counter overflow"),
-            );
-            ORDERED_DIAGNOSTIC_NORMALIZATION_CONSTRUCTIONS.set(
-                ORDERED_DIAGNOSTIC_NORMALIZATION_CONSTRUCTIONS
-                    .get()
-                    .checked_add(constructed)
-                    .expect("normalization construction counter overflow"),
-            );
-        }
         Ok(candidate)
     }
 
@@ -6847,8 +6688,6 @@ impl Field {
                 pending.extend(children.into_iter().rev().map(|(child, _)| (child, None)));
                 continue;
             };
-            #[cfg(test)]
-            NORMALIZATION_SUMMARY_FIELD_VISITS.set(NORMALIZATION_SUMMARY_FIELD_VISITS.get() + 1);
             let mut coefficient = field.normalization_local_work_bytes()?;
             let mut offset = 0usize;
             for (child, ancestry_delta) in children {
@@ -8291,7 +8130,6 @@ impl Field {
     }
 
     fn nested_effective_segments(&self) -> Option<Vec<NestedEffectiveSegment<'_>>> {
-        note_nested_effective_projection();
         if let Some(owner) = &self.ordered_result {
             let mut segments = Vec::new();
             for path in owner.paragraph.accepted_run_paths() {
@@ -8642,29 +8480,12 @@ fn cached_display_range<'a>(
     result
 }
 
-#[cfg(test)]
-thread_local! {
-    static COUNT_NESTED_EFFECTIVE_PROJECTION: Cell<bool> = const { Cell::new(false) };
-    static NESTED_EFFECTIVE_PROJECTION_VISITS: Cell<u64> = const { Cell::new(0) };
-    /// Test-only fault injection for the public collapsed-removal atomicity
-    /// contract. It is never set outside a labeled control test.
-    pub(crate) static FORCE_COLLAPSED_REMOVAL_REFUSAL: Cell<bool> = const { Cell::new(false) };
-}
-
 fn joined_nested_text(segments: Option<&[NestedEffectiveSegment<'_>]>) -> Option<String> {
     let segments = segments?;
     if segments.is_empty() {
         return None;
     }
     Some(segments.iter().map(|(text, _, _)| text.as_ref()).collect())
-}
-
-fn note_nested_effective_projection() {
-    #[cfg(test)]
-    if COUNT_NESTED_EFFECTIVE_PROJECTION.get() {
-        NESTED_EFFECTIVE_PROJECTION_VISITS
-            .set(NESTED_EFFECTIVE_PROJECTION_VISITS.get().saturating_add(1));
-    }
 }
 
 // Same result projection as cached_run_display, compared without constructing
@@ -10050,8 +9871,6 @@ impl CT_R {
             **output = None;
         }
         let mut selected_property = None;
-        #[cfg(test)]
-        PARSED_RUN_CONSTRUCTIONS.set(PARSED_RUN_CONSTRUCTIONS.get() + 1);
         if let Some(facts) = &mut text_facts {
             facts.clear();
         }
@@ -10568,11 +10387,6 @@ impl CT_R {
                         emission.write_text(writer, &t.text, word_text)?;
                     } else {
                         let event = BytesText::new(&t.text);
-                        #[cfg(test)]
-                        if event.as_ref().as_ptr() != t.text.as_ptr() {
-                            WORD_TEXT_ESCAPE_MATERIALIZATIONS
-                                .set(WORD_TEXT_ESCAPE_MATERIALIZATIONS.get() + 1);
-                        }
                         let _word = word_text
                             .map(|input| WordPayloadTransport::new(event.as_ref(), input))
                             .transpose()?;
@@ -10595,11 +10409,6 @@ impl CT_R {
                         emission.write_text(writer, &t.text, None)?;
                     } else {
                         let event = BytesText::new(&t.text);
-                        #[cfg(test)]
-                        if event.as_ref().as_ptr() != t.text.as_ptr() {
-                            WORD_TEXT_ESCAPE_MATERIALIZATIONS
-                                .set(WORD_TEXT_ESCAPE_MATERIALIZATIONS.get() + 1);
-                        }
                         writer.write_event(Event::Text(event))?;
                     }
                     if let Some(emission) = emission {
@@ -10884,8 +10693,6 @@ fn run_xml_root_in<'emission>(
     let mut local = HashSet::new();
     let mut attributes = Vec::new();
     for (position, raw) in run.extra_xml_positions.iter().zip(&run.extra_xml) {
-        #[cfg(test)]
-        RUN_METADATA_VISITS.with(|count| count.set(count.get() + 1));
         if CT_R::raw_child_is_root_attributes(*position) {
             let mut reader = Reader::from_reader(raw.as_slice());
             let Event::Empty(record) = reader.read_event()? else {
@@ -11276,19 +11083,6 @@ pub(crate) fn parse_run_raw_with_observation(
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    static SIMPLE_FIELD_HEADER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static ORDERED_DIAGNOSTIC_SIMPLE_CACHE_COPY_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_NORMALIZATION_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_NORMALIZATION_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_NORMALIZATION_PHASE_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_NORMALIZATION_PHASE_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_PROJECTION_COPY_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ORDERED_DIAGNOSTIC_PROJECTION_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct SimpleFieldHeader {
     syntax: Option<InstructionSyntax>,
@@ -11313,8 +11107,6 @@ fn simple_header_attribute_index(
 
 impl SimpleFieldHeader {
     pub(crate) fn read(start: &BytesStart<'_>, prefixes: &[String], empty: bool) -> Self {
-        #[cfg(test)]
-        SIMPLE_FIELD_HEADER_READS.set(SIMPLE_FIELD_HEADER_READS.get() + 1);
         let instruction_attribute = simple_header_attribute_index(start, prefixes, b"instr");
         let Some(instruction) = optional_word_attribute(start, b"instr", prefixes) else {
             return Self {
@@ -11437,13 +11229,6 @@ fn parse_simple_field_body(
     prepared_selector: Option<(bool, std::ops::Range<usize>)>,
     mapped: Option<&crate::document::WordFieldInput>,
 ) -> Result<Option<(Field, ParsedFieldSummary)>> {
-    #[cfg(test)]
-    ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS.set(
-        ORDERED_DIAGNOSTIC_SIMPLE_PARSE_CALLS
-            .get()
-            .checked_add(1)
-            .expect("constructor counter overflow"),
-    );
     let mut reader = Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
@@ -11477,8 +11262,6 @@ fn parse_simple_field_body(
 
     let initial_result_start = reader.buffer_position() as usize;
     let (ordered, result_bounds) = if let Some(prepared) = prepared_selector {
-        #[cfg(test)]
-        SIMPLE_SELECTOR_REUSES.set(SIMPLE_SELECTOR_REUSES.get() + 1);
         prepared
     } else {
         simple_result_ownership(raw, &prefixes, initial_result_start)?
@@ -11548,12 +11331,6 @@ fn parse_simple_field_body(
             .expect("retained result")
             .paragraph
             .append_ordered_comment_ranges(&mut 0, &mut field.parsed_cached_comment_ranges);
-        #[cfg(test)]
-        assert_eq!(
-            summary,
-            ParsedFieldSummary::from_model(&field)?,
-            "prospective populated simple field summary"
-        );
         return Ok(Some((field, summary)));
     }
     let result_xml = &raw[result_bounds.clone()];
@@ -11610,12 +11387,6 @@ fn parse_simple_field_body(
         );
         field.parsed_cached_comment_ranges = paragraph.comment_ranges;
         field.simple_cached_runs = Some(paragraph.runs);
-        #[cfg(test)]
-        assert_eq!(
-            summary,
-            ParsedFieldSummary::from_model(&field)?,
-            "prospective populated simple field summary"
-        );
         return Ok(Some((field, summary)));
     }
     let cursor = mapped.map(|input| input.cursor(raw)).transpose()?;
@@ -11698,12 +11469,6 @@ fn parse_simple_field_body(
     // Keep physical facts even when opaque source children have a legacy
     // scalar display. Semantic cache readers still require display agreement.
     field.simple_cached_runs = Some(result_runs);
-    #[cfg(test)]
-    assert_eq!(
-        summary,
-        ParsedFieldSummary::from_model(&field)?,
-        "prospective populated simple field summary"
-    );
     Ok(Some((field, summary)))
 }
 
@@ -12000,28 +11765,6 @@ fn replace_ordered_result_text(
         replacement.push(part.into_run_content());
     }
     work.complete_leaf_actions(reserved);
-    #[cfg(test)]
-    {
-        FIELD_RESULT_LEAF_ACTIONS.set(
-            FIELD_RESULT_LEAF_ACTIONS
-                .get()
-                .checked_add(replacement.len())
-                .expect("field result leaf observation overflow"),
-        );
-        let copied = replacement
-            .iter()
-            .map(|part| match part {
-                RunContent::Text(text) => text.text.len(),
-                _ => 0,
-            })
-            .sum::<usize>();
-        FIELD_RESULT_TEXT_COPY_BYTES.set(
-            FIELD_RESULT_TEXT_COPY_BYTES
-                .get()
-                .checked_add(copied)
-                .expect("field result text observation overflow"),
-        );
-    }
     let mut written = false;
     for path in paragraph.accepted_run_paths() {
         let Some(mut run) = paragraph.accepted_run(&path).cloned() else {
@@ -12374,8 +12117,6 @@ fn simple_result_ownership(
     prefixes: &[String],
     initial_start: usize,
 ) -> Result<(bool, std::ops::Range<usize>)> {
-    #[cfg(test)]
-    SIMPLE_SELECTOR_SCANS.set(SIMPLE_SELECTOR_SCANS.get() + 1);
     (|| -> std::result::Result<_, SelectorFailure> {
         let mut reader = Reader::from_reader(raw);
         reader.config_mut().trim_text(false);
@@ -13988,8 +13729,6 @@ fn prepare_complete_complex_result(
 ) -> Result<bool> {
     let mut pending = vec![(field, span)];
     while let Some((field, span)) = pending.pop() {
-        #[cfg(test)]
-        COMPLETE_RESULT_QUALIFICATIONS.set(COMPLETE_RESULT_QUALIFICATIONS.get() + 1);
         let Some(geometry) = complete_complex_result_geometry(
             field,
             span,
@@ -14081,8 +13820,6 @@ fn transfer_complete_complex_result(
     };
     let mut pending = vec![CompleteResultTransferFrame::new(field, geometry)];
     loop {
-        #[cfg(test)]
-        COMPLETE_RESULT_TRANSFER_DEPTH.set(COMPLETE_RESULT_TRANSFER_DEPTH.get().max(pending.len()));
         let parent = pending.last_mut().expect("root transfer frame");
         if let Some((_, slot, first, last)) =
             parent.geometry.child_spans.get(parent.next_child).copied()
@@ -14417,12 +14154,6 @@ fn publish_complete_complex_result(
                 )?;
             }
         }
-        #[cfg(test)]
-        assert_eq!(
-            _publication,
-            ParsedFieldSummary::from_model(field)?,
-            "complete derived ordered-result publication summary"
-        );
     }
     Ok(())
 }
@@ -15372,12 +15103,6 @@ fn project_complex_fields(projection: ComplexFieldProjection<'_>) -> Result<bool
                             )
                             .collect();
                     }
-                    #[cfg(test)]
-                    assert_eq!(
-                        initial_summary,
-                        ParsedFieldSummary::from_model(&parsed)?,
-                        "prospective populated close-boundary summary"
-                    );
                     let valid = field.valid
                         && !parsed.instruction.name.is_empty()
                         && run_sources[field.start_run..=run_index]
@@ -16203,8 +15928,6 @@ fn assemble_field_source(parts: &[&[u8]]) -> Result<Vec<u8>> {
         .iter()
         .try_fold(0usize, |total, part| total.checked_add(part.len()))
         .ok_or_else(|| OxmlError::InvalidValue("field source byte overflow".into()))?;
-    #[cfg(test)]
-    PARSER_FIELD_SOURCE_ASSEMBLIES.set(PARSER_FIELD_SOURCE_ASSEMBLIES.get() + 1);
     let mut output = Vec::with_capacity(bytes);
     for part in parts {
         output.extend_from_slice(part);
@@ -16705,12 +16428,6 @@ fn field_span_runs(
             ..
         } = Arc::make_mut(&mut field.source)
         {
-            #[cfg(test)]
-            {
-                FIELD_GROUP_SOURCE_COPIES.set(FIELD_GROUP_SOURCE_COPIES.get() + 1);
-                FIELD_GROUP_SOURCE_GROWTHS
-                    .set(FIELD_GROUP_SOURCE_GROWTHS.get() + usize::from(raw.len() > source.len()));
-            }
             *source = raw.to_vec();
             if let (Some(shape), Some(ranges)) = (&shape, &publication_ranges) {
                 *publication_owned = shape
@@ -16756,14 +16473,7 @@ fn field_span_runs(
         return Ok(fields
             .into_iter()
             .zip(summaries)
-            .map(|((field, properties), _summary)| {
-                #[cfg(test)]
-                assert_eq!(
-                    _summary,
-                    ParsedFieldSummary::from_model(&field).expect("guarded field publication")
-                );
-                field_run(field, properties)
-            })
+            .map(|((field, properties), _summary)| field_run(field, properties))
             .collect());
     };
     let mut fields = fields.into_iter().zip(summaries).enumerate();
@@ -16790,11 +16500,6 @@ fn field_span_runs(
                         .expect("field origin registry poisoned")
                         .register_publication_ranges(&field, std::mem::take(ranges));
                 }
-                #[cfg(test)]
-                assert_eq!(
-                    _summary,
-                    ParsedFieldSummary::from_model(&field).expect("guarded span publication")
-                );
                 field_run(field, properties)
             }
         })
@@ -20054,12 +19759,6 @@ impl CT_P {
             .zip(removed)
             .filter_map(|(run, remove)| (!*remove).then_some(run))
             .collect();
-        #[cfg(test)]
-        if !collapsed.is_empty() && FORCE_COLLAPSED_REMOVAL_REFUSAL.with(Cell::get) {
-            return Err(OxmlError::InvalidValue(
-                "collapsed hyperlink replacement refused by test fault injection".into(),
-            ));
-        }
         for old_index in collapsed {
             let Some(index) = hyperlink_map[old_index] else {
                 continue;
@@ -23805,8 +23504,6 @@ fn write_field_with_result_properties<W: std::io::Write>(
                 }
             }
         }
-        #[cfg(test)]
-        ORDERED_SIMPLE_SOURCE_COWS.set(ORDERED_SIMPLE_SOURCE_COWS.get() + 1);
         let FieldSource::Parsed {
             raw_xml,
             original_instruction,
@@ -24540,9 +24237,6 @@ fn write_legacy_word_empty<W: std::io::Write>(
     if let Some(value) = value {
         element.push("w:val", value)?;
     }
-    #[cfg(test)]
-    WORD_LEGACY_VALUE_EVENT_MATERIALIZATIONS
-        .set(WORD_LEGACY_VALUE_EVENT_MATERIALIZATIONS.get() + 1);
     element.write(writer, true)?;
     Ok(())
 }
@@ -24745,11 +24439,6 @@ fn write_legacy_form_value_element<W: std::io::Write>(
         FieldSourcePiece::Literal(b"\"/>"),
     ];
     emission.write_xml_pieces(output, &pieces)?;
-    #[cfg(test)]
-    if value.len() >= 4096 {
-        WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS
-            .set(WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS.get() + 1);
-    }
     Ok(())
 }
 
@@ -24809,11 +24498,6 @@ fn write_patched_value_event<W: std::io::Write>(
     }
     pieces.push(FieldSourcePiece::Literal(if empty { b"/>" } else { b">" }));
     emission.write_xml_pieces(output, &pieces)?;
-    #[cfg(test)]
-    if value.len() >= 4096 {
-        WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS
-            .set(WORD_LARGE_EVENT_ATTRIBUTE_MATERIALIZATIONS.get() + 1);
-    }
     Ok(())
 }
 
@@ -27918,8 +27602,6 @@ impl<'a> FieldSourceEdit<'a> {
                 "field source edit input changed".into(),
             ));
         }
-        #[cfg(test)]
-        FIELD_SOURCE_EDIT_MATERIALIZATIONS.set(FIELD_SOURCE_EDIT_MATERIALIZATIONS.get() + 1);
         let mut output = Vec::with_capacity(self.projected);
         output.extend_from_slice(&raw[..self.range.start]);
         self.replacement_bytes(&mut output);
@@ -30096,8 +29778,6 @@ pub(crate) fn emit_retained_roots_mapped_in<'a>(
         .unwrap_or(false);
     // No closed root, escaped URI clone or expanded buffer exists before the
     // complete borrowed proof above. Emission is a single bounded buffer pass.
-    #[cfg(test)]
-    FIELD_PUBLICATION_CONSTRUCTIONS.set(FIELD_PUBLICATION_CONSTRUCTIONS.get() + 1);
     let plan = RetainedRootPlan {
         source,
         roots,

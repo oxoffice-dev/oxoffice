@@ -344,9 +344,6 @@ impl CT_FitText {
         if let Some(id) = self.id {
             e.push_word(&word_prefix, "id", buf.format(id))?;
         }
-        #[cfg(test)]
-        crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS
-            .set(crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS.get() + 1);
         e.write(writer, true)?;
         Ok(())
     }
@@ -424,9 +421,6 @@ impl CT_EastAsianLayout {
                 if vert_compress { "1" } else { "0" },
             )?;
         }
-        #[cfg(test)]
-        crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS
-            .set(crate::text::WORD_COMPOUND_EVENT_MATERIALIZATIONS.get() + 1);
         e.write(writer, true)?;
         Ok(())
     }
@@ -1649,9 +1643,6 @@ impl CT_RPr {
                 if let Some(ref f) = self.font_cs_theme {
                     e.push_word(&word_prefix, "cstheme", f.as_str())?;
                 }
-                #[cfg(test)]
-                crate::text::WORD_FONT_EVENT_MATERIALIZATIONS
-                    .set(crate::text::WORD_FONT_EVENT_MATERIALIZATIONS.get() + 1);
                 e.write(writer, true)?;
             }
         }
@@ -1790,9 +1781,6 @@ impl CT_RPr {
                         std::str::from_utf8(&value).expect("ASCII hex"),
                     )?;
                 }
-                #[cfg(test)]
-                crate::text::WORD_COLOR_EVENT_MATERIALIZATIONS
-                    .set(crate::text::WORD_COLOR_EVENT_MATERIALIZATIONS.get() + 1);
                 e.write(writer, true)?;
             }
         }
@@ -2493,9 +2481,6 @@ fn write_word_value<W: std::io::Write>(
     }
     let mut element = BytesStart::new(format!("{prefix}:{local}"));
     element.push_attribute((format!("{prefix}:val").as_str(), value));
-    #[cfg(test)]
-    crate::text::WORD_VALUE_EVENT_MATERIALIZATIONS
-        .set(crate::text::WORD_VALUE_EVENT_MATERIALIZATIONS.get() + 1);
     writer.write_event(Event::Empty(element))?;
     Ok(())
 }

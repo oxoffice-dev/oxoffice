@@ -20,11 +20,6 @@ use crate::text::{
     AcceptedRunPath, AcceptedRunPathSegment, CT_P, CT_R, Field, LegacyFormFieldValue, RunContent,
 };
 
-#[cfg(test)]
-thread_local! {
-    pub(crate) static TEMPLATE_RETAINED_SOURCE_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// The bounded content-control type markers that oxoffice reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdtType {
@@ -1335,22 +1330,16 @@ impl CT_Sdt {
     pub fn retained_run_xml(&self, content_index: usize) -> Option<&[u8]> {
         self.inline_run_sources
             .iter()
-            .find(|source| {
-                #[cfg(test)]
-                TEMPLATE_RETAINED_SOURCE_PROBES.set(TEMPLATE_RETAINED_SOURCE_PROBES.get() + 1);
-                source.content_index == content_index
-            })
+            .find(|source| source.content_index == content_index)
             .map(|source| source.raw_xml.as_slice())
     }
 
     /// Borrow every actual stored run capture once, retaining absolute indices.
     #[doc(hidden)]
     pub fn retained_resource_run_xml(&self) -> impl Iterator<Item = (usize, &[u8])> {
-        self.inline_run_sources.iter().map(|source| {
-            #[cfg(test)]
-            TEMPLATE_RETAINED_SOURCE_PROBES.set(TEMPLATE_RETAINED_SOURCE_PROBES.get() + 1);
-            (source.content_index, source.raw_xml.as_slice())
-        })
+        self.inline_run_sources
+            .iter()
+            .map(|source| (source.content_index, source.raw_xml.as_slice()))
     }
 
     /// Project complex legacy fields owned by direct inline runs.

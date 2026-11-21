@@ -2288,11 +2288,6 @@ fn write_math_text<W: Write>(
         emission.write_text(writer, text_value, None)?;
     } else {
         let text = BytesText::new(text_value);
-        #[cfg(test)]
-        if text.len() != text_value.len() {
-            crate::text::WORD_TEXT_ESCAPE_MATERIALIZATIONS
-                .set(crate::text::WORD_TEXT_ESCAPE_MATERIALIZATIONS.get() + 1);
-        }
         writer.write_event(Event::Text(text))?;
     }
     writer.write_event(Event::End(BytesEnd::new("m:t")))?;
