@@ -657,6 +657,113 @@ impl ContentPath {
     }
 }
 
+/// The unit a property stores a length in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LengthUnit {
+    /// EMU, as drawings store them: nothing rounds.
+    Emu,
+    /// Twentieths of a point, 635 EMU.
+    Twips,
+    /// Half-points, 6350 EMU, as Word stores font sizes.
+    HalfPoints,
+    /// Hundredths of a point, 127 EMU, as PowerPoint stores font sizes and
+    /// spacing.
+    Centipoints,
+}
+
+impl LengthUnit {
+    fn emu(self) -> i64 {
+        match self {
+            Self::Emu => 1,
+            Self::Twips => 635,
+            Self::HalfPoints => 6350,
+            Self::Centipoints => 127,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Emu => "EMU",
+            Self::Twips => "twips",
+            Self::HalfPoints => "half-points",
+            Self::Centipoints => "hundredths of a point",
+        }
+    }
+}
+
+/// The `Length` class of one Python package and the classes to suggest for a
+/// small value.
+#[derive(Clone, Copy, Debug)]
+pub struct LengthClasses {
+    /// The module that exports `Length`, such as `oxoffice.docx`.
+    pub module: &'static str,
+    /// The subclasses to name in a message, such as `Pt, Twips or Emu`.
+    pub hint: &'static str,
+}
+
+/// Read one optional length argument the way every length argument is read.
+///
+/// `None`, or an omitted argument, gives `None`. A `Length` is taken as given,
+/// even when it rounds to zero in `unit`. A bare `int` is EMU: zero is
+/// accepted, and a nonzero one that would round to zero in `unit` is refused
+/// with `ValueError`. `bool`, `float` and every other type are `TypeError`.
+pub fn length_argument(
+    value: Option<&Bound<'_, PyAny>>,
+    classes: LengthClasses,
+    name: &str,
+    unit: LengthUnit,
+) -> PyResult<Option<i64>> {
+    match value {
+        Some(value) if !value.is_none() => checked_length(
+            value,
+            classes,
+            name,
+            unit,
+            "a Length, a bare integer EMU or None",
+        )
+        .map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// Read one length argument that takes no `None`, as [`length_argument`] does.
+pub fn required_length(
+    value: &Bound<'_, PyAny>,
+    classes: LengthClasses,
+    name: &str,
+    unit: LengthUnit,
+) -> PyResult<i64> {
+    checked_length(value, classes, name, unit, "a Length or a bare integer EMU")
+}
+
+fn checked_length(
+    value: &Bound<'_, PyAny>,
+    classes: LengthClasses,
+    name: &str,
+    unit: LengthUnit,
+    accepted: &str,
+) -> PyResult<i64> {
+    if value.is_instance_of::<pyo3::types::PyBool>()
+        || !value.is_instance_of::<pyo3::types::PyInt>()
+    {
+        return Err(PyTypeError::new_err(format!("{name} requires {accepted}")));
+    }
+    let emu = value
+        .extract::<i64>()
+        .map_err(|_| PyValueError::new_err(format!("{name} does not fit 64-bit EMU")))?;
+    if emu != 0
+        && emu / unit.emu() == 0
+        && !value.is_instance(&value.py().import(classes.module)?.getattr("Length")?)?
+    {
+        return Err(PyValueError::new_err(format!(
+            "{name}: bare integer {emu} EMU would round to zero {}; use {}",
+            unit.name(),
+            classes.hint
+        )));
+    }
+    Ok(emu)
+}
+
 /// Convert inches to EMU with the canonical truncation behavior.
 pub fn emu_from_inches(value: f64) -> i64 {
     Length::inches(value).to_emu()

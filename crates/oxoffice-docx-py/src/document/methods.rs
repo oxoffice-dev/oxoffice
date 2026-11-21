@@ -25,8 +25,17 @@ impl PyDocument {
     }
 
     #[setter]
-    fn set_default_font_size(&mut self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
-        let value = value.map(oxoffice_docx::Length::emu);
+    fn set_default_font_size(
+        &mut self,
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let value = crate::length_argument(
+            value,
+            "Document.default_font_size",
+            crate::LengthUnit::HalfPoints,
+        )?
+        .map(oxoffice_docx::Length::emu);
         if value.is_some_and(|value| {
             value.to_emu() < 0 || u32::try_from(value.to_emu() / 6350).is_err()
         }) {
@@ -1231,8 +1240,16 @@ impl PyDocument {
                 },
             ));
         }
-        let width = checked_section_length(Some(width), "picture width")?.unwrap();
-        let height = checked_section_length(Some(height), "picture height")?.unwrap();
+        let width = crate::required_length(
+            width,
+            "Document.set_picture_size(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "Document.set_picture_size(height)",
+            crate::LengthUnit::Emu,
+        )?;
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_picture_size_at(
@@ -1259,9 +1276,19 @@ impl PyDocument {
         &mut self,
         py: Python<'_>,
         relationship_id: &str,
-        width: i64,
-        height: i64,
+        width: &Bound<'_, PyAny>,
+        height: &Bound<'_, PyAny>,
     ) -> PyResult<usize> {
+        let width = crate::required_length(
+            width,
+            "Document.set_picture_sizes_for_relationship(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "Document.set_picture_sizes_for_relationship(height)",
+            crate::LengthUnit::Emu,
+        )?;
         // No content moves, so live handles stay valid.
         py.detach(|| {
             self.inner.set_picture_size(
@@ -2027,21 +2054,23 @@ impl PyDocument {
         different_first_page: Option<bool>,
         break_type: Option<&str>,
     ) -> PyResult<PySection> {
-        let page_width = checked_update_section_length(py, page_width.as_ref(), "page_width")?;
-        let page_height = checked_update_section_length(py, page_height.as_ref(), "page_height")?;
-        let margin_top = checked_update_section_length(py, margin_top.as_ref(), "margin_top")?;
-        let margin_right =
-            checked_update_section_length(py, margin_right.as_ref(), "margin_right")?;
-        let margin_bottom =
-            checked_update_section_length(py, margin_bottom.as_ref(), "margin_bottom")?;
-        let margin_left = checked_update_section_length(py, margin_left.as_ref(), "margin_left")?;
-        let gutter = checked_update_section_length(py, gutter.as_ref(), "gutter")?;
-        let column_spacing =
-            checked_update_section_length(py, column_spacing.as_ref(), "column_spacing")?;
-        let header_distance =
-            checked_update_section_length(py, header_distance.as_ref(), "header_distance")?;
-        let footer_distance =
-            checked_update_section_length(py, footer_distance.as_ref(), "footer_distance")?;
+        let length = |value: Option<Bound<'_, PyAny>>, name: &str| {
+            crate::length_argument(
+                value.as_ref(),
+                &format!("Document.update_section({name})"),
+                crate::LengthUnit::Twips,
+            )
+        };
+        let page_width = length(page_width, "page_width")?;
+        let page_height = length(page_height, "page_height")?;
+        let margin_top = length(margin_top, "margin_top")?;
+        let margin_right = length(margin_right, "margin_right")?;
+        let margin_bottom = length(margin_bottom, "margin_bottom")?;
+        let margin_left = length(margin_left, "margin_left")?;
+        let gutter = length(gutter, "gutter")?;
+        let column_spacing = length(column_spacing, "column_spacing")?;
+        let header_distance = length(header_distance, "header_distance")?;
+        let footer_distance = length(footer_distance, "footer_distance")?;
         let orientation = orientation
             .map(|value| {
                 ST_PageOrientation::from_str(value)
@@ -2280,10 +2309,16 @@ impl PyDocument {
         width: &Bound<'_, PyAny>,
         height: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let width = checked_section_length(Some(width), "watermark width")?
-            .ok_or_else(|| PyTypeError::new_err("watermark width is required"))?;
-        let height = checked_section_length(Some(height), "watermark height")?
-            .ok_or_else(|| PyTypeError::new_err("watermark height is required"))?;
+        let width = crate::required_length(
+            width,
+            "Document.set_image_watermark(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "Document.set_image_watermark(height)",
+            crate::LengthUnit::Emu,
+        )?;
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_image_watermark(
@@ -2418,15 +2453,15 @@ impl PyDocument {
         based_on: Option<&str>,
         next_style: Option<&str>,
         font_name: Option<String>,
-        font_size: Option<i64>,
+        font_size: Option<&Bound<'_, PyAny>>,
         bold: Option<bool>,
         italic: Option<bool>,
         color: Option<&Bound<'_, PyAny>>,
-        space_before: Option<i64>,
-        space_after: Option<i64>,
-        left_indent: Option<i64>,
-        right_indent: Option<i64>,
-        first_line_indent: Option<i64>,
+        space_before: Option<&Bound<'_, PyAny>>,
+        space_after: Option<&Bound<'_, PyAny>>,
+        left_indent: Option<&Bound<'_, PyAny>>,
+        right_indent: Option<&Bound<'_, PyAny>>,
+        first_line_indent: Option<&Bound<'_, PyAny>>,
         alignment: Option<i32>,
         line_spacing: Option<&Bound<'_, PyAny>>,
         underline: Option<&Bound<'_, PyAny>>,
@@ -2441,6 +2476,19 @@ impl PyDocument {
             .filter(|value| !value.is_none())
             .map(|value| oxoffice_py_support::rgb_channels(value, "Document.add_style(color)"))
             .transpose()?;
+        let length = |value, name: &str, unit| {
+            crate::length_argument(value, &format!("Document.add_style({name})"), unit)
+        };
+        let font_size = length(font_size, "font_size", crate::LengthUnit::HalfPoints)?;
+        let space_before = length(space_before, "space_before", crate::LengthUnit::Twips)?;
+        let space_after = length(space_after, "space_after", crate::LengthUnit::Twips)?;
+        let left_indent = length(left_indent, "left_indent", crate::LengthUnit::Twips)?;
+        let right_indent = length(right_indent, "right_indent", crate::LengthUnit::Twips)?;
+        let first_line_indent = length(
+            first_line_indent,
+            "first_line_indent",
+            crate::LengthUnit::Twips,
+        )?;
         type NewStyle = fn(&str, &str) -> oxoffice_docx::StyleBuilder;
         let (native_type, new_style): (oxoffice_docx::StyleType, NewStyle) = match style_type {
             "paragraph" => (
@@ -2484,6 +2532,7 @@ impl PyDocument {
             )));
         }
         let formatting = StyleFormatting {
+            method: "Document.add_style",
             font_name,
             font_size,
             bold,
@@ -2588,15 +2637,15 @@ impl PyDocument {
         based_on: Option<&str>,
         next_style: Option<&str>,
         font_name: Option<String>,
-        font_size: Option<i64>,
+        font_size: Option<&Bound<'_, PyAny>>,
         bold: Option<bool>,
         italic: Option<bool>,
         color: Option<&Bound<'_, PyAny>>,
-        space_before: Option<i64>,
-        space_after: Option<i64>,
-        left_indent: Option<i64>,
-        right_indent: Option<i64>,
-        first_line_indent: Option<i64>,
+        space_before: Option<&Bound<'_, PyAny>>,
+        space_after: Option<&Bound<'_, PyAny>>,
+        left_indent: Option<&Bound<'_, PyAny>>,
+        right_indent: Option<&Bound<'_, PyAny>>,
+        first_line_indent: Option<&Bound<'_, PyAny>>,
         alignment: Option<i32>,
         line_spacing: StyleLineSpacingArg,
         underline: Option<&Bound<'_, PyAny>>,
@@ -2611,6 +2660,19 @@ impl PyDocument {
             .filter(|value| !value.is_none())
             .map(|value| oxoffice_py_support::rgb_channels(value, "Document.set_style(color)"))
             .transpose()?;
+        let length = |value, name: &str, unit| {
+            crate::length_argument(value, &format!("Document.set_style({name})"), unit)
+        };
+        let font_size = length(font_size, "font_size", crate::LengthUnit::HalfPoints)?;
+        let space_before = length(space_before, "space_before", crate::LengthUnit::Twips)?;
+        let space_after = length(space_after, "space_after", crate::LengthUnit::Twips)?;
+        let left_indent = length(left_indent, "left_indent", crate::LengthUnit::Twips)?;
+        let right_indent = length(right_indent, "right_indent", crate::LengthUnit::Twips)?;
+        let first_line_indent = length(
+            first_line_indent,
+            "first_line_indent",
+            crate::LengthUnit::Twips,
+        )?;
         let (style_type, style_id) = defined_style(&self.inner, style)?;
         let existing = self.inner.style(&style_id).expect("the style was found");
         let name = existing.name().unwrap_or(&style_id).to_owned();
@@ -2640,6 +2702,7 @@ impl PyDocument {
             )?);
         }
         let formatting = StyleFormatting {
+            method: "Document.set_style",
             font_name,
             font_size,
             bold,
@@ -2749,8 +2812,18 @@ impl PyDocument {
                 continue;
             };
             match name {
-                "space_before" => next.space_before = length_keyword(py, &value, name)?,
-                "space_after" => next.space_after = length_keyword(py, &value, name)?,
+                "space_before" => {
+                    next.space_before = length_keyword(
+                        &value,
+                        "Document.set_default_paragraph_format(space_before)",
+                    )?;
+                }
+                "space_after" => {
+                    next.space_after = length_keyword(
+                        &value,
+                        "Document.set_default_paragraph_format(space_after)",
+                    )?;
+                }
                 "line_spacing" => {
                     let line = line_spacing_keyword(py, &value)?;
                     // A missing rule already means auto, so the same multiple
@@ -2982,12 +3055,16 @@ impl PyDocument {
         after: Option<PyRef<'_, PyParagraph>>,
     ) -> PyResult<Py<PyParagraph>> {
         let (kind, data) = checked_chart_inputs(chart_type, chart_data)?;
-        let width = oxoffice_docx::Length::emu(
-            checked_section_length(Some(width), "chart width")?.unwrap(),
-        );
-        let height = oxoffice_docx::Length::emu(
-            checked_section_length(Some(height), "chart height")?.unwrap(),
-        );
+        let width = oxoffice_docx::Length::emu(crate::required_length(
+            width,
+            "Document.add_chart(width)",
+            crate::LengthUnit::Emu,
+        )?);
+        let height = oxoffice_docx::Length::emu(crate::required_length(
+            height,
+            "Document.add_chart(height)",
+            crate::LengthUnit::Emu,
+        )?);
         let after = after
             .map(|paragraph| {
                 if !paragraph.belongs_to(py, &slf) {
@@ -3512,9 +3589,15 @@ impl PyDocument {
         options: Option<PyRef<'_, PyPictureOptions>>,
     ) -> PyResult<Py<PyPicture>> {
         let (data, filename) = picture_input(data, filename)?;
-        let width = checked_section_length(width, "picture width")?.map(oxoffice_docx::Length::emu);
-        let height =
-            checked_section_length(height, "picture height")?.map(oxoffice_docx::Length::emu);
+        let width =
+            crate::length_argument(width, "Document.add_picture(width)", crate::LengthUnit::Emu)?
+                .map(oxoffice_docx::Length::emu);
+        let height = crate::length_argument(
+            height,
+            "Document.add_picture(height)",
+            crate::LengthUnit::Emu,
+        )?
+        .map(oxoffice_docx::Length::emu);
         if width.is_some() != height.is_some() {
             return Err(crate::docx_to_pyerr(
                 py,

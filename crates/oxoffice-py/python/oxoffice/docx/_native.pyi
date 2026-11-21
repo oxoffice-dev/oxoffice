@@ -1303,18 +1303,18 @@ class Document:
         index: int,
         *,
         orientation: _Literal["portrait", "landscape"] | None = None,
-        page_width: _shared.Length | _Literal[0] | None = None,
-        page_height: _shared.Length | _Literal[0] | None = None,
-        margin_top: _shared.Length | _Literal[0] | None = None,
-        margin_right: _shared.Length | _Literal[0] | None = None,
-        margin_bottom: _shared.Length | _Literal[0] | None = None,
-        margin_left: _shared.Length | _Literal[0] | None = None,
-        gutter: _shared.Length | _Literal[0] | None = None,
+        page_width: _shared.Length | int | None = None,
+        page_height: _shared.Length | int | None = None,
+        margin_top: _shared.Length | int | None = None,
+        margin_right: _shared.Length | int | None = None,
+        margin_bottom: _shared.Length | int | None = None,
+        margin_left: _shared.Length | int | None = None,
+        gutter: _shared.Length | int | None = None,
         column_count: int | None = None,
-        column_spacing: _shared.Length | _Literal[0] | None = None,
+        column_spacing: _shared.Length | int | None = None,
         page_number_start: int | None = None,
-        header_distance: _shared.Length | _Literal[0] | None = None,
-        footer_distance: _shared.Length | _Literal[0] | None = None,
+        header_distance: _shared.Length | int | None = None,
+        footer_distance: _shared.Length | int | None = None,
         different_first_page: bool | None = None,
         break_type: _Literal[
             "nextPage", "continuous", "evenPage", "oddPage", "nextColumn"
@@ -1406,19 +1406,20 @@ class Document:
     def set_default_paragraph_format(
         self,
         *,
-        space_before: _shared.Length | None = ...,
-        space_after: _shared.Length | None = ...,
+        space_before: _shared.Length | int | None = ...,
+        space_after: _shared.Length | int | None = ...,
         line_spacing: _shared.Length | float | None = ...,
     ) -> None:
         """Set document default paragraph spacing.
 
         An omitted keyword keeps its stored value. None clears only that
-        keyword. A Length writes that spacing. A Length line_spacing writes
-        an exact rule, and a float or int line_spacing writes a line multiple
-        with the auto rule, as set_style does, so the value
-        default_paragraph_format reads writes back unchanged. A float or an
-        int for space_before or space_after, a bool, or any other type is
-        refused and the document stays unchanged.
+        keyword. A Length or a bare integer EMU writes that spacing; a bare
+        integer that would round to zero twips is refused. A Length
+        line_spacing writes an exact rule, and a float or int line_spacing
+        writes a line multiple with the auto rule, as set_style does, so the
+        value default_paragraph_format reads writes back unchanged. A float
+        for space_before or space_after, a bool, or any other type is refused
+        and the document stays unchanged.
         """
     def part_names(self) -> tuple[str, ...]: ...
     def part_xml(self, name: str) -> str: ...

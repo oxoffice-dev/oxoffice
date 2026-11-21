@@ -2,7 +2,12 @@
 
 
 class Length(int):
-    """An integer length measured in English Metric Units (EMU)."""
+    """An integer length measured in English Metric Units (EMU).
+
+    Every length argument takes a Length as given, or a bare int as EMU. A bare
+    int that would round to zero hundredths of a point, where font sizes and
+    spacing are stored, is refused, and so are bool and float.
+    """
 
     _EMUS_PER_INCH = 914400
     _EMUS_PER_PT = 12700
