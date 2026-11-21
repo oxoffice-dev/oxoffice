@@ -18,6 +18,8 @@ INSERTS = {
     "Document.insert_paragraph": lambda doc: doc.insert_paragraph(0, "inserted"),
     "Document.insert_table": lambda doc: doc.insert_table(0, 1, 1),
     "Paragraph.insert_paragraph_before": lambda doc: doc.paragraphs[0].insert_paragraph_before("before"),
+    "Document.add_bullet_list_item": lambda doc: doc.add_bullet_list_item("bullet"),
+    "Document.add_numbered_list_item": lambda doc: doc.add_numbered_list_item("number"),
 }
 
 

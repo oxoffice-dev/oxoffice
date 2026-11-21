@@ -12,6 +12,16 @@ pub(crate) enum SplicedBodyItem {
     Table(Vec<u8>, WordOwnerSnapshots),
 }
 
+/// An appended paragraph whose publication is ready: what remains cannot
+/// fail before the paragraph reaches the document.
+pub(crate) enum StagedAppend {
+    /// A prepared body splice and the handle of the paragraph it appends.
+    Splice(Box<PreparedBodySplice>, Py<PyParagraph>),
+    /// A candidate that holds the paragraph, its revision committed, and the
+    /// paragraph's handle.
+    Revision(Box<oxoffice_docx::Document>, Py<PyParagraph>),
+}
+
 /// Plain direct body paragraphs removed from a body slot, or one item
 /// inserted at it.
 pub(crate) struct BodySplice {

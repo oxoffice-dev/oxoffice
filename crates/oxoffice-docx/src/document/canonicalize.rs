@@ -236,7 +236,15 @@ impl Document {
             .iter()
             .map(|instance| (instance.num_id, instance.abstract_num_id))
             .collect::<HashMap<_, _>>();
+        // Identifiers that content names and the save does not renumber stay
+        // taken: those of the source, and those naming a list the document
+        // does not define, so that no renumbered list takes one of them.
         let mut occupied_nums = self.identifiers.preserved_numbering_instance_ids.clone();
+        occupied_nums.extend(
+            self.content_numbering_instance_ids()
+                .into_iter()
+                .filter(|id| !semantic_nums.contains(id)),
+        );
         let mut occupied_abstract = self.identifiers.preserved_abstract_numbering_ids.clone();
         let referenced_abstract = abstract_by_num.values().copied().collect::<HashSet<_>>();
         occupied_abstract.extend(
@@ -251,7 +259,7 @@ impl Document {
         for old_num in semantic_nums {
             num_remap.insert(
                 old_num,
-                reserve_u32(&mut occupied_nums, 1, "numbering instance")?,
+                reserve_u32_or_lowest_free(&mut occupied_nums, 1, "numbering instance")?,
             );
             if let Some(old_abstract) = abstract_by_num.get(&old_num)
                 && !self

@@ -3049,34 +3049,14 @@ impl PyDocument {
         if !(0..=8).contains(&level) {
             return Err(PyValueError::new_err("level must be between 0 and 8"));
         }
-        let mut document = slf.borrow_mut(py);
-        let index = document.inner.paragraph_count();
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
-            .try_add_bullet_list_item(text, level as u32)
-            .map(|_| ())
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
+        Self::append_list_item(
+            slf,
             py,
-            &candidate,
+            oxoffice_docx::ListItemKind::Bullet,
+            text,
+            level as u32,
             "Document.add_bullet_list_item",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let path = document
-            .revisions
-            .capture_prepared(
-                &prepared.revision,
-                smallvec![PathSeg::Body(0), PathSeg::Para(index)],
-            )
-            .map_err(oxoffice_py_support::revision_to_pyerr)?;
-        let result = Py::new(
-            py,
-            PyParagraph::new(slf.clone_ref(py), path)
-                .bind_prepared(py, &document, &prepared, &candidate, None)?,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        Ok(result)
+        )
     }
 
     #[pyo3(signature = (text, level = 0, *, restart = false))]
@@ -3090,6 +3070,18 @@ impl PyDocument {
         if !(0..=8).contains(&level) {
             return Err(PyValueError::new_err("level must be between 0 and 8"));
         }
+        if !restart {
+            return Self::append_list_item(
+                slf,
+                py,
+                oxoffice_docx::ListItemKind::Numbered,
+                text,
+                level as u32,
+                "Document.add_numbered_list_item",
+            );
+        }
+        // A restart gives the item an instance of its own through the
+        // facade's staged restart.
         let mut document = slf.borrow_mut(py);
         let index = document.inner.paragraph_count();
         let mut candidate = document.inner.clone_for_staging();
