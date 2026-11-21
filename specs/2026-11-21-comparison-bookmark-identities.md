@@ -35,15 +35,16 @@ where they mean the same bookmark, in its main story:
 - **Ids.** A bookmark name both versions hold takes the original's id. A
   bookmark only the edited version holds keeps its id, or takes a fresh one
   when the original uses that id in any story.
-- **Generated names.** The paragraphs of the two main stories are aligned by
-  text (the comparison's own `align`: longest common sequence, then gaps
-  paired by position, after setting the common prefix and suffix aside). A
-  `_Toc` bookmark whose paragraph pairs with one of the original holding as
-  many takes the original's name, in order. An unpaired one keeps its name,
-  or takes a fresh `_Toc` name when the original uses it. Pairing paragraphs
-  rather than headings alone keeps a heading removed in one place from
-  pairing with one added further on, which the comparison deletes and inserts
-  apart.
+- **Generated names.** The blocks of the two bodies pair as the comparison
+  pairs them (signatures, longest common sequence, then each gap by kind),
+  the signatures read without the generated bookmarks, as the comparison will
+  read them once the names agree. A `_Toc` bookmark of a body paragraph that
+  pairs with one of the original holding as many takes the original's name,
+  in order. An unpaired body heading keeps its name, or takes a fresh `_Toc`
+  name when the original uses it; a nested one (table, text box) keeps its
+  name unless a paired heading claims it. Pairing what the comparison pairs
+  keeps a heading removed in one place from pairing with one added further
+  on, and leaves a heading whose bookmark did not change as it is.
 - **References follow.** Link anchors, simple field instructions and complex
   field instructions naming a renamed bookmark are rewritten with it, so the
   edited input reads the same.

@@ -1257,8 +1257,10 @@ class Document:
 
         Bookmark ids, which Word renumbers on every save, and the ``_Toc``
         names a rebuilt table of contents gives its heading bookmarks are no
-        change: a body bookmark both documents hold keeps this document's id
-        and name, and the links and page references of ``edited`` follow it.
+        change: a body bookmark both documents hold keeps this document's id, a
+        heading paired with one of this document's takes its ``_Toc`` name, a
+        new heading takes a fresh one where this document uses its own, and
+        the links and page references of ``edited`` follow them.
         """
     @property
     def comments(self) -> tuple[Comment, ...]: ...
