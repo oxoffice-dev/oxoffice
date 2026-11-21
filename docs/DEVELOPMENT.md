@@ -154,6 +154,11 @@ entry and closes the issue.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
   pull requests into `main`, every call on the three platforms on `main`.
+- The `skill-examples` job runs the examples of
+  [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) on
+  `main` only, against the Linux wheel of `build`
+  ([tests/skills/README.md](../tests/skills/README.md)). A change that breaks
+  one updates the skills too.
 - Dependabot opens the monthly updates. Review them like any change: the
   maintainer, or the agent that merges them, answers the review's findings.
 
