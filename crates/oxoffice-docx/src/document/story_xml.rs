@@ -367,6 +367,7 @@ fn modeled_word_child(parent: &[u8], child: &[u8]) -> bool {
                 | b"sym"
                 | b"noBreakHyphen"
                 | b"softHyphen"
+                | b"ptab"
                 | b"footnoteReference"
                 | b"endnoteReference"
                 | b"commentReference"

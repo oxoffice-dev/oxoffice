@@ -38,7 +38,9 @@ pub enum RunContent {
         /// The code point, written back as four upper-case hex digits.
         char_code: u16,
     },
-    /// One of the Word special characters that carries no text of its own.
+    /// One of the Word special characters: a carriage return reads as a line
+    /// break, a non-breaking hyphen as `-`, a positional tab as a tab and a
+    /// soft hyphen as nothing.
     SpecialCharacter(SpecialCharacter),
 }
 
@@ -879,10 +881,14 @@ impl CT_R {
             RunContent::FootnoteRef { custom_mark, .. }
             | RunContent::EndnoteRef { custom_mark, .. } => custom_mark.as_deref().unwrap_or(""),
             RunContent::CommentReference { .. } => "",
-            // A symbol is font-encoded rather than Unicode, and the special
-            // characters carry no text, so neither contributes to extraction.
+            // A symbol is font-encoded rather than Unicode, so it contributes
+            // nothing. A non-breaking hyphen and a positional tab read as Word
+            // shows them, a hyphen and a tab; a soft hyphen shows only at a
+            // line end and reads as nothing.
             RunContent::Symbol { .. } => "",
             RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => "\n",
+            RunContent::SpecialCharacter(SpecialCharacter::NoBreakHyphen) => "-",
+            RunContent::SpecialCharacter(SpecialCharacter::PositionalTab { .. }) => "\t",
             RunContent::SpecialCharacter(_) => "",
         }
     }

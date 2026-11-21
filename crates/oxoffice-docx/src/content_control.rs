@@ -4553,7 +4553,8 @@ fn display_piece(xml: &[u8], elem: &XmlElem) -> Result<Option<String>> {
     }
     match elem.local.as_slice() {
         b"t" => Ok(Some(element_text(xml, elem)?)),
-        b"tab" => Ok(Some("\t".to_owned())),
+        b"tab" | b"ptab" => Ok(Some("\t".to_owned())),
+        b"noBreakHyphen" => Ok(Some("-".to_owned())),
         b"br" | b"cr" => Ok(Some("\n".to_owned())),
         _ => Ok(None),
     }
@@ -5839,7 +5840,10 @@ fn rewrite_display(
         let sdt = find_sdt(&elems, sdt_start)?;
         for elem in &elems {
             if elem.word
-                && matches!(elem.local.as_slice(), b"tab" | b"br" | b"cr")
+                && matches!(
+                    elem.local.as_slice(),
+                    b"tab" | b"ptab" | b"noBreakHyphen" | b"br" | b"cr"
+                )
                 && accepted_display_text(&elems, sdt, elem)
             {
                 separators.push(elem.range.start);

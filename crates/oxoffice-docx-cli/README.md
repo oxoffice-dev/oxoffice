@@ -301,13 +301,14 @@ remains in `not_compared` even when another story differs. Without
 exactly `N`. A mismatch exits unsuccessfully without creating or replacing the
 requested output.
 
-A tab reads as a tab character and a line, page or column break as a line
-feed, as `text` prints them: a placeholder holding one matches it, and a value
-holding one writes a `w:tab` or a line break (a carriage return or a Windows
-line ending writes one line break too, and a page or column break matched and
-written back becomes a line break). In a `--map` file write them `\t` and
-`\n`; on a shell command line, pass the characters themselves (`$'a\tb'` in
-bash).
+A tab or a positional tab reads as a tab character, a non-breaking hyphen as
+`-`, and a line, page or column break as a line feed, as `text` prints them: a
+placeholder holding one matches it, and a value holding one writes a `w:tab`,
+a plain hyphen or a line break (a carriage return or a Windows line ending
+writes one line break too; a page or column break matched and written back
+becomes a line break, a positional tab an ordinary tab, a non-breaking hyphen
+a plain one). In a `--map` file write them `\t` and `\n`; on a shell command
+line, pass the characters themselves (`$'a\tb'` in bash).
 
 A literal `replace`, one pair or a `--map`, also refuses a pair after which a
 paragraph that held the placeholder (outside the comments) does not read as its
