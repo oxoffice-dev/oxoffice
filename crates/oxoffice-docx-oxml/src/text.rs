@@ -143,6 +143,8 @@ use field_write::{
 };
 pub(crate) use field_write::{write_mixed_field_run, write_published_run_field, write_run_field};
 
+mod block_bookmarks;
+pub use block_bookmarks::BlockBookmarks;
 mod paragraph_projection;
 mod paragraph_read;
 mod paragraph_write;

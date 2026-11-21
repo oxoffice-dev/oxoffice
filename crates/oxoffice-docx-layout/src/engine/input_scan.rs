@@ -542,9 +542,10 @@ fn bookmark_range_in_paragraphs(
     let mut starts: HashMap<i32, Vec<BookmarkStart<'_>>> = HashMap::new();
     let mut ends: HashMap<i32, Vec<OrderedBodyRunPosition>> = HashMap::new();
     let mut encounter = 0usize;
+    let block_bookmarks = input.block_bookmarks();
     let current_bookmarks = paragraphs
         .iter()
-        .map(|paragraph| paragraph.current_bookmark_projection())
+        .map(|paragraph| block_bookmarks.paragraph_projection(paragraph))
         .collect::<Vec<_>>();
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate() {
         let projected_run_count = project_paragraph_runs(paragraph, input.revision_view).len();
@@ -593,10 +594,14 @@ fn bookmark_range_in_paragraphs(
 
 pub(super) fn bookmark_text(input: &LayoutInput, name: &str) -> Option<String> {
     let stories = input_story_paragraphs(input);
+    let block_bookmarks = input.block_bookmarks();
     let named_starts = stories
         .iter()
         .flatten()
-        .flat_map(|p| &p.bookmark_markers)
+        .flat_map(|p| {
+            let (before, after) = block_bookmarks.markers(p);
+            p.bookmark_markers.iter().chain(before).chain(after)
+        })
         .filter(|marker| marker.is_start() && marker.name() == Some(name))
         .count();
     if named_starts != 1 {
