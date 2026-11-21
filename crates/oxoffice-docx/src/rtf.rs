@@ -432,6 +432,10 @@ impl<'a> RtfWriter<'a> {
         }
         let mut occurrences = BTreeMap::<usize, usize>::new();
         for (index, raw) in &properties.extra_xml {
+            // The default height: nothing is dropped.
+            if CT_TrPr::raw_is_bare_height(raw) {
+                continue;
+            }
             let occurrence = occurrences.entry(*index).or_insert(0);
             let suffix = if *occurrence == 0 {
                 String::new()
@@ -505,6 +509,10 @@ impl<'a> RtfWriter<'a> {
         }
         let mut occurrences = BTreeMap::<usize, usize>::new();
         for (index, raw) in &properties.extra_xml {
+            // The default height: nothing is dropped.
+            if CT_TrPr::raw_is_bare_height(raw) {
+                continue;
+            }
             let occurrence = occurrences.entry(*index).or_insert(0);
             let suffix = if *occurrence == 0 {
                 String::new()

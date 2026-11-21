@@ -918,6 +918,11 @@ pub struct Document {
     pub(crate) comments_extended_owned: bool,
     /// Embedded identities whose retained signature evidence is known invalid.
     pub(crate) embedded_invalidated_signatures: HashSet<(String, String)>,
+    /// Image relationships (owner part, id) that `remove_content_at` left
+    /// unreferenced. They stay until the document is written, so a removed
+    /// fragment can be inserted again; the output drops those still
+    /// unreferenced then, with their media when nothing else reaches it.
+    pub(crate) freed_image_relationships: Vec<(String, String)>,
     /// Whether retained package signature evidence is known invalid.
     pub(crate) package_signatures_invalidated: bool,
     /// The file this document was opened from, canonical, which `save`
@@ -1702,6 +1707,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
+            freed_image_relationships: Vec::new(),
             package_signatures_invalidated: false,
             source_path: None,
             glossary: None,

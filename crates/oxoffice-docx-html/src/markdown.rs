@@ -3,13 +3,12 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
-use oxoffice_docx_oxml::numbering::CT_Numbering;
 use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::styles::CT_Styles;
 use oxoffice_docx_oxml::table::CT_Tbl;
 use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
-use crate::{Block, HtmlInput, ImageData, body_blocks, cell_blocks};
+use crate::{Block, Counted, HtmlInput, ImageData, ListCounter, body_blocks, cell_blocks};
 
 /// Emit the full body content as Markdown.
 pub(crate) fn emit_markdown(
@@ -21,7 +20,8 @@ pub(crate) fn emit_markdown(
     let images = &input.images;
     let mut out = String::new();
     // The open list levels, each with the column its item text starts at.
-    let mut list_levels: Vec<(u32, usize, u32)> = Vec::new();
+    let mut list_levels: Vec<MarkdownList> = Vec::new();
+    let mut counter = ListCounter::new(styles, input.numbering.as_ref());
 
     let mut previous_quote_owner = None;
     for block in body_blocks(&input.document.body, true) {
@@ -44,7 +44,7 @@ pub(crate) fn emit_markdown(
             out.pop();
             let path = container_path(style_id, styles).unwrap_or_default();
             if !path.starts_with('q')
-                && let Some((_, column, _)) = list_levels.last()
+                && let Some(MarkdownList { column, .. }) = list_levels.last()
             {
                 out.push_str(&" ".repeat(*column));
             }
@@ -60,7 +60,8 @@ pub(crate) fn emit_markdown(
         previous_quote_owner = owner;
         match block {
             Block::Paragraph(p, boundaries) => {
-                emit_paragraph(&mut out, &p, &boundaries, input, &mut list_levels);
+                let counted = counter.paragraph(&p);
+                emit_paragraph(&mut out, &p, &boundaries, input, counted, &mut list_levels);
                 for id in crate::paragraph_chart_ids(&p) {
                     if let Some(chart) = charts.get(&id) {
                         leave_list(&mut out, &mut list_levels);
@@ -69,6 +70,7 @@ pub(crate) fn emit_markdown(
                 }
             }
             Block::Table(tbl) => {
+                counter.table(tbl);
                 let mut table = String::new();
                 emit_table(&mut table, tbl, styles, hyperlink_urls, images);
                 if !table.is_empty() {
@@ -98,7 +100,7 @@ pub(crate) fn emit_markdown(
                         .as_ref()
                         .and_then(|properties| properties.indent.as_ref())
                         .is_some_and(|indent| indent.width_type == "dxa" && indent.w > 0)
-                        && let Some((_, column, _)) = list_levels.last()
+                        && let Some(MarkdownList { column, .. }) = list_levels.last()
                     {
                         if !out.ends_with("\n\n") {
                             out.push_str(&outer_prefix);
@@ -126,19 +128,32 @@ pub(crate) fn emit_markdown(
 ///
 /// A list item ends in a single newline, and a block that follows it without
 /// a blank line is read as a lazy continuation of the last item.
-fn leave_list(out: &mut String, list_levels: &mut Vec<(u32, usize, u32)>) {
+fn leave_list(out: &mut String, list_levels: &mut Vec<MarkdownList>) {
     if !list_levels.is_empty() && !out.ends_with("\n\n") {
         out.push('\n');
     }
     list_levels.clear();
 }
 
-fn leave_quoted_list(out: &mut String, list_levels: &mut Vec<(u32, usize, u32)>, prefix: &str) {
+fn leave_quoted_list(out: &mut String, list_levels: &mut Vec<MarkdownList>, prefix: &str) {
     if !list_levels.is_empty() && !out.ends_with("\n\n") {
         out.push_str(prefix);
         out.push('\n');
     }
     list_levels.clear();
+}
+
+/// An open Markdown list at one level.
+struct MarkdownList {
+    /// The level of its items.
+    level: u32,
+    /// The column its item text starts at.
+    column: usize,
+    /// The definition that counts its items.
+    definition: u32,
+    ordered: bool,
+    /// The number of its last item.
+    last: u32,
 }
 
 /// Detect heading level from paragraph properties/style.
@@ -167,51 +182,27 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
     None
 }
 
-/// Detect if a paragraph is a list item, through its style too. Returns
-/// (is_ordered, ilvl, num_id, start).
-fn detect_list(
-    para: &CT_P,
-    styles: &CT_Styles,
-    numbering: Option<&CT_Numbering>,
-) -> Option<(bool, u32, u32, u32)> {
-    let (num_id, ilvl, level, start) = crate::list_level(para, styles, numbering?)?;
-
-    use oxoffice_docx_oxml::numbering::ST_NumberFormat;
-    let is_ordered = match level.num_fmt.as_ref() {
-        Some(ST_NumberFormat::Bullet) => false,
-        None
-        | Some(
-            ST_NumberFormat::Decimal
-            | ST_NumberFormat::UpperRoman
-            | ST_NumberFormat::LowerRoman
-            | ST_NumberFormat::UpperLetter
-            | ST_NumberFormat::LowerLetter
-            | ST_NumberFormat::Ordinal,
-        ) => true,
-        // A `none` level draws no marker, as in layout: not a list item.
-        Some(_) => return None,
-    };
-
-    Some((is_ordered, ilvl, num_id, start))
-}
-
 /// Emit a paragraph as Markdown.
 fn emit_paragraph(
     out: &mut String,
     para: &CT_P,
     boundaries: &[usize],
     input: &HtmlInput,
-    list_levels: &mut Vec<(u32, usize, u32)>,
+    counted: Counted,
+    list_levels: &mut Vec<MarkdownList>,
 ) {
     let styles = &input.styles;
-    let numbering = input.numbering.as_ref();
     let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
     let detected_level = detect_heading_level(para.properties.as_ref(), styles);
     // A heading numbered through its style, as Word numbers its headings,
     // stays a heading; only its own numbering makes it a list item.
-    let list_info = detect_list(para, styles, numbering)
-        .filter(|_| detected_level.is_none() || crate::has_own_numbering(para));
+    let list_info = match counted {
+        Counted::Item(item) if detected_level.is_none() || crate::has_own_numbering(para) => {
+            Some(item)
+        }
+        _ => None,
+    };
     // Outline level 9 (level 10 here) is body text, the level of Word's TOC
     // Heading style: written as a paragraph, which, as in HTML, takes no
     // numbering from its style either.
@@ -310,32 +301,32 @@ fn emit_paragraph(
     }
     let quote_prefix = "> ".repeat(outer_quotes);
 
-    let continued = if para
-        .properties
-        .as_ref()
-        .is_some_and(|properties| properties.num_id == Some(0))
-    {
-        para.properties
+    let continued = if detected_level.is_none()
+        && para
+            .properties
             .as_ref()
-            .and_then(|properties| properties.num_ilvl)
-            .and_then(|level| {
-                list_levels
-                    .iter()
-                    .position(|&(current, _, _)| current == level)
-            })
-    } else if detected_level.is_none() && list_info.is_none() {
-        // A paragraph on a `none` level goes on the open item of its list at
-        // its level or above.
-        crate::unmarked_list_level(para, styles, numbering).and_then(|(num_id, level)| {
-            list_levels
-                .iter()
-                .rposition(|&(current, _, id)| id == num_id && current <= level)
-        })
+            .is_some_and(|properties| properties.num_id == Some(0))
+    {
+        crate::numbering_turned_off_level(para)
+            .and_then(|level| list_levels.iter().position(|list| list.level == level))
+    } else if detected_level.is_none()
+        && list_info.is_none()
+        && let Counted::Unmarked {
+            level,
+            definition,
+            unmarked: true,
+        } = counted
+    {
+        // A paragraph on a `none` level goes on the open item of a list of
+        // its definition at its level or above.
+        list_levels
+            .iter()
+            .rposition(|list| list.definition == definition && list.level <= level)
     } else {
         None
     };
     if let Some(index) = continued {
-        let indent = list_levels[index].1;
+        let indent = list_levels[index].column;
         let blank_prefix = if quote_prefix.is_empty() && inner_quotes > 0 && compound_quote {
             format!("{}> ", " ".repeat(indent))
         } else {
@@ -370,32 +361,69 @@ fn emit_paragraph(
         out.push(' ');
         out.push_str(&text.trim().replace(LINE_BREAK, "<br>"));
         out.push_str("\n\n");
-    } else if let Some((is_ordered, ilvl, num_id, start)) = list_info {
+    } else if let Some(item) = list_info {
         if item_quotes > 0 && !list_levels.is_empty() && !out.ends_with("\n\n") {
             out.push('\n');
         }
-        // A nested item is indented to the text column of its parent item,
-        // which is three columns after `1. ` and two after `- `.
-        let continued = list_levels
-            .iter()
-            .any(|&(level, _, id)| level == ilvl && id == num_id);
+        // The outermost deeper list closed here had its markers at this
+        // item's column.
+        let mut closed = None;
         while list_levels
             .last()
-            .is_some_and(|&(level, _, _)| level >= ilvl)
+            .is_some_and(|list| list.level > item.level)
         {
-            list_levels.pop();
+            closed = list_levels.pop().map(|list| list.ordered);
         }
-        let indent = list_levels.last().map_or(0, |&(_, column, _)| column);
-        let marker = if is_ordered {
-            format!("{}. ", if continued { 1 } else { start })
+        let ordered = item.kind.ordered();
+        // The kind of the list before this item at its column, and its last
+        // number when this item may go on with it.
+        let previous = match list_levels.pop_if(|list| list.level == item.level) {
+            Some(list) => Some((list.ordered, Some(list.last))),
+            None => closed.map(|ordered| (ordered, None)),
+        };
+        // A nested item is indented to the text column of its parent item,
+        // which is three columns after `1. ` and two after `- `.
+        let indent = list_levels.last().map_or(0, |list| list.column);
+        let blank_line = |out: &mut String| {
+            if !out.ends_with("\n\n") {
+                out.push_str(&quote_prefix);
+                out.push('\n');
+            }
+        };
+        let goes_on = |last: Option<u32>| {
+            last.is_some_and(|last| !ordered || last.checked_add(1) == Some(item.count))
+        };
+        match previous {
+            // An item of the same kind that does not go on with the list
+            // before it at its column starts a new list: CommonMark would
+            // join the two, so an empty comment parts them, as its spec
+            // advises.
+            Some((was_ordered, last)) if was_ordered == ordered && !goes_on(last) => {
+                blank_line(out);
+                out.push_str(&format!("{quote_prefix}{}<!-- -->\n", " ".repeat(indent)));
+                blank_line(out);
+            }
+            // Another kind starts a new list by itself, but a number other
+            // than 1 cannot interrupt the text before it, in a parent item
+            // either: a blank line comes first.
+            Some((was_ordered, _)) if was_ordered != ordered && ordered && item.count != 1 => {
+                blank_line(out)
+            }
+            None if ordered && item.count != 1 && !list_levels.is_empty() => blank_line(out),
+            _ => {}
+        }
+        let marker = if ordered {
+            format!("{}. ", item.count)
         } else {
             "- ".to_owned()
         };
-        list_levels.push((
-            ilvl,
-            indent + item_quote_prefix.len() + marker.len(),
-            num_id,
-        ));
+        list_levels.push(MarkdownList {
+            level: item.level,
+            column: indent + item_quote_prefix.len() + marker.len(),
+            definition: item.definition,
+            ordered,
+            last: item.count,
+        });
         let mut lines = text.trim_matches(|c: char| c.is_ascii_whitespace()).lines();
         out.push_str(&format!(
             "{quote_prefix}{}{item_quote_prefix}{marker}{}\n",

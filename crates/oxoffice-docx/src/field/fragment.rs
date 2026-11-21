@@ -838,9 +838,32 @@ pub(super) fn import_fragment_content_with_state(
         ));
     }
 
+    // Header and footer parts are copied whole, and the list numbers they
+    // use are remapped after the copy: one holding a list is never shared
+    // with an equal destination part, whose numbers mean other lists. With
+    // source-owned numbering the numbers keep their meaning.
+    let mut numbered_header_footers = HashSet::new();
+    for (selected_owner, _, _, relationship, source_part) in &imports {
+        if *selected_owner
+            && !source_owned_numbering
+            && (relationship.rel_type == rel_types::HEADER
+                || relationship.rel_type == rel_types::FOOTER)
+        {
+            let xml = fragment.package.get_part(source_part).ok_or_else(|| {
+                Error::Other(format!("document fragment part {source_part} is missing"))
+            })?;
+            if word_value_attributes(xml, &[b"numId"])?
+                .iter()
+                .any(|value| value != "0")
+            {
+                numbered_header_footers.insert(source_part.clone());
+            }
+        }
+    }
     for source_part in closure {
         let destination_part = if policy.reuse_related_parts()
             && !remapped_store_properties.contains(&source_part)
+            && !numbered_header_footers.contains(&source_part)
         {
             equivalent_fragment_leaf_part(&fragment.package, document, &source_part).map_or_else(
                 || {
@@ -1232,6 +1255,18 @@ pub(super) fn import_fragment_content_with_state(
             .map(|(evaluation, _)| &mut evaluation.operation),
         edits,
     )?;
+    for source_part in &numbered_header_footers {
+        let copied = part_map
+            .get(source_part)
+            .ok_or_else(|| Error::Other(format!("fragment part {source_part} was not reserved")))?;
+        let mut xml = document
+            .package
+            .get_part(copied)
+            .ok_or_else(|| Error::Other(format!("copied fragment part {copied} is missing")))?
+            .to_vec();
+        patch_word_values(&mut xml, &[b"numId"], &numbering_values)?;
+        document.package.set_part(copied, xml);
+    }
     if let Some(comments) = document.comments.as_mut() {
         for comment in &mut comments.comments {
             if !comment_ids.values().any(|id| *id == comment.id.to_string()) {
@@ -1377,6 +1412,23 @@ fn prune_document_fragment_dependencies(
         .filter_map(|value| value.parse::<u32>().ok())
         .collect::<HashSet<_>>();
     let mut used_styles = word_value_attributes(&body_xml, &[b"pStyle", b"rStyle", b"tblStyle"])?;
+    // The header and footer parts the section properties reach are copied
+    // whole: the styles and lists they use come along like the body's.
+    for part in fragment_header_footer_parts(fragment, selected)? {
+        let xml = fragment
+            .package
+            .get_part(&part)
+            .ok_or_else(|| Error::Other(format!("document fragment part {part} is missing")))?;
+        used_numbering.extend(
+            word_value_attributes(xml, &[b"numId"])?
+                .into_iter()
+                .filter_map(|value| value.parse::<u32>().ok()),
+        );
+        used_styles.extend(word_value_attributes(
+            xml,
+            &[b"pStyle", b"rStyle", b"tblStyle"],
+        )?);
+    }
     used_styles.extend(
         fragment
             .styles
@@ -1868,6 +1920,40 @@ fn remap_fragment_style_collisions(
         }
         *comments = CT_Comments::from_xml(&xml)?;
     }
+    // Header and footer parts are copied whole: they take the renames here,
+    // in one pass, since a replacement can also be a key.
+    let header_footer_parts = fragment
+        .package
+        .get_part_rels(&fragment.doc_part_name)
+        .map(|relationships| {
+            relationships
+                .items
+                .iter()
+                .filter(|relationship| {
+                    (relationship.rel_type == rel_types::HEADER
+                        || relationship.rel_type == rel_types::FOOTER)
+                        && crate::document::relationship_is_internal(relationship)
+                })
+                .map(|relationship| {
+                    OpcPackage::resolve_rel_target(&fragment.doc_part_name, &relationship.target)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for part in header_footer_parts {
+        let Some(original) = fragment.package.get_part(&part) else {
+            continue;
+        };
+        let mut xml = original.to_vec();
+        patch_word_values(
+            &mut xml,
+            &[b"pStyle", b"rStyle", b"tblStyle"],
+            &replacements,
+        )?;
+        if xml != original {
+            fragment.package.set_part(&part, xml);
+        }
+    }
     let styles_part = fragment
         .package
         .get_part_rels(&fragment.doc_part_name)
@@ -2038,6 +2124,28 @@ fn remap_fragment_companion(
         )?);
     }
     Ok(())
+}
+
+/// The header and footer parts the section properties in `selected` reach.
+fn fragment_header_footer_parts(fragment: &Document, selected: &[u8]) -> Result<Vec<String>> {
+    let Some(relationships) = fragment.package.get_part_rels(&fragment.doc_part_name) else {
+        return Ok(Vec::new());
+    };
+    let mut parts = Vec::new();
+    for id in relationship_ids_in_xml(selected)? {
+        if let Some(relationship) = relationships.get_by_id(&id)
+            && (relationship.rel_type == rel_types::HEADER
+                || relationship.rel_type == rel_types::FOOTER)
+            && crate::document::relationship_is_internal(relationship)
+        {
+            let part =
+                OpcPackage::resolve_rel_target(&fragment.doc_part_name, &relationship.target);
+            if !parts.contains(&part) {
+                parts.push(part);
+            }
+        }
+    }
+    Ok(parts)
 }
 
 fn fragment_dependency_companions(fragment: &Document, selected: &[u8]) -> Result<Vec<Vec<u8>>> {
@@ -3180,18 +3288,24 @@ fn collect_reference_field_name(instruction: &str, references: &mut Vec<String>)
     }
 }
 
+/// The bookmark a field refers to (see
+/// [`oxoffice_docx_oxml::text::bookmark_reference_span`]).
 fn reference_field_name(instruction: &str) -> Option<String> {
-    let field = Field::new(instruction, "");
-    if matches!(field.instruction.name.as_str(), "REF" | "PAGEREF") {
-        field
-            .instruction
-            .arguments
-            .first()
-            .and_then(argument_text)
-            .map(str::to_owned)
-    } else {
-        None
-    }
+    oxoffice_docx_oxml::text::bookmark_reference_span(instruction).map(|(_, name)| name)
+}
+
+/// The new name of the bookmark `old` names, when an import renamed it.
+/// Word compares bookmark names without regard to case, so a reference
+/// written in another case follows the rename too.
+fn renamed_bookmark<'a>(names: &'a BTreeMap<String, String>, old: &str) -> Option<&'a String> {
+    let new = names.get(old).or_else(|| {
+        let folded = old.to_lowercase();
+        names
+            .iter()
+            .find(|(name, _)| name.to_lowercase() == folded)
+            .map(|(_, new)| new)
+    })?;
+    (new.to_lowercase() != old.to_lowercase()).then_some(new)
 }
 
 #[derive(Clone, Copy)]
@@ -3358,17 +3472,20 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                         Error::Other(format!("invalid field instruction entity: {error}"))
                     })?;
                     instruction.text.push_str(&decoded);
-                    instruction.spans.push((before, after));
+                    instruction
+                        .spans
+                        .push((before, after, Some(decoded.into_owned())));
                 }
             }
             Event::CData(text) if body_depth.is_some() && in_instruction_text => {
                 if let Some(instruction) = complex.last_mut()
                     && instruction.collecting
                 {
-                    instruction.text.push_str(&text.decode().map_err(|error| {
+                    let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
-                    })?);
-                    instruction.spans.push((before, after));
+                    })?;
+                    instruction.text.push_str(&decoded);
+                    instruction.spans.push((before, after, None));
                 }
             }
             Event::End(element) => {
@@ -3713,7 +3830,9 @@ pub(super) fn add_identity_attribute_edit(
 struct ComplexInstructionEdit {
     text: String,
     collecting: bool,
-    spans: Vec<(usize, usize)>,
+    /// Each source span of the instruction text with its decoded text, or
+    /// `None` for a CDATA span, which is not edited.
+    spans: Vec<(usize, usize, Option<String>)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3732,17 +3851,15 @@ fn collect_body_reference_edits(
         return Ok(false);
     }
     if local.as_ref() == b"hyperlink" {
-        add_identity_attribute_edit(
-            xml,
-            start,
-            end,
-            element,
-            resolver,
-            b"anchor",
-            AttributeNamespace::Word,
-            &remap.bookmark_names,
-            edits,
-        )?;
+        // A link with an address names a place in that address.
+        if resolved_element_attribute(element, resolver, b"id", AttributeNamespace::Relationship)?
+            .is_none()
+            && let Some((key, old)) =
+                resolved_element_attribute(element, resolver, b"anchor", AttributeNamespace::Word)?
+            && let Some(replacement) = renamed_bookmark(&remap.bookmark_names, &old)
+        {
+            add_attribute_value_edit(xml, start, end, &key, replacement, true, edits)?;
+        }
     } else if local.as_ref() == b"fldSimple" {
         if let Some((key, instruction)) =
             resolved_element_attribute(element, resolver, b"instr", AttributeNamespace::Word)?
@@ -3771,23 +3888,39 @@ fn collect_body_reference_edits(
                 }
             }
             Some("end") => {
+                // Only the source span that holds the whole name is edited, so
+                // no text moves around a nested field; a name split across
+                // spans, or in CDATA, is left as it is.
                 if let Some(instruction) = complex.pop()
-                    && let Some(updated) =
-                        remap_reference_instruction(&instruction.text, &remap.bookmark_names)
-                    && let Some((first, remaining)) = instruction.spans.split_first()
+                    && let Some((range, replacement)) =
+                        renamed_reference_range(&instruction.text, &remap.bookmark_names)
                 {
-                    edits.push(FieldSourceEdit {
-                        start: first.0,
-                        end: first.1,
-                        replacement: quick_xml::escape::escape(&updated)
-                            .into_owned()
-                            .into_bytes(),
-                    });
-                    edits.extend(remaining.iter().map(|(start, end)| FieldSourceEdit {
-                        start: *start,
-                        end: *end,
-                        replacement: Vec::new(),
-                    }));
+                    let mut offset = 0;
+                    for (start, end, decoded) in &instruction.spans {
+                        let length = decoded.as_ref().map_or_else(|| usize::MAX / 2, String::len);
+                        if let Some(decoded) = decoded
+                            && offset <= range.start
+                            && range.end <= offset + length
+                        {
+                            let mut updated = decoded.clone();
+                            updated.replace_range(
+                                range.start - offset..range.end - offset,
+                                &replacement,
+                            );
+                            edits.push(FieldSourceEdit {
+                                start: *start,
+                                end: *end,
+                                replacement: quick_xml::escape::escape(&updated)
+                                    .into_owned()
+                                    .into_bytes(),
+                            });
+                            break;
+                        }
+                        if decoded.is_none() {
+                            break;
+                        }
+                        offset += length;
+                    }
                 }
             }
             _ => {}
@@ -3829,16 +3962,21 @@ fn remap_reference_instruction(
     instruction: &str,
     names: &BTreeMap<String, String>,
 ) -> Option<String> {
-    let old = reference_field_name(instruction)?;
-    let replacement = names.get(&old)?;
-    let command_end = instruction
-        .find(char::is_whitespace)
-        .unwrap_or(instruction.len());
-    let relative = instruction[command_end..].find(&old)?;
-    let start = command_end + relative;
+    let (range, replacement) = renamed_reference_range(instruction, names)?;
     let mut updated = instruction.to_owned();
-    updated.replace_range(start..start + old.len(), replacement);
+    updated.replace_range(range, &replacement);
     Some(updated)
+}
+
+/// Where the instruction names a bookmark the import renamed, and its new
+/// name: the name's own bytes, never the keyword or another operand.
+fn renamed_reference_range(
+    instruction: &str,
+    names: &BTreeMap<String, String>,
+) -> Option<(std::ops::Range<usize>, String)> {
+    let (range, old) = oxoffice_docx_oxml::text::bookmark_reference_span(instruction)?;
+    let replacement = renamed_bookmark(names, &old)?;
+    Some((range, replacement.clone()))
 }
 
 pub(crate) fn attribute_value_span(

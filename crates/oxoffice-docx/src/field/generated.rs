@@ -1625,7 +1625,7 @@ fn generated_render_table(
                 };
                 let label_end = paragraph.runs.len();
                 generated_append_separator(&mut paragraph, &options.entry_page_separator);
-                paragraph.runs.push(generated_page_run(
+                paragraph.runs.extend(generated_page_run(
                     &section_formats,
                     source,
                     None,
@@ -1722,7 +1722,7 @@ fn generated_page_run(
     prefix_separator: &str,
     bold: bool,
     italic: bool,
-) -> Result<CT_R> {
+) -> Result<Vec<CT_R>> {
     let target = last.unwrap_or(&source.target);
     let mut properties = source.properties.clone().unwrap_or_default();
     properties.vanish = Some(false);
@@ -1734,6 +1734,7 @@ fn generated_page_run(
         properties.italic = Some(true);
         properties.italic_cs = Some(true);
     }
+    let mut runs = Vec::new();
     let mut run = CT_R::new("");
     run.properties = Some(properties.clone());
     let value = if let Some(snapshot) = snapshot {
@@ -1770,10 +1771,14 @@ fn generated_page_run(
                 .and_then(Option::as_deref),
         )
         .map_err(Error::Other)?;
-        prefix.map_or_else(
-            || label.clone(),
-            |prefix| format!("{prefix}{prefix_separator}{label}"),
-        )
+        // The chapter prefix goes before the field, as Word writes it for a
+        // `TOC \s`: the page reference's result is the page alone.
+        if let Some(prefix) = prefix {
+            let mut before = CT_R::new(&format!("{prefix}{prefix_separator}"));
+            before.properties = Some(properties.clone());
+            runs.push(before);
+        }
+        label
     } else {
         "99".into()
     };
@@ -1789,7 +1794,8 @@ fn generated_page_run(
         vec![cached],
     )?;
     run.content = vec![RunContent::Field(field)];
-    Ok(run)
+    runs.push(run);
+    Ok(runs)
 }
 
 fn generated_collation(left: &[String], right: &[String]) -> std::cmp::Ordering {
@@ -1871,7 +1877,7 @@ fn generated_append_pages(
             }
             _ => (false, false),
         };
-        paragraph.runs.push(generated_page_run(
+        paragraph.runs.extend(generated_page_run(
             section_formats,
             source,
             None,
@@ -1883,7 +1889,7 @@ fn generated_append_pages(
         )?);
         if let Some(last) = &source.last_target {
             generated_append_separator(paragraph, range_separator);
-            paragraph.runs.push(generated_page_run(
+            paragraph.runs.extend(generated_page_run(
                 section_formats,
                 source,
                 Some(last),

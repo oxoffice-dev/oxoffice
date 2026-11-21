@@ -2,11 +2,13 @@
 
 use super::*;
 
-/// Apply page background color from `w:background` element to all pages.
+/// Apply page background color from `w:background` element to all pages but
+/// the blank pages added before odd-page and even-page sections.
 pub(super) fn apply_page_background(
     pages: &mut [PageFrame],
     paint: &mut paginator::PagePaintRecords,
     input: &LayoutInput,
+    blank_pages: &[usize],
 ) -> Result<()> {
     let bg_xml = match &input.document.background_xml {
         Some(xml) => xml,
@@ -24,6 +26,9 @@ pub(super) fn apply_page_background(
     // Insert a full-page FilledRect at position 0 on every page (renders underneath everything)
     paint.validate(pages)?;
     for (index, page) in pages.iter_mut().enumerate() {
+        if blank_pages.contains(&index) {
+            continue;
+        }
         let mut painted = PaintedElements::from_parts(
             std::mem::take(&mut page.elements),
             std::mem::take(&mut paint.policies[index]),

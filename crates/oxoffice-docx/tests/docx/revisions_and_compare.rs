@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use oxoffice_docx::{
-    Alignment, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, Document,
-    RevisionKind, RunItemRef, StoryKind,
+    Alignment, BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
+    Document, RevisionKind, RunItemRef, StoryKind,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -1039,38 +1039,631 @@ fn a_final_paragraph_replaced_by_a_table_is_compared() {
     );
 }
 
+/// A new document holding these body owners in order: a paragraph for each
+/// text, and a one-cell table for a text written `[cell text]`.
+fn doc_with_owners(owners: &[&str]) -> Document {
+    let mut doc = Document::new();
+    for owner in owners {
+        if let Some(cell) = owner.strip_prefix('[').and_then(|o| o.strip_suffix(']')) {
+            doc.add_table(1, 1).cell(0, 0).unwrap().set_text(cell);
+        } else {
+            doc.add_paragraph(owner);
+        }
+    }
+    doc
+}
+
+/// The body owners of `doc` in order, written as [`doc_with_owners`] takes
+/// them.
+fn owners(doc: &Document) -> Vec<String> {
+    doc.body_items()
+        .map(|item| match item {
+            BodyItemRef::Paragraph(paragraph) => paragraph.text(),
+            BodyItemRef::Table(table) => format!("[{}]", table.cell(0, 0).unwrap().text()),
+            _ => panic!("the body holds only paragraphs and tables"),
+        })
+        .collect()
+}
+
+/// Whether the main part of `doc` holds a table row marked as moved away
+/// and one marked as moved here. Row move markers are not listed among
+/// the revisions.
+fn table_moved(doc: &mut Document) -> bool {
+    let xml = main_part_xml(doc);
+    xml.contains("<w:trPr><w:moveFrom ") && xml.contains("<w:trPr><w:moveTo ")
+}
+
+/// The saved main part of `doc`.
+fn main_part_xml(doc: &mut Document) -> String {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a ZIP package");
+    let mut xml = String::new();
+    std::io::Read::read_to_string(
+        &mut zip.by_name("word/document.xml").expect("main part"),
+        &mut xml,
+    )
+    .expect("main part is UTF-8");
+    xml
+}
+
+/// Whether a paragraph mark of `doc` holds two revision markers of this
+/// kind, which the schema allows once.
+fn a_mark_holds_two(doc: &mut Document, kind: &str) -> bool {
+    let marker = format!("<w:{kind} ");
+    main_part_xml(doc)
+        .split("<w:pPr")
+        .skip(1)
+        .filter(|properties| properties.starts_with(['>', ' ']))
+        .filter_map(|properties| properties.split("</w:pPr>").next())
+        .any(|properties| properties.matches(&marker).count() > 1)
+}
+
+/// `owners` redlined into `edited` by an earlier comparison, saved and
+/// reopened: its tracked changes are existing ones for the next comparison.
+fn earlier_redline(owners: &[&str], edited: &[&str]) -> Document {
+    redline(doc_with_owners(owners), &doc_with_owners(edited))
+}
+
 #[test]
-fn a_paragraph_appended_after_a_redlined_final_table_keeps_the_refusal() {
-    // The table is an earlier tracked insertion: rejecting it removes the
-    // table, and the new paragraph would then end the body alone.
-    let mut redlined = doc_with(&["intro"]);
-    let mut with_table = doc_with(&["intro"]);
-    with_table
-        .add_table(1, 1)
-        .cell(0, 0)
+fn a_paragraph_moved_after_a_final_table_is_compared() {
+    let original = [
+        "Alpha paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "[cell]",
+    ];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveTo),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_moved_after_a_table_added_at_the_end_is_compared() {
+    // Rejecting removes the new table with the move, so the mark of the
+    // paragraph before the table carries the move.
+    let original = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveTo),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_moved_away_from_after_a_final_table_is_compared() {
+    let original = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let edited = [
+        "Alpha paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "[cell]",
+    ];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveFrom),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_table_moved_to_the_end_is_compared() {
+    let original = ["[cell]", "Beta paragraph.", "Gamma paragraph."];
+    let edited = ["Beta paragraph.", "Gamma paragraph.", "[cell]", "closing"];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert!(table_moved(&mut doc), "the table is moved");
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_final_paragraph_deleted_after_a_table_moved_to_the_end_is_compared() {
+    let original = ["[cell]", "Beta paragraph.", "Gamma paragraph.", "closing"];
+    let edited = ["Beta paragraph.", "Gamma paragraph.", "[cell]"];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert!(table_moved(&mut doc), "the table is moved");
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+/// The text and alignment of each body paragraph, in order.
+fn aligned_texts(doc: &Document) -> Vec<(String, Option<Alignment>)> {
+    doc.paragraphs()
+        .iter()
+        .map(|paragraph| (paragraph.text(), paragraph.alignment()))
+        .collect()
+}
+
+/// These paragraphs, the one at `centred` centred.
+fn doc_with_centred(paragraphs: &[&str], centred: usize) -> Document {
+    let mut doc = doc_with(paragraphs);
+    doc.paragraph_mut(centred)
         .unwrap()
-        .set_text("cell");
-    redlined.compare(&with_table, AUTHOR, DATE).unwrap();
+        .set_alignment(Alignment::Center);
+    doc
+}
+
+#[test]
+fn a_paragraph_moved_to_the_end_then_one_appended_is_compared() {
+    // The paragraph before the moved one keeps its own properties when
+    // rejecting merges the two ends of the body into it.
+    let original = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Alpha paragraph.",
+        "closing",
+    ];
+    let mut doc = redline(
+        doc_with_centred(&original, 2),
+        &doc_with_centred(&edited, 1),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveTo),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 1))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 2))
+    );
+}
+
+#[test]
+fn a_paragraph_appended_then_one_moved_to_the_end_is_compared() {
+    let original = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "closing",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(
+        doc_with_centred(&original, 2),
+        &doc_with_centred(&edited, 1),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveTo),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 1))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 2))
+    );
+}
+
+#[test]
+fn two_paragraphs_moved_to_the_end_are_compared() {
+    let original = [
+        "Alpha paragraph.",
+        "Delta paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+    ];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Alpha paragraph.",
+        "Delta paragraph.",
+    ];
+    let mut doc = redline(
+        doc_with_centred(&original, 3),
+        &doc_with_centred(&edited, 1),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveTo),
+        ["Alpha paragraph.", "Delta paragraph."]
+    );
+    assert!(!a_mark_holds_two(&mut doc, "moveTo"));
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 1))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 3))
+    );
+}
+
+#[test]
+fn two_paragraphs_moved_away_from_the_end_are_compared() {
+    let original = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Epsilon paragraph.",
+        "Alpha paragraph.",
+        "Delta paragraph.",
+    ];
+    let edited = [
+        "Alpha paragraph.",
+        "Delta paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Epsilon paragraph.",
+    ];
+    let mut doc = redline(
+        doc_with_centred(&original, 2),
+        &doc_with_centred(&edited, 4),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveFrom),
+        ["Alpha paragraph.", "Delta paragraph."]
+    );
+    assert!(!a_mark_holds_two(&mut doc, "moveFrom"));
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 4))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 2))
+    );
+}
+
+#[test]
+fn a_paragraph_moved_away_from_the_end_with_the_final_paragraph_deleted_is_compared() {
+    let original = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Alpha paragraph.",
+        "closing",
+    ];
+    let edited = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let mut doc = redline(
+        doc_with_centred(&original, 1),
+        &doc_with_centred(&edited, 2),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveFrom),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 2))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 1))
+    );
+}
+
+#[test]
+fn the_final_paragraph_deleted_and_the_one_before_moved_away_are_compared() {
+    let original = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "closing",
+        "Alpha paragraph.",
+    ];
+    let edited = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let mut doc = redline(
+        doc_with_centred(&original, 1),
+        &doc_with_centred(&edited, 2),
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::MoveFrom),
+        ["Alpha paragraph."]
+    );
+    assert_eq!(
+        aligned_texts(&accepted(&mut doc)),
+        aligned_texts(&doc_with_centred(&edited, 2))
+    );
+    assert_eq!(
+        aligned_texts(&rejected(&mut doc)),
+        aligned_texts(&doc_with_centred(&original, 1))
+    );
+}
+
+/// `doc` saved with only the revision of this kind resolved, by its id:
+/// both ends of a move share theirs.
+fn with_one_resolved(doc: &mut Document, kind: RevisionKind, accept: bool) -> Document {
+    let id = doc
+        .revisions()
+        .iter()
+        .find(|revision| revision.kind() == kind)
+        .map(|revision| revision.id())
+        .expect("a revision of that kind");
+    let mut copy = reopen(doc);
+    if accept {
+        copy.accept_revision_id(id).unwrap();
+    } else {
+        copy.reject_revision_id(id).unwrap();
+    }
+    reopen(&mut copy)
+}
+
+#[test]
+fn rejecting_only_a_move_to_the_end_keeps_the_paragraph_appended_before_it() {
+    let original = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "closing",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(doc_with(&original), &doc_with(&edited));
+    let mut moved_back = with_one_resolved(&mut doc, RevisionKind::MoveTo, false);
+    // The appended paragraph is still a tracked insertion.
+    assert_eq!(
+        texts(&accepted(&mut moved_back)),
+        [&original[..], &["closing"]].concat()
+    );
+    assert_eq!(texts(&rejected(&mut moved_back)), original);
+}
+
+#[test]
+fn accepting_only_a_move_away_from_the_end_keeps_the_deleted_paragraph_before_it() {
+    let original = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "closing",
+        "Alpha paragraph.",
+    ];
+    let edited = ["Alpha paragraph.", "Beta paragraph.", "Gamma paragraph."];
+    let mut doc = redline(doc_with(&original), &doc_with(&edited));
+    let mut moved_up = with_one_resolved(&mut doc, RevisionKind::MoveFrom, true);
+    // The final paragraph is still a tracked deletion.
+    assert_eq!(texts(&accepted(&mut moved_up)), edited);
+    assert_eq!(
+        texts(&rejected(&mut moved_up)),
+        [&edited[..], &["closing"]].concat()
+    );
+}
+
+#[test]
+fn a_paragraph_a_table_and_a_paragraph_appended_are_compared() {
+    let original = ["intro"];
+    let edited = ["intro", "added", "[cell]", "closing"];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_a_table_and_a_paragraph_deleted_at_the_end_are_compared() {
+    let original = ["intro", "removed", "[cell]", "closing"];
+    let edited = ["intro"];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_moved_to_the_end_after_a_moved_table_is_compared() {
+    let original = [
+        "Alpha paragraph.",
+        "[cell]",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+    ];
+    let edited = [
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "added",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    assert!(table_moved(&mut doc), "the table is moved");
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_inserted_before_a_final_table_inserted_by_an_earlier_redline_is_compared() {
+    // Rejecting every revision removes the table and the paragraph before
+    // it: the body ends with the paragraph before both.
+    let mut redlined = earlier_redline(&["intro"], &["intro", "[cell]"]);
+    let mut edited = reopen(&mut redlined);
+    edited.insert_paragraph(1, "added");
+    assert_eq!(owners(&edited), ["intro", "added", "[cell]"]);
+    let mut doc = redline(reopen(&mut redlined), &edited);
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "added", "[cell]"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn a_paragraph_deleted_before_a_final_table_deleted_by_an_earlier_redline_is_compared() {
+    let mut redlined = earlier_redline(&["intro", "[cell]"], &["intro"]);
     let mut original = reopen(&mut redlined);
+    original.insert_paragraph(1, "removed");
+    // The cell's text is a tracked deletion.
+    assert_eq!(owners(&original), ["intro", "removed", "[]"]);
+    let mut doc = redline(original, &reopen(&mut redlined));
+    assert_eq!(owners(&accepted(&mut doc)), ["intro"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro", "removed", "[cell]"]);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_final_table_with_tracked_cell_text_is_compared() {
+    // The earlier redline changes the text of the cell: no resolution
+    // removes the table, so the new paragraph carries its own mark.
+    let mut redlined = earlier_redline(&["intro", "[cell]"], &["intro", "[changed]"]);
     let mut edited = reopen(&mut redlined);
     edited.add_paragraph("closing");
-    let error = original.compare(&edited, AUTHOR, DATE).unwrap_err();
-    assert!(
-        error.to_string().contains("cannot mark the paragraph mark"),
-        "{error}"
+    let mut doc = redline(reopen(&mut redlined), &edited);
+    assert_eq!(
+        owners(&accepted(&mut doc)),
+        ["intro", "[changed]", "closing"]
     );
-    assert!(!kinds(&original).is_empty());
-    assert!(
-        kinds(&original)
-            .iter()
-            .all(|kind| *kind == RevisionKind::Insertion)
+    assert_eq!(owners(&rejected(&mut doc)), ["intro", "[cell]"]);
+}
+
+#[test]
+fn a_final_paragraph_deleted_after_a_table_with_tracked_cell_text_is_compared() {
+    let mut redlined = earlier_redline(&["intro", "[cell]"], &["intro", "[changed]"]);
+    let mut original = reopen(&mut redlined);
+    original.add_paragraph("closing");
+    let mut doc = redline(original, &reopen(&mut redlined));
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "[changed]"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro", "[cell]", "closing"]);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_final_table_inserted_by_an_earlier_redline_is_compared() {
+    // Rejecting only the comparison's revisions keeps the table, so the new
+    // paragraph carries its own mark; rejecting every revision removes the
+    // table too, and the paragraph goes with it.
+    let mut redlined = doc_with_owners(&["intro"]);
+    redlined
+        .compare(&doc_with_owners(&["intro", "[cell]"]), "Earlier", DATE)
+        .unwrap();
+    let mut edited = reopen(&mut redlined);
+    edited.add_paragraph("closing");
+    let mut doc = redline(reopen(&mut redlined), &edited);
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "[cell]", "closing"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro"]);
+    let mut own = reopen(&mut doc);
+    own.reject_revisions_by_author(AUTHOR).unwrap();
+    assert_eq!(owners(&reopen(&mut own)), ["intro", "[cell]"]);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_lone_table_inserted_by_an_earlier_redline_is_compared() {
+    // Rejecting every revision removes all the body holds, as it does for
+    // the original.
+    let mut redlined = earlier_redline(&[], &["[cell]"]);
+    let mut edited = reopen(&mut redlined);
+    edited.add_paragraph("closing");
+    let mut doc = redline(reopen(&mut redlined), &edited);
+    assert_eq!(owners(&accepted(&mut doc)), ["[cell]", "closing"]);
+    assert_eq!(owners(&rejected(&mut doc)), Vec::<String>::new());
+    assert_eq!(owners(&rejected(&mut redlined)), Vec::<String>::new());
+}
+
+#[test]
+fn a_paragraph_appended_after_a_final_table_deleted_by_an_earlier_redline_is_compared() {
+    // Rejecting keeps the table, which then ends the body again.
+    let mut redlined = earlier_redline(&["intro", "[cell]"], &["intro"]);
+    let mut edited = reopen(&mut redlined);
+    edited.add_paragraph("closing");
+    let mut doc = redline(reopen(&mut redlined), &edited);
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "closing"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro", "[cell]"]);
+}
+
+#[test]
+fn a_final_paragraph_deleted_after_a_final_table_inserted_by_an_earlier_redline_is_compared() {
+    // Accepting keeps the table, which then ends the body.
+    let mut redlined = earlier_redline(&["intro"], &["intro", "[cell]"]);
+    let mut original = reopen(&mut redlined);
+    original.add_paragraph("closing");
+    let mut doc = redline(original, &reopen(&mut redlined));
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "[cell]"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro", "closing"]);
+}
+
+#[test]
+fn a_paragraph_appended_after_a_table_both_resolutions_remove_is_compared() {
+    // Every row of the table is an inserted row that is deleted again: each
+    // resolution of every revision removes the table and the new paragraph
+    // with it.
+    let body = concat!(
+        r#"<w:p><w:r><w:t>intro</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr>"#,
+        r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"/>"#,
+        r#"<w:del w:id="2" w:author="Earlier" w:date="2026-01-01T00:00:00Z"/>"#,
+        r#"</w:trPr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
     );
+    let mut edited = doc_with_body(body);
+    edited.add_paragraph("closing");
+    let mut doc = redline(doc_with_body(body), &edited);
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "closing"]);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro"]);
+}
+
+#[test]
+fn rejecting_a_final_paragraph_inserted_with_the_table_before_it_ends_the_body_with_the_paragraph_before()
+ {
+    // Rejecting removes the table and the paragraph after it, which has
+    // nothing left: the body ends with the paragraph before the table.
+    let body = concat!(
+        r#"<w:p><w:r><w:t>intro</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr>"#,
+        r#"<w:ins w:id="1" w:author="Eve" w:date="2026-01-01T00:00:00Z"/>"#,
+        r#"</w:trPr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="2" w:author="Eve" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr>"#,
+        r#"<w:ins w:id="3" w:author="Eve" w:date="2026-01-01T00:00:00Z"><w:r><w:t>closing</w:t></w:r></w:ins></w:p>"#,
+    );
+    let mut doc = doc_with_body(body);
+    assert_eq!(owners(&rejected(&mut doc)), ["intro"]);
+    assert_eq!(owners(&accepted(&mut doc)), ["intro", "[cell]", "closing"]);
+}
+
+#[test]
+fn empty_border_containers_against_none_are_no_format_change() {
+    // The original saved by LibreOffice, with empty table and cell border
+    // containers, the edited copy saved by Word without them.
+    let table = |borders: &str, cell_borders: &str, text: &str| {
+        format!(
+            concat!(
+                r#"<w:tbl><w:tblPr>{}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+                r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{}</w:tcPr>"#,
+                r#"<w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+            ),
+            borders, cell_borders, text
+        )
+    };
+    for (original, edited) in [
+        (
+            table(
+                "<w:tblBorders></w:tblBorders>",
+                "<w:tcBorders></w:tcBorders>",
+                "cell",
+            ),
+            table("", "", "cell edited"),
+        ),
+        (
+            table("", "", "cell"),
+            table("<w:tblBorders/>", "<w:tcBorders/>", "cell edited"),
+        ),
+    ] {
+        let doc = redline(doc_with_body(&original), &doc_with_body(&edited));
+        assert!(
+            kinds(&doc)
+                .iter()
+                .all(|kind| matches!(kind, RevisionKind::Insertion | RevisionKind::Deletion)),
+            "no table or cell format change: {:?}",
+            kinds(&doc)
+        );
+    }
 }
 
 #[test]
 fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
     // LibreOffice writes `<w:trPr></w:trPr>` and `<w:tcBorders></w:tcBorders>`;
-    // an edit through the model writes them back as nothing.
+    // the comparison reads them as no properties.
     let body = concat!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
         r#"<w:tr><w:trPr></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:tcBorders></w:tcBorders></w:tcPr>"#,

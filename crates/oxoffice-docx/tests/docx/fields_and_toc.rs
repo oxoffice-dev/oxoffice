@@ -573,6 +573,47 @@ fn page_fields_take_their_numbers_from_the_layout_except_in_a_footer() {
 }
 
 #[test]
+fn updating_page_fields_keeps_a_table_of_contents_entry_saved_by_libreoffice() {
+    // LibreOffice writes the whole entry as the result of its PAGEREF; Word
+    // writes the page number alone.
+    let entry = |result: &str| {
+        format!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">PAGEREF _Toc1 \h</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r>{result}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    // Word's `\p` writes "on page N", which is not computed either.
+    let relative = entry("<w:t>on page 7</w:t>").replace(r"PAGEREF _Toc1 \h", r"PAGEREF _Toc1 \p");
+    let mut doc = doc_with_body(&format!(
+        r#"{}{}{relative}<w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Motivation</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        entry("<w:t>1.1</w:t><w:tab/><w:t>Motivation</w:t><w:tab/><w:t>7</w:t>"),
+        entry("<w:t>7</w:t>"),
+    ));
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert_eq!(report.page_reference_fields, 1, "{:?}", report.diagnostics);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("retained cache: the result holds more than a page number")),
+        "{:?}",
+        report.diagnostics
+    );
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|line| line.contains(r"retained cache: unsupported switch \p")),
+        "{:?}",
+        report.diagnostics
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        ["1.1\tMotivation\t7", "1", "on page 7", "Motivation"]
+    );
+}
+
+#[test]
 fn update_fields_on_open_is_set_cleared_and_removed() {
     let mut doc = Document::new();
     assert_eq!(doc.update_fields_on_open(), None);
@@ -884,6 +925,54 @@ fn a_table_of_figures_lists_the_captions() {
         texts(&doc)[1..3],
         ["Figure 1: Sales\t1", "Figure 2: Sites\t1"]
     );
+}
+
+#[test]
+fn a_table_of_figures_numbered_by_chapter_keeps_its_prefix_out_of_the_page_reference() {
+    let mut doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+        r#"<w:p><w:fldSimple w:instr=" SEQ Chapter "><w:r><w:t>1</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> Chapter</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>chart</w:t></w:r></w:p>"#,
+    ));
+    let location = paragraph_at(&doc, StoryKind::Body, "chart");
+    doc.insert_caption(
+        &location,
+        &CaptionOptions {
+            text: "Sales".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    doc.update_fields(&no_context()).unwrap();
+    let location = paragraph_at(&doc, StoryKind::Body, "Intro");
+    doc.insert_table_of_figures(&location, &TableOfFiguresOptions::default())
+        .unwrap();
+    // Number the pages by chapter: `\s Chapter`.
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let numbered = xml.replacen(r" TOC \c Figure ", r" TOC \s Chapter \c Figure ", 1);
+    assert_ne!(numbered, xml, "the table of figures takes \\s");
+    package.set_part("/word/document.xml", numbered.into_bytes());
+    let mut out = Vec::new();
+    package
+        .write_to(&mut std::io::Cursor::new(&mut out))
+        .unwrap();
+    let mut doc = Document::from_bytes(&out).unwrap();
+
+    doc.rebuild_generated_tables().unwrap();
+    let entry = |doc: &Document| {
+        texts(doc)
+            .into_iter()
+            .find(|text| text.contains("Sales\t"))
+            .expect("the entry")
+    };
+    assert!(entry(&doc).ends_with("\t1-1"), "{}", entry(&doc));
+    // The page update recomputes the page and keeps the prefix before it.
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert_eq!(report.page_reference_fields, 1, "{:?}", report.diagnostics);
+    let doc = reopen(&mut doc);
+    assert!(entry(&doc).ends_with("\t1-1"), "{}", entry(&doc));
 }
 
 // ---- Bookmarks ----

@@ -102,7 +102,9 @@ use field_instruction::{
     InstructionOperand, InstructionPart, classify_instruction_tokens, lex_field_text,
     parse_field_instruction, parse_instruction_syntax, switch_is_known_flag, switch_takes_argument,
 };
-pub use field_instruction::{bibliography_option_switch_edits, story_field_instruction_has_name};
+pub use field_instruction::{
+    bibliography_option_switch_edits, bookmark_reference_span, story_field_instruction_has_name,
+};
 use field_legacy_form::{
     InlineFieldParagraph, NestedEffectiveSegment, PhysicalRunSources, complex_outer_result_present,
     field_publication_bytes, legacy_form_author_parts, legacy_form_canonical_display,
@@ -5613,8 +5615,8 @@ pub(crate) fn source_value_is_modeled(
             return value.parse::<i32>().is_ok();
         }
         if key == b"customMarkFollows" {
-            return parse_field_bool(value)
-                .is_some_and(|parsed| parsed == matches!(value, "1" | "true"));
+            // The reader takes every on/off spelling; an off one is absent.
+            return parse_field_bool(value).is_some();
         }
     }
     if matches!(local, b"fldSimple" | b"fldChar") {

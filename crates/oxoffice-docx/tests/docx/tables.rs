@@ -1595,6 +1595,137 @@ fn a_save_keeps_empty_row_properties() {
 }
 
 #[test]
+fn a_row_height_rule_without_a_value_is_formatting_a_row_edit_can_copy_and_set() {
+    // The value of `w:trHeight` is optional: a rule alone is row formatting
+    // like any other, not opaque XML.
+    let body = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:hRule="exact"/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#;
+    let mut doc = doc_with_body(body);
+    doc.table_mut(0).unwrap().add_row().unwrap();
+    let mut doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        xml.matches(r#"<w:trPr><w:trHeight w:hRule="exact"/></w:trPr>"#)
+            .count(),
+        2,
+        "{xml}"
+    );
+
+    doc.table_mut(0)
+        .unwrap()
+        .row(0)
+        .unwrap()
+        .set_height_exact(oxoffice_docx::Length::twips(300));
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:tr><w:trPr><w:trHeight w:val="300" w:hRule="exact"/></w:trPr>"#),
+        "one height, the one set: {xml}"
+    );
+    assert_eq!(xml.matches("<w:trHeight").count(), 2, "{xml}");
+
+    // A row height without attributes means the default: a row added beside
+    // it is not refused, and a height set replaces it.
+    let bare = r#"<w:trPr><w:trHeight/></w:trPr>"#;
+    let mut doc =
+        doc_with_body(&body.replace(r#"<w:trPr><w:trHeight w:hRule="exact"/></w:trPr>"#, bare));
+    doc.table_mut(0).unwrap().add_row().unwrap();
+    doc.table_mut(0)
+        .unwrap()
+        .row(0)
+        .unwrap()
+        .set_height_exact(oxoffice_docx::Length::twips(300));
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:tr><w:trPr><w:trHeight w:val="300" w:hRule="exact"/></w:trPr>"#),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:trHeight").count(), 1, "{xml}");
+
+    // A row height with an attribute the model does not hold stays as written.
+    let foreign = r#"<w:trHeight xmlns:x="urn:example:x" w:hRule="exact" x:keep="1"/>"#;
+    let mut doc = doc_with_body(&body.replace(r#"<w:trHeight w:hRule="exact"/>"#, foreign));
+    doc.try_set_cell_text(0, 0, 0, "x").unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains(r#"x:keep="1""#), "{xml}");
+}
+
+#[test]
+fn empty_border_containers_read_from_a_file_survive_an_edit() {
+    // LibreOffice writes an empty `w:tcBorders` in every cell: an edit of
+    // the table writes it back as read, whether written empty or self-closed.
+    for (written, saved) in [
+        ("", ""),
+        ("<w:tcBorders></w:tcBorders>", "<w:tcBorders/>"),
+        ("<w:tcBorders/>", "<w:tcBorders/>"),
+    ] {
+        for (table_written, table_saved) in [
+            ("<w:tblBorders></w:tblBorders>", "<w:tblBorders/>"),
+            ("<w:tblBorders/>", "<w:tblBorders/>"),
+        ] {
+            let body = format!(
+                r#"<w:tbl><w:tblPr>{table_written}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{written}</w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
+            );
+            let mut doc = doc_with_body(&body);
+            doc.try_set_cell_text(0, 0, 0, "x").unwrap();
+            doc.table_mut(0).unwrap().add_row().unwrap();
+            let doc = reopen(&mut doc);
+            let xml = doc.part_xml("word/document.xml").unwrap();
+            assert!(
+                xml.contains(&format!("<w:tblPr>{table_saved}</w:tblPr>")),
+                "{written} {table_written}: {xml}"
+            );
+            assert!(
+                xml.contains(&format!(
+                    r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{saved}</w:tcPr><w:p>"#
+                )),
+                "{written} {table_written}: {xml}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_conditional_format_written_with_booleans_only_is_read_and_kept_as_written() {
+    // The Transitional boolean form of `w:cnfStyle`, without `w:val`, reads
+    // as the value it stands for and is written back as read.
+    let row_cnf = r#"<w:cnfStyle w:firstRow="1" w:lastRow="0"/>"#;
+    let cell_cnf = r#"<w:cnfStyle w:firstRow="true" w:firstRowFirstColumn="1"/>"#;
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr>{row_cnf}</w:trPr><w:tc><w:tcPr>{cell_cnf}</w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
+    );
+    let mut doc = doc_with_body(&body);
+    {
+        let table = doc.table(0).unwrap();
+        let row = table.row(0).unwrap();
+        let formatting = row.conditional_formatting().expect("row formatting");
+        assert!(formatting.first_row && !formatting.last_row);
+        let cell = row
+            .cell(0)
+            .unwrap()
+            .conditional_formatting()
+            .expect("cell formatting");
+        assert!(cell.first_row && cell.first_row_first_column && !cell.last_column);
+    }
+    // A row added beside it and a column inserted beside it copy it.
+    doc.table_mut(0).unwrap().add_row().unwrap();
+    doc.table_mut(0)
+        .unwrap()
+        .insert_column(0, false, None)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        xml.matches(&format!("<w:trPr>{row_cnf}</w:trPr>")).count(),
+        2,
+        "{xml}"
+    );
+    assert_eq!(xml.matches(cell_cnf).count(), 4, "{xml}");
+    assert!(!xml.contains("w:val=\"1"), "{xml}");
+}
+
+#[test]
 fn a_row_added_beside_empty_properties_writes_none() {
     // A new row and its cells write only the formatting they carry.
     let mut doc = doc_with_body(
@@ -1671,6 +1802,8 @@ fn exports_report_no_formatting_for_empty_property_elements() {
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
         r#"<w:tr><w:trPr/><w:tc><w:tcPr/><w:p><w:pPr><w:rPr/></w:pPr><w:r><w:rPr/><w:t>a</w:t></w:r></w:p></w:tc></w:tr>"#,
         r#"<w:tr><w:trPr></w:trPr><w:tc><w:tcPr></w:tcPr><w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr>"#,
+        // A height without attributes means the default height.
+        r#"<w:tr><w:trPr><w:trHeight/></w:trPr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>"#,
         r#"</w:tbl><w:p><w:pPr><w:rPr/></w:pPr><w:r><w:t>after</w:t></w:r></w:p>"#,
     ));
     let doc = reopen(&mut { doc });

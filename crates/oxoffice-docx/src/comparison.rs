@@ -1525,9 +1525,13 @@ fn remap_equivalent_owner_relationships(
                         && relationship_payload(original, original_owner, left) == right_payload
                 })
         else {
-            if right.rel_type == rel_types::HYPERLINK {
+            // A linked picture's image relationship is an address, carried
+            // as a hyperlink's is.
+            if right.rel_type == rel_types::HYPERLINK
+                || !crate::document::relationship_is_internal(right)
+            {
                 unmatched_links.push(right.clone());
-            } else if crate::document::relationship_is_internal(right) {
+            } else {
                 let target = OpcPackage::resolve_rel_target(edited_owner, &right.target);
                 let bytes = edited.package.get_part(&target).ok_or_else(|| {
                     Error::Other(format!("comparison image target is missing: {target}"))
@@ -1560,7 +1564,7 @@ fn remap_equivalent_owner_relationships(
         .map(|relationship| relationship.id.clone())
         .chain(remap.values().cloned())
         .collect::<HashSet<_>>();
-    // The redline allocates a carried hyperlink's id the way the original's
+    // The redline allocates a carried address's id the way the original's
     // relationships do, which is the id staging keeps when it reopens it.
     let mut allocator = original_relationships.clone();
     let mut carried = Vec::with_capacity(unmatched_links.len() + unmatched_images.len());
@@ -9007,31 +9011,15 @@ fn compare_body_impl(
         &edited_signatures,
         &mut metadata.ids,
     )?;
-    let trailing_paragraph_insert_start = aligned
-        .iter()
-        .enumerate()
-        .rev()
-        .take_while(|(_, (left, right))| {
-            left.is_none()
-                && right
-                    .and_then(|index| edited.body.content.get(index))
-                    .is_some_and(|content| matches!(content, BodyContent::Paragraph(_)))
-        })
-        .map(|(position, _)| position)
-        .last();
-    let trailing_paragraph_delete_start = aligned
-        .iter()
-        .enumerate()
-        .rev()
-        .take_while(|(_, (left, right))| {
-            right.is_none()
-                && left.is_some_and(|index| {
-                    moves.original[index].is_none()
-                        && matches!(original.body.content[index], BodyContent::Paragraph(_))
-                })
-        })
-        .map(|(position, _)| position)
-        .last();
+    let trailing_inserted = trailing_paragraphs(&aligned, |(left, right)| {
+        right
+            .filter(|_| left.is_none())
+            .and_then(|index| edited.body.content.get(index))
+    });
+    let trailing_deleted = trailing_paragraphs(&aligned, |(left, right)| {
+        left.filter(|_| right.is_none())
+            .and_then(|index| original.body.content.get(index))
+    });
     // A final paragraph change marks the paragraph mark of an owner already
     // emitted, which must not be one that holds an existing revision.
     let refuse_held_mark = |position: Option<usize>| -> Result<()> {
@@ -9050,8 +9038,7 @@ fn compare_body_impl(
     // formatting. Caller ignore policies still govern ordinary comparison.
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
-    let mut trailing_merged = PropertySide::default();
-    let mut trailing_after_table = false;
+    let mut trailing = (PropertySide::default(), false, false);
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();
@@ -9185,14 +9172,8 @@ fn compare_body_impl(
                         diagnostics,
                     )?
                 };
-                // A table holding tracked revisions may not survive a
-                // resolution, so only one free of them counts as kept.
                 let owner = match (original_content, edited_content) {
-                    (BodyContent::Table(_), BodyContent::Table(_))
-                        if !held_original.holds(Some(left)) && !held_edited.holds(Some(right)) =>
-                    {
-                        EmittedOwner::KeptTable
-                    }
+                    (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
                     _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
                 };
                 output.push((owner, compared));
@@ -9215,73 +9196,44 @@ fn compare_body_impl(
                         )
                     }));
                 }
-                if let Some(id) = moves.original[left] {
-                    if let BodyContent::Paragraph(paragraph) = content
-                        && !next_takes_mark
-                    {
-                        refuse_held_mark(output.len().checked_sub(1))?;
-                        let merged = mark_previous_paragraph_with_id(
-                            &mut output,
-                            "moveFrom",
-                            id,
-                            source_bindings,
-                            metadata,
-                        )?;
-                        output.push(final_paragraph(
-                            paragraph,
-                            "moveFrom",
-                            Some(id),
-                            merged,
-                            metadata,
-                        )?);
-                    } else {
-                        output.push((
-                            EmittedOwner::of(content, content, None, metadata)?,
-                            moved_body_content(content, "moveFrom", id, metadata)?,
-                        ));
-                    }
-                } else if let BodyContent::Paragraph(paragraph) = content
-                    && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
+                let move_id = moves.original[left];
+                let kind = if move_id.is_some() { "moveFrom" } else { "del" };
+                if let BodyContent::Paragraph(paragraph) = content
+                    && let Some((first, last)) =
+                        trailing_deleted.filter(|&(first, _)| position >= first)
                 {
-                    if trailing_paragraph_delete_start == Some(position) {
-                        trailing_after_table = after_kept_table(&output, "del", location);
-                        if !trailing_after_table {
-                            refuse_held_mark(previous_mark_position(&output, "del"))?;
-                            trailing_merged = mark_previous_paragraph(
-                                &mut output,
-                                "del",
-                                source_bindings,
-                                metadata,
-                            )?;
-                        }
-                    }
-                    if next_takes_mark || trailing_after_table {
-                        output.push((
-                            EmittedOwner::of(content, content, Some("del"), metadata)?,
-                            deleted_body_content(content, metadata)?,
-                        ));
-                    } else {
-                        output.push(final_paragraph(
+                    trailing_paragraph(
+                        &mut output,
+                        TrailingRun {
+                            content,
                             paragraph,
-                            "del",
-                            None,
-                            trailing_merged.clone(),
-                            metadata,
-                        )?);
-                    }
+                            kind,
+                            move_id,
+                            first: position == first,
+                            single: first == last,
+                            next_takes_mark,
+                            location,
+                        },
+                        &mut trailing,
+                        &refuse_held_mark,
+                        source_bindings,
+                        metadata,
+                    )?;
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
-                    && !after_kept_table(&output, "del", location)
+                    && !after_kept_table(&output, kind, location)
                 {
-                    refuse_held_mark(previous_mark_position(&output, "del"))?;
-                    let merged =
-                        mark_previous_paragraph(&mut output, "del", source_bindings, metadata)?;
-                    output.push(final_paragraph(paragraph, "del", None, merged, metadata)?);
+                    refuse_held_mark(previous_mark_position(&output, kind))?;
+                    let merged = mark_before_final_paragraph(
+                        &mut output,
+                        kind,
+                        move_id,
+                        source_bindings,
+                        metadata,
+                    )?;
+                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
                 } else {
-                    output.push((
-                        EmittedOwner::of(content, content, Some("del"), metadata)?,
-                        deleted_body_content(content, metadata)?,
-                    ));
+                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
                 }
             }
             (None, Some(right)) => {
@@ -9297,73 +9249,44 @@ fn compare_body_impl(
                         body_location(location, content, right)
                     )));
                 }
-                if let Some(id) = moves.edited[right] {
-                    if let BodyContent::Paragraph(paragraph) = content
-                        && !next_takes_mark
-                    {
-                        refuse_held_mark(output.len().checked_sub(1))?;
-                        let merged = mark_previous_paragraph_with_id(
-                            &mut output,
-                            "moveTo",
-                            id,
-                            source_bindings,
-                            metadata,
-                        )?;
-                        output.push(final_paragraph(
-                            paragraph,
-                            "moveTo",
-                            Some(id),
-                            merged,
-                            metadata,
-                        )?);
-                    } else {
-                        output.push((
-                            EmittedOwner::of(content, content, None, metadata)?,
-                            moved_body_content(content, "moveTo", id, metadata)?,
-                        ));
-                    }
-                } else if let BodyContent::Paragraph(paragraph) = content
-                    && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
+                let move_id = moves.edited[right];
+                let kind = if move_id.is_some() { "moveTo" } else { "ins" };
+                if let BodyContent::Paragraph(paragraph) = content
+                    && let Some((first, last)) =
+                        trailing_inserted.filter(|&(first, _)| position >= first)
                 {
-                    if trailing_paragraph_insert_start == Some(position) {
-                        trailing_after_table = after_kept_table(&output, "ins", location);
-                        if !trailing_after_table {
-                            refuse_held_mark(previous_mark_position(&output, "ins"))?;
-                            trailing_merged = mark_previous_paragraph(
-                                &mut output,
-                                "ins",
-                                source_bindings,
-                                metadata,
-                            )?;
-                        }
-                    }
-                    if next_takes_mark || trailing_after_table {
-                        output.push((
-                            EmittedOwner::of(content, content, None, metadata)?,
-                            inserted_body_content(content, metadata)?,
-                        ));
-                    } else {
-                        output.push(final_paragraph(
+                    trailing_paragraph(
+                        &mut output,
+                        TrailingRun {
+                            content,
                             paragraph,
-                            "ins",
-                            None,
-                            trailing_merged.clone(),
-                            metadata,
-                        )?);
-                    }
+                            kind,
+                            move_id,
+                            first: position == first,
+                            single: first == last,
+                            next_takes_mark,
+                            location,
+                        },
+                        &mut trailing,
+                        &refuse_held_mark,
+                        source_bindings,
+                        metadata,
+                    )?;
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
-                    && !after_kept_table(&output, "ins", location)
+                    && !after_kept_table(&output, kind, location)
                 {
-                    refuse_held_mark(previous_mark_position(&output, "ins"))?;
-                    let merged =
-                        mark_previous_paragraph(&mut output, "ins", source_bindings, metadata)?;
-                    output.push(final_paragraph(paragraph, "ins", None, merged, metadata)?);
+                    refuse_held_mark(previous_mark_position(&output, kind))?;
+                    let merged = mark_before_final_paragraph(
+                        &mut output,
+                        kind,
+                        move_id,
+                        source_bindings,
+                        metadata,
+                    )?;
+                    output.push(final_paragraph(paragraph, kind, move_id, merged, metadata)?);
                 } else {
-                    output.push((
-                        EmittedOwner::of(content, content, Some("ins"), metadata)?,
-                        inserted_body_content(content, metadata)?,
-                    ));
+                    output.push(unmatched_body_owner(content, kind, move_id, metadata)?);
                 }
             }
             (None, None) => unreachable!(),
@@ -11105,16 +11028,19 @@ enum EmittedOwner<'a> {
         accepted: PropertySide<'a>,
         rejected: PropertySide<'a>,
     },
-    /// A table whose every row carries this `w:ins` or `w:del` marker. A change
-    /// of the same kind crosses it, because resolving that kind removes the
-    /// table and leaves the paragraphs on either side adjacent.
+    /// A table whose every row carries a marker of this kind (`ins`, `del`,
+    /// `moveFrom` or `moveTo`). A change that the same resolution removes
+    /// crosses it, because that resolution removes the table and leaves the
+    /// paragraphs on either side adjacent; the other resolution keeps it.
     MarkedTable(&'static str),
     /// Source whitespace between owners, which every change crosses.
     Whitespace,
-    /// A table both versions hold, which both resolutions keep. A final
-    /// paragraph after it carries its own change: the resolution removing
-    /// its mark removes it, and the body ends with the table, as it did on
-    /// that side.
+    /// A table both versions hold, which resolving the comparison's
+    /// revisions keeps. A final paragraph after it carries its own change:
+    /// the resolution removing its mark removes it, and the body ends with
+    /// the table, as it did on that side. When existing revisions in the
+    /// table remove it too, resolving them with the change, the paragraph
+    /// goes with the table, and the body ends with what came before it.
     KeptTable,
     Other,
 }
@@ -11197,11 +11123,42 @@ fn next_kept_owner(
         })
 }
 
+/// Whether accepting, rather than rejecting, removes content marked `kind`.
+fn accept_removes(kind: &str) -> bool {
+    matches!(kind, "del" | "moveFrom")
+}
+
+/// The first and last positions of the paragraphs in the run of owners
+/// that one side alone holds (`one_sided` gives the owner) and that ends
+/// the body. The tables between them are crossed: the mark before the
+/// first paragraph carries the change of the last one, whose own mark ends
+/// the story.
+fn trailing_paragraphs<'d>(
+    aligned: &[(Option<usize>, Option<usize>)],
+    one_sided: impl Fn((Option<usize>, Option<usize>)) -> Option<&'d BodyContent>,
+) -> Option<(usize, usize)> {
+    let paragraphs = aligned
+        .iter()
+        .enumerate()
+        .rev()
+        .map_while(|(position, &pair)| {
+            one_sided(pair)
+                .filter(|content| {
+                    matches!(content, BodyContent::Paragraph(_) | BodyContent::Table(_))
+                })
+                .map(|content| (position, content))
+        })
+        .filter(|(_, content)| matches!(content, BodyContent::Paragraph(_)))
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    paragraphs.last().copied().zip(paragraphs.first().copied())
+}
+
 /// The position in `output` of the owner whose paragraph mark
 /// [`mark_previous_paragraph`] marks for a final `kind` change.
 fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> Option<usize> {
     output.iter().rposition(|(owner, _)| match owner {
-        EmittedOwner::MarkedTable(marked) => *marked != kind,
+        EmittedOwner::MarkedTable(marked) => accept_removes(marked) != accept_removes(kind),
         EmittedOwner::Whitespace => false,
         EmittedOwner::Paragraph { .. } | EmittedOwner::KeptTable | EmittedOwner::Other => true,
     })
@@ -11209,7 +11166,7 @@ fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> 
 
 /// Whether the owner a final `kind` change would mark is a table this
 /// change's resolution keeps: one both versions hold, or one the other
-/// resolution removes (a table marked with the same kind is crossed before
+/// resolution removes (a table this resolution removes is crossed before
 /// it). The final paragraph then carries its own change.
 fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str, location: &str) -> bool {
     // Only the body may end with a table; every other story ends with a
@@ -11291,8 +11248,119 @@ fn marked_paragraph_properties_xml(
     append_word_child(properties, "pPr", &run_properties)
 }
 
+/// A paragraph of the run of owners one side alone holds that ends the
+/// body.
+struct TrailingRun<'a, 'l> {
+    content: &'a BodyContent,
+    paragraph: &'a CT_P,
+    kind: &'static str,
+    move_id: Option<i32>,
+    /// Whether it is the first paragraph of the run, and the only one.
+    first: bool,
+    single: bool,
+    next_takes_mark: bool,
+    location: &'l str,
+}
+
+/// Emit a paragraph of the run that ends the body, with `trailing` the
+/// properties [`final_paragraph`] merges, whether a kept table precedes the
+/// run, and whether the run paragraph emitted last is moved.
+///
+/// The first paragraph marks the paragraph before the run, unless a kept
+/// table precedes it: with its own change when it is the only one, else
+/// with a mark of the run's resolution under a fresh id, so that resolving
+/// one move of the run alone merges nothing else. Each paragraph but the
+/// last carries its own change. The last keeps its mark as the story
+/// terminator; when it is moved, its move also goes on the mark of the
+/// paragraph before it in the run, which resolving that move alone merges
+/// into it, unless that paragraph is moved too: a mark holds one move
+/// marker of a kind, and resolving the last move alone then leaves its
+/// paragraph empty.
+fn trailing_paragraph<'a>(
+    output: &mut Vec<(EmittedOwner<'a>, String)>,
+    run: TrailingRun<'a, '_>,
+    trailing: &mut (PropertySide<'a>, bool, bool),
+    refuse_held_mark: &dyn Fn(Option<usize>) -> Result<()>,
+    bindings: &[(String, String)],
+    metadata: &mut Metadata<'_>,
+) -> Result<()> {
+    let (merged, after_table, previous_moved) = (&mut trailing.0, &mut trailing.1, &mut trailing.2);
+    if run.first {
+        let (kind, move_id) = if run.single {
+            (run.kind, run.move_id)
+        } else if accept_removes(run.kind) {
+            ("del", None)
+        } else {
+            ("ins", None)
+        };
+        *after_table = after_kept_table(output, kind, run.location);
+        if !*after_table {
+            refuse_held_mark(previous_mark_position(output, kind))?;
+            *merged = mark_before_final_paragraph(output, kind, move_id, bindings, metadata)?;
+        }
+    }
+    if run.next_takes_mark || *after_table {
+        output.push(unmatched_body_owner(
+            run.content,
+            run.kind,
+            run.move_id,
+            metadata,
+        )?);
+        *previous_moved = run.move_id.is_some();
+        return Ok(());
+    }
+    if let Some(id) = run.move_id
+        && !run.single
+        && !*previous_moved
+    {
+        mark_previous_paragraph_with_id(output, run.kind, id, bindings, metadata)?;
+    }
+    output.push(final_paragraph(
+        run.paragraph,
+        run.kind,
+        run.move_id,
+        merged.clone(),
+        metadata,
+    )?);
+    Ok(())
+}
+
+/// A body owner one side alone holds, written with its own `kind` marks:
+/// moved under `move_id`, deleted or inserted.
+fn unmatched_body_owner<'a>(
+    content: &'a BodyContent,
+    kind: &'static str,
+    move_id: Option<i32>,
+    metadata: &mut Metadata<'_>,
+) -> Result<(EmittedOwner<'a>, String)> {
+    let xml = match (move_id, kind) {
+        (Some(id), _) => moved_body_content(content, kind, id, metadata)?,
+        (None, "del") => deleted_body_content(content, metadata)?,
+        (None, _) => inserted_body_content(content, metadata)?,
+    };
+    Ok((
+        EmittedOwner::of(content, content, Some(kind), metadata)?,
+        xml,
+    ))
+}
+
+/// Mark the paragraph before a final `kind` paragraph, with the id of its
+/// move pair when it is moved, and return what [`final_paragraph`] merges.
+fn mark_before_final_paragraph<'a>(
+    output: &mut [(EmittedOwner<'a>, String)],
+    kind: &str,
+    move_id: Option<i32>,
+    bindings: &[(String, String)],
+    metadata: &mut Metadata<'_>,
+) -> Result<PropertySide<'a>> {
+    match move_id {
+        Some(id) => mark_previous_paragraph_with_id(output, kind, id, bindings, metadata),
+        None => mark_previous_paragraph(output, kind, bindings, metadata),
+    }
+}
+
 /// [`mark_previous_paragraph`] for a final moved paragraph, whose move
-/// pair shares `id`. The paragraph before must be the last owner emitted.
+/// pair shares `id`.
 fn mark_previous_paragraph_with_id<'a>(
     output: &mut [(EmittedOwner<'a>, String)],
     kind: &str,
@@ -11300,7 +11368,8 @@ fn mark_previous_paragraph_with_id<'a>(
     bindings: &[(String, String)],
     metadata: &Metadata<'_>,
 ) -> Result<PropertySide<'a>> {
-    let Some((EmittedOwner::Paragraph { accepted, rejected }, paragraph)) = output.last_mut()
+    let Some((EmittedOwner::Paragraph { accepted, rejected }, paragraph)) =
+        previous_mark_position(output, kind).map(|position| &mut output[position])
     else {
         return Err(Error::Other(
             "comparison needs an adjacent paragraph for a final paragraph move".to_owned(),
@@ -15810,6 +15879,14 @@ fn modeled_table_properties(properties: Option<&CT_TblPr>) -> Option<CT_TblPr> {
         properties.change = None;
         properties.revision_xml.clear();
         properties.extra_xml.clear();
+        // An empty border container, as LibreOffice writes it, is no border.
+        if properties
+            .borders
+            .as_ref()
+            .is_some_and(oxoffice_docx_oxml::table::CT_TblBorders::is_empty)
+        {
+            properties.borders = None;
+        }
         properties
     })
 }
@@ -20602,11 +20679,18 @@ fn row_formatting(row: &CT_Row) -> Result<Vec<u8>> {
 
 /// Cell properties as the model writes them. Empty containers, such as
 /// LibreOffice's `<w:tcBorders></w:tcBorders>` or the `<w:tcPr/>` Google
-/// Docs writes, read as no properties.
+/// Docs writes, read as no properties, although a save keeps them.
 fn cell_formatting(cell: &CT_Tc) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     if let Some(mut properties) = cell.properties.clone() {
         properties.from_source = false;
+        if properties
+            .borders
+            .as_ref()
+            .is_some_and(oxoffice_docx_oxml::table::CT_TblBorders::is_empty)
+        {
+            properties.borders = None;
+        }
         properties.to_xml(&mut writer)?;
     }
     Ok(writer.into_inner())

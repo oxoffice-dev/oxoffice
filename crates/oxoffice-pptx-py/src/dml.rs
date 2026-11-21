@@ -1601,7 +1601,8 @@ impl PyLineFormat {
     }
 
     #[setter]
-    fn set_width(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_width(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "LineFormat.width", crate::LengthUnit::Emu)?;
         self.validate(py)?;
         let width = value.unwrap_or(0);
         if !(0..=MAX_LINE_WIDTH_EMU).contains(&width) {
@@ -2098,7 +2099,9 @@ impl PyShadowFormat {
     }
 
     #[setter]
-    fn set_blur_radius(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_blur_radius(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value =
+            crate::required_length(value, "ShadowFormat.blur_radius", crate::LengthUnit::Emu)?;
         let value = check_shadow_length("blur_radius", value)?;
         self.edit(py, |shadow| shadow.blur_radius = Some(value))
     }
@@ -2110,7 +2113,8 @@ impl PyShadowFormat {
     }
 
     #[setter]
-    fn set_distance(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_distance(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = crate::required_length(value, "ShadowFormat.distance", crate::LengthUnit::Emu)?;
         let value = check_shadow_length("distance", value)?;
         self.edit(py, |shadow| shadow.distance = Some(value))
     }

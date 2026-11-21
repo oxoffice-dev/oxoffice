@@ -310,7 +310,7 @@ pub enum RevisionContent {
 }
 
 /// A tracked revision whose captured subtree remains its serialization source.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct CT_Revision {
     kind: RevisionKind,
@@ -341,6 +341,31 @@ impl std::fmt::Debug for RevisionReadContext {
         f.debug_struct("RevisionReadContext")
             .field("raw_len", &self.raw_map.len())
             .finish_non_exhaustive()
+    }
+}
+
+// Callers compare Debug output as a signature, so the prefix context is
+// written in a stable order, as equality reads it.
+impl std::fmt::Debug for CT_Revision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parse_word_prefixes = self.parse_word_prefixes.iter().collect::<Vec<_>>();
+        parse_word_prefixes.sort_unstable();
+        f.debug_struct("CT_Revision")
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("author", &self.author)
+            .field("timestamp", &self.timestamp)
+            .field("raw_xml", &self.raw_xml)
+            .field("content", &self.content)
+            .field("content_paragraph", &self.content_paragraph)
+            .field("nested_revisions", &self.nested_revisions)
+            .field("parse_word_prefixes", &parse_word_prefixes)
+            .field("require_author", &self.require_author)
+            .field("accepted_fields_pending", &self.accepted_fields_pending)
+            .field("accepted_payload_pending", &self.accepted_payload_pending)
+            .field("semantic_fields_pending", &self.semantic_fields_pending)
+            .field("read_context", &self.read_context)
+            .finish()
     }
 }
 

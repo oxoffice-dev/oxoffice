@@ -207,7 +207,9 @@ enum Command {
     /// line, each located between brackets: `[2]` for the second body
     /// paragraph, or a story location such as `[table 1, row 1, cell 2,
     /// paragraph 1]` or `[header default, section 1, paragraph 1]`. A story
-    /// that cannot be read is named as not compared.
+    /// that cannot be read is named as not compared. Comments pair by author
+    /// and text, then by author and anchor text, not by their order in the
+    /// file, so comments a producer only reordered show no difference.
     Diff {
         /// First DOCX file
         file_a: PathBuf,

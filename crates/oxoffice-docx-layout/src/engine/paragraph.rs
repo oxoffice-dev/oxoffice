@@ -112,6 +112,8 @@ fn computed_layout_field(
                         ),
                     });
                     (None, None)
+                } else if page_reference_keeps_stored_display(&field.cached_result) {
+                    (None, None)
                 } else if let Some(target) = page_ref_id(input, bookmark) {
                     (Some("99".to_owned()), Some(FieldKind::TargetPage(target)))
                 } else {
@@ -1438,9 +1440,15 @@ fn layout_paragraph_with_source_and_table(
                                 "NUMPAGES" => Some(FieldKind::NumPages),
                                 "SECTION" => Some(FieldKind::Section),
                                 "SECTIONPAGES" => Some(FieldKind::SectionPages),
-                                "PAGEREF" => field_text_argument(&display_owner.instruction, 0)
-                                    .and_then(|name| page_ref_id(input, name))
-                                    .map(FieldKind::TargetPage),
+                                "PAGEREF"
+                                    if !page_reference_keeps_stored_display(
+                                        &display_owner.cached_result,
+                                    ) =>
+                                {
+                                    field_text_argument(&display_owner.instruction, 0)
+                                        .and_then(|name| page_ref_id(input, name))
+                                        .map(FieldKind::TargetPage)
+                                }
                                 _ => None,
                             }
                         };
