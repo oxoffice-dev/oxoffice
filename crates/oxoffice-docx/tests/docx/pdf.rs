@@ -1514,6 +1514,16 @@ fn an_internal_hyperlink_goes_to_the_top_of_its_bookmark() {
         .unwrap()
         .svg;
     assert!(!svg.contains("href=\"#"), "{svg}");
+    // The bookmark's page draws its SVG with nothing left out.
+    let bookmarked = doc.render_page_to_svg_deterministic(2).unwrap().unwrap();
+    assert!(
+        bookmarked
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("omitted")),
+        "{:?}",
+        bookmarked.diagnostics
+    );
     let pdf = pdf_of(&doc);
     assert!(pdf.links(0).is_empty(), "no URI link");
     let links = pdf.internal_links(0);
@@ -1554,8 +1564,20 @@ fn an_internal_hyperlink_to_a_missing_bookmark_gets_no_link() {
 }
 
 #[test]
-fn the_table_of_contents_of_a_word_thesis_goes_to_its_headings() {
-    let pdf = pdf_of(&corpus_doc("word/thesis.docx"));
+fn the_table_of_contents_of_a_thesis_goes_to_its_headings() {
+    // Word and LibreOffice start a heading's bookmark in its paragraph,
+    // Google before it.
+    for file in [
+        "word/thesis.docx",
+        "libreoffice/thesis.docx",
+        "google/thesis.docx",
+    ] {
+        toc_goes_to_headings(file);
+    }
+}
+
+fn toc_goes_to_headings(file: &str) {
+    let pdf = pdf_of(&corpus_doc(file));
     let mut checked = 0;
     for page in 0..pdf.page_count() {
         let drawn = pdf.drawn(page);
@@ -1583,14 +1605,15 @@ fn the_table_of_contents_of_a_word_thesis_goes_to_its_headings() {
                 .any(|line| (line.y - top).abs() < 40.0 && letters(&line.text).contains(&title));
             assert!(
                 lands,
-                "the entry {entry:?} goes to page {target} at {top}, which draws no {title:?} there"
+                "{file}: the entry {entry:?} goes to page {target} at {top}, which draws no \
+                 {title:?} there"
             );
             checked += 1;
         }
     }
     assert!(
         checked >= 5,
-        "the table of contents is clickable: {checked}"
+        "{file}: the table of contents is clickable: {checked}"
     );
 }
 

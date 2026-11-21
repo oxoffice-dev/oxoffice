@@ -279,6 +279,8 @@ impl<'a> SvgState<'a> {
                     );
                     output.push_str("</g>");
                 }
+                // Where an internal link lands: nothing to draw.
+                PositionedElement::Destination { .. } => {}
                 _ => self.diagnose(
                     &element_path,
                     "unsupported positioned element was omitted from SVG output",
@@ -1238,6 +1240,7 @@ fn element_bounds(element: &PositionedElement, fonts: &[FontData]) -> Result<Opt
             elements_bounds(children, fonts)
         }
         PositionedElement::LinkAnnotation { .. }
+        | PositionedElement::Destination { .. }
         | PositionedElement::Text(_)
         | PositionedElement::MultilingualText(_) => Ok(None),
         _ => Err(()),

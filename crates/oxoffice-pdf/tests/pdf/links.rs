@@ -204,8 +204,9 @@ fn an_internal_link_goes_to_the_first_destination_of_its_name() {
     let layout = tagged(layout(vec![
         vec![paragraph(vec![
             run("See the results", Point { x: 72.0, y: 112.0 }, 11.0),
-            link_to(100.0, "#results"),
+            // A skipped link first, so the kept one's rank counts it.
             link_to(200.0, "#nowhere"),
+            link_to(100.0, "#results"),
         ])],
         // The destination sits in a group moved down 50 points; a later one
         // of the same name loses.
