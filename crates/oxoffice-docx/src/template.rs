@@ -2165,9 +2165,10 @@ fn replay_program<'data>(
         pending_drawings,
         evaluation,
     )?;
-    // Allocation canonicalizes bookmarks and relationships before publication.
-    // Splice the prepared expansion into that fresh owner, preserving the
-    // original callback locations already paired onto the root program.
+    // Allocation gives bookmarks and relationships their ids before
+    // publication. Splice the prepared expansion into that fresh owner,
+    // preserving the original callback locations already paired onto the root
+    // program.
     let base = if refresh_root {
         Cow::Owned(canonical_root_base(
             candidate,
@@ -2308,18 +2309,17 @@ fn canonical_root_base(
     pending_drawings: &HashSet<u32>,
     evaluation: &mut TemplateEvaluation<'_, '_>,
 ) -> Result<TemplateProgram> {
-    // Dependency allocation changes identifier occupancy. Canonicalize before
-    // reading the owner that publication will check again. A candidate that
-    // nothing changed since the last staging keeps its canonical roots.
+    // Dependency allocation changes identifier occupancy. Stage before reading
+    // the owner that publication will check again. A candidate that nothing
+    // changed since the last staging keeps its staged roots.
     if evaluation.staged.is_none() {
         candidate.prepare_staged_template_package(
             &mut evaluation.operation,
             &mut evaluation.lineage,
             &mut evaluation.sources,
         )?;
-        // That prepare keeps only drawings already in the package. Repeated
-        // copies still live in the unpublished replacement, so their ids stay
-        // reserved.
+        // Repeated copies still live in the unpublished replacement: their ids
+        // stay reserved.
         candidate.retain_pending_drawing_ids(pending_drawings);
         evaluation.staged = Some(candidate.template_programs_scoped(
             &mut evaluation.operation,

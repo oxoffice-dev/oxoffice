@@ -72,7 +72,7 @@ impl Document {
         Ok((xml, (!record.head.is_empty()).then_some(record)))
     }
 
-    /// Temporary main-part bytes for canonicalization. The returned record
+    /// Temporary main-part bytes, as the save would write them. The returned record
     /// proves these bytes, without replacing the package or flushed record.
     pub(super) fn canonical_source(&self) -> Result<(Vec<u8>, Option<MainPartBlocks>)> {
         self.canonical_source_in(None)

@@ -1122,7 +1122,13 @@ pub(super) fn import_fragment_content_with_state(
         let xml = patch_relationship_ids(&xml, &comment_relationship_map)?;
         let wrapped =
             patch_body_identity_attributes(&wrap_fragment_companion(&xml), &identity_remap)?;
-        let xml = unwrap_fragment_companion(&wrapped);
+        let mut xml = unwrap_fragment_companion(&wrapped);
+        let edits = document
+            .identifiers
+            .fresh_drawing_id_edits(&xml, &BTreeMap::new())?;
+        for (start, end, replacement) in edits.into_iter().rev() {
+            xml.splice(start..end, replacement);
+        }
         Ok(CT_Comments::from_xml(&freshen_fragment_marker_ids(
             document, &xml,
         )?)?)
@@ -1305,6 +1311,26 @@ pub(super) fn import_fragment_content_with_state(
             &identity_remap,
         )?;
         let edits = fragment_marker_id_edits(document, &note.xml)?;
+        apply_fragment_xml_edits(
+            &mut note.xml,
+            &mut note.source,
+            template
+                .as_mut()
+                .map(|(evaluation, _)| &mut evaluation.operation),
+            edits,
+        )?;
+        // The note's drawings were made unique with the body's, then patched
+        // by value: each takes its own id now, as the save keeps them.
+        let edits = document
+            .identifiers
+            .fresh_drawing_id_edits(&note.xml, &BTreeMap::new())?
+            .into_iter()
+            .map(|(start, end, replacement)| FieldSourceEdit {
+                start,
+                end,
+                replacement,
+            })
+            .collect();
         apply_fragment_xml_edits(
             &mut note.xml,
             &mut note.source,

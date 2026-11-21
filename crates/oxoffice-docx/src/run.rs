@@ -577,9 +577,10 @@ impl<'a> Run<'a> {
 
     /// Append an inline picture using a relationship already embedded in the document.
     ///
-    /// Obtain `relationship_id` from [`crate::Document::embed_image`]. The
-    /// picture takes its drawing id (`wp:docPr/@id`) when the document is
-    /// saved.
+    /// Obtain `relationship_id` from [`crate::Document::embed_image`]. A run
+    /// cannot reach the document's identifiers: the saved file gives the
+    /// picture its drawing id (`wp:docPr/@id`), the document keeps a
+    /// placeholder, and an insert between two saves can change that id.
     pub fn add_picture(&mut self, relationship_id: &str, width: Length, height: Length) {
         let mut inline = CT_Inline::new(relationship_id, width.to_emu(), height.to_emu());
         inline.doc_pr_id_unallocated = true;

@@ -1086,8 +1086,8 @@ fn an_addition_to_an_instance_on_a_missing_definition_is_refused_without_a_chang
 
 #[test]
 fn saving_twice_writes_the_added_lists_alike_with_their_ids() {
-    // The removed first list leaves its id free; the second list keeps the
-    // id it was given, in the body and in both saves.
+    // The second list keeps the id it was given, in the body and in both
+    // saves; the removed first list's id is not reused.
     let mut doc = Document::new();
     let first = doc.add_list_definition(&[ListLevel::decimal()]);
     let second = doc.add_list_definition(&[ListLevel::bullet()]);

@@ -490,15 +490,14 @@ impl Document {
     }
 }
 
-/// The identifiers reads show and a save writes, for the debug oracle of
-/// decision 3: the ids of the main part (bookmarks, drawings, relationship
-/// references), the numbering each body paragraph names, the numbering,
-/// comment and footnote definitions, every relationship by owner, and the
-/// media part names.
 /// The relationships of one owner: id to type, target and target mode.
 #[cfg(debug_assertions)]
 type RelationshipTargets = BTreeMap<String, (String, String, Option<String>)>;
 
+/// The identifiers reads show and a save writes, for the debug oracle of
+/// decision 3: the ids of the main part (bookmarks, drawings, relationship
+/// and numbering references), the numbering definitions, every relationship
+/// by owner, and the media part names.
 #[cfg(debug_assertions)]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct IdentifierSummary {
@@ -721,21 +720,68 @@ fn numbering_references(xml: &[u8]) -> Vec<String> {
 
 #[cfg(debug_assertions)]
 impl DocumentIdentifiers {
-    /// Panic unless every id `reopened`, a scan of the saved package, holds
-    /// is reserved here, so that no later insert can take it again.
-    pub(super) fn assert_covers(&self, reopened: &Self) {
+    /// Panic unless every id `reopened`, a scan of a saved package, holds is
+    /// reserved in `self`, the live document's registry, so that no later
+    /// insert can take one again. Ids the save made on its copy are not in
+    /// the live document and need no reservation there: a relationship or
+    /// part the live package did not hold, and a drawing id `prepared`, the
+    /// copy's registry, reserved for a handle's picture.
+    pub(super) fn assert_covers(
+        &self,
+        reopened: &Self,
+        prepared: &Self,
+        live_package: &OpcPackage,
+    ) {
+        let live_relationships = std::iter::once(("/", &live_package.package_rels))
+            .chain(
+                live_package
+                    .part_rels
+                    .iter()
+                    .map(|(owner, relationships)| (owner.as_str(), relationships)),
+            )
+            .flat_map(|(owner, relationships)| {
+                relationships.items.iter().map(move |relationship| {
+                    (relationship_owner_identity(owner), relationship.id.clone())
+                })
+            })
+            .collect::<HashSet<_>>();
         for (owner, ids) in &reopened.relationship_ids {
             let reserved = self.relationship_ids.get(owner);
             for id in ids {
                 assert!(
-                    reserved.is_some_and(|reserved| reserved.contains(id)),
+                    !live_relationships.contains(&(owner.clone(), id.clone()))
+                        || reserved.is_some_and(|reserved| reserved.contains(id)),
                     "relationship {id} of {owner} is saved but not reserved"
                 );
             }
         }
+        let live_parts = live_package
+            .parts
+            .keys()
+            .chain(live_package.part_rels.keys())
+            .chain(live_package.content_types.overrides.keys())
+            .map(|name| part_name_identity(name))
+            .collect::<HashSet<_>>();
         let unreserved = |kind: &str, saved: Vec<String>| {
             assert!(saved.is_empty(), "{kind} saved but not reserved: {saved:?}");
         };
+        unreserved(
+            "part names",
+            reopened
+                .part_names
+                .iter()
+                .filter(|name| live_parts.contains(*name) && !self.part_names.contains(*name))
+                .cloned()
+                .collect(),
+        );
+        unreserved(
+            "drawing ids",
+            reopened
+                .drawing_ids
+                .difference(&prepared.drawing_ids)
+                .map(ToString::to_string)
+                .collect(),
+        );
         unreserved(
             "bookmark ids",
             reopened
@@ -753,14 +799,6 @@ impl DocumentIdentifiers {
                 .collect(),
         );
         unreserved(
-            "drawing ids",
-            reopened
-                .drawing_ids
-                .difference(&self.drawing_ids)
-                .map(ToString::to_string)
-                .collect(),
-        );
-        unreserved(
             "abstract numbering ids",
             reopened
                 .abstract_numbering_ids
@@ -774,14 +812,6 @@ impl DocumentIdentifiers {
                 .numbering_instance_ids
                 .difference(&self.numbering_instance_ids)
                 .map(ToString::to_string)
-                .collect(),
-        );
-        unreserved(
-            "part names",
-            reopened
-                .part_names
-                .difference(&self.part_names)
-                .cloned()
                 .collect(),
         );
     }

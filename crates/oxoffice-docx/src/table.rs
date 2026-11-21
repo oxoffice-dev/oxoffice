@@ -2405,8 +2405,10 @@ impl<'a> Cell<'a> {
     ///
     /// Obtain the `rel_id` by calling [`crate::Document::embed_image`] first, then
     /// pass it here along with the desired display dimensions. This matches
-    /// the python-docx `run.add_picture()` pattern. The picture takes its
-    /// drawing id (`wp:docPr/@id`) when the document is saved.
+    /// the python-docx `run.add_picture()` pattern. A cell cannot reach the
+    /// document's identifiers: the saved file gives the picture its drawing
+    /// id (`wp:docPr/@id`), the document keeps a placeholder, and an insert
+    /// between two saves can change that id.
     pub fn add_picture(&mut self, rel_id: &str, width: Length, height: Length) {
         use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
         use oxoffice_docx_oxml::table::CellContent;

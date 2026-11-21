@@ -473,8 +473,8 @@ impl Document {
                 )
             }
         };
-        // Preparation inspects only published owners. Earlier repeated copies
-        // still awaiting publication keep their actual reserved drawing ids.
+        // Earlier repeated copies still awaiting publication keep the drawing
+        // ids they reserved.
         self.retain_pending_drawing_ids(pending_drawings);
         let (imported, imported_source) = if let Some(input) = input {
             let (xml, source) = crate::field::import_document_fragment_content(
@@ -519,9 +519,8 @@ impl Document {
             )
         };
         // Preserve newly allocated note/comment companions before any owner
-        // replacement reacquires the actual physical source. Staging then
-        // rebuilds drawing occupancy from the live package. The repeated copy
-        // is not in that package yet, so keep the ids this import reserved.
+        // replacement reacquires the actual physical source. The repeated
+        // copy is not in the package yet: keep the ids this import reserved.
         if scoped {
             self.prepare_staged_template_package(
                 &mut evaluation.operation,
@@ -594,9 +593,9 @@ impl Document {
         if program.raw == replacement {
             return Ok(());
         }
-        // Allocation already canonicalized identifiers. Another prepare here
-        // renumbers the owner under the snapshot and makes the equality proof
-        // fail. Flush the model, then require the selected owner bytes.
+        // Allocation already gave the owner its identifiers. A prepare here
+        // would rewrite more than the owner under the snapshot. Flush the
+        // model, then require the selected owner bytes.
         self.flush_to_package()?;
         // Reacquire the physical part and owner, then prove the exact selected
         // original source instead of reusing a stale caller fingerprint.

@@ -4214,6 +4214,7 @@ impl Importer<'_> {
                             && let Some(inline) = drawing.inline.as_mut()
                         {
                             inline.doc_pr_id = drawing_id;
+                            inline.doc_pr_id_unallocated = false;
                         }
                         emitted = true;
                         pending_space = false;

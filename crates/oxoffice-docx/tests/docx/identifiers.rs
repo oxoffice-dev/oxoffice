@@ -474,3 +474,161 @@ fn a_google_file_keeps_its_repeated_drawing_ids_beside_a_handle_picture() {
         "the handle picture takes an id no source picture holds: {added}"
     );
 }
+
+/// `doc` with `xml` added before the end of the last `</{element}>` of
+/// `part`, and an image part shown through relationship `relationship` of
+/// that part.
+fn with_pictures_in_part(
+    doc: &Document,
+    part: &str,
+    element: &str,
+    xml: &str,
+    relationship: &str,
+) -> Document {
+    let bytes = doc.clone_for_staging().to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let source = String::from_utf8(package.get_part(part).expect("part").to_vec()).unwrap();
+    let at = source.rfind(&format!("</{element}>")).expect("element end");
+    package.set_part(
+        part,
+        format!("{}{xml}{}", &source[..at], &source[at..]).into_bytes(),
+    );
+    let media = format!("/word/media/{}.png", relationship.to_lowercase());
+    package.set_part(&media, png(2, 130));
+    package.content_types.add_default("png", "image/png");
+    package.get_or_create_part_rels(part).add_with_id(
+        relationship,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        media.trim_start_matches("/word/"),
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document opens")
+}
+
+/// The `wp:docPr` ids of a part as saved.
+fn saved_drawing_ids(doc: &Document, part: &str) -> Vec<String> {
+    let xml = doc.part_xml(part).unwrap();
+    xml.match_indices("<wp:docPr ")
+        .map(|(at, _)| {
+            let element = &xml[at..at + xml[at..].find('>').unwrap()];
+            element
+                .split_whitespace()
+                .find_map(|attribute| attribute.strip_prefix("id=\""))
+                .unwrap()
+                .trim_end_matches(['/', '"'])
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn imported_note_and_comment_pictures_take_ids_of_their_own() {
+    let mut source = doc_with(&["source body"]);
+    let first = source.paragraph_story_location(0).unwrap().unwrap();
+    source.create_footnote(&first, "a note").unwrap();
+    source
+        .add_comment_on_text(
+            "source",
+            "Ada",
+            "a comment",
+            oxoffice_docx::TextCommentOptions {
+                date: oxoffice_docx::CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    // A producer writes `wp:docPr id="0"` on every picture: two in the note,
+    // one in the comment.
+    let source = with_pictures_in_part(
+        &source,
+        "/word/footnotes.xml",
+        "w:footnote",
+        &(producer_picture("rIdNoteImage", "a") + &producer_picture("rIdNoteImage", "b")),
+        "rIdNoteImage",
+    );
+    let source = with_pictures_in_part(
+        &source,
+        "/word/comments.xml",
+        "w:comment",
+        &producer_picture("rIdCommentImage", "c"),
+        "rIdCommentImage",
+    );
+
+    for import in ["append", "insert_document"] {
+        let mut destination = doc_with(&["destination"]);
+        destination.add_picture(
+            &png(2, 140),
+            "d.png",
+            Length::inches(1.0),
+            Length::inches(1.0),
+        );
+        match import {
+            "append" => destination.append(&source),
+            _ => destination.insert_document(0, &source),
+        }
+
+        let saved = saved(&destination);
+        let mut ids = saved_drawing_ids(&saved, "word/document.xml");
+        ids.extend(saved_drawing_ids(&saved, "word/footnotes.xml"));
+        ids.extend(saved_drawing_ids(&saved, "word/comments.xml"));
+        assert_eq!(ids.len(), 4, "{import}: {ids:?}");
+        let distinct = ids.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            distinct.len(),
+            4,
+            "{import}: every picture has its own id: {ids:?}"
+        );
+    }
+}
+
+#[test]
+fn a_picture_inserted_twice_in_a_gained_header_takes_two_ids() {
+    let mut doc = doc_with(&["body"]);
+    doc.set_header("Header");
+    let header = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == oxoffice_docx::StoryKind::Header)
+        .expect("a header");
+    doc.add_picture_to_story(
+        &header,
+        &png(2, 150),
+        "p.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    )
+    .unwrap();
+    let picture = doc
+        .pictures()
+        .unwrap()
+        .into_iter()
+        .find(|picture| picture.location.story().kind() == oxoffice_docx::StoryKind::Header)
+        .expect("the header picture");
+    // Cut from the header, pasted back twice: both copies hold the cut
+    // picture's drawing id.
+    let fragment = doc.remove_content_at(&picture.location).unwrap();
+    let header_now = |doc: &Document| {
+        doc.stories()
+            .unwrap()
+            .into_iter()
+            .find(|story| story.kind() == oxoffice_docx::StoryKind::Header)
+            .expect("a header")
+    };
+    for _ in 0..2 {
+        let header = header_now(&doc);
+        doc.insert_content(
+            &oxoffice_docx::ContentLocation::end(header),
+            fragment.clone(),
+        )
+        .unwrap();
+    }
+
+    let saved = saved(&doc);
+    let header_part = header.part_name().trim_start_matches('/').to_owned();
+    let ids = saved_drawing_ids(&saved, &header_part);
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    assert_ne!(ids[0], ids[1], "{ids:?}");
+}

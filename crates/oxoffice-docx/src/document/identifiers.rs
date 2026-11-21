@@ -483,6 +483,41 @@ impl DocumentIdentifiers {
         reserve_u32(&mut self.drawing_ids, 1, "drawing")
     }
 
+    /// Edits giving every `wp:docPr` of `xml` a drawing id reserved here, by
+    /// the rule of [`Self::reserve_drawing_id`], for content an edit puts in
+    /// a part: the save keeps the ids it finds. `scope` binds the prefixes
+    /// `xml` uses without declaring them.
+    pub(crate) fn fresh_drawing_id_edits(
+        &mut self,
+        xml: &[u8],
+        scope: &BTreeMap<String, String>,
+    ) -> Result<Vec<(usize, usize, Vec<u8>)>> {
+        if !xml.windows(5).any(|window| window == b"docPr") {
+            return Ok(Vec::new());
+        }
+        let mut wrapped = b"<oxoffice-scope".to_vec();
+        for (prefix, namespace) in scope {
+            let name = if prefix.is_empty() {
+                "xmlns".to_owned()
+            } else {
+                format!("xmlns:{prefix}")
+            };
+            let namespace = namespace
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('"', "&quot;");
+            wrapped.extend_from_slice(format!(" {name}=\"{namespace}\"").as_bytes());
+        }
+        wrapped.push(b'>');
+        let offset = wrapped.len();
+        wrapped.extend_from_slice(xml);
+        wrapped.extend_from_slice(b"</oxoffice-scope>");
+        Ok(authored_doc_pr_edits(&wrapped, &mut self.drawing_ids)?
+            .into_iter()
+            .map(|(start, end, replacement)| (start - offset, end - offset, replacement))
+            .collect())
+    }
+
     pub(super) fn reserve_abstract_numbering_id(&mut self) -> Result<u32> {
         reserve_u32(&mut self.abstract_numbering_ids, 0, "abstract numbering")
     }

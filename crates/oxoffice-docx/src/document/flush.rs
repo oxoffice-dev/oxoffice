@@ -96,7 +96,6 @@ impl Document {
         Ok(false)
     }
 
-    /// Restore live numbering immediately after writing its package projection.
     /// Write the main part, then the numbering part. Every id keeps its
     /// value; a numbering the document was read without is written with its
     /// definitions and instances in id order, as the save always wrote it.

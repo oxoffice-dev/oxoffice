@@ -236,6 +236,8 @@ impl Document {
     /// other modelled parts do, so a save without a comment edit neither
     /// rewrites it nor invalidates a package signature over it.
     pub(crate) fn prepare_staged_output(&mut self) -> Result<bool> {
+        #[cfg(debug_assertions)]
+        let (live_identifiers, live_package) = (self.identifiers.clone(), self.package.clone());
         if let (Some(comments), Some(part_name)) = (&self.comments, &self.comments_part_name) {
             self.comments_dirty |= self
                 .package
@@ -245,22 +247,29 @@ impl Document {
                 != Some(comments);
         }
         let normalized = self.prepare_staged_package()?;
+        #[cfg(debug_assertions)]
+        IdentifierSummary::of_package(self).assert_reads_back(&IdentifierSummary::of(self));
         // Pictures `remove_content_at` freed leave the written copy only: a
         // copy that released one is not installed, so the live document can
         // still take the removed fragment back.
         let released = self.release_freed_image_relationships()?;
         #[cfg(debug_assertions)]
-        self.assert_saved_package_reopens();
+        self.assert_saved_package_reopens(&live_identifiers, &live_package);
         Ok(normalized && !released)
     }
 
-    /// Debug proof that the package a save writes reopens, reads the ids
-    /// this document holds (checked by [`Self::reopen_staged`]), adds no
-    /// repeated drawing or bookmark id, and holds no id the registry has not
-    /// reserved, so that no later insert can take one again. A package the
-    /// write refuses is the save's error, not this proof's.
+    /// Debug proof that the package a save writes reopens, reads the ids it
+    /// holds (checked by [`Self::reopen_staged`]), adds no repeated drawing
+    /// or bookmark id, and holds no id the live document has not reserved,
+    /// so that no later insert can take one again: `live_identifiers` and
+    /// `live_package` are the document's before the save prepared its copy.
+    /// A package the write refuses is the save's error, not this proof's.
     #[cfg(debug_assertions)]
-    fn assert_saved_package_reopens(&self) {
+    fn assert_saved_package_reopens(
+        &self,
+        live_identifiers: &DocumentIdentifiers,
+        live_package: &OpcPackage,
+    ) {
         let copy = self.clone_for_debug_reference();
         if copy
             .package
@@ -270,7 +279,11 @@ impl Document {
             return;
         }
         match copy.reopen_staged(false, PackageReadLimits::UNBOUNDED) {
-            Ok(reopened) => self.identifiers.assert_covers(&reopened.identifiers),
+            Ok(reopened) => live_identifiers.assert_covers(
+                &reopened.identifiers,
+                &self.identifiers,
+                live_package,
+            ),
             Err(error) => panic!("a save writes a package that does not reopen: {error}"),
         }
     }

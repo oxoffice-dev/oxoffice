@@ -228,10 +228,10 @@ pub(crate) use xml_ids::{
     uniquify_drawing_ids_in_xml, xml_relationship_ids_in_order,
 };
 use xml_ids::{
-    authored_relationship_ids_in_source_order, drawing_ids_in_xml, drawing_occurrences,
-    relationship_ids_by_blocks, relationship_xml_from_replayed, rewrite_authored_doc_pr_ids,
-    story_attribute_value_span, xml_attribute_values, xml_relationship_ids_in_collection_range,
-    xml_relationship_ids_in_order_with_bindings,
+    authored_doc_pr_edits, authored_relationship_ids_in_source_order, drawing_ids_in_xml,
+    drawing_occurrences, relationship_ids_by_blocks, relationship_xml_from_replayed,
+    rewrite_authored_doc_pr_ids, story_attribute_value_span, xml_attribute_values,
+    xml_relationship_ids_in_collection_range, xml_relationship_ids_in_order_with_bindings,
 };
 
 mod edited_paragraph;
