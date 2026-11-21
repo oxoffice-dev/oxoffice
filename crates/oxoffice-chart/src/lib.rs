@@ -2749,6 +2749,25 @@ pub struct CT_DLbls {
     raw_children: OrderedRawChildren,
 }
 
+impl CT_DLbls {
+    /// Labels that show the percentage and nothing else, with all six flags
+    /// written, as PowerPoint writes them: readers disagree on an absent
+    /// flag, and LibreOffice reads one as shown.
+    fn percentage_only() -> Self {
+        let stated = || Some(ScalarMarkup::default());
+        Self {
+            show_percent: true,
+            show_legend_key_markup: stated(),
+            show_value_markup: stated(),
+            show_category_name_markup: stated(),
+            show_series_name_markup: stated(),
+            show_percent_markup: stated(),
+            show_bubble_size_markup: stated(),
+            ..Self::default()
+        }
+    }
+}
+
 /// How a chart displays cells whose cached values are blank.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum DispBlanksAs {

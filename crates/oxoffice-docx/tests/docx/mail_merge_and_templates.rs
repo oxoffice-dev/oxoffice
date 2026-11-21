@@ -880,12 +880,7 @@ fn the_python_docx_letter_merges_its_recipient_fields() {
     assert_eq!(merged.footer_text(), template.footer_text());
 }
 
-// Fails today: LibreOffice writes an even-page header and footer although the
-// document does not turn on different even and odd pages, and the field
-// update behind the merge refuses such a header ("source inventory
-// identified 0 of 1 paragraphs in header"). Issue: #202
 #[test]
-#[should_panic(expected = "the LibreOffice letter merges")]
 fn the_libreoffice_letter_merges_its_recipient_fields() {
     let template = corpus_doc("libreoffice/letter.docx");
     let mut outputs = match template.mail_merge(&[letter_recipient()]) {

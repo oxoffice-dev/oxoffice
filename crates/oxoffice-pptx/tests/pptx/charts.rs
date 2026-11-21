@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
+use oxoffice_chart::CT_DLbls;
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::rel_types;
 use oxoffice_pptx::{
@@ -471,9 +472,7 @@ fn axis_titles_given_at_creation_are_written_on_the_axes() {
     assert!(value_axis.contains("Euros (k)"), "{xml}");
 }
 
-// Fails today: labels state only showPercent, so LibreOffice shows every field. Issue: #42
 #[test]
-#[should_panic(expected = "data labels leave a field to the reader")]
 fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
     // The facade has no reader for data labels: read the chart part. Readers
     // disagree on an absent flag, so each field must be stated.
@@ -482,13 +481,43 @@ fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
         chart_on(&mut prs, 0, kind, &shares());
         let flags = data_label_flags(&only_chart_xml(&prs));
         assert_eq!(flags.get("showPercent").map(String::as_str), Some("1"));
-        for field in ["showLegendKey", "showVal", "showCatName", "showSerName"] {
+        for field in [
+            "showLegendKey",
+            "showVal",
+            "showCatName",
+            "showSerName",
+            "showBubbleSize",
+        ] {
             assert_eq!(
                 flags.get(field).map(String::as_str),
                 Some("0"),
                 "{kind:?}: data labels leave a field to the reader: {field}"
             );
         }
+    }
+}
+
+#[test]
+fn data_labels_read_back_keep_the_flags_they_were_written_with() {
+    // A new pie states every flag; labels from an older file state only
+    // showPercent. Parsing and writing again keeps each as it was.
+    let mut prs = blank_deck(1);
+    chart_on(&mut prs, 0, ChartKind::Pie, &shares());
+    let chart = only_chart_xml(&prs);
+    let start = chart.find("<c:dLbls").expect("the pie has data labels");
+    let end = chart[start..].find("</c:dLbls>").unwrap() + start + "</c:dLbls>".len();
+    let authored = chart[start..end].to_owned();
+    let older = r#"<c:dLbls><c:showPercent val="1"/></c:dLbls>"#.to_owned();
+    for labels in [authored, older] {
+        let written = CT_DLbls::from_xml(labels.as_bytes())
+            .unwrap()
+            .to_xml()
+            .unwrap();
+        assert_eq!(
+            data_label_flags(&String::from_utf8(written).unwrap()),
+            data_label_flags(&labels),
+            "{labels}"
+        );
     }
 }
 
