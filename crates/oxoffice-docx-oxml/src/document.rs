@@ -28,8 +28,27 @@ use crate::units::Twips;
 mod section;
 mod source;
 
-pub use section::*;
-pub use source::*;
+use section::SectionScalar;
+pub use section::{
+    CT_Column, CT_Columns, CT_DocGrid, CT_LineNumber, CT_NoteProperties, CT_PageBorders,
+    CT_PageNumberType, CT_PaperSource, CT_SectPr, CT_SectPrRawPosition, CT_SectPrReferenceAnchor,
+    ST_DocGrid, ST_LineNumberRestart, ST_PageBorderDisplay, ST_PageBorderOffset,
+    ST_PageBorderZOrder,
+};
+pub(crate) use section::{checked_section_child_slot, validate_checked_section_child};
+use source::ReturnedWordRead;
+pub(crate) use source::{
+    AdmittedWordSource, ConstructorFailures, ControlSourceCursor, PartReaderKind, TemplateCopyWork,
+    TemplateWordRead, WordCaptureWindow, WordFieldInput, WordOrdinaryFact, WordOwner,
+    WordPublicationCoverage, WordPublicationPiece, WordPublicationTape, WordSourceMap,
+    WordSourceReader, WordXmlInput, admit_paragraph_result_field_input, admit_raw_word_source,
+    admit_reader_source, admit_revision_field_input, admit_word_field_input,
+    admit_word_input_with_constructors, admit_word_model, admit_word_reader, admit_word_source,
+    admit_word_xml, admitted_word_child, control_has_property_measurement_failure_in,
+    reader_input_origin, returned_block_inputs, template_paragraph_clone_pairs,
+    template_scalar_bytes, word_model_children_maxima, word_model_maxima, word_owner_cost,
+};
+pub use source::{ScopedWordOperation, ScopedWordSource, close_content_fragment_namespaces};
 
 /// Content that can appear in a document body (paragraphs and tables).
 ///
