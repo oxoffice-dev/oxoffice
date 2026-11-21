@@ -1642,6 +1642,14 @@ fn remap_fragment_style_collisions(
         .collect::<HashSet<_>>();
     for style in &fragment.styles.styles {
         let Some(existing) = destination.styles.get_by_id(&style.style_id) else {
+            // A default of its type under an id the destination lacks, such as
+            // Word's localized Policepardfaut or TableauNormal: the content
+            // takes the destination's default, as a type has one default.
+            if style.is_default
+                && let Some(default) = destination.styles.get_default(style.style_type)
+            {
+                replacements.insert(style.style_id.clone(), default.style_id.clone());
+            }
             continue;
         };
         // The destination's definition wins: the content keeps the id. A
@@ -1687,6 +1695,44 @@ fn remap_fragment_style_collisions(
             })?;
         }
     }
+    // A renamed style linked to one that is reused would point at the
+    // destination's style, which links elsewhere: rename the pair together.
+    loop {
+        let mut partners = Vec::new();
+        for style in &fragment.styles.styles {
+            // A default mapped to the destination's own takes its links too.
+            let Some(partner) = style.linked_style.as_ref().filter(|_| {
+                replacements
+                    .get(&style.style_id)
+                    .is_some_and(|target| destination.styles.get_by_id(target).is_none())
+            }) else {
+                continue;
+            };
+            if !replacements.contains_key(partner)
+                && !kept.contains(partner)
+                && destination.styles.get_by_id(partner).is_some()
+                && !partners.contains(partner)
+            {
+                partners.push(partner.clone());
+            }
+        }
+        if partners.is_empty() {
+            break;
+        }
+        for partner in partners {
+            let mut ordinal = 1u64;
+            loop {
+                let candidate = format!("{partner}Merge{ordinal}");
+                if used.insert(candidate.clone()) {
+                    replacements.insert(partner.clone(), candidate);
+                    break;
+                }
+                ordinal = ordinal.checked_add(1).ok_or_else(|| {
+                    Error::Other("fragment style name space is exhausted".to_owned())
+                })?;
+            }
+        }
+    }
     if !kept.is_empty() {
         // An imported style linked to one the destination keeps would not be
         // linked back, so it comes in unlinked.
@@ -1713,9 +1759,8 @@ fn remap_fragment_style_collisions(
     for style in &mut std::sync::Arc::make_mut(&mut fragment.styles).styles {
         if let Some(replacement) = replacements.get(&style.style_id) {
             style.style_id = replacement.clone();
-            // A renamed copy is not the destination default. The destination
-            // keeps its own default. A second default is still refused when
-            // the source default id does not collide and is not renamed.
+            // A renamed copy is not the destination default: the destination
+            // keeps its own, and a source default under another id maps to it.
             style.is_default = false;
         }
         if let Some(replacement) = style
