@@ -1029,7 +1029,7 @@ pub fn diff(file_a: &Path, file_b: &Path, json_output: bool, diff_status: &mut i
             stream_items(&streams_b, name),
         );
         if name == "comments" {
-            changes.extend(diff_comments(&doc_a, items_a, &doc_b, items_b)?);
+            changes.extend(diff_comments(&doc_a, items_a, &doc_b, items_b));
         } else {
             changes.extend(diff_items(items_a, items_b));
         }
@@ -1427,15 +1427,29 @@ struct CommentIdentity {
     text: String,
     anchor: String,
     date: String,
-    /// The index of its parent in the comments part.
-    parent: Option<usize>,
+    /// The author and text of its parent, which survive a save as its own do.
+    parent: Option<(String, String)>,
 }
 
 /// The identity of each comment of `doc`, in the order of its comments part.
-fn comment_identities(doc: &Document) -> Result<Vec<CommentIdentity>> {
+/// The anchor is only a second key, so a file whose anchors cannot be read
+/// is compared without them.
+fn comment_identities(doc: &Document) -> Vec<CommentIdentity> {
     let comments = doc.comments();
-    let anchors = doc.comment_anchor_snapshot_results()?;
-    Ok(comments
+    let anchors = doc.comment_anchor_snapshot_results().unwrap_or_default();
+    let by_id: HashMap<i32, (String, String)> = comments
+        .iter()
+        .map(|comment| {
+            (
+                comment.id(),
+                (
+                    comment.author().unwrap_or_default().to_owned(),
+                    comment.text(),
+                ),
+            )
+        })
+        .collect();
+    comments
         .iter()
         .map(|comment| CommentIdentity {
             author: comment.author().unwrap_or_default().to_owned(),
@@ -1448,108 +1462,109 @@ fn comment_identities(doc: &Document) -> Result<Vec<CommentIdentity>> {
             date: comment.date().unwrap_or_default().to_owned(),
             parent: comment
                 .parent_id()
-                .and_then(|parent| comments.iter().position(|other| other.id() == parent)),
+                .and_then(|parent| by_id.get(&parent).cloned()),
         })
-        .collect())
+        .collect()
 }
 
 /// Pair the comments of two files by what identifies them rather than by
 /// part order, then compare the paragraphs of each pair. A comment matches
 /// one by the same author with the same text first, then one by the same
 /// author on the same anchor text, whose paragraphs show as changed. Among
-/// equal candidates the one with the same anchor, then the same date, then
-/// a matched parent wins. What is left is removed or added whole.
+/// the candidates of a pass, pairs with the same anchor, then the same date,
+/// then the same parent are taken first, so two equal replies pair with the
+/// one in their own thread. What is left is removed or added whole. Items of
+/// the comments part that belong to no comment, such as the cells of a table
+/// in a comment, are compared in order after them.
 fn diff_comments(
     doc_a: &Document,
     items_a: &[DiffItem],
     doc_b: &Document,
     items_b: &[DiffItem],
-) -> Result<Vec<ItemChange>> {
-    let (comments_a, comments_b) = (comment_identities(doc_a)?, comment_identities(doc_b)?);
-    let owners = |items: &[DiffItem]| {
+) -> Vec<ItemChange> {
+    let (comments_a, comments_b) = (comment_identities(doc_a), comment_identities(doc_b));
+    // Items grouped by comment in part order, and the rest.
+    let group = |items: &[DiffItem], count: usize| {
         let mut owners: Vec<usize> = Vec::new();
-        for owner in items.iter().filter_map(|item| item.comment) {
-            if !owners.contains(&owner) {
-                owners.push(owner);
+        let mut grouped: HashMap<usize, Vec<DiffItem>> = HashMap::new();
+        let mut rest = Vec::new();
+        for item in items {
+            match item.comment {
+                Some(owner) if owner < count => {
+                    let entry = grouped.entry(owner).or_default();
+                    if entry.is_empty() {
+                        owners.push(owner);
+                    }
+                    entry.push(item.clone());
+                }
+                _ => rest.push(item.clone()),
             }
         }
-        owners
+        (owners, grouped, rest)
     };
-    let (owners_a, owners_b) = (owners(items_a), owners(items_b));
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let (owners_a, mut grouped_a, rest_a) = group(items_a, comments_a.len());
+    let (owners_b, mut grouped_b, rest_b) = group(items_b, comments_b.len());
+
+    let mut paired_a: HashMap<usize, usize> = HashMap::new();
+    let mut paired_b: HashMap<usize, usize> = HashMap::new();
     for exact in [true, false] {
-        for &a in &owners_a {
-            if pairs.iter().any(|(left, _)| *left == a) {
-                continue;
+        let key = |identity: &CommentIdentity| -> Option<(String, String)> {
+            if exact {
+                Some((identity.author.clone(), identity.text.clone()))
+            } else {
+                (!identity.anchor.is_empty())
+                    .then(|| (identity.author.clone(), identity.anchor.clone()))
             }
-            let Some(left) = comments_a.get(a) else {
-                continue;
-            };
-            let candidates = owners_b.iter().copied().filter(|b| {
-                !pairs.iter().any(|(_, right)| right == b)
-                    && comments_b.get(*b).is_some_and(|right| {
-                        right.author == left.author
-                            && if exact {
-                                right.text == left.text
-                            } else {
-                                !left.anchor.is_empty() && right.anchor == left.anchor
-                            }
-                    })
-            });
-            let score = |b: usize| {
+        };
+        let mut buckets: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        for &b in owners_b.iter().filter(|b| !paired_b.contains_key(b)) {
+            if let Some(key) = key(&comments_b[b]) {
+                buckets.entry(key).or_default().push(b);
+            }
+        }
+        let mut candidates = Vec::new();
+        for &a in owners_a.iter().filter(|a| !paired_a.contains_key(a)) {
+            let left = &comments_a[a];
+            for &b in key(left)
+                .and_then(|key| buckets.get(&key))
+                .into_iter()
+                .flatten()
+            {
                 let right = &comments_b[b];
-                let parent_matched = match (left.parent, right.parent) {
-                    (Some(pa), Some(pb)) => pairs.contains(&(pa, pb)),
-                    (None, None) => true,
-                    _ => false,
-                };
-                (
+                let score = (
                     right.anchor == left.anchor,
                     right.date == left.date,
-                    parent_matched,
-                )
-            };
-            // The first of the best candidates, in part order.
-            if let Some(b) = candidates.fold(None, |best: Option<usize>, b| match best {
-                Some(current) if score(current) >= score(b) => Some(current),
-                _ => Some(b),
-            }) {
-                pairs.push((a, b));
+                    right.parent == left.parent,
+                );
+                candidates.push((std::cmp::Reverse(score), a, b));
+            }
+        }
+        // The best pairs first, then part order.
+        candidates.sort();
+        for (_, a, b) in candidates {
+            if !paired_a.contains_key(&a) && !paired_b.contains_key(&b) {
+                paired_a.insert(a, b);
+                paired_b.insert(b, a);
             }
         }
     }
 
-    let items_of = |items: &[DiffItem], owner: usize| {
-        items
-            .iter()
-            .filter(|item| item.comment == Some(owner))
-            .cloned()
-            .collect::<Vec<_>>()
-    };
     let mut changes = Vec::new();
     // In the order of the first file, then the comments only the second has.
-    for &a in &owners_a {
-        match pairs.iter().find(|(left, _)| *left == a) {
-            Some(&(_, b)) => {
-                changes.extend(diff_items(&items_of(items_a, a), &items_of(items_b, b)))
-            }
-            None => changes.extend(
-                items_of(items_a, a)
-                    .into_iter()
-                    .map(|item| (Some(item), None)),
-            ),
+    for a in &owners_a {
+        let items = grouped_a.remove(a).unwrap_or_default();
+        match paired_a.get(a) {
+            Some(b) => changes.extend(diff_items(&items, &grouped_b.remove(b).unwrap_or_default())),
+            None => changes.extend(items.into_iter().map(|item| (Some(item), None))),
         }
     }
-    for &b in &owners_b {
-        if !pairs.iter().any(|(_, right)| *right == b) {
-            changes.extend(
-                items_of(items_b, b)
-                    .into_iter()
-                    .map(|item| (None, Some(item))),
-            );
+    for b in &owners_b {
+        if let Some(items) = grouped_b.remove(b) {
+            changes.extend(items.into_iter().map(|item| (None, Some(item))));
         }
     }
-    Ok(changes)
+    changes.extend(diff_items(&rest_a, &rest_b));
+    changes
 }
 
 /// The forward and backward furthest-reaching `x` of each diagonal in

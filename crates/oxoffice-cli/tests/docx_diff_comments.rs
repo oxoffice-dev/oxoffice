@@ -58,6 +58,37 @@ fn diff(a: &str, b: &str) -> Value {
     })
 }
 
+/// Run oxoffice and return its standard output, failing on an error.
+fn oxoffice(args: &[&str]) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+        .args(args)
+        .output()
+        .expect("oxoffice runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+/// The comment rows of a diff as (change, location before, location after).
+fn comment_locations(diff: &Value) -> Vec<(String, Option<String>, Option<String>)> {
+    diff["differences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["story"] == "comment" || row["story"] == "table_cell")
+        .map(|row| {
+            (
+                row["change"].as_str().unwrap().to_owned(),
+                row["location_a"].as_str().map(str::to_owned),
+                row["location_b"].as_str().map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
 /// The comment rows of a diff as (change, text before, text after).
 fn comment_rows(diff: &Value) -> Vec<(String, Option<String>, Option<String>)> {
     diff["differences"]
@@ -136,4 +167,81 @@ fn a_reordered_comment_whose_text_changed_is_one_changed_row() {
             .unwrap()
             .contains("We need two extra months")
     );
+}
+
+#[test]
+fn of_two_equal_replies_the_one_left_pairs_with_the_one_on_its_anchor() {
+    // James answers "Done." on two clauses; the copy loses the first answer.
+    let scratch = Scratch::new("equal");
+    let (one, both, second) = (
+        scratch.path("one.docx"),
+        scratch.path("both.docx"),
+        scratch.path("second.docx"),
+    );
+    let add = |source: &str, anchor: &str, target: &str| {
+        oxoffice(&[
+            "docx",
+            "comment",
+            "add",
+            source,
+            "--anchor",
+            anchor,
+            "--author",
+            "James Patel",
+            "--text",
+            "Done.",
+            "--date",
+            "2026-11-22T10:00:00Z",
+            "--output",
+            target,
+            "--json",
+        ])["comment_id"]
+            .as_i64()
+            .unwrap()
+    };
+    let first = add(&contract("authored"), "Confidential Information", &one);
+    add(&one, "shall not exceed", &both);
+    oxoffice(&[
+        "docx",
+        "comment",
+        "remove",
+        &both,
+        "--id",
+        &first.to_string(),
+        "--output",
+        &second,
+        "--json",
+    ]);
+    // The authored contract has seven comments: the answers are the eighth
+    // and ninth, and the copy keeps the ninth as its eighth.
+    assert_eq!(
+        comment_locations(&diff(&both, &second)),
+        [(
+            "removed".to_owned(),
+            Some("comment 8, paragraph 1".to_owned()),
+            None
+        )]
+    );
+}
+
+#[test]
+fn a_table_in_a_comment_is_still_compared() {
+    let scratch = Scratch::new("table");
+    let table = |text: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:comment>"#
+        )
+    };
+    let (before, after) = (scratch.path("before.docx"), scratch.path("after.docx"));
+    for (target, text) in [(&before, "Net 30"), (&after, "Net 45")] {
+        with_part(
+            &contract("authored"),
+            "word/comments.xml",
+            |xml| xml.replacen("</w:comment>", &table(text), 1),
+            target,
+        );
+    }
+    let rows = comment_locations(&diff(&before, &after));
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "changed");
 }
