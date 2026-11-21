@@ -87,6 +87,12 @@ size = 70468
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "text-box", "transition", "sections", "widescreen"]
 
 [[file]]
+path = "authored/record.docx"
+producer = "python-docx 1.2.0"
+size = 42746
+features = ["headings", "numbered-list", "multi-level-list", "table", "merged-cells", "comment", "comment-reply", "tracked-changes", "header-footer", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "checkbox-control", "date-control", "list-control", "rsid"]
+
+[[file]]
 path = "authored/report.docx"
 producer = "python-docx 1.2.0"
 size = 41241
@@ -279,6 +285,12 @@ size = 66888
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "transition", "widescreen"]
 
 [[file]]
+path = "libreoffice/record.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 28912
+features = ["headings", "numbered-list", "multi-level-list", "table", "merged-cells", "comment", "comment-reply", "tracked-changes", "header-footer", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "checkbox-control", "date-control", "list-control"]
+
+[[file]]
 path = "libreoffice/report.docx"
 producer = "LibreOffice 26.8.3.1"
 size = 29655
@@ -381,6 +393,12 @@ size = 36249
 features = ["headings", "table", "picture", "endnote", "sections", "columns", "equation", "rsid", "paraId"]
 
 [[file]]
+path = "word/record.docx"
+producer = "Microsoft Word for Mac 16.115"
+size = 38929
+features = ["headings", "numbered-list", "multi-level-list", "table", "merged-cells", "comment", "comment-reply", "tracked-changes", "header-footer", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "checkbox-control", "date-control", "list-control", "rsid", "paraId"]
+
+[[file]]
 path = "word/report.docx"
 producer = "Microsoft Word for Mac 16.115"
 size = 38827
@@ -391,3 +409,9 @@ path = "word/thesis.docx"
 producer = "Microsoft Word for Mac 16.115"
 size = 56262
 features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid", "paraId"]
+
+[[file]]
+path = "word-google/record.docx"
+producer = "Google Docs export of the Word copy"
+size = 16595
+features = ["headings", "numbered-list", "multi-level-list", "table", "merged-cells", "comment", "comment-reply", "tracked-changes", "header-footer", "toc", "page-fields", "bookmark", "hyperlink", "content-control", "rsid", "paraId"]
