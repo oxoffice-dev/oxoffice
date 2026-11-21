@@ -1,0 +1,12 @@
+{
+  "file": "libreoffice/record.docx",
+  "reason": "the record family, new in the corpus",
+  "resources": "09090f6df66528af52c4762d2945647f4b05a84ecd51f11b9ea77c1ee3b8ad87",
+  "outline_and_tags": "084a5a8f552b3ee3448a5f6dd4f1b7823ec3e5414ece479993f8fb66fa482d06",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "5cd8a8286ff9a0e8efde1cda7106b50600f189d50a33ada6ae9c926e9c29fb6c", "content": "1301d12e4c70388262ba1b2af718638366e13a80f8fc474005a60219c77102fb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "1b14d45c2da7e2944151378bdc8f0b0790e259b634c16c698929ac6ab4434704", "content": "94dbcfab31686989cf3088c12e2f0afbcfc39e80b314769d74b725d32dd2bf57", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "e2c9f32b692b4dc09c851629c46dd60e59a0d0d44f495809d206345039076075", "content": "2d38cba36db62a4e88ba0aa7c0822184d9c2e5f09d2cb1c4536d166647e0dcdb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+  ]
+}

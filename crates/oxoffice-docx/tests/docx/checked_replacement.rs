@@ -1070,3 +1070,256 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
         assert_eq!(found, expected_revisions, "{path}");
     }
 }
+
+/// The ids a part gives its `tag` elements, sorted.
+fn ids_of_tag(xml: &str, tag: &str) -> Vec<String> {
+    let mut ids = xml
+        .split(&format!("<w:{tag} "))
+        .skip(1)
+        .map(|rest| {
+            rest.split("w:id=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
+/// Every tracked change as (kind, author, date, text).
+fn revision_facts(doc: &Document) -> Vec<(String, String, Option<String>, String)> {
+    doc.story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| {
+            (
+                format!("{:?}", revision.kind()),
+                revision.author().to_owned(),
+                revision.timestamp().map(str::to_owned),
+                revision.text().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// The edit a tool makes in place on a record co-edited in Word and Google
+/// Docs: counted replacements in the body, a table cell, the header, the
+/// footer and inside a tracked insertion, a paragraph copied below itself
+/// and one removed with the comment on it. Its guard then finds the same
+/// parts, every part it did not edit byte for byte, every other paragraph
+/// with its style, list level and runs, the content controls, the other
+/// comments and the tracked changes as they were.
+#[test]
+fn a_counted_edit_of_a_co_edited_record_changes_only_what_it_meant_to() {
+    crate::support::run_workflow("record-edit", &crate::support::record_copies(), |path| {
+        let source = crate::support::workflow_source(path);
+        // LibreOffice writes the header and footer twice (first page and
+        // other pages).
+        let page_parts = if path.starts_with("libreoffice/") {
+            2
+        } else {
+            1
+        };
+        let before = Document::from_bytes(&source).unwrap();
+        let pairs = [
+            // The subtitle and the header.
+            (
+                "Warehouse management system",
+                "Warehouse platform",
+                1 + page_parts,
+            ),
+            ("Internal - ", "Restricted - ", page_parts),
+            // Inside a tracked insertion.
+            ("label printers", "label and badge printers", 1),
+            // A table cell.
+            (
+                "Freeze the configuration",
+                "Freeze the release configuration",
+                1,
+            ),
+            ("next release window", "autumn release window", 1),
+        ];
+        let replace = |text: String| {
+            pairs
+                .iter()
+                .fold(text, |text, (old, new, _)| text.replace(old, new))
+        };
+
+        let mut doc = Document::from_bytes(&source).unwrap();
+        let counted = pairs.map(|(old, new, count)| (old, new, Some(count)));
+        let counts = doc
+            .try_replace_all_expected(&counted)
+            .unwrap()
+            .unwrap_or_else(|mismatch| panic!("{path}: {mismatch:?}"));
+        assert_eq!(counts, pairs.map(|(_, _, count)| count), "{path}");
+        let paragraph_of = |doc: &Document, start: &str| {
+            (0..doc.paragraph_count())
+                .find(|&index| doc.paragraph(index).unwrap().text().starts_with(start))
+                .unwrap_or_else(|| panic!("{path}: a paragraph starts with {start}"))
+        };
+        let copied = paragraph_of(&before, "The customer advisory board");
+        let below = doc.paragraph_story_location(copied + 1).unwrap().unwrap();
+        let from = doc.paragraph_story_location(copied).unwrap().unwrap();
+        doc.clone_content(&from, &below).unwrap();
+        // The paragraph holding one person's note goes with its note.
+        let approval = doc
+            .find_content_index("Approval of the cut-over plan")
+            .unwrap();
+        assert_eq!(
+            doc.remove_content_range(approval, approval + 1).unwrap(),
+            1,
+            "{path}"
+        );
+        let saved = doc.to_bytes().unwrap();
+        let after = Document::from_bytes(&saved).unwrap();
+
+        // Same parts; the ones it did not edit, byte for byte.
+        let old_parts = crate::support::package_parts(&source);
+        let new_parts = crate::support::package_parts(&saved);
+        assert_eq!(
+            old_parts.keys().collect::<Vec<_>>(),
+            new_parts.keys().collect::<Vec<_>>(),
+            "{path}"
+        );
+        let edited = |name: &str, bytes: &[u8]| {
+            let xml = String::from_utf8_lossy(bytes);
+            name == "word/document.xml"
+                || name.starts_with("word/comments")
+                || ((name.starts_with("word/header") || name.starts_with("word/footer"))
+                    && pairs.iter().any(|(old, _, _)| xml.contains(old)))
+        };
+        let changed = new_parts
+            .iter()
+            .filter(|(name, bytes)| old_parts[*name] != **bytes)
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        let expected = old_parts
+            .iter()
+            .filter(|(name, bytes)| edited(name, bytes))
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            changed.iter().all(|name| expected.contains(name)),
+            "{path}: only the parts it edited are rewritten: {changed:?}, allowed {expected:?}"
+        );
+        assert!(
+            expected
+                .iter()
+                .filter(|name| !name.starts_with("word/comments"))
+                .all(|name| changed.contains(name)),
+            "{path}: every story it replaced in is rewritten: {changed:?}"
+        );
+        // The header and footer keep their page fields and read their
+        // replacement.
+        for name in changed.iter().filter(|name| **name != "word/document.xml") {
+            assert_eq!(
+                instructions(&String::from_utf8_lossy(&new_parts[*name])),
+                instructions(&String::from_utf8_lossy(&old_parts[*name])),
+                "{path}: {name}"
+            );
+        }
+        let page_text = |doc: &Document| (doc.header_text(), doc.footer_text());
+        let (header, footer) = page_text(&before);
+        assert_eq!(
+            page_text(&after),
+            (header.map(&replace), footer.map(&replace)),
+            "{path}"
+        );
+
+        // Each paragraph: its text with the replacements, its form unchanged.
+        let removed = paragraph_of(&before, "Approval of the cut-over plan");
+        let mut origin = (0..before.paragraph_count()).collect::<Vec<_>>();
+        origin.remove(removed);
+        origin.insert(copied + 1, copied);
+        assert_eq!(after.paragraph_count(), origin.len(), "{path}");
+        for (index, &old) in origin.iter().enumerate() {
+            let text = before.paragraph(old).unwrap().text();
+            assert_eq!(
+                after.paragraph(index).unwrap().text(),
+                replace(text.clone()),
+                "{path}: paragraph {index}"
+            );
+            let (style, numbering, runs) = paragraph_form(&before, old);
+            let (new_style, new_numbering, new_runs) = paragraph_form(&after, index);
+            assert_eq!(
+                (style, numbering),
+                (new_style, new_numbering),
+                "{path}: paragraph {index}"
+            );
+            if replace(text.clone()) == text {
+                assert_eq!(runs, new_runs, "{path}: runs of paragraph {index}");
+            }
+        }
+        // Every table cell, with the replacement in the task table.
+        let cells = |doc: &Document| {
+            doc.tables()
+                .iter()
+                .flat_map(|table| {
+                    (0..table.row_count()).flat_map(move |row| {
+                        let count = table.row(row).unwrap().cell_count();
+                        (0..count).map(move |col| table.row(row).unwrap().cell(col).unwrap().text())
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let new_cells = cells(&after);
+        assert!(
+            new_cells.contains(&"Freeze the release configuration".to_owned()),
+            "{path}: {new_cells:?}"
+        );
+        assert_eq!(
+            new_cells,
+            cells(&before).into_iter().map(replace).collect::<Vec<_>>(),
+            "{path}"
+        );
+        // No content control is lost.
+        let controls = |parts: &std::collections::BTreeMap<String, Vec<u8>>| {
+            let xml = String::from_utf8_lossy(&parts["word/document.xml"]);
+            xml.matches("<w:sdt>").count() + xml.matches("<w:sdt ").count()
+        };
+        assert_eq!(controls(&new_parts), controls(&old_parts), "{path}");
+
+        // The note on the removed paragraph went, every other comment stays
+        // with its anchor, and no comment mark is left without its comment.
+        let expected_comments = comment_facts(&before)
+            .into_iter()
+            .filter(|(facts, _)| !facts.contains("board's reference number"))
+            .map(|(facts, anchor)| (facts, anchor.map(replace)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            comment_facts(&after).len() + 1,
+            comment_facts(&before).len(),
+            "{path}: one comment goes"
+        );
+        assert_eq!(comment_facts(&after), expected_comments, "{path}");
+        let main = String::from_utf8_lossy(&new_parts["word/document.xml"]);
+        let comments = ids_of_tag(
+            &String::from_utf8_lossy(&new_parts["word/comments.xml"]),
+            "comment",
+        );
+        for tag in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            assert_eq!(
+                ids_of_tag(&main, tag),
+                comments,
+                "{path}: every {tag} has its comment"
+            );
+        }
+
+        // The tracked changes, the replaced insertion still tracked.
+        let found = revision_facts(&after);
+        assert!(
+            found.iter().any(|(kind, _, _, text)| kind == "Insertion"
+                && text.contains("label and badge printers")),
+            "{path}: {found:?}"
+        );
+        let expected_revisions = revision_facts(&before)
+            .into_iter()
+            .map(|(kind, author, date, text)| (kind, author, date, replace(text)))
+            .collect::<Vec<_>>();
+        assert_eq!(found, expected_revisions, "{path}");
+    });
+}

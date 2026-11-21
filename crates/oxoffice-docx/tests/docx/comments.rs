@@ -2817,3 +2817,194 @@ fn every_producer_copy_of_the_contract_keeps_its_reply_threads() {
         }
     }
 }
+
+/// A review in one person's name on a record co-edited in Word and Google
+/// Docs: comments on a body sentence, a table cell, text inside a content
+/// control and text inside a tracked insertion, and a reply to the open
+/// thread. They read back dated, the reply under its thread (written on the
+/// last paragraph of its two-paragraph parent, as Word and Google Docs read
+/// it), and the other people's comments, thread, resolved state and tracked
+/// changes stay as they were.
+#[test]
+fn a_review_in_one_name_on_a_co_edited_record_leaves_the_other_people_alone() {
+    crate::support::run_workflow("record-review", &crate::support::record_copies(), |path| {
+        let before = corpus_doc(path);
+        // The thread of the two people: a two-paragraph question and its
+        // answer.
+        let review = review_of(&before);
+        let question = review
+            .iter()
+            .find(|line| line.contains("Which scanner models are affected?"))
+            .unwrap_or_else(|| panic!("{path}: the question: {review:#?}"));
+        assert!(
+            question.contains("we can replace them at the pilot site first")
+                && question.contains("parent None"),
+            "{path}: {question}"
+        );
+        let answer = review
+            .iter()
+            .find(|line| line.contains("Only the older model"))
+            .unwrap_or_else(|| panic!("{path}: the answer: {review:#?}"));
+        assert!(
+            answer.contains("parent Some(\"Which scanner models are affected?"),
+            "{path}: {answer}"
+        );
+        // The resolved comment: Google Docs leaves it out of its export.
+        let resolved = review
+            .iter()
+            .find(|line| line.contains("Confirm the two new sites"));
+        if path.starts_with("word-google/") {
+            assert!(resolved.is_none(), "{path}: {review:#?}");
+        } else {
+            assert!(
+                resolved.is_some_and(|line| line.contains("resolved Some(true)")),
+                "{path}: {review:#?}"
+            );
+        }
+
+        let mut doc = corpus_doc(path);
+        for (anchor, tables_only) in [
+            ("regional warehouses", false),
+            ("Late", true),
+            ("firmware test passing", false),
+            // The tracked insertion of the history section, whole: a part
+            // of it is refused (#443).
+            ("Version 1.1 will record the closure review.", false),
+        ] {
+            doc.add_comment_on_text(
+                anchor,
+                REVIEWER,
+                &format!("Check \"{anchor}\""),
+                TextCommentOptions {
+                    tables_only,
+                    date: CommentDate::At("2026-11-21T10:05:00Z"),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path}: comment on {anchor}: {e}"));
+        }
+        let thread = doc
+            .comments()
+            .iter()
+            .find(|comment| comment.text().starts_with("Which scanner models"))
+            .map(CommentRef::id)
+            .unwrap();
+        doc.reply_to_with_date(
+            thread,
+            REVIEWER,
+            "Confirmed with the supplier.",
+            CommentDate::At("2026-11-21T10:06:00Z"),
+        )
+        .unwrap_or_else(|e| panic!("{path}: reply: {e}"));
+        let saved = doc.to_bytes().unwrap();
+        let doc = Document::from_bytes(&saved).unwrap();
+
+        // The reply names its parent's last paragraph in the saved package,
+        // whatever the read API accepts.
+        let id_of = |start: &str| {
+            doc.comments()
+                .iter()
+                .find(|comment| comment.text().starts_with(start))
+                .map(CommentRef::id)
+                .unwrap_or_else(|| panic!("{path}: a comment starts with {start}"))
+        };
+        let (paragraphs, entries) = comment_paragraph_ids(&saved);
+        let paragraphs_of = |id: i32| {
+            paragraphs
+                .iter()
+                .find(|(comment, _)| *comment == id)
+                .map(|(_, ids)| ids.clone())
+                .unwrap_or_else(|| panic!("{path}: comment {id} has paragraph ids"))
+        };
+        let question = paragraphs_of(id_of("Which scanner models"));
+        let reply = paragraphs_of(id_of("Confirmed with the supplier."));
+        // Two paragraphs; LibreOffice gives an id to the last one only.
+        assert!(!question.is_empty(), "{path}");
+        assert_eq!(
+            doc.comments()
+                .iter()
+                .find(|comment| comment.text().starts_with("Which scanner models"))
+                .map(|comment| comment.text().lines().count()),
+            Some(2),
+            "{path}"
+        );
+        let entry = entries
+            .iter()
+            .find(|(paragraph, _, _)| Some(paragraph) == reply.last())
+            .unwrap_or_else(|| panic!("{path}: the reply's entry: {entries:?}"));
+        assert_eq!(
+            entry.1.as_ref(),
+            question.last(),
+            "{path}: the reply names its parent's last paragraph"
+        );
+
+        // LibreOffice writes no state for a thread's opening comment;
+        // the reply gives it one, open, as Word writes it.
+        let others = |doc: &Document| {
+            let (comments, revisions) = other_reviewers(doc);
+            let comments = comments
+                .into_iter()
+                .map(|line| line.replace("resolved None", "resolved Some(false)"))
+                .collect::<Vec<_>>();
+            (comments, revisions)
+        };
+        assert_eq!(others(&doc), others(&before), "{path}");
+        let mine = review_of(&doc)
+            .into_iter()
+            .filter(|line| line.starts_with(&format!("Some({REVIEWER:?})")))
+            .collect::<Vec<_>>();
+        assert_eq!(mine.len(), 5, "{path}: {mine:#?}");
+        assert!(
+            mine.iter()
+                .all(|line| line.contains("2026-11-21T10:0")
+                    && !line.contains("resolved Some(true)")),
+            "{path}: {mine:#?}"
+        );
+        for anchor in [
+            "regional warehouses",
+            "Late",
+            "firmware test passing",
+            "Version 1.1 will record the closure review.",
+        ] {
+            assert!(
+                mine.iter().any(|line| line.contains("parent None")
+                    && line.ends_with(&format!("on Some({anchor:?})"))),
+                "{path}: a comment on {anchor}: {mine:#?}"
+            );
+        }
+        assert!(
+            mine.iter()
+                .any(|line| line.contains("Confirmed with the supplier.")
+                    && line.contains("parent Some(\"Which scanner models are affected?")),
+            "{path}: the reply sits under its thread: {mine:#?}"
+        );
+    });
+}
+
+// Known failure #443: a comment's edge inside a tracked insertion is refused.
+// When it passes, drop the `should_panic`.
+#[test]
+#[should_panic(expected = "falls inside a tracked insertion or move")]
+fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins></w:p>"#,
+    );
+    doc.add_comment_on_text(
+        "words",
+        REVIEWER,
+        "Check",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.comments()[0].anchor_text().unwrap().as_deref(),
+        Some("words")
+    );
+    let revisions = doc.story_revisions().unwrap();
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].text(), "new words here");
+}
