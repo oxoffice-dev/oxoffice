@@ -112,6 +112,13 @@ fn computed_layout_field(
                         ),
                     });
                     (None, None)
+                } else if field.cached_result.contains('\t') {
+                    // LibreOffice writes a whole table of contents entry
+                    // (its number, a tab, its title, a tab, its page) as the
+                    // result of the entry's PAGEREF. Word draws that stored
+                    // result as it is until its fields are updated, and a
+                    // page number alone never holds a tab, so it stays.
+                    (None, None)
                 } else if let Some(target) = page_ref_id(input, bookmark) {
                     (Some("99".to_owned()), Some(FieldKind::TargetPage(target)))
                 } else {

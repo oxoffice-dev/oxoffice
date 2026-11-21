@@ -838,6 +838,30 @@ fn no_page_of_a_corpus_report_is_blank() {
     }
 }
 
+#[test]
+fn a_table_of_contents_entry_saved_by_libreoffice_keeps_its_title() {
+    // LibreOffice writes the whole entry (number, tab, title, tab, page) as
+    // the result of its PAGEREF; Word writes the page number alone.
+    let entry = |result: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="right" w:pos="9000"/></w:tabs></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">PAGEREF _Toc1 \h</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r>{result}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let heading = r#"<w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Motivation</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#;
+    let libreoffice = entry("<w:t>1.1</w:t><w:tab/><w:t>Motivation</w:t><w:tab/><w:t>7</w:t>");
+    let word = entry("<w:t>7</w:t>");
+    let pdf = pdf_of(&doc_with_body(&format!("{libreoffice}{word}{heading}")));
+    let lines: Vec<String> = lines(&pdf.drawn(0))
+        .into_iter()
+        .map(|line| squeeze(&line.text))
+        .collect();
+    assert_eq!(
+        lines[..2],
+        ["1.1Motivation7", "1"],
+        "the LibreOffice entry keeps its stored text, the Word one gets the page"
+    );
+}
+
 // ---- Where text lands ----
 
 #[test]
