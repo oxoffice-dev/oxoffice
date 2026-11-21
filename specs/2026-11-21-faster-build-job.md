@@ -72,11 +72,11 @@ the wheel's tag, and that no cache is saved.
 ## Outcome
 
 Shipped in #216. Its own run (44888491973), beside the medians of the
-profile this spec started from (32 pull request runs before 08:21 UTC;
-the Linux, Windows and upload figures come from that profile too) and
-beside #207's run (44887139694), 16 minutes earlier with the old
-configuration and the same exact cache keys. One run each, and runner speed
-varies a lot between runs.
+profile this spec started from (32 pull request runs created from 04:54
+to 08:21 UTC; the Linux, Windows and upload figures come from that profile
+too) and beside #207's run (44887139694), 17 minutes earlier with the old
+configuration and the same exact cache keys, on another branch (31 more
+Rust tests). One run each, and runner speed varies a lot between runs.
 
 | Build and test | profile median | #207, old | #216, new |
 | --- | --- | --- | --- |
@@ -86,8 +86,9 @@ varies a lot between runs.
 | Linux job | 13.3 min | 10.5 min | 11.1 min |
 | Windows job | 14.8 min | 11.5 min | 10.0 min |
 
-- The parallel Python tests are the gain: the same 333 tests passed (2
-  skipped), in about a third of the time on macOS and Windows. Linux varied
+- The parallel Python tests are the gain: the same tests passed (333 and 2
+  skipped on macOS and Linux, 332 and 3 skipped on Windows), in about a
+  third of the time on macOS and a bit over half on Windows. Linux varied
   with its runner (#216's ran `docx/main` in 158 s, #207's in 92 s, on the
   same cache).
 - No cache was saved (`save-if: false`). Both runs restored an exact key,
@@ -101,9 +102,11 @@ varies a lot between runs.
   apart, not found yet. It also compiled `ring`, which no warm macOS run had
   compiled before: its build script likely tracks the variable, and the
   cache `main` saved holds a `ring` built without it; `main` saves again only
-  when the key changes. Aligning the features remains a lever for the
-  crates that have features; for macOS, the cause above comes first. The
-  variable is cheap to drop if a cold run shows no gain either.
+  when the key changes. Aligning the features of the whole graph,
+  dev-dependencies included (they reach every workspace crate through
+  `thiserror-impl`), remains the lever on Linux and Windows; for macOS, the
+  cause above comes first. The variable goes if a run on a cache `main`
+  saved with it shows no gain either.
 
 ## Links
 
