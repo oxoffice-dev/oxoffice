@@ -1093,6 +1093,58 @@ impl PyDocument {
             self.indexes.direct_body_paragraphs, indexes.direct_body_paragraphs,
             "spliced direct body paragraph index"
         );
+        // The owner indexes, each list in any order, an empty one as none.
+        fn lists<K: Copy + Ord>(map: &IndexMap<K, Vec<usize>>) -> BTreeMap<K, Vec<usize>> {
+            map.iter()
+                .filter(|(_, list)| !list.is_empty())
+                .map(|(key, list)| {
+                    let mut list = list.clone();
+                    list.sort_unstable();
+                    (*key, list)
+                })
+                .collect()
+        }
+        assert_eq!(
+            self.indexes
+                .by_generation
+                .iter()
+                .collect::<BTreeMap<_, _>>(),
+            indexes.by_generation.iter().collect::<BTreeMap<_, _>>(),
+            "owner index by generation"
+        );
+        assert_eq!(
+            lists(&self.indexes.by_route),
+            lists(&indexes.by_route),
+            "owner index by route"
+        );
+        for (name, actual, expected) in [
+            (
+                "paragraphs",
+                &self.indexes.paragraphs_by_parent,
+                &indexes.paragraphs_by_parent,
+            ),
+            (
+                "tables",
+                &self.indexes.tables_by_parent,
+                &indexes.tables_by_parent,
+            ),
+            (
+                "cells",
+                &self.indexes.cells_by_parent,
+                &indexes.cells_by_parent,
+            ),
+            (
+                "runs",
+                &self.indexes.runs_by_parent,
+                &indexes.runs_by_parent,
+            ),
+        ] {
+            assert_eq!(
+                lists(actual),
+                lists(expected),
+                "owner index of {name} by parent"
+            );
+        }
     }
 }
 

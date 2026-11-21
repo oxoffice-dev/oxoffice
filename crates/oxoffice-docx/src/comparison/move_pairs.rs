@@ -82,20 +82,24 @@ fn refuse_changed_reply_held_owners(
             let left_owner = left_model.body.content.get(index);
             let right_owner = right_model.body.content.get(index);
             // The replay changes only the selected graph. Unrelated held
-            // owners must retain their actual typed content and residual,
-            // or be the same tree that the replay's save writes another way.
-            if left_owner
-                .zip(right_owner)
-                .is_some_and(|(left, right)| left == right)
-                && held_left.same_owner_source(index, &held_right, index)
-                || index < left_spans.len()
-                    && index < right_spans.len()
-                    && same_owner_tree(
-                        Some((left, &left_spans, left_bindings)),
-                        index,
-                        (right, &right_spans, right_bindings),
-                        index,
-                    )?
+            // owners must stay the same owner, read as the compare path
+            // reads one.
+            if let Some((left_owner, right_owner)) = left_owner.zip(right_owner)
+                && index < left_spans.len()
+                && index < right_spans.len()
+                && same_held_owner(
+                    left_owner == right_owner,
+                    held_left.same_owner_source(index, &held_right, index),
+                    || {
+                        same_owner_tree(
+                            Some((left, &left_spans, left_bindings)),
+                            index,
+                            (right, &right_spans, right_bindings),
+                            index,
+                        )
+                    },
+                    || same_written_owner(left_owner, right_owner, left_bindings, right_bindings),
+                )?
             {
                 continue;
             }

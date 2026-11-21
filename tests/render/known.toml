@@ -22,18 +22,6 @@ pages = [25]
 issue = 156
 
 [[known]]
-file = "authored/thesis.docx"
-check = "off-page"
-pages = [25]
-issue = 404
-
-[[known]]
-file = "word/thesis.docx"
-check = "off-page"
-pages = [25]
-issue = 404
-
-[[known]]
 file = "libreoffice/thesis.docx"
 check = "overlap"
 pages = [25]
@@ -109,28 +97,28 @@ issue = 224
 file = "authored/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "7 diagnostics"
+finding = "8 diagnostics"
 issue = 224
 
 [[known]]
 file = "google/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "6 diagnostics"
+finding = "7 diagnostics"
 issue = 224
 
 [[known]]
 file = "libreoffice/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "7 diagnostics"
+finding = "8 diagnostics"
 issue = 224
 
 [[known]]
 file = "word/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "7 diagnostics"
+finding = "8 diagnostics"
 issue = 224
 
 [[known]]
@@ -202,3 +190,59 @@ file = "word/thesis.docx"
 check = "empty-page"
 pages = [6]
 by_design = "the blank page that sends the odd-page first chapter to a right-hand page, as LibreOffice prints it"
+
+[[known]]
+file = "authored/minutes.docx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "google/minutes.docx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "libreoffice/minutes.docx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "word/minutes.docx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "authored/multilingual.pptx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "google/multilingual.pptx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "libreoffice/multilingual.pptx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157
+
+[[known]]
+file = "powerpoint/multilingual.pptx"
+check = "dropped"
+pages = [0]
+finding = "3 diagnostics"
+issue = 157

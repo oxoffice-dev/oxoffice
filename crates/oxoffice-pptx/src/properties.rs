@@ -29,6 +29,10 @@ impl Presentation {
     }
 
     /// Changes known core fields while retaining every unowned imported byte.
+    ///
+    /// The core title (`dc:title`) is the user's: a slide edit never changes
+    /// it, while a save after a slide edit refreshes `docProps/app.xml` (see
+    /// [`Self::application_properties`]).
     pub fn set_core_properties(&mut self, mut properties: CoreProperties) -> Result<()> {
         // An empty value reads back as no value: it removes the property.
         for value in [
@@ -135,11 +139,24 @@ impl Presentation {
     }
 
     /// Returns cached application properties without dirtying retained XML.
+    ///
+    /// A save after a slide edit refreshes the slide, notes and hidden-slide
+    /// counts of `docProps/app.xml`. After any edit of a slide's content but
+    /// a hide or a show, or a change of the slide list, it also drops what
+    /// oxoffice does not recount: the title lists (`HeadingPairs`,
+    /// `TitlesOfParts`) and the `Words` and `Paragraphs` counts, which
+    /// PowerPoint writes again on its next save. A hide or a show alone
+    /// keeps them.
     pub fn application_properties(&self) -> Option<&AppProperties> {
         self.application_properties.as_ref()
     }
 
     /// Publishes application properties after staged validation and source preservation.
+    ///
+    /// A field equal to what [`Self::application_properties`] gave is left
+    /// as the part has it: after a slide edit not yet committed, the refresh
+    /// of the counts wins over a stale copy, and a field set to a new value
+    /// wins over the refresh.
     pub fn set_application_properties(&mut self, properties: AppProperties) -> Result<()> {
         if let Some(version) = &properties.application_version {
             let bytes = version.as_bytes();
@@ -156,6 +173,18 @@ impl Presentation {
         let generated = properties
             .to_xml()
             .map_err(|e| invalid_shape_mutation("application properties", e.to_string()))?;
+        // A slide edit still pending refreshes app.xml when it is committed:
+        // commit it first, then apply only the fields the caller changed, so
+        // that neither the refresh nor a stale copy undoes the other.
+        let before = self.application_properties.clone();
+        let pending = self.clone();
+        self.commit_candidate(pending)?;
+        let properties = match (&before, &self.application_properties) {
+            (Some(before), Some(current)) if before != current => {
+                changed_application_properties(before, &properties, current)
+            }
+            _ => properties,
+        };
         if self.application_properties.as_ref() == Some(&properties) {
             return Ok(());
         }
@@ -331,21 +360,20 @@ impl Presentation {
     ///
     /// `docProps/app.xml` gets the deck's counts where it has them: after a
     /// slide is added or removed, the slide, notes and hidden-slide counts,
-    /// and its title lists (`HeadingPairs`, `TitlesOfParts`) go, as they may
-    /// name a removed slide or miss a new one: their group names are
-    /// localised, so a title cannot be picked out, and PowerPoint writes them
-    /// again on its next save. After a hide or a show, only the hidden-slide
-    /// count. A move changes no count and is left out; the lists then keep
-    /// the old order. An app.xml the source-preserving patch cannot edit (one
-    /// outside its namespace, or with a count in a foreign namespace) is left
-    /// as it was rather than refusing the edit.
+    /// and what the edit makes stale goes (see
+    /// [`Self::refreshed_application_properties`]). After a hide or a show,
+    /// only the hidden-slide count. A save refreshes them again whenever a
+    /// slide, its notes or the slide list changed, so text edits, notes and
+    /// moves are covered too. An app.xml the source-preserving patch cannot
+    /// edit (one outside its namespace, or with a count in a foreign
+    /// namespace) is left as it was rather than refusing the edit.
     ///
     /// After a removal the package thumbnail goes too: it pictures the slide
     /// that was first when the deck was last saved, which moves and inserts
     /// may have taken anywhere.
     pub(super) fn refresh_document_metadata(&mut self, edit: MetadataEdit) -> Result<()> {
         let thumbnail = edit == MetadataEdit::Removal;
-        let titles = edit != MetadataEdit::Visibility;
+        let structure = edit != MetadataEdit::Visibility;
         let thumbnails = self
             .package
             .package_rels
@@ -367,6 +395,29 @@ impl Presentation {
                 || relationship.rel_type != rel_types::THUMBNAIL
                 || relationship_is_external(relationship)
         });
+        let Some((part, xml, properties)) =
+            self.refreshed_application_properties(structure, structure)?
+        else {
+            return Ok(());
+        };
+        self.package.set_part(&part, xml);
+        self.application_properties = Some(properties);
+        Ok(())
+    }
+
+    /// `docProps/app.xml` with the deck's counts, or `None` when there is
+    /// none, or the source-preserving patch cannot edit it. `counts` refreshes
+    /// the slide and notes counts (the hidden-slide count always follows);
+    /// `stale` drops what an edit of slide text, order or structure makes
+    /// stale and oxoffice does not recount: the title lists
+    /// (`HeadingPairs`, `TitlesOfParts`, whose group names are localised) and
+    /// the `Words` and `Paragraphs` counts. PowerPoint writes them again on
+    /// its next save. The core title (`dc:title`) is the user's and is kept.
+    pub(super) fn refreshed_application_properties(
+        &self,
+        counts: bool,
+        stale: bool,
+    ) -> Result<Option<(String, Vec<u8>, AppProperties)>> {
         let (Some(old), Some(part)) = (
             self.application_properties.clone(),
             property_part(
@@ -375,14 +426,14 @@ impl Presentation {
                 content_types::EXTENDED_PROPERTIES,
             )?,
         ) else {
-            return Ok(());
+            return Ok(None);
         };
         let count = |keep: fn(&SlideRecord) -> bool| {
             i32::try_from(self.slides.iter().filter(|record| keep(record)).count())
                 .unwrap_or(i32::MAX)
         };
         let mut new = old.clone();
-        if titles {
+        if counts {
             new.slides = old.slides.map(|_| count(|_| true));
             // `Notes` counts slides containing notes, not empty notes pages.
             new.notes = old.notes.map(|_| {
@@ -404,24 +455,28 @@ impl Presentation {
                 Ok((patched, ranges))
             })
         else {
-            return Ok(());
+            return Ok(None);
         };
         let mut xml = Vec::with_capacity(patched.len());
         let mut cursor = 0;
         for (_, _, start, end) in children.iter().filter(|(uri, local, _, _)| {
-            titles
+            stale
                 && uri.as_deref() == Some(EXTENDED_PROPERTIES_NS)
-                && matches!(local.as_str(), "HeadingPairs" | "TitlesOfParts")
+                && matches!(
+                    local.as_str(),
+                    "HeadingPairs" | "TitlesOfParts" | "Words" | "Paragraphs"
+                )
         }) {
             xml.extend_from_slice(&patched[cursor..*start]);
             cursor = *end;
         }
         xml.extend_from_slice(&patched[cursor..]);
+        if xml.as_slice() == source {
+            return Ok(None);
+        }
         let properties = AppProperties::from_xml(&xml)
             .map_err(|error| footer_malformed(&part, error.to_string()))?;
-        self.package.set_part(&part, xml);
-        self.application_properties = Some(properties);
-        Ok(())
+        Ok(Some((part, xml, properties)))
     }
 }
 
@@ -705,6 +760,47 @@ fn patch_application_properties(
         ));
     }
     Ok(result)
+}
+
+/// `current` with the fields `wanted` changes from `before`: a field the
+/// caller left as it read it follows the part as it is now.
+fn changed_application_properties(
+    before: &AppProperties,
+    wanted: &AppProperties,
+    current: &AppProperties,
+) -> AppProperties {
+    let mut merged = current.clone();
+    macro_rules! changed {
+        ($($field:ident),* $(,)?) => {
+            $(if wanted.$field != before.$field {
+                merged.$field = wanted.$field.clone();
+            })*
+        };
+    }
+    changed!(
+        template,
+        manager,
+        company,
+        pages,
+        words,
+        characters,
+        presentation_format,
+        lines,
+        paragraphs,
+        slides,
+        notes,
+        total_time,
+        hidden_slides,
+        multimedia_clips,
+        scale_crop,
+        links_up_to_date,
+        characters_with_spaces,
+        shared_document,
+        hyperlinks_changed,
+        application,
+        application_version,
+    );
+    merged
 }
 
 fn custom_value_xml(value: &CustomPropertyValue) -> Result<String> {

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use oxoffice_docx::{
     Alignment, BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
-    Document, RevisionKind, RunItemRef, StoryKind,
+    Document, RenderOptions, RevisionKind, RevisionStyle, RevisionView, RunItemRef, StoryKind,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -881,12 +881,24 @@ fn a_redline_in_one_name_on_a_reviewed_contract_edited_by_oxoffice_is_compared()
 /// body, added in its package so that every other byte stays as Word wrote
 /// it.
 fn contract_with_a_comment_on_its_first_run() -> Document {
-    let bytes = std::fs::read(crate::support::corpus_root().join("files/word/contract.docx"))
-        .expect("corpus file");
+    contract_copy_with_a_comment_on_its_first_run("word")
+}
+
+/// [`contract_with_a_comment_on_its_first_run`] on the copy of `producer`.
+fn contract_copy_with_a_comment_on_its_first_run(producer: &str) -> Document {
+    let bytes = std::fs::read(
+        crate::support::corpus_root().join(format!("files/{producer}/contract.docx")),
+    )
+    .expect("corpus file");
     let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
     let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
     let body = main.find("<w:body>").unwrap();
-    let start = body + main[body..].find("<w:r>").unwrap();
+    let start = body
+        + main[body..]
+            .match_indices("<w:r")
+            .find(|(at, _)| matches!(main.as_bytes()[body + at + 4], b'>' | b' '))
+            .unwrap()
+            .0;
     let end = start + main[start..].find("</w:r>").unwrap() + "</w:r>".len();
     let main = format!(
         "{}<w:commentRangeStart w:id=\"90\"/>{}<w:commentRangeEnd w:id=\"90\"/><w:r><w:commentReference w:id=\"90\"/></w:r>{}",
@@ -931,6 +943,68 @@ fn a_reply_added_on_a_reviewed_contract_is_compared() {
 }
 
 #[test]
+fn a_reply_added_on_the_google_and_libreoffice_contracts_is_compared() {
+    // The replay's save writes the copies' held paragraphs as an oxoffice
+    // save writes them, which the reply path reads as the compare path does.
+    for producer in ["google", "libreoffice"] {
+        let mut edited = contract_copy_with_a_comment_on_its_first_run(producer);
+        edited
+            .reply_to(90, "Second reviewer", "Agreed, it's fine.")
+            .unwrap();
+        let edited = reopen(&mut edited);
+        let original = contract_copy_with_a_comment_on_its_first_run(producer);
+        let held = original.revisions().len();
+        let doc = redline(original, &edited);
+        assert_eq!(doc.revisions().len(), held, "{producer}: no revision");
+        assert_eq!(doc.comments().len(), edited.comments().len(), "{producer}");
+    }
+}
+
+#[test]
+fn a_held_paragraph_whose_dropped_value_changed_keeps_the_refusal() {
+    // The reader reads both values of automatic spacing as off and the writer
+    // writes them alike, but the source says another thing: the held
+    // paragraph changed, and the comparison may not replace it.
+    let body = |value: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t>Term.</w:t></w:r></w:p>"#,
+                r#"<w:p><w:pPr><w:spacing w:beforeAutospacing="{}"/></w:pPr><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+                r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+            ),
+            value
+        ))
+    };
+    let mut original = body("on");
+    let error = original.compare(&body("0"), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+    // A value the reader drops by design: the residual keeps it.
+    let body = |properties: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t>Term.</w:t></w:r></w:p>"#,
+                r#"<w:p><w:pPr>{}</w:pPr><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+                r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+            ),
+            properties
+        ))
+    };
+    let mut original = body(r#"<w:jc w:val="bogus"/>"#);
+    let error = original.compare(&body(""), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
     // The reply's range goes in the paragraph that holds the reviewer's
     // revision, which the comparison may not change.
@@ -947,6 +1021,123 @@ fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
             .to_string()
             .contains("holds an existing tracked revision"),
         "{error}"
+    );
+}
+
+#[test]
+fn a_redline_in_one_name_on_the_google_and_libreoffice_contracts_edited_by_oxoffice_is_compared() {
+    // The same walk on the copies Google Docs and LibreOffice saved: the
+    // save also writes their held paragraphs' property values its own way
+    // and declares the part's namespaces differently.
+    for path in ["google/contract.docx", "libreoffice/contract.docx"] {
+        let mut edited = corpus_doc(path);
+        let replaced = edited.replace_all(&HashMap::from([(
+            "thirty-six (36) months",
+            "forty-eight (48) months",
+        )]));
+        assert_eq!(replaced, 1, "{path}");
+        let mut edited = reopen(&mut edited);
+        // The save wrote the part another way: Google's root default
+        // namespace is gone, and LibreOffice's empty run properties too.
+        let (before, after) = (
+            main_part_xml(&mut corpus_doc(path)),
+            main_part_xml(&mut edited),
+        );
+        let written = |xml: &str| {
+            (
+                xml.contains(
+                    r#"xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks""#,
+                ),
+                xml.matches("<w:rPr></w:rPr>").count(),
+            )
+        };
+        assert!(
+            written(&before).0 && !written(&after).0 || written(&before).1 > written(&after).1,
+            "{path}: the save rewrote the part"
+        );
+        let original = corpus_doc(path);
+        let earlier = original
+            .revisions()
+            .iter()
+            .map(|revision| (revision.kind(), revision.author().to_owned()))
+            .collect::<Vec<_>>();
+        assert!(!earlier.is_empty(), "{path}");
+        let mut doc = redline(original, &edited);
+        let others = doc
+            .revisions()
+            .iter()
+            .filter(|revision| revision.author() != AUTHOR)
+            .map(|revision| (revision.kind(), revision.author().to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            others, earlier,
+            "{path}: the other reviewers' revisions stay"
+        );
+        assert!(
+            doc.revisions()
+                .iter()
+                .any(|revision| revision.author() == AUTHOR),
+            "{path}: the replacement is tracked in the reviewer's name"
+        );
+        // Resolve this reviewer's revisions only: LibreOffice's own property
+        // revisions do not resolve today, whatever the comparison does.
+        let mut copy = reopen(&mut doc);
+        copy.accept_revisions_by_author(AUTHOR).unwrap();
+        assert_eq!(texts(&reopen(&mut copy)), texts(&edited), "{path}");
+        let mut copy = reopen(&mut doc);
+        copy.reject_revisions_by_author(AUTHOR).unwrap();
+        assert_eq!(
+            texts(&reopen(&mut copy)),
+            texts(&corpus_doc(path)),
+            "{path}"
+        );
+    }
+}
+
+/// `doc` with its term changed from thirty-six to forty-eight months,
+/// saved and opened again.
+fn with_term_changed(mut doc: Document) -> Document {
+    let replaced = doc.replace_all(&HashMap::from([("thirty-six", "forty-eight")]));
+    assert_eq!(replaced, 1);
+    reopen(&mut doc)
+}
+
+#[test]
+fn a_held_revision_under_a_part_namespace_a_save_drops_is_unchanged() {
+    // Google Docs declares a default namespace on the part's root, which the
+    // save does not write again; the earlier revision reads none of it.
+    let with_default_namespace = |doc: &mut Document| {
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+                .unwrap();
+        let main = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen(
+            "<w:document ",
+            r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+            1,
+        );
+        package.set_part(&main, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        Document::from_bytes(&out.into_inner()).unwrap()
+    };
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Term: thirty-six months.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>"#,
+        r#"<w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z"><w:r><w:t>clause.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let mut edited = with_term_changed(with_default_namespace(&mut doc_with_body(body)));
+    assert!(!main_part_xml(&mut edited).contains("documenttasks"));
+    let original = with_default_namespace(&mut doc_with_body(body));
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        texts(&accepted(&mut doc)),
+        ["Term: forty-eight months.", "Kept clause."]
+    );
+    assert_eq!(
+        texts(&rejected(&mut doc)),
+        ["Term: thirty-six months.", "Kept "]
     );
 }
 
@@ -3329,6 +3520,407 @@ fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
             );
         }
     }
+}
+
+// ---- The redline of two versions of a long document ----
+// A tool keeps each version of a thesis, edits the next one, then hands the
+// reader a redline: by words, fields and formatting left out, accepted to the
+// new version or rejected to the old one, and printed in the colours of
+// legal comparison tools.
+
+/// A thesis copy as its producer saved it, and its next version: a section
+/// added before the last one, the first paragraph of the discussion moved
+/// below the second, the running header retitled and a footnote added. With `rebuild_toc`,
+/// both versions carry the contents oxoffice rebuilt, as a tool leaves them
+/// after each pass.
+fn thesis_versions(path: &str, rebuild_toc: bool) -> (Document, Document) {
+    let mut original = Document::from_bytes(&crate::support::workflow_source(path)).unwrap();
+    if rebuild_toc {
+        original.rebuild_toc().unwrap();
+        original = reopen(&mut original);
+    }
+    let mut edited = reopen(&mut original);
+    let body_paragraph = |doc: &Document, text: &str| {
+        let paragraphs = doc.story_paragraphs().unwrap();
+        let at = paragraphs
+            .iter()
+            .position(|p| p.kind == StoryKind::Body && p.text == text && p.style.is_some())
+            .unwrap_or_else(|| panic!("{path}: a heading reads {text:?}"));
+        (paragraphs, at)
+    };
+    // The discussion's first paragraph goes below its second.
+    let (paragraphs, discussion) = body_paragraph(&edited, "Discussion");
+    let [first, second] = [&paragraphs[discussion + 1], &paragraphs[discussion + 2]];
+    assert!(
+        first.style == second.style && !first.text.is_empty() && !second.text.is_empty(),
+        "{path}: two body paragraphs follow the discussion heading"
+    );
+    edited
+        .move_content(&first.location, &paragraphs[discussion + 3].location)
+        .unwrap();
+    // A section heading before the last section, in its heading style.
+    let (paragraphs, future) = body_paragraph(&edited, "Future work");
+    let style = paragraphs[future].style.clone().unwrap();
+    let index = (0..edited.paragraph_count())
+        .rfind(|&index| edited.paragraph(index).unwrap().text() == "Future work")
+        .and_then(|index| edited.content_index_of_paragraph(index))
+        .unwrap_or_else(|| panic!("{path}: the last section heading is a body paragraph"));
+    edited.insert_paragraph(index, "Limitations").style(&style);
+    let (paragraphs, future) = body_paragraph(&edited, "Future work");
+    assert_eq!(paragraphs[future - 1].text, "Limitations", "{path}");
+    let retitled = edited.replace_all(&HashMap::from([("MSc thesis", "MSc dissertation")]));
+    assert!(retitled > 0, "{path}: the header names the degree");
+    // A footnote on the paragraph that opens the last section.
+    let note = edited.add_footnote("Agreed with the site managers.");
+    let opening = (0..edited.paragraph_count())
+        .rfind(|&index| edited.paragraph(index).unwrap().text() == "Future work")
+        .unwrap()
+        + 1;
+    edited
+        .paragraph_mut(opening)
+        .unwrap()
+        .add_footnote_ref(note);
+    if rebuild_toc {
+        edited.rebuild_toc().unwrap();
+    }
+    (original, reopen(&mut edited))
+}
+
+fn compare_versions(original: &mut Document, edited: &Document) {
+    let options = ComparisonOptions {
+        granularity: ComparisonGranularity::Word,
+        ignore_formatting: true,
+        ignore_fields: true,
+        ..Default::default()
+    };
+    let diagnostics = original
+        .compare_with_options(edited, AUTHOR, DATE, &options)
+        .unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+/// Every paragraph text of every story, as a reader sees it.
+fn story_texts(doc: &Document) -> Vec<(StoryKind, String)> {
+    doc.story_paragraphs()
+        .unwrap()
+        .into_iter()
+        .map(|paragraph| (paragraph.kind, paragraph.text))
+        .collect()
+}
+
+/// One render of a document: the PDF, for where text is drawn, and every
+/// page image at 72 DPI, from one layout.
+struct View {
+    pdf: oxoffice_render_test::pdf::Pdf,
+    images: Vec<oxoffice_render_test::fingerprint::Pixels>,
+}
+
+impl View {
+    fn of(doc: &Document, options: RenderOptions) -> Self {
+        let pdf = oxoffice_render_test::pdf::Pdf::read(
+            &doc.to_pdf_deterministic_with_options(options).unwrap(),
+        );
+        let images = doc
+            .render_all_pages_with_options(72.0, options)
+            .unwrap()
+            .iter()
+            .map(|png| oxoffice_render_test::fingerprint::Pixels::decode(png))
+            .collect::<Vec<_>>();
+        assert_eq!(images.len(), pdf.page_count());
+        Self { pdf, images }
+    }
+
+    /// The pages whose drawn text holds `text`.
+    fn pages_drawing(&self, text: &str) -> Vec<usize> {
+        (0..self.pdf.page_count())
+            .filter(|&page| {
+                self.pdf
+                    .drawn(page)
+                    .iter()
+                    .any(|piece| piece.text.contains(text))
+            })
+            .collect()
+    }
+
+    /// The page and the first piece drawn holding `text`.
+    fn piece(&self, text: &str) -> (usize, oxoffice_render_test::pdf::Drawn) {
+        let page = *self
+            .pages_drawing(text)
+            .first()
+            .unwrap_or_else(|| panic!("{text} is drawn"));
+        let piece = self
+            .pdf
+            .drawn(page)
+            .into_iter()
+            .find(|piece| piece.text.contains(text));
+        (page, piece.unwrap())
+    }
+
+    /// The first piece drawn on `page` holding `text`.
+    fn piece_on(
+        &self,
+        page: usize,
+        text: &str,
+    ) -> Option<(usize, oxoffice_render_test::pdf::Drawn)> {
+        let piece = self
+            .pdf
+            .drawn(page)
+            .into_iter()
+            .find(|piece| piece.text.contains(text));
+        piece.map(|piece| (page, piece))
+    }
+
+    /// The piece holding `text` drawn on the line of `anchor`, the first
+    /// piece drawn holding that.
+    fn piece_beside(&self, anchor: &str, text: &str) -> (usize, oxoffice_render_test::pdf::Drawn) {
+        let (page, anchor) = self.piece(anchor);
+        let piece = self
+            .pdf
+            .drawn(page)
+            .into_iter()
+            .find(|piece| piece.text.contains(text) && (piece.y - anchor.y).abs() < 1.0)
+            .unwrap_or_else(|| panic!("{text} is drawn beside {}", anchor.text));
+        (page, piece)
+    }
+
+    /// How many pixels inside the box of `piece` on `page`, from a little
+    /// under its baseline to its font size above it, pass `colour`.
+    fn pixels_in(
+        &self,
+        (page, piece): (usize, oxoffice_render_test::pdf::Drawn),
+        colour: impl Fn([u8; 3]) -> bool,
+    ) -> usize {
+        let image = &self.images[page];
+        let height = f64::from(image.height);
+        let rows = (height - piece.y - piece.size).max(0.0) as u32
+            ..((height - piece.y + piece.size * 0.4) as u32).min(image.height);
+        let mut count = 0;
+        for y in rows {
+            for x in piece.x as u32..(piece.end as u32).min(image.width) {
+                let at = ((y * image.width + x) * 4) as usize;
+                if colour([image.rgba[at], image.rgba[at + 1], image.rgba[at + 2]]) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// How many pixels of page `page` pass `colour`.
+    fn page_pixels(&self, page: usize, colour: impl Fn([u8; 3]) -> bool) -> usize {
+        self.images[page]
+            .rgba
+            .chunks_exact(4)
+            .filter(|pixel| colour([pixel[0], pixel[1], pixel[2]]))
+            .count()
+    }
+}
+
+#[test]
+fn a_redline_of_two_thesis_versions_resolves_to_either_and_prints_in_legal_colours() {
+    let copies = crate::support::thesis_copies();
+    crate::support::run_workflow("redline", &copies, |path| {
+        let (mut doc, edited) = thesis_versions(path, false);
+        let original = story_texts(&doc);
+        compare_versions(&mut doc, &edited);
+        let mut doc = reopen(&mut doc);
+
+        assert!(
+            doc.revisions()
+                .iter()
+                .all(|r| r.author() == AUTHOR && r.timestamp() == Some(DATE)),
+            "{path}"
+        );
+        let changes = doc.story_revisions().unwrap();
+        let covers = |kind: RevisionKind, story: StoryKind, text: &str| {
+            changes.iter().any(|revision| {
+                revision.kind() == kind
+                    && revision.story().kind() == story
+                    && revision.text().contains(text)
+            })
+        };
+        assert!(
+            covers(RevisionKind::Insertion, StoryKind::Body, "Limitations"),
+            "{path}"
+        );
+        assert!(
+            covers(RevisionKind::Deletion, StoryKind::Header, "thesis"),
+            "{path}"
+        );
+        assert!(
+            covers(RevisionKind::Insertion, StoryKind::Header, "dissertation"),
+            "{path}"
+        );
+        assert!(
+            covers(
+                RevisionKind::Insertion,
+                StoryKind::Footnote,
+                "site managers"
+            ),
+            "{path}"
+        );
+        assert!(
+            kinds(&doc).contains(&RevisionKind::MoveFrom)
+                && kinds(&doc).contains(&RevisionKind::MoveTo),
+            "{path}: the paragraph is recorded as moved, {:?}",
+            kinds(&doc)
+        );
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&edited),
+            "{path}"
+        );
+        assert_eq!(story_texts(&rejected(&mut doc)), original, "{path}");
+
+        // Printed in the legal style: insertions blue, deletions red, the
+        // moved paragraph green, in the body and in the header alike, and
+        // the text around in its own colour.
+        let legal = View::of(
+            &doc,
+            RenderOptions::default()
+                .with_revision_view(RevisionView::Tracked)
+                .with_revision_style(RevisionStyle::Legal),
+        );
+        let blue = |[r, g, b]: [u8; 3]| b > 180 && r < 90 && g < 90;
+        let red = |[r, g, b]: [u8; 3]| r > 180 && g < 90 && b < 90;
+        let green = |[r, g, b]: [u8; 3]| g > 120 && r < 60 && b < 60;
+        let (page, inserted) = legal.piece("Limitations");
+        assert!(legal.pixels_in((page, inserted), blue) > 10, "{path}");
+        let next = legal
+            .piece_on(page, "Future")
+            .expect("the last section heading follows the new one");
+        assert_eq!(
+            legal.pixels_in(next.clone(), blue) + legal.pixels_in(next, red),
+            0,
+            "{path}: the heading after the insertion keeps its colour"
+        );
+        assert!(
+            legal.pixels_in(legal.piece("dissertation"), blue) > 10,
+            "{path}"
+        );
+        let deleted = legal.piece_beside("dissertation", "thesis");
+        assert!(legal.pixels_in(deleted, red) > 10, "{path}");
+        let kept = legal.piece_beside("dissertation", "Laurent");
+        assert_eq!(
+            legal.pixels_in(kept.clone(), blue) + legal.pixels_in(kept, red),
+            0,
+            "{path}"
+        );
+        // The moved paragraph sits below the discussion heading (drawn last,
+        // after its TOC entries): its text is green where it left and where
+        // it went, and green shows nowhere else, change bars included.
+        let heading = *legal.pages_drawing("Discussion").last().unwrap();
+        let paragraphs = edited.story_paragraphs().unwrap();
+        let discussion = paragraphs
+            .iter()
+            .rposition(|p| p.text == "Discussion")
+            .unwrap();
+        let moved = &paragraphs[discussion + 2].text;
+        let word = moved
+            .split(|c: char| !c.is_alphanumeric())
+            .max_by_key(|word| word.len())
+            .unwrap();
+        // Where the moved word is drawn on those pages, in reading order
+        // (page, then top to bottom), and whether it is green: green above
+        // the kept paragraph, where the text left, and below it, where it went.
+        let on_pages = |text: &str| {
+            [heading, heading + 1]
+                .into_iter()
+                .filter(|&page| page < legal.images.len())
+                .flat_map(|page| {
+                    legal
+                        .pdf
+                        .drawn(page)
+                        .into_iter()
+                        .filter(|piece| piece.text.contains(text))
+                        .map(move |piece| (page, piece))
+                })
+                .collect::<Vec<_>>()
+        };
+        let drawn = on_pages(word)
+            .into_iter()
+            .map(|(page, piece)| {
+                let is_green = legal.pixels_in((page, piece.clone()), green) > 5;
+                (page, -piece.y, is_green)
+            })
+            .collect::<Vec<_>>();
+        // The kept paragraph's own longest word, drawn in the text colour.
+        let kept_word = paragraphs[discussion + 1]
+            .text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|kept| !moved.contains(kept))
+            .max_by_key(|kept| kept.len())
+            .unwrap_or_else(|| panic!("{path}: the kept paragraph has a word of its own"));
+        let (page, piece) = on_pages(kept_word)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("{path}: {kept_word} is drawn"));
+        let kept_at = (page, -piece.y);
+        let green_before = drawn
+            .iter()
+            .any(|&(page, y, is_green)| is_green && (page, y) < kept_at);
+        let green_after = drawn
+            .iter()
+            .any(|&(page, y, is_green)| is_green && (page, y) > kept_at);
+        assert!(
+            green_before && green_after,
+            "{path}: {word} is green where it left and where it went, {drawn:?} around {kept_at:?}"
+        );
+        let pages = (0..legal.images.len())
+            .filter(|&page| legal.page_pixels(page, green) > 0)
+            .collect::<Vec<_>>();
+        assert!(
+            pages
+                .iter()
+                .all(|&page| page == heading || page == heading + 1),
+            "{path}: green on {pages:?}, the discussion starts on {heading}"
+        );
+    });
+}
+
+/// The same redline once both versions carry the contents oxoffice rebuilt,
+/// as a tool that rebuilds them on each pass compares its versions. The
+/// rebuild writes page references as simple fields, which the new heading's
+/// entry carries as one complex field in its tracked paragraph; the corpus
+/// copies still stop on other causes (`workflows-known.toml`).
+#[test]
+fn a_redline_of_two_thesis_versions_with_rebuilt_contents_resolves_to_either() {
+    let copies = crate::support::thesis_copies();
+    crate::support::run_workflow("redline-rebuilt-toc", &copies, |path| {
+        let (mut doc, edited) = thesis_versions(path, true);
+        let original = story_texts(&doc);
+        compare_versions(&mut doc, &edited);
+        let mut doc = reopen(&mut doc);
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&edited),
+            "{path}"
+        );
+        assert_eq!(story_texts(&rejected(&mut doc)), original, "{path}");
+    });
+}
+
+// Fails today: once a copy went through an oxoffice edit, its save declares
+// the root's namespaces again on a kept equation, and the comparison reads
+// the unchanged equation as changed. Issue: #408
+#[test]
+#[should_panic(
+    expected = "comparison acceptance does not reproduce the edited stories at body story item[1]"
+)]
+fn an_equation_an_edit_kept_is_no_change() {
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>"#,
+        r#"<w:p><m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>x</m:t></m:r></m:oMath></m:oMathPara></w:p>"#,
+    );
+    let mut edited = doc_with_body(body);
+    edited.add_paragraph("Added");
+    let edited = reopen(&mut edited);
+    let mut doc = doc_with_body(body);
+    doc.compare(&edited, AUTHOR, DATE)
+        .expect("an equation the edit kept is no change");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Added"]);
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
 }
 
 // ---- A whole paragraph's simple field ----

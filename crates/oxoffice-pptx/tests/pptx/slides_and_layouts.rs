@@ -8,7 +8,7 @@ use std::io::Cursor;
 use oxoffice_opc::OpcPackage;
 use oxoffice_pptx::{
     Comment, CommentAuthor, Emu, Error, Fill, ImportSlideOptions, Presentation, Section, ShapeKind,
-    ShapeOwner, SlideRef,
+    ShapeOwner, SlideRef, TransitionDirection, TransitionKind, ValidationIssue,
 };
 
 use crate::support::{corpus_deck, new_deck, reopen};
@@ -1386,10 +1386,19 @@ fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
         let end = xml[start..].find(to).expect("the element closes") + start + to.len();
         format!("{}{}", &xml[..start], &xml[end..])
     };
+    // The text counts go too: oxoffice does not recount them.
     let expected = cut(
-        &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
-        "<TitlesOfParts>",
-        "</TitlesOfParts>",
+        &cut(
+            &cut(
+                &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
+                "<TitlesOfParts>",
+                "</TitlesOfParts>",
+            ),
+            "<Words>",
+            "</Words>",
+        ),
+        "<Paragraphs>",
+        "</Paragraphs>",
     )
     .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
     .replace("<Notes>1</Notes>", "<Notes>0</Notes>");
@@ -1469,10 +1478,14 @@ fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
     assert!(app.contains("<Slides>3</Slides>"), "{app}");
     assert!(app.contains("<Notes>1</Notes>"), "{app}");
 
-    // Google writes no app.xml, LibreOffice one without counts or titles.
+    // Google writes no app.xml, LibreOffice one without slide counts or
+    // titles, whose zero text counts go as any stale text count does.
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
         let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml");
+        let before = saved_part_text(&prs, "/docProps/app.xml").map(|app| {
+            app.replace("<Words>0</Words>", "")
+                .replace("<Paragraphs>0</Paragraphs>", "")
+        });
         prs.remove_slide(1).unwrap();
         let prs = reopen(&prs);
         assert_eq!(saved_part_text(&prs, "/docProps/app.xml"), before, "{name}");
@@ -1567,7 +1580,7 @@ fn hiding_a_slide_updates_only_the_hidden_slide_count() {
 }
 
 #[test]
-fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged() {
+fn slide_edits_add_no_counts_to_decks_without_them_and_leave_an_unedited_deck_unchanged() {
     // The authored deck says it has no slide: an added one makes it five.
     let mut prs = corpus_deck("authored/deck.pptx");
     let layout = prs.slide_layout_index(0).unwrap();
@@ -1577,7 +1590,10 @@ fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged()
 
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
         let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml");
+        let before = saved_part_text(&prs, "/docProps/app.xml").map(|app| {
+            app.replace("<Words>0</Words>", "")
+                .replace("<Paragraphs>0</Paragraphs>", "")
+        });
         prs.duplicate_slide(1).unwrap();
         prs.slide_mut(0).unwrap().set_hidden(true);
         assert_eq!(
@@ -2093,5 +2109,293 @@ fn a_removed_property_removes_its_element() {
     assert!(
         !saved.contains("<Slides>") && !saved.contains("Company"),
         "{saved}"
+    );
+}
+
+#[test]
+fn the_notes_count_follows_notes_text_set_or_cleared() {
+    // The PowerPoint deck has notes text on one slide of four.
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let with_notes = (0..prs.len())
+        .find(|index| {
+            prs.slide(*index)
+                .unwrap()
+                .notes_text()
+                .is_some_and(|text| !text.trim().is_empty())
+        })
+        .unwrap();
+    prs.slide_mut(with_notes)
+        .unwrap()
+        .set_notes_text("")
+        .unwrap();
+    let mut prs = reopen(&prs);
+    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>0</Notes>"), "{app}");
+    // Notes text changes no slide text: the title lists and text counts stay.
+    assert!(
+        app.contains("<TitlesOfParts>") && app.contains("<Words>61</Words>"),
+        "{app}"
+    );
+    prs.slide_mut(with_notes)
+        .unwrap()
+        .set_notes_text("Say hello")
+        .unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>1</Notes>"), "{app}");
+}
+
+#[test]
+fn a_slide_text_edit_drops_the_stale_title_lists_and_text_counts_and_keeps_the_title() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let core = saved_part_text(&prs, "/docProps/core.xml").unwrap();
+    assert!(
+        core.contains("<dc:title>Quarterly Operations Review</dc:title>"),
+        "{core}"
+    );
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("A new title")
+        .unwrap();
+    let saved = reopen(&prs);
+    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
+    for gone in [
+        "<HeadingPairs>",
+        "<TitlesOfParts>",
+        "<Words>",
+        "<Paragraphs>",
+    ] {
+        assert!(!app.contains(gone), "{gone}: {app}");
+    }
+    assert!(app.contains("<Slides>4</Slides>"), "{app}");
+    // The core title is the user's: a slide edit leaves it alone.
+    assert_eq!(saved_part_text(&saved, "/docProps/core.xml").unwrap(), core);
+}
+
+#[test]
+fn a_text_count_set_after_a_pending_slide_edit_is_kept() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("A new title")
+        .unwrap();
+    let mut app = prs.application_properties().unwrap().clone();
+    app.words = Some(120);
+    prs.set_application_properties(app).unwrap();
+    assert_eq!(prs.application_properties().unwrap().words, Some(120));
+    let saved = reopen(&prs);
+    assert_eq!(saved.application_properties().unwrap().words, Some(120));
+    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
+    // The stale counts of the copy do not come back.
+    assert!(
+        !app.contains("<TitlesOfParts>") && !app.contains("Paragraphs>"),
+        "{app}"
+    );
+}
+
+#[test]
+fn a_property_set_after_pending_notes_edits_keeps_the_refreshed_notes_count() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let with_notes = (0..prs.len())
+        .find(|index| {
+            prs.slide(*index)
+                .unwrap()
+                .notes_text()
+                .is_some_and(|text| !text.trim().is_empty())
+        })
+        .unwrap();
+    prs.slide_mut(with_notes)
+        .unwrap()
+        .set_notes_text("")
+        .unwrap();
+    let mut app = prs.application_properties().unwrap().clone();
+    app.company = Some("Acme".to_owned());
+    prs.set_application_properties(app).unwrap();
+    let saved = reopen(&prs);
+    let app = saved.application_properties().unwrap();
+    assert_eq!(
+        (app.company.as_deref(), app.notes, app.words),
+        (Some("Acme"), Some(0), Some(61))
+    );
+}
+
+#[test]
+fn notes_created_on_a_slide_without_them_are_counted() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let without = (0..prs.len())
+        .find(|index| prs.slide(*index).unwrap().notes_text().is_none())
+        .unwrap();
+    prs.set_notes_text(without, "New notes").unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>2</Notes>"), "{app}");
+}
+
+#[test]
+fn a_move_alone_drops_the_title_lists_and_a_slide_size_change_keeps_them() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.move_slide(0, 2).unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    for gone in [
+        "<HeadingPairs>",
+        "<TitlesOfParts>",
+        "<Words>",
+        "<Paragraphs>",
+    ] {
+        assert!(!app.contains(gone), "{gone}: {app}");
+    }
+
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    prs.set_slide_size(Emu(9_144_000), Emu(6_858_000)).unwrap();
+    assert_eq!(
+        saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap(),
+        before
+    );
+}
+
+// ---- Transitions and shape ids, as a tool checks a deck ----
+
+/// The effect and direction of each slide's transition, `None` without one.
+fn transition_kinds(
+    prs: &Presentation,
+) -> Vec<Option<(Option<TransitionKind>, Option<TransitionDirection>)>> {
+    prs.slides()
+        .map(|slide| slide.transition().map(|t| (t.kind, t.direction)))
+        .collect()
+}
+
+#[test]
+fn the_transitions_of_the_pitch_deck_are_read_from_every_producer() {
+    let authored = transition_kinds(&corpus_deck("authored/pitch.pptx"));
+    use TransitionDirection as D;
+    use TransitionKind as K;
+    assert_eq!(
+        authored,
+        [
+            Some((Some(K::Fade), None)),
+            Some((Some(K::Push), Some(D::Up))),
+            Some((Some(K::Push), Some(D::Up))),
+            Some((Some(K::Wipe), Some(D::Right))),
+            Some((Some(K::Wipe), Some(D::Right))),
+            Some((Some(K::Split), Some(D::VerticalOut))),
+            Some((Some(K::Cover), Some(D::Left))),
+            Some((Some(K::Other("randomBar".to_owned())), None)),
+            Some((Some(K::Zoom), Some(D::In))),
+            Some((Some(K::Fade), None)),
+        ]
+    );
+    // Every producer's copy reads a transition, with its effect, on each
+    // slide whose file has one. PowerPoint keeps the authored effects and
+    // directions but leaves out a kind's default: a cover from the left reads
+    // as `None` (split's default is filled in, randomBar's direction is not
+    // modelled). LibreOffice keeps the effects but turns that cover to the
+    // right and drops the zoom; Google writes its own effects.
+    for producer in ["powerpoint", "libreoffice", "google"] {
+        let path = format!("{producer}/pitch.pptx");
+        let read = transition_kinds(&corpus_deck(&path));
+        let package = OpcPackage::from_reader(Cursor::new(
+            std::fs::read(crate::support::corpus_root().join("files").join(&path)).unwrap(),
+        ))
+        .unwrap();
+        let in_file = (1..=read.len())
+            .map(|n| {
+                let part = package
+                    .get_part(&format!("/ppt/slides/slide{n}.xml"))
+                    .unwrap();
+                String::from_utf8_lossy(part).contains("<p:transition")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            read.iter()
+                .map(|t| matches!(t, Some((Some(_), _))))
+                .collect::<Vec<_>>(),
+            in_file,
+            "{producer}"
+        );
+        if producer == "powerpoint" {
+            let defaulted = authored
+                .iter()
+                .map(|t| {
+                    t.clone().map(|(kind, direction)| match kind {
+                        Some(TransitionKind::Cover) => (kind, None),
+                        _ => (kind, direction),
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(read, defaulted, "{producer}");
+        }
+    }
+}
+
+// LibreOffice writes a transition element on every slide of a deck that has
+// none, with only a duration: it reads as a transition without an effect,
+// as the file says, and the other producers' copies have none.
+#[test]
+fn a_deck_without_transitions_reads_none_except_libreoffice_s_empty_ones() {
+    for family in ["training", "deck"] {
+        for producer in ["authored", "powerpoint", "google"] {
+            let read = transition_kinds(&corpus_deck(&format!("{producer}/{family}.pptx")));
+            assert!(
+                read.iter().all(Option::is_none),
+                "{producer}/{family}: {read:?}"
+            );
+        }
+        let prs = corpus_deck(&format!("libreoffice/{family}.pptx"));
+        for slide in prs.slides() {
+            let transition = slide.transition().expect("LibreOffice writes one");
+            assert_eq!(transition.kind, None, "libreoffice/{family}");
+            assert_eq!(transition.duration_ms, Some(2000), "libreoffice/{family}");
+        }
+    }
+}
+
+#[test]
+fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
+    let mut prs = new_deck();
+    let blank = (0..prs.layout_count())
+        .find(|&index| prs.layout_name(index) == Some("Blank"))
+        .unwrap();
+    prs.add_slide(blank).unwrap();
+    for left in [1, 4] {
+        prs.slide_mut(0)
+            .unwrap()
+            .add_textbox(
+                Emu(left * 914_400),
+                Emu(914_400),
+                Emu(914_400),
+                Emu(914_400),
+            )
+            .unwrap();
+    }
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = "/ppt/slides/slide1.xml";
+    let xml = String::from_utf8(package.get_part(slide).unwrap().to_vec()).unwrap();
+    let ids = xml
+        .match_indices("<p:cNvPr id=\"")
+        .map(|(at, found)| {
+            let rest = &xml[at + found.len()..];
+            rest[..rest.find('"').unwrap()].to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 3, "the tree and two text boxes: {ids:?}");
+    // The second text box takes the first one's id.
+    let duplicated = xml.replacen(
+        &format!("<p:cNvPr id=\"{}\"", ids[2]),
+        &format!("<p:cNvPr id=\"{}\"", ids[1]),
+        1,
+    );
+    package.set_part(slide, duplicated.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let prs = Presentation::from_bytes(&bytes.into_inner()).expect("a duplicate id opens");
+    assert_eq!(
+        prs.validate(),
+        [ValidationIssue::DuplicateShapeId {
+            slide: 0,
+            id: ids[1].parse().unwrap()
+        }]
     );
 }

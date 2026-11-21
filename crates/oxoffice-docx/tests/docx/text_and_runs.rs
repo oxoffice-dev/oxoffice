@@ -1896,3 +1896,58 @@ fn isolate_span_at_the_edges_of_a_run_inside_an_insertion_or_a_control() {
     assert_eq!(doc.story_revisions().unwrap().len(), 1, "one insertion");
     assert_eq!(doc.content_controls().len(), 1, "one control");
 }
+
+#[test]
+fn run_measures_written_with_a_unit_open() {
+    // Character spacing and fitText are twips; size, kerning and position
+    // half-points. Each takes a universal measure in Transitional.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:spacing w:val="1pt"/><w:kern w:val="8pt"/><w:position w:val="-1pt"/>"#,
+        r#"<w:sz w:val="12pt"/><w:fitText w:val="1in" w:id="5"/></w:rPr><w:t>Measured</w:t></w:r></w:p>"#,
+    ));
+    let paragraph = doc.paragraph(0).unwrap();
+    let run = paragraph.run(0).unwrap();
+    assert_eq!(run.size(), Some(12.0));
+    assert_eq!(run.character_spacing().map(|twips| twips.0), Some(20));
+    assert_eq!(run.position(), Some(-2));
+    assert_eq!(run.kern(), Some(8.0));
+    assert_eq!(run.fit_text().map(|fit| fit.val.0), Some(1440));
+
+    // A text scale written as a percent opens too.
+    let doc = crate::support::doc_with_body(
+        r#"<w:p><w:r><w:rPr><w:w w:val="150%"/></w:rPr><w:t>Wide</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Wide");
+}
+
+#[test]
+fn ruby_sizes_written_with_a_unit_read_as_half_points() {
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:ruby><w:rubyPr><w:hps w:val="5pt"/><w:hpsRaise w:val="9pt"/><w:hpsBaseText w:val="10.5pt"/>"#,
+        r#"<w:lid w:val="ja-JP"/></w:rubyPr><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt>"#,
+        r#"<w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:p>"#,
+    ));
+    let paragraph = doc.paragraph(0).unwrap();
+    let properties = paragraph.ruby(0).unwrap().properties.as_ref().unwrap();
+    assert_eq!(properties.hps.map(|hps| hps.0), Some(10));
+    assert_eq!(properties.hps_raise.map(|hps| hps.0), Some(18));
+    assert_eq!(properties.hps_base_text.map(|hps| hps.0), Some(21));
+}
+
+#[test]
+fn run_measures_with_a_unit_pass_the_checked_paragraph_route() {
+    let mut doc = doc_with(&["Old"]);
+    let location = doc.paragraph_story_location(0).unwrap().unwrap();
+    let paragraph = |size: &str| {
+        format!(
+            r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:rPr><w:sz w:val="{size}"/></w:rPr><w:t>New</w:t></w:r></w:p>"#
+        )
+    };
+    assert!(
+        doc.replace_paragraph_xml(&location, &paragraph("-1pt"))
+            .is_err()
+    );
+    doc.replace_paragraph_xml(&location, &paragraph("12pt"))
+        .unwrap();
+    assert_eq!(doc.paragraph(0).unwrap().run(0).unwrap().size(), Some(12.0));
+}

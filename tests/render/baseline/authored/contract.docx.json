@@ -1,12 +1,12 @@
 {
   "file": "authored/contract.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
   "resources": "d96e5b078966cd3159e526d133a2dcd90ff5e94b34a974fc2b7c1d33e35c700a",
   "outline_and_tags": "37398142914345dc78328fa145b7ea878e4f57ee9e59aecb9a768acdb5355fa0",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
-    {"page": 1, "pixels": "4032def61fbcac745dcf70513440158af80236a96bf0cc3f6d43c9c1140cd989", "content": "cfc67bf6db7b71633c85f043dc8ce326c1b0ef4f69a2b1b52d712cf25be39ed6", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
-    {"page": 2, "pixels": "4bb7da9db465f95b894e4d8b117ce750e95c11eb85977d58f76938d14e032d33", "content": "bc99dbeba15a0f0e3c7ce45a359de6bb02a65619c652cd5693b3ef0a9a2e57d4", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
-    {"page": 3, "pixels": "f5e510b03285dae39c33ddc3e80c3fc2161f0ce684dd3cf4c2e351801864e2da", "content": "def639ac294c2a1b10155bf3a0bf6f40e152863d9505eb3dfa96723167ff83f6", "annotations": "7f2a04b180e8e3076b485bf86485dd759c6b0a048f61340785dc5713261193ac", "dictionary": "1ef65fa789b8f45a1caeab080a9c6d44082d18c0f8dd0263eb7d061ae4e89a9d"}
+    {"page": 1, "pixels": "3a04f27f9b660ad72a4b5af42b6fb8c00d5d14e74b4334d132b6fc802122ecdd", "content": "a26d9b9241b2323a5d218502de45848eec04e8e444075ff9695ab5a86018e730", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
+    {"page": 2, "pixels": "5f7b7713e024481b8cc7d8383c9eeb2208dfde99f9ad15ca311cb8bb87c2bbb0", "content": "c97ddb92d71e35115e5145bc8c86eaea43e55acf9ff91f1d966f6226131c4bec", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
+    {"page": 3, "pixels": "115d476b5f102fd197ebbb8d8006fde04b8f1ece7862ff6590d2c010ced983c9", "content": "6ebbab0feeac3e5c89c592f2f726bb819dfe0bfc9f660378df1a99cc709a4b17", "annotations": "7f2a04b180e8e3076b485bf86485dd759c6b0a048f61340785dc5713261193ac", "dictionary": "1ef65fa789b8f45a1caeab080a9c6d44082d18c0f8dd0263eb7d061ae4e89a9d"}
   ]
 }

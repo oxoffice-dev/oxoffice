@@ -164,15 +164,26 @@ fn compare_body_impl(
                                 _ => false,
                             }
                         };
-                // A protected owner both versions hold as the same tree,
-                // written another way (a character as an entity, attributes
-                // or namespace declarations in another order, as a save
-                // writes them), is unchanged: the redline keeps the
-                // original's bytes.
+                // A protected owner both versions hold as the same owner,
+                // written another way (see `same_held_owner`: the same tree,
+                // or, with the same residual, what the model writes back),
+                // is unchanged: the redline keeps the original's bytes.
                 let rewritten = protected
-                    && !equal
+                    && !(equal && same_source)
                     && !metadata.leaf_capture
-                    && same_owner_tree(original_source, left, edited_source, right)?;
+                    && same_held_owner(
+                        equal,
+                        same_source,
+                        || same_owner_tree(original_source, left, edited_source, right),
+                        || {
+                            same_written_owner(
+                                original_content,
+                                edited_content,
+                                original_source.map_or(&[][..], |(_, _, bindings)| bindings),
+                                edited_source.2,
+                            )
+                        },
+                    )?;
                 let equal = equal || rewritten;
                 let same_source = same_source || rewritten;
                 let needs_field_dispatch = equal

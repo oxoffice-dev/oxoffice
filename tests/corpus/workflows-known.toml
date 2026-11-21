@@ -1,0 +1,62 @@
+# Corpus copies a workflow test fails on today, read by the workflow tests of
+# the docx test binary (specs/2026-11-21-consumer-workflows.md).
+# Written by hand. Like every known failure of the suite, an entry is strict:
+# once the copy passes the workflow, the test fails until the entry goes.
+# `message` is text the failure must hold, so that a failure with another
+# cause still fails the test.
+
+# With the contents oxoffice rebuilt on both versions, the comparison now
+# tracks the new heading's entry (#66); the copies then stop where the plain
+# redline stops (equations, #408; LibreOffice's TOC content control, #413),
+# and Google's copy on a paragraph boundary its heading bookmarks change.
+[[known]]
+file = "word/thesis.docx"
+workflow = "redline-rebuilt-toc"
+issue = 408
+message = "comparison acceptance does not reproduce the edited stories at body story item[51]"
+
+[[known]]
+file = "libreoffice/thesis.docx"
+workflow = "redline-rebuilt-toc"
+issue = 413
+message = "raw publication boundary is outside the emitted owner"
+
+[[known]]
+file = "authored/thesis.docx"
+workflow = "redline-rebuilt-toc"
+issue = 408
+message = "comparison acceptance does not reproduce the edited stories at body story item[51]"
+
+[[known]]
+file = "google/thesis.docx"
+workflow = "redline-rebuilt-toc"
+issue = 340
+message = "comparison cannot revise paragraph boundary structures at body/paragraph[157]"
+
+# The thesis copies hold an equation, which the comparison reads as changed
+# once the edited copy went through an oxoffice edit.
+[[known]]
+file = "word/thesis.docx"
+workflow = "redline"
+issue = 408
+message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
+
+# LibreOffice's TOC content control is refused before the equations.
+[[known]]
+file = "libreoffice/thesis.docx"
+workflow = "redline"
+issue = 413
+message = "raw publication boundary is outside the emitted owner"
+
+[[known]]
+file = "authored/thesis.docx"
+workflow = "redline"
+issue = 408
+message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
+
+# Google's copy refuses the footnote the new version adds before its equation.
+[[known]]
+file = "google/thesis.docx"
+workflow = "redline"
+issue = 419
+message = "footnotes retained root/special/opaque shell changed"

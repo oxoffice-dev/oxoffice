@@ -1196,7 +1196,9 @@ class Document:
         fillable_forms: bool = False,
     ) -> bytes:
         """Render PDF with bundled fallback by default and ordered caller fonts first.
-        Set system_fonts=True to opt into system fallback.
+        Set system_fonts=True to opt into system fallback: Chinese, Japanese and Korean text needs it, or a font
+        file, since the bundled faces hold only a few of its characters (to_pdf_with_diagnostics names text drawn as
+        empty boxes).
 
         Directory faces load in sequence order and explicit fonts win last.
         Singular font_dir and ordered font_dirs are mutually exclusive.

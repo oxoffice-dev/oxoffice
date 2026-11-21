@@ -1,0 +1,17 @@
+slide 1 | Google Shape;89;p13 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 1 | Google Shape;90;p13 | 2 lines 76.8 pt | at 95 %: 2 lines 76.8 pt
+slide 2 | Google Shape;97;p14 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 2 | Google Shape;98;p14 | 5 lines 206.4 pt | at 95 %: 6 lines 244.8 pt
+slide 3 | Google Shape;104;p15 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 3 | Google Shape;105;p15 | 7 lines 283.2 pt | at 95 %: 7 lines 283.2 pt
+slide 4 | Google Shape;111;p16 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 4 | Google Shape;113;p16 | 3 lines 57.6 pt | at 95 %: 4 lines 76.8 pt
+slide 5 | Google Shape;119;p17 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 6 | Google Shape;125;p18 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 7 | Google Shape;132;p19 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 8 | Google Shape;138;p20 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 8 | Google Shape;139;p20 | 6 lines 245.6 pt | at 95 %: 6 lines 245.6 pt
+slide 9 | Google Shape;144;p21 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 9 | Google Shape;145;p21 | 6 lines 245.6 pt | at 95 %: 6 lines 245.6 pt
+slide 10 | Google Shape;151;p22 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 10 | Google Shape;152;p22 | 5 lines 200.8 pt | at 95 %: 5 lines 200.8 pt

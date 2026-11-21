@@ -630,16 +630,22 @@ impl PyParagraph {
             let (run_index, run_path) = location
                 .edit(&mut candidate, append)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?;
-            let operation = if url.is_some() {
-                "Paragraph.add_hyperlink"
+            let route = document
+                .paragraph_route(&location, None)
+                .map_err(|error| crate::docx_to_pyerr(py, error))?;
+            // A hyperlink also adds a relationship to the part, which its
+            // own publication accounts for.
+            let (operation, publication) = if url.is_some() {
+                (
+                    "Paragraph.add_hyperlink",
+                    crate::document::WordPublication::ParagraphAppend(route),
+                )
             } else {
-                "Paragraph.add_run"
+                (
+                    "Paragraph.add_run",
+                    crate::document::WordPublication::ParagraphEdit(route),
+                )
             };
-            let publication = crate::document::WordPublication::ParagraphAppend(
-                document
-                    .paragraph_route(&location, None)
-                    .map_err(|error| crate::docx_to_pyerr(py, error))?,
-            );
             let prepared =
                 document.prepare_word_revision(py, &candidate, operation, publication)?;
             let mut segments = self.path.segs.clone();
@@ -932,19 +938,12 @@ impl PyParagraph {
         location
             .edit(&mut candidate, |p| p.add_equation(equation))
             .map_err(|e| crate::docx_to_pyerr(py, e))?;
-        let publication = crate::document::WordPublication::ParagraphAppend(
+        let publication = crate::document::WordPublication::ParagraphEdit(
             document
                 .paragraph_route(&location, None)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?,
         );
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Paragraph.add_equation",
-            publication,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
+        document.publish_block_edit(py, candidate, "Paragraph.add_equation", publication)?;
         Ok(result)
     }
 
@@ -1020,29 +1019,31 @@ impl PyParagraph {
 
     // Replace the content with one run holding `text`, keeping the paragraph
     // properties, comments and bookmarks. `None` is empty text. A success
-    // advances the revision, so every earlier handle, this one included, is
-    // stale.
+    // retires the paragraph's runs and what the edit renumbers; this handle
+    // and the handles of other paragraphs stay. Text the paragraph already
+    // shows as its only run changes nothing and keeps every handle.
     #[setter]
     fn set_text(&self, py: Python<'_>, text: Option<&str>) -> PyResult<()> {
         let location = self.validate(py)?;
         let text = text.unwrap_or_default();
         let mut document = self.document.borrow_mut(py);
-        let native = document
-            .paragraph_route(&location, None)
-            .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        if document.try_local_cell_paragraph_text(py, &native, text)? {
+        // A paragraph without a checked route (one in a nested block content
+        // control) retires every handle.
+        let native = document.paragraph_route(&location, None).ok();
+        if let Some(native) = &native
+            && document.try_local_cell_paragraph_text(py, native, text)?
+        {
             return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| paragraph.set_text(text))
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::ParagraphText(native);
-        let prepared =
-            document.prepare_word_revision(py, &candidate, "Paragraph.text", publication)?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        Ok(())
+        let publication = native.map_or(
+            crate::document::WordPublication::Conservative,
+            crate::document::WordPublication::ParagraphEdit,
+        );
+        document.publish_block_edit(py, candidate, "Paragraph.text", publication)
     }
 
     #[getter]

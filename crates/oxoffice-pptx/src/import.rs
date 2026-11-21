@@ -116,7 +116,7 @@ impl Presentation {
 
     /// Imports slides of another presentation.
     ///
-    /// `docProps/app.xml` counts the new slides and drops its title lists,
+    /// `docProps/app.xml` counts the new slides and drops its title lists and text counts,
     /// which PowerPoint writes again on its next save.
     ///
     /// Without `options.keep_sections`, each copy joins the section of this

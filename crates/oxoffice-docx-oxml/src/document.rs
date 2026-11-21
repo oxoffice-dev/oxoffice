@@ -13,7 +13,7 @@ use crate::numbering::{
     word_prefixes_at,
 };
 use crate::properties::{
-    get_word_val_attr, is_word_attribute, is_word_element, parse_integer_measurement,
+    get_word_val_attr, is_word_attribute, is_word_element, parse_twips_measure,
 };
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::revision::{CT_Revision, RevisionKind};

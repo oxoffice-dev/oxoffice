@@ -1887,6 +1887,9 @@ impl Engine {
                 std::mem::take(&mut page.elements),
                 std::mem::take(&mut page_policies[page_index]),
             )?;
+            // Aligned text moves once, by the change of every field on its
+            // line: a STYLEREF and a PAGE side by side move it together.
+            let mut changes = Vec::new();
             let mut occurrence_state = substitute_fields(
                 &mut painted,
                 page_num,
@@ -1898,9 +1901,9 @@ impl Engine {
                 input.sequence_snapshot.as_deref(),
                 sequence_boundaries[page_index],
                 &mut self.font_manager,
+                &mut changes,
             )?;
             if let Some(values) = styleref_values.get(&page.page_number) {
-                let mut changes = Vec::new();
                 substitute_styleref(
                     &mut painted,
                     values,
@@ -1909,9 +1912,9 @@ impl Engine {
                     &mut changes,
                     &mut occurrence_state,
                 )?;
-                if !changes.is_empty() {
-                    realign_tab_aligned_text(painted.coordinate_elements_mut(), &changes);
-                }
+            }
+            if !changes.is_empty() {
+                realign_tab_aligned_text(painted.coordinate_elements_mut(), &changes);
             }
             for diagnostic in occurrence_state.diagnostics {
                 push_unique_diagnostic(&mut diagnostics, diagnostic.message);
@@ -2139,6 +2142,13 @@ impl Engine {
         let mut result = LayoutResult::new(pages, fonts, metadata, outlines);
         diagnostics.extend(self.font_manager.current_font_diagnostics().iter().cloned());
         diagnostics.extend(self.font_manager.word_substitution_diagnostics());
+        diagnostics.extend(oxoffice_layout::missing_glyph_diagnostics(
+            &result.pages,
+            &result.fonts,
+            "render with system fonts (CLI --system-fonts, Python system_fonts=True, Rust \
+             RenderOptions::with_system_fonts) on a machine with a font for it, or pass a font \
+             file (CLI --font-dir, Python fonts= or font_dir=, Rust to_pdf_with_fonts)",
+        ));
         result.diagnostics = diagnostics;
         self.last_picture_draw_owners = media.picture_draw_owners_since(0);
         result.structure = Some(structure);

@@ -3,6 +3,7 @@
 pub mod bundled_fonts;
 pub mod error;
 pub mod font;
+pub mod glyph_coverage;
 pub mod line;
 pub mod output;
 pub mod paint;
@@ -14,6 +15,7 @@ pub use font::{
     FontContribution, FontContributionScope, FontFile, FontManager, FontMetrics, FontTraceEvent,
     GlyphCluster, MultilingualTextSegment, ShapedText, TextDirection, TextScript,
 };
+pub use glyph_coverage::missing_glyph_diagnostics;
 pub use line::{
     Align, ForcedBreakKind, FormMark, InlineItem, LayoutLine, LineBreakParams, LineItem,
     LineSpacing, NoteRef, NoteStream, TabAlign, TabLeader, TabStop, TextSegment, Underline,

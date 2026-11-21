@@ -2630,12 +2630,12 @@ impl PyCell {
             .last()
             .cloned()
             .ok_or_else(|| PyValueError::new_err("nested table was not published"))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Cell.add_table",
-            crate::document::WordPublication::Conservative,
-        )?;
+        let publication = document
+            .table_route(table, &current_related)
+            .map(|location| crate::document::WordPublication::CellInsert(location, row, cell))
+            .unwrap_or(crate::document::WordPublication::Conservative);
+        let prepared =
+            document.prepare_word_revision(py, &candidate, "Cell.add_table", publication)?;
         let path = document
             .revisions
             .capture_prepared(
@@ -2750,11 +2750,15 @@ impl PyCell {
                     Ok(paragraph)
                 })
                 .map_err(|error| docx_to_pyerr(py, error))?;
+            let publication = document
+                .table_route(table, &current_related)
+                .map(|location| crate::document::WordPublication::CellInsert(location, row, cell))
+                .unwrap_or(crate::document::WordPublication::Conservative);
             let prepared = document.prepare_word_revision(
                 py,
                 &candidate,
                 "Cell.add_paragraph",
-                crate::document::WordPublication::Conservative,
+                publication,
             )?;
             let path = document
                 .revisions
