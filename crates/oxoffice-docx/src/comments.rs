@@ -756,7 +756,7 @@ impl CommentRef<'_> {
         self.inner
             .paragraphs
             .iter()
-            .map(CT_P::text)
+            .map(CT_P::accepted_text)
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1204,7 +1204,13 @@ impl Document {
         HashMap<String, usize>,
     )> {
         let paragraphs = self.story_range_located_paragraphs()?;
-        let name_counts = bookmark_start_name_counts(&paragraphs);
+        let mut name_counts = bookmark_start_name_counts(&paragraphs);
+        // A bookmark start between blocks names a bookmark too.
+        for name in oxoffice_docx_oxml::text::BlockBookmarks::of_blocks(&self.document.body.content)
+            .start_names()
+        {
+            *name_counts.entry(name.to_owned()).or_default() += 1;
+        }
         let paired = located_story_markers(&paragraphs).and_then(|(located, identity_counts)| {
             pair_located_story_markers(&located, &identity_counts)
         });
@@ -1360,8 +1366,11 @@ impl Document {
                     .map(|paragraph| (paragraph, direct_index)),
             );
         }
+        // A marker between blocks belongs to the paragraph it wraps.
+        let block_markers =
+            oxoffice_docx_oxml::text::BlockBookmarks::of_blocks(&self.document.body.content);
         for (body_index, (paragraph, direct_index)) in paragraphs.into_iter().enumerate() {
-            for marker in paragraph.current_bookmark_projection() {
+            for marker in block_markers.paragraph_projection(paragraph) {
                 let run_index = marker.projected_run_index();
                 markers.push(Marker {
                     position: RunPosition {

@@ -49,23 +49,17 @@ impl DocumentIdentifiers {
                 .collect(),
             authored_content_type_defaults: HashSet::new(),
             preserved_relationship_ids: HashMap::new(),
-            preserved_bookmark_ids: HashSet::new(),
             preserved_comment_ids: HashSet::new(),
             preserved_drawing_ids: HashSet::new(),
             preserved_abstract_numbering_ids: HashSet::new(),
             preserved_numbering_instance_ids: HashSet::new(),
             preserved_part_names: HashSet::new(),
-            authored_bookmark_ids: HashSet::new(),
             authored_comment_ids: HashSet::new(),
             authored_toc_bookmark_ids: HashSet::new(),
             authored_bookmark_names: HashSet::new(),
             authored_story_parts: HashSet::new(),
             authored_story_relationship_ids: HashMap::new(),
             authored_nested_story_relationship_ids: HashMap::new(),
-            authored_nested_story_drawing_ids: HashMap::new(),
-            authored_bundle_relationship_ids: HashMap::new(),
-            provisional_relationship_ids: HashMap::new(),
-            pending_relationship_ids: HashMap::new(),
             scanned_parts: Arc::default(),
         };
         identifiers.part_names.extend(
@@ -206,7 +200,6 @@ impl DocumentIdentifiers {
         }
         identifiers.scanned_parts = Arc::new(scanned_parts);
         identifiers.preserved_relationship_ids = identifiers.relationship_ids.clone();
-        identifiers.preserved_bookmark_ids = identifiers.bookmark_ids.clone();
         identifiers.preserved_comment_ids = identifiers.comment_ids.clone();
         identifiers.preserved_drawing_ids = identifiers.drawing_ids.clone();
         identifiers.preserved_abstract_numbering_ids = identifiers.abstract_numbering_ids.clone();
@@ -456,9 +449,7 @@ impl DocumentIdentifiers {
     }
 
     pub(crate) fn reserve_bookmark_id(&mut self) -> Result<i32> {
-        let id = reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")?;
-        self.authored_bookmark_ids.insert(id);
-        Ok(id)
+        reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")
     }
 
     pub(crate) fn reserve_preferred_bookmark_id(&mut self, preferred: i32) -> Result<i32> {
@@ -490,6 +481,41 @@ impl DocumentIdentifiers {
 
     pub(crate) fn reserve_drawing_id(&mut self) -> Result<u32> {
         reserve_u32(&mut self.drawing_ids, 1, "drawing")
+    }
+
+    /// Edits giving every `wp:docPr` of `xml` a drawing id reserved here, by
+    /// the rule of [`Self::reserve_drawing_id`], for content an edit puts in
+    /// a part: the save keeps the ids it finds. `scope` binds the prefixes
+    /// `xml` uses without declaring them.
+    pub(crate) fn fresh_drawing_id_edits(
+        &mut self,
+        xml: &[u8],
+        scope: &BTreeMap<String, String>,
+    ) -> Result<Vec<(usize, usize, Vec<u8>)>> {
+        if !xml.windows(5).any(|window| window == b"docPr") {
+            return Ok(Vec::new());
+        }
+        let mut wrapped = b"<oxoffice-scope".to_vec();
+        for (prefix, namespace) in scope {
+            let name = if prefix.is_empty() {
+                "xmlns".to_owned()
+            } else {
+                format!("xmlns:{prefix}")
+            };
+            let namespace = namespace
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('"', "&quot;");
+            wrapped.extend_from_slice(format!(" {name}=\"{namespace}\"").as_bytes());
+        }
+        wrapped.push(b'>');
+        let offset = wrapped.len();
+        wrapped.extend_from_slice(xml);
+        wrapped.extend_from_slice(b"</oxoffice-scope>");
+        Ok(authored_doc_pr_edits(&wrapped, &mut self.drawing_ids)?
+            .into_iter()
+            .map(|(start, end, replacement)| (start - offset, end - offset, replacement))
+            .collect())
     }
 
     pub(super) fn reserve_abstract_numbering_id(&mut self) -> Result<u32> {
@@ -524,82 +550,17 @@ impl DocumentIdentifiers {
         }
     }
 
-    pub(super) fn reserve_bundle_relationship_id_checked(
-        &mut self,
-        owner: &str,
-        rel_type: &str,
-    ) -> Result<String> {
-        let stem = match rel_type {
-            rel_types::STYLES => "rdocxDeferredStyles",
-            rel_types::NUMBERING => "rdocxDeferredNumbering",
-            rel_types::SETTINGS => "rdocxDeferredSettings",
-            rel_types::FOOTNOTES => "rdocxDeferredFootnotes",
-            rel_types::ENDNOTES => "rdocxDeferredEndnotes",
-            rel_types::GLOSSARY_DOCUMENT => "rdocxDeferredGlossary",
-            rel_types::COMMENTS => "rdocxDeferredComments",
-            crate::comments::COMMENTS_EXTENDED_REL_TYPE => "rdocxDeferredCommentsExtended",
-            _ => {
-                return Err(Error::Other(format!(
-                    "relationship type {rel_type} is not a document bundle"
-                )));
-            }
-        };
-        self.ensure_relationship_capacity(owner, 1)?;
-        let owner = relationship_owner_identity(owner);
-        let occupied = self.relationship_ids.entry(owner.clone()).or_default();
-        let mut ordinal = 0u32;
-        loop {
-            let id = if ordinal == 0 {
-                stem.to_owned()
-            } else {
-                format!("{stem}{ordinal}")
-            };
-            if occupied.insert(id.clone()) {
-                self.authored_bundle_relationship_ids
-                    .entry(owner.clone())
-                    .or_default()
-                    .insert(id.clone());
-                self.provisional_relationship_ids
-                    .entry(owner.clone())
-                    .or_default()
-                    .insert(id.clone());
-                return Ok(id);
-            }
-            ordinal = ordinal.checked_add(1).ok_or_else(|| {
-                Error::Other("bundle relationship id range is exhausted".to_owned())
-            })?;
-        }
-    }
-
     pub(crate) fn reserve_requested_relationship_id_checked(
         &mut self,
         owner: &str,
         requested: &str,
     ) -> Result<String> {
         let owner = relationship_owner_identity(owner);
-        let numeric_request = requested
-            .strip_prefix("rId")
-            .and_then(|value| value.parse::<u32>().ok());
         let is_available = !self
             .relationship_ids
             .get(&owner)
             .is_some_and(|occupied| occupied.contains(requested));
         if is_available {
-            if numeric_request.is_some() {
-                let provisional_count = self
-                    .provisional_relationship_ids
-                    .get(&owner)
-                    .map_or(0, HashSet::len);
-                let maximum = self
-                    .relationship_ids
-                    .get(&owner)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|id| id.strip_prefix("rId")?.parse::<u32>().ok())
-                    .chain(numeric_request)
-                    .max();
-                ensure_numeric_relationship_capacity(maximum, provisional_count)?;
-            }
             self.relationship_ids
                 .entry(owner.clone())
                 .or_default()
@@ -623,13 +584,7 @@ impl DocumentIdentifiers {
             .flatten()
             .filter_map(|id| id.strip_prefix("rId")?.parse::<u32>().ok())
             .max();
-        let provisional_count = self
-            .provisional_relationship_ids
-            .get(&owner)
-            .map_or(0, HashSet::len)
-            .checked_add(additional)
-            .ok_or_else(|| Error::Other("relationship id range is exhausted".to_owned()))?;
-        ensure_numeric_relationship_capacity(maximum, provisional_count)
+        ensure_numeric_relationship_capacity(maximum, additional)
     }
 
     pub(super) fn reserve_part_name(
@@ -711,13 +666,6 @@ impl DocumentIdentifiers {
             .insert(relationship_id);
     }
 
-    pub(super) fn register_nested_story_drawing(&mut self, story: &StoryId, drawing_id: u32) {
-        self.authored_nested_story_drawing_ids
-            .entry(relationship_owner_identity(&story.part_name))
-            .or_default()
-            .insert(drawing_id);
-    }
-
     pub(crate) fn retire_authored_story_relationships(
         &mut self,
         owner: &str,
@@ -752,18 +700,6 @@ impl DocumentIdentifiers {
                 }
                 !authored.is_empty()
             });
-        if let Some(authored) = self.authored_bundle_relationship_ids.get_mut(&owner) {
-            authored.retain(|id| !removed.contains(id));
-            if authored.is_empty() {
-                self.authored_bundle_relationship_ids.remove(&owner);
-            }
-        }
-        if let Some(provisional) = self.provisional_relationship_ids.get_mut(&owner) {
-            provisional.retain(|id| !removed.contains(id));
-            if provisional.is_empty() {
-                self.provisional_relationship_ids.remove(&owner);
-            }
-        }
     }
 
     pub(crate) fn retire_authored_part(&mut self, part_name: &str) {
@@ -913,34 +849,6 @@ impl DocumentIdentifiers {
                 (!retained.is_empty()).then(|| (owner.clone(), retained))
             })
             .collect();
-        self.authored_nested_story_drawing_ids = source
-            .authored_nested_story_drawing_ids
-            .iter()
-            .filter_map(|(owner, ids)| {
-                let retained = ids
-                    .intersection(&self.drawing_ids)
-                    .copied()
-                    .collect::<HashSet<_>>();
-                (!retained.is_empty()).then(|| (owner.clone(), retained))
-            })
-            .collect();
-        self.authored_bundle_relationship_ids = intersect_relationship_registry(
-            &source.authored_bundle_relationship_ids,
-            &self.relationship_ids,
-        );
-        self.provisional_relationship_ids = intersect_relationship_registry(
-            &source.provisional_relationship_ids,
-            &self.relationship_ids,
-        );
-        self.pending_relationship_ids = intersect_relationship_registry(
-            &source.pending_relationship_ids,
-            &self.relationship_ids,
-        );
-        self.preserved_bookmark_ids = source
-            .preserved_bookmark_ids
-            .intersection(&self.bookmark_ids)
-            .copied()
-            .collect();
         self.preserved_comment_ids = source
             .preserved_comment_ids
             .intersection(&self.comment_ids)
@@ -965,11 +873,6 @@ impl DocumentIdentifiers {
             .preserved_part_names
             .intersection(&self.part_names)
             .cloned()
-            .collect();
-        self.authored_bookmark_ids = source
-            .authored_bookmark_ids
-            .intersection(&self.bookmark_ids)
-            .copied()
             .collect();
         self.authored_comment_ids = source
             .authored_comment_ids
@@ -1031,19 +934,6 @@ pub(super) fn read_child_canonical_facts(
     } else {
         xml_relationship_ids_in_collection_range(xml, &[], Some(child)).ok()?
     };
-    let (mut drawings, error) = drawing_occurrences(xml);
-    if error.is_some() {
-        return None;
-    }
-    for drawing in &mut drawings {
-        if let Some((_, span)) = &mut drawing.doc_pr {
-            if span.start < child_start || span.end > child_end || span.start > span.end {
-                return None;
-            }
-            *span = span.start - child_start..span.end - child_start;
-        }
-    }
-    let drawing_ids = drawing_ids_in_xml(xml).ok()?;
     Some(CanonicalChildFacts {
         root_declarations: frame.root_declarations.clone(),
         body_declarations: frame.body_declarations.clone(),
@@ -1052,8 +942,6 @@ pub(super) fn read_child_canonical_facts(
         tail: Arc::clone(&frame.tail),
         bound_relationship_ids: bound,
         plain_relationship_ids: plain,
-        drawings,
-        drawing_ids,
     })
 }
 
@@ -1211,40 +1099,6 @@ fn ensure_numeric_relationship_capacity(maximum: Option<u32>, required: usize) -
         ))
     } else {
         Ok(())
-    }
-}
-
-pub(super) fn reserve_relationship_from_cursor(
-    occupied: &mut HashSet<String>,
-    cursor: &mut u32,
-) -> Result<String> {
-    loop {
-        let id = format!("rId{cursor}");
-        if occupied.insert(id.clone()) {
-            if let Some(next) = cursor.checked_add(1) {
-                *cursor = next;
-            }
-            return Ok(id);
-        }
-        *cursor = cursor
-            .checked_add(1)
-            .ok_or_else(|| Error::Other("relationship id range is exhausted".to_owned()))?;
-    }
-}
-
-pub(super) fn reserve_part_from_set(
-    occupied: &mut HashSet<String>,
-    directory: &str,
-    stem: &str,
-    extension: &str,
-) -> Result<String> {
-    let mut namer =
-        oxoffice_media::MediaNamer::scan(directory, stem, occupied.iter().map(String::as_str));
-    loop {
-        let part = namer.next_part_name(extension);
-        if occupied.insert(part_name_identity(&part)) {
-            return Ok(part);
-        }
     }
 }
 

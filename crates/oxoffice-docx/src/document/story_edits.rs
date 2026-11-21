@@ -28,8 +28,7 @@ impl Document {
     ) -> Result<T> {
         let mut table_index = table;
         let selected = nth_table_in_body_ref(&self.document.body.content, &mut table_index)
-            .and_then(|table| table.rows.get(row))
-            .and_then(|row| row.cells.get(cell))
+            .and_then(|table| crate::table::table_cell(table, row, cell))
             .ok_or_else(|| Error::Other("cell index is out of range".to_owned()))?;
         let readers = selected.paragraphs();
         let direct_count = selected
@@ -102,8 +101,7 @@ impl Document {
         }
         let mut table_index = table;
         let selected = nth_table_in_body(&mut self.document.body.content, &mut table_index)
-            .and_then(|table| table.rows.get_mut(row))
-            .and_then(|row| row.cells.get_mut(cell))
+            .and_then(|table| crate::table::table_cell_mut(table, row, cell))
             .ok_or_else(|| Error::Other("cell index is out of range".to_owned()))?;
         if selected
             .content
@@ -388,7 +386,17 @@ impl Document {
         // The same fragment can be inserted twice: its paragraph and row ids
         // (w14:paraId, w14:textId) go, as clone_content drops them, and Word
         // gives new ones.
-        let fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
+        let mut fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
+        // A header, footer, note or comment part keeps the drawing ids it
+        // holds at a save, so the drawings it receives take theirs now.
+        if part_name != candidate.doc_part_name {
+            let edits = candidate
+                .identifiers
+                .fresh_drawing_id_edits(&fragment_xml, &fragment.namespace_scope)?;
+            for (start, end, replacement) in edits.into_iter().rev() {
+                fragment_xml.splice(start..end, replacement);
+            }
+        }
         let mut updated = source_xml;
         insert_story_fragment(&mut updated, &owner, boundary, fragment_xml)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;

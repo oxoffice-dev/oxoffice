@@ -529,7 +529,6 @@ impl Document {
         let relationship_id = candidate
             .add_image_relationship_checked(&owner, image_data, filename)
             .expect("an in-memory package cannot exhaust every relationship identifier");
-        candidate.register_pending_relationship(&owner, &relationship_id);
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
         relationship_id
@@ -577,7 +576,6 @@ impl Document {
         let id = candidate
             .add_external_relationship_checked(&owner, rel_types::HYPERLINK, url)
             .expect("an in-memory document can install a hyperlink relationship");
-        candidate.register_pending_relationship(&owner, &id);
         self.commit_staged_mutation(candidate);
         id
     }

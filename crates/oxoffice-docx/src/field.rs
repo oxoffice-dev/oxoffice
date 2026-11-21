@@ -90,9 +90,8 @@ use fragment::{
 };
 pub(crate) use fragment::{
     attribute_value_span, copy_fragment_part, fragment_note_references,
-    freshen_content_fragment_identities, import_document_fragment_content, patch_bookmark_ids,
-    patch_bookmark_source, patch_relationship_ids, patch_relationship_source,
-    relationship_ids_in_xml,
+    freshen_content_fragment_identities, import_document_fragment_content, patch_relationship_ids,
+    patch_relationship_source, relationship_ids_in_xml,
 };
 pub use mail_merge::{
     MailMergeControl, MailMergeData, MailMergeFieldMapping, MailMergeFormatContext,

@@ -16,7 +16,7 @@ use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::revision::CT_Revision;
 use oxoffice_docx_oxml::styles::{CT_Style, CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{CT_P, CT_R, Field, HyperlinkSpan, RunContent, SpecialCharacter};
+use oxoffice_docx_oxml::text::{CT_P, CT_R, Field, HyperlinkSpan, RunContent};
 use oxoffice_opc::relationship::rel_types;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
@@ -1891,37 +1891,9 @@ fn list_definition<'a>(
 }
 
 fn projected_paragraph_text(paragraph: &CT_P) -> String {
-    let mut text = String::new();
-    for run in &paragraph.accepted_view().runs {
-        for content in &run.content {
-            match content {
-                RunContent::Text(value) | RunContent::DeletedText(value) => {
-                    text.push_str(&value.text)
-                }
-                RunContent::Tab => text.push('\t'),
-                RunContent::Break(_) => text.push('\n'),
-                RunContent::Field(field) => {
-                    if let Some(value) = field.projected_text() {
-                        text.push_str(value);
-                    }
-                }
-                // The same projection `CT_R::text` uses, so a heading label
-                // never disagrees with the run text it labels.
-                RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => text.push('\n'),
-                RunContent::SpecialCharacter(SpecialCharacter::NoBreakHyphen) => text.push('-'),
-                RunContent::SpecialCharacter(SpecialCharacter::PositionalTab { .. }) => {
-                    text.push('\t');
-                }
-                RunContent::SpecialCharacter(_)
-                | RunContent::Symbol { .. }
-                | RunContent::Drawing(_)
-                | RunContent::FootnoteRef { .. }
-                | RunContent::EndnoteRef { .. }
-                | RunContent::CommentReference { .. } => {}
-            }
-        }
-    }
-    text
+    // The text a reader sees, as `Paragraph::text` reads it: simple field
+    // results and tracked insertions included.
+    paragraph.accepted_text()
 }
 
 fn referenced_drawing_ids(content: &[BodyContent]) -> Vec<String> {
@@ -2770,6 +2742,7 @@ fn render_drawing_projection(drawing: &CT_Drawing) -> CT_Drawing {
         name: None,
         source_rect: None,
         raw_xml: None,
+        doc_pr_id_unallocated: false,
     })
 }
 

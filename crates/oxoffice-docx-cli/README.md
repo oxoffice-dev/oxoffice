@@ -414,9 +414,10 @@ not become successful updates.
 
 `fill --tag NAME=VALUE` selects tags only, never aliases. Values retain every
 character after the first `=`. Duplicate tags, a missing tag, invalid text or
-an unsupported bound owner refuse the complete batch. Each matching main-body
-control and its supported custom XML binding changes together. Counts follow
-the supplied tag order.
+an unsupported bound owner refuse the complete batch. Each matching control,
+in the body, a header, a footer, a note, a comment or a text box, and its
+supported custom XML binding changes together. Counts follow the supplied tag
+order.
 
 `meta set` changes supplied core fields and preserves unspecified metadata.
 An empty core string removes that value. Custom syntax is `NAME=TYPE:VALUE`:

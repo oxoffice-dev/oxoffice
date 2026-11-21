@@ -475,9 +475,6 @@ impl Document {
             candidate
                 .identifiers
                 .register_nested_story_relationship(story, relationship_id);
-            candidate
-                .identifiers
-                .register_nested_story_drawing(story, drawing_id);
         }
         let reopened = candidate.prepare_and_reopen_staged()?;
         let location = {
@@ -562,9 +559,6 @@ impl Document {
             candidate
                 .identifiers
                 .register_nested_story_relationship(story, relationship_id);
-            candidate
-                .identifiers
-                .register_nested_story_drawing(story, drawing_id);
         }
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
@@ -795,11 +789,6 @@ impl Document {
             alt_drawings: vec![drawing],
         });
         candidate.append_authored_paragraph_to_story(story, paragraph)?;
-        if story.part_name == candidate.doc_part_name && story.kind != StoryKind::Body {
-            candidate
-                .identifiers
-                .register_nested_story_drawing(story, drawing_id);
-        }
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(())
@@ -888,33 +877,9 @@ impl Document {
         candidate.flush_to_package()?;
         candidate.story_source_and_owner(story)?;
         let owner = story.part_name.clone();
-        let matching_before = candidate
-            .package
-            .get_part_rels(&owner)
-            .into_iter()
-            .flat_map(|relationships| &relationships.items)
-            .filter(|relationship| {
-                relationship.rel_type == rel_types::HYPERLINK
-                    && relationship.target == url
-                    && relationship.target_mode.as_deref() == Some("External")
-            })
-            .count();
-        let id = candidate.add_external_relationship_checked(&owner, rel_types::HYPERLINK, url)?;
-        candidate.register_pending_relationship(&owner, &id);
+        let relationship_id =
+            candidate.add_external_relationship_checked(&owner, rel_types::HYPERLINK, url)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
-        let relationship_id = reopened
-            .package
-            .get_part_rels(&owner)
-            .into_iter()
-            .flat_map(|relationships| &relationships.items)
-            .filter(|relationship| {
-                relationship.rel_type == rel_types::HYPERLINK
-                    && relationship.target == url
-                    && relationship.target_mode.as_deref() == Some("External")
-            })
-            .nth(matching_before)
-            .map(|relationship| relationship.id.clone())
-            .ok_or_else(|| Error::Other("authored hyperlink relationship was lost".to_owned()))?;
         self.commit_staged_mutation(reopened);
         Ok(relationship_id)
     }
@@ -1065,7 +1030,7 @@ impl Document {
                                 .and_then(|ranges| picture_free_span_kind(ranges, owner, span))
                         })
                         .flatten();
-                    if proof.is_some() && block_proofs_enabled() {
+                    if proof.is_some() {
                         continue;
                     }
                     let paragraph = CT_P::from_xml_fragment(&closed)?;

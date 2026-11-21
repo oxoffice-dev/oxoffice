@@ -125,14 +125,11 @@ impl<'a> HyperlinkRef<'a> {
             .any(|(name, _)| name != "xmlns" && !name.starts_with("xmlns:"))
     }
 
-    /// Get the combined text of the hyperlink runs, field results included,
-    /// as [`crate::Paragraph::text`] reads each run.
+    /// Get the combined text of the hyperlink as a reader sees it: its runs
+    /// with their field results and the tracked insertions inside it, as
+    /// [`crate::Paragraph::text`] reads them.
     pub fn text(&self) -> String {
-        let hyperlink = self.inner();
-        self.paragraph.runs[hyperlink.run_start..hyperlink.run_end]
-            .iter()
-            .map(CT_R::accepted_text)
-            .collect()
+        self.paragraph.accepted_hyperlink_text(self.index)
     }
 
     /// Iterate over hyperlink children in source order.
@@ -1351,7 +1348,8 @@ impl<'a> Paragraph<'a> {
     pub(crate) fn add_picture(&mut self, rel_id: &str, width: Length, height: Length) -> &mut CT_R {
         use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
 
-        let inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        let mut inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        inline.doc_pr_id_unallocated = true;
         let drawing = CT_Drawing::inline(inline);
         let mut run = CT_R::new("");
         run.content = vec![RunContent::Drawing(drawing)];
@@ -3172,9 +3170,9 @@ impl<'a> ParagraphRef<'a> {
                                     && (*markers_before).min(markers.len()) == marker_index
                             })
                             .map(|(_, _, _, control)| {
-                                ParagraphItemRef::ContentControl(ContentControlRef {
-                                    inner: control,
-                                })
+                                ParagraphItemRef::ContentControl(ContentControlRef::borrowed(
+                                    control,
+                                ))
                             }),
                     );
                     if let Some(marker) = markers.get(marker_index) {

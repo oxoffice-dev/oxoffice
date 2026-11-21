@@ -1085,10 +1085,9 @@ fn an_addition_to_an_instance_on_a_missing_definition_is_refused_without_a_chang
 }
 
 #[test]
-fn saving_twice_renumbers_the_added_lists_alike() {
-    // The first save writes list 2 as 1 into the package while the live body
-    // keeps 2. That package copy must not count as content naming list 1 at
-    // the next save.
+fn saving_twice_writes_the_added_lists_alike_with_their_ids() {
+    // The second list keeps the id it was given, in the body and in both
+    // saves; the removed first list's id is not reused.
     let mut doc = Document::new();
     let first = doc.add_list_definition(&[ListLevel::decimal()]);
     let second = doc.add_list_definition(&[ListLevel::bullet()]);
@@ -1101,7 +1100,7 @@ fn saving_twice_renumbers_the_added_lists_alike() {
     let twice = doc.to_bytes().unwrap();
     assert_eq!(once, twice);
     let doc = Document::from_bytes(&twice).unwrap();
-    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((1, 0)));
+    assert_eq!(doc.paragraph(0).unwrap().numbering(), Some((second, 0)));
     assert_eq!(markers(&doc), ["•"]);
 }
 
@@ -2435,4 +2434,205 @@ fn a_swapped_in_level_without_a_format_reads_as_numbered() {
     assert_eq!(markers(&doc), ["1."]);
     let (id, _) = doc.paragraph(0).unwrap().numbering().unwrap();
     assert_eq!(doc.numbering_is_bullet(id), Some(false));
+}
+
+#[test]
+fn a_style_numbered_without_a_level_links_and_unlinks_at_level_zero() {
+    // Word writes List Bullet with a w:numId and no w:ilvl; it numbers at
+    // level 0, as the graph check and the layout read it.
+    let mut doc = corpus_doc("word/report.docx");
+    doc.link_style_to_numbering("Listepuces", 1, 0)
+        .expect("already linked at level 0: nothing to change");
+    let mut doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    assert!(
+        styles.contains(r#"w:styleId="Listepuces""#)
+            && !styles[styles.find(r#"w:styleId="Listepuces""#).unwrap()..]
+                .split("</w:style>")
+                .next()
+                .unwrap()
+                .contains("w:ilvl"),
+        "the style keeps its form"
+    );
+    assert!(
+        doc.part_xml("word/numbering.xml")
+            .unwrap()
+            .contains(r#"<w:pStyle w:val="Listepuces"/>"#),
+        "level 0 names the style back"
+    );
+    assert!(doc.link_style_to_numbering("Listepuces", 1, 2).is_err());
+    // The unlink runs on the style as Word wrote it: no w:ilvl.
+    assert!(
+        !doc.part_xml("word/styles.xml").unwrap()[doc
+            .part_xml("word/styles.xml")
+            .unwrap()
+            .find(r#"w:styleId="Listepuces""#)
+            .unwrap()..]
+            .split("</w:style>")
+            .next()
+            .unwrap()
+            .contains("w:ilvl")
+    );
+    doc.unlink_style_from_numbering("Listepuces", 1, 0).unwrap();
+    let doc = reopen(&mut doc);
+    assert!(
+        !doc.part_xml("word/numbering.xml")
+            .unwrap()
+            .contains(r#"<w:pStyle w:val="Listepuces"/>"#),
+        "level 0 no longer names the style"
+    );
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    let style = styles[styles.find(r#"w:styleId="Listepuces""#).unwrap()..]
+        .split("</w:style>")
+        .next()
+        .unwrap()
+        .to_owned();
+    assert!(!style.contains("w:numId"), "{style}");
+}
+
+#[test]
+fn a_paragraph_numbered_without_a_level_restarts_and_continues_at_level_zero() {
+    let mut doc = Document::new();
+    for text in ["a", "b", "c", "d"] {
+        doc.add_numbered_list_item(text, 0);
+    }
+    // The same list as a producer writes it: a w:numId and no w:ilvl.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"<w:ilvl w:val="0"/>"#), "{xml}");
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="0"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let old = doc.paragraph(0).unwrap().numbering().unwrap().0;
+    let new = doc.restart_numbering(2, 7).unwrap();
+    assert_ne!(new, old);
+    // The restarted items as a producer writes them too: no w:ilvl.
+    let mut doc = without_levels(&mut doc);
+    // An item added after them continues the restarted list at level 0.
+    doc.add_numbered_list_item("e", 0);
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(4).unwrap().numbering().unwrap().0, new);
+    assert_eq!(markers(&doc), ["1.", "2.", "7.", "8.", "9."]);
+}
+
+/// The document saved with every `w:ilvl w:val="0"` of its body taken out.
+fn without_levels(doc: &mut Document) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="0"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_paragraph_without_a_level_restarts_at_the_level_its_style_gives() {
+    let mut doc = Document::new();
+    for text in ["a", "b", "c"] {
+        doc.add_numbered_list_item(text, 1);
+    }
+    let id = doc.paragraph(0).unwrap().numbering().unwrap().0;
+    // A heading style numbered at level 1, and items that name it with
+    // their own w:numId and no w:ilvl: they show at level 1.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"<w:ilvl w:val="1"/>"#), "{xml}");
+    let xml = xml
+        .replace(r#"<w:ilvl w:val="1"/>"#, "")
+        .replace("<w:pPr>", r#"<w:pPr><w:pStyle w:val="Level2"/>"#);
+    package.set_part(&main, xml.into_bytes());
+    let styles_part = main.replace("document.xml", "styles.xml");
+    let styles = String::from_utf8(package.get_part(&styles_part).unwrap().to_vec()).unwrap();
+    let styles = styles.replace(
+        "</w:styles>",
+        &format!(
+            r#"<w:style w:type="paragraph" w:styleId="Level2"><w:name w:val="Level 2"/><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="{id}"/></w:numPr></w:pPr></w:style></w:styles>"#
+        ),
+    );
+    package.set_part(&styles_part, styles.into_bytes());
+    // Level 1 counts in decimal, so that an added item may continue it.
+    let numbering_part = main.replace("document.xml", "numbering.xml");
+    let numbering = String::from_utf8(package.get_part(&numbering_part).unwrap().to_vec()).unwrap();
+    let level = numbering.find(r#"w:ilvl="1""#).unwrap();
+    let format = level + numbering[level..].find("<w:numFmt w:val=\"").unwrap();
+    let end = format + numbering[format..].find("/>").unwrap() + 2;
+    let numbering = format!(
+        r#"{}<w:numFmt w:val="decimal"/>{}"#,
+        &numbering[..format],
+        &numbering[end..]
+    );
+    package.set_part(&numbering_part, numbering.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let new = doc.restart_numbering(2, 5).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(2).unwrap().numbering(), Some((new, 1)));
+    // The restarted item as a producer writes it, without its w:ilvl: an
+    // item added at level 1 still continues the restarted list.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="1"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.add_numbered_list_item("d", 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(3).unwrap().numbering().unwrap().0, new);
+}
+
+#[test]
+fn a_paragraph_numbered_without_a_level_takes_the_indentation_of_level_zero() {
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("a", 0);
+    let numbered = doc.paragraph(0).unwrap();
+    let expected = doc.effective_paragraph_properties(&numbered).ind_left;
+    assert!(expected.is_some(), "level 0 of a new list is indented");
+    // The same item as a producer writes it: a w:numId and no w:ilvl.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"<w:ilvl w:val="0"/>"#), "{xml}");
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="0"/>"#, "").into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        doc.effective_paragraph_properties(&paragraph).ind_left,
+        expected
+    );
+}
+
+#[test]
+fn writing_a_style_numbered_without_a_level_at_level_zero_changes_no_numbering() {
+    let mut doc = corpus_doc("word/report.docx");
+    // Word writes List Bullet with a w:numId and no w:ilvl: the same
+    // numbering written with w:ilvl 0 is no numbering change.
+    doc.set_style(
+        oxoffice_docx::StyleBuilder::paragraph("Listepuces", "List Bullet").paragraph_properties(
+            oxoffice_docx_oxml::properties::CT_PPr {
+                num_id: Some(1),
+                num_ilvl: Some(0),
+                ..Default::default()
+            },
+        ),
+    )
+    .unwrap();
 }

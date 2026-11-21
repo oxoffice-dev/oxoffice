@@ -75,7 +75,7 @@ impl Document {
         {
             missing.push((
                 "FootnoteReference",
-                note_reference_style(StoryKind::Footnote),
+                note_reference_style(StoryKind::Footnote, &self.styles),
             ));
         }
         if missing.is_empty() {
@@ -171,6 +171,9 @@ impl Document {
             &mut TemplateMainSources,
         )>,
     ) -> Result<bool> {
+        self.allocate_handle_drawing_ids()?;
+        #[cfg(debug_assertions)]
+        let (before, registry) = (IdentifierSummary::of(self), self.identifiers.clone());
         let normalized = self.prepare_current_field_models(template.as_mut().map(
             |(operation, lineage, sources)| {
                 (
@@ -186,16 +189,6 @@ impl Document {
         }
         self.ensure_referenced_character_styles()?;
         self.preflight_flush_required_bundles()?;
-        if let Some((operation, lineage, sources)) = template.as_mut() {
-            let mut writer = TemplateMainWriter {
-                operation,
-                lineage,
-                sources,
-            };
-            self.canonicalize_typed_identifiers(Some(&mut writer))?;
-        } else {
-            self.canonicalize_typed_identifiers(None)?;
-        }
         let retained_signature_invalidated =
             self.retained_package_signature_would_be_invalidated()?;
         if let Some((operation, lineage, sources)) = template.as_mut() {
@@ -208,16 +201,7 @@ impl Document {
         } else {
             self.flush_dirty_related_story_models()?;
         }
-        if let Some((operation, lineage, sources)) = template.as_mut() {
-            let mut writer = TemplateMainWriter {
-                operation,
-                lineage,
-                sources,
-            };
-            self.canonicalize_drawing_ids(Some(&mut writer))?;
-        } else {
-            self.canonicalize_drawing_ids(None)?;
-        }
+        self.order_authored_relationships();
         if let Some((operation, lineage, sources)) = template.as_mut() {
             let mut writer = TemplateMainWriter {
                 operation,
@@ -239,6 +223,10 @@ impl Document {
         } else {
             self.flush_to_package()
         };
+        #[cfg(debug_assertions)]
+        if result.is_ok() {
+            IdentifierSummary::of(self).assert_kept_from(&before, &registry);
+        }
         result.map(|()| normalized)
     }
 
@@ -248,6 +236,8 @@ impl Document {
     /// other modelled parts do, so a save without a comment edit neither
     /// rewrites it nor invalidates a package signature over it.
     pub(crate) fn prepare_staged_output(&mut self) -> Result<bool> {
+        #[cfg(debug_assertions)]
+        let (live_identifiers, live_package) = (self.identifiers.clone(), self.package.clone());
         if let (Some(comments), Some(part_name)) = (&self.comments, &self.comments_part_name) {
             self.comments_dirty |= self
                 .package
@@ -257,11 +247,45 @@ impl Document {
                 != Some(comments);
         }
         let normalized = self.prepare_staged_package()?;
+        #[cfg(debug_assertions)]
+        IdentifierSummary::of_package(self).assert_reads_back(&IdentifierSummary::of(self));
         // Pictures `remove_content_at` freed leave the written copy only: a
         // copy that released one is not installed, so the live document can
         // still take the removed fragment back.
         let released = self.release_freed_image_relationships()?;
+        #[cfg(debug_assertions)]
+        self.assert_saved_package_reopens(&live_identifiers, &live_package);
         Ok(normalized && !released)
+    }
+
+    /// Debug proof that the package a save writes reopens, reads the ids it
+    /// holds (checked by [`Self::reopen_staged`]), adds no repeated drawing
+    /// or bookmark id, and holds no id the live document has not reserved,
+    /// so that no later insert can take one again: `live_identifiers` and
+    /// `live_package` are the document's before the save prepared its copy.
+    /// A package the write refuses is the save's error, not this proof's.
+    #[cfg(debug_assertions)]
+    fn assert_saved_package_reopens(
+        &self,
+        live_identifiers: &DocumentIdentifiers,
+        live_package: &OpcPackage,
+    ) {
+        let copy = self.clone_for_debug_reference();
+        if copy
+            .package
+            .write_to(&mut std::io::Cursor::new(Vec::new()))
+            .is_err()
+        {
+            return;
+        }
+        match copy.reopen_staged(false, PackageReadLimits::UNBOUNDED) {
+            Ok(reopened) => live_identifiers.assert_covers(
+                &reopened.identifiers,
+                &self.identifiers,
+                live_package,
+            ),
+            Err(error) => panic!("a save writes a package that does not reopen: {error}"),
+        }
     }
 
     pub(crate) fn prepare_and_reopen_staged(mut self) -> Result<Self> {
@@ -342,6 +366,8 @@ impl Document {
             .clone();
         let carried_blocks = self.main_part_blocks.clone();
         let provenance = self.identifiers.clone();
+        #[cfg(debug_assertions)]
+        let prepared = IdentifierSummary::of_package(&self);
         let custom_properties_owned = self.custom_properties_owned;
         let settings_owned = self.settings_owned;
         let owned_settings = settings_owned.then(|| self.settings.clone());
@@ -376,12 +402,11 @@ impl Document {
         reopened
             .identifiers
             .reject_new_repeated_bookmark_ids(&provenance)?;
+        #[cfg(debug_assertions)]
+        {
+            IdentifierSummary::of(&reopened).assert_reads_back(&prepared);
+        }
         reopened.identifiers.reconcile_provenance(&provenance);
-        reopened.restore_live_numbering(
-            &self.published_abstract_by_live,
-            &self.published_instance_by_live,
-            &provenance,
-        )?;
         reopened.custom_properties_owned = custom_properties_owned;
         reopened.settings_owned = settings_owned;
         if let Some(settings) = owned_settings {
@@ -400,102 +425,5 @@ impl Document {
         reopened.install_carried_body_scans(carried_scans);
         reopened.install_carried_blocks(carried_blocks);
         Ok(reopened)
-    }
-
-    fn restore_live_numbering(
-        &mut self,
-        abstract_map: &HashMap<u32, u32>,
-        instance_map: &HashMap<u32, u32>,
-        provenance: &DocumentIdentifiers,
-    ) -> Result<()> {
-        if abstract_map.is_empty() && instance_map.is_empty() {
-            return Ok(());
-        }
-        let numbering = self
-            .numbering
-            .as_mut()
-            .ok_or_else(|| Error::Other("published numbering model is missing".into()))?;
-        for published in abstract_map.values() {
-            if !numbering
-                .abstract_nums
-                .iter()
-                .any(|definition| definition.abstract_num_id == *published)
-            {
-                return Err(Error::Other(
-                    "published abstract numbering ID is missing".into(),
-                ));
-            }
-        }
-        for published in instance_map.values() {
-            if !numbering
-                .nums
-                .iter()
-                .any(|instance| instance.num_id == *published)
-            {
-                return Err(Error::Other(
-                    "published numbering instance ID is missing".into(),
-                ));
-            }
-        }
-        let abstract_inverse = abstract_map
-            .iter()
-            .map(|(live, published)| (*published, *live))
-            .collect::<HashMap<_, _>>();
-        let instance_inverse = instance_map
-            .iter()
-            .map(|(live, published)| (*published, *live))
-            .collect::<HashMap<_, _>>();
-        let published_ids = numbering
-            .nums
-            .iter()
-            .map(|instance| instance.num_id)
-            .collect::<HashSet<_>>();
-        let mut missing_body_id = false;
-        visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
-            if let Some(id) = paragraph
-                .properties
-                .as_mut()
-                .and_then(|properties| properties.num_id.as_mut())
-                && let Some(live) = instance_inverse.get(id)
-            {
-                missing_body_id |= !published_ids.contains(id);
-                *id = *live;
-            }
-        });
-        if missing_body_id {
-            return Err(Error::Other(
-                "published body numbering ID is missing".into(),
-            ));
-        }
-        for definition in &mut numbering.abstract_nums {
-            if let Some(live) = abstract_inverse.get(&definition.abstract_num_id) {
-                definition.abstract_num_id = *live;
-            }
-        }
-        for instance in &mut numbering.nums {
-            if let Some(live) = instance_inverse.get(&instance.num_id) {
-                instance.num_id = *live;
-            }
-            if let Some(live) = abstract_inverse.get(&instance.abstract_num_id) {
-                instance.abstract_num_id = *live;
-            }
-        }
-        self.identifiers.abstract_numbering_ids = numbering
-            .abstract_nums
-            .iter()
-            .map(|definition| definition.abstract_num_id)
-            .collect();
-        self.identifiers.numbering_instance_ids = numbering
-            .nums
-            .iter()
-            .map(|instance| instance.num_id)
-            .collect();
-        self.identifiers.preserved_abstract_numbering_ids =
-            provenance.preserved_abstract_numbering_ids.clone();
-        self.identifiers.preserved_numbering_instance_ids =
-            provenance.preserved_numbering_instance_ids.clone();
-        self.published_abstract_by_live = abstract_map.clone();
-        self.published_instance_by_live = instance_map.clone();
-        Ok(())
     }
 }

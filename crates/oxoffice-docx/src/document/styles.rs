@@ -683,16 +683,10 @@ impl Document {
         }
         let old_link = existing.linked_style.clone();
         merge_style_update(existing, &mut authored, cleared, &removed_regions);
-        let existing_numbering = existing
-            .ppr
-            .as_ref()
-            .map(|properties| (properties.num_id, properties.num_ilvl))
-            .unwrap_or((None, None));
-        let authored_numbering = authored
-            .ppr
-            .as_ref()
-            .map(|properties| (properties.num_id, properties.num_ilvl))
-            .unwrap_or((None, None));
+        // A `w:numId` without `w:ilvl` is level 0: writing it as `w:ilvl 0`
+        // changes no numbering.
+        let existing_numbering = super::numbering::style_numbering_level(existing);
+        let authored_numbering = super::numbering::style_numbering_level(&authored);
         if authored_numbering != existing_numbering {
             return Err(Error::Other(format!(
                 "style '{}' numbering must be changed with link_style_to_numbering or unlink_style_from_numbering",
@@ -1171,8 +1165,10 @@ impl Document {
         let mut effective = style::resolve_paragraph_properties(style_id, &self.styles);
         self.apply_effective_numbering(&mut effective, direct, style_id);
 
-        if let Some((num_id, level)) = effective.num_id.zip(effective.num_ilvl)
-            && let Some(definition) = self.resolved_numbering_level_definition(num_id, level)
+        // A `w:numId` without `w:ilvl` numbers at level 0, as Word reads it.
+        if let Some(num_id) = effective.num_id
+            && let Some(definition) =
+                self.resolved_numbering_level_definition(num_id, effective.num_ilvl.unwrap_or(0))
             && let Some(properties) = &definition.ppr
         {
             effective.merge_from(properties);

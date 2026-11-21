@@ -2191,3 +2191,118 @@ fn each_kept_mark_of_a_note_referenced_twice_keeps_its_own_run_properties() {
     assert!(!xml[run_of(first)..first].contains("FF0000"), "{xml}");
     assert!(xml[run_of(second)..second].contains("FF0000"), "{xml}");
 }
+
+/// The `w:style` elements of a styles part whose name is `name`.
+fn styles_named(styles: &str, name: &str) -> Vec<String> {
+    styles
+        .split("<w:style ")
+        .skip(1)
+        .filter(|style| style.contains(&format!(r#"<w:name w:val="{name}"/>"#)))
+        .map(|style| style.split("</w:style>").next().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_note_mark_uses_the_localized_style_of_its_built_in_name() {
+    // A French Word file names the note mark styles otherwise.
+    let mut doc = doc_with(&["Body"]);
+    for (id, name) in [
+        ("Appelnotedebasdep", "footnote reference"),
+        ("Appeldenotedefin", "endnote reference"),
+    ] {
+        doc.add_style(
+            oxoffice_docx::StyleBuilder::character(id, name).run_properties(
+                oxoffice_docx_oxml::properties::CT_RPr {
+                    vert_align: Some("superscript".into()),
+                    ..Default::default()
+                },
+            ),
+        )
+        .unwrap();
+    }
+    doc.create_footnote_at(&boundary(&doc, 0, 1), "a footnote")
+        .unwrap();
+    doc.add_footnote("another");
+    doc.create_endnote_at(&boundary(&doc, 0, 0), "an endnote")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    for name in ["footnote reference", "endnote reference"] {
+        assert_eq!(styles_named(&styles, name).len(), 1, "{name}: {styles}");
+    }
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        body.contains(r#"<w:rStyle w:val="Appelnotedebasdep"/>"#)
+            && body.contains(r#"<w:rStyle w:val="Appeldenotedefin"/>"#)
+            && !body.contains("FootnoteReference")
+            && !body.contains("EndnoteReference"),
+        "{body}"
+    );
+    let notes = doc.part_xml("word/footnotes.xml").unwrap();
+    assert!(!notes.contains("FootnoteReference"), "{notes}");
+}
+
+#[test]
+fn a_created_note_mark_style_is_defined_as_word_defines_it() {
+    // A French Word file, whose default paragraph font is `Policepardfaut`.
+    let mut doc = corpus_doc("word/report.docx");
+    doc.create_endnote_at(&boundary(&doc, 0, 1), "an endnote")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    let style = &styles_named(&styles, "endnote reference")[0];
+    for expected in [
+        r#"<w:basedOn w:val="Policepardfaut"/>"#,
+        r#"<w:uiPriority w:val="99"/>"#,
+        "<w:semiHidden/>",
+        "<w:unhideWhenUsed/>",
+        r#"<w:vertAlign w:val="superscript"/>"#,
+    ] {
+        assert!(style.contains(expected), "{expected}: {style}");
+    }
+}
+
+#[test]
+fn a_note_mark_prefers_the_character_style_of_its_built_in_name_to_an_id_of_another_type() {
+    // The mark style's id is taken by a paragraph style; the character
+    // style named for it, in another case, is the mark style.
+    let mut doc = doc_with(&["Body"]);
+    doc.add_style(oxoffice_docx::StyleBuilder::paragraph(
+        "FootnoteReference",
+        "Custom",
+    ))
+    .unwrap();
+    doc.add_style(oxoffice_docx::StyleBuilder::character(
+        "Appelnotedebasdep",
+        "Footnote Reference",
+    ))
+    .unwrap();
+    doc.create_footnote_at(&boundary(&doc, 0, 1), "a footnote")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        body.contains(r#"<w:rStyle w:val="Appelnotedebasdep"/>"#),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_note_mark_style_id_taken_by_a_paragraph_style_is_not_defined_twice() {
+    let mut doc = doc_with(&["Body"]);
+    doc.add_style(oxoffice_docx::StyleBuilder::paragraph(
+        "FootnoteReference",
+        "Custom",
+    ))
+    .unwrap();
+    doc.add_footnote("one");
+    doc.create_footnote_at(&boundary(&doc, 0, 1), "two")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let styles = doc.part_xml("word/styles.xml").unwrap();
+    assert_eq!(
+        styles.matches(r#"w:styleId="FootnoteReference""#).count(),
+        1,
+        "{styles}"
+    );
+}
