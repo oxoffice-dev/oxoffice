@@ -752,6 +752,14 @@ impl Document {
 
     /// Remove an unreferenced style, returning whether it existed.
     ///
+    /// A linked pair goes as one: removing either side of a paragraph style
+    /// and the character style that links back to it removes both. A
+    /// numbering level the removed style points at, and that names it back,
+    /// stops naming it, as [`Document::unlink_style_from_numbering`] does.
+    /// The call is refused while content, a numbering level or a style
+    /// outside the pair still names either side; a one-way link counts as a
+    /// use.
+    ///
     /// Every definition of a repeated style ID is removed, so no later one takes
     /// over the ID. Validation retains existing defects as in
     /// [`Document::add_style`].
@@ -759,8 +767,104 @@ impl Document {
         if self.styles.get_by_id(style_id).is_none() {
             return Ok(false);
         }
+        let links = |from: &str, to: &str| {
+            self.styles
+                .styles
+                .iter()
+                .any(|style| style.style_id == from && style.linked_style.as_deref() == Some(to))
+        };
+        let mut removed = vec![style_id.to_string()];
+        for style in &self.styles.styles {
+            if style.style_id != style_id
+                && !removed.contains(&style.style_id)
+                && links(&style.style_id, style_id)
+                && links(style_id, &style.style_id)
+            {
+                removed.push(style.style_id.clone());
+            }
+        }
+
+        let mut candidate = self.clone_for_staging();
+        let released = candidate.release_numbering_levels_naming(&removed);
+        if released {
+            candidate.reserve_numbering_bundle()?;
+        }
+        for id in &removed {
+            candidate.check_style_unreferenced(id, &removed)?;
+        }
+        candidate.reserve_styles_bundle()?;
+        Arc::make_mut(&mut candidate.styles)
+            .styles
+            .retain(|style| !removed.contains(&style.style_id));
+        style::validate_style_graph_change(&self.styles, &candidate.styles)?;
+        if released {
+            candidate.validate_numbering_graph()?;
+            candidate.flush_to_package()?;
+        }
+        candidate.invalidate_layout();
+        self.commit_staged_mutation(candidate);
+        Ok(true)
+    }
+
+    /// Clear the `w:pStyle` of each numbering level that one of `styles`
+    /// points at and that names that style back, returning whether any was
+    /// cleared. A style without `w:ilvl` points at level 0.
+    fn release_numbering_levels_naming(&mut self, styles: &[String]) -> bool {
+        let pointers: Vec<(String, u32, u32)> = self
+            .styles
+            .styles
+            .iter()
+            .filter(|style| styles.contains(&style.style_id))
+            .filter_map(|style| {
+                let properties = style.ppr.as_ref()?;
+                Some((
+                    style.style_id.clone(),
+                    properties.num_id?,
+                    properties.num_ilvl.unwrap_or(0),
+                ))
+            })
+            .collect();
+        let Some(numbering) = self.numbering.as_mut() else {
+            return false;
+        };
+        let mut released = false;
+        for (style_id, num_id, level) in pointers {
+            let Some(instance) = numbering.nums.iter_mut().find(|n| n.num_id == num_id) else {
+                continue;
+            };
+            let definition_id = instance.abstract_num_id;
+            if let Some(value) = instance
+                .level_overrides
+                .iter_mut()
+                .find(|value| value.ilvl == level && value.level.is_some())
+            {
+                let level = value.level.as_mut().expect("selected for its level");
+                if level.p_style.as_deref() == Some(style_id.as_str()) {
+                    level.p_style = None;
+                    released = true;
+                }
+                continue;
+            }
+            if let Some(level) = numbering
+                .abstract_nums
+                .iter_mut()
+                .filter(|definition| definition.abstract_num_id == definition_id)
+                .flat_map(|definition| definition.levels.iter_mut())
+                .find(|value| value.ilvl == level)
+                && level.p_style.as_deref() == Some(style_id.as_str())
+            {
+                level.p_style = None;
+                released = true;
+            }
+        }
+        released
+    }
+
+    /// Refuse when anything outside `removed` names `style_id`: another
+    /// style, document content or a numbering level.
+    fn check_style_unreferenced(&self, style_id: &str, removed: &[String]) -> Result<()> {
         if let Some(owner) = self.styles.styles.iter().find(|style| {
-            style.style_id != style_id
+            !removed.contains(&style.style_id)
                 && (style.based_on.as_deref() == Some(style_id)
                     || style.next_style.as_deref() == Some(style_id)
                     || style.linked_style.as_deref() == Some(style_id))
@@ -794,16 +898,7 @@ impl Document {
                 "style '{style_id}' is referenced by a numbering level"
             )));
         }
-
-        let mut candidate = self.clone_for_staging();
-        candidate.reserve_styles_bundle()?;
-        Arc::make_mut(&mut candidate.styles)
-            .styles
-            .retain(|style| style.style_id != style_id);
-        style::validate_style_graph_change(&self.styles, &candidate.styles)?;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(true)
+        Ok(())
     }
 
     /// Add the Word built-in styles most documents use and python-docx's
