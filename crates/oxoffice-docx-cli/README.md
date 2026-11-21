@@ -172,19 +172,21 @@ paragraphs inside content controls, table cells, and nested tables in document
 order.
 
 After the body, `text` prints every other story: text boxes, headers, footers,
-footnotes, endnotes, and comments, in the order of `Document::stories`. Each
-package part starts with a line that names the kind of its first story and the
-part, such as `--- header (/word/header1.xml) ---`. Each direct paragraph or
-block content control of its stories follows on one line, table cells
-included, with the accepted-view text of Python `StoryItem.text`. A part
-without any text, such as an empty header variant, is left out. A text box
-that Word writes twice, DrawingML in `mc:Choice` and a VML copy in
+footnotes, endnotes, and comments, part by part in the order of
+`Document::stories`. Each package part starts with a line that names the kind of
+its first story and the part, such as `--- header (/word/header1.xml) ---`. Each
+direct paragraph or block content control of its stories follows on one line in
+reading order (`Document::other_story_texts`): a table's cells where the table
+sits, a text box after the paragraph that anchors it, the cells of a table in a
+body text box included, with the accepted-view text of Python `StoryItem.text`.
+A part without any text, such as an empty header variant, is left out. A text
+box that Word writes twice, DrawingML in `mc:Choice` and a VML copy in
 `mc:Fallback`, is never read from the copy. When a story part cannot be read,
 such as a truncated header or a header relationship to a missing part, `text`
-and the Markdown and HTML conversions keep the body, print one warning on
-stderr that names the part when it can, list no other story, and exit
-successfully. `text --json` then states `main` scope. `validate` reports that
-part as an error.
+and the Markdown and HTML conversions keep the body, print one warning on stderr
+that names the part when it can, list no other story, and exit successfully.
+`text --json` then states `main` scope. `validate` reports that part as an
+error.
 
 `text --json` reports accepted-view paragraphs in source order. Each paragraph
 has a zero-based `body_index`, a typed zero-based path within that body item,

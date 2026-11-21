@@ -176,17 +176,14 @@ impl Document {
 
     /// Count the number of words in the document.
     ///
-    /// Counts whitespace-separated tokens across all paragraphs (including
-    /// paragraphs inside table cells and content controls), leaving out the
-    /// table rows that accepting every tracked change removes, as
-    /// [`Self::text`] does. Each paragraph counts its accepted-view text:
-    /// tracked insertions are counted and tracked deletions are not.
+    /// Counts the whitespace-separated tokens of [`Self::text`]: every
+    /// paragraph (including paragraphs inside table cells and content
+    /// controls) with its accepted-view text, tracked insertions counted and
+    /// tracked deletions not, leaving out the table rows that accepting every
+    /// tracked change removes, and joining a paragraph whose mark is deleted
+    /// to the next one, as accepting it does.
     pub fn word_count(&self) -> usize {
-        let mut count = 0;
-        visit_body_paragraphs(&self.document.body.content, true, &mut |paragraph| {
-            count += paragraph.accepted_text().split_whitespace().count();
-        });
-        count
+        self.text().split_whitespace().count()
     }
 
     /// Audit the document for accessibility issues.

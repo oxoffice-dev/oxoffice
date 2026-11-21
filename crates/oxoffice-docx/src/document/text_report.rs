@@ -47,7 +47,14 @@ pub(super) const STORY_TEXT_RELATIONSHIPS: [&str; 5] = [
 
 impl Document {
     /// Read every story but the main body and its table cells, which the body
-    /// view already covers, in [`Document::stories`] order.
+    /// view already covers, in reading order: the stories of each part in
+    /// [`Document::stories`] order of their parts, and inside a part each item
+    /// where it sits in the part's XML. A table's cells come where the table
+    /// sits among its story's paragraphs, and a text box after the paragraph
+    /// that anchors it, so a story interrupted by a table or a text box gives
+    /// several entries. The first entry of a part is its first story, empty
+    /// when that story starts with a table. The cells of a table in a body
+    /// text box are read too: the body view leaves text boxes out.
     ///
     /// Only the direct items of a story are read, so the text of an inline
     /// control or a field is not repeated after its paragraph. A table is left
@@ -65,18 +72,16 @@ impl Document {
     }
 
     fn read_other_story_texts(&self) -> Result<Vec<StoryText>> {
-        Ok(self
-            .read_other_stories()?
-            .into_iter()
-            .map(|story| story.text)
-            .collect())
-    }
-
-    /// [`Self::read_other_story_texts`], with where each direct table of a
-    /// story sits among its items.
-    fn read_other_stories(&self) -> Result<Vec<OtherStory>> {
+        let offsets = self.story_item_offsets()?;
+        let offsets_of = |story: &StoryId| {
+            offsets
+                .get(&(story.kind, story.part_name.clone(), story.owner_index))
+                .ok_or_else(|| Error::Other("story owner was not inventoried".to_owned()))
+        };
         let mut main_part = None;
-        let mut stories: Vec<OtherStory> = Vec::new();
+        // Each part in order, with its first story and its items by offset.
+        type PartItems = Vec<(usize, StoryId, StoryTextItem)>;
+        let mut parts: Vec<(StoryId, PartItems)> = Vec::new();
         for item in self.story_item_snapshots()? {
             let story = item.location().story();
             if story.kind() == StoryKind::Body {
@@ -86,43 +91,94 @@ impl Document {
             if story.kind() == StoryKind::TableCell
                 && main_part.as_deref() == Some(story.part_name())
             {
-                continue;
-            }
-            if stories.last().is_none_or(|last| &last.text.story != story) {
-                stories.push(OtherStory {
-                    text: StoryText {
-                        story: story.clone(),
-                        items: Vec::new(),
-                    },
-                    tables: Vec::new(),
+                // A body table's cell, unless the table sits in a text box.
+                let start = offsets_of(story)?.0.start;
+                let in_text_box = offsets.iter().any(|((kind, part, _), (span, _))| {
+                    *kind == StoryKind::TextBox
+                        && part.as_str() == story.part_name()
+                        && span.contains(&start)
                 });
+                if !in_text_box {
+                    continue;
+                }
+            }
+            if parts
+                .last()
+                .is_none_or(|(first, _)| first.part_name() != story.part_name())
+            {
+                parts.push((story.clone(), Vec::new()));
             }
             let kind = item.location().item_kind();
-            if kind == StoryItemKind::Table
-                && item.is_direct_child()
-                && let Some(last) = stories.last_mut()
-            {
-                let position = last.text.items.len();
-                last.tables.push((position, table_cell_count(item.xml())));
-                continue;
-            }
             if !matches!(
                 kind,
                 StoryItemKind::Paragraph | StoryItemKind::ContentControl
-            ) {
+            ) || !item.is_direct_child()
+            {
                 continue;
             }
-            if item.is_direct_child()
-                && let Some(last) = stories.last_mut()
-            {
-                last.text.items.push(StoryTextItem {
-                    index_path: item.location().index_path().to_vec(),
-                    kind,
-                    text: item.text().unwrap_or_default().to_owned(),
-                });
+            let index_path = item.location().index_path().to_vec();
+            let offset = index_path
+                .first()
+                .and_then(|index| offsets_of(story).ok()?.1.get(*index).copied())
+                .ok_or_else(|| Error::Other("story item was not inventoried".to_owned()))?;
+            if let Some((_, items)) = parts.last_mut() {
+                items.push((
+                    offset,
+                    story.clone(),
+                    StoryTextItem {
+                        index_path,
+                        kind,
+                        text: item.text().unwrap_or_default().to_owned(),
+                    },
+                ));
+            }
+        }
+        let mut stories: Vec<StoryText> = Vec::new();
+        for (first, mut items) in parts {
+            stories.push(StoryText {
+                story: first,
+                items: Vec::new(),
+            });
+            items.sort_by_key(|(offset, _, _)| *offset);
+            for (_, story, item) in items {
+                match stories.last_mut() {
+                    Some(last) if last.story == story => last.items.push(item),
+                    _ => stories.push(StoryText {
+                        story,
+                        items: vec![item],
+                    }),
+                }
             }
         }
         Ok(stories)
+    }
+
+    /// Where each story owner spans in its part, and where each of its items
+    /// starts, by the index the item snapshots give it.
+    #[allow(clippy::type_complexity)]
+    fn story_item_offsets(
+        &self,
+    ) -> Result<HashMap<(StoryKind, String, usize), (Range<usize>, Vec<usize>)>> {
+        let mut offsets = HashMap::new();
+        for source in self.story_sources()? {
+            let xml = source.xml.as_ref();
+            let owners = scan_story_owners(xml, source.root_kind)?;
+            let scopes =
+                story_namespace_scopes_at(xml, owners.iter().map(|owner| owner.full.start))?;
+            for owner in owners {
+                let key = (owner.kind, source.part_name.clone(), owner.owner_index);
+                if offsets.contains_key(&key) {
+                    continue;
+                }
+                let scope = scopes.get(&owner.full.start).ok_or_else(|| {
+                    Error::Other("story owner namespace scope was not inventoried".to_owned())
+                })?;
+                let items = scan_story_items_with_scope(xml, &owner, scope, None)?;
+                let starts = items.iter().map(|item| item.full.start).collect();
+                offsets.insert(key, (owner.full.clone(), starts));
+            }
+        }
+        Ok(offsets)
     }
 
     /// Name the first story part of the main document that is not
@@ -151,12 +207,8 @@ impl Document {
     pub fn text_report(&self) -> TextReport {
         let mut text = self.text();
         let mut diagnostics = Vec::new();
-        let read = self.read_other_stories().map_err(|error| {
-            self.malformed_story_part()
-                .unwrap_or_else(|| error.to_string())
-        });
-        let (stories, scope) = match read {
-            Ok(stories) => (in_reading_order(stories), "all-supported-stories"),
+        let (stories, scope) = match self.other_story_texts() {
+            Ok(stories) => (stories, "all-supported-stories"),
             Err(reason) => {
                 diagnostics.push(TextDiagnostic {
                     message: format!("other stories left out: {reason}"),
@@ -196,103 +248,6 @@ impl Document {
         count
     }
 }
-/// A story read for the text report, and each of its direct tables: the
-/// count of its items before the table, and the table cells it holds.
-struct OtherStory {
-    text: StoryText,
-    tables: Vec<(usize, usize)>,
-}
-
-/// Put the cells of each table where the table sits in its story. The cell
-/// stories of a part follow the story that holds their table, in source
-/// order, so the next table-cell stories of the same part, as many as the
-/// table has cells, and the stories they hold, go before the items that
-/// follow the table. A story is then split into the parts around its tables.
-fn in_reading_order(stories: Vec<OtherStory>) -> Vec<StoryText> {
-    let mut queue: std::collections::VecDeque<OtherStory> = stories.into();
-    let mut ordered = Vec::new();
-    while let Some(story) = queue.pop_front() {
-        place_tables(story, &mut queue, &mut ordered);
-    }
-    ordered
-}
-
-/// Push `story` with the stories of its tables' cells in place, and return
-/// how many table-cell stories that took from `queue`, nested ones included.
-fn place_tables(
-    story: OtherStory,
-    queue: &mut std::collections::VecDeque<OtherStory>,
-    ordered: &mut Vec<StoryText>,
-) -> usize {
-    let OtherStory {
-        text: StoryText { story: id, items },
-        tables,
-    } = story;
-    let mut items = items.into_iter();
-    let mut placed = 0;
-    let mut taken = 0;
-    for (position, cells) in tables {
-        ordered.push(StoryText {
-            story: id.clone(),
-            items: items.by_ref().take(position - placed).collect(),
-        });
-        placed = position;
-        let mut counted = 0;
-        while counted < cells {
-            let Some(next) = queue.pop_front() else {
-                break;
-            };
-            if next.text.story.part_name() != id.part_name() {
-                queue.push_front(next);
-                break;
-            }
-            if next.text.story.kind() == StoryKind::TableCell {
-                counted += 1;
-            }
-            counted += place_tables(next, queue, ordered);
-        }
-        taken += counted;
-    }
-    ordered.push(StoryText {
-        story: id,
-        items: items.collect(),
-    });
-    taken
-}
-
-/// The table cells in a table's XML, those of nested tables included: the
-/// story scanner makes each a table-cell story. The fallback copy of
-/// alternate content is not counted, as its stories are not read twice.
-fn table_cell_count(xml: &[u8]) -> usize {
-    use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_reader(xml);
-    let mut buffer = Vec::new();
-    let mut count = 0;
-    let mut fallback_depth = 0usize;
-    loop {
-        match reader.read_event_into(&mut buffer) {
-            Ok(Event::Start(element)) => {
-                let name = element.local_name();
-                if fallback_depth > 0 || name.as_ref() == b"Fallback" {
-                    fallback_depth += 1;
-                } else if name.as_ref() == b"tc" {
-                    count += 1;
-                }
-            }
-            Ok(Event::Empty(element))
-                if fallback_depth == 0 && element.local_name().as_ref() == b"tc" =>
-            {
-                count += 1;
-            }
-            Ok(Event::End(_)) if fallback_depth > 0 => fallback_depth -= 1,
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
-        }
-        buffer.clear();
-    }
-    count
-}
-
 /// Group the texts of the stories by package part, each part labelled with
 /// the kind of its first story, such as a header part holding table cells.
 /// A part without any text, such as an empty header variant, is left out.

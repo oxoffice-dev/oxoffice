@@ -1540,6 +1540,147 @@ fn the_text_report_keeps_nested_and_successive_header_tables_in_reading_order() 
 }
 
 #[test]
+fn a_deleted_paragraph_mark_joins_two_words_into_one_as_accepting_does() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="Ana" w:date="2026-11-21T00:00:00Z"/></w:rPr></w:pPr>"#,
+        r#"<w:r><w:t>end</w:t></w:r></w:p><w:p><w:r><w:t>start here</w:t></w:r></w:p>"#,
+    ));
+    assert_eq!(doc.text(), "endstart here\n");
+    assert_eq!(doc.word_count(), 2);
+    assert_eq!(doc.character_count(false), 12);
+}
+
+/// The lines of the text report's part whose label starts with `label`.
+fn report_lines(doc: &Document, label: &str) -> Vec<String> {
+    let text = doc.text_report().text;
+    let at = text
+        .find(label)
+        .unwrap_or_else(|| panic!("{label} is in the report: {text}"));
+    text[at..]
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.starts_with("--- "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A floating text box holding `content`, as Word writes it: DrawingML in
+/// `mc:Choice` and a VML copy in `mc:Fallback`.
+fn text_box_run(id: u32, content: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
+            r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
+            r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
+            r#"xmlns:v="urn:schemas-microsoft-com:vml"><mc:Choice Requires="wps"><w:drawing>"#,
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/>"#,
+            r#"<wp:docPr id="{id}" name="Text Box {id}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>"#,
+            r#"<wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}"#,
+            r#"</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline>"#,
+            r#"</w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="tb{id}"><v:textbox><w:txbxContent>"#,
+            r#"{content}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>"#,
+        ),
+        id = id,
+        content = content,
+    )
+}
+
+fn line(text: &str) -> String {
+    format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+fn one_row_table(cells: &[&str]) -> String {
+    let grid: String = cells.iter().map(|_| r#"<w:gridCol w:w="2000"/>"#).collect();
+    let row: String = cells
+        .iter()
+        .map(|text| format!("<w:tc>{}</w:tc>", line(text)))
+        .collect();
+    format!("<w:tbl><w:tblPr/><w:tblGrid>{grid}</w:tblGrid><w:tr>{row}</w:tr></w:tbl>")
+}
+
+#[test]
+fn the_text_report_reads_a_body_text_box_and_its_table_in_reading_order() {
+    let first = format!(
+        "{}{}{}",
+        line("Intro"),
+        one_row_table(&["C1", "C2"]),
+        line("After")
+    );
+    let doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t>Body</w:t></w:r>{}</w:p><w:p>{}</w:p>",
+        text_box_run(81, &first),
+        text_box_run(82, &line("Second")),
+    ));
+    assert_eq!(doc.text(), "Body\n\n");
+    // The body view leaves text boxes out: the report reads them once, the
+    // cells of the table where it sits.
+    assert_eq!(
+        report_lines(&doc, "--- text_box ("),
+        ["Intro", "C1", "C2", "After", "Second"]
+    );
+}
+
+#[test]
+fn the_text_report_keeps_a_table_inside_a_content_control_in_reading_order() {
+    let mut doc = doc_with(&["Body"]);
+    let header = format!(
+        concat!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            "{}<w:sdt><w:sdtPr><w:alias w:val=\"Letterhead\"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>",
+            "{}{}{}</w:hdr>"
+        ),
+        line("H1"),
+        one_row_table(&["A", "B"]),
+        line("H2"),
+        one_row_table(&["C", "D"]),
+        line("H3"),
+    );
+    doc.set_raw_header_with_images(header.into_bytes(), &[], HdrFtrType::Default);
+    let doc = reopen(&mut doc);
+    let lines = report_lines(&doc, "--- header (");
+    // The control is a line of its own (it holds no paragraph of its own).
+    assert_eq!(lines, ["H1", "", "A", "B", "H2", "C", "D", "H3"]);
+}
+
+#[test]
+fn the_text_report_keeps_a_table_inside_a_footnote_before_the_next_note() {
+    let mut doc = doc_with(&["Body"]);
+    for text in ["first", "second"] {
+        let location = doc.paragraph_story_location(0).unwrap().unwrap();
+        doc.create_footnote(&location, text).unwrap();
+    }
+    let bytes = doc.to_bytes().unwrap();
+    let edited = edit_package(&bytes, |package| {
+        let xml =
+            String::from_utf8(package.get_part("/word/footnotes.xml").unwrap().to_vec()).unwrap();
+        let end = xml.find("first</w:t>").unwrap();
+        let at = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
+        let inserted = format!("{}{}", one_row_table(&["X1", "X2"]), line("then"));
+        package.set_part(
+            "/word/footnotes.xml",
+            format!("{}{inserted}{}", &xml[..at], &xml[at..]).into_bytes(),
+        );
+    });
+    let doc = Document::from_bytes(&edited).unwrap();
+    let lines = report_lines(&doc, "--- footnote (");
+    let at = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} is reported: {lines:?}"))
+    };
+    assert!(
+        at("first") < at("X1")
+            && at("X1") < at("X2")
+            && at("X2") < at("then")
+            && at("then") < at("second"),
+        "{lines:?}"
+    );
+}
+
+#[test]
 fn a_missing_header_part_leaves_the_other_stories_out_with_a_diagnostic() {
     let mut doc = doc_with(&["Body"]);
     doc.set_header("Head");
