@@ -1,12 +1,12 @@
 {
   "file": "word/minutes.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "reason": "right-to-left paragraphs start on the right margin, as in Word (#157): the Arabic heading and paragraphs of the minutes move",
   "resources": "6cd47cb9e52750dce2412f38e8949b0d366b288401da7e061ae3dbe3e1958dc3",
   "outline_and_tags": "febe6a8865fc96904b044e0d505b0daf22688afe69b87473008375f9dd40b129",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
-    {"page": 1, "pixels": "ccaa0ef08bcbb6cdaa276aebe946a0b0ce6d5853a35e3081c26c3ae4a607c084", "content": "94b807c5674c4676d67bf33573c66c359c743e33d469e01c6364658a18030536", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "0d5d66ee1e92ddbbd94f1e69405d0a3077ccf4efceaab6c7214a8e8762f21a1a", "content": "a45f57d10a9dc6b6aa6a73f8a025655a81f00b2d4143dc8ebe0efd9cd8725cef", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "f501827c6fef20950e41b7db433305e1e8ce5b53922232940c4ff85c86f6521d", "content": "80908e480af85fce115dd94f90561ccd53809d5ed318df2b254ee8a98d0e5f74", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 1, "pixels": "1b143366ce00fe855061607e74cbfe95c06bcebb19bdd0a37f5f9481ea59825f", "content": "1f46e03b3a8faacd09834b1724e063328c9c4fb07792d1a9cf96098fc431670a", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "b61bb6d25417771150cae3223a0d743186e307be31b644975cb0c969add42c1a", "content": "72cd3cdc7388184f997b4741fd25e2e3151d83efd89068ab6f30c75e46337ff0", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "521ccdc89c322803b6c2bf78f16a569b37c9119ce532acae6e02a308ee2c96b9", "content": "676e82ce8822d5779b6f323e2a6015a25fb502305d3e2feefe65f8ba88adf274", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }
