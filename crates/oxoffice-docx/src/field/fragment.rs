@@ -3180,18 +3180,45 @@ fn collect_reference_field_name(instruction: &str, references: &mut Vec<String>)
     }
 }
 
+/// The switch whose argument names the bookmark a field refers to, or `None`
+/// when its first argument does: `REF`, `PAGEREF`, `NOTEREF`, `GOTOBUTTON`,
+/// `SET` and `ASK` name it first, `HYPERLINK` after `\l`, `TOC` after `\b`.
+fn reference_field_switch(name: &str) -> Option<Option<&'static str>> {
+    match name.to_ascii_uppercase().as_str() {
+        "REF" | "PAGEREF" | "NOTEREF" | "GOTOBUTTON" | "SET" | "ASK" => Some(None),
+        "HYPERLINK" => Some(Some("l")),
+        "TOC" => Some(Some("b")),
+        _ => None,
+    }
+}
+
+/// The bookmark a field refers to (see [`reference_field_switch`]).
 fn reference_field_name(instruction: &str) -> Option<String> {
     let field = Field::new(instruction, "");
-    if matches!(field.instruction.name.as_str(), "REF" | "PAGEREF") {
-        field
+    let argument = match reference_field_switch(&field.instruction.name)? {
+        None => field.instruction.arguments.first(),
+        Some(switch) => field
             .instruction
-            .arguments
-            .first()
-            .and_then(argument_text)
-            .map(str::to_owned)
-    } else {
-        None
-    }
+            .switches
+            .iter()
+            .find(|candidate| candidate.name.eq_ignore_ascii_case(switch))
+            .and_then(|candidate| candidate.argument.as_ref()),
+    };
+    argument.and_then(argument_text).map(str::to_owned)
+}
+
+/// The new name of the bookmark `old` names, when an import renamed it.
+/// Word compares bookmark names without regard to case, so a reference
+/// written in another case follows the rename too.
+fn renamed_bookmark<'a>(names: &'a BTreeMap<String, String>, old: &str) -> Option<&'a String> {
+    let new = names.get(old).or_else(|| {
+        let folded = old.to_lowercase();
+        names
+            .iter()
+            .find(|(name, _)| name.to_lowercase() == folded)
+            .map(|(_, new)| new)
+    })?;
+    (new.to_lowercase() != old.to_lowercase()).then_some(new)
 }
 
 #[derive(Clone, Copy)]
@@ -3732,17 +3759,12 @@ fn collect_body_reference_edits(
         return Ok(false);
     }
     if local.as_ref() == b"hyperlink" {
-        add_identity_attribute_edit(
-            xml,
-            start,
-            end,
-            element,
-            resolver,
-            b"anchor",
-            AttributeNamespace::Word,
-            &remap.bookmark_names,
-            edits,
-        )?;
+        if let Some((key, old)) =
+            resolved_element_attribute(element, resolver, b"anchor", AttributeNamespace::Word)?
+            && let Some(replacement) = renamed_bookmark(&remap.bookmark_names, &old)
+        {
+            add_attribute_value_edit(xml, start, end, &key, replacement, true, edits)?;
+        }
     } else if local.as_ref() == b"fldSimple" {
         if let Some((key, instruction)) =
             resolved_element_attribute(element, resolver, b"instr", AttributeNamespace::Word)?
@@ -3830,12 +3852,21 @@ fn remap_reference_instruction(
     names: &BTreeMap<String, String>,
 ) -> Option<String> {
     let old = reference_field_name(instruction)?;
-    let replacement = names.get(&old)?;
+    let replacement = renamed_bookmark(names, &old)?;
     let command_end = instruction
         .find(char::is_whitespace)
         .unwrap_or(instruction.len());
-    let relative = instruction[command_end..].find(&old)?;
-    let start = command_end + relative;
+    // A switch names the bookmark after it, maybe after an argument holding
+    // the same text (a HYPERLINK address).
+    let after = match reference_field_switch(&Field::new(instruction, "").instruction.name)? {
+        None => command_end,
+        Some(switch) => {
+            let lowered = instruction.to_ascii_lowercase();
+            command_end + lowered[command_end..].find(&format!("\\{switch}"))? + 2
+        }
+    };
+    let relative = instruction[after..].find(&old)?;
+    let start = after + relative;
     let mut updated = instruction.to_owned();
     updated.replace_range(start..start + old.len(), replacement);
     Some(updated)

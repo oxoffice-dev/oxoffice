@@ -1003,6 +1003,73 @@ fn importing_gives_taken_bookmarks_controls_and_revisions_new_identities() {
 }
 
 #[test]
+fn every_reference_to_a_renamed_bookmark_follows_it_whatever_its_kind_or_case() {
+    let field = |instruction: &str, result: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+                r#"<w:r><w:instrText xml:space="preserve"> {} </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{}</w:t></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+            ),
+            instruction, result
+        )
+    };
+    // Word compares bookmark names without regard to case.
+    let source = doc_with_body(&format!(
+        concat!(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+            "{}{}{}{}{}",
+            r#"<w:p><w:hyperlink w:anchor="MARK"><w:r><w:t>src jump</w:t></w:r></w:hyperlink></w:p>"#,
+        ),
+        field(r#"REF mark \h"#, "src marked"),
+        field(r#"HYPERLINK \l "Mark""#, "link"),
+        field(
+            r#"HYPERLINK "https://example.com/Mark" \l "Mark""#,
+            "address"
+        ),
+        field(r#"NOTEREF Mark \h"#, "1"),
+        format!(
+            "{}{}{}",
+            field(r#"GOTOBUTTON Mark "Go""#, "Go"),
+            field(r#"SET Mark "value""#, ""),
+            field(r#"TOC \o "1-3" \b Mark"#, "contents"),
+        ),
+    ));
+    let mut doc = with_identities("dst");
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let doc = reopen(&mut doc);
+
+    let bookmarks = bookmark_list(&doc);
+    let renamed = bookmarks
+        .iter()
+        .find(|(_, text)| text == "src marked")
+        .map(|(name, _)| name.clone())
+        .unwrap();
+    assert!(!renamed.eq_ignore_ascii_case("Mark"), "{bookmarks:?}");
+    assert_eq!(
+        field_instructions(&doc),
+        [
+            "REF Mark \\h".to_owned(),
+            format!("REF {renamed} \\h"),
+            format!("HYPERLINK \\l \"{renamed}\""),
+            format!("HYPERLINK \"https://example.com/Mark\" \\l \"{renamed}\""),
+            format!("NOTEREF {renamed} \\h"),
+            format!("GOTOBUTTON {renamed} \"Go\""),
+            format!("SET {renamed} \"value\""),
+            format!("TOC \\o \"1-3\" \\b {renamed}"),
+        ]
+    );
+    let anchors: Vec<_> = doc
+        .links()
+        .into_iter()
+        .filter(|link| link.text == "src jump")
+        .map(|link| link.anchor)
+        .collect();
+    assert_eq!(anchors, [Some(renamed)]);
+}
+
+#[test]
 fn a_bookmark_whose_name_is_free_keeps_it_on_import() {
     let source = doc_with_body(
         r#"<w:p><w:bookmarkStart w:id="0" w:name="Summary"/><w:r><w:t>summary</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
