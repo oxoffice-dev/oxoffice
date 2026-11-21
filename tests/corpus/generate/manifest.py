@@ -78,6 +78,19 @@ def _number_format(numbering: str, num: str, ilvl: int) -> str | None:
     return level.group(1) if level else None
 
 
+def _signature_control(stories: str) -> bool:
+    """A control PDF form export turns into a signature field: a plain text,
+    rich text or picture control tagged `signature` or `signature:<name>`,
+    whatever the case."""
+    for properties in re.findall(r"<w:sdtPr>(.*?)</w:sdtPr>", stories, re.S):
+        tagged = re.search(r'<w:tag w:val="(?i:signature)(:[^"]*)?"', properties)
+        other_kind = re.search(r"<(w:date|w:dropDownList|w:comboBox|w14:checkbox|w:docPart\w*|w:group|w:equation"
+                               r"|w:citation|w:bibliography|w15:repeatingSection\w*)\b", properties)
+        if tagged and not other_kind:
+            return True
+    return False
+
+
 def docx_features(package: zipfile.ZipFile) -> list[str]:
     names = package.namelist()
     body = package.read("word/document.xml").decode("utf-8", "replace")
@@ -143,7 +156,7 @@ def docx_features(package: zipfile.ZipFile) -> list[str]:
         "date-control": "<w:date " in stories or "<w:date>" in stories,
         "list-control": "<w:dropDownList" in stories or "<w:comboBox" in stories,
         # The tag PDF form export reads as a signature field, and a locked control.
-        "signature-control": re.search(r'<w:tag w:val="signature(:[^"]*)?"', stories),
+        "signature-control": _signature_control(stories),
         "locked-control": re.search(r'<w:lock w:val="(contentLocked|sdtContentLocked)"', stories),
         "equation": "<m:oMath" in stories,
         "rtl": "<w:bidi/>" in stories or "<w:rtl/>" in stories or '<w:bidi w:val="1"' in stories,
@@ -158,12 +171,15 @@ def docx_features(package: zipfile.ZipFile) -> list[str]:
 
 
 def _sixteen_by_nine(presentation: str) -> bool:
-    """A 16:9 slide, within the few EMU producers round it by (12192000 x 6858000,
-    or the 12191695 of 13.333 inches)."""
-    size = re.search(r"<p:sldSz [^>]*>", presentation)
+    """A 16:9 slide, within 0.1 %: producers round it (12192000 x 6858000, the
+    12191695 of 13.333 inches, python-pptx's 13.33 inches)."""
+    size = re.search(r"<p:sldSz\s[^>]*>", presentation)
     cx = size and re.search(r'\bcx="(\d+)"', size.group(0))
     cy = size and re.search(r'\bcy="(\d+)"', size.group(0))
-    return bool(cx and cy) and abs(int(cx.group(1)) * 9 - int(cy.group(1)) * 16) < 16 * 1000
+    if not (cx and cy):
+        return False
+    width, height = int(cx.group(1)), int(cy.group(1))
+    return abs(width * 9 - height * 16) <= height * 16 // 1000
 
 
 def pptx_features(package: zipfile.ZipFile) -> list[str]:
