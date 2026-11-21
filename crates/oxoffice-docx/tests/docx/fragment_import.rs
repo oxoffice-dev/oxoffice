@@ -469,3 +469,46 @@ fn a_same_id_style_of_another_type_comes_in_under_a_new_id() {
     assert_ne!(imported, "Accent");
     assert!(imported.starts_with("Accent"), "{imported}");
 }
+
+/// A document of one bookmarked paragraph per name, as Word writes them:
+/// `add_bookmark` refuses a hidden name.
+fn with_raw_bookmarks(names: &[&str]) -> Document {
+    let body: String = names
+        .iter()
+        .enumerate()
+        .map(|(id, name)| {
+            format!(
+                r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>bookmarked text</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
+            )
+        })
+        .collect();
+    let mut doc = doc_with_body(&body);
+    reopen(&mut doc)
+}
+
+#[test]
+fn a_taken_hidden_bookmark_name_gets_a_hidden_fresh_name() {
+    // Word hides the bookmarks whose name starts with an underscore, such
+    // as _GoBack; a fresh name for one stays out of Word's bookmark list.
+    for insert_document in [false, true] {
+        let mut destination = with_raw_bookmarks(&["_GoBack", "Intro"]);
+        let source = with_raw_bookmarks(&["_GoBack", "Intro"]);
+        if insert_document {
+            destination.insert_document(destination.content_count(), &source);
+        } else {
+            import_body(&mut destination, &source);
+        }
+        let destination = reopen(&mut destination);
+        let names = bookmark_names(&destination);
+        assert_eq!(names.len(), 4, "{names:?}");
+        assert_eq!(names[..2], ["_GoBack", "Intro"], "the destination's stay");
+        assert!(
+            names[2].starts_with('_') && names[2] != "_GoBack",
+            "the imported _GoBack is renamed and hidden: {names:?}"
+        );
+        assert!(
+            !names[3].starts_with('_') && names[3] != "Intro",
+            "the imported Intro is renamed and visible: {names:?}"
+        );
+    }
+}

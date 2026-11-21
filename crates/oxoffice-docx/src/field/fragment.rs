@@ -2927,9 +2927,13 @@ impl BodyIdentityState {
         }
     }
 
-    fn allocate_name(&mut self) -> Result<String> {
+    /// A fresh bookmark name for `name`, which is taken. A hidden name (a
+    /// leading underscore, as Word's `_GoBack`, `_Toc` and `_Ref` names) gets
+    /// a hidden one, which Word keeps out of its bookmark list.
+    fn allocate_name(&mut self, name: &str) -> Result<String> {
+        let prefix = if name.starts_with('_') { "_" } else { "" };
         loop {
-            let candidate = format!("MailMerge{}", self.next_name);
+            let candidate = format!("{prefix}MailMerge{}", self.next_name);
             self.next_name = self.next_name.checked_add(1).ok_or_else(|| {
                 Error::Other("mail merge exhausted the bookmark name range".to_owned())
             })?;
@@ -3047,7 +3051,7 @@ fn remap_fragment_xml_identities(
         }
     }
     for value in renamed {
-        let name = state.allocate_name()?;
+        let name = state.allocate_name(&value)?;
         remap.bookmark_names.insert(value, name);
     }
     let updated = patch_body_identity_attributes(&xml, &remap)?;
@@ -3616,9 +3620,10 @@ pub(crate) fn freshen_content_fragment_identities(
         }
     }
     for value in values.bookmark_names {
-        if let std::collections::btree_map::Entry::Vacant(entry) = remap.bookmark_names.entry(value)
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            remap.bookmark_names.entry(value.clone())
         {
-            entry.insert(state.allocate_name()?);
+            entry.insert(state.allocate_name(&value)?);
         }
     }
     patch_body_identity_attributes(wrapped_fragment, &remap)
