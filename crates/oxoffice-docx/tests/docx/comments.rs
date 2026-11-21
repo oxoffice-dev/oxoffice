@@ -2063,6 +2063,72 @@ fn a_first_story_comment_in_a_header_or_a_footer_comes_with_the_comment_parts() 
             .unwrap();
         assert_eq!(anchor_kind(&doc, id), kind);
         assert_first_comment_reads_back(&mut doc, id, part, "Up here");
+    }
+}
+
+#[test]
+fn a_first_comment_on_text_or_on_runs_comes_with_the_comment_parts() {
+    let mut doc = doc_with(&["review this"]);
+    assert_no_comments_yet(&doc);
+    let id = doc
+        .add_comment_on_text(
+            "review",
+            "Ada",
+            "On text",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "On text");
+
+    let mut doc = doc_with(&["review this"]);
+    assert_no_comments_yet(&doc);
+    let id = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "On runs")
+        .unwrap();
+    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "On runs");
+}
+
+#[test]
+fn a_reply_on_the_first_comment_of_a_document_takes_the_reference_style() {
+    type First = fn(&mut Document) -> i32;
+    let routes: [(&str, First); 3] = [
+        ("on text", |doc| {
+            doc.add_comment_on_text(
+                "Body",
+                "Ada",
+                "Thread",
+                TextCommentOptions {
+                    date: CommentDate::Undated,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        }),
+        ("on runs", |doc| {
+            doc.add_comment(run_range(0, 0, 0, 1), "Ada", None, "Thread")
+                .unwrap()
+        }),
+        ("on a story range", |doc| {
+            let paragraph = story_paragraph(doc, StoryKind::Body, 0);
+            doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
+                .unwrap()
+        }),
+    ];
+    for (route, first) in routes {
+        let mut doc = doc_with(&["Body"]);
+        assert_no_comments_yet(&doc);
+        let root = first(&mut doc);
+        let reply = doc.reply_to(root, "Ben", "Reply").unwrap();
+        let mut doc = reopen(&mut doc);
+        assert_eq!(comment(&doc, reply).parent_id(), Some(root), "{route}");
+        assert_first_comment_reads_back(&mut doc, root, "word/document.xml", "Thread");
+        assert_first_comment_reads_back(&mut doc, reply, "word/document.xml", "Reply");
+    }
+}
+
 // ---- Range edges inside tracked changes ----
 
 /// A document whose one body paragraph is `paragraph`, with a comment `id`
@@ -2154,67 +2220,6 @@ fn a_range_edge_inside_tracked_deleted_or_moved_text_reads_at_the_next_accepted_
 }
 
 #[test]
-fn a_first_comment_on_text_or_on_runs_comes_with_the_comment_parts() {
-    let mut doc = doc_with(&["review this"]);
-    assert_no_comments_yet(&doc);
-    let id = doc
-        .add_comment_on_text(
-            "review",
-            "Ada",
-            "On text",
-            TextCommentOptions {
-                date: CommentDate::Undated,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "On text");
-
-    let mut doc = doc_with(&["review this"]);
-    assert_no_comments_yet(&doc);
-    let id = doc
-        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "On runs")
-        .unwrap();
-    assert_first_comment_reads_back(&mut doc, id, "word/document.xml", "On runs");
-}
-
-#[test]
-fn a_reply_on_the_first_comment_of_a_document_takes_the_reference_style() {
-    type First = fn(&mut Document) -> i32;
-    let routes: [(&str, First); 3] = [
-        ("on text", |doc| {
-            doc.add_comment_on_text(
-                "Body",
-                "Ada",
-                "Thread",
-                TextCommentOptions {
-                    date: CommentDate::Undated,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-        }),
-        ("on runs", |doc| {
-            doc.add_comment(run_range(0, 0, 0, 1), "Ada", None, "Thread")
-                .unwrap()
-        }),
-        ("on a story range", |doc| {
-            let paragraph = story_paragraph(doc, StoryKind::Body, 0);
-            doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
-                .unwrap()
-        }),
-    ];
-    for (route, first) in routes {
-        let mut doc = doc_with(&["Body"]);
-        assert_no_comments_yet(&doc);
-        let root = first(&mut doc);
-        let reply = doc.reply_to(root, "Ben", "Reply").unwrap();
-        let mut doc = reopen(&mut doc);
-        assert_eq!(comment(&doc, reply).parent_id(), Some(root), "{route}");
-        assert_first_comment_reads_back(&mut doc, root, "word/document.xml", "Thread");
-        assert_first_comment_reads_back(&mut doc, reply, "word/document.xml", "Reply");
-    }
-}
 fn a_comment_starting_inside_a_deletion_can_be_moved_and_removed() {
     let (mut doc, id) = commented_paragraph(&format!(
         concat!(
@@ -2345,4 +2350,34 @@ fn accepting_or_rejecting_the_change_a_comment_sits_on_keeps_the_comment() {
     assert_eq!(doc.comments().len(), 1);
     assert_eq!(doc.comment_anchor_text(id).unwrap().as_deref(), Some(""));
     assert_eq!(texts(&doc), ["Pay  now"]);
+}
+
+#[test]
+fn accepting_or_rejecting_a_change_that_holds_a_whole_comment_removes_the_comment() {
+    let whole = |wrapper: &str, attributes: &str, text: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:{0} {1}>"#,
+                r#"<w:commentRangeStart w:id="ID"/><w:r><w:{2}>30 days</w:{2}></w:r>"#,
+                r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r></w:{0}></w:p>"#
+            ),
+            wrapper, attributes, text
+        )
+    };
+    for (paragraph, accept) in [
+        (whole("ins", INS, "t"), false),
+        (whole("del", DEL, "delText"), true),
+    ] {
+        let (mut doc, _) = commented_paragraph(&paragraph);
+        if accept {
+            doc.accept_all().unwrap();
+        } else {
+            doc.reject_all().unwrap();
+        }
+        let doc = reopen(&mut doc);
+        assert!(doc.comments().is_empty(), "{paragraph}");
+        let main = doc.part_xml("word/document.xml").unwrap();
+        assert!(!main.contains("commentRange"), "{main}");
+        assert_eq!(texts(&doc), ["Pay "]);
+    }
 }

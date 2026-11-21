@@ -2306,7 +2306,8 @@ impl CT_P {
             };
             // Place these edges with the checked writer and read them back.
             let place = |start: Option<usize>,
-                         end: Option<usize>|
+                         end: Option<usize>,
+                         incoming: bool|
              -> Result<
                 std::result::Result<CommentTextProjection, RangeAnchorError>,
             > {
@@ -2323,13 +2324,9 @@ impl CT_P {
                     &raw,
                     &[("w".to_owned(), crate::namespace::W_NS.to_owned())],
                 )?;
-                Ok(Ok(project_comment_text(
-                    &raw,
-                    id,
-                    open_at_start || start.is_none(),
-                )?))
+                Ok(Ok(project_comment_text(&raw, id, incoming)?))
             };
-            match place(selected.start, selected.end)? {
+            match place(selected.start, selected.end, open_at_start)? {
                 Ok(placed) => {
                     if selected.text != placed.text
                         || selected.start_offset != placed.start_offset
@@ -2343,15 +2340,19 @@ impl CT_P {
                 // view holds the inserted text. The other edge is still
                 // checked on its own.
                 Err(RangeAnchorError::InsideRevision { .. }) => {
-                    for (start, end) in [(selected.start, None), (None, selected.end)] {
-                        if start.is_none() && end.is_none() {
+                    // Each edge alone, as a collapsed range in this paragraph.
+                    for (edge, is_start) in [(selected.start, true), (selected.end, false)] {
+                        let Some(edge) = edge else {
                             continue;
-                        }
-                        match place(start, end)? {
+                        };
+                        match place(Some(edge), Some(edge), false)? {
                             Ok(placed) => {
-                                if (start.is_some() && placed.start_offset != selected.start_offset)
-                                    || (end.is_some() && placed.end_offset != selected.end_offset)
-                                {
+                                let (read, wanted) = if is_start {
+                                    (placed.start_offset, selected.start_offset)
+                                } else {
+                                    (placed.end_offset, selected.end_offset)
+                                };
+                                if read != wanted {
                                     return Err(unfaithful(String::new()));
                                 }
                             }
