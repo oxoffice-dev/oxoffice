@@ -398,6 +398,59 @@ impl FieldLexer {
     }
 }
 
+/// Where a field instruction names a bookmark, and the name: the first
+/// operand of `REF`, `PAGEREF`, `NOTEREF`, `GOTOBUTTON`, `SET` and `ASK`, the
+/// `\l` operand of a `HYPERLINK` with no address (with an address it names a
+/// place in that address), the `\b` operand of `TOC`, `INDEX` and `TOA`, the
+/// `\r` operand of `XE` and `TA`. The span is the name's own bytes in `raw`,
+/// never the keyword; `None` when the name is not a plain, single-source
+/// token (a nested field, an escape) whose bytes spell it.
+#[doc(hidden)]
+pub fn bookmark_reference_span(raw: &str) -> Option<(std::ops::Range<usize>, String)> {
+    let tokens = lex_field_text(raw);
+    let text = |token: &InstructionToken| match &token.argument {
+        InstructionOperand::Text(value) => Some(value.clone()),
+        InstructionOperand::Nested(_) => None,
+    };
+    let is_switch = |token: &InstructionToken| {
+        !token.quoted && text(token).is_some_and(|value| value.starts_with('\\'))
+    };
+    let name = text(tokens.first()?)?.to_ascii_uppercase();
+    let switch = match name.as_str() {
+        "REF" | "PAGEREF" | "NOTEREF" | "GOTOBUTTON" | "SET" | "ASK" => None,
+        "HYPERLINK" => Some("l"),
+        "TOC" | "INDEX" | "TOA" => Some("b"),
+        "XE" | "TA" => Some("r"),
+        _ => return None,
+    };
+    let index = match switch {
+        None => (1..tokens.len()).find(|&index| !is_switch(&tokens[index]))?,
+        Some(switch) => {
+            let at = (1..tokens.len()).find(|&index| {
+                is_switch(&tokens[index])
+                    && text(&tokens[index])
+                        .is_some_and(|value| value[1..].eq_ignore_ascii_case(switch))
+            })?;
+            // A HYPERLINK with an address: `\l` is a place in that address.
+            if name == "HYPERLINK" && (1..at).any(|index| !is_switch(&tokens[index])) {
+                return None;
+            }
+            at + 1
+        }
+    };
+    let token = tokens.get(index)?;
+    if !token.well_formed || is_switch(token) {
+        return None;
+    }
+    let value = text(token)?;
+    let mut span = token.source_span.clone()?;
+    let bytes = raw.as_bytes();
+    if token.quoted && span.len() >= 2 && bytes[span.start] == b'"' && bytes[span.end - 1] == b'"' {
+        span = span.start + 1..span.end - 1;
+    }
+    (raw.get(span.clone())? == value).then_some((span, value))
+}
+
 /// Replace only bibliography l, f and m token spans, retaining other raw spelling.
 ///
 /// This checked edit uses the shared field lexer. Ambiguous source boundaries
