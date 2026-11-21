@@ -276,6 +276,48 @@ impl Field {
 }
 
 impl Field {
+    /// The direct formatting of the run that opens this field, read from its
+    /// source. A field that stores no result, such as a legacy checkbox
+    /// saved by Word, draws with it.
+    pub fn begin_run_properties(&self) -> Option<CT_RPr> {
+        let FieldSource::Parsed {
+            raw_xml,
+            word_prefixes,
+            ..
+        } = self.source.as_ref()
+        else {
+            return None;
+        };
+        // Entries starting with NUL carry namespace bindings, the rest are the
+        // prefixes bound to the main namespace.
+        let mut prefixes: Vec<String> = word_prefixes
+            .iter()
+            .filter(|entry| !entry.starts_with('\0'))
+            .cloned()
+            .collect();
+        if prefixes.is_empty() {
+            prefixes.push("w".to_owned());
+        }
+        let mut reader = Reader::from_reader(raw_xml.as_slice());
+        let mut buf = Vec::new();
+        let mut in_run = false;
+        loop {
+            match reader.read_event_into(&mut buf).ok()? {
+                Event::Start(start) if !in_run => {
+                    in_run = matches_local_name(start.name().as_ref(), b"r");
+                }
+                Event::Start(start) if matches_local_name(start.name().as_ref(), b"rPr") => {
+                    return CT_RPr::from_xml_with_prefixes(&mut reader, &prefixes).ok();
+                }
+                // The run's first child is not its properties: it has none.
+                Event::Start(_) | Event::Empty(_) | Event::End(_) if in_run => return None,
+                Event::Eof => return None,
+                _ => {}
+            }
+            buf.clear();
+        }
+    }
+
     fn owned_clone_children(&self) -> Vec<&Field> {
         let mut children = Vec::new();
         for argument in self.instruction.arguments.iter().chain(
@@ -632,6 +674,8 @@ pub struct LegacyFormFieldData {
     pub value: LegacyFormFieldValue,
     pub choices: Vec<String>,
     pub max_length: Option<usize>,
+    /// A checkbox's drawn size, `None` for the other kinds.
+    pub checkbox_size: Option<LegacyCheckBoxSize>,
 }
 
 /// Help or status text stored on a legacy form field.
@@ -4564,6 +4608,7 @@ struct LegacyFormProjection {
     text_type_seen: bool,
     text_format_seen: bool,
     checkbox_size_seen: bool,
+    checkbox_size: Option<LegacyCheckBoxSize>,
     default_text: Option<String>,
     default_text_seen: bool,
     checked: Option<bool>,
@@ -4859,6 +4904,7 @@ fn parse_legacy_form_data(
             value,
             choices: projection.choices,
             max_length: projection.max_length,
+            checkbox_size: projection.checkbox_size,
         },
         reset_default,
         text_default,
@@ -5088,7 +5134,9 @@ fn project_legacy_form_element(
                     &mut projection.checkbox_size_seen,
                     "w:checkBox size choice",
                 )?;
-                legacy_form_hps_measure_value(element, word_prefixes, "w:checkBox/w:size")?;
+                projection.checkbox_size = Some(LegacyCheckBoxSize::HalfPoints(
+                    legacy_form_hps_measure_value(element, word_prefixes, "w:checkBox/w:size")?,
+                ));
             }
             (Some(LegacyFormFieldKind::CheckBox), Some("sizeAuto")) => {
                 mark_legacy_form_singleton(
@@ -5096,6 +5144,7 @@ fn project_legacy_form_element(
                     "w:checkBox size choice",
                 )?;
                 legacy_form_boolean_value(element, word_prefixes, "w:checkBox/w:sizeAuto")?;
+                projection.checkbox_size = Some(LegacyCheckBoxSize::Auto);
             }
             (Some(LegacyFormFieldKind::CheckBox), Some("checked")) => {
                 mark_legacy_form_singleton(&mut projection.checked_seen, "w:checkBox/w:checked")?;
@@ -5364,14 +5413,16 @@ fn legacy_form_usize_value(
         .map_err(|_| OxmlError::InvalidValue(format!("invalid {name} numeric token")))
 }
 
+/// A half-point measure: a count of half-points, or a number with a unit,
+/// rounded to the nearest half-point.
 fn legacy_form_hps_measure_value(
     element: &BytesStart<'_>,
     word_prefixes: &[String],
     name: &str,
-) -> Result<()> {
+) -> Result<u64> {
     let value = required_legacy_form_value(element, word_prefixes, name)?;
-    if value.parse::<u64>().is_ok() {
-        return Ok(());
+    if let Ok(half_points) = value.parse::<u64>() {
+        return Ok(half_points);
     }
     let Some(unit) = ["mm", "cm", "in", "pt", "pc", "pi"]
         .into_iter()
@@ -5396,7 +5447,15 @@ fn legacy_form_hps_measure_value(
             "invalid {name} measure token"
         )));
     }
-    Ok(())
+    let points_per_unit = match unit {
+        "mm" => 72.0 / 25.4,
+        "cm" => 72.0 / 2.54,
+        "in" => 72.0,
+        "pt" => 1.0,
+        _ => 12.0,
+    };
+    let half_points = number.parse::<f64>().unwrap_or(0.0) * points_per_unit * 2.0;
+    Ok(half_points.round().min(u64::MAX as f64) as u64)
 }
 
 fn set_legacy_form_kind(
@@ -16432,6 +16491,7 @@ fn legacy_form_author_parts(
         value,
         choices,
         max_length,
+        checkbox_size: author.checkbox_size,
     };
     Ok((name, display, data, author, reset_default, text_default))
 }
@@ -22303,4 +22363,63 @@ pub(crate) fn source_value_is_modeled(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod legacy_checkbox_size_tests {
+    use super::*;
+
+    /// The checkbox size of a Word legacy checkbox with this `w:checkBox` size.
+    fn checkbox_size(size: &str) -> Option<LegacyCheckBoxSize> {
+        let xml = format!(
+            r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox>{size}<w:default w:val="0"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        );
+        let paragraph = CT_P::from_xml_fragment(xml.as_bytes()).unwrap();
+        paragraph
+            .runs
+            .iter()
+            .flat_map(|run| &run.content)
+            .find_map(|content| match content {
+                RunContent::Field(field) => field.legacy_form.as_ref()?.checkbox_size,
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn a_checkbox_size_reads_half_points_and_unit_measures() {
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="24"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(24))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="12pt"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(24))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="0.5in"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(72))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="1cm"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(57)),
+            "28.35 points"
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="2pc"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(48))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="1pi"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(24))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="10mm"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(57)),
+            "28.35 points"
+        );
+        assert_eq!(
+            checkbox_size("<w:sizeAuto/>"),
+            Some(LegacyCheckBoxSize::Auto)
+        );
+    }
 }

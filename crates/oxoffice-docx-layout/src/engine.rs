@@ -8694,12 +8694,27 @@ fn computed_layout_field(
             _ => (None, None),
         }
     };
+    // Word draws a legacy checkbox itself from its state, locked or not;
+    // any stored result only gives the box its formatting.
+    if let Some(glyph) = drawn_legacy_checkbox(field) {
+        return (Some(glyph.to_owned()), None);
+    }
     let (computed_value, field_kind) = if field.locked() == Some(true) {
         (None, None)
     } else {
         (computed_value, field_kind)
     };
     (computed_value, field_kind)
+}
+
+/// The box a legacy checkbox draws from its state, as Word does whatever
+/// result it stores: ☒ when checked, ☐ when not.
+fn drawn_legacy_checkbox(field: &oxoffice_docx_oxml::text::Field) -> Option<&'static str> {
+    let data = field.legacy_form.as_ref()?;
+    let oxoffice_docx_oxml::text::LegacyFormFieldValue::Checked(checked) = data.value else {
+        return None;
+    };
+    Some(if checked { "\u{2612}" } else { "\u{2610}" })
 }
 
 /// Lay out a single paragraph into a ParagraphBlock.
@@ -9926,6 +9941,10 @@ fn layout_paragraph_with_source_and_table(
                         .cloned()
                         .unwrap_or((None, None));
                     let stored_segments = field.effective_display_field_segments();
+                    // A legacy checkbox without formatted result runs takes the
+                    // formatting of the run that opens it.
+                    let checkbox_properties =
+                        drawn_legacy_checkbox(field).and_then(|_| field.begin_run_properties());
                     let segments: Vec<(
                         Cow<'_, str>,
                         Option<&CT_RPr>,
@@ -9933,7 +9952,8 @@ fn layout_paragraph_with_source_and_table(
                     )> = if let Some(value) = computed_value.as_deref() {
                         let stored_properties = stored_segments
                             .first()
-                            .and_then(|(_, properties, _)| *properties);
+                            .and_then(|(_, properties, _)| *properties)
+                            .or(checkbox_properties.as_ref());
                         vec![(Cow::Borrowed(value), stored_properties, field)]
                     } else {
                         stored_segments
@@ -9980,6 +10000,22 @@ fn layout_paragraph_with_source_and_table(
                         };
                         if let Some(properties) = stored_properties {
                             segment_rpr.merge_from(properties);
+                        }
+                        if computed_value.is_some() && drawn_legacy_checkbox(field).is_some() {
+                            // The box's own size, unless automatic.
+                            if let Some(oxoffice_docx_oxml::text::LegacyCheckBoxSize::HalfPoints(
+                                size,
+                            )) = field
+                                .legacy_form
+                                .as_ref()
+                                .and_then(|data| data.checkbox_size)
+                            {
+                                let size = oxoffice_docx_oxml::HalfPoint(
+                                    u32::try_from(size).unwrap_or(u32::MAX),
+                                );
+                                segment_rpr.sz = Some(size);
+                                segment_rpr.sz_cs = Some(size);
+                            }
                         }
                         if segment_rpr.vanish == Some(true) {
                             continue;
