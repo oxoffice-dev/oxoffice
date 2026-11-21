@@ -19,6 +19,14 @@ pub(crate) enum WordPublication {
     CellText(oxoffice_docx::ContentLocation, usize, usize),
     ElementXml(WordOwnerLocation),
     RunText(WordOwnerLocation),
+    /// An edit of the paragraph at this route alone (for a run edit, the
+    /// run's paragraph). It retires the paragraph's content and what it
+    /// holds, and what the edit renumbers, and keeps the document epoch.
+    ParagraphEdit(oxoffice_docx::ContentLocation),
+    /// An insertion in one table cell: the table's route, the row and the
+    /// cell. It retires the cell's content and what the edit renumbers, and
+    /// keeps the document epoch.
+    CellInsert(oxoffice_docx::ContentLocation, usize, usize),
 }
 
 pub(super) fn form_owner_certificates(

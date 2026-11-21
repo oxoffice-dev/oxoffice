@@ -80,6 +80,7 @@ pub use styles::PyStyle;
 use styles::{StyleLineSpacingArg, style_id_from_name};
 use templates::{template_render_pyerr, template_value};
 
+mod block_edits;
 mod body_splice;
 mod inventory_matches;
 mod owner_facts;
@@ -87,6 +88,10 @@ mod owner_locations;
 mod owner_pieces;
 mod publication;
 
+pub(crate) use block_edits::BlockShift;
+#[cfg(debug_assertions)]
+use block_edits::assert_kept_owners_name_their_elements;
+use block_edits::block_retention;
 pub(crate) use body_splice::{BodySplice, PreparedBodySplice, SplicedBodyItem, StagedAppend};
 use inventory_matches::{
     append_word_owners_with_states, indexed_inventory_matches, property_owner_key,
@@ -415,6 +420,8 @@ struct WordOwnerAddress {
     read_facts: WordReadFacts,
 }
 
+// Debug checks keep the inventory a local edit replaces, to compare.
+#[cfg_attr(debug_assertions, derive(Clone))]
 pub(crate) struct WordOwner {
     location: WordOwnerLocation,
     parent: Option<usize>,

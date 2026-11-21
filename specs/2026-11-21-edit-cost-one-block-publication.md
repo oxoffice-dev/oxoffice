@@ -64,8 +64,9 @@ matcher pairs old and new owners by equal route.
      content state, its runs, its hyperlinks and every story inside it (text
      boxes, with their tables, cells, paragraphs, runs and links) are born. A
      text-box paragraph keeps today's rule (all its states born).
-   - A cell insertion retires the cell's content and its descendants; the
-     cell keeps its owner state and the table its owner and grid states.
+   - A cell insertion retires the cell's content and its descendants, with
+     the hyperlinks and the stories inside the cell; the cell keeps its owner
+     state and the table its owner and grid states.
    - Owners whose route holds an ordinal the edit shifts retire, in every
      story:
      - when the edit changes how many story items its story holds (fields,
@@ -74,18 +75,28 @@ matcher pairs old and new owners by equal route.
      - when it adds or removes a link inside a story item that holds more
        than the edited paragraph (a block content control), the later links
        of that item;
-     - when it changes how many text-box or table-cell stories its part
-       holds, every owner of a later story of that kind in that part.
+     - when it changes how many text-box stories its part holds, every
+       owner of a later text box of that part;
+     - when it changes how many table-cell stories its part holds, the
+       hyperlinks of the later cell stories of that part. A cell, and what it
+       holds, is found through its table, which the edit does not move; the
+       content of a later cell whose table has no owner of its own (a table
+       inside a block content control) is found by its story, and retires.
      Paragraphs and tables keep their states: the body's are matched by their
      block slot, the other stories' by their ordinal among the story's
      paragraphs or tables, which an edit of one paragraph does not move.
+   - An owner whose parent retires retires with it: the runs of a retired
+     paragraph, the cells of a retired table.
    - The snapshot scope retires, as for every publication.
    - Nothing else retires. The publication uses the local revision mode, so
      the document epoch stays and the `Run` handles of other paragraphs keep
      working; so do other paragraphs, tables, cells, sections, headers,
      footers, notes, comments, and the hyperlinks of other paragraphs.
    On every route, an edit that leaves the edited paragraph (or cell) equal
-   to what it was is a no-op: it publishes nothing and keeps every handle.
+   to what it was (the same bytes) is a no-op: it publishes nothing and keeps
+   every handle. When the element cannot be read alone before and after the
+   edit, or the two reads disagree outside it, the publication retires every
+   handle, as `Conservative` does.
    The nine calls get block publications of their own. `ParagraphText`,
    `ParagraphAppend` and `Conservative` keep their rules for the other calls
    that use them (`Paragraph.add_internal_hyperlink`, `Document.add_note`).
@@ -109,11 +120,18 @@ matcher pairs old and new owners by equal route.
    in 1b-iii-c.
 4. **A debug oracle proves every kept handle, without the matcher.** After
    every publication of the nine calls, on every route, debug builds check
-   each owner whose state is kept. The owners whose element the edit rewrites
-   (the edited paragraph; for a cell edit, the cell and its table) keep their
-   route. Every other kept owner, inside the edited block or table as well as
-   outside it, has the same element (its bytes, serialized alone) at its old
-   route moved by the edit's shift. The shift is known from the edit and
+   each owner whose state is kept. The owner whose element the edit rewrites
+   (the edited paragraph or cell) keeps its route. So does every owner whose
+   element holds it (the cells and tables around it, and for a text-box
+   paragraph the paragraph and the run that hold the text box), and its bytes
+   differ by the edited element alone. Every other kept owner, inside the
+   edited block or table as well as outside it, has the same element at its
+   old route moved by the edit's shift. Elements compare by their XML events,
+   each element and attribute name resolved to its namespace, with the
+   namespace declarations left out: rewriting a text-box paragraph declares
+   its namespaces again on the run that holds the drawing, which the oracle
+   of 1b-iii-a found, while a prefix bound to another namespace still makes
+   another element (both tested on the comparison itself). The shift is known from the edit and
    defined for every story: the item indexes of the edited story after the
    edit, by the change in its item count; the link indexes of the item that
    holds the edit, by the change in its link count; the text-box and
