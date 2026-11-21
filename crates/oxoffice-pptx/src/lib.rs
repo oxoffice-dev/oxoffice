@@ -10285,7 +10285,9 @@ impl Presentation {
     /// Duplicates one slide immediately after its source.
     ///
     /// The copy has its own notes and its own modern comments, whose comment
-    /// and reply ids are fresh and whose anchors follow the copy.
+    /// and reply ids are fresh and whose anchors follow the copy. Its legacy
+    /// comments are copied into a part of its own, each taking its author's
+    /// next index.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10430,8 +10432,10 @@ impl Presentation {
     /// are carried unchanged and may name a custom show this presentation
     /// lacks.
     ///
-    /// Legacy comments, controls and any other internal relationship type,
-    /// on the slide, its notes or a copied part, are rejected without
+    /// Legacy comments are copied into a part of their own: their authors
+    /// join this presentation's legacy author list, and each comment takes
+    /// its author's next index. Controls and any other internal relationship
+    /// type, on the slide, its notes or a copied part, are rejected without
     /// mutation, and the error names the relationship type.
     pub fn import_slides(
         &mut self,
@@ -10623,7 +10627,13 @@ impl Presentation {
             &font_names,
             &mut part_copies,
         )?;
-        staged.import_classic_comment_graphs(source, &source_package, indexes, &mut part_copies)?;
+        staged.import_classic_comment_graphs(
+            &source.slides,
+            &source.presentation_part,
+            &source_package,
+            indexes,
+            &mut part_copies,
+        )?;
         for (offset, (index, layout, slide_part)) in copies.iter().enumerate() {
             let layout_part = match layout {
                 ImportLayout::Destination(layout_index) => {
@@ -10964,14 +10974,44 @@ impl Presentation {
     fn duplicate_slide_in_place(&mut self, index: usize) -> Result<usize> {
         let source_package = self.package.clone();
         let source = SlideRecord::clone(&self.slides[index]);
-        self.copy_slide_from_in_place(
+        // Legacy comments are copied as an import copies them: a part of
+        // the copy's own, whose comments take their authors' next indexes.
+        let mut legacy_comments = HashMap::new();
+        let source_slides = self.slides.clone();
+        let presentation_part = self.presentation_part.clone();
+        self.import_classic_comment_graphs(
+            &source_slides,
+            &presentation_part,
+            &source_package,
+            &[index],
+            &mut legacy_comments,
+        )?;
+        let inserted = self.copy_slide_from_in_place(
             &source_package,
             source,
             index + 1,
             "duplicate slide",
             None,
             None,
-        )
+        )?;
+        let slide_part = self.slides[inserted].part_name.clone();
+        if let Some(relationship) =
+            self.package
+                .get_part_rels_mut(&slide_part)
+                .and_then(|relationships| {
+                    relationships
+                        .items
+                        .iter_mut()
+                        .find(|relationship| relationship.rel_type == rel_types::COMMENTS)
+                })
+            && let Some(copied) = legacy_comments.get(&OpcPackage::resolve_rel_target(
+                &slide_part,
+                &relationship.target,
+            ))
+        {
+            relationship.target = relative_part_target(&slide_part, copied);
+        }
+        Ok(inserted)
     }
 
     /// Copies one slide record, with its notes and modern comments, into this
@@ -12215,7 +12255,8 @@ impl Presentation {
 
     fn import_classic_comment_graphs(
         &mut self,
-        source: &Presentation,
+        source_slides: &[Arc<SlideRecord>],
+        source_presentation_part: &str,
         source_package: &OpcPackage,
         indexes: &[usize],
         copies: &mut HashMap<String, String>,
@@ -12223,7 +12264,7 @@ impl Presentation {
         let mut source_parts = Vec::new();
         let mut seen = HashSet::new();
         for &index in indexes {
-            let part = &source.slides[index].part_name;
+            let part = &source_slides[index].part_name;
             let Some(relationships) = source_package.get_part_rels(part) else {
                 continue;
             };
@@ -12251,7 +12292,7 @@ impl Presentation {
         }
         let mut all_parts = Vec::new();
         let mut seen = HashSet::new();
-        for record in &source.slides {
+        for record in source_slides {
             if let Some(relationships) = source_package.get_part_rels(&record.part_name) {
                 for relationship in relationships.get_all_by_type(rel_types::COMMENTS) {
                     reject_external(&record.part_name, relationship)?;
@@ -12311,8 +12352,8 @@ impl Presentation {
             imported_relationships.insert(part.clone(), relationships);
         }
         for (package, owner) in [
-            (source_package, &source.presentation_part),
-            (&self.package, &self.presentation_part),
+            (source_package, source_presentation_part),
+            (&self.package, self.presentation_part.as_str()),
         ] {
             let count = package.get_part_rels(owner).map_or(0, |relationships| {
                 relationships
@@ -12321,7 +12362,7 @@ impl Presentation {
             });
             if count > 1 {
                 return Err(Error::DuplicateRelationships {
-                    source_part: owner.clone(),
+                    source_part: owner.to_owned(),
                     relationship_type: CLASSIC_COMMENT_AUTHORS_RELATIONSHIP,
                     count,
                 });
@@ -12329,11 +12370,11 @@ impl Presentation {
         }
         let source_authors = related_internal_part(
             source_package,
-            &source.presentation_part,
+            source_presentation_part,
             CLASSIC_COMMENT_AUTHORS_RELATIONSHIP,
         )?
         .ok_or_else(|| Error::MalformedPart {
-            part_name: source.presentation_part.clone(),
+            part_name: source_presentation_part.to_owned(),
             message: "classic comments have no commentAuthors relationship".into(),
         })?;
         let destination_authors = related_internal_part(

@@ -1319,20 +1319,94 @@ fn a_duplicated_comment_keeps_its_author_among_namesakes() {
 }
 
 #[test]
-fn legacy_comments_shared_with_a_duplicate_stay_until_their_last_slide_goes() {
+fn a_duplicated_legacy_thread_keeps_its_reply_on_the_copied_parent() {
+    // Slide 5 holds a legacy comment by author 2 (index 1) and a reply by
+    // author 1 (index 2) whose parent is that comment, as PowerPoint wrote them.
+    let mut prs = corpus_deck("powerpoint/training.pptx");
+    prs.duplicate_slide(4).unwrap();
+
+    let reopened = reopen(&prs);
+    assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+    let package = package_of(&reopened);
+    let mut comment_parts = package
+        .parts
+        .keys()
+        .filter(|part| part.starts_with("/ppt/slides/slide"))
+        .filter_map(|slide| {
+            let relationships = package.get_part_rels(slide)?;
+            let relationship = relationships.get_by_type(rel_types::COMMENTS)?;
+            Some(OpcPackage::resolve_rel_target(slide, &relationship.target).to_string())
+        })
+        .collect::<Vec<_>>();
+    comment_parts.sort();
+    comment_parts.dedup();
+    assert_eq!(
+        comment_parts.len(),
+        3,
+        "each commented slide has its own part"
+    );
+    let copy = comment_parts
+        .iter()
+        .find(|part| !part.ends_with("/comment1.xml") && !part.ends_with("/comment2.xml"))
+        .expect("the copy's part is new");
+
+    let original = part_xml(&reopened, "/ppt/comments/comment2.xml");
+    assert!(original.contains(r#"authorId="2" dt="2026-11-21T09:00:00" idx="1""#));
+    assert!(original.contains(r#"parentCm authorId="2" idx="1""#));
+    let copied = part_xml(&reopened, copy);
+    assert!(
+        copied.contains(r#"authorId="2" dt="2026-11-21T09:00:00" idx="2""#),
+        "{copied}"
+    );
+    assert!(
+        copied.contains(r#"authorId="1" dt="2026-11-21T14:30:00" idx="3""#),
+        "{copied}"
+    );
+    assert!(
+        copied.contains(r#"parentCm authorId="2" idx="2""#),
+        "the reply points at the copied comment: {copied}"
+    );
+}
+
+#[test]
+fn a_duplicated_slide_gets_its_own_copy_of_its_legacy_comments() {
     let mut prs = deck_with_legacy_comments(2);
     prs.duplicate_slide(0).unwrap();
 
-    prs.remove_slide(0).unwrap();
     let reopened = reopen(&prs);
     let package = package_of(&reopened);
-    let owner = package
-        .get_part_rels("/ppt/slides/slide3.xml")
-        .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
-        .expect("the copy still points at the legacy comments");
-    assert_eq!(owner.target, "../comments/comment1.xml");
-    assert!(part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"));
+    let comments_of = |slide: &str| {
+        package
+            .get_part_rels(slide)
+            .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
+            .map(|relationship| {
+                OpcPackage::resolve_rel_target(slide, &relationship.target).to_string()
+            })
+    };
+    let original = comments_of("/ppt/slides/slide1.xml").expect("the original keeps its comments");
+    let copy = comments_of("/ppt/slides/slide3.xml").expect("the copy has legacy comments");
+    assert_eq!(original, "/ppt/comments/comment1.xml");
+    assert_ne!(copy, original, "the copy has a comment part of its own");
+    let copied = part_xml(&reopened, &copy);
+    assert!(
+        copied.contains("Legacy remark on the opening slide"),
+        "{copied}"
+    );
+    assert!(
+        copied.contains(r#"idx="2""#),
+        "the copied comment takes its author's next index: {copied}"
+    );
+    assert!(part_xml(&reopened, &original).contains(r#"idx="1""#));
+    assert!(part_xml(&reopened, "/ppt/commentAuthors.xml").contains(r#"lastIdx="2""#));
     assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+
+    prs.remove_slide(0).unwrap();
+    let reopened = reopen(&prs);
+    assert_eq!(
+        parts_under(&reopened, "ppt/comments/"),
+        [copy.trim_start_matches('/')]
+    );
+    assert!(part_xml(&reopened, &copy).contains("Legacy remark on the opening slide"));
 
     prs.remove_slide(0).unwrap();
     assert!(parts_under(&reopen(&prs), "ppt/comments/").is_empty());
