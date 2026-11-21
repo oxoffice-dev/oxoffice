@@ -152,7 +152,11 @@ pub(super) fn parse_hyperlink_children(
                 } else {
                     let raw = capture_element(&mut reader, &element)?;
                     if let Some(facts) = source_facts.as_deref_mut() {
-                        if is_word_element(element.name().as_ref(), b"hyperlink", &prefixes) {
+                        if is_word_element(element.name().as_ref(), b"fldSimple", &prefixes) {
+                            // Read later, as the paragraph defers its own.
+                            facts.simple_fields_deferred = true;
+                        } else if is_word_element(element.name().as_ref(), b"hyperlink", &prefixes)
+                        {
                             facts.append_opaque_hyperlink(&raw, &prefixes)?;
                         } else if crate::revision::revision_kind(element.name().as_ref(), &prefixes)
                             .is_some()
@@ -230,6 +234,11 @@ pub(super) fn parse_hyperlink_children(
                         extra_xml.push((runs.len(), revisions_at_boundary, raw));
                     }
                 } else {
+                    if let Some(facts) = source_facts.as_deref_mut()
+                        && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
+                    {
+                        facts.simple_fields_deferred = true;
+                    }
                     extra_xml.push((runs.len(), revisions_at_boundary, raw));
                 }
             }

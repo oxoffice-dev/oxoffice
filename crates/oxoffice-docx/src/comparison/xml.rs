@@ -464,9 +464,7 @@ pub(super) fn paragraph_run_spans(xml: &str) -> Result<Vec<Range<usize>>> {
                     && matches!(local.as_slice(), b"r" | b"fldSimple")
                     && parent.is_some_and(|(value, word)| {
                         word && ((value == b"p" && stack.len() == 2)
-                            || (value == b"hyperlink"
-                                && stack.len() == 3
-                                && local.as_slice() == b"r"))
+                            || (value == b"hyperlink" && stack.len() == 3))
                     });
                 stack.push((local, is_word, target.then_some(before)));
             }
@@ -477,7 +475,10 @@ pub(super) fn paragraph_run_spans(xml: &str) -> Result<Vec<Range<usize>>> {
                     .map(|(local, word, _)| (local.as_slice(), *word));
                 if is_word
                     && local.as_ref() == b"fldSimple"
-                    && parent.is_some_and(|(value, word)| word && value == b"p" && stack.len() == 2)
+                    && parent.is_some_and(|(value, word)| {
+                        word && ((value == b"p" && stack.len() == 2)
+                            || (value == b"hyperlink" && stack.len() == 3))
+                    })
                 {
                     spans.push(before.saturating_sub(offset)..after.saturating_sub(offset));
                 }

@@ -384,12 +384,48 @@ fn a_simple_field_inside_a_hyperlink_in_a_file_reads_and_saves_as_written() {
             ]
         );
     }
+    // An edit in the paragraph writes the link again, its fields in place.
+    doc.paragraph_mut(0).unwrap().add_run(" tail");
     let package =
         oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
             .unwrap();
     let part = package.main_document_part().unwrap();
     let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
-    assert!(xml.contains(body), "the link saves as it was read: {xml}");
+    let link = &xml[xml.find("<w:hyperlink").unwrap()..xml.find("</w:hyperlink>").unwrap()];
+    let pageref = link
+        .find("PAGEREF total")
+        .expect("the PAGEREF stays in the link");
+    let numpages = link
+        .find("NUMPAGES")
+        .expect("the NUMPAGES stays in the link");
+    assert!(pageref < numpages, "{link}");
+    assert_eq!(texts(&reopen(&mut doc)), ["See page 2 of  tail"]);
+
+    // The story items read the field result, and a comparison of the file
+    // with its own copy runs.
+    let doc = doc_with_body(body);
+    let items: Vec<_> = doc
+        .story_items(&story(&doc, StoryKind::Body))
+        .unwrap()
+        .into_iter()
+        .filter_map(|item| item.text().unwrap())
+        .collect();
+    // As for a simple field directly in a paragraph: the paragraph, then
+    // the field with its result.
+    assert_eq!(items, ["See page 2 of ", "2"]);
+    let mut compared = doc_with_body(body);
+    compared
+        .compare(&doc_with_body(body), "Ana", "2026-01-01T00:00:00Z")
+        .unwrap();
+    assert_eq!(texts(&compared), ["See page 2 of "]);
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_inside_an_insertion_reads_in_the_accepted_text() {
+    let doc = doc_with_body(
+        r#"<w:p><w:ins w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>2</w:t></w:r></w:fldSimple></w:hyperlink></w:ins></w:p>"#,
+    );
+    assert_eq!(texts(&doc), ["See page 2"]);
 }
 
 #[test]
