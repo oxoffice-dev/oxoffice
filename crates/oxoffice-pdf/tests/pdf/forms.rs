@@ -406,23 +406,7 @@ fn fragments_of_a_field_union_on_its_first_page_and_later_ones_stay_on_the_page(
     );
     let appearance = read.appearance(read.field("notes"), None);
     assert_eq!(read.drawn_text(&appearance), "first linesecond line");
-    let operators: Vec<String> = lopdf::content::Content::decode(&appearance)
-        .expect("the appearance parses")
-        .operations
-        .into_iter()
-        .map(|operation| operation.operator)
-        .collect();
-    assert!(
-        operators.iter().all(|operator| matches!(
-            operator.as_str(),
-            "q" | "Q" | "cm" | "rg" | "BT" | "ET" | "Tf" | "Tm" | "TJ" | "Tj" | "gs"
-        )),
-        "every fragment's operators stay apart: {operators:?}"
-    );
-    assert_eq!(
-        operators.iter().filter(|operator| *operator == "q").count(),
-        operators.iter().filter(|operator| *operator == "Q").count()
-    );
+    assert_operators_apart(&appearance);
 }
 
 #[test]
@@ -659,4 +643,63 @@ fn a_tagged_fragment_drawn_on_the_page_is_an_artifact() {
     let later = read.page_content(1);
     assert_eq!(read.drawn_text(&later), "later");
     assert!(contains(&later, b"/Artifact BMC"));
+}
+
+/// The operators of a content stream, decoded strictly: any byte that does
+/// not parse fails the decoding.
+fn operators(content: &[u8]) -> Vec<String> {
+    lopdf::content::Content::decode_strict(content)
+        .expect("the appearance parses to its last byte")
+        .operations
+        .into_iter()
+        .map(|operation| operation.operator)
+        .collect()
+}
+
+fn assert_operators_apart(content: &[u8]) {
+    let operators = operators(content);
+    assert!(
+        operators.iter().all(|operator| matches!(
+            operator.as_str(),
+            "q" | "Q" | "cm" | "rg" | "BT" | "ET" | "Tf" | "Tm" | "TJ" | "Tj" | "gs"
+        )),
+        "every fragment's operators stay apart: {operators:?}"
+    );
+}
+
+#[test]
+fn the_fragments_of_a_field_draw_apart_in_every_appearance() {
+    let check = |x: f64| {
+        PositionedElement::FormField(FormFieldFragment {
+            field: FormFieldId(1),
+            rect: line(x, 130.0, 12.0),
+            children: vec![run("X", Point { x, y: 142.0 }, 11.0)],
+            alternate: vec![run("O", Point { x, y: 142.0 }, 11.0)],
+        })
+    };
+    let layout = with_fields(
+        layout(vec![vec![
+            fragment(0, line(72.0, 100.0, 60.0), "Jane"),
+            fragment(0, line(132.0, 100.0, 60.0), "Doe"),
+            check(72.0),
+            check(90.0),
+        ]]),
+        vec![
+            field("name", text_kind("Jane Doe")),
+            field("agree", FormFieldKind::CheckBox { checked: true }),
+        ],
+    );
+    let read = pdf(&layout);
+    let name = read.appearance(read.field("name"), None);
+    assert_operators_apart(&name);
+    assert_eq!(read.drawn_text(&name), "JaneDoe");
+    for state in [b"Yes".as_slice(), b"Off".as_slice()] {
+        let appearance = read.appearance(read.field("agree"), Some(state));
+        assert_operators_apart(&appearance);
+        let texts = operators(&appearance)
+            .iter()
+            .filter(|operator| *operator == "BT")
+            .count();
+        assert_eq!(texts, 2, "both fragments of the state are drawn");
+    }
 }
