@@ -10,32 +10,54 @@ One manual workflow, no manual tags, no hand-edited changelog.
    (`gh run list -w CI -e schedule -L 1 --json headSha,conclusion`) if it ran
    on that commit, otherwise `gh workflow run ci.yml --ref main` and wait for
    it.
-2. Run a dry run first: Actions, **Release**, **Run workflow**, the version,
-   **dry_run** ticked. Every job builds the commit `main` points at when the
-   run's first job starts, even if `main` moves meanwhile (the smoke check
-   takes its script and corpus from the commit the run was started from, so
-   a dry run from a branch tests that branch's check); it runs every check
-   but the one that the wheels carry the new version, and publishes nothing.
-3. Run it again without **dry_run**. The workflow sets the version,
-   regenerates `CHANGELOG.md` with git-cliff, commits `chore(release):
-   vX.Y.Z`, tags `vX.Y.Z`, builds, checks each wheel on its platform with
-   `scripts/wheel_smoke.py` and publishes the GitHub release, then PyPI and
-   prefix.dev.
+2. Actions, **Release**, **Run workflow** from `main`, the version (or
+   `gh workflow run release.yml -f version=X.Y.Z`). Merging into `main`
+   meanwhile is fine. Every build job checks out the commit the run was
+   dispatched on and sets the version in its own workspace
+   (`scripts/set_version.py`, then `cargo update --workspace`): the binaries,
+   the wheels and the sdist all come from that one commit. Each wheel runs
+   on its platform (`scripts/wheel_smoke.py`), and each conda package is
+   built and tested into a local channel.
+3. Only once all of that is green, the last job sets the version again on
+   the dispatched commit, regenerates `CHANGELOG.md` with git-cliff, commits
+   `chore(release): vX.Y.Z` on top of that commit and tags it: the tag holds
+   exactly the tree every job built, plus the version and the changelog. It
+   builds the remaining assets and the release notes, then pushes `main` and
+   the tag in one atomic push (both land or neither does), and publishes the
+   GitHub release, then PyPI and prefix.dev.
+
+If `main` did not move during the run, it is fast-forwarded to the version
+commit. If pull requests merged meanwhile, they are not in the release:
+`main` gets a merge commit, `chore(release): merge vX.Y.Z into main`, whose
+parents are the current `main` and the version commit, so the tag stays on
+`main`'s history and git-cliff puts those pull requests in the next release.
+A conflict in that merge is resolved by the workflow: `CHANGELOG.md` takes
+the release's, `Cargo.toml` and `Cargo.lock` take `main`'s, and the version is
+set again on them (a crate added during the run gets it too).
 
 The smoke check opens, edits, saves and renders the corpus on the main thread,
 then measures the smallest thread stack the same work needs and fails above
 its budget, 1 MiB (`STACK_BUDGET_KIB`): the main thread of most Windows
 programs that embed Python. Each job's summary shows the measure.
 
-### When a run fails after the tag
+### When a run fails
 
-The commit and the tag are pushed before the builds, so a failed build or
-check leaves them on `main` with nothing published. Fix the cause on `main`,
-then either release the next patch version, or remove the tag
-(`git push --delete origin vX.Y.Z`), revert the `chore(release)` commit and
-run the same version again. A failure in PyPI or prefix.dev after the GitHub
-release is retried with **Re-run failed jobs**: both skip files already
-uploaded.
+Nothing reaches `main` or the tags before every build, smoke check, conda
+check and asset is done: the push is the last step but the GitHub release.
+
+- **A build, a check or an asset fails**: nothing was pushed. A transient
+  failure is retried with **Re-run failed jobs**. Otherwise fix the cause on
+  `main` and run the same version again.
+- **The push is refused five times** (`main` kept moving, or a rule refused
+  it): nothing was pushed. **Re-run failed jobs**.
+- **The GitHub release fails** after the push: **Re-run failed jobs**. The
+  last job finds the tag on the version commit it made and goes on; it stops
+  if the tag is on any other commit. A new run of the same version stops at
+  once, since the tag exists. If it keeps failing, delete the tag
+  (`git push --delete origin vX.Y.Z`), fix the cause on `main` and run the
+  same version again; the version commit already merged into `main` stays.
+- **PyPI or prefix.dev fails** after the GitHub release: **Re-run failed
+  jobs**: both skip files already uploaded.
 
 ## Versions
 
