@@ -1103,7 +1103,16 @@ fn a_new_numbered_list_can_be_started_in_word_google_and_python_docx_reports() {
         "google/report.docx",
         "authored/report.docx",
     ] {
+        let durable_ids = |numbering: &str| -> Vec<String> {
+            numbering
+                .split("w16cid:durableId=\"")
+                .skip(1)
+                .map(|rest| rest[..rest.find('"').unwrap()].to_owned())
+                .collect()
+        };
         let mut doc = corpus_doc(name);
+        let original = durable_ids(&doc.part_xml("word/numbering.xml").unwrap());
+        let instances = doc.numbering_instances().len();
         doc.try_add_numbered_list_item("Fourth step", 0).unwrap();
         doc.try_add_numbered_list_item_with_restart("First of a new list", 0, true)
             .unwrap();
@@ -1122,17 +1131,26 @@ fn a_new_numbered_list_can_be_started_in_word_google_and_python_docx_reports() {
             "{name}"
         );
         doc.validate_numbering_graph().unwrap();
-        // Word names each list instance with a w16cid:durableId: the new
-        // instance does not copy the one of the instance it restarts.
-        let numbering = doc.part_xml("word/numbering.xml").unwrap();
-        let ids: Vec<&str> = numbering
-            .split("w16cid:durableId=\"")
-            .skip(1)
-            .map(|rest| &rest[..rest.find('"').unwrap()])
-            .collect();
-        let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
-        assert_eq!(unique.len(), ids.len(), "{name}: durable ids stay unique");
+        // Word names each list instance with a w16cid:durableId: they all
+        // stay, and the new instance does not copy the one it restarts.
+        assert_eq!(doc.numbering_instances().len(), instances + 1, "{name}");
+        assert_eq!(
+            durable_ids(&doc.part_xml("word/numbering.xml").unwrap()),
+            original,
+            "{name}"
+        );
     }
+}
+
+#[test]
+fn the_word_report_names_its_list_instances_with_durable_ids() {
+    let numbering = corpus_doc("word/report.docx")
+        .part_xml("word/numbering.xml")
+        .unwrap();
+    assert!(
+        numbering.matches("w16cid:durableId=\"").count() >= 2,
+        "{numbering}"
+    );
 }
 
 // Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29

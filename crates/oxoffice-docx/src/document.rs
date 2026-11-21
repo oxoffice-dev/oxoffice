@@ -53572,13 +53572,12 @@ fn numbering_level_has_unmodeled(level: &CT_Lvl) -> bool {
 /// Whether a restart can copy this instance into a new one: everything it
 /// holds is modelled, but namespace declarations and Word's
 /// `w16cid:durableId`, which names the source instance and which the copy
-/// must not take.
+/// must not take. The durable id is matched with the prefix Word writes, so
+/// an attribute of that name in another namespace is refused, not dropped.
 fn restart_can_copy(instance: &CT_Num) -> bool {
     instance.extra_xml.is_empty()
         && instance.extra_attributes.iter().all(|(name, _)| {
-            name == "xmlns"
-                || name.starts_with("xmlns:")
-                || name.rsplit(':').next() == Some("durableId")
+            name == "xmlns" || name.starts_with("xmlns:") || name == "w16cid:durableId"
         })
         && !instance
             .abstract_num_id_raw

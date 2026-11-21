@@ -90,6 +90,15 @@
     "issue": 32
   },
   {
+    "id": "docx-restart-style-numbered-item",
+    "format": "docx",
+    "area": "lists",
+    "title": "A list item numbered through its style cannot be restarted",
+    "symptom": "restart_numbering fails with \"paragraph has no explicit numbering level\" on the List Number paragraphs of Word and LibreOffice files, whose numbering comes from the style",
+    "workaround": "Rust: give the paragraph its own numbering first (set_numbering with the num_id and level of effective_paragraph_properties), then restart; Python: start a new list (add_numbering_definition, add_numbering_instance, Paragraph.numbering)",
+    "issue": 82
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",
