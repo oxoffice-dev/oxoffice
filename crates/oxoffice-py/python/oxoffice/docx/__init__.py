@@ -49,6 +49,29 @@ class ReplacementCountError(DocxError):
         return str(self.args[0])
 
 
+class UnreachedTextError(DocxError):
+    """A ``Document.replace_all`` pair left its text in the document, out of its replacement's reach.
+
+    A match across the edge of a content control, a tracked change or a field is not replaced. ``index`` is the
+    position of the pair, ``placeholder`` its text, ``left`` the occurrences left, and ``paragraphs`` the
+    ``StoryParagraph`` objects that hold them. ``left`` is ``None`` when the check could not read the document's
+    stories, such as a header whose part is missing. Nothing was changed; ``allow_unreached=True`` skips the check
+    and replaces what can be reached.
+    """
+
+    def __init__(
+        self, message: str, index: int, placeholder: str, left: "int | None", paragraphs: tuple = ()
+    ) -> None:
+        super().__init__(message, index, placeholder, left, paragraphs)
+        self.index = index
+        self.placeholder = placeholder
+        self.left = left
+        self.paragraphs = paragraphs
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
 from ._native import (
     HtmlDiagnostic,
     FontEmbeddingLicense,
@@ -243,6 +266,7 @@ __all__ = [
     "RGBColor",
     "DocxError",
     "ReplacementCountError",
+    "UnreachedTextError",
     "Revision",
     "Row",
     "RowCollection",

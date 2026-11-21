@@ -282,6 +282,31 @@ remains in `not_compared` even when another story differs. Without
 exactly `N`. A mismatch exits unsuccessfully without creating or replacing the
 requested output.
 
+A tab reads as a tab character and a line, page or column break as a line
+feed, as `text` prints them: a placeholder holding one matches it, and a value
+holding one writes a `w:tab` or a line break (a carriage return or a Windows
+line ending writes one line break too, and a page or column break matched and
+written back becomes a line break). In a `--map` file write them `\t` and
+`\n`; on a shell command line, pass the characters themselves (`$'a\tb'` in
+bash).
+
+A literal `replace`, one pair or a `--map`, also refuses a pair after which a
+paragraph that held the placeholder (outside the comments) does not read as its
+text with every occurrence replaced: the occurrences it keeps are out of the
+replacement's reach, such as a match across the edge of a content control, a
+tracked change or a simple field, text in a text box inside a note, or the
+paragraphs of a block custom XML element. The error names the pair, how many
+occurrences are left, and the first paragraphs that hold them with their part
+and style, and nothing is written. A value that forms the placeholder again
+with its neighbours, as `"  "` to `" "` on three spaces, or a value equal to
+the placeholder, is not refused.
+Comments are not searched and do not refuse. A document whose stories the
+check cannot read, such as one whose header relationship targets a missing
+part, is refused with the reason. `--allow-unreached` skips the check and
+publishes with the reachable occurrences replaced. `--regex` pairs are not
+checked, and `--allow-unreached` conflicts with `--regex`. A table of contents
+is reached like the body: its cached entries are replaced with their headings.
+
 The count covers the text a reader sees in the body, tables,
 content controls, headers, footers, footnotes, endnotes, and tracked insertions,
 in the text boxes of the body, headers, and footers, in the labels of the

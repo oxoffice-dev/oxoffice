@@ -153,6 +153,60 @@ One pull request per row group, each with tests on the corpus:
   `paragraph_mut`); in Python, where edits go through the document's
   revision tracking, it stays `Document.isolate_span`, the span carrying its
   paragraph. No CLI: the CLI has no run formatting to apply to the runs.
+- **2. Text left out of a replacement's reach** (#24): counts and the
+  ordered, all-or-nothing batch were already there
+  (`try_replace_all_expected`, Python `replace_all([(old, new, expected)])`,
+  CLI `--map`). New `Document::try_replace_all_checked(pairs,
+  ReplaceOptions)` also refuses a pair after which a story paragraph that
+  held its text (comments aside) does not read as that text with every
+  occurrence replaced, with `ReplacementRefusal::Unreached(
+  UnreachedReplacement { index, placeholder, left, paragraphs })`, the
+  paragraphs being those that keep occurrences;
+  `ReplaceOptions { allow_unreached: true }` skips the check. Python
+  `replace_all(pairs, *, allow_unreached=False)` raises `UnreachedTextError`
+  (index, placeholder, left, paragraphs). CLI literal `replace` (one pair or
+  `--map`) refuses, with `--allow-unreached`.
+- Decisions: the check covers the stories replacement searches, so comments
+  are left out (they would refuse every batch whose text a comment quotes);
+  `count_text` still shows them. The check compares each paragraph before
+  and after the pair, keyed by its place without the story fingerprint: the
+  text after must read as the text before with each occurrence replaced or
+  left as it was, and the fewest left over such readings count (an
+  ambiguous reading, as with a value that holds its placeholder, gets the
+  benefit of the doubt). Replacement reads tabs and breaks as the story
+  view does since #88, so a text no reading explains only comes from a
+  change the check does not model, and counts what it holds beyond a full
+  replacement. The readings followed at once are capped; past the cap, how
+  far the text moved tells how many occurrences were made. Before #88,
+  replacement matched across a tab or a line break that the story view
+  reads as `\t` and `\n` (#26), and four review rounds went into a second
+  reading that modelled it; #88 removed the cause, and that reading with
+  it. Four designs came before the check, each answered by an independent
+  review: looking for the text after the pair refused a value that forms
+  its text again (`"  "` to `" "` on three spaces); counting over the
+  document let a match outside a paragraph offset one left in it; adding
+  "a paragraph left unchanged" refused a value equal to its placeholder and
+  missed a changed paragraph that keeps a cut match; and working out the
+  occurrences made from how far the text moved let a match across a line
+  break offset a cut one in the same paragraph. A document the check
+  cannot read, such as one whose header relationship targets a missing part,
+  is refused with `ReplacementRefusal::Unchecked` (Python
+  `UnreachedTextError` with `left=None`; Python already refuses to open such
+  a file) and a hint at `allow_unreached`, which replaces as before.
+  `try_replace_text` and the regex batches are not checked.
+  `try_replace_all_expected` keeps its signature and behaviour, so the
+  change is additive for Rust; Python `replace_all` and the CLI refuse by
+  default, as the helper did, which changes their 0.1.0 behaviour (a
+  breaking change in the changelog). A match cut by a content control, a
+  tracked insertion or a simple field is refused; one cut by a hyperlink is
+  replaced. A table of contents, written by oxoffice (`insert_toc`) or as
+  Word writes it (a block control holding a TOC field result with `PAGEREF`
+  fields), is reached like the body: its entries are replaced with their
+  headings, so it never refuses a batch. A text box inside a note and the
+  paragraphs of a block `w:customXml` are not searched and refuse.
+- PowerPoint: the helper only checked counts, which
+  `Presentation::try_replace_all_expected` and `pptx replace --map --expect`
+  already do; nothing new there.
 
 ## Links
 

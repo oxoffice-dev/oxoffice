@@ -81,7 +81,7 @@ def test_counts_by_story_kind_include_what_replacement_cannot_reach(producer):
     assert list(doc.count_text("the")) == ["body", "footer"]
     assert doc.count_text("not in the report") == {}
     # The match across the edge of the inline control is counted, not replaced.
-    assert doc.replace_all([("ACME", "Globex", 2)]) == (2,)
+    assert doc.replace_all([("ACME", "Globex", 2)], allow_unreached=True) == (2,)
     assert doc.count_text("ACME") == {"body": 1}
 
 

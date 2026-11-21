@@ -1529,11 +1529,15 @@ class Document:
         self, placeholder: str, replacement: str, *, expect: int | None = None
     ) -> int: ...
     def replace_all(
-        self, pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]]
+        self,
+        pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]],
+        *,
+        allow_unreached: bool = False,
     ) -> tuple[int, ...]:
         """Apply (old, new) or (old, new, expected) pairs in order, one after another, all or nothing: a later pair
         sees what an earlier one wrote, unlike the Rust `Document::replace_all` over a map, whose pairs apply
-        together. Returns the count of each pair."""
+        together. Returns the count of each pair. Raises UnreachedTextError when a pair's text is still in a
+        paragraph after its replacement, unless allow_unreached is true."""
     def replace_all_regex_expected(self, pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]]) -> tuple[int, ...]: ...
     def fill_content_control_tags(self, pairs: list[tuple[str, str]]) -> tuple[int, ...]: ...
     def insert_content_control(

@@ -13,8 +13,9 @@ use oxoffice_docx::{
     BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, ContentLocation,
     CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
     FieldEvaluationContext, HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat,
-    RasterOptions, RasterOutput, RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId,
-    StoryItemKind, StoryKind, StoryRevision,
+    RasterOptions, RasterOutput, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal,
+    RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId, StoryItemKind, StoryKind,
+    StoryRevision,
 };
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
@@ -2287,6 +2288,7 @@ pub struct ReplaceInput<'a> {
     pub map: Option<&'a Path>,
     pub expect: Option<usize>,
     pub regex: bool,
+    pub allow_unreached: bool,
 }
 
 /// Replace one pair or an ordered map through the shared checked transaction.
@@ -2313,17 +2315,30 @@ pub fn replace(
         .map(|pair| (pair.placeholder.as_str(), pair.value.as_str(), pair.expect))
         .collect::<Vec<_>>();
     let mut doc = Document::open(file)?;
-    let counts = if input.regex {
-        doc.try_replace_all_regex_expected(&borrowed)?
-    } else {
-        doc.try_replace_all_expected(&borrowed)?
-    }
-    .map_err(|mismatch| {
+    let mismatch_message = |mismatch: ReplacementCountMismatch| {
         format!(
             "pair {}: expected {} replacement(s) of {:?}, found {}",
             mismatch.index, mismatch.expected, mismatch.placeholder, mismatch.found
         )
-    })?;
+    };
+    let counts = if input.regex {
+        doc.try_replace_all_regex_expected(&borrowed)?
+            .map_err(mismatch_message)?
+    } else {
+        let options = ReplaceOptions {
+            allow_unreached: input.allow_unreached,
+        };
+        doc.try_replace_all_checked(&borrowed, options)?
+            .map_err(|refusal| match refusal {
+                ReplacementRefusal::Count(mismatch) => mismatch_message(mismatch),
+                ReplacementRefusal::Unreached(unreached) => {
+                    format!("{unreached}; pass --allow-unreached once handled")
+                }
+                ReplacementRefusal::Unchecked(unchecked) => {
+                    format!("{unchecked}; pass --allow-unreached to replace without the check")
+                }
+            })?
+    };
     let total = counts
         .iter()
         .try_fold(0usize, |sum, count| sum.checked_add(*count))
