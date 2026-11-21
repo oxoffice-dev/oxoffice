@@ -42,100 +42,6 @@ pub(crate) const COMMENT_COMPARISON_OPEN: &str =
     "<rdocx:comparisonComments xmlns:rdocx=\"urn:rdocx:comparison:comments:1\">";
 pub(crate) const COMMENT_COMPARISON_CLOSE: &str = "</rdocx:comparisonComments>";
 
-#[cfg(test)]
-std::thread_local! {
-    static POLICY_DIAGNOSTIC_SCOPES: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-#[cfg(test)]
-struct PolicyDiagnosticScope;
-#[cfg(test)]
-impl PolicyDiagnosticScope {
-    fn enter(stage: &str, owner: &str) -> Self {
-        POLICY_DIAGNOSTIC_SCOPES
-            .with(|scopes| scopes.borrow_mut().push((stage.into(), owner.into())));
-        Self
-    }
-}
-#[cfg(test)]
-impl Drop for PolicyDiagnosticScope {
-    fn drop(&mut self) {
-        POLICY_DIAGNOSTIC_SCOPES.with(|scopes| {
-            scopes.borrow_mut().pop();
-        });
-    }
-}
-#[cfg(test)]
-fn policy_diagnostic_path(xml: &str, target: usize) -> String {
-    let mut reader = NsReader::from_str(xml);
-    let mut path = Vec::new();
-    let mut counts = vec![0usize];
-    loop {
-        let at = reader.buffer_position() as usize;
-        let (namespace, event) = match reader.read_resolved_event() {
-            Ok(value) => value,
-            Err(error) => return format!("reader error: {error}"),
-        };
-        match event {
-            Event::Start(root) | Event::Empty(root) => {
-                let child = counts.last_mut().unwrap();
-                let ordinal = *child;
-                *child += 1;
-                let local = String::from_utf8_lossy(root.local_name().as_ref()).into_owned();
-                let uri = match namespace {
-                    ResolveResult::Bound(uri) => String::from_utf8_lossy(uri.as_ref()).into_owned(),
-                    other => format!("{other:?}"),
-                };
-                let node = (uri, local, ordinal);
-                if at == target {
-                    let mut selected = path.clone();
-                    selected.push(node);
-                    return format!("{selected:?}");
-                }
-                if matches!(
-                    xml.as_bytes().get(reader.buffer_position() as usize - 2),
-                    Some(b'/')
-                ) {
-                    continue;
-                }
-                path.push(node);
-                counts.push(0);
-            }
-            Event::End(_) => {
-                path.pop();
-                counts.pop();
-            }
-            Event::Eof => return format!("no event at offset {target}"),
-            _ => {}
-        }
-    }
-}
-#[cfg(test)]
-fn policy_diagnostic(event: &str, value: serde_json::Value) {
-    if std::env::var_os("OXOFFICE_POLICY_DIAGNOSTICS").is_some() {
-        POLICY_DIAGNOSTIC_SCOPES.with(|scopes| {
-            eprintln!(
-                "POLICY3_DIAGNOSTIC {}",
-                serde_json::json!({
-                    "test": std::thread::current().name(), "event": event,
-                    "scopes": &*scopes.borrow(), "value": value,
-                })
-            )
-        });
-    }
-}
-
-#[cfg(test)]
-fn destination_diagnostic_enabled() -> bool {
-    std::thread::current().name().is_some_and(|name| {
-        name.contains("destination_option_metadata_diagnostics")
-            || name.contains("projected_aliases_keep_authored")
-            || name.contains("default_run_controls_keep_property")
-            || name.contains("destination_repair")
-            || name.contains("mixed_textbox_projection")
-    })
-}
-
 fn comment_relationship(relationship: &Relationship) -> bool {
     matches!(
         relationship.rel_type.as_str(),
@@ -612,15 +518,6 @@ pub(crate) fn apply_comment_snapshot(
     Ok(())
 }
 
-#[cfg(test)]
-thread_local! {
-    static FAIL_AFTER_COMPARISON_STAGING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The bytes of the parents [`RunSource::capture_all`],
-    /// [`publication_parents_at`] and [`source_children`] have read, which the
-    /// tests of the cost of a comparison count instead of timing it.
-    static SOURCE_READ_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 type ControlPropertySignature<'a> = Option<(
     Option<oxoffice_docx_oxml::content_control::SdtType>,
     Option<&'a oxoffice_docx_oxml::content_control::CT_DataBinding>,
@@ -789,22 +686,6 @@ impl IdAllocator {
     }
 
     fn generated(&self, xml: String) -> Result<String> {
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            let closed = crate::document::close_content_fragment_namespaces(
-                xml.as_bytes(),
-                &BTreeMap::from([("w".to_owned(), W_NS.to_owned())]),
-            );
-            policy_diagnostic(
-                "destination_generated",
-                serde_json::json!({
-                    "local_word_binding":self.local_word_binding,"input":xml,
-                    "root_qualified_output":if self.local_word_binding && !xml.is_empty() {
-                        format!("{:?}",closed.as_ref().map(|bytes|String::from_utf8_lossy(bytes)))
-                    } else { xml.clone() }, "allocated_ids":self.used,
-                }),
-            );
-        }
         let scope = self.generated_bindings();
         if scope.is_empty() || xml.is_empty() {
             return Ok(xml);
@@ -1569,15 +1450,6 @@ impl Document {
             candidate = Document::from_bytes(bytes.get_ref())?;
         }
         candidate = reopen_staged(candidate)?;
-        #[cfg(test)]
-        FAIL_AFTER_COMPARISON_STAGING.with(|fail| {
-            if fail.replace(false) {
-                return Err(Error::Other(
-                    "injected staged comparison postcondition failure".to_owned(),
-                ));
-            }
-            Ok(())
-        })?;
         // The postconditions resolve only the revisions this comparison
         // wrote, so a kept revision stays in both resolved copies and must
         // match the input that holds it.
@@ -1627,60 +1499,6 @@ impl Document {
         let main_ignored = story_ignored(options, ComparisonStoryKind::Main);
         if main_ignored {
             edited_package.0 = accepted_body.0.clone();
-        }
-        #[cfg(test)]
-        {
-            let diagnostic_rejected = resolved_package(
-                &candidate,
-                |document| document.reject_revision_ids(&new_ids),
-                &original_stories,
-                options,
-                &text_box_markers,
-                Some(&new_ids),
-            );
-            let diagnostic_original =
-                normalized_package(&original, &original_stories, options, &text_box_markers);
-            policy_diagnostic(
-                "global_guards",
-                serde_json::json!({
-                    "accepted":format!("{accepted_body:?}"), "edited":format!("{edited_package:?}"),
-                    "rejected":format!("{diagnostic_rejected:?}"),"original":format!("{diagnostic_original:?}"),
-                    "new_ids":new_ids,"projected_textbox_noop":metadata.projected_textbox_noop,
-                    "candidate_main":String::from_utf8_lossy(candidate.package.get_part(&candidate.doc_part_name).unwrap_or_default()),
-                    "candidate_model":format!("{:?}",candidate.document),
-                }),
-            );
-        }
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            for accept in [true, false] {
-                let observation = (|| -> Result<serde_json::Value> {
-                    let mut diagnostic_candidate = candidate.clone_for_staging();
-                    let count = if accept {
-                        diagnostic_candidate.accept_revision_ids(&new_ids)?
-                    } else {
-                        diagnostic_candidate.reject_revision_ids(&new_ids)?
-                    };
-                    let resolved_xml = String::from_utf8_lossy(
-                        diagnostic_candidate
-                            .package
-                            .get_part(&diagnostic_candidate.doc_part_name)
-                            .unwrap_or_default(),
-                    )
-                    .into_owned();
-                    let saved = diagnostic_candidate.to_bytes()?;
-                    let reopened = Document::from_bytes(&saved)?;
-                    Ok(
-                        serde_json::json!({"accept":accept,"count":count,"selected_ids":new_ids,
-                        "resolved_xml":resolved_xml,"reopened_xml":String::from_utf8_lossy(reopened.package.get_part(&reopened.doc_part_name).unwrap_or_default()),
-                        "revisions":format!("{:?}",reopened.story_revisions())}),
-                    )
-                })();
-                policy_diagnostic(
-                    "destination_candidate_resolution",
-                    serde_json::json!({"observation":format!("{observation:?}")}),
-                );
-            }
         }
         validate_field_conversion_role(
             &candidate,
@@ -2770,8 +2588,6 @@ fn compare_story_inner(
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<String> {
-    #[cfg(test)]
-    let _diagnostic_scope = PolicyDiagnosticScope::enter("compare_story_inner", location);
     // Formatting policy uses the same qualified paired host publisher as the
     // main story. Ignored text boxes keep the existing mask-and-restore scan.
     let scan_text_boxes = !metadata.options.ignore_formatting
@@ -3667,8 +3483,6 @@ fn publication_parents_at(parent: &str, positions: &[usize]) -> Vec<Result<Names
     if positions.is_empty() {
         return Vec::new();
     }
-    #[cfg(test)]
-    SOURCE_READ_BYTES.with(|bytes| bytes.set(bytes.get() + parent.len()));
     let opening = format!(r#"<scope xmlns:w="{W_NS}">"#);
     let wrapped = format!("{opening}{parent}</scope>");
     let mut reader = NsReader::from_str(&wrapped);
@@ -3775,8 +3589,6 @@ fn source_children(parent: &str, spans: &[Range<usize>]) -> Vec<Result<String>> 
     if spans.is_empty() {
         return Vec::new();
     }
-    #[cfg(test)]
-    SOURCE_READ_BYTES.with(|bytes| bytes.set(bytes.get() + parent.len()));
     let opening = format!(r#"<scope xmlns:w="{W_NS}">"#);
     let wrapped = format!("{opening}{parent}</scope>");
     let mut reader = NsReader::from_str(&wrapped);
@@ -6537,12 +6349,6 @@ fn comparison_postcondition_error(
     actual: &NormalizedPackage,
     wanted: &NormalizedPackage,
 ) -> Error {
-    #[cfg(debug_assertions)]
-    if std::env::var_os("OXOFFICE_POLICY_DIAGNOSTICS").is_some() {
-        eprintln!(
-            "COMPARISON_GUARD_DIAGNOSTIC outcome={outcome} actual={actual:?} wanted={wanted:?}"
-        );
-    }
     Error::Other(format!(
         "comparison {outcome} does not reproduce the {expected} stories at {}",
         first_normalized_mismatch(actual, wanted)
@@ -6678,19 +6484,6 @@ fn refuse_changed_existing_revisions(
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn resolved_package(
-    candidate: &Document,
-    resolve: impl FnOnce(&mut Document) -> Result<usize>,
-    stories: &[StoryPart],
-    options: &ComparisonOptions,
-    text_box_markers: &TextBoxMarkers,
-    custody_ids: Option<&HashSet<i32>>,
-) -> Result<NormalizedPackage> {
-    let resolved = resolved_candidate(candidate, resolve, custody_ids)?;
-    normalized_package(&resolved, stories, options, text_box_markers)
 }
 
 /// The candidate with its revisions resolved one way and the transient note
@@ -7020,12 +6813,6 @@ fn validate_field_conversion_role(
             })
             .collect::<Vec<_>>();
         if current.len() != 1 {
-            #[cfg(debug_assertions)]
-            if std::env::var_os("OXOFFICE_POLICY_DIAGNOSTICS").is_some() {
-                eprintln!(
-                    "FIELD_TARGET_DIAGNOSTIC role={role} source={source:?} actual={current_observations:?}"
-                );
-            }
             return Err(Error::Other(
                 "publication has no unique independently observed resolved logical Field target"
                     .into(),
@@ -8506,13 +8293,6 @@ fn guard_source_body_at(
     coordinates: Option<SourceCoordinates>,
 ) -> Result<Vec<GuardItem>> {
     let ordinary_part = coordinates.is_some();
-    #[cfg(test)]
-    let _diagnostic_scope = PolicyDiagnosticScope::enter("guard_source_body", owner);
-    #[cfg(test)]
-    policy_diagnostic(
-        "guard_input",
-        serde_json::json!({"owner": owner,"source": source,"bindings": bindings,"model": format!("{model:?}")}),
-    );
     let spans = story_content_spans(source, bindings)?;
     let mut snapshots = SourceSnapshots {
         guard_graphs: true,
@@ -9071,17 +8851,6 @@ impl RunSource {
         if runs.is_empty() {
             return Vec::new();
         }
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            for (_, span) in runs {
-                policy_diagnostic(
-                    "destination_actual_parent",
-                    serde_json::json!({"parent_source":parent,"run_span":[span.start,span.end]}),
-                );
-            }
-        }
-        #[cfg(test)]
-        SOURCE_READ_BYTES.with(|bytes| bytes.set(bytes.get() + parent.len()));
         let opening = format!(r#"<scope xmlns:w="{W_NS}">"#);
         let wrapped = format!("{opening}{parent}</scope>");
         let mut reader = NsReader::from_str(&wrapped);
@@ -9226,13 +8995,6 @@ impl RunSource {
             });
         }
         let context = root_namespace_bindings(&self.scoped, "r", &[])?;
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            policy_diagnostic(
-                "destination_captured_run",
-                serde_json::json!({"raw":self.raw,"scoped":self.scoped,"parent_bindings":self.parent,"model":format!("{run:?}")}),
-            );
-        }
         self.raw_slots.resize(run.extra_xml.len(), None);
         let mut cursor = 0;
         let mut boundary = 0;
@@ -9279,22 +9041,6 @@ impl RunSource {
                 if raw_occurrence_representation(actual, &context)?
                     != raw_occurrence_representation(modeled, &context)?
                 {
-                    #[cfg(test)]
-                    policy_diagnostic(
-                        "raw_role_refusal",
-                        serde_json::json!({
-                            "qualified_path":policy_diagnostic_path(&self.scoped,span.start),"ordinal": ordinal,"target_boundary":target,"actual_boundary":boundary,"event_cursor":cursor,
-                            "span":[span.start,span.end],"actual":actual,"modeled":modeled,
-                            "actual_len":actual.len(),"modeled_len":modeled.len(),
-                            "actual_sha256":Sha256::digest(actual.as_bytes()).iter().map(|byte|format!("{byte:02x}")).collect::<String>(),
-                            "modeled_sha256":Sha256::digest(modeled.as_bytes()).iter().map(|byte|format!("{byte:02x}")).collect::<String>(),
-                            "first_diff":actual.bytes().zip(modeled.bytes()).position(|(a,b)|a!=b).or_else(||(actual.len()!=modeled.len()).then_some(actual.len().min(modeled.len()))),
-                            "actual_representation":format!("{:?}",raw_occurrence_representation(actual,&context)),
-                            "modeled_representation":format!("{:?}",raw_occurrence_representation(modeled,&context)),
-                            "raw_run":self.raw,"scoped_run":self.scoped,"parent_scope":self.parent,"root_scope":context,
-                            "trace":std::backtrace::Backtrace::force_capture().to_string(),
-                        }),
-                    );
                     return Err(Error::Other(format!(
                         "source raw ordinal {ordinal} has a different physical role"
                     )));
@@ -10172,35 +9918,6 @@ impl SourceSnapshots {
     }
 
     fn paragraph(&mut self, paragraph: &CT_P, xml: &str) -> Result<()> {
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            policy_diagnostic(
-                "destination_owner_classification",
-                serde_json::json!({"kind":"paragraph","source":xml,"model":format!("{paragraph:?}"),"existing_owning_residual":format!("{:?}",oxoffice_docx_oxml::properties::protected_source_residual(xml.as_bytes(),&[]))}),
-            );
-        }
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            for (index, run) in paragraph.runs.iter().enumerate() {
-                let fields=run.content.iter().filter_map(|content|match content {RunContent::Field(field)=>Some(serde_json::json!({
-                    "owner_id":field.source_owner_id(),"model":format!("{field:?}"),
-                    "actual_source_fragment":field.source_replacement().ok().flatten().map(|(raw,_)|String::from_utf8_lossy(raw).into_owned()),
-                    "detached_source":format!("{:?}",field.detached_source().map(|raw|raw.map(|raw|String::from_utf8_lossy(&raw).into_owned()))),
-                    "source_replacement":format!("{:?}",field.source_replacement().map(|source|source.map(|(raw,replacement)|(String::from_utf8_lossy(raw).into_owned(),String::from_utf8_lossy(&replacement).into_owned())))),
-                })),_=>None}).collect::<Vec<_>>();
-                if !fields.is_empty()
-                    || paragraph
-                        .field_source_run_fragments_at(index)
-                        .is_ok_and(|value| value.is_some())
-                {
-                    policy_diagnostic(
-                        "destination_actual_inner_field_bridge",
-                        serde_json::json!({"paragraph":xml,"run":index,
-                        "bridge":format!("{:?}",paragraph.field_source_run_fragments_at(index).map(|source|source.map(|(coverage,fragments)|(coverage,fragments.into_iter().map(|raw|raw.map(|raw|String::from_utf8_lossy(&raw).into_owned())).collect::<Vec<_>>())))),"fields":fields}),
-                    );
-                }
-            }
-        }
         self.paragraphs
             .insert(paragraph as *const CT_P as usize, xml.to_owned());
         let actual_parent_scope = self
@@ -10525,13 +10242,6 @@ impl SourceSnapshots {
     }
 
     fn table(&mut self, table: &CT_Tbl, xml: &str) -> Result<()> {
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            policy_diagnostic(
-                "destination_owner_classification",
-                serde_json::json!({"kind":"table","source":xml,"model":format!("{table:?}"),"existing_owning_residual":format!("{:?}",oxoffice_docx_oxml::properties::protected_source_residual(xml.as_bytes(),&[]))}),
-            );
-        }
         self.tables
             .insert(table as *const CT_Tbl as usize, xml.to_owned());
         let rows = direct_word_element_spans(xml, "tr")?;
@@ -10584,13 +10294,6 @@ impl SourceSnapshots {
     }
 
     fn row(&mut self, row: &CT_Row, xml: &str) -> Result<()> {
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            policy_diagnostic(
-                "destination_owner_classification",
-                serde_json::json!({"kind":"row","source":xml,"model":format!("{row:?}"),"existing_owning_residual":format!("{:?}",oxoffice_docx_oxml::properties::protected_source_residual(xml.as_bytes(),&[]))}),
-            );
-        }
         self.rows
             .insert(row as *const CT_Row as usize, xml.to_owned());
         let cells = direct_word_element_spans(xml, "tc")?;
@@ -10643,13 +10346,6 @@ impl SourceSnapshots {
     }
 
     fn cell(&mut self, cell: &CT_Tc, xml: &str) -> Result<()> {
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            policy_diagnostic(
-                "destination_owner_classification",
-                serde_json::json!({"kind":"cell","source":xml,"model":format!("{cell:?}"),"existing_owning_residual":format!("{:?}",oxoffice_docx_oxml::properties::protected_source_residual(xml.as_bytes(),&[]))}),
-            );
-        }
         self.cells
             .insert(cell as *const CT_Tc as usize, xml.to_owned());
         let children = cell_child_spans(cell, xml, "source snapshot")?
@@ -10694,13 +10390,6 @@ impl SourceSnapshots {
     }
 
     fn control(&mut self, control: &CT_Sdt, xml: &str) -> Result<()> {
-        #[cfg(test)]
-        if destination_diagnostic_enabled() {
-            policy_diagnostic(
-                "destination_owner_classification",
-                serde_json::json!({"kind":"control","source":xml,"model":format!("{control:?}"),"existing_owning_residual":format!("{:?}",oxoffice_docx_oxml::properties::protected_source_residual(xml.as_bytes(),&[]))}),
-            );
-        }
         self.controls
             .insert(control as *const CT_Sdt as usize, xml.to_owned());
         let (budget_source, budget_scope) = self
@@ -12307,13 +11996,6 @@ fn patch_property_source(
     source: Option<&str>,
     ids: &IdAllocator,
 ) -> Result<String> {
-    #[cfg(test)]
-    if destination_diagnostic_enabled() {
-        policy_diagnostic(
-            "destination_property_input",
-            serde_json::json!({"before":before,"after":after,"actual_source":source,"local_word_binding":ids.local_word_binding}),
-        );
-    }
     let Some(source) = source else {
         return ids.generated(after.to_owned());
     };
@@ -12382,13 +12064,6 @@ fn patch_property_source(
             output = append_word_child(&output, element_local_name(source), &child)?;
         }
     }
-    #[cfg(test)]
-    if destination_diagnostic_enabled() {
-        policy_diagnostic(
-            "destination_property_output",
-            serde_json::json!({"actual_source":source,"output":output}),
-        );
-    }
     Ok(output)
 }
 
@@ -12443,39 +12118,6 @@ struct LeafPublication {
     physical: (usize, usize, Range<usize>),
     domains: [Option<(usize, usize, usize)>; 2],
     actions: Vec<([Option<Range<usize>>; 2], GranularAction)>,
-}
-
-#[cfg(test)]
-fn occurrence_leaf_diagnostic(leaf: &LeafPublication) -> serde_json::Value {
-    serde_json::json!({"range":[leaf.range.start,leaf.range.end],"owner":leaf.owner,
-        "ordinal":leaf.ordinal,"scalars":[leaf.scalars.start,leaf.scalars.end],
-        "source":leaf.source,"context":leaf.context,"payload":leaf.payload,
-        "physical":format!("{:?}",leaf.physical),"domains":leaf.domains,
-        "actions":format!("{:?}",leaf.actions)})
-}
-
-#[cfg(test)]
-fn occurrence_units_diagnostic(units: &[AttributedRunUnit]) -> serde_json::Value {
-    serde_json::json!(
-        units
-            .iter()
-            .enumerate()
-            .map(|(index, unit)| {
-                serde_json::json!({"index":index,"owner_index":unit.owner,"ignored":unit.ignored,
-            "raw_sources":unit.raw_sources,"typed_sources":format!("{:?}",unit.typed_sources),
-            "properties":format!("{:?}",unit.run.properties),
-            "xml":format!("{:?}",paragraph_owned_run_xml(&unit.run))})
-            })
-            .collect::<Vec<_>>()
-    )
-}
-
-#[cfg(test)]
-fn occurrence_source_diagnostic(source: Option<&RunSource>) -> serde_json::Value {
-    source.map_or(serde_json::Value::Null, |source| serde_json::json!({
-        "owner":source.owner,"raw":source.raw,"scoped":source.scoped,"parent":source.parent,
-        "typed_slots":source.typed_slots.iter().map(|span|span.as_ref().map(|s|[s.start,s.end])).collect::<Vec<_>>(),
-        "raw_slots":format!("{:?}",source.raw_slots)}))
 }
 
 fn shift_leaf_publications(leaves: &mut [LeafPublication], delta: isize) -> Result<()> {
@@ -12658,14 +12300,6 @@ fn restore_resolved_leaf_occurrences(
                 .push((leaf, range.clone()));
         }
     }
-    #[cfg(test)]
-    policy_diagnostic(
-        "occurrence_restore_input",
-        serde_json::json!({
-        "resolved":xml,"publications":publications.iter().map(occurrence_leaf_diagnostic).collect::<Vec<_>>(),
-        "mapped":mapped.iter().map(|range|range.as_ref().map(|s|[s.start,s.end])).collect::<Vec<_>>(),
-        "groups":groups.iter().map(|(key,group)|serde_json::json!({"key":key,"entries":group.iter().map(|(leaf,range)|serde_json::json!({"leaf":occurrence_leaf_diagnostic(leaf),"mapped":[range.start,range.end]})).collect::<Vec<_>>()})).collect::<Vec<_>>() }),
-    );
     let mut physical = HashMap::<(usize, usize), Vec<Range<usize>>>::new();
     for group in groups.values() {
         for (leaf, _) in group {
@@ -12686,31 +12320,20 @@ fn restore_resolved_leaf_occurrences(
     let mut replacements = Vec::new();
     for group in groups.values() {
         let first = group[0].0;
-        let Some(RunContent::Text(source_text) | RunContent::DeletedText(source_text)) =
+        let Some(RunContent::Text(_) | RunContent::DeletedText(_)) =
             source_content_model(&first.source, &first.context)?
         else {
             return Err(Error::Other(
                 "fragment restoration has no source text".into(),
             ));
         };
-        let _ = &source_text;
         validate_projection_actions(&first.domains, &first.actions)?;
-        #[cfg(test)]
-        let mut scalar = 0;
         let mut value = String::new();
         let mut runs = Vec::<Range<usize>>::new();
         let mut properties = None;
         let mut root_facts = None;
         let mut root_scope = None;
         for (leaf, range) in group {
-            #[cfg(test)]
-            policy_diagnostic(
-                "occurrence_restore_coverage_operand",
-                serde_json::json!({
-                "key":[first.owner,first.ordinal],"leaf":occurrence_leaf_diagnostic(leaf),
-                "mapped":[range.start,range.end],"scalar_before":scalar,
-                "source_equal":leaf.source==first.source,"context_equal":leaf.context==first.context }),
-            );
             if leaf.source != first.source
                 || leaf.context != first.context
                 || leaf.domains != first.domains
@@ -12719,10 +12342,6 @@ fn restore_resolved_leaf_occurrences(
                 return Err(Error::Other(
                     "fragment restoration has incomplete source occurrence coverage".into(),
                 ));
-            }
-            #[cfg(test)]
-            {
-                scalar = leaf.scalars.end;
             }
             let parent = publication_parent_at(xml, range.start)?;
             let Some(RunContent::Text(text) | RunContent::DeletedText(text)) =
@@ -12743,24 +12362,12 @@ fn restore_resolved_leaf_occurrences(
                     "resolved fragment has a foreign run owner".into(),
                 ));
             }
-            #[cfg(test)]
-            let opening = paragraph_shell(Some(&xml[run.clone()]))?;
             let props = direct_property(&xml[run.clone()], "rPr")?.unwrap_or_default();
             let parent_scope = publication_parent_at(xml, start)?;
             let facts = source_root_metadata(&xml[run.clone()], &parent_scope)?;
             let scope = root_namespace_bindings(&xml[run.clone()], "r", &parent_scope)?
                 .into_iter()
                 .collect::<BTreeMap<_, _>>();
-            #[cfg(test)]
-            policy_diagnostic(
-                "occurrence_restore_shell_operands",
-                serde_json::json!({
-                "key":[first.owner,first.ordinal],"leaf":occurrence_leaf_diagnostic(leaf),
-                "mapped":[range.start,range.end],"run":[run.start,run.end],"run_xml":&xml[run.clone()],
-                "parent":parent,"text":text.text,"payload_equal":text.text==leaf.payload,
-                "prior_facts":root_facts,"facts":facts,"prior_scope":root_scope,"scope":scope,
-                "prior_properties":properties,"properties":props,"opening":opening }),
-            );
             if root_facts.as_ref().is_some_and(|actual| actual != &facts)
                 || root_scope.as_ref().is_some_and(|actual| actual != &scope)
                 || properties.as_ref().is_some_and(|actual| actual != &props)
@@ -12776,13 +12383,6 @@ fn restore_resolved_leaf_occurrences(
                 runs.push(run);
             }
         }
-        #[cfg(test)]
-        policy_diagnostic(
-            "occurrence_restore_terminal_operands",
-            serde_json::json!({
-            "key":[first.owner,first.ordinal],"scalar":scalar,"source_length":source_text.text.chars().count(),
-            "source_text":source_text.text,"actual_value":value,"runs":runs.iter().map(|s|[s.start,s.end]).collect::<Vec<_>>() }),
-        );
         if group.iter().any(|(leaf, _)| {
             leaf.scalars != leaf.physical.2 || leaf.physical.2.start > leaf.physical.2.end
         }) {
@@ -12870,15 +12470,6 @@ fn restore_resolved_leaf_occurrences(
                 "terminal carrier has no selected child".into(),
             ));
         };
-        #[cfg(test)]
-        policy_diagnostic(
-            "occurrence_terminal_child_budget",
-            serde_json::json!({"key":[first.owner,first.ordinal],
-            "terminal":[terminal.start,terminal.end],"terminal_source":&xml[terminal.clone()],
-            "retired_runs":runs[..runs.len()-1].iter().map(|r|[r.start,r.end]).collect::<Vec<_>>(),
-            "children":terminal_members.iter().map(|r|[r.start,r.end]).collect::<Vec<_>>(),
-            "suffix":&xml[last.end..terminal.end],"actual_value":value,"replacement":leaf}),
-        );
         for member in &terminal_members[..terminal_members.len() - 1] {
             replacements.push((member.clone(), String::new()));
         }
@@ -13385,17 +12976,6 @@ fn preserve_run_source(
                     }
                     restored = true;
                 } else if !typed_authority {
-                    #[cfg(test)]
-                    policy_diagnostic(
-                        "occurrence_raw_mismatch",
-                        serde_json::json!({
-                            "source_child":source_child_xml,"generated_child":generated_child,
-                            "raw_ordinal":raw_ordinal,"source_parent":content_source.parent,
-                            "source_context":context,"destination":destination,"source_run":content_source.scoped,
-                            "selected_raw":selected_raw,"selected_typed":format!("{selected_typed:?}"),
-                            "scopes":format!("{:?}",std::backtrace::Backtrace::force_capture()),
-                        }),
-                    );
                     return Err(Error::Other(format!(
                         "generated raw source occurrence {:?} changed its payload",
                         raw_ordinal
@@ -13420,21 +13000,6 @@ fn preserve_run_source(
     };
     output.push_str(&generated[cursor..end]);
     output.push_str(&closing);
-    #[cfg(test)]
-    if destination_diagnostic_enabled() {
-        policy_diagnostic(
-            "destination_run_restore",
-            serde_json::json!({
-                "generated":generated,"shell_raw":shell_source.raw,"shell_scoped":shell_source.scoped,
-                "source_parent":shell_source.parent,"content_raw":content_source.raw,
-                "content_scoped":content_source.scoped,"content_parent":content_source.parent,
-                "computed_destination_from_source":destination,"content_context":context,
-                "same_source_scopes":same_scope,"properties":current,"pre_root_restore":output,
-                "root_restore_result":format!("{:?}",retain_source_root_namespaces(&output,&shell_source.raw,&shell_source.parent)),
-                "selected_raw":selected_raw,"selected_typed":format!("{selected_typed:?}"),"ids":ids.used,
-            }),
-        );
-    }
     retain_source_root_namespaces(&output, &shell_source.raw, destination_parent)
 }
 
@@ -14211,9 +13776,6 @@ fn compare_paragraph(
         return Ok(source.to_owned());
     }
     let output = (|| -> Result<String> {
-        #[cfg(test)]
-        let _destination_diagnostic_scope =
-            PolicyDiagnosticScope::enter("destination:compare_paragraph", location);
         if original.bookmark_markers == edited.bookmark_markers
             && paragraph_boundaries_differ(original, edited, metadata.options)
         {
@@ -14492,9 +14054,6 @@ fn compare_granular_paragraph(
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:compare_granular_paragraph", location);
     let leaf_mark = metadata.leaf_publications.len();
     let actual_source = original_source
         .map(str::to_owned)
@@ -14537,16 +14096,6 @@ fn compare_granular_paragraph(
         .iter()
         .map(attributed_run_signature)
         .collect::<Vec<_>>();
-    #[cfg(test)]
-    policy_diagnostic(
-        "occurrence_whole_owner_witnesses",
-        serde_json::json!({
-        "location":location,"original_boundaries":original_boundaries,"edited_boundaries":edited_boundaries,
-        "original_signatures":original_run_signatures,"edited_signatures":edited_run_signatures,
-        "diagnostic_ordered_alignment_not_selected_relation":align(&original_run_signatures,&edited_run_signatures),
-        "original":original.runs.iter().enumerate().map(|(index,run)|serde_json::json!({"index":index,"owner":run as *const CT_R as usize,"source":occurrence_source_diagnostic(metadata.run_source(run)),"model":format!("{:?}",run)})).collect::<Vec<_>>(),
-        "edited":edited.runs.iter().enumerate().map(|(index,run)|serde_json::json!({"index":index,"owner":run as *const CT_R as usize,"source":occurrence_source_diagnostic(metadata.run_source(run)),"model":format!("{:?}",run)})).collect::<Vec<_>>() }),
-    );
     // Runs that all match stay whole even when a control differs, so a
     // control's metadata or content never moves run-indexed markers.
     if original_run_signatures == edited_run_signatures
@@ -14785,15 +14334,6 @@ fn compare_granular_paragraph(
             location,
         )?;
     }
-    #[cfg(test)]
-    policy_diagnostic(
-        "occurrence_alignment_before_group",
-        serde_json::json!({
-        "location":location,"aligned":aligned,"segments":segments,"cuts":cuts,
-        "original_units":occurrence_units_diagnostic(&original_units),
-        "edited_units":occurrence_units_diagnostic(&edited_units),
-        "original_signatures":original_signatures,"edited_signatures":edited_signatures }),
-    );
     let (aligned, segments) = grouped_text_alignment(
         &aligned,
         &segments,
@@ -14839,13 +14379,6 @@ fn compare_granular_paragraph(
             metadata.options,
         )?;
     }
-    #[cfg(test)]
-    policy_diagnostic(
-        "occurrence_alignment_after_group",
-        serde_json::json!({
-        "location":location,"aligned":aligned,"segments":segments,
-        "groups":grouped.iter().map(|(action,range)|serde_json::json!({"action":match action { GranularAction::Preserve=>"Preserve",GranularAction::Equal=>"Equal",GranularAction::Replace=>"Replace",GranularAction::Delete=>"Delete",GranularAction::Insert=>"Insert",GranularAction::Drop=>"Drop" },"members":[range.start,range.end]})).collect::<Vec<_>>() }),
-    );
     validate_fragment_partition(&aligned, &grouped)?;
     let mut grouped_alignment = Vec::with_capacity(grouped.len());
     let mut grouped_segment_runs = Vec::with_capacity(grouped.len());
@@ -15190,18 +14723,6 @@ fn compare_granular_paragraph(
                 )?;
             }
         }
-        #[cfg(test)]
-        policy_diagnostic(
-            "occurrence_actual_emission",
-            serde_json::json!({
-            "location":location,"action":match action { GranularAction::Preserve=>"Preserve",GranularAction::Equal=>"Equal",GranularAction::Replace=>"Replace",GranularAction::Delete=>"Delete",GranularAction::Insert=>"Insert",GranularAction::Drop=>"Drop" },
-            "left_indices":left_indices,"right_indices":right_indices,
-            "left_source":occurrence_source_diagnostic(left_source.as_ref()),"right_source":occurrence_source_diagnostic(right_source.as_ref()),
-            "left_typed":format!("{:?}",left_typed),"right_typed":format!("{:?}",right_typed),
-            "left_properties":left.as_ref().map(|run|format!("{:?}",run.properties)),
-            "right_properties":right.as_ref().map(|run|format!("{:?}",run.properties)),
-            "actual_xml":replacements.last(),"recorded_leaves":leaves.iter().map(occurrence_leaf_diagnostic).collect::<Vec<_>>() }),
-        );
         fragment_publications.push(leaves);
     }
     // Payloads retain their separate physical owners and source publication.
@@ -16090,15 +15611,6 @@ fn retain_projection_separators(
             continue;
         }
         *action = GranularAction::Insert;
-        #[cfg(test)]
-        policy_diagnostic(
-            "occurrence_necessary_separator",
-            serde_json::json!({
-            "segment":segments[at],"pair":pair,"actual_owner":source.owner,
-            "ordinal":selected.ordinal,"scalars":selected.scalars,"payload":text.text,
-            "left_edge":left,"right_edge":right_edge,"joined_edge_tokens":1,
-            "granularity":format!("{:?}",options.granularity),"action":"Insert"}),
-        );
     }
     Ok(())
 }
@@ -17225,9 +16737,6 @@ fn compare_complex_paragraph(
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:compare_complex_paragraph", location);
     if paragraph_signature_with_options(original, metadata.options)
         == paragraph_signature_with_options(edited, metadata.options)
         && !SourceMetadata::paragraph_contains_fields(original, metadata.options)?
@@ -18341,9 +17850,6 @@ fn marked_row(row: &CT_Row, kind: &str, metadata: &mut Metadata<'_>) -> Result<S
 /// nested tables included. Without the cell marks Word merges an adjacent
 /// removed paragraph mark into the first cell and leaves the row unresolved.
 fn marked_row_xml(row: &str, kind: &str, metadata: &mut Metadata<'_>) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:marked_row_xml", row);
     let marker = metadata
         .ids
         .marker(kind, metadata.author, metadata.timestamp)?;
@@ -18374,9 +17880,6 @@ fn marked_row_xml(row: &str, kind: &str, metadata: &mut Metadata<'_>) -> Result<
 }
 
 fn marked_cell_xml(cell: &str, kind: &str, metadata: &mut Metadata<'_>) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:marked_cell_xml", cell);
     let paragraph_spans = direct_word_element_spans(cell, "p")?;
     let paragraphs = source_children(cell, &paragraph_spans)
         .into_iter()
@@ -18425,9 +17928,6 @@ fn marked_cell_xml(cell: &str, kind: &str, metadata: &mut Metadata<'_>) -> Resul
 /// Wrap every direct `w:r` of `owner` in a revision, with deleted text as
 /// `w:delText`.
 fn marked_direct_runs_xml(owner: &str, kind: &str, metadata: &mut Metadata<'_>) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:marked_direct_runs_xml", owner);
     let spans = direct_word_element_spans(owner, "r")?
         .into_iter()
         .map(|span| (None, span))
@@ -19012,9 +18512,6 @@ fn compare_control_from_xml(
 ) -> Result<String> {
     let leaf_mark = metadata.leaf_publications.len();
     let output = (|| -> Result<String> {
-        #[cfg(test)]
-        let _destination_diagnostic_scope =
-            PolicyDiagnosticScope::enter("destination:compare_control_from_xml", location);
         if control_property_signature(original) != control_property_signature(edited) {
             return Err(Error::Other(format!(
                 "comparison cannot revise content-control properties at {location}"
@@ -19473,9 +18970,6 @@ fn compare_control_content(
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:compare_control_content", location);
     match (original, edited) {
         (SdtContent::Paragraph(left), SdtContent::Paragraph(right)) => compare_paragraph(
             left,
@@ -19592,9 +19086,6 @@ fn compare_control_runs_with_options(
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<String> {
-    #[cfg(test)]
-    let _destination_diagnostic_scope =
-        PolicyDiagnosticScope::enter("destination:compare_control_runs_with_options", location);
     let revision_parent = metadata.ids.revision_parent_scope(destination_parent);
     let [original, edited] = runs;
     let projection_pairs = metadata
@@ -19696,15 +19187,6 @@ fn compare_control_runs_with_options(
             location,
         )?;
     }
-    #[cfg(test)]
-    policy_diagnostic(
-        "occurrence_alignment_before_group",
-        serde_json::json!({
-        "location":location,"aligned":aligned,"segments":segments,"cuts":cuts,
-        "original_units":occurrence_units_diagnostic(&original_units),
-        "edited_units":occurrence_units_diagnostic(&edited_units),
-        "original_signatures":original_signatures,"edited_signatures":edited_signatures }),
-    );
     let (aligned, segments) = grouped_text_alignment(
         &aligned,
         &segments,
@@ -19732,13 +19214,6 @@ fn compare_control_runs_with_options(
             metadata.options,
         )?;
     }
-    #[cfg(test)]
-    policy_diagnostic(
-        "occurrence_alignment_after_group",
-        serde_json::json!({
-        "location":location,"aligned":aligned,"segments":segments,
-        "groups":grouped.iter().map(|(action,range)|serde_json::json!({"action":match action { GranularAction::Preserve=>"Preserve",GranularAction::Equal=>"Equal",GranularAction::Replace=>"Replace",GranularAction::Delete=>"Delete",GranularAction::Insert=>"Insert",GranularAction::Drop=>"Drop" },"members":[range.start,range.end]})).collect::<Vec<_>>() }),
-    );
     validate_fragment_partition(&aligned, &grouped)?;
     let mut grouped_alignment = Vec::with_capacity(grouped.len());
     let mut grouped_segment_runs = Vec::with_capacity(grouped.len());
@@ -19983,18 +19458,6 @@ fn compare_control_runs_with_options(
                 )?;
             }
         }
-        #[cfg(test)]
-        policy_diagnostic(
-            "occurrence_actual_emission",
-            serde_json::json!({
-            "location":location,"action":match action { GranularAction::Preserve=>"Preserve",GranularAction::Equal=>"Equal",GranularAction::Replace=>"Replace",GranularAction::Delete=>"Delete",GranularAction::Insert=>"Insert",GranularAction::Drop=>"Drop" },
-            "left_indices":left_indices,"right_indices":right_indices,
-            "left_source":occurrence_source_diagnostic(left_source.as_ref()),"right_source":occurrence_source_diagnostic(right_source.as_ref()),
-            "left_typed":format!("{:?}",left_typed),"right_typed":format!("{:?}",right_typed),
-            "left_properties":left.as_ref().map(|run|format!("{:?}",run.properties)),
-            "right_properties":right.as_ref().map(|run|format!("{:?}",run.properties)),
-            "actual_xml":replacements.last(),"recorded_leaves":leaves.iter().map(occurrence_leaf_diagnostic).collect::<Vec<_>>() }),
-        );
         fragment_publications.push(leaves);
     }
     if metadata.leaf_capture {
@@ -23249,15 +22712,6 @@ fn paired_run_replacement(
         )?;
         // Both strings are faithful publications from their selected source
         // roles. Geometry, root attributes and opaque payloads participate.
-        #[cfg(test)]
-        policy_diagnostic(
-            "paired_publications",
-            serde_json::json!({"location":location,"inserted":inserted_xml,"original":original_xml,
-            "equal":inserted_xml==original_xml,"used_ids":metadata.ids.used,"local_word_binding":metadata.ids.local_word_binding,
-            "left_source":left_source.as_ref().map(|source|serde_json::json!({"raw":source.raw,"scoped":source.scoped,"parent":source.parent})),
-            "right_source":right_source.as_ref().map(|source|serde_json::json!({"raw":source.raw,"scoped":source.scoped,"parent":source.parent})),
-            "original_model":format!("{original:?}"),"derived_model":format!("{inserted:?}")}),
-        );
         if inserted_xml == original_xml {
             metadata.projected_textbox_noop = true;
             return Ok(original_xml);
@@ -23291,17 +22745,6 @@ fn paired_run_replacement(
         metadata
             .ids
             .revision("ins", metadata.author, metadata.timestamp, &inserted_xml)?;
-    #[cfg(test)]
-    if destination_diagnostic_enabled() {
-        policy_diagnostic(
-            "destination_paired_wrappers",
-            serde_json::json!({
-                "location":location,"inserted_before_wrapper":inserted_xml,"deleted_wrapped":deleted,
-                "inserted_wrapped":inserted,"local_word_binding":metadata.ids.local_word_binding,
-                "ids":metadata.ids.used,
-            }),
-        );
-    }
     Ok(format!("{deleted}{inserted}"))
 }
 
@@ -23719,35 +23162,10 @@ fn project_paired_textboxes(
                 crate::revision::RevisionScope::Ids(&temporary),
                 &leaf_ranges,
             )?;
-            #[cfg(test)]
-            policy_diagnostic(
-                "occurrence_projection_transport",
-                serde_json::json!({
-                "location":location,"tracked":tracked,"wrapped":String::from_utf8_lossy(&wrapped),
-                "wrapper_offset":wrapper_offset,"resolved":String::from_utf8_lossy(&resolved),
-                "leaf_ranges":leaf_ranges.iter().map(|s|[s.start,s.end]).collect::<Vec<_>>(),
-                "publications":leaf_publications.iter().map(occurrence_leaf_diagnostic).collect::<Vec<_>>(),
-                "mapped":mapped.iter().map(|s|s.as_ref().map(|s|[s.start,s.end])).collect::<Vec<_>>(),
-                "temporary":temporary }),
-            );
             let resolved =
                 restore_resolved_leaf_occurrences(&resolved, &leaf_publications, &mapped)?
                     .into_bytes();
             let remaining = crate::revision::modeled_revision_spans(&resolved)?;
-            #[cfg(test)]
-            policy_diagnostic(
-                "occurrence_projection_held_operands",
-                serde_json::json!({
-                "location":location,"input":String::from_utf8_lossy(&input),
-                "tracked":String::from_utf8_lossy(&wrapped),"resolved":String::from_utf8_lossy(&resolved),
-                "input_held":input_held.iter().map(|(id,bytes)|serde_json::json!({"id":id,"xml":String::from_utf8_lossy(bytes)})).collect::<Vec<_>>(),
-                "tracked_spans":format!("{:?}",crate::revision::modeled_revision_spans(&wrapped)),
-                "input_spans":format!("{:?}",crate::revision::modeled_revision_spans(&input)),
-                "held":held.iter().map(|(id,bytes)|serde_json::json!({"id":id,"xml":String::from_utf8_lossy(bytes)})).collect::<Vec<_>>(),
-                "remaining":remaining.iter().map(|(span,id)|serde_json::json!({"id":id,"span":[span.start,span.end],"xml":String::from_utf8_lossy(&resolved[span.clone()])})).collect::<Vec<_>>(),
-                "temporary":temporary,"word_ids":format!("{:?}",word_ids(&resolved)),
-                "held_equal":held==input_held,"remaining_temporary":remaining.iter().any(|(_,id)|temporary.contains(id)) }),
-            );
             if held != input_held
                 || remaining.iter().any(|(_, id)| temporary.contains(id))
                 || held
@@ -23802,13 +23220,6 @@ fn project_paired_textboxes(
                     projected.replace_range(span, &closed);
                 }
             }
-            #[cfg(test)]
-            policy_diagnostic(
-                "inner_projection",
-                serde_json::json!({"location":location,"temporary_ids":temporary,"left_box":left_xml,"right_box":right_xml,
-                "left_bindings":left_box.1,"right_bindings":right_box.1,"qualified_path":right_box.2,
-                "left_content":left_content,"right_content":right_content,"tracked":tracked,"resolved":String::from_utf8_lossy(&resolved),"projected":projected}),
-            );
             inner_replacements.push((
                 right_box.0.start + right_inner.start..right_box.0.start + right_inner.end,
                 projected,
@@ -23821,12 +23232,6 @@ fn project_paired_textboxes(
         let actual = &right.scoped[right_host.2.clone()];
         let context = root_namespace_bindings(&right.scoped, "r", &right.parent)?;
         let derived = restore_extracted_root(&derived, actual, &context)?;
-        #[cfg(test)]
-        policy_diagnostic(
-            "derived_host",
-            serde_json::json!({"location":location,"before_splice":right_host.3,"derived":derived,
-            "actual_template":actual,"destination_context":context,"typed":matches!(right_host.0,RunHostRole::Typed(..))}),
-        );
         match right_host.0 {
             RunHostRole::Raw(local, _) => {
                 inserted.extra_xml[local] = derived.as_bytes().to_vec();
@@ -23880,12 +23285,6 @@ fn project_paired_textboxes(
                         "projected drawing has no supported body at {location}"
                     )));
                 }
-                #[cfg(test)]
-                policy_diagnostic(
-                    "reparsed_typed_host",
-                    serde_json::json!({"location":location,"derived":derived,"context":context,
-                    "drawing":format!("{drawing:?}"),"signature":format!("{:?}",drawing_signature(&drawing))}),
-                );
                 inserted.content[local] = RunContent::Drawing(drawing);
             }
         }
