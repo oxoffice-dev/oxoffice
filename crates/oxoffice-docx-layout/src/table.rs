@@ -692,9 +692,7 @@ fn layout_table_inner(
                 .as_ref()
                 .and_then(|p| p.shading.as_ref())
                 .or(style_cell.shading.as_ref())
-                .and_then(|shd| shd.fill.as_ref())
-                .filter(|f| f.as_str() != "auto")
-                .map(|f| Color::from_hex(f));
+                .and_then(crate::engine::shading_color);
 
             // A cell's own `w:tcMar` replaces the table's margins edge by edge.
             let own_margin = cell

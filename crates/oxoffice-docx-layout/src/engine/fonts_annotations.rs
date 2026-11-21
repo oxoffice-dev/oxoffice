@@ -1197,6 +1197,48 @@ pub(super) fn resolve_run_color(
 /// light one or on none. Word draws automatic text in whichever contrasts
 /// with the shading behind it. The coefficients and the luminance floor of
 /// 156 in 255 are the donor's chosen policy, not a pinned LibreOffice source.
+/// The colour a `w:shd` paints: its fill under a clear pattern, its
+/// foreground under a solid one, the two mixed under a percentage pattern,
+/// and nothing for `nil` or an automatic fill. Under a pattern Word paints an
+/// automatic foreground black and an automatic fill white. Other patterns
+/// (stripes, crosses) are painted as their fill.
+pub(crate) fn shading_color(shading: &CT_Shd) -> Option<Color> {
+    let hex = |value: &Option<String>| {
+        value
+            .as_deref()
+            .filter(|value| *value != "auto")
+            .map(Color::from_hex)
+    };
+    let percent = match shading.val.as_str() {
+        "nil" => return None,
+        "solid" => 100.0,
+        pattern => pattern
+            .strip_prefix("pct")
+            .and_then(|percent| percent.parse::<f64>().ok())
+            .unwrap_or(0.0),
+    };
+    if percent == 0.0 {
+        return hex(&shading.fill);
+    }
+    let foreground = hex(&shading.color).unwrap_or(Color::BLACK);
+    let background = hex(&shading.fill).unwrap_or(Color::WHITE);
+    let mix = |front: f64, back: f64| (front * percent + back * (100.0 - percent)) / 100.0;
+    Some(Color {
+        r: mix(foreground.r, background.r),
+        g: mix(foreground.g, background.g),
+        b: mix(foreground.b, background.b),
+        a: 1.0,
+    })
+}
+
+/// The fill drawn behind a run's text: its highlight, which Word draws over
+/// its shading, or else its shading.
+pub(super) fn run_fill(rpr: &CT_RPr) -> Option<Color> {
+    rpr.highlight
+        .and_then(highlight_to_color)
+        .or_else(|| rpr.shading.as_deref().and_then(shading_color))
+}
+
 pub(super) fn automatic_text_color(fill: Option<Color>) -> Color {
     let Some(fill) = fill else {
         return Color::BLACK;

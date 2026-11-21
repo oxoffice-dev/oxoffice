@@ -12,6 +12,7 @@ use oxoffice_docx::{
     RevisionView, StoryItemKind, StoryKind, StoryRunPosition,
 };
 use oxoffice_docx_oxml::shared::ST_PageOrientation;
+use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf, Picture};
 
 use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, texts};
@@ -1191,6 +1192,79 @@ fn the_same_document_converts_to_the_same_bytes() {
     let saved = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     assert!(saved == plain, "save_pdf wrote other bytes");
+}
+
+/// How many pixels of `rgb` the 72 DPI image of page 0 holds inside the box
+/// of the drawn text `text`, from its baseline to its font size above it.
+fn pixels_in_text_box(doc: &Document, text: &str, rgb: [u8; 3]) -> usize {
+    let pdf = pdf_of(doc);
+    let piece = pdf
+        .drawn(0)
+        .into_iter()
+        .find(|piece| piece.text.contains(text))
+        .unwrap_or_else(|| panic!("{text} is drawn"));
+    let image = Pixels::decode(&doc.render_page_to_png(0, 72.0).unwrap().expect("page 0"));
+    let height = f64::from(image.height);
+    let mut count = 0;
+    for y in (height - piece.y - piece.size * 0.7) as u32..(height - piece.y) as u32 {
+        for x in piece.x as u32..piece.end as u32 {
+            let at = ((y * image.width + x) * 4) as usize;
+            if image.rgba[at..at + 3] == rgb {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_run_shading_is_drawn_behind_its_text() {
+    let run = |fill: &str, text: &str| {
+        format!(
+            r#"<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="{fill}"/></w:rPr><w:t xml:space="preserve">{text} </w:t></w:r>"#
+        )
+    };
+    // Word's pale green, red and grey cell styles applied to text, then a
+    // highlight over a shading, and a dark fill under automatic text.
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{}{}{}<w:r><w:rPr><w:highlight w:val="yellow"/><w:shd w:val="clear" w:fill="C6EFCE"/></w:rPr><w:t xml:space="preserve">Both </w:t></w:r>{}</w:p>"#,
+        run("C6EFCE", "Done"),
+        run("FFC7CE", "Late"),
+        run("E7E6E6", "Open"),
+        run("1F3864", "Dark"),
+    ));
+    for (text, rgb) in [
+        ("Done", [0xC6, 0xEF, 0xCE]),
+        ("Late", [0xFF, 0xC7, 0xCE]),
+        ("Open", [0xE7, 0xE6, 0xE6]),
+        ("Dark", [0x1F, 0x38, 0x64]),
+    ] {
+        assert!(
+            pixels_in_text_box(&doc, text, rgb) > 20,
+            "{text} has its fill behind it"
+        );
+    }
+    // Word draws the highlight over the shading.
+    assert!(pixels_in_text_box(&doc, "Both", [0xFF, 0xFF, 0x00]) > 20);
+    assert_eq!(pixels_in_text_box(&doc, "Both", [0xC6, 0xEF, 0xCE]), 0);
+    // Automatic text turns white on a dark fill, as on a dark paragraph.
+    assert!(pixels_in_text_box(&doc, "Dark", [0xFF, 0xFF, 0xFF]) > 0);
+    assert_eq!(pixels_in_text_box(&doc, "Dark", [0, 0, 0]), 0);
+}
+
+#[test]
+fn a_solid_or_percentage_shading_paints_its_pattern_colour() {
+    // A solid pattern paints its foreground colour, a percentage mixes it
+    // into the fill: 25 % black over white is (191, 191, 191).
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:shd w:val="solid" w:color="C00000" w:fill="FFFFFF"/></w:pPr><w:r><w:t>Paragraph</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="000000" w:fill="FFFFFF"/></w:rPr><w:t>Quarter</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="solid" w:color="00B050" w:fill="auto"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p/>"#,
+    ));
+    assert!(pixels_in_text_box(&doc, "Paragraph", [0xC0, 0x00, 0x00]) > 20);
+    assert!(pixels_in_text_box(&doc, "Quarter", [191, 191, 191]) > 20);
+    assert!(pixels_in_text_box(&doc, "Cell", [0x00, 0xB0, 0x50]) > 20);
 }
 
 #[test]
