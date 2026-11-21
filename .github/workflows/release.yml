@@ -74,8 +74,8 @@ jobs:
       - name: Commit and tag
         id: commit
         run: |
-          # The commit of main this run started from: a dry run builds it in
-          # every job, while main may move during the run.
+          # The commit main points at when this job starts: a dry run builds
+          # it in every job, while main may move during the run.
           base="$(git rev-parse HEAD)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
