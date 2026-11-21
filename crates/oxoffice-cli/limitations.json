@@ -117,6 +117,33 @@
     "issue": 149
   },
   {
+    "id": "docx-pdf-pagination",
+    "format": "docx",
+    "area": "pdf",
+    "title": "PDF pages: a blank page before a section break, endnotes over a final table, outline entries on the wrong page",
+    "symptom": "a page break just before a next-page section break leaves a blank page; endnotes overlap a table that ends the document; an outline entry opens the page before a heading moved by keep with next",
+    "workaround": "remove the page break before a next-page section break; end the document with a paragraph after a final table; put a page break before such a heading",
+    "issue": 156
+  },
+  {
+    "id": "docx-pdf-rtl-cjk",
+    "format": "docx",
+    "area": "pdf",
+    "title": "PDF text: right-to-left paragraphs start at the left margin, CJK text is drawn as boxes by default",
+    "symptom": "a right-to-left paragraph is drawn against the left margin, and Chinese, Japanese and Korean glyphs are empty boxes with the default render options",
+    "workaround": "none for right-to-left paragraphs (an explicit right alignment would move them left in Word and LibreOffice); for CJK, pass a CJK font file (Rust to_pdf_with_fonts, or to_pdfa_with_fonts_deterministic for PDF/A; Python to_pdf(fonts=...) or font_dir=...; CLI convert --font-dir) or turn system fonts on (Rust to_pdf_with_options with use_system_fonts, Python to_pdf(system_fonts=True), CLI convert --system-fonts); none for PDF/A in Python and the CLI",
+    "issue": 157
+  },
+  {
+    "id": "docx-pdf-endnote-numbers",
+    "format": "docx",
+    "area": "pdf",
+    "title": "PDF endnotes are numbered 1, 2, 3 instead of i, ii, iii",
+    "symptom": "endnotes without a number format of their own are numbered in decimal in the PDF, where Word numbers them in lower roman",
+    "workaround": "set the endnote policy's number format to lower roman (set_note_policy, same name in Python) before converting; none through the CLI",
+    "issue": 158
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",

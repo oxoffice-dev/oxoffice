@@ -1,0 +1,2099 @@
+//! Converting documents to PDF, read back with a real PDF parser: pages and
+//! their sizes, where text lands, headers, footers, notes, tables, pictures,
+//! fonts, links, outline, tags, PDF/A, metadata, determinism and the corpus.
+
+use std::collections::{BTreeMap, HashMap};
+use std::io::{Cursor, Read};
+
+use lopdf::content::Content;
+use lopdf::{Dictionary, Object, ObjectId};
+use oxoffice_docx::paragraph::Alignment;
+use oxoffice_docx::{
+    ContentLocation, Document, Field, Length, PdfConformance, PictureOptions, RenderOptions,
+    RevisionView, StoryItemKind, StoryKind, StoryRunPosition,
+};
+use oxoffice_docx_oxml::shared::ST_PageOrientation;
+
+use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, texts};
+
+// ---- Reading a PDF back ----
+
+/// One text object of a content stream, or one shaped run read through its
+/// ActualText: its text, where its first glyph starts and its last glyph
+/// ends, in default user space (points from the bottom left corner).
+#[derive(Debug, Clone)]
+struct Drawn {
+    text: String,
+    /// What its glyphs map back to through the font's ToUnicode map: the
+    /// text itself outside a shaped run, the drawn characters inside one.
+    glyphs: String,
+    x: f64,
+    y: f64,
+    end: f64,
+    /// The marked content identifier the structure tree refers to it by.
+    mcid: Option<i64>,
+    /// How many of its glyphs are the font's .notdef glyph, an empty box.
+    notdef: usize,
+}
+
+/// A font of a page: its map back to text and its glyph widths.
+struct PageFont<'a> {
+    encoding: lopdf::Encoding<'a>,
+    widths: HashMap<u16, f64>,
+}
+
+/// A picture a page paints.
+#[derive(Debug)]
+struct Picture {
+    /// Left, bottom, width and height, in points.
+    rect: [f64; 4],
+    /// Width and height in pixels.
+    pixels: (i64, i64),
+    /// The image's filter, such as `FlateDecode` or `DCTDecode`.
+    filter: String,
+    /// The decoded samples, or the JPEG bytes as stored.
+    data: Vec<u8>,
+}
+
+/// A structure element: its type, its depth under the root, its alternate
+/// text, and the (page, MCID) of the marked content it owns directly.
+type Element = (String, usize, Option<String>, Vec<(usize, i64)>);
+
+/// A PDF read back.
+struct Pdf {
+    doc: lopdf::Document,
+}
+
+impl Pdf {
+    fn read(bytes: &[u8]) -> Self {
+        assert!(bytes.starts_with(b"%PDF-"), "the output is not a PDF");
+        Self {
+            doc: lopdf::Document::load_mem(bytes).expect("the PDF parses"),
+        }
+    }
+
+    fn catalog(&self) -> &Dictionary {
+        self.doc.catalog().expect("the PDF has a catalog")
+    }
+
+    /// The object behind a reference, or the object itself.
+    fn resolve<'a>(&'a self, object: &'a Object) -> &'a Object {
+        self.doc.dereference(object).expect("reference resolves").1
+    }
+
+    fn dict<'a>(&'a self, object: &'a Object) -> &'a Dictionary {
+        self.resolve(object).as_dict().expect("a dictionary")
+    }
+
+    fn page_ids(&self) -> Vec<ObjectId> {
+        self.doc.get_pages().into_values().collect()
+    }
+
+    fn page_count(&self) -> usize {
+        self.page_ids().len()
+    }
+
+    fn page(&self, page: usize) -> &Dictionary {
+        self.doc
+            .get_dictionary(self.page_ids()[page])
+            .expect("page dictionary")
+    }
+
+    /// Width and height of a page's media box, in points.
+    fn page_size(&self, page: usize) -> (f64, f64) {
+        let media_box = self.resolve(self.page(page).get(b"MediaBox").expect("MediaBox"));
+        let [left, bottom, right, top] = numbers(media_box.as_array().expect("MediaBox array"))[..]
+        else {
+            panic!("a MediaBox has four numbers");
+        };
+        (right - left, top - bottom)
+    }
+
+    fn fonts(&self, page: usize) -> BTreeMap<Vec<u8>, PageFont<'_>> {
+        let fonts = self
+            .doc
+            .get_page_fonts(self.page_ids()[page])
+            .expect("page fonts");
+        fonts
+            .into_iter()
+            .map(|(name, font)| {
+                let descendants = font.get(b"DescendantFonts").expect("DescendantFonts");
+                let descendant =
+                    self.dict(&self.resolve(descendants).as_array().expect("array")[0]);
+                let mut widths = HashMap::new();
+                if let Ok(entries) = descendant.get(b"W") {
+                    let entries = self.resolve(entries).as_array().expect("W array");
+                    let mut index = 0;
+                    while index < entries.len() {
+                        let first = entries[index].as_i64().expect("W start") as u16;
+                        if let Object::Array(list) = self.resolve(&entries[index + 1]) {
+                            for (offset, width) in numbers(list).into_iter().enumerate() {
+                                widths.insert(first + offset as u16, width);
+                            }
+                            index += 2;
+                        } else {
+                            let last = entries[index + 1].as_i64().expect("W end") as u16;
+                            let width = f64::from(entries[index + 2].as_float().expect("W"));
+                            widths.extend((first..=last).map(|glyph| (glyph, width)));
+                            index += 3;
+                        }
+                    }
+                }
+                let encoding = font.get_font_encoding(&self.doc).expect("font encoding");
+                (name, PageFont { encoding, widths })
+            })
+            .collect()
+    }
+
+    /// Every text object a page draws, in content stream order. A shaped
+    /// run (right-to-left and complex scripts) reads as its ActualText, its
+    /// logical text, once.
+    fn drawn(&self, page: usize) -> Vec<Drawn> {
+        let fonts = self.fonts(page);
+        let content = self.doc.get_page_content(self.page_ids()[page]);
+        let operations = Content::decode(&content)
+            .expect("content stream decodes")
+            .operations;
+
+        // An open marked content sequence: whether it is a span with
+        // ActualText, and its marked content identifier.
+        struct Mark {
+            span: bool,
+            mcid: Option<i64>,
+        }
+        let mut ctm = IDENTITY;
+        let mut saved = Vec::new();
+        let mut font: Option<(&PageFont, f64)> = None;
+        let mut text_matrix = IDENTITY;
+        let mut marks: Vec<Mark> = Vec::new();
+        let mut drawn = Vec::new();
+        let mut current: Option<Drawn> = None;
+        // Along the baseline, in points from the current text matrix: the
+        // start of the text line, the pen, and the furthest glyph edge.
+        let (mut line_start, mut pen, mut reach) = (0.0, 0.0, f64::NEG_INFINITY);
+        let finish = |piece: Option<Drawn>, reach: f64, drawn: &mut Vec<Drawn>| {
+            drawn.extend(piece.map(|mut piece| {
+                piece.end = piece.x + reach.max(0.0);
+                piece
+            }));
+        };
+        for operation in &operations {
+            let operands = &operation.operands;
+            let in_span = marks.iter().any(|mark| mark.span);
+            let mcid = marks.iter().rev().find_map(|mark| mark.mcid);
+            let new_piece = |text: String, mcid| Drawn {
+                text,
+                glyphs: String::new(),
+                x: f64::NAN,
+                y: f64::NAN,
+                end: f64::NAN,
+                mcid,
+                notdef: 0,
+            };
+            // Text space to user space, along the baseline.
+            let along = text_matrix[0] * ctm[0] + text_matrix[1] * ctm[2];
+            match operation.operator.as_str() {
+                "q" => saved.push(ctm),
+                "Q" => ctm = saved.pop().expect("balanced q and Q"),
+                "cm" => ctm = multiply(matrix(operands), ctm),
+                "BDC" => {
+                    let properties = operands.get(1).and_then(|object| object.as_dict().ok());
+                    let actual = properties
+                        .and_then(|properties| properties.get(b"ActualText").ok())
+                        .map(|text| lopdf::decode_text_string(text).expect("ActualText"));
+                    let own = properties
+                        .and_then(|properties| properties.get(b"MCID").ok())
+                        .map(|id| id.as_i64().expect("MCID is an integer"));
+                    if let Some(text) = &actual
+                        && !in_span
+                    {
+                        current = Some(new_piece(text.clone(), own.or(mcid)));
+                        reach = f64::NEG_INFINITY;
+                    }
+                    marks.push(Mark {
+                        span: actual.is_some(),
+                        mcid: own,
+                    });
+                }
+                "BMC" => marks.push(Mark {
+                    span: false,
+                    mcid: None,
+                }),
+                "EMC" => {
+                    let mark = marks.pop().expect("balanced BDC and EMC");
+                    if mark.span && !marks.iter().any(|mark| mark.span) {
+                        finish(current.take(), reach, &mut drawn);
+                    }
+                }
+                "BT" if !in_span => {
+                    current = Some(new_piece(String::new(), mcid));
+                    reach = f64::NEG_INFINITY;
+                }
+                "ET" if !in_span => finish(current.take(), reach, &mut drawn),
+                "Tf" => {
+                    let name = operands[0].as_name().expect("font name");
+                    let size = f64::from(operands[1].as_float().expect("font size"));
+                    font = Some((fonts.get(name).expect("a font of the page"), size));
+                }
+                "Tm" => {
+                    text_matrix = matrix(operands);
+                    (line_start, pen) = (0.0, 0.0);
+                    if let Some(piece) = current.as_mut().filter(|piece| piece.x.is_nan()) {
+                        let [.., x, y] = multiply(text_matrix, ctm);
+                        (piece.x, piece.y) = (x, y);
+                    }
+                }
+                // The next line starts from the start of this one, not the pen.
+                "Td" => {
+                    line_start += f64::from(operands[0].as_float().expect("Td x")) * along;
+                    pen = line_start;
+                }
+                "Tj" | "TJ" => {
+                    let (font, size) = font.expect("a font is set before text");
+                    let scale = along * size / 1000.0;
+                    let piece = current.as_mut().expect("text is shown inside BT and ET");
+                    let items: Vec<&Object> = match &operands[0] {
+                        Object::Array(items) => items.iter().collect(),
+                        string => vec![string],
+                    };
+                    for item in items {
+                        let Ok(string) = item.as_str() else {
+                            pen -= f64::from(item.as_float().expect("TJ number")) * scale;
+                            continue;
+                        };
+                        // Two-byte glyph identifiers (Identity-H); 0 is .notdef.
+                        for glyph in string.chunks(2) {
+                            let glyph = u16::from_be_bytes([glyph[0], glyph[1]]);
+                            piece.notdef += usize::from(glyph == 0);
+                            pen += font.widths.get(&glyph).copied().unwrap_or(0.0) * scale;
+                            reach = reach.max(pen);
+                        }
+                        let text = lopdf::Document::decode_text(&font.encoding, string)
+                            .expect("text decodes");
+                        piece.glyphs.push_str(&text);
+                        if !in_span {
+                            piece.text.push_str(&text);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            current.is_none() && marks.is_empty() && saved.is_empty(),
+            "page {page} ends inside text, marked content or a saved state"
+        );
+        drawn
+    }
+
+    /// Every picture a page paints, in content stream order.
+    fn pictures(&self, page: usize) -> Vec<Picture> {
+        let resources = self.dict(self.page(page).get(b"Resources").expect("Resources"));
+        let xobjects = resources
+            .get(b"XObject")
+            .ok()
+            .map(|xobjects| self.dict(xobjects));
+        let content = self.doc.get_page_content(self.page_ids()[page]);
+        let operations = Content::decode(&content)
+            .expect("content stream decodes")
+            .operations;
+        let mut ctm = IDENTITY;
+        let mut saved = Vec::new();
+        let mut pictures = Vec::new();
+        for operation in &operations {
+            match operation.operator.as_str() {
+                "q" => saved.push(ctm),
+                "Q" => ctm = saved.pop().expect("balanced q and Q"),
+                "cm" => ctm = multiply(matrix(&operation.operands), ctm),
+                "Do" => {
+                    let name = operation.operands[0].as_name().expect("XObject name");
+                    let xobject = xobjects.expect("XObjects").get(name).expect("XObject");
+                    let stream = self.resolve(xobject).as_stream().expect("XObject stream");
+                    let entry = |key: &[u8]| stream.dict.get(key).expect("image entry");
+                    if entry(b"Subtype").as_name().ok() != Some(b"Image") {
+                        continue;
+                    }
+                    let filter = entry(b"Filter").as_name().expect("filter name");
+                    let filter = String::from_utf8_lossy(filter).into_owned();
+                    let data = if filter == "FlateDecode" {
+                        stream.decompressed_content().expect("image inflates")
+                    } else {
+                        stream.content.clone()
+                    };
+                    // The unit square through the current matrix.
+                    let xs = [0.0, ctm[0], ctm[2], ctm[0] + ctm[2]].map(|x| x + ctm[4]);
+                    let ys = [0.0, ctm[1], ctm[3], ctm[1] + ctm[3]].map(|y| y + ctm[5]);
+                    let (left, bottom) = (min(&xs), min(&ys));
+                    pictures.push(Picture {
+                        rect: [left, bottom, max(&xs) - left, max(&ys) - bottom],
+                        pixels: (
+                            entry(b"Width").as_i64().expect("width"),
+                            entry(b"Height").as_i64().expect("height"),
+                        ),
+                        filter,
+                        data,
+                    });
+                }
+                _ => {}
+            }
+        }
+        pictures
+    }
+
+    /// The URI and rectangle (left, bottom, right, top) of each link
+    /// annotation of a page.
+    fn links(&self, page: usize) -> Vec<(String, [f64; 4])> {
+        let annotations = self
+            .doc
+            .get_page_annotations(self.page_ids()[page])
+            .expect("page annotations");
+        annotations
+            .into_iter()
+            .filter(|annot| annot.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Link"))
+            .map(|annot| {
+                let action = self.dict(annot.get(b"A").expect("link action"));
+                let kind = action
+                    .get(b"S")
+                    .and_then(Object::as_name)
+                    .expect("action kind");
+                assert_eq!(kind, b"URI", "a link opens a URI");
+                let uri = action.get(b"URI").and_then(Object::as_str).expect("URI");
+                let rect = self.resolve(annot.get(b"Rect").expect("Rect"));
+                let rect = numbers(rect.as_array().expect("Rect array"));
+                let uri = String::from_utf8(uri.to_vec()).expect("URI is UTF-8");
+                (uri, [rect[0], rect[1], rect[2], rect[3]])
+            })
+            .collect()
+    }
+
+    /// The outline in order, depth first: title, depth from 0, and the
+    /// index of the page it opens.
+    fn outline(&self) -> Vec<(String, usize, usize)> {
+        let Ok(root) = self.catalog().get(b"Outlines") else {
+            return Vec::new();
+        };
+        let pages = self.page_ids();
+        let mut entries = Vec::new();
+        let mut stack = Vec::new();
+        if let Ok(first) = self.dict(root).get(b"First") {
+            stack.push((first.as_reference().expect("First"), 0));
+        }
+        while let Some((id, depth)) = stack.pop() {
+            let item = self.doc.get_dictionary(id).expect("outline item");
+            let title = lopdf::decode_text_string(item.get(b"Title").expect("Title"));
+            let destination = self.resolve(item.get(b"Dest").expect("Dest"));
+            let target = destination.as_array().expect("Dest array")[0]
+                .as_reference()
+                .expect("Dest page");
+            let page = pages.iter().position(|page| *page == target);
+            entries.push((
+                title.expect("title text"),
+                depth,
+                page.expect("Dest is a page"),
+            ));
+            if let Ok(next) = item.get(b"Next") {
+                stack.push((next.as_reference().expect("Next"), depth));
+            }
+            if let Ok(child) = item.get(b"First") {
+                stack.push((child.as_reference().expect("First"), depth + 1));
+            }
+        }
+        entries
+    }
+
+    /// An entry of the document information dictionary.
+    fn info(&self, key: &[u8]) -> Option<String> {
+        let info = self.dict(self.doc.trailer.get(b"Info").ok()?);
+        let value = info.get(key).ok()?;
+        Some(lopdf::decode_text_string(value).expect("Info text"))
+    }
+
+    /// The XMP metadata packet of the catalog, if any.
+    fn xmp(&self) -> Option<String> {
+        let metadata = self.resolve(self.catalog().get(b"Metadata").ok()?);
+        let stream = metadata.as_stream().expect("Metadata stream");
+        let bytes = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        Some(String::from_utf8(bytes).expect("XMP is UTF-8"))
+    }
+
+    /// Every composite font of the file: its name, whether its font program
+    /// is embedded, and whether it maps its glyphs back to text.
+    fn embedded_fonts(&self) -> Vec<(String, bool, bool)> {
+        let mut fonts = Vec::new();
+        for object in self.doc.objects.values() {
+            let Ok(font) = object.as_dict() else { continue };
+            if font.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type0") {
+                continue;
+            }
+            let name = font
+                .get(b"BaseFont")
+                .and_then(Object::as_name)
+                .expect("BaseFont");
+            let descendants = font.get(b"DescendantFonts").expect("DescendantFonts");
+            let descendant = self.dict(&self.resolve(descendants).as_array().expect("array")[0]);
+            let descriptor = self.dict(descendant.get(b"FontDescriptor").expect("descriptor"));
+            let embedded = descriptor.get(b"FontFile2").is_ok_and(|file| {
+                let program = self.resolve(file).as_stream().expect("font program");
+                !program
+                    .decompressed_content()
+                    .expect("font inflates")
+                    .is_empty()
+            });
+            // A subset may carry a tag of six capital letters and a plus.
+            let name = match name.split_at_checked(7) {
+                Some((tag, rest))
+                    if tag[6] == b'+' && tag[..6].iter().all(u8::is_ascii_uppercase) =>
+                {
+                    rest
+                }
+                _ => name,
+            };
+            let name = String::from_utf8_lossy(name).into_owned();
+            fonts.push((name, embedded, font.get(b"ToUnicode").is_ok()));
+        }
+        fonts.sort();
+        fonts
+    }
+
+    /// The structure tree, depth first.
+    fn structure(&self) -> Vec<Element> {
+        let pages = self.page_ids();
+        let root = self.dict(
+            self.catalog()
+                .get(b"StructTreeRoot")
+                .expect("StructTreeRoot"),
+        );
+        let mut elements = Vec::new();
+        let mut stack = vec![(root.get(b"K").expect("root kids"), 0)];
+        while let Some((kid, depth)) = stack.pop() {
+            match self.resolve(kid) {
+                Object::Array(kids) => stack.extend(kids.iter().rev().map(|kid| (kid, depth))),
+                Object::Dictionary(element) if element.get(b"S").is_ok() => {
+                    let role = element.get(b"S").and_then(Object::as_name).expect("S");
+                    let alt = element
+                        .get(b"Alt")
+                        .ok()
+                        .map(|alt| lopdf::decode_text_string(alt).expect("Alt text"));
+                    let page = element.get(b"Pg").and_then(Object::as_reference).ok();
+                    let kids: Vec<&Object> = match element.get(b"K") {
+                        Ok(Object::Array(kids)) => kids.iter().collect(),
+                        Ok(kid) => vec![kid],
+                        Err(_) => Vec::new(),
+                    };
+                    let (mut marks, mut children) = (Vec::new(), Vec::new());
+                    for kid in kids {
+                        match self.resolve(kid) {
+                            Object::Integer(mcid) => marks.push((page.expect("Pg"), *mcid)),
+                            Object::Dictionary(mark) if mark.get(b"MCID").is_ok() => {
+                                let own = mark.get(b"Pg").and_then(Object::as_reference).ok();
+                                let mcid = mark.get(b"MCID").and_then(Object::as_i64);
+                                marks.push((own.or(page).expect("Pg"), mcid.expect("MCID")));
+                            }
+                            _ => children.push((kid, depth + 1)),
+                        }
+                    }
+                    let marks = marks
+                        .into_iter()
+                        .map(|(page, mcid)| {
+                            let index = pages.iter().position(|id| *id == page);
+                            (index.expect("Pg is a page"), mcid)
+                        })
+                        .collect();
+                    let role = String::from_utf8_lossy(role).into_owned();
+                    elements.push((role, depth, alt, marks));
+                    stack.extend(children.into_iter().rev());
+                }
+                _ => {}
+            }
+        }
+        elements
+    }
+
+    /// The text a page draws, its pieces joined in stream order.
+    fn page_text(&self, page: usize) -> String {
+        self.drawn(page)
+            .into_iter()
+            .map(|piece| piece.text)
+            .collect()
+    }
+
+    /// The text a page draws between its top and bottom margins, without
+    /// its header and footer.
+    fn body_text(&self, page: usize, margin: f64) -> String {
+        let (_, height) = self.page_size(page);
+        self.drawn(page)
+            .into_iter()
+            .filter(|piece| piece.y > margin && piece.y < height - margin)
+            .map(|piece| piece.text)
+            .collect()
+    }
+}
+
+const IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+fn numbers(objects: &[Object]) -> Vec<f64> {
+    objects
+        .iter()
+        .map(|object| f64::from(object.as_float().expect("a number")))
+        .collect()
+}
+
+/// The six numbers of a matrix operator.
+fn matrix(operands: &[Object]) -> [f64; 6] {
+    numbers(operands).try_into().expect("six matrix numbers")
+}
+
+/// `first` then `second`, as PDF concatenates matrices.
+fn multiply(first: [f64; 6], second: [f64; 6]) -> [f64; 6] {
+    [
+        first[0] * second[0] + first[1] * second[2],
+        first[0] * second[1] + first[1] * second[3],
+        first[2] * second[0] + first[3] * second[2],
+        first[2] * second[1] + first[3] * second[3],
+        first[4] * second[0] + first[5] * second[2] + second[4],
+        first[4] * second[1] + first[5] * second[3] + second[5],
+    ]
+}
+
+fn min(values: &[f64]) -> f64 {
+    values.iter().copied().fold(f64::INFINITY, f64::min)
+}
+
+fn max(values: &[f64]) -> f64 {
+    values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// One line of a page: the pieces on one baseline, in stream order, from
+/// the left edge of its leftmost glyph to the right edge of its rightmost.
+#[derive(Debug)]
+struct Line {
+    y: f64,
+    text: String,
+    left: f64,
+    right: f64,
+}
+
+fn lines(pieces: &[Drawn]) -> Vec<Line> {
+    let mut lines: Vec<Line> = Vec::new();
+    for piece in pieces {
+        match lines.last_mut() {
+            Some(line) if (line.y - piece.y).abs() < 0.5 => {
+                line.text.push_str(&piece.text);
+                line.left = line.left.min(piece.x);
+                line.right = line.right.max(piece.end);
+            }
+            _ => lines.push(Line {
+                y: piece.y,
+                text: piece.text.clone(),
+                left: piece.x,
+                right: piece.end,
+            }),
+        }
+    }
+    lines
+}
+
+/// The line of a page that holds `text`.
+fn line_of(pdf: &Pdf, page: usize, text: &str) -> Line {
+    lines(&pdf.drawn(page))
+        .into_iter()
+        .find(|line| line.text.contains(text))
+        .unwrap_or_else(|| panic!("page {page} draws no line with {text:?}"))
+}
+
+/// Text without its white space, to compare text across line breaks and tabs.
+fn squeeze(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+/// The first page whose text holds `text`, white space aside.
+fn page_with(pdf: &Pdf, text: &str) -> usize {
+    (0..pdf.page_count())
+        .find(|page| squeeze(&pdf.page_text(*page)).contains(&squeeze(text)))
+        .unwrap_or_else(|| panic!("no page draws {text:?}"))
+}
+
+/// The text of a structure element and of the elements under it, read
+/// through their marked content.
+fn tagged_text(pdf: &Pdf, elements: &[Element], index: usize) -> String {
+    let depth = elements[index].1;
+    let below = elements[index + 1..]
+        .iter()
+        .take_while(|element| element.1 > depth);
+    let mut pages: HashMap<usize, Vec<Drawn>> = HashMap::new();
+    let mut text = String::new();
+    for (page, mcid) in std::iter::once(&elements[index])
+        .chain(below)
+        .flat_map(|element| element.3.iter())
+    {
+        let drawn = pages.entry(*page).or_insert_with(|| pdf.drawn(*page));
+        for piece in drawn.iter().filter(|piece| piece.mcid == Some(*mcid)) {
+            text.push_str(&piece.text);
+        }
+    }
+    text
+}
+
+// ---- Builders ----
+
+/// The document converted with the bundled fonts only, whatever fonts the
+/// machine has.
+fn pdf_of(doc: &Document) -> Pdf {
+    Pdf::read(
+        &doc.to_pdf_deterministic()
+            .expect("document converts to PDF"),
+    )
+}
+
+/// Whether the glyphs of a piece draw its text: the same characters, in any
+/// order, since a right-to-left run is drawn in visual order. An Arabic face
+/// draws letter skeletons and dots as glyphs several letters share, and a
+/// ToUnicode map gives each glyph one text for the whole file, so the glyphs
+/// of an Arabic word only map to Arabic characters; its ActualText spells it.
+fn glyphs_draw_text(piece: &Drawn) -> bool {
+    let arabic = |ch: char| ('\u{0600}'..='\u{06FF}').contains(&ch);
+    if piece.text.chars().any(arabic) {
+        return !piece.glyphs.is_empty()
+            && piece
+                .glyphs
+                .chars()
+                .all(|ch| arabic(ch) || piece.text.contains(ch));
+    }
+    let sorted = |text: &str| {
+        let mut chars: Vec<char> = text.chars().collect();
+        chars.sort_unstable();
+        chars
+    };
+    sorted(&piece.text) == sorted(&piece.glyphs)
+}
+
+/// A PNG of `width` by `height` RGB pixels, rows top first.
+fn png(width: u32, height: u32, pixels: &[[u8; 3]]) -> Vec<u8> {
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFF_u32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    0xEDB8_8320 ^ (crc >> 1)
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend((data.len() as u32).to_be_bytes());
+        let start = out.len();
+        out.extend(kind);
+        out.extend(data);
+        let crc = crc32(&out[start..]);
+        out.extend(crc.to_be_bytes());
+    }
+    let mut samples = Vec::new();
+    for row in pixels.chunks(width as usize) {
+        samples.push(0);
+        samples.extend(row.iter().flatten());
+    }
+    let mut header = Vec::new();
+    header.extend(width.to_be_bytes());
+    header.extend(height.to_be_bytes());
+    header.extend([8, 2, 0, 0, 0]);
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut out, b"IHDR", &header);
+    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&samples, 6);
+    chunk(&mut out, b"IDAT", &compressed);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+/// A part of a corpus file, by its ZIP entry name.
+fn corpus_part(name: &str, part: &str) -> Vec<u8> {
+    let bytes = std::fs::read(corpus_root().join("files").join(name)).expect("corpus file");
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("package is a ZIP");
+    let mut data = Vec::new();
+    zip.by_name(part)
+        .expect("part is in the package")
+        .read_to_end(&mut data)
+        .expect("part inflates");
+    data
+}
+
+/// The location of the first paragraph of the first story of this kind.
+fn first_paragraph_of(doc: &Document, kind: StoryKind) -> ContentLocation {
+    let stories = doc.stories().expect("stories are listed");
+    let story = stories
+        .into_iter()
+        .find(|story| story.kind() == kind)
+        .expect("the story exists");
+    doc.story_items(&story)
+        .expect("story reads")
+        .iter()
+        .find(|item| item.kind() == StoryItemKind::Paragraph)
+        .expect("the story has a paragraph")
+        .location()
+        .clone()
+}
+
+const LETTER: (f64, f64) = (612.0, 792.0);
+const A4: (f64, f64) = (595.3, 841.9);
+const PRODUCERS: [&str; 4] = ["word", "google", "libreoffice", "authored"];
+
+fn assert_size(found: (f64, f64), expected: (f64, f64), what: &str) {
+    assert!(
+        (found.0 - expected.0).abs() < 0.5 && (found.1 - expected.1).abs() < 0.5,
+        "{what}: page is {found:?}, expected {expected:?}"
+    );
+}
+
+// ---- Pages ----
+
+#[test]
+fn a_document_converts_to_letter_pages_even_when_empty() {
+    let pdf = pdf_of(&doc_with(&["Hello world"]));
+    assert_eq!(pdf.page_count(), 1);
+    assert_size(pdf.page_size(0), LETTER, "page 1");
+    assert_eq!(pdf.page_text(0), "Hello world");
+
+    // A document with no paragraph still prints one blank page.
+    let pdf = pdf_of(&Document::new());
+    assert_eq!(pdf.page_count(), 1);
+    assert_size(pdf.page_size(0), LETTER, "empty page");
+    assert!(pdf.drawn(0).is_empty(), "{:?}", pdf.drawn(0));
+}
+
+#[test]
+fn long_text_flows_onto_further_pages_in_reading_order() {
+    let paragraphs: Vec<String> = (1..=150).map(|n| format!("Paragraph {n:03}")).collect();
+    let doc = doc_with(&paragraphs.iter().map(String::as_str).collect::<Vec<_>>());
+    let pdf = pdf_of(&doc);
+    assert!(pdf.page_count() >= 3, "{} pages", pdf.page_count());
+    let mut read = Vec::new();
+    for page in 0..pdf.page_count() {
+        let lines = lines(&pdf.drawn(page));
+        assert!(!lines.is_empty(), "page {page} is blank");
+        assert!(
+            lines.windows(2).all(|pair| pair[0].y > pair[1].y),
+            "page {page}: lines are not drawn top to bottom"
+        );
+        read.extend(lines.into_iter().map(|line| line.text));
+    }
+    // Every paragraph once, in order, across the pages.
+    assert_eq!(read, paragraphs);
+}
+
+#[test]
+fn each_section_keeps_its_page_size_and_orientation() {
+    let mut doc = doc_with(&["On an A4 page"]);
+    doc.section_mut(0)
+        .unwrap()
+        .set_page_size(Length::twips(11906), Length::twips(16838))
+        .unwrap();
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("On a landscape page");
+    doc.section_mut(1)
+        .unwrap()
+        .set_orientation(ST_PageOrientation::Landscape);
+    let pdf = pdf_of(&reopen(&mut doc));
+
+    assert_eq!(pdf.page_count(), 2);
+    assert_size(pdf.page_size(0), A4, "A4 portrait");
+    assert_size(pdf.page_size(1), (A4.1, A4.0), "A4 landscape");
+    assert_eq!(pdf.page_text(0), "On an A4 page");
+    assert_eq!(pdf.page_text(1), "On a landscape page");
+    // Each page is laid out at its own height: the first baseline sits the
+    // top margin (one inch) and less than a line below its top edge.
+    for page in 0..2 {
+        let (_, height) = pdf.page_size(page);
+        let below_top = height - pdf.drawn(page)[0].y;
+        assert!(
+            (72.0..86.0).contains(&below_top),
+            "page {page}: first baseline {below_top} pt below the top"
+        );
+    }
+}
+
+// Fails today: a page break followed by a next-page section break leaves a
+// blank page; Word (Pages = 3 in the Word file) and LibreOffice print 3 pages.
+// Issue: #156
+#[test]
+#[should_panic(expected = "draws only its header and footer")]
+fn no_page_of_a_corpus_report_is_blank() {
+    for producer in PRODUCERS {
+        let pdf = pdf_of(&corpus_doc(&format!("{producer}/report.docx")));
+        for page in 0..pdf.page_count() {
+            assert!(
+                !pdf.body_text(page, 72.0).trim().is_empty(),
+                "page {} of the {producer} report draws only its header and footer",
+                page + 1
+            );
+        }
+    }
+}
+
+// ---- Where text lands ----
+
+#[test]
+fn text_lands_inside_the_margins_and_aligns_on_them() {
+    let long = "Margins decide where every line of a paragraph starts and ends. ".repeat(5);
+    let mut doc = doc_with(&["First line", long.trim_end()]);
+    doc.add_paragraph("Right aligned")
+        .alignment(Alignment::Right);
+    doc.add_paragraph("Centred").alignment(Alignment::Center);
+    // Top 1.5 in, right 3 in, bottom 1 in, left 2 in.
+    doc.set_margins(
+        Length::inches(1.5),
+        Length::inches(3.0),
+        Length::inches(1.0),
+        Length::inches(2.0),
+    );
+    let pdf = pdf_of(&reopen(&mut doc));
+    let (left, right) = (144.0, 612.0 - 216.0);
+    let lines = lines(&pdf.drawn(0));
+
+    assert_eq!(lines[0].text, "First line");
+    assert!(
+        (lines[0].left - left).abs() < 0.01,
+        "starts at {}",
+        lines[0].left
+    );
+    let below_top = 792.0 - 108.0 - lines[0].y;
+    assert!(
+        (0.0..14.0).contains(&below_top),
+        "{below_top} pt below the top margin"
+    );
+
+    // The long paragraph wraps inside both margins and uses the width.
+    let wrapped = &lines[1..lines.len() - 2];
+    assert!(wrapped.len() >= 3, "{wrapped:?}");
+    for line in wrapped {
+        assert!((line.left - left).abs() < 0.01, "{line:?}");
+        assert!(line.right <= right + 0.5, "{line:?}");
+    }
+    assert!(wrapped[0].right > right - 40.0, "{:?}", wrapped[0]);
+    assert_eq!(
+        squeeze(
+            &wrapped
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<String>()
+        ),
+        squeeze(&long)
+    );
+
+    let aligned = &lines[lines.len() - 2];
+    assert_eq!(aligned.text, "Right aligned");
+    assert!((aligned.right - right).abs() < 0.5, "{aligned:?}");
+    let centred = &lines[lines.len() - 1];
+    assert_eq!(centred.text, "Centred");
+    let middle = (centred.left + centred.right) / 2.0;
+    assert!((middle - (left + right) / 2.0).abs() < 0.5, "{centred:?}");
+}
+
+// Fails today: a right-to-left paragraph is drawn against the left margin;
+// Word and LibreOffice align it on the right margin, with no alignment set
+// and with the `jc="left"` (start) LibreOffice writes. Issue: #157
+#[test]
+#[should_panic(expected = "right-to-left line ends at")]
+fn a_right_to_left_paragraph_ends_at_the_right_margin() {
+    let mut doc = Document::new();
+    doc.add_paragraph("مرحبا بالعالم").right_to_left(true);
+    doc.add_paragraph("שלום עולם").right_to_left(true);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let lines = lines(&pdf.drawn(0));
+    assert_eq!(lines.len(), 2);
+    for line in lines {
+        assert!(
+            (line.right - 540.0).abs() < 1.0,
+            "right-to-left line ends at {:.1}, not at the right margin (540): {:?}",
+            line.right,
+            line.text
+        );
+    }
+
+    // LibreOffice saves its right-aligned Arabic heading as bidi with
+    // jc="left", which a bidi paragraph reads as its start, the right. A fix
+    // of the default alone stops at this assertion, with its own message.
+    let doc = corpus_doc("libreoffice/minutes.docx");
+    let (_, right, _, _) = doc.section(0).unwrap().margins().unwrap();
+    let pdf = pdf_of(&doc);
+    let page = page_with(&pdf, "ملخص الاجتماع");
+    let margin = pdf.page_size(page).0 - right.to_pt();
+    let heading = line_of(&pdf, page, "ملخص الاجتماع");
+    assert!(
+        (heading.right - margin).abs() < 1.0,
+        "the jc=left Arabic heading of the LibreOffice minutes ends at {:.1}, not at its right margin ({margin:.1})",
+        heading.right
+    );
+}
+
+// ---- Headers, footers and notes ----
+
+#[test]
+fn headers_and_footers_with_page_numbers_are_drawn_on_every_page() {
+    let mut doc = doc_with(&["One", "Two", "Three"]);
+    for index in [1, 2] {
+        doc.paragraph_mut(index)
+            .unwrap()
+            .set_page_break_before(true);
+    }
+    doc.set_header("Running header");
+    doc.set_footer("Page ");
+    let footer = first_paragraph_of(&doc, StoryKind::Footer);
+    let position = StoryRunPosition {
+        location: footer,
+        run_index: 1,
+    };
+    doc.insert_field(&position, Field::new("PAGE", "9"))
+        .unwrap();
+    let pdf = pdf_of(&reopen(&mut doc));
+
+    assert_eq!(pdf.page_count(), 3);
+    for (page, body) in ["One", "Two", "Three"].into_iter().enumerate() {
+        let lines = lines(&pdf.drawn(page));
+        let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+        // Not the stored result 9: each page shows its own number.
+        let number = format!("Page {}", page + 1);
+        assert_eq!(texts, ["Running header", body, &number], "page {page}");
+        // The header sits in the top margin, the footer in the bottom one.
+        assert!(lines[0].y > 792.0 - 72.0, "{:?}", lines[0]);
+        assert!(lines[2].y < 72.0, "{:?}", lines[2]);
+    }
+}
+
+#[test]
+fn a_first_page_header_replaces_the_header_on_the_first_page_only() {
+    let mut doc = doc_with(&["Cover", "Content"]);
+    doc.paragraph_mut(1).unwrap().set_page_break_before(true);
+    doc.set_header("Running header");
+    doc.set_first_page_header("Cover header");
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.page_count(), 2);
+    assert_eq!(pdf.page_text(0), "Cover headerCover");
+    assert_eq!(pdf.page_text(1), "Running headerContent");
+}
+
+#[test]
+fn notes_are_drawn_where_word_prints_them() {
+    let mut doc = doc_with(&[
+        "First page",
+        "Cited on the second page",
+        "Closing paragraph",
+    ]);
+    doc.paragraph_mut(1).unwrap().set_page_break_before(true);
+    let cited = doc.paragraph_story_location(1).unwrap().unwrap();
+    doc.create_footnote(&cited, "The footnote.").unwrap();
+    let cited = doc.paragraph_story_location(1).unwrap().unwrap();
+    doc.create_endnote(&cited, "The endnote.").unwrap();
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.page_count(), 2);
+    assert_eq!(pdf.page_text(0), "First page");
+
+    let page = lines(&pdf.drawn(1));
+    let texts: Vec<&str> = page.iter().map(|line| line.text.as_str()).collect();
+    // The reference marks (the footnote's number first) follow the cited
+    // text, raised above its baseline.
+    assert_eq!(texts[0], "Cited on the second page");
+    assert!(
+        texts[1].starts_with('1') && texts[1].chars().count() == 2,
+        "{texts:?}"
+    );
+    assert_eq!(texts[2], "Closing paragraph");
+    assert!(
+        page[1].y > page[0].y && page[1].y < page[0].y + 6.0,
+        "{page:?}"
+    );
+    // Endnotes follow the last paragraph; footnotes sit at the foot of the
+    // page of their reference, above the bottom margin.
+    let endnote = page
+        .iter()
+        .find(|line| line.text.ends_with("The endnote."))
+        .unwrap();
+    let note = page
+        .iter()
+        .find(|line| line.text.ends_with("The footnote."))
+        .unwrap();
+    assert!(endnote.y < page[2].y, "{page:?}");
+    assert!(
+        note.y < endnote.y && note.y > 72.0 && note.y < 100.0,
+        "{page:?}"
+    );
+}
+
+// Fails today: with no number format set, endnotes are numbered 1, 2, 3 like
+// footnotes; Word and LibreOffice number them i, ii, iii. Issue: #158
+#[test]
+#[should_panic(expected = "the endnote marks read")]
+fn endnotes_are_numbered_in_lower_roman_by_default() {
+    let mut doc = doc_with(&["First claim", "Second claim"]);
+    for index in 0..2 {
+        let cited = doc.paragraph_story_location(index).unwrap().unwrap();
+        doc.create_endnote(&cited, "Source.").unwrap();
+    }
+    let pdf = pdf_of(&reopen(&mut doc));
+    let lines = lines(&pdf.drawn(0));
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    // Each claim, then its raised mark.
+    assert_eq!(
+        [texts[0], texts[2]],
+        ["First claim", "Second claim"],
+        "{texts:?}"
+    );
+    let marks = [texts[1], texts[3]];
+    assert_eq!(marks, ["i", "ii"], "the endnote marks read {marks:?}");
+}
+
+// Fails today: endnotes are drawn over a table that ends the document, at
+// the height of its rows. Issue: #156
+#[test]
+#[should_panic(expected = "endnote drawn over the table")]
+fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
+    let mut doc = doc_with(&["Has a note"]);
+    let cited = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_endnote(&cited, "Endnote text.").unwrap();
+    {
+        let mut table = doc.add_table(3, 2);
+        for row in 0..3 {
+            for column in 0..2 {
+                let text = format!("cell {row}{column}");
+                table.cell(row, column).unwrap().set_text(&text);
+            }
+        }
+    }
+    let pdf = pdf_of(&reopen(&mut doc));
+    let last_row = line_of(&pdf, 0, "cell 20");
+    let note = line_of(&pdf, 0, "Endnote text.");
+    assert!(
+        note.y < last_row.y,
+        "endnote drawn over the table: its baseline {:.1} is above the last row at {:.1}",
+        note.y,
+        last_row.y
+    );
+}
+
+// ---- Tables ----
+
+#[test]
+fn table_cells_are_drawn_row_by_row_in_their_columns() {
+    let mut doc = doc_with(&["Before"]);
+    {
+        let mut table = doc.add_table(3, 3);
+        for row in 0..3 {
+            for column in 0..3 {
+                let text = format!("R{row}C{column}");
+                table.cell(row, column).unwrap().set_text(&text);
+            }
+        }
+    }
+    doc.add_paragraph("After");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let drawn = pdf.drawn(0);
+    let read: Vec<&str> = drawn.iter().map(|piece| piece.text.as_str()).collect();
+    assert_eq!(
+        read,
+        [
+            "Before", "R0C0", "R0C1", "R0C2", "R1C0", "R1C1", "R1C2", "R2C0", "R2C1", "R2C2",
+            "After"
+        ]
+    );
+    let cells = &drawn[1..10];
+    for row in cells.chunks(3) {
+        // One baseline per row, the columns left to right.
+        assert!(
+            row.iter().all(|cell| (cell.y - row[0].y).abs() < 0.01),
+            "{row:?}"
+        );
+        assert!(row[0].end < row[1].x && row[1].end < row[2].x, "{row:?}");
+    }
+    for column in 0..3 {
+        // The columns line up from row to row, the rows go down the page.
+        let (top, middle, bottom) = (&cells[column], &cells[column + 3], &cells[column + 6]);
+        assert!((top.x - bottom.x).abs() < 0.01 && (top.x - middle.x).abs() < 0.01);
+        assert!(top.y > middle.y && middle.y > bottom.y);
+    }
+    assert!(drawn[0].y > cells[0].y && cells[8].y > drawn[10].y);
+}
+
+#[test]
+fn a_header_row_is_repeated_at_the_top_of_every_page_of_a_long_table() {
+    let mut doc = doc_with(&["Inventory"]);
+    {
+        let mut table = doc.add_table(90, 2);
+        table.row(0).unwrap().header();
+        table.cell(0, 0).unwrap().set_text("Item");
+        table.cell(0, 1).unwrap().set_text("Count");
+        for row in 1..90 {
+            table.cell(row, 0).unwrap().set_text(&format!("Item {row}"));
+            table
+                .cell(row, 1)
+                .unwrap()
+                .set_text(&format!("{}", row * 10));
+        }
+    }
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert!(pdf.page_count() >= 3, "{} pages", pdf.page_count());
+    let mut items = Vec::new();
+    for page in 0..pdf.page_count() {
+        let mut lines = lines(&pdf.drawn(page)).into_iter();
+        if page == 0 {
+            assert_eq!(lines.next().unwrap().text, "Inventory");
+        }
+        assert_eq!(
+            lines.next().unwrap().text,
+            "ItemCount",
+            "header row on page {page}"
+        );
+        items.extend(lines.map(|line| line.text));
+    }
+    // Every row once, in order, below the repeated headers.
+    let expected: Vec<String> = (1..90)
+        .map(|row| format!("Item {row}{}", row * 10))
+        .collect();
+    assert_eq!(items, expected);
+}
+
+// ---- Pictures ----
+
+#[test]
+fn pictures_are_drawn_once_at_their_size_with_their_pixels() {
+    let pixels = [
+        [255, 0, 0],
+        [0, 255, 0],
+        [0, 0, 255],
+        [255, 255, 0],
+        [0, 255, 255],
+        [255, 0, 255],
+    ];
+    let jpeg = corpus_part("authored/contract.docx", "docProps/thumbnail.jpeg");
+    let mut doc = doc_with(&["Above"]);
+    let swatch = png(3, 2, &pixels);
+    doc.add_picture(
+        &swatch,
+        "swatch.png",
+        Length::inches(2.0),
+        Length::inches(1.0),
+    );
+    doc.add_paragraph("Between");
+    doc.add_picture(
+        &jpeg,
+        "photo.jpeg",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    doc.add_paragraph("Below");
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.page_count(), 1);
+
+    let pictures = pdf.pictures(0);
+    assert_eq!(pictures.len(), 2, "{pictures:?}");
+    let lines = lines(&pdf.drawn(0));
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, ["Above", "Between", "Below"]);
+
+    // In the flow at the left margin, between the paragraphs around it.
+    let [x, bottom, width, height] = pictures[0].rect;
+    assert!((x - 72.0).abs() < 0.01, "{:?}", pictures[0].rect);
+    assert!((width - 144.0).abs() < 0.01 && (height - 72.0).abs() < 0.01);
+    assert!(bottom + height < lines[0].y && bottom > lines[1].y);
+    assert_eq!(pictures[0].pixels, (3, 2));
+    assert_eq!(
+        pictures[0].data,
+        pixels.concat(),
+        "the samples are the PNG's"
+    );
+
+    // A JPEG keeps its bytes: no second lossy compression.
+    assert_eq!(pictures[1].filter, "DCTDecode");
+    assert!(
+        pictures[1].data == jpeg,
+        "the JPEG is stored as it was given"
+    );
+    let [_, bottom, width, height] = pictures[1].rect;
+    assert!((width - 72.0).abs() < 0.01 && (height - 72.0).abs() < 0.01);
+    assert!(bottom + height < lines[1].y && bottom > lines[2].y);
+}
+
+// ---- Links and outline ----
+
+#[test]
+fn an_external_hyperlink_becomes_a_link_annotation_over_its_text() {
+    let url = "https://example.com/reports?year=2026&q=3";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship(url);
+    {
+        let mut paragraph = doc.add_paragraph("Read ");
+        paragraph.add_hyperlink("the full report", &relationship);
+        paragraph.add_run(" online.");
+    }
+    doc.add_paragraph("No link here.");
+    let pdf = pdf_of(&reopen(&mut doc));
+
+    let links = pdf.links(0);
+    assert!(!links.is_empty());
+    assert!(links.iter().all(|(uri, _)| uri == url), "{links:?}");
+    let covered = |piece: &Drawn| {
+        links.iter().any(|(_, [left, bottom, right, top])| {
+            piece.x >= left - 0.01
+                && piece.end <= right + 0.01
+                && piece.y > *bottom
+                && piece.y < *top
+        })
+    };
+    let linked: Vec<String> = pdf
+        .drawn(0)
+        .into_iter()
+        .filter(|piece| covered(piece))
+        .map(|piece| piece.text)
+        .collect();
+    assert_eq!(linked.concat(), "the full report");
+}
+
+#[test]
+fn headings_become_the_outline_with_their_levels_and_pages() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Introduction").style("Heading1");
+    doc.add_paragraph("Body text");
+    doc.add_paragraph("Background").style("Heading2");
+    doc.add_paragraph("Results")
+        .style("Heading1")
+        .page_break_before(true);
+    doc.add_paragraph("Numbers").style("Heading3");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let outline = pdf.outline();
+    let outline: Vec<(&str, usize, usize)> = outline
+        .iter()
+        .map(|(title, depth, page)| (title.as_str(), *depth, *page))
+        .collect();
+    let expected = [
+        ("Introduction", 0, 0),
+        ("Background", 1, 0),
+        ("Results", 0, 1),
+        ("Numbers", 1, 1),
+    ];
+    assert_eq!(outline, expected);
+
+    // Without a heading there is no outline at all.
+    let pdf = pdf_of(&doc_with(&["Plain", "Paragraphs"]));
+    assert!(pdf.catalog().get(b"Outlines").is_err());
+}
+
+// Fails today: the outline keeps the place a heading had before keep with
+// next moved it to the next page, so the bookmark opens the page before; the
+// four corpus reports show it on "3. Operations", the thesis on "1.2 Research
+// questions". Issue: #156
+#[test]
+#[should_panic(expected = "but the heading is drawn on page")]
+fn an_outline_entry_opens_the_page_its_heading_moved_to() {
+    let mut doc = Document::new();
+    for number in 1..=27 {
+        doc.add_paragraph(&format!("Filler {number}"));
+    }
+    // Too little room is left for the heading and the paragraph it keeps
+    // with, so both start the next page.
+    doc.add_paragraph("Moved heading")
+        .style("Heading1")
+        .keep_with_next(true);
+    doc.add_paragraph(&"A paragraph kept on one page. ".repeat(12))
+        .keep_together(true);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let drawn_on = page_with(&pdf, "Moved heading");
+    assert_eq!(drawn_on, 1, "the heading starts the second page");
+    let outline = pdf.outline();
+    assert_eq!(outline.len(), 1, "{outline:?}");
+    let (title, _, opens) = &outline[0];
+    assert_eq!(title, "Moved heading");
+    assert_eq!(
+        *opens, drawn_on,
+        "the outline opens page {opens} but the heading is drawn on page {drawn_on}"
+    );
+}
+
+#[test]
+fn the_links_of_a_libreoffice_letter_cover_their_text() {
+    let pdf = pdf_of(&corpus_doc("libreoffice/letter.docx"));
+    let pages = 0..pdf.page_count();
+    let links: Vec<(String, [f64; 4])> = pages.clone().flat_map(|page| pdf.links(page)).collect();
+    let drawn: Vec<Drawn> = pages.flat_map(|page| pdf.drawn(page)).collect();
+    let mut uris: Vec<&str> = links.iter().map(|(uri, _)| uri.as_str()).collect();
+    uris.sort();
+    uris.dedup();
+    assert_eq!(uris.len(), 3, "{uris:?}");
+    for (uri, text) in [
+        ("https://www.northwind.example/pricing/2027", "our website"),
+        (
+            "https://portal.northwind.example/renewals?ref=NW-2026-114",
+            "customer portal",
+        ),
+        (
+            "mailto:julien.moreau@northwind.example",
+            "julien.moreau@northwind.example",
+        ),
+    ] {
+        let rects: Vec<&[f64; 4]> = links
+            .iter()
+            .filter(|(found, _)| found == uri)
+            .map(|(_, rect)| rect)
+            .collect();
+        assert!(!rects.is_empty(), "no link to {uri}");
+        let covered: String = drawn
+            .iter()
+            .filter(|piece| {
+                rects.iter().any(|[left, bottom, right, top]| {
+                    piece.x >= left - 0.01
+                        && piece.end <= right + 0.01
+                        && piece.y > *bottom
+                        && piece.y < *top
+                })
+            })
+            .map(|piece| piece.text.as_str())
+            .collect();
+        assert_eq!(covered.trim(), text, "{uri}");
+    }
+}
+
+// ---- Fonts and scripts ----
+
+#[test]
+fn every_face_is_embedded_with_a_map_back_to_text() {
+    let mut doc = Document::new();
+    {
+        let mut paragraph = doc.add_paragraph("Plain ");
+        paragraph.add_run("bold").bold(true);
+        paragraph.add_run(" and ");
+        paragraph.add_run("italic").italic(true);
+    }
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.page_text(0), "Plain bold and italic");
+    let fonts = pdf.embedded_fonts();
+    let expected = [
+        ("Carlito".to_owned(), true, true),
+        ("Carlito-Bold".to_owned(), true, true),
+        ("Carlito-Italic".to_owned(), true, true),
+    ];
+    assert_eq!(fonts, expected);
+}
+
+#[test]
+fn a_caller_font_draws_the_runs_of_its_family() {
+    let mono = oxoffice_layout::bundled_fonts::bundled_font_data()
+        .into_iter()
+        .find(|(family, _)| *family == "Liberation Mono")
+        .expect("Liberation Mono is bundled")
+        .1;
+    let mut doc = Document::new();
+    doc.add_paragraph("Body ")
+        .add_run("brand text")
+        .font("Brand Sans");
+    let doc = reopen(&mut doc);
+
+    // Without the font, the run falls back to a bundled face, and says so.
+    let (bytes, diagnostics) = doc
+        .to_pdf_with_diagnostics(&[], RenderOptions::default())
+        .unwrap();
+    let fonts = Pdf::read(&bytes).embedded_fonts();
+    assert!(
+        fonts.iter().all(|font| font.0 != "LiberationMono"),
+        "{fonts:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("'Brand Sans' substituted")),
+        "{diagnostics:?}"
+    );
+
+    let fonts = [("Brand Sans", mono)];
+    let options = RenderOptions::default();
+    let pdf = Pdf::read(
+        &doc.to_pdf_with_fonts_deterministic_and_options(&fonts, options)
+            .unwrap(),
+    );
+    assert_eq!(pdf.page_text(0), "Body brand text");
+    let fonts: Vec<String> = pdf
+        .embedded_fonts()
+        .into_iter()
+        .map(|font| font.0)
+        .collect();
+    assert_eq!(fonts, ["Carlito", "LiberationMono"]);
+}
+
+#[test]
+fn accented_and_symbol_text_reads_back_and_hidden_text_is_not_drawn() {
+    let text = "Café, naïve façade — 12 € œuvre « déjà » Ångström ß";
+    let mut doc = doc_with(&[text]);
+    doc.add_paragraph("Shown ")
+        .add_run("hidden words")
+        .hidden(true);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let drawn = pdf.drawn(0);
+    let lines = lines(&drawn);
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, [text, "Shown "]);
+    assert!(drawn.iter().all(|piece| piece.notdef == 0), "{drawn:?}");
+}
+
+#[test]
+fn arabic_and_hebrew_text_reads_back_in_logical_order() {
+    let arabic = "مرحبا بالعالم الجميل";
+    let hebrew = "שלום עולם יפה";
+    let mut doc = Document::new();
+    doc.add_paragraph(arabic).right_to_left(true);
+    doc.add_paragraph(hebrew).right_to_left(true);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let drawn = pdf.drawn(0);
+    // Real glyphs that map back to the characters of their words.
+    for piece in &drawn {
+        assert!(piece.notdef == 0 && glyphs_draw_text(piece), "{piece:?}");
+    }
+    let lines = lines(&drawn);
+    for (line, text) in lines.iter().zip([arabic, hebrew]) {
+        assert_eq!(line.text, text);
+        // The first word is drawn rightmost, the last word leftmost.
+        let words: Vec<&Drawn> = drawn
+            .iter()
+            .filter(|piece| (piece.y - line.y).abs() < 0.5 && !piece.text.trim().is_empty())
+            .collect();
+        assert_eq!(words.len(), 3, "{words:?}");
+        assert!(
+            words[0].x > words[1].x && words[1].x > words[2].x,
+            "{words:?}"
+        );
+    }
+    let fonts: Vec<String> = pdf
+        .embedded_fonts()
+        .into_iter()
+        .map(|font| font.0)
+        .collect();
+    assert!(fonts.contains(&"NotoSansArabic".to_owned()), "{fonts:?}");
+}
+
+// Fails today: the default conversion uses bundled fonts only, whose Chinese,
+// Japanese and Korean faces hold a handful of test characters, so ordinary
+// text is drawn as .notdef boxes while the text layer still reads right (the
+// corpus minutes too).
+// Workaround: pass a CJK font file (to_pdf_with_fonts), or
+// RenderOptions { use_system_fonts: true, .. } on a machine with a CJK font.
+// Issue: #157
+#[test]
+#[should_panic(expected = "drawn as empty boxes")]
+fn chinese_japanese_and_korean_text_is_drawn_with_real_glyphs() {
+    let sentences = [
+        "我们的公司在北京有很多客户。",
+        "東京の会社は大きいです。",
+        "한국어 문장입니다.",
+    ];
+    // Plain to_pdf on purpose, not the bundled-only pdf_of: the failure is
+    // about what to_pdf draws by default.
+    let doc = doc_with(&sentences);
+    let pdf = Pdf::read(&doc.to_pdf().expect("document converts to PDF"));
+    let drawn = pdf.drawn(0);
+    let lines = lines(&drawn);
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, sentences);
+    for piece in drawn {
+        assert_eq!(
+            piece.notdef, 0,
+            "{:?} is drawn as empty boxes ({} .notdef glyphs)",
+            piece.text, piece.notdef
+        );
+        assert!(
+            glyphs_draw_text(&piece),
+            "the glyphs of {:?} map back to {:?}",
+            piece.text,
+            piece.glyphs
+        );
+    }
+}
+
+// ---- Tags, PDF/A and metadata ----
+
+#[test]
+fn ordinary_output_is_tagged_with_headings_paragraphs_tables_lists_and_figures() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Quarterly results").style("Heading1");
+    doc.add_paragraph("Revenue grew.");
+    {
+        let mut table = doc.add_table(2, 2);
+        table.row(0).unwrap().header();
+        table.cell(0, 0).unwrap().set_text("Region");
+        table.cell(0, 1).unwrap().set_text("Revenue");
+        table.cell(1, 0).unwrap().set_text("North");
+        table.cell(1, 1).unwrap().set_text("1,402");
+    }
+    doc.add_bullet_list_item("First point", 0);
+    let stories = doc.stories().unwrap();
+    let body = stories
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap();
+    let options = PictureOptions {
+        width: Length::inches(1.0),
+        height: Length::inches(1.0),
+        crop: None,
+        anchor: None,
+        name: None,
+        description: Some("Revenue chart".to_owned()),
+        title: None,
+        decorative: false,
+    };
+    doc.add_picture_with_options(&body, &png(1, 1, &[[0, 0, 0]]), "dot.png", options)
+        .unwrap();
+    let pdf = pdf_of(&reopen(&mut doc));
+
+    let mark_info = pdf.dict(pdf.catalog().get(b"MarkInfo").expect("MarkInfo"));
+    assert_eq!(
+        mark_info.get(b"Marked").and_then(Object::as_bool).ok(),
+        Some(true)
+    );
+    assert!(pdf.page(0).get(b"StructParents").is_ok());
+
+    let elements = pdf.structure();
+    let roles: Vec<&str> = elements
+        .iter()
+        .map(|element| element.0.as_str())
+        .filter(|role| !["P", "LBody"].contains(role))
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            "Document", "H1", "Table", "TR", "TH", "TH", "TR", "TD", "TD", "L", "LI", "Figure"
+        ]
+    );
+    let text_of = |role: &str| -> Vec<String> {
+        (0..elements.len())
+            .filter(|index| elements[*index].0 == role)
+            .map(|index| tagged_text(&pdf, &elements, index))
+            .collect()
+    };
+    assert_eq!(text_of("H1"), ["Quarterly results"]);
+    assert_eq!(text_of("TH"), ["Region", "Revenue"]);
+    assert_eq!(text_of("TD"), ["North", "1,402"]);
+    assert!(
+        text_of("LI")[0].ends_with("First point"),
+        "{:?}",
+        text_of("LI")
+    );
+    let figure = elements
+        .iter()
+        .find(|element| element.0 == "Figure")
+        .unwrap();
+    assert_eq!(figure.2.as_deref(), Some("Revenue chart"));
+    assert_eq!(
+        figure.3.len(),
+        1,
+        "the figure owns the picture's marked content"
+    );
+}
+
+#[test]
+fn pdfa_output_declares_its_part_and_carries_an_output_intent() {
+    let doc = doc_with(&["Archived"]);
+    for (profile, part) in [(PdfConformance::PdfA2b, 2), (PdfConformance::PdfA3b, 3)] {
+        let pdf = Pdf::read(&doc.to_pdfa_deterministic(profile).unwrap());
+        assert_eq!(pdf.page_text(0), "Archived");
+        let xmp = pdf.xmp().expect("PDF/A carries XMP metadata");
+        assert!(
+            xmp.contains(&format!("<pdfaid:part>{part}</pdfaid:part>")),
+            "{xmp}"
+        );
+        assert!(
+            xmp.contains("<pdfaid:conformance>B</pdfaid:conformance>"),
+            "{xmp}"
+        );
+        let intents = pdf.resolve(pdf.catalog().get(b"OutputIntents").expect("OutputIntents"));
+        let intent = pdf.dict(&intents.as_array().expect("OutputIntents array")[0]);
+        let kind = intent
+            .get(b"S")
+            .and_then(Object::as_name)
+            .expect("intent kind");
+        assert_eq!(kind, b"GTS_PDFA1");
+        let icc = pdf.resolve(intent.get(b"DestOutputProfile").expect("ICC profile"));
+        let channels = icc.as_stream().expect("ICC stream").dict.get(b"N");
+        assert_eq!(channels.and_then(Object::as_i64).ok(), Some(3));
+        assert!(
+            pdf.doc.trailer.get(b"ID").is_ok(),
+            "PDF/A needs a file identifier"
+        );
+        assert!(pdf.embedded_fonts().iter().all(|font| font.1));
+    }
+    // An ordinary conversion claims no archival profile.
+    let plain = pdf_of(&doc);
+    assert!(plain.catalog().get(b"OutputIntents").is_err());
+    assert!(!plain.xmp().unwrap_or_default().contains("pdfaid"));
+}
+
+#[test]
+fn pdfa_output_refuses_a_link_it_cannot_archive() {
+    let target = "file:///srv/share/budget.xlsx";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship(target);
+    doc.add_paragraph("See ")
+        .add_hyperlink("the budget", &relationship);
+    let doc = reopen(&mut doc);
+    match doc.to_pdfa_deterministic(PdfConformance::PdfA2b) {
+        Err(oxoffice_docx::Error::Pdf(oxoffice_pdf::PdfError::ForbiddenAction { action })) => {
+            assert_eq!(action, target)
+        }
+        Err(error) => panic!("expected a refusal of the file link, got {error}"),
+        Ok(_) => panic!("expected a refusal of the file link, got a PDF"),
+    }
+    // An ordinary PDF keeps the link.
+    let links = pdf_of(&doc).links(0);
+    assert!(
+        !links.is_empty() && links.iter().all(|(uri, _)| uri == target),
+        "{links:?}"
+    );
+}
+
+#[test]
+fn title_author_subject_and_keywords_reach_the_document_information() {
+    let title = "Rapport été 2026 – 東京";
+    let mut doc = doc_with(&["Body"]);
+    doc.set_title(title);
+    doc.set_author("Zoë Martin");
+    doc.set_subject("Quarterly review");
+    doc.set_keywords("revenue, churn, Lyon");
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.info(b"Title").as_deref(), Some(title));
+    assert_eq!(pdf.info(b"Author").as_deref(), Some("Zoë Martin"));
+    assert_eq!(pdf.info(b"Subject").as_deref(), Some("Quarterly review"));
+    assert_eq!(
+        pdf.info(b"Keywords").as_deref(),
+        Some("revenue, churn, Lyon")
+    );
+    assert_eq!(pdf.info(b"Producer").as_deref(), Some("oxoffice"));
+    // Viewers show the title, not the file name, in their title bar.
+    let preferences = pdf.dict(
+        pdf.catalog()
+            .get(b"ViewerPreferences")
+            .expect("preferences"),
+    );
+    let display = preferences
+        .get(b"DisplayDocTitle")
+        .and_then(Object::as_bool);
+    assert_eq!(display.ok(), Some(true));
+    let xmp = pdf.xmp().expect("tagged output carries XMP metadata");
+    let dc_title = format!("<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{title}</rdf:li>");
+    assert!(xmp.contains(&dc_title), "{xmp}");
+}
+
+#[test]
+fn tracked_changes_are_drawn_in_the_tracked_view_only() {
+    let mut original = doc_with(&["Keep OLDWORD here."]);
+    let edited = doc_with(&["Keep NEWWORD here."]);
+    original
+        .compare(&edited, "Reviewer", "2026-11-21T10:00:00Z")
+        .unwrap();
+    let redline = reopen(&mut original);
+
+    assert_eq!(pdf_of(&redline).page_text(0), "Keep NEWWORD here.");
+    let options = RenderOptions {
+        revision_view: RevisionView::Tracked,
+        ..RenderOptions::default()
+    };
+    let tracked = Pdf::read(&redline.to_pdf_deterministic_with_options(options).unwrap());
+    let text = tracked.page_text(0);
+    assert!(
+        text.contains("OLDWORD") && text.contains("NEWWORD"),
+        "{text}"
+    );
+}
+
+// ---- Determinism and other outputs ----
+
+#[test]
+fn the_same_document_converts_to_the_same_bytes() {
+    let build = || {
+        let mut doc = Document::new();
+        doc.set_title("Same bytes");
+        doc.add_paragraph("Heading").style("Heading1");
+        doc.add_paragraph("Plain and ").add_run("bold").bold(true);
+        doc.add_table(2, 2).cell(1, 1).unwrap().set_text("cell");
+        let dot = png(1, 1, &[[9, 9, 9]]);
+        doc.add_picture(&dot, "dot.png", Length::inches(0.5), Length::inches(0.5));
+        doc
+    };
+    // Two documents built apart, and the next session's copy.
+    let first = build().to_pdf_deterministic().unwrap();
+    assert!(
+        first == build().to_pdf_deterministic().unwrap(),
+        "two builds convert differently"
+    );
+    let mut doc = build();
+    let reopened = reopen(&mut doc).to_pdf_deterministic().unwrap();
+    assert!(first == reopened, "a reopened copy converts differently");
+    let archived = doc.to_pdfa_deterministic(PdfConformance::PdfA2b).unwrap();
+    let again = build()
+        .to_pdfa_deterministic(PdfConformance::PdfA2b)
+        .unwrap();
+    assert!(archived == again, "two PDF/A builds differ");
+
+    // to_pdf repeats itself on one machine too, and save_pdf writes its bytes.
+    let plain = doc.to_pdf().unwrap();
+    assert!(
+        plain == build().to_pdf().unwrap(),
+        "two builds convert differently through to_pdf"
+    );
+    let name = format!("oxoffice-docx-pdf-{}.pdf", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    doc.save_pdf(&path).unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(saved == plain, "save_pdf wrote other bytes");
+}
+
+#[test]
+fn a_single_page_renders_to_png_at_the_size_of_its_pdf_page() {
+    let mut doc = doc_with(&["Portrait"]);
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("Landscape");
+    doc.section_mut(1)
+        .unwrap()
+        .set_orientation(ST_PageOrientation::Landscape);
+    let doc = reopen(&mut doc);
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    for page in 0..2 {
+        let image = doc
+            .render_page_to_png(page, 36.0)
+            .unwrap()
+            .expect("page renders");
+        assert!(image.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let width = u32::from_be_bytes(image[16..20].try_into().unwrap());
+        let height = u32::from_be_bytes(image[20..24].try_into().unwrap());
+        // 36 dpi is half a pixel per point.
+        let (pdf_width, pdf_height) = pdf.page_size(page);
+        let expected = ((pdf_width / 2.0) as u32, (pdf_height / 2.0) as u32);
+        assert_eq!((width, height), expected, "page {page}");
+    }
+    assert!(doc.render_page_to_png(2, 36.0).unwrap().is_none());
+}
+
+// ---- Corpus ----
+
+#[test]
+fn every_corpus_report_draws_its_text_header_footer_picture_and_outline() {
+    const HEADER: &str = "Northwind Analytics: Quarterly Operations Review";
+    const FOOTER: &str = "Internal. Prepared by the operations team.";
+    for producer in PRODUCERS {
+        let doc = corpus_doc(&format!("{producer}/report.docx"));
+        let pdf = pdf_of(&doc);
+        let last = pdf.page_count() - 1;
+        assert_size(pdf.page_size(0), LETTER, producer);
+        assert_size(pdf.page_size(last), (792.0, 612.0), producer);
+
+        for page in 0..=last {
+            let lines = lines(&pdf.drawn(page));
+            assert_eq!(lines[0].text, HEADER, "{producer} page {page}");
+            assert_eq!(
+                lines[lines.len() - 1].text,
+                FOOTER,
+                "{producer} page {page}"
+            );
+        }
+
+        // Every body paragraph, in document order, across the pages.
+        let body: String = (0..=last).map(|page| pdf.body_text(page, 72.0)).collect();
+        let body = squeeze(&body);
+        let mut from = 0;
+        for paragraph in texts(&doc) {
+            let paragraph = squeeze(&paragraph);
+            let found = body[from..]
+                .find(&paragraph)
+                .unwrap_or_else(|| panic!("{producer}: {paragraph:?} is missing or out of order"));
+            from += found + paragraph.len();
+        }
+        let appendix = pdf.body_text(last, 72.0);
+        assert!(
+            appendix.starts_with("Appendix A. Regional detail"),
+            "{producer}"
+        );
+
+        // The picture is drawn once, above its caption.
+        let pictures: Vec<(usize, Picture)> = (0..=last)
+            .flat_map(|page| {
+                pdf.pictures(page)
+                    .into_iter()
+                    .map(move |picture| (page, picture))
+            })
+            .collect();
+        assert_eq!(pictures.len(), 1, "{producer}");
+        let (page, picture) = &pictures[0];
+        assert_eq!(picture.pixels, (900, 450), "{producer}");
+        let caption = line_of(&pdf, *page, "Figure 1.");
+        assert!(
+            picture.rect[1] > caption.y,
+            "{producer}: picture below its caption"
+        );
+
+        // The headings make the outline.
+        let outline = pdf.outline();
+        let titles: Vec<(&str, usize)> = outline
+            .iter()
+            .map(|(title, depth, _)| (title.as_str(), *depth))
+            .collect();
+        let expected = [
+            ("1. Highlights", 0),
+            ("2. Financial overview", 0),
+            ("3. Operations", 0),
+            ("3.1 Support", 1),
+            ("3.2 Next steps", 1),
+            ("Appendix A. Regional detail", 0),
+        ];
+        assert_eq!(titles, expected, "{producer}");
+    }
+}
+
+#[test]
+fn the_minutes_keep_their_arabic_hebrew_chinese_and_japanese_text() {
+    for name in ["authored/minutes.docx", "libreoffice/minutes.docx"] {
+        let doc = corpus_doc(name);
+        let pdf = pdf_of(&doc);
+        // LibreOffice lays the minutes out on three A4 pages too.
+        assert_eq!(pdf.page_count(), 3, "{name}");
+        for page in 0..3 {
+            assert_size(pdf.page_size(page), A4, name);
+        }
+        let all: String = (0..3).map(|page| pdf.page_text(page)).collect();
+        let all = squeeze(&all);
+        for paragraph in texts(&doc) {
+            assert!(
+                all.contains(&squeeze(&paragraph)),
+                "{name}: {paragraph:?} is not drawn"
+            );
+        }
+        // The Arabic summary reads in logical order, spaces and all.
+        let summary = texts(&doc)
+            .into_iter()
+            .find(|text| text.starts_with("وافقت اللجنة"))
+            .expect("the Arabic summary");
+        let page = page_with(&pdf, &summary);
+        assert!(pdf.page_text(page).contains(&summary), "{name}");
+        // Every piece but the Chinese and Japanese ones (see the known
+        // failure on them above) is drawn with real glyphs that map back to
+        // its characters, Arabic and Hebrew included.
+        let cjk = |ch: char| {
+            ('\u{3000}'..='\u{9FFF}').contains(&ch) || ('\u{FF00}'..='\u{FFEF}').contains(&ch)
+        };
+        let mut right_to_left = 0;
+        for page in 0..3 {
+            for piece in pdf.drawn(page) {
+                if piece.text.chars().any(cjk) {
+                    continue;
+                }
+                assert!(
+                    piece.notdef == 0 && glyphs_draw_text(&piece),
+                    "{name}: {piece:?}"
+                );
+                let script = |ch: char| ('\u{0590}'..='\u{06FF}').contains(&ch);
+                right_to_left += usize::from(piece.text.chars().any(script));
+            }
+        }
+        assert!(
+            right_to_left > 50,
+            "{name}: {right_to_left} right-to-left pieces"
+        );
+        let outline = pdf.outline();
+        let arabic = outline
+            .iter()
+            .any(|(title, depth, _)| title == "ملخص الاجتماع" && *depth == 1);
+        assert!(arabic, "{name}: {outline:?}");
+    }
+}
+
+#[test]
+fn the_manual_repeats_its_table_header_flows_into_columns_and_draws_its_chart() {
+    let pdf = pdf_of(&corpus_doc("authored/manual.docx"));
+    // LibreOffice lays the manual out on seven A4 pages too.
+    assert_eq!(pdf.page_count(), 7);
+    for page in 0..7 {
+        let footer = lines(&pdf.drawn(page)).pop().unwrap();
+        let expected = format!(
+            "SC-40 User and Maintenance Manual, version 2.3 - page {}",
+            page + 1
+        );
+        assert_eq!(footer.text, expected);
+    }
+
+    // The error code table runs over pages 2 to 5, each opening with its
+    // header row.
+    let codes: Vec<usize> = (0..7)
+        .filter(|page| pdf.page_text(*page).contains("Battery too hot"))
+        .collect();
+    assert_eq!(codes, [1, 2, 3, 4]);
+    for page in &codes[1..] {
+        let first = lines(&pdf.drawn(*page)).remove(0);
+        assert_eq!(first.text, "CodeMessageCauseWhat to do", "page {page}");
+    }
+
+    // The maintenance section flows into a second column, from the top.
+    let page = page_with(&pdf, "5. Maintenance");
+    let lines = lines(&pdf.drawn(page));
+    let body: Vec<&Line> = lines.iter().filter(|line| line.y > 60.0).collect();
+    let second = body
+        .iter()
+        .position(|line| line.left > 297.0)
+        .expect("a second column");
+    assert!(second > 10 && body[..second].iter().all(|line| line.left < 297.0));
+    assert!(
+        body[second].y > body[second - 1].y + 500.0,
+        "{:?}",
+        body[second]
+    );
+
+    // The chart draws its axis labels and its legend.
+    let chart = pdf.page_text(page_with(&pdf, "6. Battery performance"));
+    for label in [
+        "-20 °C",
+        "40 °C",
+        "Standard model (h)",
+        "Extended battery (h)",
+    ] {
+        assert!(chart.contains(label), "{label:?} in {chart:?}");
+    }
+}
+
+#[test]
+fn the_thesis_numbers_its_pages_and_keeps_its_landscape_pages_figure_notes_and_outline() {
+    let doc = corpus_doc("authored/thesis.docx");
+    let pdf = pdf_of(&doc);
+    let count = pdf.page_count();
+    // LibreOffice lays it out on 28 pages.
+    assert!((22..=32).contains(&count), "{count} pages");
+    let margin = 1417.0 / 20.0;
+    // Each page read once: its lines, and its text without white space.
+    let pages: Vec<Vec<Line>> = (0..count).map(|page| lines(&pdf.drawn(page))).collect();
+    let page_with = |text: &str| {
+        let text = squeeze(text);
+        pages
+            .iter()
+            .position(|lines| {
+                squeeze(
+                    &lines
+                        .iter()
+                        .map(|line| line.text.as_str())
+                        .collect::<String>(),
+                )
+                .contains(&text)
+            })
+            .unwrap_or_else(|| panic!("no page draws {text:?}"))
+    };
+
+    // The title page has no number, the front matter counts in roman
+    // numerals, the chapters from 1 again; odd numbers sit on the right.
+    let footer = |page: usize| pages[page].iter().find(|line| line.y < margin);
+    assert!(footer(0).is_none(), "{:?}", footer(0));
+    let chapter = page_with("Regional distributors keep stock");
+    let roman = ["ii", "iii", "iv", "v", "vi", "vii"];
+    for page in 1..count {
+        let (number, value) = match page < chapter {
+            true => (roman[page - 1].to_owned(), page + 1),
+            false => ((page - chapter + 1).to_string(), page - chapter + 1),
+        };
+        let line = footer(page).unwrap_or_else(|| panic!("page {page} has no number"));
+        assert_eq!(line.text, number, "page {page}");
+        assert_eq!(line.left > 300.0, value % 2 == 1, "page {page}: {line:?}");
+    }
+
+    // The landscape section is one run of pages, holding the results.
+    let landscape: Vec<usize> = (0..count)
+        .filter(|page| pdf.page_size(*page).0 > pdf.page_size(*page).1)
+        .collect();
+    assert!(landscape.len() >= 2, "{landscape:?}");
+    assert!(
+        landscape.windows(2).all(|pair| pair[1] == pair[0] + 1),
+        "{landscape:?}"
+    );
+    assert!(landscape.contains(&page_with("Each scenario simulates 730 days")));
+    for page in (0..count).filter(|page| !landscape.contains(page)) {
+        assert_size(pdf.page_size(page), A4, &format!("page {page}"));
+    }
+
+    // The figure is drawn above its caption.
+    let figures: Vec<(usize, Picture)> = (0..count)
+        .flat_map(|page| {
+            pdf.pictures(page)
+                .into_iter()
+                .map(move |picture| (page, picture))
+        })
+        .collect();
+    assert_eq!(figures.len(), 1);
+    let (page, figure) = &figures[0];
+    let caption = pages[*page]
+        .iter()
+        .find(|line| line.text.contains("Weekly demand at the central warehouse"))
+        .expect("the caption is on the page of the figure");
+    assert!(figure.rect[1] > caption.y, "{:?} {caption:?}", figure.rect);
+
+    // Each footnote is drawn in the lower part of a page.
+    let footnotes = doc.footnotes();
+    assert!(!footnotes.is_empty());
+    for (_, note) in footnotes {
+        let page = page_with(&note);
+        let start: String = squeeze(&note).chars().take(16).collect();
+        let line = pages[page]
+            .iter()
+            .find(|line| squeeze(&line.text).contains(&start))
+            .unwrap();
+        assert!(line.y < A4.1 / 3.0, "{note:?} on page {page}: {line:?}");
+    }
+
+    // The outline lists the headings in order, at their levels.
+    let headings: Vec<(String, usize)> = doc
+        .paragraphs()
+        .iter()
+        .filter_map(|paragraph| {
+            let level = paragraph
+                .style_id()?
+                .strip_prefix("Heading")?
+                .parse::<usize>()
+                .ok()?;
+            Some((paragraph.text(), level - 1))
+        })
+        .collect();
+    let outline = pdf.outline();
+    assert!(headings.len() > 20, "{headings:?}");
+    assert_eq!(outline.len(), headings.len(), "{outline:?}");
+    for ((title, depth, _), (heading, level)) in outline.iter().zip(&headings) {
+        assert!(
+            title.ends_with(heading.as_str()),
+            "{title:?} for {heading:?}"
+        );
+        assert_eq!(depth, level, "{title}");
+    }
+}
+
+// Fails today: the number of a caption made with a SEQ field is drawn, and
+// tagged, before its label, so text extraction and screen readers read
+// "1Table : Notation". Issue: #158
+#[test]
+#[should_panic(expected = "in the tagged order")]
+fn a_caption_number_is_read_after_its_label() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Table </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> SEQ Table \* ARABIC </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve">: Notation</w:t></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    // The number is drawn where it belongs on the line, after the label.
+    let drawn = pdf.drawn(0);
+    let label = drawn.iter().find(|piece| piece.text == "Table ").unwrap();
+    let number = drawn.iter().find(|piece| piece.text == "1").unwrap();
+    assert!(number.x >= label.end - 0.01, "{drawn:?}");
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .position(|element| element.0 == "P")
+        .unwrap();
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(
+        read, "Table 1: Notation",
+        "the caption reads {read:?} in the tagged order"
+    );
+}
