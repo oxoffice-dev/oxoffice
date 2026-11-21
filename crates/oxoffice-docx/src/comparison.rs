@@ -1434,6 +1434,12 @@ impl Document {
             *again = Some((next, ids));
             return Ok(Vec::new());
         }
+        refuse_shared_note_references(
+            &original,
+            &edited,
+            &candidate,
+            story_ignored(options, ComparisonStoryKind::Endnote),
+        )?;
         if snapshot_comments {
             let revision_id = metadata.ids.allocate()?;
             let mut carried_comments = edited_comments.clone();
@@ -6703,6 +6709,122 @@ fn strict_pairs(left: &[String], right: &[String]) -> Vec<(usize, usize)> {
         pairs.append(&mut gap);
     }
     pairs
+}
+
+/// The footnote and endnote references of a document's stories, counted by
+/// element name and note id. The notes parts themselves are left out.
+fn note_reference_counts(document: &Document) -> Result<HashMap<(String, i32), usize>> {
+    let mut parts = vec![document.doc_part_name.clone()];
+    parts.extend(
+        story_parts(document)?
+            .into_iter()
+            .filter(|story| {
+                !matches!(
+                    story.kind,
+                    ComparisonStoryKind::Footnote | ComparisonStoryKind::Endnote
+                )
+            })
+            .map(|story| story.part_name),
+    );
+    parts.sort();
+    parts.dedup();
+    let mut counts = HashMap::new();
+    for part in parts {
+        let xml = document
+            .package
+            .get_part(&part)
+            .ok_or_else(|| Error::Other(format!("missing reference story {part}")))?;
+        let mut reader = NsReader::from_reader(xml);
+        let mut buffer = Vec::new();
+        loop {
+            let (namespace, event) = reader
+                .read_resolved_event_into(&mut buffer)
+                .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
+            match event {
+                Event::Start(element) | Event::Empty(element)
+                    if matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
+                        && matches!(
+                            element.local_name().as_ref(),
+                            b"footnoteReference" | b"endnoteReference"
+                        ) =>
+                {
+                    let local = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+                    for attribute in element.attributes() {
+                        let attribute =
+                            attribute.map_err(|error| Error::Other(error.to_string()))?;
+                        let (namespace, name) = reader.resolver().resolve_attribute(attribute.key);
+                        if name.as_ref() == b"id"
+                            && matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
+                            && let Ok(id) = std::str::from_utf8(&attribute.value)
+                                .unwrap_or_default()
+                                .parse::<i32>()
+                        {
+                            *counts.entry((local.clone(), id)).or_insert(0) += 1;
+                        }
+                    }
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+            buffer.clear();
+        }
+    }
+    Ok(counts)
+}
+
+/// No note may reach the result with more references than either input gives
+/// it. A reference that moved, or the content holding it written as a
+/// deletion and an insertion, leaves a deleted and an inserted reference
+/// naming one note, which Word for Mac cannot open. Moved footnotes became
+/// new notes before this point. Endnotes, and footnotes whose story is
+/// ignored, have no such path: the pair is refused. Nor may the result name
+/// an endnote the original does not hold while endnotes are ignored, since
+/// the result keeps the original's endnotes.
+fn refuse_shared_note_references(
+    original: &Document,
+    edited: &Document,
+    candidate: &Document,
+    endnotes_ignored: bool,
+) -> Result<()> {
+    let left = note_reference_counts(original)?;
+    let right = note_reference_counts(edited)?;
+    // Read only when the result references an endnote.
+    let mut held_endnotes = None;
+    let mut pending = note_reference_counts(candidate)?
+        .into_iter()
+        .collect::<Vec<_>>();
+    pending.sort();
+    for ((element, id), count) in pending {
+        let key = (element, id);
+        if endnotes_ignored && key.0 == "endnoteReference" {
+            if held_endnotes.is_none() {
+                held_endnotes = Some(original.normal_endnote_ids()?);
+            }
+            if held_endnotes
+                .as_ref()
+                .is_some_and(|held: &HashSet<i32>| !held.contains(&id))
+            {
+                return Err(Error::Other(format!(
+                    "ignored endnotes cannot supply the edited reference to endnote {id}"
+                )));
+            }
+        }
+        let (Some(&left), Some(&right)) = (left.get(&key), right.get(&key)) else {
+            continue;
+        };
+        let most = left.max(right);
+        if count > most {
+            let note = if key.0 == "endnoteReference" {
+                "endnote"
+            } else {
+                "footnote"
+            };
+            return Err(Error::Other(format!(
+                "comparison would give {note} {id} {count} references where each input has at most {most}: its reference moved to another site, or what holds it was deleted and inserted again"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A copy of the edited input with each of these footnotes under a new id,
