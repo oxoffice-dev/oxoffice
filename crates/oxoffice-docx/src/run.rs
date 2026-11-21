@@ -508,9 +508,50 @@ impl<'a> Run<'a> {
     }
 
     /// Set the text content, replacing all existing content.
+    ///
+    /// A footnote or endnote mark or a comment reference the run holds stays,
+    /// so its note or comment keeps it. A custom mark reads as part of the
+    /// run's text, so the mark goes back where the new text has it; a mark
+    /// that came before any text stays first, and the others follow the text.
     pub fn set_text(&mut self, text: &str) {
-        self.inner
-            .replace_content(vec![RunContent::Text(CT_Text::new(text))]);
+        let mut content = Vec::new();
+        let mut trailing = Vec::new();
+        let mut rest = text;
+        let mut text_before = false;
+        for item in &self.inner.content {
+            let custom = match item {
+                RunContent::FootnoteRef { custom_mark, .. }
+                | RunContent::EndnoteRef { custom_mark, .. } => custom_mark.as_deref(),
+                RunContent::CommentReference { .. } => None,
+                _ => {
+                    text_before = true;
+                    continue;
+                }
+            };
+            let mut kept = item.clone();
+            if let RunContent::CommentReference { raw_before, .. } = &mut kept {
+                *raw_before = 0;
+            }
+            match custom.and_then(|mark| Some((rest.find(mark)?, mark.len()))) {
+                Some((at, length)) => {
+                    if at > 0 {
+                        content.push(RunContent::Text(CT_Text::new(&rest[..at])));
+                    }
+                    content.push(kept);
+                    rest = &rest[at + length..];
+                }
+                None if !text_before && rest.len() == text.len() => content.push(kept),
+                None => trailing.push(kept),
+            }
+            if custom.is_some() {
+                text_before = true;
+            }
+        }
+        if !rest.is_empty() || (content.is_empty() && trailing.is_empty()) {
+            content.push(RunContent::Text(CT_Text::new(rest)));
+        }
+        content.extend(trailing);
+        self.inner.replace_content(content);
     }
 
     /// Add text to this run.

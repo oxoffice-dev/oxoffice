@@ -2128,3 +2128,33 @@ fn a_reply_on_the_first_comment_of_a_document_takes_the_reference_style() {
         assert_first_comment_reads_back(&mut doc, reply, "word/document.xml", "Reply");
     }
 }
+
+#[test]
+fn writing_each_run_text_back_keeps_the_comment_reference() {
+    let mut doc = doc_with(&["Commented"]);
+    let id = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "Note")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    {
+        // The find-and-replace loop over every run, the reference run included.
+        let mut paragraph = doc.paragraph_mut(0).unwrap();
+        let count = paragraph.runs().count();
+        for index in 0..count {
+            let mut run = paragraph.run_mut(index).unwrap();
+            let text = run.text().replace("Commented", "Reviewed");
+            run.set_text(&text);
+        }
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Reviewed"]);
+    assert_eq!(
+        doc.comment_anchor_text(id).unwrap().as_deref(),
+        Some("Reviewed")
+    );
+    assert!(
+        doc.part_xml("word/document.xml")
+            .unwrap()
+            .contains("<w:commentReference")
+    );
+}

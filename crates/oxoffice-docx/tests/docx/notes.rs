@@ -1788,3 +1788,304 @@ fn a_document_with_notes_saves_the_same_bytes_every_time() {
     assert_eq!(twice.to_bytes().unwrap(), first);
     assert_eq!(twice.footnotes(), once.footnotes());
 }
+
+#[test]
+fn setting_a_paragraph_text_keeps_its_note_marks() {
+    let mut doc = doc_with(&["Old text"]);
+    let footnote = create_note(&mut doc, Footnote, 0, "Foot");
+    let endnote = create_note(&mut doc, Endnote, 0, "End");
+    let dagger = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Dagger note", "\u{2020}")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    doc.paragraph_mut(0).unwrap().set_text("New").unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["New\u{2020}"]);
+    assert_eq!(
+        references(&doc, 0),
+        [(Footnote, footnote), (Endnote, endnote), (Footnote, dagger)]
+    );
+    assert_eq!(doc.footnotes().len(), 2);
+    assert_eq!(note_text(&doc, Endnote, endnote).as_deref(), Some(" End"));
+    // Each mark keeps its run properties: the note mark style.
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        xml.matches(r#"<w:rStyle w:val="FootnoteReference"/>"#)
+            .count(),
+        2
+    );
+    assert_eq!(
+        xml.matches(r#"<w:rStyle w:val="EndnoteReference"/>"#)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn setting_a_cell_text_keeps_its_note_mark() {
+    let mut doc = doc_with(&["Before"]);
+    let ids = table_with_cell_notes(&mut doc, 1, 1, &[(0, 0, "Cell note")]);
+    let mut doc = reopen(&mut doc);
+    doc.table_mut(0)
+        .unwrap()
+        .cell(0, 0)
+        .unwrap()
+        .try_set_text("New")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes(), [(ids[0], " Cell note".to_owned())]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains(&format!(r#"<w:footnoteReference w:id="{}"/>"#, ids[0])));
+}
+
+#[test]
+fn setting_the_text_of_a_paragraph_holding_a_deleted_note_mark_is_refused() {
+    let mut doc = doc_with(&["Old"]);
+    let id = create_note(&mut doc, Footnote, 0, "Deleted mark");
+    let mut doc = with_main_part(&mut doc, |xml| {
+        wrapped_reference(
+            xml,
+            id,
+            &format!(r#"<w:del w:id="900" {TRACKED}>"#),
+            "</w:del>",
+        )
+    });
+    let before = doc.to_bytes().unwrap();
+    let error = doc.paragraph_mut(0).unwrap().set_text("New").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("tracked deletion of the mark of footnote"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn replacing_story_content_removes_the_notes_it_no_longer_references() {
+    let mut doc = doc_with(&["Kept", "Replaced"]);
+    let kept = create_note(&mut doc, Footnote, 0, "Kept note");
+    create_note(&mut doc, Footnote, 1, "Replaced note");
+    let mut paragraph = CT_P::new();
+    paragraph.add_run("New");
+    doc.replace_story_content(
+        &paragraph_at(&doc, 1),
+        ContentFragment::paragraph(paragraph).unwrap(),
+    )
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept", "New"]);
+    assert_eq!(doc.footnotes(), [(kept, " Kept note".to_owned())]);
+}
+
+#[test]
+fn setting_a_story_paragraph_text_keeps_its_note_mark() {
+    let mut doc = doc_with(&["Old"]);
+    let id = create_note(&mut doc, Footnote, 0, "Kept");
+    doc.set_story_text(&paragraph_at(&doc, 0), "New").unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes(), [(id, " Kept".to_owned())]);
+    assert_eq!(references(&doc, 0), [(Footnote, id)]);
+}
+
+#[test]
+fn setting_a_run_text_keeps_its_note_mark() {
+    let mut doc = doc_with(&["Old"]);
+    let numbered = create_note(&mut doc, Footnote, 0, "Numbered");
+    let dagger = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Dagger note", "\u{2020}")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    {
+        let mut paragraph = doc.paragraph_mut(0).unwrap();
+        // The find-and-replace loop: every run is written back.
+        let count = paragraph.runs().count();
+        for index in 0..count {
+            let mut run = paragraph.run_mut(index).unwrap();
+            let text = run.text().replace("Old", "New");
+            run.set_text(&text);
+        }
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["New\u{2020}"]);
+    assert_eq!(
+        references(&doc, 0),
+        [(Footnote, numbered), (Footnote, dagger)]
+    );
+    assert_eq!(doc.footnotes().len(), 2);
+}
+
+#[test]
+fn setting_the_text_of_a_note_paragraph_keeps_the_note_number() {
+    let mut doc = doc_with(&["Body"]);
+    let id = create_note(&mut doc, Footnote, 0, "Old note");
+    let mut doc = reopen(&mut doc);
+    doc.edit_story_paragraph(&note_paragraph(&doc, Footnote, id), |paragraph| {
+        paragraph.set_text("New note")
+    })
+    .unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/footnotes.xml").unwrap();
+    assert!(xml.contains("<w:footnoteRef/>"), "{xml}");
+    // The space Word writes after the number was part of the old text.
+    assert_eq!(doc.footnotes(), [(id, "New note".to_owned())]);
+}
+
+#[test]
+fn a_kept_note_mark_keeps_its_own_run_properties() {
+    let mut doc = doc_with(&["Old"]);
+    let id = create_note(&mut doc, Footnote, 0, "Note");
+    let mut doc = with_main_part(&mut doc, |xml| {
+        let reference = xml
+            .find(&format!(r#"<w:footnoteReference w:id="{id}""#))
+            .unwrap();
+        let style = xml[..reference]
+            .rfind(r#"<w:rStyle w:val="FootnoteReference"/>"#)
+            .unwrap();
+        let end = style + r#"<w:rStyle w:val="FootnoteReference"/>"#.len();
+        format!("{}<w:color w:val=\"FF0000\"/>{}", &xml[..end], &xml[end..])
+    });
+    doc.paragraph_mut(0).unwrap().set_text("New").unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let reference = xml.find("<w:footnoteReference").unwrap();
+    let run = xml[..reference]
+        .rfind("<w:r>")
+        .max(xml[..reference].rfind("<w:r "))
+        .unwrap();
+    assert!(
+        xml[run..reference].contains(r#"<w:color w:val="FF0000"/>"#),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_bookmark_around_a_note_mark_still_holds_it_after_set_text() {
+    let mut doc = doc_with(&["Old"]);
+    let id = create_note(&mut doc, Footnote, 0, "Note");
+    let mut doc = with_main_part(&mut doc, |xml| {
+        wrapped_reference(
+            xml,
+            id,
+            r#"<w:bookmarkStart w:id="77" w:name="_Ref1"/>"#,
+            r#"<w:bookmarkEnd w:id="77"/>"#,
+        )
+    });
+    doc.paragraph_mut(0).unwrap().set_text("New").unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let start = xml.find(r#"w:name="_Ref1""#).unwrap();
+    let mark = xml.find("<w:footnoteReference").unwrap();
+    let end = xml.find(r#"<w:bookmarkEnd w:id="77"/>"#).unwrap();
+    assert!(start < mark && mark < end, "{xml}");
+}
+
+#[test]
+fn replacing_a_paragraph_xml_removes_the_notes_it_no_longer_references() {
+    let mut doc = doc_with(&["Kept", "Replaced"]);
+    let kept = create_note(&mut doc, Footnote, 0, "Kept note");
+    create_note(&mut doc, Footnote, 1, "Replaced note");
+    doc.replace_paragraph_xml(
+        &paragraph_at(&doc, 1),
+        r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:t>New</w:t></w:r></w:p>"#,
+    )
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept", "New"]);
+    assert_eq!(doc.footnotes(), [(kept, " Kept note".to_owned())]);
+}
+
+#[test]
+fn writing_a_run_text_back_keeps_a_custom_mark_where_it_was() {
+    let mut doc = doc_with(&["Body"]);
+    let id = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Star note", "*")
+        .unwrap();
+    // The mark between two texts of its own run, as a foreign file may hold it.
+    let mut doc = with_main_part(&mut doc, |xml| {
+        let reference = xml
+            .find(&format!(r#"w:id="{id}""#))
+            .and_then(|at| xml[..at].rfind("<w:footnoteReference"))
+            .unwrap();
+        let end = reference + xml[reference..].find("</w:r>").unwrap();
+        format!(
+            "{}<w:t>x</w:t>{}<w:t>y</w:t>{}",
+            &xml[..reference],
+            &xml[reference..end],
+            &xml[end..]
+        )
+    });
+    let before = texts(&doc);
+    assert_eq!(before, ["Bodyx*y"]);
+    {
+        let mut paragraph = doc.paragraph_mut(0).unwrap();
+        let count = paragraph.runs().count();
+        for index in 0..count {
+            let mut run = paragraph.run_mut(index).unwrap();
+            let text = run.text();
+            run.set_text(&text);
+        }
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), before);
+    assert_eq!(references(&doc, 0), [(Footnote, id)]);
+}
+
+#[test]
+fn setting_the_text_of_a_note_paragraph_with_a_deleted_number_is_refused() {
+    let mut doc = doc_with(&["Body"]);
+    let id = create_note(&mut doc, Footnote, 0, "Note");
+    let mut doc = with_part(&mut doc, "/word/footnotes.xml", |xml| {
+        let number = xml.find("<w:footnoteRef/>").unwrap();
+        let start = xml[..number]
+            .rfind("<w:r>")
+            .max(xml[..number].rfind("<w:r "))
+            .unwrap();
+        let end = number + xml[number..].find("</w:r>").unwrap() + "</w:r>".len();
+        format!(
+            r#"{}<w:del w:id="901" {TRACKED}>{}</w:del>{}"#,
+            &xml[..start],
+            &xml[start..end],
+            &xml[end..]
+        )
+    });
+    let error = doc
+        .edit_story_paragraph(&note_paragraph(&doc, Footnote, id), |paragraph| {
+            paragraph.set_text("New")
+        })
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("tracked deletion of its note number"),
+        "{error}"
+    );
+}
+
+#[test]
+fn each_kept_mark_of_a_note_referenced_twice_keeps_its_own_run_properties() {
+    let mut doc = doc_with(&["Old"]);
+    let id = create_note(&mut doc, Footnote, 0, "Note");
+    let mut doc = with_main_part(&mut doc, |xml| {
+        let run = reference_run(xml, id);
+        let red = xml[run.clone()].replacen(
+            r#"<w:rStyle w:val="FootnoteReference"/>"#,
+            r#"<w:rStyle w:val="FootnoteReference"/><w:color w:val="FF0000"/>"#,
+            1,
+        );
+        format!("{}{}{}", &xml[..run.end], red, &xml[run.end..])
+    });
+    doc.paragraph_mut(0).unwrap().set_text("New").unwrap();
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let second = xml.rfind("<w:footnoteReference").unwrap();
+    let first = xml[..second].rfind("<w:footnoteReference").unwrap();
+    let run_of = |at: usize| {
+        xml[..at]
+            .rfind("<w:r>")
+            .max(xml[..at].rfind("<w:r "))
+            .unwrap()
+    };
+    assert!(!xml[run_of(first)..first].contains("FF0000"), "{xml}");
+    assert!(xml[run_of(second)..second].contains("FF0000"), "{xml}");
+}
