@@ -52,6 +52,7 @@ dependency bumps and documentation.
 | 2026-11-20 | [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md) | shipped |
 | 2026-11-21 | [Corpus at scale and behaviour tests by area](2026-11-21-corpus-at-scale-and-behaviour-tests.md) | accepted |
 | 2026-11-21 | [An independent review before every merge](2026-11-21-independent-review-before-merge.md) | shipped |
+| 2026-11-21 | [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md) | shipped |
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
 | 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |

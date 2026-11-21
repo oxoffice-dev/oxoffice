@@ -17,7 +17,12 @@ How work lands in oxoffice. Short on purpose.
    shape.
 5. **Independent review**, posted on the pull request, then answer every
    finding (see [Independent review](#independent-review)).
-6. **CI green**, squash merge. The squash commit takes the title, so
+6. **CI green on the three platforms**, squash merge: `gh pr checks` lists
+   `Build and test (ubuntu-latest)`, `(macos-latest)` and
+   `(windows-latest)`. A pull request whose base was changed to `main` may
+   only have its Linux run: push a new commit, or close and reopen it,
+   first. A documentation-only pull request runs no build, so there is
+   nothing to check. The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
@@ -130,9 +135,19 @@ entry and closes the issue.
   compiled with hashes: `uv pip compile --universal --python-version 3.12
   --generate-hashes X.in -o X.txt`, installed with `pip install
   --require-hashes -r X.txt`.
+- Which pull requests run what: one whose base is `main` and that is not a
+  draft builds and tests on Linux, macOS and Windows and times the QUICK
+  scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
+  A draft, or one whose base is another branch, runs lint, WebAssembly and
+  the Linux build only. `main` and `workflow_dispatch` run everything on the
+  three platforms.
+- **A change of base to `main` runs nothing**, whether GitHub moves a stacked
+  pull request when its base merges or the author changes it by hand. Before
+  merging, check the three platforms ran (loop step 6); if not, push a new
+  commit, or close and reopen the pull request.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
-  the `ci` one, and runs the scaling tests: the QUICK sets on pull requests,
-  every call on `main`.
+  the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
+  pull requests into `main`, every call on the three platforms on `main`.
 - Dependabot opens the monthly updates. Review them like any change: the
   maintainer, or the agent that merges them, answers the review's findings.
 
