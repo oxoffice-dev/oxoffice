@@ -24,13 +24,16 @@ on the work. The repository is public, so this costs time, not money.
   the three platforms after the merge.
 - **A draft, or a pull request whose base is another branch**, runs lint,
   WebAssembly and the Linux build and tests only. The full run needs both a
-  base of `main` and a ready pull request, on a push, a reopen or
-  `ready_for_review` (now a trigger).
-- **A stacked pull request moved onto `main`** when its base merges gets no
-  run from the move itself (an `edited` event, left out so that title and
-  body edits do not run or cancel CI). Its rebase onto `main`, which squash
-  merges make necessary anyway, is pushed before the merge, and the merge
-  waits for that run on the three platforms.
+  base of `main` and a ready pull request, on `opened`, `synchronize`,
+  `reopened` or `ready_for_review` (the last one now a trigger).
+- **A change of base to `main` runs nothing**: GitHub's move of a stacked
+  pull request when its base merges, or a change by hand, is an `edited`
+  event, left out because the concurrency group would let every title or
+  body edit cancel a real run. Such a pull request can be merged cleanly with
+  only its old Linux run, so the merge step itself checks the platforms:
+  `gh pr checks` must list `Build and test` for macOS and Windows, otherwise
+  push again, or close and reopen, first (loop step 6 of
+  `docs/DEVELOPMENT.md`).
 - `workflow_dispatch` runs everything, like `main`.
 - `main` is unchanged: every job on the three platforms, every scaling call.
 

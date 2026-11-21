@@ -17,7 +17,10 @@ How work lands in oxoffice. Short on purpose.
    shape.
 5. **Independent review**, posted on the pull request, then answer every
    finding (see [Independent review](#independent-review)).
-6. **CI green**, squash merge. The squash commit takes the title, so
+6. **CI green on the three platforms**, squash merge: `gh pr checks` lists
+   `Build and test` for Linux, macOS and Windows (a pull request that was a
+   draft or stacked until now may only have the Linux run; push again, or
+   close and reopen it, first). The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
@@ -132,14 +135,14 @@ entry and closes the issue.
   --require-hashes -r X.txt`.
 - Which pull requests run what: one whose base is `main` and that is not a
   draft builds and tests on Linux, macOS and Windows and times the QUICK
-  scaling sets on Linux, on each push, reopen or `ready_for_review`. A draft,
-  or one whose base is another branch, runs lint, WebAssembly and the Linux
-  build only. `main` and `workflow_dispatch` run everything on the three
-  platforms.
-- **A stacked pull request moved onto `main`** (GitHub does it when its base
-  merges) gets no new run from the move: push its rebase onto `main` first,
-  which a squash merge makes necessary anyway, and merge only once its run
-  shows the three platforms.
+  scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
+  A draft, or one whose base is another branch, runs lint, WebAssembly and
+  the Linux build only. `main` and `workflow_dispatch` run everything on the
+  three platforms.
+- **A change of base to `main` runs nothing**, whether GitHub moves a stacked
+  pull request when its base merges or the author changes it by hand. Before
+  merging, check the three platforms ran (loop step 6); if not, push again,
+  or close and reopen the pull request.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
   pull requests into `main`, every call on the three platforms on `main`.
