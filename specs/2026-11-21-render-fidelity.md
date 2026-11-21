@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: draft
+status: accepted
 scope: tests
 ---
 
@@ -136,9 +136,12 @@ A file that breaks an invariant today gets an issue and an entry in
 read by the two test binaries only. Like the rest of the suite, a known
 failure is strict: once the file passes, the test fails until the entry goes.
 
-**Exact baseline.** `tests/render/baseline/docx.json` and `pptx.json`, each
-written by its own test binary, hold for each corpus file its page count and,
-per page, the SHA-256 of the decoded PNG pixels, of the page's inflated PDF
+**Exact baseline.** One file per corpus file, at the corpus path under
+`tests/render/baseline/` (`word/report.docx.json`), written by the test
+binary of its format: two pull requests that change the render of different
+files never touch the same baseline file (the lesson of `limitations.json`,
+where one shared file made every pull request conflict). Each holds the
+file's page count and, per page, the SHA-256 of the decoded PNG pixels, of the page's inflated PDF
 content stream, of its link annotations (rectangles and targets) and of the
 rest of its page dictionary (its own entries, references left out), plus,
 per file, one hash of the inflated PDF resources (font subsets, ToUnicode
@@ -157,8 +160,8 @@ test.
   serves Linux, macOS and Windows, and there is no tolerance to tune.
 - `OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render`
   (and `-p oxoffice-pptx --test pptx`) renders the whole corpus whatever
-  `OXOFFICE_RENDER` says, rewrites that binary's baseline and records the
-  reason; an empty reason is refused. The update lands
+  `OXOFFICE_RENDER` says, rewrites the baseline files of that format and
+  records the reason in each file it changes; an empty reason is refused. The update lands
   in the pull request that changes the render, in a commit of its own whose
   message states the expected change.
 - A test proves the check bites: one changed pixel, and one changed byte of
@@ -169,7 +172,7 @@ test.
 moved twice: with the pull request's wheel (after) and with `main`'s latest
 Linux wheel, the `wheel-linux` artifact the build job already keeps (before;
 kept only when its decoded-pixel hash is the one the base's baseline holds,
-`git show <base>:tests/render/baseline/<format>.json`, otherwise the report
+`git show <base>:tests/render/baseline/<file>.json`, otherwise the report
 says that `main` moved). The step fetches the base commit first (the
 checkout is one commit deep), runs even when the test step failed, once the
 wheel was built (`!cancelled()` and the build step's success), and its job
@@ -265,8 +268,9 @@ pptx is scored per slide the same way.
 
 **Thresholds.** The scoring pull request runs the whole set against Word and
 PowerPoint once and puts the distribution in its body. Each file's scores
-are then committed as its floor (`tests/render/scores.json`, written by the
-scorer with an update reason, like the baseline). A night fails when a score
+are then committed as its floor (`tests/render/scores/<file>.json`, one
+file per corpus file like the baseline, written by the scorer with an update
+reason). A night fails when a score
 falls below its floor by more than 0.02 (a share) or by one page; a better
 score raises the floor at the next update. Independently of history, a file
 is a gap when its page count differs, or fewer than 98 % of the reference
@@ -324,11 +328,13 @@ One pull request in CI at a time, each reviewed before its push, two reviews
 at most.
 
 1. This spec, documentation only.
-2. `test(docx)`: layer A for docx: `render.rs`, its baseline, `known.toml`
-   with issues for what breaks today, the update command, the budget test,
-   the proof that the check fails, and `OXOFFICE_RENDER=subset` on the Linux
-   test step of `ci.yml` (with the CI session). The pull request measures its
-   CI time and the test profile.
+2. `test(docx)`: layer A for docx: `render.rs`, its baseline files,
+   `known.toml` with issues for what breaks today, the update command, the
+   budget test, the proof that the check fails, and `OXOFFICE_RENDER=subset`
+   on the Linux test step of `ci.yml` (with the CI session). Its body gives
+   the measured time of the Linux test step before and after, against the
+   2-minute limit; above it, the thesis copies move to the nightly set in the
+   same pull request. It also measures the test profile.
 3. `test(pptx)`: layer A for pptx. The perf and refactoring sessions hear when
    2 and 3 land.
 4. `ci`: the before and after report, `off` on macOS and Windows for pull
