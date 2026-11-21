@@ -122,6 +122,37 @@ One pull request per row group, each with tests on the corpus:
   The cost is linear in the document (measured ×3.8 per 4× paragraphs), and
   the scaling tests now time `story_paragraphs` and `count_text` against
   the linear bound.
+- **5. Find and isolate a span**: `ParagraphRef::find_text(text,
+  occurrence)` (and the same on `Paragraph`) returns a `TextSpan { start,
+  end }` in the paragraph's literal run text, the text `split_run` offsets
+  count: case-sensitive, without overlaps, in the accepted view, inline
+  controls, hyperlinks and tracked insertions included. What
+  `Paragraph::text` shows besides (a tab, a break, a field result, simple or
+  complex, a drawing, a symbol) is not searched and a match never crosses
+  it, nor a non-breaking hyphen or a picture, shape or object kept as raw
+  XML; each stretch between two of these is searched on its own, so a
+  refused match never hides an overlapping one. Smart tags and custom XML
+  are not searched either; reference marks are not barriers.
+  `Paragraph::isolate_span(span)` splits runs so that the span is whole runs
+  and returns their index range, as `Paragraph::run` counts runs; each run
+  keeps its formatting, its insertion or its control, the text does not
+  change, and on error the paragraph is unchanged. A tab, a break or another
+  text-free item at either edge of the span stays out of those runs, even
+  when it starts or ends the run that holds the span's text (Word often
+  starts a run with the tab before its text), so bolding the span or
+  setting its text leaves it alone; `add_comment_on_text` shares the split
+  and keeps such an item out of the comment range. Python:
+  `Paragraph.find_text(text, occurrence=0)` returns a `TextSpan` (paragraph,
+  start, end), and `Document.isolate_span(span)` returns `(first, last)` for
+  a paragraph of the body, a table cell, a header, a footer, a note or a
+  comment; a change stales the document's earlier handles, the paragraphs
+  of other spans included, as every structural edit does.
+- Design move: the plan had `Document::isolate_span(span)`. A Rust paragraph
+  handle holds no place in the document, so a span is paragraph-relative and
+  isolating it is a paragraph method (`doc.paragraph_mut(i)` or a cell's
+  `paragraph_mut`); in Python, where edits go through the document's
+  revision tracking, it stays `Document.isolate_span`, the span carrying its
+  paragraph. No CLI: the CLI has no run formatting to apply to the runs.
 
 ## Links
 

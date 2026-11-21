@@ -8878,6 +8878,31 @@ fn remap_complex_field_boundaries(
     }
 }
 
+/// Where a run split puts the text-free content at its cut: tabs, breaks,
+/// fields, drawings and raw children, which have no literal width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitEdge {
+    /// With the text after the cut. A cut at either end of the run splits
+    /// nothing.
+    Plain,
+    /// The cut starts a span: the text-free content before the span's first
+    /// character stays in the first run, even at the start of the run.
+    SpanStart,
+    /// The cut ends a span: the text-free content after the span's last
+    /// character goes to the second run, even at the end of the run.
+    SpanEnd,
+}
+
+/// Where [`CT_R::split_point`] cuts a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunCut {
+    /// Inside the text item at `index`, after `within` of its characters.
+    Inside { index: usize, within: usize },
+    /// Before the content item at `index`. The first run keeps the raw
+    /// children positioned up to `head_raw` content items.
+    Between { index: usize, head_raw: usize },
+}
+
 /// Why [`CT_P::split_run`] could not split a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RunSplitError {
@@ -10779,6 +10804,27 @@ impl CT_P {
         work: Option<&mut WordOperationWork>,
         emission: Option<&FieldXmlEmission>,
     ) -> Result<usize> {
+        self.split_accepted_run_at(
+            path,
+            accepted_index,
+            offset,
+            work,
+            emission,
+            SplitEdge::Plain,
+        )
+    }
+
+    /// [`Self::split_accepted_run_in`], where `edge` says where the text-free
+    /// content at the cut goes.
+    pub(crate) fn split_accepted_run_at(
+        &mut self,
+        path: &AcceptedRunPath,
+        accepted_index: usize,
+        offset: usize,
+        work: Option<&mut WordOperationWork>,
+        emission: Option<&FieldXmlEmission>,
+        edge: SplitEdge,
+    ) -> Result<usize> {
         let run = self
             .accepted_run(path)
             .ok_or_else(|| OxmlError::InvalidValue("accepted run path is stale".to_owned()))?;
@@ -10788,17 +10834,16 @@ impl CT_P {
                 "split offset {offset} exceeds a run's literal text length of {literal_len} characters"
             )));
         }
-        if offset == 0 {
-            return Ok(accepted_index);
+        if run.split_point(offset, edge).is_none() {
+            return Ok(if offset == 0 {
+                accepted_index
+            } else {
+                accepted_index + 1
+            });
         }
-        if offset == literal_len {
-            return Ok(accepted_index + 1);
-        }
-        if if work.is_some() {
-            self.split_accepted_run_segments_in(path.segments(), offset, work, emission)?
-        } else {
-            self.split_accepted_run_segments(path.segments(), offset)?
-        } {
+        // Field XML emission only applies to a recorded operation.
+        let emission = emission.filter(|_| work.is_some());
+        if self.split_accepted_run_segments_in(path.segments(), offset, work, emission, edge)? {
             Ok(accepted_index + 1)
         } else {
             Err(OxmlError::InvalidValue(
@@ -10994,21 +11039,29 @@ impl CT_P {
             ),
             _ => return Err(outside()),
         };
-        // The end goes first, so the start run keeps its index.
+        // The end goes first, so the start run keeps its index. Text-free
+        // content at either edge stays outside the span, even at the edge of
+        // a run.
         let path = self.accepted_run_paths()[end_run].clone();
-        let end_boundary = self.split_accepted_run(&path, end_run, end_offset + 1)?;
+        let end_boundary = self.split_accepted_run_at(
+            &path,
+            end_run,
+            end_offset + 1,
+            None,
+            None,
+            SplitEdge::SpanEnd,
+        )?;
         let path = self.accepted_run_paths()[start_run].clone();
-        let start_boundary = self.split_accepted_run(&path, start_run, start_offset)?;
-        // A split inside the start run adds one run before the end boundary.
-        Ok((start_boundary, end_boundary + usize::from(start_offset > 0)))
-    }
-
-    pub(crate) fn split_accepted_run_segments(
-        &mut self,
-        path: &[AcceptedRunPathSegment],
-        offset: usize,
-    ) -> Result<bool> {
-        self.split_accepted_run_segments_in(path, offset, None, None)
+        let start_boundary = self.split_accepted_run_at(
+            &path,
+            start_run,
+            start_offset,
+            None,
+            None,
+            SplitEdge::SpanStart,
+        )?;
+        // A split of the start run adds one run before the end boundary.
+        Ok((start_boundary, end_boundary + start_boundary - start_run))
     }
 
     pub(crate) fn split_accepted_run_segments_in(
@@ -11017,34 +11070,27 @@ impl CT_P {
         offset: usize,
         work: Option<&mut WordOperationWork>,
         emission: Option<&FieldXmlEmission>,
+        edge: SplitEdge,
     ) -> Result<bool> {
         let Some((first, rest)) = path.split_first() else {
             return Ok(false);
         };
         match *first {
             AcceptedRunPathSegment::Run(index) if rest.is_empty() => self
-                .split_run(index, offset)
+                .split_run_with(index, offset, edge)
                 .map(|_| true)
                 .map_err(|error| OxmlError::InvalidValue(error.to_string())),
             AcceptedRunPathSegment::ContentControl(index) => {
                 let Some((_, _, _, control)) = self.content_controls.get_mut(index) else {
                     return Ok(false);
                 };
-                if work.is_some() {
-                    control.split_accepted_run_segments_in(rest, offset, work, emission)
-                } else {
-                    control.split_accepted_run_segments(rest, offset)
-                }
+                control.split_accepted_run_segments_in(rest, offset, work, emission, edge)
             }
             AcceptedRunPathSegment::Revision(index) => {
                 let Some((_, _, revision)) = self.revisions.get_mut(index) else {
                     return Ok(false);
                 };
-                if work.is_some() {
-                    revision.split_accepted_run_segments_in(rest, offset, work, emission)
-                } else {
-                    revision.split_accepted_run_segments(rest, offset)
-                }
+                revision.split_accepted_run_segments_in(rest, offset, work, emission, edge)
             }
             AcceptedRunPathSegment::Run(_) => Ok(false),
         }
@@ -11361,36 +11407,49 @@ impl CT_P {
     /// text length selects the boundary after it without changing the paragraph.
     /// Tabs, breaks, fields, drawings, references, and raw children are
     /// zero-width for this operation.
-    /// Text-free content and raw children at the split point stay in the first
-    /// run, and boundary markers after the original run stay after the second.
+    /// Text-free content and raw children right after the split point go to
+    /// the second run with the text that follows, and boundary markers after
+    /// the original run stay after the second.
     /// Only [`RunSplitError::BookmarkProjection`] leaves the paragraph changed.
     pub fn split_run(
         &mut self,
         run_index: usize,
         offset: usize,
     ) -> std::result::Result<usize, RunSplitError> {
+        self.split_run_with(run_index, offset, SplitEdge::Plain)
+    }
+
+    /// [`Self::split_run`], where `edge` says where the text-free content at
+    /// the cut goes.
+    pub(crate) fn split_run_with(
+        &mut self,
+        run_index: usize,
+        offset: usize,
+        edge: SplitEdge,
+    ) -> std::result::Result<usize, RunSplitError> {
         let run_count = self.runs.len();
-        let literal_len = self
+        let run = self
             .runs
             .get(run_index)
             .ok_or(RunSplitError::RunOutOfRange {
                 run_index,
                 run_count,
-            })?
-            .literal_len();
+            })?;
+        let literal_len = run.literal_len();
         if offset > literal_len {
             return Err(RunSplitError::OffsetOutOfRange {
                 offset,
                 len: literal_len,
             });
         }
-        if offset == 0 {
-            return Ok(run_index);
+        if run.split_point(offset, edge).is_none() {
+            return Ok(if offset == 0 {
+                run_index
+            } else {
+                run_index + 1
+            });
         }
-        if offset == literal_len {
-            return Ok(run_index + 1);
-        }
-        let tail = self.runs[run_index].split_off_at(offset)?;
+        let tail = self.runs[run_index].split_off_at(offset, edge)?;
         let inserted = run_index + 1;
         self.shift_run_boundaries_from(inserted);
         for hyperlink in &mut self.hyperlinks {
