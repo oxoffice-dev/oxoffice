@@ -50,7 +50,7 @@ code is one dense job, size alone is not a reason.
 | --- | --- | --- |
 | docx `document.rs` | `impl Document` (27,700 lines) in about 25 contiguous feature groups (lifecycle, staging, save, stories, notes, body, media, headers and footers, numbering, styles, sections, settings, fonts, properties, merge, TOC, replace, template hooks, render, inspect); the main-part partition and its proofs; story source editing and scanning; identifiers; tree walkers; option types; validation | **Split** into `document/`, about 45 modules. Feature groups share only a few hubs (`commit_staged_mutation`, `clone_for_staging`). The core machinery stays dense: the split makes it findable, not decoupled. |
 | pptx `lib.rs` | About 20 responsibilities: state, raw XML owners, stored validation, open, save and commit, render and export (5,600 lines, all behind `render`), masters and themes, slide import, media, shape handles, arrange, headers and footers, properties, fonts, charts, comments, transitions | **Split** into about 20 modules, `render/` as one gated module. `Presentation` stays in `lib.rs`, as `html.rs`, `odp.rs` and `pdf.rs` already assume. |
-| docx-oxml `text.rs` | Fields (46%: model, parse, write, rewrite), `CT_P`, `CT_R`, and the namespace and emission infrastructure the whole crate imports (`FieldXmlEmission`, `raw_with_external_bindings`, `WordOperationWork`) | **Split** into `text/`: bindings, owner check, work, emission, run, `field/`, `paragraph/`. |
+| docx-oxml `text.rs` | Fields (46%: model, parse, write, rewrite), `CT_P`, `CT_R`, and the namespace and emission infrastructure the whole crate imports (`FieldXmlEmission`, `raw_with_external_bindings`, `WordOperationWork`) | **Split** into flat `text/` modules: bindings, owner check, work, emission, run, `field.rs` and `field_*.rs`, `paragraph_*.rs`. |
 | docx `field.rs` | About 10 unrelated features: TOC, mail merge (4,700), fragment import and identity remapping (3,900), index and tables of figures and authorities, legacy form fields, evaluator, formulas, span scanning, REF copies, fields in other stories | **Split** into `field/`, about 15 modules. |
 | docx `comparison.rs` | One recursive engine (12,700 lines, body to paragraph, table or control to cell and back, one shared context), postconditions, source snapshots; plus comment snapshots and footnote custody, which accept and reject also use | **Trim only.** Delete 580 dead lines; move comments and footnotes to `comparison/`. Cutting the engine by element kind would spread one algorithm over files, with about 300 visibility changes, and make it no easier to follow. Revisit with items 3 and 6. |
 | docx-py `document.rs` | 74 Python classes in families (values, sub-handles, styles, properties, forms, mail merge, content controls, exports), the owner inventory that keeps live handles valid (7,100 lines), and the single `#[pymethods] impl PyDocument` (5,155 lines) | **Split** by class family into `document/`. The `#[pymethods]` block moves whole: PyO3 allows one per class, and `multiple-pymethods` stays off. |
@@ -77,9 +77,8 @@ code is one dense job, size alone is not a reason.
   - a one-line `//!` doc at the top of each new file.
 - **No rename, no reordering inside an item**, and no new explicit import of
   a helper whose name exists elsewhere with another meaning (`local_name`,
-  `attribute_in_namespace`, `namespace_declaration`,
-  `raw_element_has_child_content`): next to a glob, a local name wins
-  silently. Such helpers move with their callers.
+  `attribute_in_namespace`, `raw_element_has_child_content`): next to a
+  glob, a local name wins silently. Such helpers move with their callers.
 - **Cut lists name items, not line numbers**, so a split is re-cut on a fresh
   `main` instead of rebased.
 - **Checks on every split:**
@@ -230,7 +229,8 @@ pull request rebases another session's work.
 5. `refactor(docx): word model infrastructure and runs in their own
    modules`: `text/{bindings,owner_check,work,emission,run}.rs`.
 6. `refactor(docx): word model fields in their own modules`: flat
-   `text/field_*.rs` (#124; one level per range, not a `text/field/` folder).
+   `text/field.rs` and `text/field_*.rs` (#124; one level per range, not a
+   `text/field/` folder).
 7. `refactor(docx): word model paragraphs in their own modules`: flat
    `text/paragraph_*.rs`, as for fields.
 8. `refactor(layout): split the word layout engine`, in two pull requests:
@@ -286,8 +286,8 @@ moves have tests to stand on.
     `shapes/`).
 19. `chore: remove hidden public items nothing calls`.
 
-**Wave 4: shared code.** These are not moves: each changes code paths and
-comes with tests.
+**Wave 4: shared code.** Items 21 to 24 are not moves: each changes code
+paths and comes with tests. Item 20 is the exception.
 
 20. XML micro-helpers to `oxoffice-core`. Identical copies only, so no path
     changes and no new test can tell the old code from the new.
