@@ -107,7 +107,7 @@ routes that no saved file takes. Its criterion (4N under 2.5 times N plus
 5 ms, N = 25) lets a linear cost with a fixed part pass: `Paragraph.text`,
 `add_paragraph` and plain `Run.text` are linear and pass. Even on saved
 bodies, `Run.text` and `remove_content` pass (measured: the same 81 calls
-xfail, the other 178 pass). The 81 calls of `GROWING` (#6) are the ones whose
+xfail, the other 178 timed calls and reads pass). The 81 calls of `GROWING` (#6) are the ones whose
 slope is steep enough to show. At N and 16N on saved bodies, 149 calls grow,
 none faster than linear.
 
@@ -136,25 +136,30 @@ edit.
    in `save` and the outputs (`to_bytes`, render, convert). Its error is as
    useful as the save can make it: it names the part and, where the save can
    tell, the element and the journal operation that introduced it. A form
-   operation
-   checks the controls it changes; its whole-document validation moves to
-   the save too (#7). The refusal of edits on a body already known to be
-   unsavable (`refuse_unsavable_body_edit`) stays: it is computed at open and
-   again only while the body is unsavable, since an edit whose element passed
-   its checks cannot make a savable body unsavable, which the oracle asserts.
-3. **Identifiers are allocated at insert and kept by the save.** An insert
-   takes its drawing, relationship, bookmark or paragraph id from allocators
-   the document keeps (highest in use plus one). The save keeps every id that
-   is already unique and renumbers only duplicates and missing ids, so the
-   file holds what the reads showed. This changes save output in one way:
-   ids added by edits keep their allocation order instead of being
-   renumbered in document order. The pull requests that change it say so in
+   operation checks the controls it changes; its whole-document validation
+   moves to the save too (#7). A body that cannot be saved as opened (one that
+   rebinds a prefix the writer needs, for instance) still refuses every edit
+   of it: today four routes refuse up front (`refuse_unsavable_body_edit`)
+   and the staged save refuses the others; after, one guard on the journal's
+   entry refuses them all. Its answer is computed at open, kept by an edit
+   that only adds checked content, and computed again after a removal while
+   the body is unsavable; the oracle recomputes it after every edit.
+3. **Identifiers are allocated at insert and kept by the save.** Today the
+   save keeps the ids the source had, repeated ones included, and gives the
+   ids edits added (bookmarks, relationships, drawings...) the lowest free
+   values in document order; reads match the file only because staged
+   commits reopen after each edit. After, an insert takes the lowest free
+   value when it is made, and the save keeps it, as it keeps the source's.
+   One change to save output: ids added by edits follow the order of the
+   edits, not of the document. The pull requests that change it say so in
    their body, and the changelog carries it.
 4. **Edits say what they touched.** The binding drains the same journal,
    through a `#[doc(hidden)]` facade call as it reaches
    `direct_body_paragraph_facts` today, and updates its handle inventory from
    it: the story, the owners changed, the block slots inserted or removed. A
    no-op is decided on the touched element (model before equals model after).
+   The journal holds the current edit only: the next edit starts it empty,
+   so a Rust or CLI caller that never reads it keeps one edit's worth.
 5. **The whole-document routes become the oracle.** In debug builds every
    edit also runs today's route and asserts agreement: the journal equals the
    inventory diff, the no-op answer equals `saves_as`, and the document saves
@@ -175,9 +180,8 @@ What moves, and is accepted:
 - An edit that passes its element checks but leaves the document unsavable
   is reported by `save`, not by the edit, and the edit is already in place.
   The save error names the part, and the element and journal operation where
-  it can (decision 2). The oracle makes every such
-  case a test failure in debug builds, so the gap is a bug in the element
-  checks, not a behaviour.
+  it can (decision 2). The oracle makes every such case a test failure in
+  debug builds, so the gap is a bug in the element checks, not a behaviour.
 - Rust callers meet that error at save too. A CLI command saves within the
   same command, so a CLI user sees it at the same step as today.
 
@@ -209,32 +213,41 @@ on three OS once merged), the debug oracle over the whole Python and Rust
 suites, and the steady-state table above at 25, 100 and 400 paragraphs in its
 description. A call leaves `GROWING` in the pull request that makes it flat.
 
+Every call pays the whole clone and the handle inventory, and the calls of
+the save comparison and the staged commit pay them on top of their staging
+(the plain `Run.text` route, which already skips the save comparison, still
+grows at 16N). So the shared costs go first: a call can only leave `GROWING`
+once both its own proof and the shared costs are gone.
+
 | PR | Change | Area | Calls | Leave `GROWING` |
 | --- | --- | --- | --- | --- |
-| 0 | **A gate that sees what users hit.** `builders.edit_cost_docx` writes Word's identifiers on every paragraph, run and row; the docx documents go from N and 4N to N and 16N (25 and 400 paragraphs, `LINEAR` 24), so a linear cost cannot hide behind the floor; `GROWING` re-measured (149 calls on the prototype). A debug-build test runs every timed call once, untimed, on a small saved document, for the oracle. The full docx scaling set takes about 19 minutes locally instead of 5. | tests | all | none; it joins 68 |
-| 1 | **No save comparison.** The binding's `publish_owner_candidate` / `publish_block_candidate` decide the no-op on the touched owner and run the element checks; `saves_as` and the block routes stay as debug oracles; the unsavable-body refusal is computed at open. | docx-py | 14 (fonts, protection, custom XML, numbering restart, page border, `move_content_control`, `Run.text`) | 14 |
-| 2a | **Structural edits commit in place: body.** First the save keeps unique ids (decision 3), with the reopen oracle. Then staged commits edit the live model with the journal, allocate their identifiers, and stop staging and reopening. Body blocks, tables, sections, replacements, revisions, fragments. | docx facade | 30 | 30 |
-| 2b | Same, notes and comments. | docx facade | 10 | 10 |
-| 2c | Same, pictures, charts, hyperlinks, page colour. | docx facade | 12 | 12 |
-| 2d | Same, content controls, legacy forms, permissions, mail merge, headers, footers, watermarks, section stories. Form operations check only the controls they change, measured at 25 and 1,000 paragraphs (#7). | docx facade | 28 | 28 |
-| 3 | **Handles from receipts.** The binding updates its inventory from the journal; the block diff and inventory match run as debug oracles. Python `replace_all` measured against the CLI (#5). | docx facade, docx-py | 62 and the 7 appends | 55 with PR 4 |
-| 4 | **No whole-document clone.** The last `clone_for_staging` on edit paths replaced by in-place edits with the journal. `GROWING` is empty. | docx facade, docx-py | every edit | the rest |
+| 0 | **A gate that sees what users hit.** `builders.edit_cost_docx` writes Word's identifiers on every paragraph, run and row; the docx documents go from N and 4N to N and 16N (25 and 400 paragraphs, `LINEAR` 24): on the `scaling` profile a call passes only if its cost at 400 paragraphs stays under 2.5 times its cost at 25 plus 5 ms. `GROWING` re-measured (149 calls on the prototype). A test runs every timed call once, untimed, on a small saved document, so that a debug build puts each of them under the oracle. `docs/DEVELOPMENT.md`, the test and `conftest.py` docstrings and the test-suite spec say 16N. The pptx scaling test is measured once at 16N and the result reported. The full docx scaling set takes about 19 minutes locally instead of 5. | tests | all | none; it joins 68 |
+| 1 | **The journal.** Edits that clone and then match the inventory edit the live model with the journal (decision 1), and the binding updates its handles from it (decision 4); the whole clone and the inventory diff run as debug oracles. The unsavable-body guard moves to the journal's entry, with a test document whose body rebinds a writer prefix. | docx facade, docx-py | 62 and the 7 appends | 55 |
+| 2 | **No save comparison.** `publish_owner_candidate` / `publish_block_candidate` decide the no-op on the touched owner and run the element checks; `saves_as` and the block routes run as debug oracles. | docx-py | 14 (fonts, protection, custom XML, numbering restart, page border, `move_content_control`, `Run.text`) | 14 |
+| 3a | **Structural edits commit in place: body.** First the save keeps the ids edits added (decision 3), with the reopen oracle. Then staged commits edit the live model with the journal, allocate their ids, and stop staging and reopening. Body blocks, tables, sections, replacements, revisions, fragments. | docx facade | 30 | 30 |
+| 3b | Same, notes and comments. | docx facade | 10 | 10 |
+| 3c | Same, pictures, charts, hyperlinks, page colour. | docx facade | 12 | 12 |
+| 3d | Same, content controls, legacy forms, permissions, mail merge, headers, footers, watermarks, section stories. Form operations check only the controls they change, measured at 25 and 1,000 paragraphs. | docx facade | 28 | 28 |
 
 The expected counts come from the routes above; the scaling run of each pull
 request is the judge, and a call that stays linear for another reason gets a
-line in that pull request.
+line in that pull request. The pull request that empties `GROWING` removes
+the limitation of #6 from `limitations.json`, 3d the one of #7, and the
+first after which the Python replacement costs what the CLI does (measured
+from PR 1 on) the one of #5, each with `docs/LIMITATIONS.md` regenerated.
 
 Order with the other work of ROADMAP items 1b and 2:
 
 - PR 0 first: it changes only the tests, and fixes what the gate
-  measures before anything is judged by it. It goes on top of #22, which
-  changes the same test.
-- Splits of item 2 (agreed with that work): the facade and binding
-  `document.rs` splits are cut by item names and re-cut on `main` after each
-  merge of this plan, so these pull requests never wait for them. The
-  docx-oxml `text.rs` and `document.rs` splits land first: no pull request of
-  this plan edits those files before they are in. The publication code then
-  sits in `text/work.rs`, `text/emission.rs` and `document/source.rs`.
+  measures before anything is judged by it.
+- Splits of item 2, as agreed with that work and the orchestration on
+  2026-11-21, which changes the order of the code inspection spec: the
+  facade and binding `document.rs` splits are cut by item names and re-cut
+  on `main` after each merge of this plan, so these pull requests never wait
+  for them. The docx-oxml `text.rs` and `document.rs` splits land first: no
+  pull request of this plan edits those files before they are in. The
+  publication code then sits in `text/work.rs`, `text/emission.rs` and
+  `document/source.rs`.
 - The helpers of item 1b are additive. A helper that mutates uses the
   publication of the time; the next PR of this plan converts it with the
   others.
