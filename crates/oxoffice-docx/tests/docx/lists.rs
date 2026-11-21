@@ -1009,8 +1009,6 @@ fn roman_markers_go_up_to_3999_then_show_the_number() {
     assert_eq!(markers(&doc), [format!("{}.", u32::MAX)]);
 }
 
-// Known failures.
-
 #[test]
 fn items_can_be_added_to_a_libreoffice_report() {
     let mut doc = corpus_doc("libreoffice/report.docx");
@@ -1156,7 +1154,6 @@ fn the_word_report_names_its_list_instances_with_durable_ids() {
     );
 }
 
-// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29
 #[test]
 fn markdown_shows_word_list_paragraphs_as_list_items() {
     let markdown = corpus_doc("word/report.docx").to_markdown();
