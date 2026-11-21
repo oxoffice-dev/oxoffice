@@ -713,6 +713,12 @@ fn write_num_pr_extras<W: std::io::Write>(
 
 #[allow(non_snake_case)]
 impl CT_PPr {
+    /// Whether no paragraph property is set: an empty `<w:pPr/>` carries
+    /// no formatting.
+    pub fn carries_nothing(&self) -> bool {
+        *self == Self::default()
+    }
+
     pub fn from_xml(reader: &mut Reader<&[u8]>) -> Result<Self> {
         Self::from_xml_with_prefixes(reader, &["w".to_string()])
     }
