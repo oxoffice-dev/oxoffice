@@ -1700,11 +1700,12 @@ fn remap_fragment_style_collisions(
     loop {
         let mut partners = Vec::new();
         for style in &fragment.styles.styles {
-            let Some(partner) = style
-                .linked_style
-                .as_ref()
-                .filter(|_| replacements.contains_key(&style.style_id))
-            else {
+            // A default mapped to the destination's own takes its links too.
+            let Some(partner) = style.linked_style.as_ref().filter(|_| {
+                replacements
+                    .get(&style.style_id)
+                    .is_some_and(|target| destination.styles.get_by_id(target).is_none())
+            }) else {
                 continue;
             };
             if !replacements.contains_key(partner)
@@ -1758,9 +1759,8 @@ fn remap_fragment_style_collisions(
     for style in &mut std::sync::Arc::make_mut(&mut fragment.styles).styles {
         if let Some(replacement) = replacements.get(&style.style_id) {
             style.style_id = replacement.clone();
-            // A renamed copy is not the destination default. The destination
-            // keeps its own default. A second default is still refused when
-            // the source default id does not collide and is not renamed.
+            // A renamed copy is not the destination default: the destination
+            // keeps its own, and a source default under another id maps to it.
             style.is_default = false;
         }
         if let Some(replacement) = style

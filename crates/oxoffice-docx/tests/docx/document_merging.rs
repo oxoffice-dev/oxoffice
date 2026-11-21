@@ -1196,7 +1196,12 @@ fn a_renamed_linked_style_keeps_a_reciprocal_link() {
     import_at_end(&mut doc, &source, FragmentConflictPolicy::default())
         .expect("a source whose linked character style differs imports");
     let doc = reopen(&mut doc);
-    assert_eq!(color_of(&doc, 1).as_deref(), Some("C00000"));
+    assert_eq!(
+        color_of(&doc, 0).as_deref(),
+        Some("0000FF"),
+        "the destination's"
+    );
+    assert_eq!(color_of(&doc, 1).as_deref(), Some("C00000"), "the source's");
     doc.validate_style_graph().unwrap();
 }
 
