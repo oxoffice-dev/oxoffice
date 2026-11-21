@@ -203,7 +203,7 @@ fn word_marker_attribute(
     Ok(None)
 }
 
-fn scan_story_markers(xml: &[u8], location: &ContentLocation) -> Result<Vec<StoryMarker>> {
+fn scan_story_markers(xml: &[u8], location: &ContentLocation) -> Result<(Vec<StoryMarker>, usize)> {
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut stack: Vec<(Vec<u8>, bool, Option<usize>)> = Vec::new();
@@ -343,7 +343,7 @@ fn scan_story_markers(xml: &[u8], location: &ContentLocation) -> Result<Vec<Stor
         }
         buffer.clear();
     }
-    Ok(markers)
+    Ok((markers, run_index))
 }
 
 fn same_marker_identity(start: &StoryRangeKind, end: &StoryRangeKind) -> bool {
@@ -423,28 +423,169 @@ fn bookmark_start_name_counts(
     name_counts
 }
 
+/// The bookmark markers between two blocks of a story source, as `(source
+/// offset, start, id, name)`: a raw scan of the markup between paragraphs,
+/// where a bookmark start or end can only be a block child.
+fn block_bookmark_markers(gap: &[u8], base: usize) -> Vec<(usize, bool, i32, String)> {
+    let mut markers = Vec::new();
+    let mut at = 0usize;
+    while let Some(open) = gap[at..].iter().position(|byte| *byte == b'<') {
+        let start = at + open;
+        let Some(close) = gap[start..].iter().position(|byte| *byte == b'>') else {
+            break;
+        };
+        let tag = &gap[start + 1..start + close];
+        at = start + close + 1;
+        let name_end = tag
+            .iter()
+            .position(|byte| byte.is_ascii_whitespace() || *byte == b'/')
+            .unwrap_or(tag.len());
+        let local = tag[..name_end]
+            .rsplit(|byte| *byte == b':')
+            .next()
+            .unwrap_or_default();
+        let is_start = match local {
+            b"bookmarkStart" => true,
+            b"bookmarkEnd" => false,
+            _ => continue,
+        };
+        let attribute = |wanted: &[u8]| -> Option<String> {
+            let text = std::str::from_utf8(&tag[name_end..]).ok()?;
+            text.split_whitespace().find_map(|pair| {
+                let (key, value) = pair.trim_end_matches('/').split_once('=')?;
+                let local = key.rsplit(':').next()?;
+                (local.as_bytes() == wanted)
+                    .then(|| value.trim_matches(|c| c == '"' || c == '\'').to_owned())
+            })
+        };
+        if let Some(id) = attribute(b"id").and_then(|id| id.parse().ok()) {
+            markers.push((
+                base + start,
+                is_start,
+                id,
+                attribute(b"name").unwrap_or_default(),
+            ));
+        }
+    }
+    markers
+}
+
 #[allow(clippy::type_complexity)]
 fn located_story_markers(
     paragraphs: &[(usize, usize, Range<usize>, ContentLocation, Vec<u8>)],
+    sources: &[&[u8]],
 ) -> Result<(
     Vec<(usize, usize, usize, StoryMarker)>,
     HashMap<(u8, i32), (usize, usize)>,
 )> {
+    let mut scanned = Vec::with_capacity(paragraphs.len());
+    for (_, _, _, location, xml) in paragraphs {
+        scanned.push(scan_story_markers(xml, location)?);
+    }
+    // A bookmark marker between blocks belongs to the paragraph it wraps:
+    // a start to the next paragraph, an end to the previous one, an end
+    // whose start waits in the same gap to the next one with it.
+    type BlockMarker = (usize, bool, i32, String);
+    let mut leading = vec![Vec::<BlockMarker>::new(); paragraphs.len()];
+    let mut trailing = vec![Vec::<BlockMarker>::new(); paragraphs.len()];
+    // Gaps are read in source order, between the spans of neighbouring
+    // paragraphs, whatever order the stories list them in.
+    let mut by_source = HashMap::<usize, Vec<usize>>::new();
+    for (index, (source_index, _, _, _, _)) in paragraphs.iter().enumerate() {
+        by_source.entry(*source_index).or_default().push(index);
+    }
+    for (source_index, mut order) in by_source {
+        let Some(source) = sources.get(source_index) else {
+            continue;
+        };
+        order.sort_by_key(|index| paragraphs[*index].2.start);
+        let mut before: Option<usize> = None;
+        let mut covered = 0usize;
+        for index in order.iter().copied().chain(std::iter::once(usize::MAX)) {
+            let start = if index == usize::MAX {
+                source.len()
+            } else {
+                paragraphs[index].2.start
+            };
+            if start < covered {
+                // A paragraph inside another one (a text box): no gap.
+                continue;
+            }
+            let mut waiting = Vec::new();
+            for marker in block_bookmark_markers(&source[covered..start], covered) {
+                let collapsed = !marker.1 && waiting.contains(&marker.2);
+                if marker.1 {
+                    waiting.push(marker.2);
+                }
+                let next = (index != usize::MAX).then_some(index);
+                match (before, next) {
+                    (Some(at), _) if !marker.1 && !collapsed => trailing[at].push(marker),
+                    (_, Some(at)) => leading[at].push(marker),
+                    (Some(at), None) => trailing[at].push(marker),
+                    (None, None) => {}
+                }
+            }
+            if index != usize::MAX {
+                covered = paragraphs[index].2.end;
+                before = Some(index);
+            }
+        }
+    }
+
     let mut located = Vec::new();
     let mut identity_counts = HashMap::<(u8, i32), (usize, usize)>::new();
     let mut story = None;
     let mut marker_ordinal = 0usize;
     let mut enumeration = 0usize;
-    for (source_index, _, raw_span, location, xml) in paragraphs {
-        let markers = scan_story_markers(xml, location)?;
+    for (index, ((source_index, _, raw_span, location, xml), (markers, run_count))) in
+        paragraphs.iter().zip(scanned).enumerate()
+    {
         if story.as_ref() != Some(location.story()) {
             story = Some(location.story().clone());
             marker_ordinal = 0;
         }
-        for mut marker in markers {
-            marker.ordinal = marker_ordinal;
-            marker_ordinal += 1;
-            let physical = story_marker_source_position(raw_span, xml.len(), marker.span.start)?;
+        let block = |(physical, start, id, name): &BlockMarker, run_index: usize| {
+            (
+                *physical,
+                StoryMarker {
+                    kind: StoryRangeKind::Bookmark {
+                        id: *id,
+                        name: if *start { name.clone() } else { String::new() },
+                    },
+                    start: *start,
+                    run_index,
+                    span: 0..0,
+                    location: location.clone(),
+                    ordinal: 0,
+                },
+            )
+        };
+        // `true` for a marker inside the paragraph: only those take an
+        // ordinal, as the marker selection counts the markers inside
+        // paragraphs; a marker between blocks takes none it could match.
+        let mut all = leading[index]
+            .iter()
+            .map(|marker| Ok((block(marker, 0), false)))
+            .collect::<Vec<Result<_>>>();
+        for marker in markers {
+            all.push(
+                story_marker_source_position(raw_span, xml.len(), marker.span.start)
+                    .map(|physical| ((physical, marker), true)),
+            );
+        }
+        all.extend(
+            trailing[index]
+                .iter()
+                .map(|marker| Ok((block(marker, run_count), false))),
+        );
+        for entry in all {
+            let ((physical, mut marker), inside) = entry?;
+            if inside {
+                marker.ordinal = marker_ordinal;
+                marker_ordinal += 1;
+            } else {
+                marker.ordinal = usize::MAX;
+            }
             if let Some(key) = marker_identity_key(&marker.kind) {
                 let counts = identity_counts.entry(key).or_default();
                 if marker.start {
@@ -604,8 +745,9 @@ fn qualify_crossing_comment_ranges(document: &Document, id: i32) -> Result<()> {
             "new comment has no accepted source range".into(),
         ));
     }
-    let paragraphs = document.story_range_located_paragraphs()?;
-    let (located, identity_counts) = located_story_markers(&paragraphs)?;
+    let (sources, paragraphs) = document.story_range_located_paragraphs_with_sources()?;
+    let sources = sources.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+    let (located, identity_counts) = located_story_markers(&paragraphs, &sources)?;
     let noncomments = located
         .iter()
         .filter(|(_, _, _, marker)| !matches!(marker.kind, StoryRangeKind::Comment { .. }))
@@ -1059,8 +1201,9 @@ impl Document {
                 "comment {id} range runs across story owners and cannot be moved"
             )));
         }
-        let paragraphs = self.story_range_located_paragraphs()?;
-        let (mut located, identity_counts) = located_story_markers(&paragraphs)?;
+        let (sources, paragraphs) = self.story_range_located_paragraphs_with_sources()?;
+        let sources = sources.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+        let (mut located, identity_counts) = located_story_markers(&paragraphs, &sources)?;
         located.retain(|(_, _, _, marker)| {
             matches!(marker.kind, StoryRangeKind::Comment { id: found } if found == id)
         });
@@ -1203,7 +1346,8 @@ impl Document {
         Result<(Vec<StoryRangeRef>, Vec<StoryRangeKind>)>,
         HashMap<String, usize>,
     )> {
-        let paragraphs = self.story_range_located_paragraphs()?;
+        let (sources, paragraphs) = self.story_range_located_paragraphs_with_sources()?;
+        let sources = sources.iter().map(AsRef::as_ref).collect::<Vec<_>>();
         let mut name_counts = bookmark_start_name_counts(&paragraphs);
         // A bookmark start between blocks names a bookmark too.
         for name in oxoffice_docx_oxml::text::BlockBookmarks::of_blocks(&self.document.body.content)
@@ -1211,9 +1355,10 @@ impl Document {
         {
             *name_counts.entry(name.to_owned()).or_default() += 1;
         }
-        let paired = located_story_markers(&paragraphs).and_then(|(located, identity_counts)| {
-            pair_located_story_markers(&located, &identity_counts)
-        });
+        let paired =
+            located_story_markers(&paragraphs, &sources).and_then(|(located, identity_counts)| {
+                pair_located_story_markers(&located, &identity_counts)
+            });
         Ok((paired, name_counts))
     }
 

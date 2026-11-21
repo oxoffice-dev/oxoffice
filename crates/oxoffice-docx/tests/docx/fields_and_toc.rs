@@ -2098,3 +2098,26 @@ fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
     );
     assert_eq!(doc.revisions().len(), revisions, "the revisions stay");
 }
+
+#[test]
+fn story_ranges_read_bookmarks_that_start_or_end_between_paragraphs() {
+    let doc = doc_with_body(&format!(
+        r#"{GOOGLE_HEADING}<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:bookmarkStart w:id="6" w:name="Empty"/><w:bookmarkEnd w:id="6"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#
+    ));
+    let names: Vec<_> = doc
+        .story_ranges()
+        .unwrap()
+        .into_iter()
+        .filter_map(|range| match range.kind() {
+            StoryRangeKind::Bookmark { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, ["_Toc217000001", "Empty"]);
+    // Google-saved files with heading and collapsed bookmarks between blocks.
+    for name in ["google/thesis.docx", "google/form.docx"] {
+        corpus_doc(name)
+            .story_ranges()
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}

@@ -1387,6 +1387,22 @@ impl Document {
         Ok(paragraphs)
     }
 
+    /// The same paragraphs with the XML of each story source, which also
+    /// holds the markup between them.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn story_range_located_paragraphs_with_sources(
+        &self,
+    ) -> Result<(
+        Vec<Cow<'_, [u8]>>,
+        Vec<(usize, usize, Range<usize>, ContentLocation, Vec<u8>)>,
+    )> {
+        let (sources, paragraphs) = self.story_range_paragraph_sources()?;
+        Ok((
+            sources.into_iter().map(|source| source.xml).collect(),
+            paragraphs,
+        ))
+    }
+
     /// List every checked range paragraph in story order, with the index of
     /// its source, its flow and its span there, after building each package
     /// source once.
