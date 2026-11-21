@@ -35,9 +35,9 @@ the same way.
 ## Plan
 
 One pull request: the script, the lint step, the release step and asset
-table, `.gitignore`, `docs/DEVELOPMENT.md`. Rule 8 of `CLAUDE.md` names the
-file too and changes with the maintainer's word. Checked by running the
-script as lint and the release do, and by the next release dry run.
+table, `.gitignore`, `docs/DEVELOPMENT.md`, and rule 8 of `CLAUDE.md` (its
+new wording approved by the maintainer on 2026-11-21). Checked by running
+the script as lint and the release do, and by the next release dry run.
 
 ## Links
 
