@@ -38,13 +38,6 @@ workflow = "redline-rebuilt-toc"
 issue = 66
 message = "comparison cannot track a whole paragraph's simple field"
 
-# LibreOffice's TOC content control is refused before the equations.
-[[known]]
-file = "libreoffice/thesis.docx"
-workflow = "redline"
-issue = 413
-message = "raw publication boundary is outside the emitted owner"
-
 # Google's copy refuses the footnote the new version adds before its equation.
 [[known]]
 file = "google/thesis.docx"
