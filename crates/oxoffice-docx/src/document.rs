@@ -260,7 +260,7 @@ use fragment_checks::{
     validate_element_owner_relationships, validate_element_xml_identity_change,
     validate_fragment_block_item, validate_fragment_relationships,
     validate_serialized_block_content_control, validated_content_boundary,
-    validated_direct_content_item, xml_1_0_whitespace,
+    validated_direct_content_item, without_w14_identities, xml_1_0_whitespace,
 };
 pub(crate) use fragment_checks::{
     close_content_fragment_namespaces, package_authoritative_body_fragment,
@@ -409,7 +409,7 @@ pub struct ContentFragment {
     /// The relationships of its source part that the fragment references, as
     /// they were where it was taken (empty when it was built, not taken), so
     /// that an insertion where those ids name something else is refused.
-    relationships: Vec<oxoffice_opc::relationship::Relationship>,
+    relationships: Vec<(oxoffice_opc::relationship::Relationship, Option<u64>)>,
 }
 
 /// An owned story range and the package dependencies it can reach.

@@ -385,6 +385,10 @@ impl Document {
         reject_section_owning_content_fragment(&fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
+        // The same fragment can be inserted twice: its paragraph and row ids
+        // (w14:paraId, w14:textId) go, as clone_content drops them, and Word
+        // gives new ones.
+        let fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
         let mut updated = source_xml;
         insert_story_fragment(&mut updated, &owner, boundary, fragment_xml)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;
@@ -614,6 +618,8 @@ impl Document {
             relationships: Vec::new(),
         };
         reject_section_owning_content_fragment(&fragment)?;
+        fragment.relationships =
+            referenced_relationships(&candidate, &source_location.story, &fragment)?;
 
         let (destination_source, destination_owner) =
             candidate.story_source_and_owner(&destination.story)?;

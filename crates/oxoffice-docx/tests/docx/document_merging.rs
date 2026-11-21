@@ -1453,3 +1453,71 @@ fn the_same_fragment_inserted_twice_writes_no_paragraph_id_twice() {
     assert_eq!(xml.matches("1A2B3C4D").count(), 0, "{xml}");
     assert_eq!(xml.matches("77777777").count(), 0, "{xml}");
 }
+
+#[test]
+fn a_fragment_inserted_twice_drops_ids_declared_on_the_document_root() {
+    // Word declares the w14 prefix on w:document, not on the paragraph.
+    let bytes = doc_with(&["first", "kept"]).to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let main = if main.contains("xmlns:w14=") {
+        main
+    } else {
+        main.replacen(
+            "<w:document ",
+            "<w:document xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" ",
+            1,
+        )
+    };
+    let first = main.find("<w:p>").or_else(|| main.find("<w:p ")).unwrap();
+    let main = format!(
+        "{}<w:p w14:paraId=\"2B3C4D5E\" w14:textId=\"66666666\"{}",
+        &main[..first],
+        &main[first + main[first..].find('>').unwrap()..]
+    );
+    package.set_part("/word/document.xml", main.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let fragment = doc.remove_content_at(&item_at(&doc, 0)).unwrap();
+    for _ in 0..2 {
+        doc.insert_content(&ContentLocation::end(body(&doc)), fragment.clone())
+            .unwrap();
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["kept", "first", "first"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        !xml.contains("2B3C4D5E") && !xml.contains("66666666"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_picture_from_another_document_never_shows_the_destinations_picture() {
+    let picture_document = |grey: u8| {
+        let mut doc = Document::new();
+        let image = [PNG, &[grey]].concat();
+        doc.add_picture(&image, "p.png", Length::inches(1.0), Length::inches(1.0));
+        reopen(&mut doc)
+    };
+    let mut source = picture_document(1);
+    let mut doc = picture_document(2);
+    let fragment = source.remove_content_at(&item_at(&source, 0)).unwrap();
+    let before = doc.to_bytes().unwrap();
+    // Both pictures have the same relationship id: an existence check passes.
+    match doc.insert_content(&ContentLocation::end(body(&doc)), fragment) {
+        Ok(()) => {
+            let doc = reopen(&mut doc);
+            let pictures = doc.pictures().unwrap();
+            assert_ne!(
+                pictures[0].bytes, pictures[1].bytes,
+                "the picture keeps its image or is refused"
+            );
+        }
+        Err(error) => {
+            assert!(error.to_string().contains("import_fragment"), "{error}");
+            assert_eq!(doc.to_bytes().unwrap(), before);
+        }
+    }
+}
