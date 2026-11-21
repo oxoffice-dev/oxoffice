@@ -179,6 +179,118 @@ pub fn workflow_copies<'a>(producers: &[&'a str]) -> Vec<&'a str> {
     }
 }
 
+/// The name the workflow tests give [`small_thesis`].
+pub const SMALL_THESIS: &str = "small-thesis";
+
+/// A few pages with the landmarks of the corpus thesis that the thesis walks
+/// read: Word's TOC field over levels 1 to 3 in a content control, with
+/// entries whose pages are stale, chapters starting a page (so their entries
+/// read 2, 3 and 4), a running header naming the degree, a "Page X of Y"
+/// footer, a discussion section of two paragraphs and a last section. A
+/// thesis copy costs minutes of layout in a debug build, so pull requests
+/// walk this one.
+pub fn small_thesis() -> Vec<u8> {
+    let run = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+    let field = |instruction: &str, result: &str| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            run(result)
+        )
+    };
+    let body_text = "Each site keeps a safety stock sized from the forecast of the coming weeks.";
+    let (mut entries, mut body) = (Vec::new(), String::new());
+    for (chapter, sections) in [
+        ("Introduction", &["Motivation", "Research questions"][..]),
+        ("Results", &["Discussion", "Threats to validity"]),
+        ("Conclusion", &["Future work"]),
+    ] {
+        for (level, title) in std::iter::once((1, chapter)).chain(sections.iter().map(|s| (2, *s)))
+        {
+            let id = entries.len() + 1;
+            let name = format!("_Toc21900{id:04}");
+            let page_break = if level == 1 {
+                "<w:pageBreakBefore/>"
+            } else {
+                ""
+            };
+            body += &format!(
+                r#"<w:p><w:pPr><w:pStyle w:val="Heading{level}"/>{page_break}</w:pPr><w:bookmarkStart w:id="{id}" w:name="{name}"/>{}<w:bookmarkEnd w:id="{id}"/></w:p>"#,
+                run(title)
+            );
+            entries.push((level, title, name));
+            let texts = if level == 1 {
+                vec![body_text.to_owned()]
+            } else {
+                vec![
+                    format!("{title} first: {body_text}"),
+                    format!("{title} second: {body_text}"),
+                ]
+            };
+            for text in texts {
+                body += &format!("<w:p>{}</w:p>", run(&text));
+            }
+        }
+    }
+    // Every entry says page 9 until a pass gives it its page.
+    let mut toc = String::new();
+    for (index, (level, title, name)) in entries.iter().enumerate() {
+        let opening = if index == 0 {
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#
+        } else {
+            ""
+        };
+        toc += &format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="TOC{level}"/><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9026"/></w:tabs></w:pPr>{opening}<w:hyperlink w:anchor="{name}" w:history="1">{}<w:r><w:tab/></w:r>{}</w:hyperlink></w:p>"#,
+            run(title),
+            field(&format!(r"PAGEREF {name} \h"), "9")
+        );
+    }
+    toc += r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="219000001"/><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:pPr><w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr></w:pPr>{}</w:p>{toc}</w:sdtContent></w:sdt>{body}"#,
+        run("Contents")
+    ));
+    doc.set_header("Sophie Laurent - MSc thesis");
+    let footer = format!(
+        r#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="right"/></w:pPr>{}{}{}{}</w:p></w:ftr>"#,
+        run("Page "),
+        field("PAGE", "1"),
+        run(" of "),
+        field("NUMPAGES", "1")
+    );
+    doc.set_raw_footer_with_images(footer.into_bytes(), &[], oxoffice_docx::HdrFtrType::Default);
+    doc.to_bytes().expect("the small thesis saves")
+}
+
+/// The thesis copies a workflow test walks: the small thesis on a pull
+/// request, and every producer's corpus copy too with [`every_copy`].
+pub fn thesis_copies() -> Vec<String> {
+    let mut copies = every_thesis_copy();
+    if !every_copy() {
+        copies.truncate(1);
+    }
+    copies
+}
+
+/// The small thesis, then every producer's corpus copy of the thesis.
+pub fn every_thesis_copy() -> Vec<String> {
+    std::iter::once(SMALL_THESIS.to_owned())
+        .chain(
+            ["word", "libreoffice", "authored", "google"]
+                .map(|producer| format!("{producer}/thesis.docx")),
+        )
+        .collect()
+}
+
+/// The bytes of a workflow copy: the small thesis, or a corpus file.
+pub fn workflow_source(copy: &str) -> Vec<u8> {
+    if copy == SMALL_THESIS {
+        small_thesis()
+    } else {
+        fs::read(corpus_root().join("files").join(copy)).expect("the corpus copy is readable")
+    }
+}
+
 /// Every part of a package by its ZIP entry name, with its bytes.
 pub fn package_parts(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
     use std::io::Read;
@@ -191,4 +303,90 @@ pub fn package_parts(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>
             (entry.name().expect("ZIP entry name").into_owned(), data)
         })
         .collect()
+}
+/// The workflows the tests walk, with the copies each walks under
+/// `OXOFFICE_WORKFLOWS=full`: an entry of `workflows-known.toml` must name
+/// one of them, so that a renamed walk or a dropped copy shows.
+pub const WORKFLOWS: [&str; 3] = ["page-numbers", "redline", "redline-rebuilt-toc"];
+
+/// A corpus copy a workflow test fails on today, from
+/// `tests/corpus/workflows-known.toml`.
+pub struct WorkflowKnownFailure {
+    pub issue: u32,
+    /// Text the failure message holds, so that another failure still shows.
+    pub message: String,
+}
+
+/// Every entry of `workflows-known.toml`: (file, workflow, known failure).
+pub fn workflow_known_failures() -> Vec<(String, String, WorkflowKnownFailure)> {
+    let text = fs::read_to_string(corpus_root().join("workflows-known.toml"))
+        .expect("workflows-known.toml is readable");
+    let mut entries = Vec::new();
+    for entry in text.split("[[known]]").skip(1) {
+        let value = |key: &str| {
+            entry
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix(key)
+                        .and_then(|rest| rest.trim_start().strip_prefix('='))
+                        .map(|v| v.trim().trim_matches('"').replace("\\\"", "\""))
+                })
+                .unwrap_or_else(|| panic!("an entry of workflows-known.toml has its {key}"))
+        };
+        let (path, name) = (value("file"), value("workflow"));
+        let issue = value("issue").parse::<u32>().expect("an issue number");
+        assert!(
+            entries
+                .iter()
+                .all(|(file, workflow, _)| (file, workflow) != (&path, &name)),
+            "{path} is listed twice for {name}"
+        );
+        entries.push((
+            path,
+            name,
+            WorkflowKnownFailure {
+                issue,
+                message: value("message"),
+            },
+        ));
+    }
+    entries
+}
+
+/// The known failure of this workflow on this copy, if it is listed.
+pub fn workflow_known_failure(file: &str, workflow: &str) -> Option<WorkflowKnownFailure> {
+    workflow_known_failures()
+        .into_iter()
+        .find(|(path, name, _)| path == file && name == workflow)
+        .map(|(_, _, known)| known)
+}
+
+/// Runs `walk` on each copy: a copy listed in `workflows-known.toml` for
+/// this workflow must fail it with the listed message, and any other must
+/// pass, so a fix shows.
+pub fn run_workflow(workflow: &str, copies: &[String], walk: impl Fn(&str)) {
+    for copy in copies {
+        let outcome = catch_unwind(AssertUnwindSafe(|| walk(copy)));
+        match (workflow_known_failure(copy, workflow), outcome) {
+            (None, Err(panic)) => std::panic::resume_unwind(panic),
+            (Some(known), Ok(())) => panic!(
+                "{copy} passes the {workflow} walk now: remove its line (#{}) from workflows-known.toml",
+                known.issue
+            ),
+            (Some(known), Err(panic)) => {
+                let text = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or_default();
+                assert!(
+                    text.contains(&known.message),
+                    "{copy} fails the {workflow} walk, but not on #{} ({:?}): {text}",
+                    known.issue,
+                    known.message
+                );
+            }
+            (None, Ok(())) => {}
+        }
+    }
 }

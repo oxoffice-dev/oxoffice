@@ -1,0 +1,17 @@
+slide 1 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 1 | Subtitle 2 | 2 lines 76.8 pt | at 95 %: 2 lines 76.8 pt
+slide 2 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 2 | Content Placeholder 2 | 5 lines 211.2 pt | at 95 %: 6 lines 249.6 pt
+slide 3 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 3 | Content Placeholder 2 | 7 lines 288.0 pt | at 95 %: 7 lines 288.0 pt
+slide 4 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 4 | TextBox 3 | 3 lines 57.6 pt | at 95 %: 4 lines 76.8 pt
+slide 5 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 6 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 7 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 8 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 8 | Content Placeholder 2 | 6 lines 251.5 pt | at 95 %: 6 lines 251.5 pt
+slide 9 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 9 | Content Placeholder 2 | 6 lines 251.5 pt | at 95 %: 6 lines 251.5 pt
+slide 10 | Title 1 | 1 lines 52.8 pt | at 95 %: 1 lines 52.8 pt
+slide 10 | Content Placeholder 2 | 5 lines 205.4 pt | at 95 %: 5 lines 205.4 pt
