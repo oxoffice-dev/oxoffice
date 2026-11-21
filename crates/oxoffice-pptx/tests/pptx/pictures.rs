@@ -320,9 +320,7 @@ fn bytes_that_are_not_an_image_are_refused_and_change_nothing() {
     assert_eq!(prs.to_bytes().unwrap(), before);
 }
 
-// Fails today: with both sides given, add_picture stores any bytes as an image part without checking them. Issue: #42
 #[test]
-#[should_panic(expected = "bytes that are not an image were added as a picture")]
 fn bytes_that_are_not_an_image_are_refused_even_with_both_sides_given() {
     let mut prs = blank_deck(1);
     let size = Some(Emu(INCH));
@@ -336,6 +334,53 @@ fn bytes_that_are_not_an_image_are_refused_even_with_both_sides_given() {
             );
         }
         Err(error) => assert!(matches!(error, Error::UnsupportedPicture { .. }), "{error}"),
+    }
+}
+
+#[test]
+fn every_editors_deck_takes_an_image_with_both_sides_given_and_refuses_other_bytes() {
+    let size = Some(Emu(INCH));
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#;
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let before = prs.to_bytes().unwrap();
+        let refused = match prs.add_picture(
+            1,
+            b"%PDF-1.7 not an image",
+            "a.png",
+            Emu(0),
+            Emu(0),
+            size,
+            size,
+        ) {
+            Ok(_) => panic!("{name}: bytes that are not an image were added"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(refused, Error::UnsupportedPicture { .. }),
+            "{name}: {refused}"
+        );
+        assert_eq!(prs.to_bytes().unwrap(), before, "{name}");
+
+        prs.add_picture(
+            1,
+            &png(10, 4, [0, 120, 250]),
+            "chart.png",
+            Emu(0),
+            Emu(0),
+            size,
+            size,
+        )
+        .unwrap();
+        prs.add_picture(1, svg, "logo.svg", Emu(0), Emu(0), size, size)
+            .unwrap();
+        let prs = reopen(&prs);
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
     }
 }
 
