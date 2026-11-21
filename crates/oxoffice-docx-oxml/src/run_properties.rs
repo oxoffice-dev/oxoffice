@@ -1967,6 +1967,11 @@ impl CT_RPr {
         self.is_empty_in(true)
     }
 
+    /// Whether a run's writer writes nothing for these properties.
+    pub(crate) fn writes_nothing(&self) -> bool {
+        self.is_empty()
+    }
+
     fn is_empty_in(&self, raw: bool) -> bool {
         self.style_id.is_none()
             && self.font_ascii.is_none()

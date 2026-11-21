@@ -1199,6 +1199,64 @@ fn an_empty_run_written_by_libreoffice_does_not_block_the_comparison() {
     assert_eq!(texts(&accepted(&mut doc)), ["first", "", "added"]);
 }
 
+// LibreOffice writes `<w:rPr></w:rPr>` on its runs, here on the run that
+// closes its table of contents in the paragraph after the entries: it reads
+// as `<w:rPr/>`, which carries no formatting, so the field's end keeps its
+// place among the run's children.
+#[test]
+fn a_field_closed_by_a_run_with_empty_properties_does_not_block_the_comparison() {
+    let body = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/><w:rPr></w:rPr></w:pPr>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"></w:fldChar></w:r>"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:instrText xml:space="preserve"> TOC \z \o &quot;1-3&quot; \u \h</w:instrText></w:r>"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:hyperlink w:anchor="_Toc217000001">"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="begin"></w:fldChar></w:r>"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:instrText xml:space="preserve">PAGEREF _Toc217000001 \h</w:instrText></w:r>"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:t>1</w:t><w:tab/><w:t>Introduction</w:t><w:tab/><w:t>1</w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:rPr></w:rPr></w:r>"#,
+        r#"<w:r><w:rPr></w:rPr><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    for spelling in [
+        "<w:rPr></w:rPr>",
+        "<w:rPr>\n</w:rPr>",
+        "<w:rPr><w:rFonts/></w:rPr>",
+    ] {
+        let body = body.replace("<w:rPr></w:rPr>", spelling);
+        let original = texts(&doc_with_body(&body));
+        let mut edited = doc_with_body(&body);
+        edited.add_paragraph("Added");
+        let edited = reopen(&mut edited);
+        let mut doc = redline(doc_with_body(&body), &edited);
+        assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Added"]);
+        assert!(
+            !kinds(&doc).contains(&RevisionKind::Deletion),
+            "{:?}",
+            kinds(&doc)
+        );
+        let mut expected = original.clone();
+        expected.push("Added".to_owned());
+        assert_eq!(texts(&accepted(&mut doc)), expected);
+        assert_eq!(texts(&rejected(&mut doc)), original);
+    }
+}
+
+// The same run with `<w:rPr></w:rPr>` and with `<w:rPr/>` is one run.
+#[test]
+fn empty_run_properties_read_alike_however_written() {
+    let run = |properties: &str| {
+        doc_with_body(&format!(
+            r#"<w:p><w:r>{properties}<w:t>text</w:t></w:r><w:r>{properties}<w:fldChar w:fldCharType="begin"/></w:r></w:p>"#
+        ))
+    };
+    let mut doc = run("<w:rPr></w:rPr>");
+    let diagnostics = doc.compare(&run("<w:rPr/>"), AUTHOR, DATE).unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(doc.revisions().is_empty(), "{:?}", kinds(&doc));
+}
+
 // Google Docs writes `<w:tcPr/>` in every cell and LibreOffice
 // `<w:trPr></w:trPr>` in every row: empty properties are no formatting.
 #[test]

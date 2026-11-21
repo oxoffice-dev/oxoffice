@@ -46,12 +46,12 @@ workflow = "redline"
 issue = 408
 message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
 
-# LibreOffice's TOC content control is refused before the equations.
+# LibreOffice's copy holds the same equations.
 [[known]]
 file = "libreoffice/thesis.docx"
 workflow = "redline"
-issue = 413
-message = "raw publication boundary is outside the emitted owner"
+issue = 408
+message = "comparison acceptance does not reproduce the edited stories at body story item[47]"
 
 [[known]]
 file = "authored/thesis.docx"

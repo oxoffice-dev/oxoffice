@@ -185,6 +185,41 @@ fn fields_in_an_even_page_header_no_section_shows_merge_and_keep_their_page_cach
     );
 }
 
+// LibreOffice writes `<w:rPr></w:rPr>` on every run of a field: the field
+// reads its instruction and result as with `<w:rPr/>` or no properties, its
+// result in the run of its end too, or with the whole field in one run.
+#[test]
+fn a_field_whose_runs_have_empty_properties_reads_its_result() {
+    let spread = concat!(
+        r#"<w:p><w:r>{p}<w:fldChar w:fldCharType="begin"></w:fldChar></w:r>"#,
+        r#"<w:r>{p}<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#,
+        r#"<w:r>{p}<w:fldChar w:fldCharType="separate"></w:fldChar></w:r>"#,
+        r#"<w:r>{p}<w:t>12</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let single = concat!(
+        r#"<w:p><w:r>{p}<w:fldChar w:fldCharType="begin"/><w:instrText xml:space="preserve"> PAGE </w:instrText>"#,
+        r#"<w:fldChar w:fldCharType="separate"/><w:t>12</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    for body in [spread, single] {
+        for properties in [
+            "",
+            "<w:rPr/>",
+            "<w:rPr></w:rPr>",
+            "<w:rPr><w:rFonts/></w:rPr>",
+        ] {
+            let mut doc = doc_with_body(&body.replace("{p}", properties));
+            let expected = vec![(FieldKind::Complex, "PAGE".to_owned(), "12".to_owned())];
+            assert_eq!(field_list(&doc), expected, "{properties} in {body}");
+            doc.add_paragraph("Added");
+            assert_eq!(
+                field_list(&reopen(&mut doc)),
+                expected,
+                "{properties} in {body}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_simple_field_keeps_its_instruction_and_result_after_a_save() {
     let mut doc = Document::new();

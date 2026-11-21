@@ -1316,17 +1316,24 @@ impl CT_R {
                                 (capture_element(reader, e)?, None)
                             };
                         let mut observed = None;
-                        properties = Some(crate::numbering::parse_scoped_rpr_with_observation(
+                        let parsed = crate::numbering::parse_scoped_rpr_with_observation(
                             &raw,
                             word_prefixes,
                             &[],
                             mapped.as_ref().map(|_| &mut observed),
-                        )?);
-                        // The later successful rPr assignment replaces its
-                        // own observation, including a new unproved property.
-                        selected_property =
-                            observed.and_then(|range| mapped.as_ref()?.property_observation(range));
-                        modeled_children += 1;
+                        )?;
+                        // Properties the writer writes nothing for, such as
+                        // LibreOffice's `<w:rPr></w:rPr>`, read as the
+                        // self-closing `<w:rPr/>` skipped below: no formatting,
+                        // and no child slot the writer would not write.
+                        if !parsed.writes_nothing() {
+                            properties = Some(parsed);
+                            // The later successful rPr assignment replaces its
+                            // own observation, including a new unproved property.
+                            selected_property = observed
+                                .and_then(|range| mapped.as_ref()?.property_observation(range));
+                            modeled_children += 1;
+                        }
                     } else if action == RunChildAction::Text {
                         let preserve = e.attributes().any(|a| {
                             a.ok()
