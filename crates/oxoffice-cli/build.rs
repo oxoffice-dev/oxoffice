@@ -14,10 +14,12 @@ use std::path::{Path, PathBuf};
 const DIR: &str = "limitations";
 
 fn main() {
-    println!("cargo:rerun-if-changed={DIR}");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets it"));
     let dir = manifest.join(DIR);
-    // No directory is no limitation: git drops the directory with its last file.
+    // Cargo reruns this when a file of the directory is added, removed or
+    // changed. The tracked `.gitkeep` keeps the directory when the last
+    // limitation goes; a directory missing anyway is no limitation.
+    println!("cargo:rerun-if-changed={DIR}");
     let listing = match fs::read_dir(&dir) {
         Ok(listing) => listing.collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),

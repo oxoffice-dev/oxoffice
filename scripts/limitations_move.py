@@ -62,8 +62,9 @@ def main() -> None:
         if git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}").returncode != 0:
             sys.exit(f"error: {rev} is not a commit here (in a merge, use the merge form of the docstring)")
     before, after = entries_at(sys.argv[1]), entries_at(sys.argv[2])
-    if before is None and after is None:
-        sys.exit(f"error: {OLD} exists at neither {sys.argv[1]} nor {sys.argv[2]}: nothing to move")
+    if after is None:
+        # Never what a conflicting commit looks like; reading it as "every entry removed" would empty the directory.
+        sys.exit(f"error: {OLD} does not exist at {sys.argv[2]}: give the commit that edits it (see the docstring)")
     before, after = before or {}, after or {}
     root = Path(git("rev-parse", "--show-toplevel").stdout.strip())
     touched, conflicts = [], []

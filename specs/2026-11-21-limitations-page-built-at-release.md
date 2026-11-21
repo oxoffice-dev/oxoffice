@@ -61,8 +61,8 @@ each conflict cost a new CI run (#81 after #173 that morning).
   `<id>.json`, whose `id` differs from its name, or whose name is not
   lower-case ASCII letters, digits and dashes (two names differing in case
   would be one file on Windows and macOS). Hidden and editor backup files
-  are skipped, and no directory means no limitation. Entries now list in
-  file name order.
+  are skipped; a tracked `.gitkeep` keeps the directory when the last
+  limitation goes. Entries now list in file name order.
 - `scripts/limitations_doc.py` reads the directory in the same order.
 - `scripts/limitations_move.py`, a one-shot tool, moves an open branch's
   edits of the old file into the directory during its rebase; it goes once
