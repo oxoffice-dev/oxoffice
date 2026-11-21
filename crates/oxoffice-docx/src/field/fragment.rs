@@ -840,17 +840,22 @@ pub(super) fn import_fragment_content_with_state(
 
     // Header and footer parts are copied whole, and the list numbers they
     // use are remapped after the copy: one holding a list is never shared
-    // with an equal destination part, whose numbers mean other lists.
+    // with an equal destination part, whose numbers mean other lists. With
+    // source-owned numbering the numbers keep their meaning.
     let mut numbered_header_footers = HashSet::new();
     for (selected_owner, _, _, relationship, source_part) in &imports {
         if *selected_owner
+            && !source_owned_numbering
             && (relationship.rel_type == rel_types::HEADER
                 || relationship.rel_type == rel_types::FOOTER)
         {
             let xml = fragment.package.get_part(source_part).ok_or_else(|| {
                 Error::Other(format!("document fragment part {source_part} is missing"))
             })?;
-            if !word_value_attributes(xml, &[b"numId"])?.is_empty() {
+            if word_value_attributes(xml, &[b"numId"])?
+                .iter()
+                .any(|value| value != "0")
+            {
                 numbered_header_footers.insert(source_part.clone());
             }
         }
