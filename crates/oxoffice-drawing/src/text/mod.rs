@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
 use oxoffice_core::xml::matches_local_name;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -559,16 +559,6 @@ impl CT_TextBody {
     pub fn raw_children(&self) -> &OrderedRawChildren {
         &self.raw_children
     }
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn element_name(element: &BytesStart<'_>) -> String {

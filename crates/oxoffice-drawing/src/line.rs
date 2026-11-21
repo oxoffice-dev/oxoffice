@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -935,16 +935,6 @@ fn unexpected(start: &BytesStart<'_>) -> LineError {
 
 fn missing_end(name: &str) -> LineError {
     LineError::Xml(OxmlError::MissingElement(format!("closing a:{name}")))
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn write_start<W: Write>(writer: &mut Writer<W>, start: BytesStart<'_>) -> Result<()> {

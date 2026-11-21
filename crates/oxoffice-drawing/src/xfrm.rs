@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
 use oxoffice_core::units::{Angle, Emu};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
@@ -451,16 +451,6 @@ fn write_size<W: Write>(writer: &mut Writer<W>, tag: &str, size: CT_PositiveSize
     writer
         .write_event(Event::Empty(element))
         .map_err(OxmlError::from)?;
-    Ok(())
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
     Ok(())
 }
 
