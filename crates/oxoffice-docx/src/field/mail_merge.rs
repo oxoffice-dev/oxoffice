@@ -979,6 +979,7 @@ fn import_rich_fragment(
         &document.doc_part_name.clone(),
         identity_state,
         false,
+        false,
         &mut Vec::new(),
         None,
     )

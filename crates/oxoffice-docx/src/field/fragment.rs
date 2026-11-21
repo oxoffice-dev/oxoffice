@@ -27,6 +27,7 @@ pub(crate) fn import_document_fragment_content(
         policy,
         destination_part,
         &mut identity_state,
+        true,
         source_owned_numbering,
         note_copy_sources,
         template,
@@ -218,6 +219,7 @@ pub(super) fn import_fragment_content_with_state(
     policy: FragmentConflictPolicy,
     destination_part: &str,
     identity_state: &mut BodyIdentityState,
+    keep_free_names: bool,
     source_owned_numbering: bool,
     note_copy_sources: &mut Vec<(StoryKind, String, i32, String, i32)>,
     mut template: Option<(
@@ -1112,6 +1114,7 @@ pub(super) fn import_fragment_content_with_state(
         &mut document.identifiers,
         identity_state,
         false,
+        keep_free_names,
     )?;
     let patched_comments = Document::fragment_comment_dependency_xml(
         fragment
@@ -2673,6 +2676,14 @@ pub(super) struct BodyIdentityState {
     used_content_control_ids: HashSet<u32>,
     used_non_visual_drawing_ids: HashSet<u32>,
     used_names: HashSet<String>,
+    /// `used_names` lowercased: a fresh name avoids every bookmark and
+    /// reference name, in any case, the glossary's included.
+    folded_names: HashSet<String>,
+    /// The lowercased names of the bookmarks of the destination's stories
+    /// (not its glossary), and those given during this import: an imported
+    /// bookmark keeps its name while it is not among them, as Word compares
+    /// bookmark names without regard to case.
+    folded_bookmark_names: HashSet<String>,
     next_content_control_id: u32,
     next_non_visual_drawing_id: u32,
     next_name: u32,
@@ -2684,6 +2695,8 @@ impl BodyIdentityState {
             used_content_control_ids: HashSet::new(),
             used_non_visual_drawing_ids: HashSet::new(),
             used_names: HashSet::new(),
+            folded_names: HashSet::new(),
+            folded_bookmark_names: HashSet::new(),
             next_content_control_id: 1,
             next_non_visual_drawing_id: 1,
             next_name: 1,
@@ -2703,9 +2716,9 @@ impl BodyIdentityState {
                     .iter()
                     .filter_map(|value| value.parse::<u32>().ok()),
             );
-            state.used_names.extend(values.bookmark_names);
-            state.used_names.extend(values.reference_names);
-            for bytes in document.package.parts.values() {
+            state.use_bookmark_names(values.bookmark_names);
+            state.use_names(values.reference_names);
+            for (part_name, bytes) in &document.package.parts {
                 if let Ok(values) = body_identity_values(&wrap_fragment_companion(bytes)) {
                     state.used_content_control_ids.extend(
                         values
@@ -2719,8 +2732,12 @@ impl BodyIdentityState {
                             .iter()
                             .filter_map(|value| value.parse::<u32>().ok()),
                     );
-                    state.used_names.extend(values.bookmark_names);
-                    state.used_names.extend(values.reference_names);
+                    if part_name.starts_with("/word/glossary/") {
+                        state.use_names(values.bookmark_names);
+                    } else {
+                        state.use_bookmark_names(values.bookmark_names);
+                    }
+                    state.use_names(values.reference_names);
                 }
             }
         }
@@ -2743,16 +2760,49 @@ impl BodyIdentityState {
         )
     }
 
+    fn use_names(&mut self, names: impl IntoIterator<Item = String>) {
+        for name in names {
+            self.folded_names.insert(name.to_lowercase());
+            self.used_names.insert(name);
+        }
+    }
+
+    fn use_bookmark_names(&mut self, names: impl IntoIterator<Item = String>) {
+        for name in names {
+            self.folded_bookmark_names.insert(name.to_lowercase());
+            self.folded_names.insert(name.to_lowercase());
+            self.used_names.insert(name);
+        }
+    }
+
     fn allocate_name(&mut self) -> Result<String> {
         loop {
             let candidate = format!("MailMerge{}", self.next_name);
             self.next_name = self.next_name.checked_add(1).ok_or_else(|| {
                 Error::Other("mail merge exhausted the bookmark name range".to_owned())
             })?;
-            if self.used_names.insert(candidate.clone()) {
+            if !self.folded_names.contains(&candidate.to_lowercase())
+                && self.used_names.insert(candidate.clone())
+            {
+                self.folded_names.insert(candidate.to_lowercase());
+                self.folded_bookmark_names.insert(candidate.to_lowercase());
                 return Ok(candidate);
             }
         }
+    }
+
+    /// Keep `name` for an imported bookmark when no bookmark of the
+    /// destination's stories, nor one given earlier in this import, has it in
+    /// any case. A reference to it in the destination then reaches the
+    /// imported bookmark, as when Word pastes one.
+    fn keep_free_name(&mut self, name: &str) -> bool {
+        let folded = name.to_lowercase();
+        if !self.folded_bookmark_names.insert(folded.clone()) {
+            return false;
+        }
+        self.folded_names.insert(folded);
+        self.used_names.insert(name.to_owned());
+        true
     }
 }
 
@@ -2779,17 +2829,25 @@ pub(super) fn remap_body_identities(
     identifiers: &mut DocumentIdentifiers,
     state: &mut BodyIdentityState,
 ) -> Result<BodyIdentityRemap> {
-    let (updated, remap) =
-        remap_fragment_xml_identities(&document.document.to_xml()?, identifiers, state, true)?;
+    let (updated, remap) = remap_fragment_xml_identities(
+        &document.document.to_xml()?,
+        identifiers,
+        state,
+        true,
+        false,
+    )?;
     document.document = crate::document::DocumentModel::unproved(CT_Document::from_xml(&updated)?);
     Ok(remap)
 }
 
+/// `keep_free_names` keeps a bookmark's name while it is free in the
+/// destination, as an import does; a merge record renames every bookmark.
 fn remap_fragment_xml_identities(
     source: &[u8],
     identifiers: &mut DocumentIdentifiers,
     state: &mut BodyIdentityState,
     drop_paragraph_identities: bool,
+    keep_free_names: bool,
 ) -> Result<(Vec<u8>, BodyIdentityRemap)> {
     // The drawing remap is keyed by value, so a source that repeats a
     // `wp:docPr/@id` is first made unique and every copy gets its own id.
@@ -2823,11 +2881,22 @@ fn remap_fragment_xml_identities(
             entry.insert(state.allocate_non_visual_drawing_id()?);
         }
     }
+    // Free names are kept first, so a fresh name never takes one that a
+    // later bookmark of the source keeps.
+    let mut renamed = Vec::new();
     for value in values.bookmark_names {
-        if let std::collections::btree_map::Entry::Vacant(entry) = remap.bookmark_names.entry(value)
-        {
-            entry.insert(state.allocate_name()?);
+        if remap.bookmark_names.contains_key(&value) {
+            continue;
         }
+        if keep_free_names && state.keep_free_name(&value) {
+            remap.bookmark_names.insert(value.clone(), value);
+        } else if !renamed.contains(&value) {
+            renamed.push(value);
+        }
+    }
+    for value in renamed {
+        let name = state.allocate_name()?;
+        remap.bookmark_names.insert(value, name);
     }
     let updated = patch_body_identity_attributes(&xml, &remap)?;
     Ok((updated, remap))
