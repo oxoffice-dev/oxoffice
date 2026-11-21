@@ -996,10 +996,7 @@ fn merged_cells_become_spans_in_html_and_keep_their_text_in_markdown() {
     );
 }
 
-// Fails today: the row span is counted by cell index, not by grid column, so
-// a cell merged down beside a horizontal merge gets no rowspan. Issue: #258
 #[test]
-#[should_panic(expected = "a cell merged down beside a horizontal merge loses its row span")]
 fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
     let mut doc = Document::new();
     {
@@ -1030,10 +1027,7 @@ fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
     );
 }
 
-// Fails today: GFM cannot span, and the cells after a merged one are written
-// in the next free column instead of their own. Issue: #258
 #[test]
-#[should_panic(expected = "a cell after a horizontal merge moves to another column in Markdown")]
 fn markdown_keeps_the_cells_after_a_horizontal_merge_in_their_columns() {
     let mut doc = Document::new();
     three_by_three(&mut doc)

@@ -1229,8 +1229,13 @@ fn emit_table(
         .into_iter()
         .filter(|row| !row.accepted_view_removes())
     {
+        // GFM cannot span: a cell spanning several grid columns, or the
+        // columns a row omits before its first cell, leave empty cells, so
+        // that every cell stays in its grid column.
         let mut cells: Vec<String> = Vec::new();
-        for cell in row.cells() {
+        let starts = crate::emitter::grid_starts(row);
+        for (cell, &start) in row.cells().into_iter().zip(&starts) {
+            cells.resize(start, String::new());
             let text = collect_cell_text(cell, styles, hyperlink_urls, images);
             cells.push(text);
         }

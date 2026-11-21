@@ -551,7 +551,8 @@ fn emit_table(
         .collect::<Vec<_>>();
     for (row_idx, row) in rows.iter().enumerate() {
         out.push_str("<tr>\n");
-        for (col_idx, cell) in row.cells().into_iter().enumerate() {
+        let starts = grid_starts(row);
+        for (cell, &grid_column) in row.cells().into_iter().zip(&starts) {
             // Skip vmerge continue cells
             if let Some(props) = &cell.properties
                 && matches!(props.v_merge, Some(VMerge::Continue))
@@ -572,7 +573,7 @@ fn emit_table(
 
                 // Row span (count consecutive vmerge continue cells below)
                 if matches!(props.v_merge, Some(VMerge::Restart)) {
-                    let rowspan = count_vmerge_span(&rows[row_idx + 1..], col_idx);
+                    let rowspan = count_vmerge_span(&rows[row_idx + 1..], grid_column);
                     if rowspan > 1 {
                         td_attrs.push_str(&format!(" rowspan=\"{rowspan}\""));
                     }
@@ -641,11 +642,40 @@ fn emit_table(
 
 /// Count the rowspan for a vmerge restart cell in column `col_idx`, from the
 /// rows below it.
-fn count_vmerge_span(rows_below: &[&CT_Row], col_idx: usize) -> u32 {
+/// The grid column each cell of `row` starts at: the columns the row omits
+/// before its first cell, then each cell's `gridSpan`.
+pub(crate) fn grid_starts(row: &CT_Row) -> Vec<usize> {
+    let mut column = row
+        .properties
+        .as_ref()
+        .and_then(|properties| properties.grid_before)
+        .unwrap_or(0) as usize;
+    row.cells()
+        .into_iter()
+        .map(|cell| {
+            let start = column;
+            column += cell
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.grid_span)
+                .unwrap_or(1)
+                .max(1) as usize;
+            start
+        })
+        .collect()
+}
+
+/// How many rows a cell merged down from the grid column `grid_column` spans:
+/// the rows below whose cell at that grid column continues the merge, cells
+/// spanning several columns counted as such.
+fn count_vmerge_span(rows_below: &[&CT_Row], grid_column: usize) -> u32 {
     let mut span = 1;
     for row in rows_below {
-        if let Some(next_cell) = row.cells().get(col_idx)
-            && let Some(props) = &next_cell.properties
+        let cells = row.cells();
+        if let Some(index) = grid_starts(row)
+            .iter()
+            .position(|&start| start == grid_column)
+            && let Some(props) = &cells[index].properties
             && matches!(props.v_merge, Some(VMerge::Continue))
         {
             span += 1;
