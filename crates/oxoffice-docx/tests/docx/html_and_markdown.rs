@@ -534,6 +534,75 @@ fn a_paragraph_starting_with_a_tab_stays_a_paragraph_in_markdown() {
 }
 
 #[test]
+fn markdown_escapes_a_character_reference_in_split_runs_alt_text_and_links() {
+    // Word splits runs around a word it flags: "&", "nbsp" and ";" in runs
+    // of their own still make a reference once written one after another.
+    let doc = reopen(&mut doc_with_body(
+        r#"<w:p><w:r><w:t>&amp;</w:t></w:r><w:r><w:t>nbsp</w:t></w:r><w:r><w:t>;</w:t></w:r></w:p>"#,
+    ));
+    assert_eq!(
+        read_markdown(&doc.to_markdown()),
+        [Read::Paragraph("&nbsp;".to_owned())]
+    );
+
+    let mut doc = Document::new();
+    let link = doc.add_hyperlink_relationship("https://example.com/?a=1&amp;b=2");
+    doc.add_paragraph("See ")
+        .add_hyperlink("&copy; terms", &link);
+    let body = body_story(&doc);
+    doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("&copy; logo")))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let targets = markdown_targets(&doc.to_markdown());
+    assert_eq!(
+        targets[0],
+        (
+            false,
+            "&copy; terms".to_owned(),
+            "https://example.com/?a=1&amp;b=2".to_owned()
+        )
+    );
+    assert_eq!(targets[1].1, "&copy; logo");
+}
+
+#[test]
+fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
+    let mut doc = Document::new();
+    {
+        let mut paragraph = doc.add_paragraph("");
+        let mut run = paragraph.add_run("a");
+        run.add_break(BreakKind::Line);
+        run.add_break(BreakKind::Line);
+        run.add_text("b");
+    }
+    let doc = reopen(&mut doc);
+    let read = read_markdown(&doc.to_markdown());
+    let [Read::Paragraph(text)] = read.as_slice() else {
+        panic!("one paragraph: {read:?}")
+    };
+    assert!(text.starts_with("a\n") && text.ends_with("\nb"), "{text:?}");
+}
+
+#[test]
+fn a_body_text_paragraph_takes_no_numbering_from_its_style_in_markdown() {
+    // The French Word thesis numbers its headings through Titre1, on which
+    // its TOC Heading style, outline level 9, is based.
+    let mut doc = corpus_doc("word/thesis.docx");
+    doc.insert_paragraph(0, "Contents")
+        .style("En-ttedetabledesmatires");
+    let doc = reopen(&mut doc);
+    let html = doc.to_html_fragment();
+    assert!(html.starts_with("<p>Contents</p>\n"), "{html:.80}");
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        read_markdown(&markdown)[0],
+        Read::Paragraph("Contents".to_owned()),
+        "{:?}",
+        markdown.lines().next()
+    );
+}
+
+#[test]
 fn links_keep_their_url_and_an_unsafe_scheme_keeps_only_its_text() {
     let mut doc = Document::new();
     let query = doc.add_hyperlink_relationship("https://example.com/a?b=c&d=e");
@@ -1036,13 +1105,13 @@ fn markdown_keeps_the_text_of_a_nested_table() {
         ["EAN-13", "13 digits", "UPC-A", "12 digits"]
     );
     // GFM has no nested tables: the nested table's rows go into the cell,
-    // each on a line of its own.
+    // each on a line of its own, its cells between pipes.
     let markdown = doc.to_markdown();
     assert_eq!(
         read_markdown(&markdown),
         [Read::Table(vec![vec![
             "Supported codes".to_owned(),
-            "EAN-13 13 digits<br>UPC-A 12 digits".to_owned()
+            "EAN-13 | 13 digits<br>UPC-A | 12 digits".to_owned()
         ]])],
         "the nested table's text is missing from the Markdown: {markdown}"
     );

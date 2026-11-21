@@ -145,10 +145,8 @@ fn leave_quoted_list(out: &mut String, list_levels: &mut Vec<(u32, usize, u32)>,
 fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32> {
     let ppr = ppr?;
 
-    // Outline level 9 is body text, the level of Word's TOC Heading style:
-    // no heading.
     if let Some(lvl) = ppr.outline_lvl {
-        return (lvl < 9).then_some(lvl + 1);
+        return Some(lvl + 1);
     }
 
     let style_id = ppr.style_id.as_deref()?;
@@ -163,7 +161,7 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
         && let Some(spr) = &style.ppr
         && let Some(lvl) = spr.outline_lvl
     {
-        return (lvl < 9).then_some(lvl + 1);
+        return Some(lvl + 1);
     }
 
     None
@@ -209,11 +207,15 @@ fn emit_paragraph(
     let numbering = input.numbering.as_ref();
     let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
-    let mut heading_level = detect_heading_level(para.properties.as_ref(), styles);
+    let detected_level = detect_heading_level(para.properties.as_ref(), styles);
     // A heading numbered through its style, as Word numbers its headings,
     // stays a heading; only its own numbering makes it a list item.
     let list_info = detect_list(para, styles, numbering)
-        .filter(|_| heading_level.is_none() || crate::has_own_numbering(para));
+        .filter(|_| detected_level.is_none() || crate::has_own_numbering(para));
+    // Outline level 9 (level 10 here) is body text, the level of Word's TOC
+    // Heading style: written as a paragraph, which, as in HTML, takes no
+    // numbering from its style either.
+    let mut heading_level = detected_level.filter(|&level| level < 10);
 
     // Collect inline text for the paragraph
     let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries);
@@ -321,7 +323,7 @@ fn emit_paragraph(
                     .iter()
                     .position(|&(current, _, _)| current == level)
             })
-    } else if heading_level.is_none() && list_info.is_none() {
+    } else if detected_level.is_none() && list_info.is_none() {
         // A paragraph on a `none` level goes on the open item of its list at
         // its level or above.
         crate::unmarked_list_level(para, styles, numbering).and_then(|(num_id, level)| {
@@ -459,14 +461,24 @@ fn quote_owner<'a>(id: Option<&str>, styles: &'a CT_Styles) -> Option<&'a str> {
 /// CommonMark drops the whitespace a paragraph line starts with, and reads
 /// four columns of it as an indented code block. Written as a character
 /// reference, the first whitespace character of a line keeps the line's
-/// whitespace and the paragraph. A line of whitespace alone is left.
+/// whitespace and the paragraph. A line of spaces alone between two lines,
+/// the hard break of two line breaks in a row, would end the paragraph: a
+/// space written before it keeps it one paragraph. An empty line, as around
+/// a page break, is left.
 fn keep_leading_whitespace(text: &str) -> String {
-    text.split('\n')
-        .map(|line| match line.chars().next() {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let last = lines.len() - 1;
+    lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| match line.chars().next() {
             Some(first @ (' ' | '\t')) if !line.trim().is_empty() => {
                 format!("&#{};{}", u32::from(first), &line[1..])
             }
-            _ => line.to_owned(),
+            _ if index > 0 && index < last && !line.is_empty() && line.trim().is_empty() => {
+                format!("&#32;{line}")
+            }
+            _ => (*line).to_owned(),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -670,8 +682,10 @@ fn push_inline_segment(out: &mut String, pieces: &[(String, Marks)], link: Optio
 /// destination and an unbalanced parenthesis ends the link, so those are
 /// percent-encoded or escaped.
 fn push_link_destination(out: &mut String, url: &str) {
-    for character in url.chars() {
+    for (index, character) in url.char_indices() {
         match character {
+            // A reader decodes a character reference in a destination too.
+            '&' if starts_character_reference(&url[index + 1..]) => out.push_str("\\&"),
             ' ' => out.push_str("%20"),
             character if character.is_ascii_control() => {
                 out.push_str(&format!("%{:02X}", u32::from(character)));
@@ -708,7 +722,7 @@ fn push_escaped(text: &mut String, character: char) {
 
 /// Append document text as `push_escaped` does, escaping as well an `&` that
 /// starts a character reference, which a reader would turn into another
-/// character. A reference split across two runs is not seen.
+/// character.
 fn push_escaped_text(out: &mut String, text: &str) {
     for (index, character) in text.char_indices() {
         push_escaped_at(out, text, index, character);
@@ -726,21 +740,35 @@ fn push_escaped_at(out: &mut String, text: &str, index: usize, character: char) 
 
 /// Whether `rest`, the text after an `&`, starts as a character reference
 /// does: a name, `#` and decimal digits, or `#x` and hexadecimal digits,
-/// then `;`.
+/// then `;`. A reference body is at most 32 bytes, so only that far is
+/// read. Text that runs to its end as such a body may go on in the next run
+/// (Word splits runs around a word it flags), so it counts too.
 fn starts_character_reference(rest: &str) -> bool {
-    let Some(end) = rest.find(';') else {
-        return false;
-    };
-    let body = &rest[..end];
-    match body.strip_prefix('#') {
-        Some(number) => match number.strip_prefix(['x', 'X']) {
-            Some(hex) => (1..=6).contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit()),
-            None => (1..=7).contains(&number.len()) && number.bytes().all(|b| b.is_ascii_digit()),
-        },
+    let bytes = rest.as_bytes();
+    match bytes.iter().take(33).position(|&byte| byte == b';') {
+        Some(end) => {
+            let body = &bytes[..end];
+            match body.strip_prefix(b"#") {
+                Some(number) => match number.strip_prefix(b"x").or(number.strip_prefix(b"X")) {
+                    Some(hex) => {
+                        (1..=6).contains(&hex.len()) && hex.iter().all(u8::is_ascii_hexdigit)
+                    }
+                    None => {
+                        (1..=7).contains(&number.len()) && number.iter().all(u8::is_ascii_digit)
+                    }
+                },
+                None => {
+                    (1..=32).contains(&body.len())
+                        && body[0].is_ascii_alphabetic()
+                        && body.iter().all(u8::is_ascii_alphanumeric)
+                }
+            }
+        }
         None => {
-            (1..=32).contains(&body.len())
-                && body.starts_with(|c: char| c.is_ascii_alphabetic())
-                && body.bytes().all(|b| b.is_ascii_alphanumeric())
+            bytes.len() <= 32
+                && bytes
+                    .iter()
+                    .all(|&byte| byte.is_ascii_alphanumeric() || byte == b'#')
         }
     }
 }
@@ -1265,7 +1293,7 @@ fn collect_cell_text(
             }
             Block::Table(table) if table.accepted_view_removes() => {}
             // GFM has no nested tables: a nested table's rows go into the
-            // cell, each on a line of its own.
+            // cell, each on a line of its own, its cells between pipes.
             Block::Table(table) => {
                 let rows: Vec<String> = table
                     .rows()
@@ -1277,7 +1305,7 @@ fn collect_cell_text(
                             .map(|cell| collect_cell_text(cell, styles, hyperlink_urls, images))
                             .filter(|text| !text.is_empty())
                             .collect::<Vec<_>>()
-                            .join(" ")
+                            .join(" \\| ")
                     })
                     .filter(|row| !row.is_empty())
                     .collect();
