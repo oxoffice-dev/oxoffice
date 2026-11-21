@@ -983,8 +983,13 @@ fn removing_an_inline_control_takes_whole_threads_and_refuses_half_ones() {
                 .part_name()
                 .trim_start_matches('/')
                 .to_owned();
-            doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
-                .unwrap();
+            if kind == StoryKind::Body {
+                doc.add_comment(run_range(0, 0, 0, 1), "Ada", None, "Thread")
+                    .unwrap();
+            } else {
+                doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
+                    .unwrap();
+            }
             let bytes = doc.to_bytes().unwrap();
             let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
             let name = format!("/{part}");
