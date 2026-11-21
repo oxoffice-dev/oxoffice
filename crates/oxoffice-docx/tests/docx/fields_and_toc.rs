@@ -1612,6 +1612,33 @@ fn a_legacy_checkbox_in_a_tracked_deletion_draws_its_box_in_the_tracked_view() {
     assert_eq!(accepted, " kept", "the accepted view draws no box");
 }
 
+/// A legacy drop-down as Word saves it: `w:ffData` with its entries and the
+/// selected one, and no result run.
+fn word_dropdown(result: &str) -> String {
+    format!(
+        r#"<w:r><w:rPr><w:sz w:val="28"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="PaymentTerms"/><w:enabled/><w:calcOnExit w:val="0"/><w:ddList>{result}<w:listEntry w:val="On receipt"/><w:listEntry w:val="30 days"/><w:listEntry w:val="60 days"/></w:ddList></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMDROPDOWN </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    )
+}
+
+#[test]
+fn a_word_saved_legacy_dropdown_draws_its_selected_entry_in_its_opening_runs_format() {
+    let doc = doc_with_body(&format!(
+        "<w:p>{}</w:p><w:p>{}</w:p>",
+        word_dropdown(r#"<w:result w:val="1"/>"#),
+        word_dropdown(""),
+    ));
+    let runs = drawn_runs(&doc);
+    let texts: String = runs.iter().map(|(text, _, _)| text.as_str()).collect();
+    assert_eq!(
+        texts, "30 daysOn receipt",
+        "the selected entry, else the first"
+    );
+    assert!(
+        runs.iter().all(|(_, size, _)| *size == 14.0),
+        "the opening run's size: {runs:?}"
+    );
+}
+
 #[test]
 fn a_locked_legacy_checkbox_draws_its_box() {
     let checkbox = word_checkbox("<w:sizeAuto/>", true).replacen(
