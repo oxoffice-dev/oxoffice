@@ -19,8 +19,3 @@ oxoffice-drawing.workspace = true
 oxoffice-layout.workspace = true
 oxoffice-sml.workspace = true
 quick-xml.workspace = true
-
-[dev-dependencies]
-oxoffice-opc.workspace = true
-oxoffice-pdf.workspace = true
-tiny-skia.workspace = true

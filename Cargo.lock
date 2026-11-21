@@ -1116,11 +1116,8 @@ dependencies = [
  "oxoffice-core",
  "oxoffice-drawing",
  "oxoffice-layout",
- "oxoffice-opc",
- "oxoffice-pdf",
  "oxoffice-sml",
  "quick-xml",
- "tiny-skia",
 ]
 
 [[package]]
