@@ -1207,6 +1207,76 @@ fn a_heading_renamed_after_a_changed_table_keeps_its_bookmark() {
     assert_eq!(bookmark_names(&rejected(&mut doc)), ["_Toc5"]);
 }
 
+#[test]
+fn a_cross_referenced_heading_compares_after_a_heading_is_added_before_it() {
+    // Word renumbers every bookmark id on save: the `_Ref` target that the
+    // cross-reference names moves from id 2 to id 3 with the new heading.
+    let heading = |text: &str, marks: &[(u32, &str)]| {
+        let starts = marks
+            .iter()
+            .map(|(id, name)| format!(r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/>"#))
+            .collect::<String>();
+        let ends = marks
+            .iter()
+            .map(|(id, _)| format!(r#"<w:bookmarkEnd w:id="{id}"/>"#))
+            .collect::<String>();
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{starts}<w:r><w:t>{text}</w:t></w:r>{ends}</w:p>"#
+        )
+    };
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}{}",
+            heading("Intro", &[(0, "_Toc1")]),
+            body("Hello."),
+            heading("Results", &[(1, "_Toc2"), (2, "_Ref9")]),
+            body("Data."),
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}{}{}",
+        heading("Intro", &[(0, "_Toc11")]),
+        body("Hello."),
+        heading("Methods", &[(1, "_Toc12")]),
+        body("How."),
+        heading("Results", &[(2, "_Toc13"), (3, "_Ref9")]),
+        body("Data."),
+    ));
+    let mut doc = redline(original(), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    let names = bookmark_names(&copy);
+    assert!(names.contains(&"_Ref9".to_owned()), "{names:?}");
+    assert_eq!(names.len(), 4, "{names:?}");
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original()));
+    assert_eq!(bookmark_names(&copy), bookmark_names(&original()));
+}
+
+#[test]
+fn a_link_to_another_file_keeps_the_bookmark_it_names() {
+    // `\l "_Toc7"` after a file names that file's bookmark, not this one's.
+    let document = |name: &str, text: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK "part1.docx" \l "_Toc7" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Part one</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+                r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+                r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#,
+            ),
+            name = name,
+            text = text,
+        ))
+    };
+    let mut doc = redline(document("_Toc1", "Old."), &document("_Toc7", "New."));
+    let copy = accepted(&mut doc);
+    assert_eq!(bookmark_names(&copy), ["_Toc1"]);
+    assert_eq!(
+        field_instructions(&copy),
+        [r#"HYPERLINK "part1.docx" \l "_Toc7""#]
+    );
+}
+
 /// The instruction of every field of the body, in order.
 fn field_instructions(doc: &Document) -> Vec<String> {
     let mut instructions = Vec::new();

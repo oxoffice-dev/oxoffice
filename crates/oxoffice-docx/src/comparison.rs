@@ -5662,8 +5662,9 @@ fn reconcile_body_bookmarks(
             })
             .collect::<Vec<Vec<String>>>()
     };
-    // Signatures as the comparison reads them once the names agree: without
-    // the generated bookmarks, which are what differs.
+    // Signatures as the comparison reads them once the identities agree:
+    // without the generated bookmarks, and without the ids of the others,
+    // which the rewrite aligns.
     let signatures = |document: &Document| {
         document
             .document
@@ -5674,7 +5675,10 @@ fn reconcile_body_bookmarks(
                 let BodyContent::Paragraph(paragraph) = content else {
                     return body_signature_with_options(content, options);
                 };
-                let ids = paragraph
+                if paragraph.bookmark_markers.is_empty() {
+                    return body_signature_with_options(content, options);
+                }
+                let generated = paragraph
                     .bookmark_markers
                     .iter()
                     .filter(|marker| {
@@ -5682,18 +5686,32 @@ fn reconcile_body_bookmarks(
                     })
                     .filter_map(|marker| marker.id())
                     .collect::<HashSet<_>>();
-                if ids.is_empty() {
-                    return body_signature_with_options(content, options);
-                }
                 let mut paragraph = paragraph.clone();
                 paragraph
                     .bookmark_markers
-                    .retain(|marker| !marker.id().is_some_and(|id| ids.contains(&id)));
+                    .retain(|marker| !marker.id().is_some_and(|id| generated.contains(&id)));
                 paragraph
                     .extra_xml
-                    .retain(|(_, raw)| !raw_bookmark_id(raw).is_some_and(|id| ids.contains(&id)));
+                    .retain_mut(|(_, raw)| match raw_bookmark(raw) {
+                        Some((_, Some(id), _)) if generated.contains(&id) => false,
+                        Some((start, _, name)) => {
+                            *raw = format!("bookmark:{start}:{name:?}").into_bytes();
+                            true
+                        }
+                        None => true,
+                    });
                 body_signature_with_options(&BodyContent::Paragraph(paragraph), options)
             })
+            .collect::<Vec<_>>()
+    };
+    // Plain signatures, as the comparison reads the rewritten input.
+    let plain_signatures = |document: &Document| {
+        document
+            .document
+            .body
+            .content
+            .iter()
+            .map(|content| body_signature_with_options(content, options))
             .collect::<Vec<_>>()
     };
     let left_generated = generated(original);
@@ -5704,6 +5722,7 @@ fn reconcile_body_bookmarks(
         .collect::<HashSet<_>>();
     let mut names = HashMap::new();
     let mut unpaired = HashSet::new();
+    let mut renamed_pairs = Vec::new();
     if right_generated.iter().any(|names| !names.is_empty()) {
         let (left_signatures, right_signatures) = (signatures(original), signatures(edited));
         let mut paired = vec![false; right_generated.len()];
@@ -5717,6 +5736,9 @@ fn reconcile_body_bookmarks(
                 && right_generated[right].len() == left_generated[left].len()
             {
                 paired[right] = true;
+                if right_generated[right] != left_generated[left] {
+                    renamed_pairs.push((left, right));
+                }
                 names.extend(
                     right_generated[right]
                         .iter()
@@ -5872,7 +5894,23 @@ fn reconcile_body_bookmarks(
         return Ok(());
     };
     let part = edited.doc_part_name.clone();
-    crate::document::set_story_source_xml(edited, &part, xml)
+    let mut candidate = edited.clone_for_staging();
+    crate::document::set_story_source_xml(&mut candidate, &part, xml)?;
+    // The comparison pairs the rewritten blocks again: a renamed heading it
+    // pairs with another one would hold that heading's bookmark beside the
+    // original's, so the input stays as it is unless every pair holds.
+    if !renamed_pairs.is_empty() {
+        let (left, right) = (plain_signatures(original), plain_signatures(&candidate));
+        let pairs = pair_gaps_by_kind(align(&left, &right), &left, &right)
+            .into_iter()
+            .filter_map(|pair| Some((pair.0?, pair.1?)))
+            .collect::<HashSet<_>>();
+        if renamed_pairs.iter().any(|pair| !pairs.contains(pair)) {
+            return Ok(());
+        }
+    }
+    *edited = candidate;
+    Ok(())
 }
 
 /// The bookmark starts of a main story, in document order. Copies in an
@@ -5893,23 +5931,29 @@ fn body_bookmarks(xml: &[u8]) -> Result<Vec<BodyBookmark>> {
     Ok(bookmarks)
 }
 
-/// The id of a raw bookmark start or end the paragraph model keeps verbatim.
-fn raw_bookmark_id(raw: &[u8]) -> Option<i32> {
+/// A raw bookmark start or end the paragraph model keeps verbatim: whether
+/// it starts, its id and its name.
+fn raw_bookmark(raw: &[u8]) -> Option<(bool, Option<i32>, Option<String>)> {
     let mut reader = Reader::from_reader(raw);
     let (Ok(Event::Start(element)) | Ok(Event::Empty(element))) = reader.read_event() else {
         return None;
     };
-    if !matches!(
-        element.local_name().as_ref(),
-        b"bookmarkStart" | b"bookmarkEnd"
-    ) {
-        return None;
+    let start = match element.local_name().as_ref() {
+        b"bookmarkStart" => true,
+        b"bookmarkEnd" => false,
+        _ => return None,
+    };
+    let mut id = None;
+    let mut name = None;
+    for attribute in element.attributes().flatten() {
+        let value = std::str::from_utf8(&attribute.value).ok();
+        match attribute.key.local_name().as_ref() {
+            b"id" => id = value.and_then(|value| value.parse().ok()),
+            b"name" => name = value.map(str::to_owned),
+            _ => {}
+        }
     }
-    element.attributes().flatten().find_map(|attribute| {
-        (attribute.key.local_name().as_ref() == b"id")
-            .then(|| std::str::from_utf8(&attribute.value).ok()?.parse().ok())
-            .flatten()
-    })
+    Some((start, id, name))
 }
 
 /// The ids of the bookmark starts of a story.
@@ -6037,6 +6081,9 @@ fn rewrite_body_bookmarks(
             segments.push((text.len(), node.open_end));
             text.extend_from_slice(&xml[node.open_end..node.close_start]);
         }
+        if links_another_file(&text) {
+            return true;
+        }
         for range in name_token_ranges(&text) {
             let token = std::str::from_utf8(&text[range.clone()]).expect("ASCII token");
             let Some(name) = names.get(token) else {
@@ -6094,12 +6141,14 @@ fn rewrite_body_bookmarks(
             "bookmarkStart" | "bookmarkEnd" | "hyperlink" | "fldSimple" => {}
             _ => continue,
         }
+        // A link to another part names a bookmark of that target.
+        let external_link = node.local == "hyperlink" && relationship_link(&tree, xml, index)?;
         let updated = rewritten_opening(&tree, xml, index, |local, value| {
             match (node.local.as_str(), local) {
                 ("bookmarkStart" | "bookmarkEnd", "id") => renumbered(value),
-                ("bookmarkStart", "name") | ("hyperlink", "anchor") | ("fldSimple", "instr") => {
-                    renamed(value)
-                }
+                ("bookmarkStart", "name") => renamed(value),
+                ("hyperlink", "anchor") if !external_link => renamed(value),
+                ("fldSimple", "instr") if !links_another_file(value) => renamed(value),
                 _ => None,
             }
         })?;
@@ -6118,6 +6167,49 @@ fn rewrite_body_bookmarks(
         updated.splice(range, value);
     }
     Ok(Some(updated))
+}
+
+/// Whether an element carries an `r:id`, the relationship of a link target.
+fn relationship_link(
+    tree: &crate::revision::XmlTree<'_>,
+    xml: &[u8],
+    index: usize,
+) -> Result<bool> {
+    let node = &tree.elements[index];
+    let scope = tree
+        .source_scope(index)
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let mut reader = Reader::from_reader(&xml[node.start..node.open_end]);
+    let (Event::Start(start) | Event::Empty(start)) = reader
+        .read_event()
+        .map_err(|error| Error::Other(error.to_string()))?
+    else {
+        unreachable!("element opening");
+    };
+    Ok(start.attributes().flatten().any(|attribute| {
+        std::str::from_utf8(attribute.key.as_ref())
+            .ok()
+            .and_then(|key| key.split_once(':'))
+            .is_some_and(|(prefix, local)| {
+                local == "id"
+                    && scope
+                        .get(prefix)
+                        .is_some_and(|uri| uri == oxoffice_docx_oxml::namespace::R_NS)
+            })
+    }))
+}
+
+/// Whether a field instruction is a `HYPERLINK` to another file, whose `\l`
+/// names a bookmark of that file.
+fn links_another_file(instruction: &[u8]) -> bool {
+    let mut words = instruction
+        .split(u8::is_ascii_whitespace)
+        .filter(|word| !word.is_empty());
+    words
+        .next()
+        .is_some_and(|word| word.eq_ignore_ascii_case(b"HYPERLINK"))
+        && words.next().is_some_and(|word| !word.starts_with(b"\\"))
 }
 
 /// The opening tag of an element with some Word attribute values replaced,
