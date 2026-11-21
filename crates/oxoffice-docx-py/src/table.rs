@@ -2225,7 +2225,7 @@ impl PyCell {
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
         let story = if current_related.is_none() {
-            // Preserve the direct-table lookup's current error and work ordering.
+            // Preserve the direct-table lookup's current error ordering.
             let slot = document
                 .inner
                 .content_index_of_table(table)

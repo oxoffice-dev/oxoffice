@@ -7333,8 +7333,8 @@ fn drawing_ids_in_xml(xml: &[u8]) -> Result<HashSet<u32>> {
 
 #[cfg(debug_assertions)]
 thread_local! {
-    /// Forces the whole-input canonical scanners. Production release stays off.
-    /// Debug oracles and reference tests, including release tests, turn it on.
+    /// Forces the whole-input canonical scanners. The debug cross-checks turn
+    /// it on; release builds always use the block proofs.
     static CANONICAL_BLOCK_PROOF_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -14488,8 +14488,8 @@ pub(crate) fn story_namespace_scope_at(
     let mut buffer = Vec::new();
     loop {
         let before = reader.buffer_position() as usize;
-        let a9_event = reader.read_event_into(&mut buffer);
-        match a9_event
+        match reader
+            .read_event_into(&mut buffer)
             .map_err(|error| Error::Other(format!("story namespace scope scan failed: {error}")))?
         {
             Event::Start(element) => {
@@ -14626,8 +14626,8 @@ fn story_namespace_scopes_at(
     let mut buffer = Vec::new();
     loop {
         let before = reader.buffer_position() as usize;
-        let a9_event = reader.read_event_into(&mut buffer);
-        match a9_event
+        match reader
+            .read_event_into(&mut buffer)
             .map_err(|error| Error::Other(format!("story namespace scope scan failed: {error}")))?
         {
             Event::Start(element) => {
@@ -34574,12 +34574,12 @@ impl Document {
                 // equality can itself read XML and retains its original order.
                 let early = (same_opening && facts.is_some()).then(&mut qualify);
                 let finite_origin = early.as_ref().is_some_and(Option::is_some);
-                if !finite_origin && { item != opened_item } {
+                if !finite_origin && item != opened_item {
                     return Ok(None);
                 }
                 if let Some(record) = models
                     && !(finite_origin && staged_origin)
-                    && { record.blocks[slot].staged.as_deref() != Some(item) }
+                    && record.blocks[slot].staged.as_deref() != Some(item)
                 {
                     models = None;
                 }
@@ -35433,8 +35433,8 @@ impl Document {
         let mut buffer = Vec::new();
         loop {
             let before = reader.buffer_position() as usize;
-            let a9_event = reader.read_event_into(&mut buffer);
-            match a9_event
+            match reader
+                .read_event_into(&mut buffer)
                 .map_err(|error| Error::Other(format!("table source order scan failed: {error}")))?
             {
                 Event::Start(_) | Event::Empty(_) => {
