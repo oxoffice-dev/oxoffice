@@ -92,6 +92,8 @@ The maintainer decided on 2026-11-21 (about 07:55 UTC):
   answer (a test that fails without the fix, or a mutation check), or a
   follow-up issue, or why it is not a defect. A minor that would need a
   risky change goes to a follow-up issue, not into the pull request.
+  (Changed by the amendment below: a cheap minor is fixed in the pull
+  request, one follow-up issue at most.)
 - **A rebase or merge that only resolves a conflict in data**
   (`limitations.json`, a generated page, the `GROWING` or test-module lists,
   a moved context line) needs no review: `git range-diff`, the tests, and a
@@ -110,12 +112,13 @@ of [CLAUDE.md](../CLAUDE.md) say so.
 ## Amendment 2026-11-21: minors fixed in the pull request
 
 The reviews of the day opened follow-up issues for minors, several per pull
-request: 135 issues were opened on 2026-11-21, while the goal is to close
-every issue before 0.2.0. The maintainer decided: a minor found in review is
+request: 135 issues were opened on 2026-11-21, many of them review
+follow-ups, while the goal is to close every issue before 0.2.0. The maintainer decided: a minor found in review is
 fixed in the pull request when the fix is cheap, with its proof (a test that
 fails without it, or a mutation check). A follow-up issue is opened only for
 a real defect that the pull request cannot carry, and at most one per pull
-request, grouping its findings. The budget of reviews is unchanged. Rule 9
+request, grouping its findings. This replaces the minors bullet of the
+budget amendment above; the budget of reviews is unchanged. Rule 9
 of [CLAUDE.md](../CLAUDE.md) and
 [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#independent-review) say so.
 
