@@ -9986,8 +9986,9 @@ impl Presentation {
     /// Removes one slide and its owned package graph by zero-based index.
     ///
     /// The package metadata stops naming it: `docProps/app.xml` counts the
-    /// slides left and drops its title lists, unless it lies outside its
-    /// namespace, and the package thumbnail, which may picture it, goes.
+    /// slides left and drops its title lists, unless the source-preserving
+    /// patch cannot edit it (one outside its namespace, say), and the package
+    /// thumbnail, which may picture it, goes.
     pub fn remove_slide(&mut self, index: usize) -> Result<()> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10910,8 +10911,9 @@ impl Presentation {
     /// (`HeadingPairs`, `TitlesOfParts`), which may name the removed slide:
     /// their group names are localised, so the removed title cannot be told
     /// apart, and PowerPoint writes them again on its next save. An app.xml
-    /// the source-preserving patch cannot edit (one outside its namespace)
-    /// is left as it was rather than refusing the removal.
+    /// the source-preserving patch cannot edit (one outside its namespace,
+    /// or with a count in a foreign namespace) is left as it was rather than
+    /// refusing the removal.
     ///
     /// The package thumbnail pictures the slide that was first when the deck
     /// was last saved, which moves and inserts may have taken anywhere, so

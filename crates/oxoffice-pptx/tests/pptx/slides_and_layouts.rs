@@ -1242,11 +1242,13 @@ fn an_app_xml_outside_its_namespace_does_not_stop_a_removal() {
 
 #[test]
 fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
-    // The authored deck says it has no slide; its counts follow the deck.
+    // The authored deck says it has no slide and no notes; its counts follow
+    // the deck, whose Highlights slide keeps its notes text.
     let mut prs = corpus_deck("authored/deck.pptx");
     prs.remove_slide(3).unwrap();
     let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
     assert!(app.contains("<Slides>3</Slides>"), "{app}");
+    assert!(app.contains("<Notes>1</Notes>"), "{app}");
 
     // Google writes no app.xml, LibreOffice one without counts or titles.
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
