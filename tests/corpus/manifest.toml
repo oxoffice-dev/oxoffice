@@ -87,6 +87,12 @@ size = 70468
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "text-box", "transition", "sections", "widescreen"]
 
 [[file]]
+path = "authored/record.docx"
+producer = "python-docx 1.2.0"
+size = 42746
+features = ["headings", "numbered-list", "multi-level-list", "table", "merged-cells", "comment", "comment-reply", "tracked-changes", "header-footer", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "checkbox-control", "date-control", "list-control", "rsid"]
+
+[[file]]
 path = "authored/report.docx"
 producer = "python-docx 1.2.0"
 size = 41241
@@ -277,6 +283,12 @@ path = "libreoffice/pitch.pptx"
 producer = "LibreOffice 26.2.6.3"
 size = 66888
 features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merged-cells", "picture", "chart", "transition", "widescreen"]
+
+[[file]]
+path = "libreoffice/record.docx"
+producer = "LibreOffice 26.2.6.3"
+size = 28912
+features = ["headings", "numbered-list", "multi-level-list", "table", "merged-cells", "comment", "comment-reply", "tracked-changes", "header-footer", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "checkbox-control", "date-control", "list-control"]
 
 [[file]]
 path = "libreoffice/report.docx"
