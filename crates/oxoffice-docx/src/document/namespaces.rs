@@ -353,9 +353,10 @@ fn is_modeled_word_child(parent: Option<&[u8]>, local_name: &[u8]) -> bool {
                 | b"footnoteReference"
                 | b"endnoteReference"
         ),
-        Some(b"hyperlink") => {
-            matches!(local_name, b"r" | b"ins" | b"del" | b"moveFrom" | b"moveTo")
-        }
+        Some(b"hyperlink") => matches!(
+            local_name,
+            b"r" | b"fldSimple" | b"ins" | b"del" | b"moveFrom" | b"moveTo"
+        ),
         Some(b"sdt") => matches!(local_name, b"sdtPr" | b"sdtEndPr" | b"sdtContent"),
         Some(b"sdtContent") => {
             matches!(local_name, b"p" | b"tbl" | b"tr" | b"tc" | b"r" | b"sdt")

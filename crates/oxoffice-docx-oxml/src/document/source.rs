@@ -1175,7 +1175,10 @@ pub(crate) fn admitted_word_child(parent: &[u8], child: &[u8]) -> bool {
         b"sdt" => child == b"sdtContent",
         // The actual owner-specific SdtOwner predicate decides content below.
         b"sdtContent" => true,
-        b"hyperlink" => matches!(child, b"r" | b"ins" | b"del" | b"moveFrom" | b"moveTo"),
+        b"hyperlink" => matches!(
+            child,
+            b"r" | b"fldSimple" | b"ins" | b"del" | b"moveFrom" | b"moveTo"
+        ),
         b"fldSimple" => matches!(
             child,
             b"r" | b"fldSimple"
@@ -3421,6 +3424,7 @@ fn constructor_child_kind(
         },
         K::Paragraph => paragraph_constructor_kind(local, empty),
         K::Hyperlink | K::SimpleFieldResult if local == b"r" => K::Run,
+        K::Hyperlink if local == b"fldSimple" => K::SimpleFieldUnknown,
         K::Hyperlink if matches!(local, b"ins" | b"del" | b"moveFrom" | b"moveTo") => {
             K::Revision(true)
         }

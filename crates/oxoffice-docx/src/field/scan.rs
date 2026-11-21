@@ -1255,7 +1255,10 @@ pub(super) fn accepted_simple_field_parent(
     direct_typed_paragraph_parent(elements, Some(paragraph))
         || elements.last().is_some_and(|parent| {
             parent.is_typed_inline_owner
-                && matches!(parent.local_name.as_slice(), b"ins" | b"moveTo")
+                && matches!(
+                    parent.local_name.as_slice(),
+                    b"ins" | b"moveTo" | b"hyperlink"
+                )
                 && parent.paragraph == Some(paragraph)
         })
 }

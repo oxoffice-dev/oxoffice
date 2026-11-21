@@ -338,22 +338,105 @@ fn a_field_added_to_a_hyperlink_reads_in_the_link_text() {
     assert_eq!(texts(&doc), ["See page 2", "2"]);
 }
 
-// Fails today: a w:fldSimple inside w:hyperlink is kept raw at the next open, so its result drops out of every text reader. Issue: #146
 #[test]
-#[should_panic(expected = "the link keeps the field result after a reopen")]
 fn a_simple_field_inside_a_hyperlink_reads_after_a_reopen() {
     let mut doc = Document::new();
     doc.add_paragraph("")
         .add_internal_hyperlink("See page ", "total", None)
         .add_field("PAGEREF total", "2")
         .unwrap();
+    doc.add_paragraph("")
+        .add_internal_hyperlink("", "total", None)
+        .add_field("PAGEREF total", "2")
+        .unwrap();
     let doc = reopen(&mut doc);
     assert_eq!(
         texts(&doc),
-        ["See page 2"],
+        ["See page 2", "2"],
         "the link keeps the field result after a reopen"
     );
     assert_eq!(link_text(&doc, 0), "See page 2");
+    assert_eq!(link_text(&doc, 1), "2", "alone in the link run");
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_in_a_file_reads_and_saves_as_written() {
+    // As a file writes it: a w:fldSimple with its result, and an empty one.
+    let body = r#"<w:p><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGEREF total "><w:r><w:t>2</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> of </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "/></w:hyperlink></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        assert_eq!(texts(doc), ["See page 2 of "]);
+        assert_eq!(link_text(doc, 0), "See page 2 of ");
+        let mut fields = Vec::new();
+        for run in doc.paragraph(0).unwrap().runs() {
+            for item in run.items() {
+                if let RunItemRef::Field(field) = item {
+                    fields.push((field.kind(), field.instruction().trim().to_owned()));
+                }
+            }
+        }
+        assert_eq!(
+            fields,
+            [
+                (FieldKind::Simple, "PAGEREF total".to_owned()),
+                (FieldKind::Simple, "NUMPAGES".to_owned())
+            ]
+        );
+    }
+    // An edit in the paragraph writes the link again, its fields in place.
+    doc.paragraph_mut(0).unwrap().add_run(" tail");
+    let package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let link = &xml[xml.find("<w:hyperlink").unwrap()..xml.find("</w:hyperlink>").unwrap()];
+    let pageref = link
+        .find("PAGEREF total")
+        .expect("the PAGEREF stays in the link");
+    let numpages = link
+        .find("NUMPAGES")
+        .expect("the NUMPAGES stays in the link");
+    assert!(pageref < numpages, "{link}");
+    assert_eq!(texts(&reopen(&mut doc)), ["See page 2 of  tail"]);
+
+    // The story items read the field result, and a comparison of the file
+    // with its own copy runs.
+    let doc = doc_with_body(body);
+    let items: Vec<_> = doc
+        .story_items(&story(&doc, StoryKind::Body))
+        .unwrap()
+        .into_iter()
+        .filter_map(|item| item.text().unwrap())
+        .collect();
+    // As for a simple field directly in a paragraph: the paragraph, then
+    // the field with its result.
+    assert_eq!(items, ["See page 2 of ", "2"]);
+    let mut compared = doc_with_body(body);
+    compared
+        .compare(&doc_with_body(body), "Ana", "2026-01-01T00:00:00Z")
+        .unwrap();
+    assert_eq!(texts(&compared), ["See page 2 of "]);
+    // A comparison with an edit in the link's text maps the link's runs,
+    // its fields included.
+    let mut compared = doc_with_body(body);
+    compared
+        .compare(
+            &doc_with_body(&body.replace(" of </w:t>", " out of </w:t>")),
+            "Ana",
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+    assert_eq!(texts(&compared), ["See page 2 out of "]);
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_inside_an_insertion_reads_in_the_accepted_text() {
+    let doc = doc_with_body(
+        r#"<w:p><w:ins w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>2</w:t></w:r></w:fldSimple></w:hyperlink></w:ins></w:p>"#,
+    );
+    assert_eq!(texts(&doc), ["See page 2"]);
 }
 
 #[test]

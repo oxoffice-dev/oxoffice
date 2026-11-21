@@ -112,10 +112,51 @@ pub(super) fn parse_hyperlink_children(
                     } else {
                         extra_xml.push((runs.len(), revisions_at_boundary, raw));
                     }
+                } else if source_facts.is_none()
+                    && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
+                {
+                    // A simple field in a link is a field run, as it is in the
+                    // paragraph, so its result reads in the link's text.
+                    let prepared_header = cursor.as_ref().and_then(|cursor| {
+                        cursor.simple_header(
+                            &reader,
+                            event_start..reader.buffer_position(),
+                            &element,
+                            &prefixes,
+                        )
+                    });
+                    let raw = capture_element(&mut reader, &element)?;
+                    let captured = event_start..reader.buffer_position();
+                    let mapped = cursor
+                        .as_ref()
+                        .and_then(|cursor| cursor.field_input(&reader, captured.clone(), &raw));
+                    let prepared_selector = cursor
+                        .as_ref()
+                        .and_then(|cursor| cursor.simple_selector(&reader, captured, &raw));
+                    if let Some((field, _)) = parse_simple_field_with_summary(
+                        &raw,
+                        &prefixes,
+                        prepared_header,
+                        prepared_selector,
+                        mapped.as_ref(),
+                    )? {
+                        runs.push(field_run(field, None));
+                        if collect_texts {
+                            text_facts.push(None);
+                        }
+                        run_sources.push(Some(raw));
+                        revisions_at_boundary = 0;
+                    } else {
+                        extra_xml.push((runs.len(), revisions_at_boundary, raw));
+                    }
                 } else {
                     let raw = capture_element(&mut reader, &element)?;
                     if let Some(facts) = source_facts.as_deref_mut() {
-                        if is_word_element(element.name().as_ref(), b"hyperlink", &prefixes) {
+                        if is_word_element(element.name().as_ref(), b"fldSimple", &prefixes) {
+                            // Read later, as the paragraph defers its own.
+                            facts.simple_fields_deferred = true;
+                        } else if is_word_element(element.name().as_ref(), b"hyperlink", &prefixes)
+                        {
                             facts.append_opaque_hyperlink(&raw, &prefixes)?;
                         } else if crate::revision::revision_kind(element.name().as_ref(), &prefixes)
                             .is_some()
@@ -168,7 +209,36 @@ pub(super) fn parse_hyperlink_children(
                     } else {
                         extra_xml.push((runs.len(), revisions_at_boundary, raw));
                     }
+                } else if source_facts.is_none()
+                    && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
+                {
+                    let mapped = cursor.as_ref().and_then(|cursor| {
+                        cursor.field_input(&reader, event_start..reader.buffer_position(), &raw)
+                    });
+                    if let Some((field, _)) = parse_empty_simple_field(
+                        &element,
+                        &raw,
+                        prefixes.into_owned(),
+                        mapped.as_ref(),
+                    )? {
+                        if let Some(mapped) = mapped {
+                            mapped.register(&field)?;
+                        }
+                        runs.push(field_run(field, None));
+                        if collect_texts {
+                            text_facts.push(None);
+                        }
+                        run_sources.push(None);
+                        revisions_at_boundary = 0;
+                    } else {
+                        extra_xml.push((runs.len(), revisions_at_boundary, raw));
+                    }
                 } else {
+                    if let Some(facts) = source_facts.as_deref_mut()
+                        && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
+                    {
+                        facts.simple_fields_deferred = true;
+                    }
                     extra_xml.push((runs.len(), revisions_at_boundary, raw));
                 }
             }

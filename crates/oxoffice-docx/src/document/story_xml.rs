@@ -344,7 +344,10 @@ fn modeled_word_child(parent: &[u8], child: &[u8]) -> bool {
         b"sdt" => matches!(child, b"sdtPr" | b"sdtEndPr" | b"sdtContent"),
         b"sdtContent" => false,
         b"hyperlink" => {
-            matches!(child, b"r" | b"ins" | b"del" | b"moveFrom" | b"moveTo")
+            matches!(
+                child,
+                b"r" | b"fldSimple" | b"ins" | b"del" | b"moveFrom" | b"moveTo"
+            )
         }
         b"ins" | b"del" | b"moveFrom" | b"moveTo" => matches!(
             child,
