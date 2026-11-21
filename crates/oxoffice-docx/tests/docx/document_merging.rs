@@ -940,12 +940,7 @@ fn importing_gives_taken_bookmarks_controls_and_revisions_new_identities() {
     assert_ne!(revisions[0].0, revisions[1].0);
 }
 
-// Fails today: import gives every imported bookmark a new MailMerge<n>
-// name, the free ones too (insert_document does the same). Its REF fields
-// and internal links follow, but the name a reader sees in Word's bookmark
-// list, and any link from outside the document, are lost. Issue: #194
 #[test]
-#[should_panic(expected = "a free bookmark name survives the import")]
 fn a_bookmark_whose_name_is_free_keeps_it_on_import() {
     let source = doc_with_body(
         r#"<w:p><w:bookmarkStart w:id="0" w:name="Summary"/><w:r><w:t>summary</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
