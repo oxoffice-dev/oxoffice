@@ -10,8 +10,8 @@ use oxoffice_cli_support::{
     ensure_output_paths_available, json_envelope, parse_range,
 };
 use oxoffice_docx::{
-    BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, ContentLocation,
-    CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
+    BodyItemRef, CommentDate, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
+    ContentLocation, CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
     FieldEvaluationContext, HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat,
     RasterOptions, RasterOutput, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal,
     RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId, StoryItemKind, StoryKind,
@@ -1720,7 +1720,7 @@ pub fn comment_add(
     author: &str,
     initials: Option<&str>,
     text: &str,
-    date: Option<&str>,
+    date: CommentDate<'_>,
     output: &Path,
     json_output: bool,
 ) -> Result<()> {
@@ -1773,7 +1773,7 @@ pub fn comment_reply(
     author: &str,
     initials: Option<&str>,
     text: &str,
-    date: Option<&str>,
+    date: CommentDate<'_>,
     output: &Path,
     json_output: bool,
 ) -> Result<()> {

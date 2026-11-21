@@ -2,6 +2,7 @@
 //! `cargo test -p oxoffice-docx --test docx`.
 
 mod checked_replacement;
+mod comment_dates;
 mod comments;
 mod corpus;
 mod fields_and_toc;

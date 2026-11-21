@@ -5,8 +5,8 @@
 use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx::{
-    Alignment, BorderStyle, CellBorderEdge, CellItemRef, CellTextDirection, Document, Length,
-    RowHeight, StyleType, TableBorderEdge, TableCellMargins, TableConditionalFormatting,
+    Alignment, BorderStyle, CellBorderEdge, CellItemRef, CellTextDirection, CommentDate, Document,
+    Length, RowHeight, StyleType, TableBorderEdge, TableCellMargins, TableConditionalFormatting,
     TableLayout, TableLook, TableWidth, VMerge, VerticalAlignment,
 };
 
@@ -22,7 +22,7 @@ const REPORTS: [&str; 4] = [
 /// The merged last row of the styled table of every corpus report.
 const NOTE: &str = "Operating margin excludes one-off costs of the Lyon opening (212).";
 
-const DATE: Option<&str> = Some("2026-11-20T00:00:00Z");
+const DATE: CommentDate = CommentDate::At("2026-11-20T00:00:00Z");
 
 /// A new document holding one table with these cell texts, row by row.
 fn table_doc(rows: &[&[&str]]) -> Document {

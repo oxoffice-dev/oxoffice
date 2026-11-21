@@ -114,7 +114,7 @@ fn the_source_is_still_refused_after_edits() {
         "Reviewer",
         None,
         "A comment",
-        Some("2026-11-20T00:00:00Z"),
+        oxoffice_docx::CommentDate::At("2026-11-20T00:00:00Z"),
     )
     .unwrap();
     assert_refused(&mut doc, &path);

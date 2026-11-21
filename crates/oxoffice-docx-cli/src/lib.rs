@@ -221,10 +221,11 @@ enum Command {
     /// unless every pair with an expected count replaced exactly that count,
     /// and, without --regex or --allow-unreached, unless no placeholder is
     /// left after its replacement, out of its reach. A tab reads as a tab
-    /// character and a break as a line feed, as `text` prints them: a
-    /// placeholder holding one matches it, a value holding one writes it, a
-    /// carriage return writing a line break too (in --map JSON, "\t" and
-    /// "\n"); a page or column break written back becomes a line break.
+    /// character and a break as a line feed, as `text` prints them (in --map
+    /// JSON, write them "\t" and "\n"): a placeholder holding one matches it,
+    /// and a value holding one writes it. A carriage return or a Windows line
+    /// ending in a value writes one line break, and a page or column break
+    /// matched and written back becomes a line break.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,
@@ -569,9 +570,12 @@ enum CommentCommand {
         /// Comment text, one paragraph per line
         #[arg(long)]
         text: String,
-        /// RFC 3339 comment timestamp, omitted from the comment when absent
+        /// RFC 3339 comment timestamp, the current time when absent
         #[arg(long)]
         date: Option<String>,
+        /// Write the comment without a date, as Word's Document Inspector does
+        #[arg(long, conflicts_with = "date")]
+        undated: bool,
         /// Output DOCX file
         #[arg(long, short = 'o')]
         output: PathBuf,
@@ -614,9 +618,12 @@ enum CommentCommand {
         /// Optional reply author initials
         #[arg(long)]
         initials: Option<String>,
-        /// RFC 3339 reply timestamp, omitted from the reply when absent
+        /// RFC 3339 reply timestamp, the current time when absent
         #[arg(long)]
         date: Option<String>,
+        /// Write the reply without a date, as Word's Document Inspector does
+        #[arg(long, conflicts_with = "date")]
+        undated: bool,
         /// Output DOCX file
         #[arg(long, short = 'o')]
         output: PathBuf,
@@ -966,6 +973,7 @@ pub fn run(cli: Cli) {
                 initials,
                 text,
                 date,
+                undated,
                 output,
                 json,
             } => commands::comment_add(
@@ -1002,7 +1010,7 @@ pub fn run(cli: Cli) {
                 &author,
                 initials.as_deref(),
                 &text,
-                date.as_deref(),
+                comment_date(date.as_deref(), undated),
                 &output,
                 json,
             ),
@@ -1020,6 +1028,7 @@ pub fn run(cli: Cli) {
                 author,
                 text,
                 date,
+                undated,
                 initials,
                 output,
                 json,
@@ -1029,7 +1038,7 @@ pub fn run(cli: Cli) {
                 &author,
                 initials.as_deref(),
                 &text,
-                date.as_deref(),
+                comment_date(date.as_deref(), undated),
                 &output,
                 json,
             ),
@@ -1183,5 +1192,15 @@ pub fn run(cli: Cli) {
     }
     if diff_exit_code && diff_status != 0 {
         process::exit(diff_status);
+    }
+}
+
+/// The date `--date` and `--undated` give a new comment or reply: the
+/// current time when neither is given.
+fn comment_date(date: Option<&str>, undated: bool) -> oxoffice_docx::CommentDate<'_> {
+    match (date, undated) {
+        (Some(date), _) => oxoffice_docx::CommentDate::At(date),
+        (None, true) => oxoffice_docx::CommentDate::Undated,
+        (None, false) => oxoffice_docx::CommentDate::Now,
     }
 }

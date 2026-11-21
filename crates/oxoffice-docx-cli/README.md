@@ -101,9 +101,11 @@ ends of the match. A text that does not occur, an occurrence past the last
 match, and a match that cannot be anchored exactly exit unsuccessfully without
 creating the output. Comment replies,
 resolution, and removal select a decimal comment id. Comment `add` and `reply`
-write an optional `--date` RFC 3339 timestamp as the comment date. An invalid
-timestamp exits unsuccessfully without creating the output, and without
-`--date` the comment stays undated.
+date the comment with the current time, in UTC to the second.
+`--date` writes an RFC 3339 timestamp instead, and `--undated` writes no date,
+as Word leaves comments once its Document Inspector removes personal
+information; the two conflict. An invalid timestamp exits unsuccessfully
+without creating the output.
 
 `compare` replaces each changed run whole by default (`--granularity run`),
 like the Rust and Python APIs. `--granularity word` marks only the changed
