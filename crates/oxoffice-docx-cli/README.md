@@ -247,7 +247,8 @@ to the default style for such an id. A style id inside a tracked property
 change is not checked, because it records the formatting before the change,
 and neither is one inside `mc:Fallback`, which Word does not read, or an empty
 id.
-Empty paragraphs, heading level gaps, and missing metadata are warnings.
+Empty paragraphs, heading level gaps, missing metadata, and paragraphs numbered
+by a numbering instance or level the document does not define are warnings.
 
 `layout --json` uses bundled deterministic fonts. It lists every direct body
 item, including preserved items that have no fragments. Each laid-out fragment
@@ -341,7 +342,9 @@ file only once it is complete, so a failed run leaves no truncated output.
 `validate` exits unsuccessfully on a structural error: a relationship to a
 missing part, a part without a content type, or a prefix that `mc:Ignorable`
 or `mc:MustUnderstand` lists without a namespace declaration. Empty
-paragraphs, heading level gaps, and missing metadata are warnings only.
+paragraphs, heading level gaps, missing metadata, and a paragraph numbered by a
+numbering instance or a level the document does not define (Word shows it
+without a number) are warnings only.
 
 The documented WordprocessingML subset also checks well-formed XML 1.0 in
 XML parts, style ids, direct body/p/r children and order, text placement,
