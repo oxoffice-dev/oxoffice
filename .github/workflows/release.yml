@@ -50,8 +50,8 @@ jobs:
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::'$VERSION' is not X.Y.Z (prereleases are not supported yet)"; exit 1
           fi
-          # The release commit goes on top of main: a run from a branch would
-          # push that branch's commits to main.
+          # The version commit is merged into main: a run from a branch would
+          # bring that branch's commits to main.
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "::error::run the release from main, not $GITHUB_REF"; exit 1
           fi

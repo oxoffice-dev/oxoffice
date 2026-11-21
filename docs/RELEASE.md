@@ -48,14 +48,17 @@ check and asset is done: the push is the last step but the GitHub release.
 - **A build, a check or an asset fails**: nothing was pushed. A transient
   failure is retried with **Re-run failed jobs**. Otherwise fix the cause on
   `main` and run the same version again.
-- **The push is refused five times** (`main` kept moving, or a rule refused
-  it): nothing was pushed. **Re-run failed jobs**.
+- **The push is refused five times**: nothing was pushed. If `main` kept
+  moving, **Re-run failed jobs**; if a rule or the token's permissions
+  refused it (the job log says), fix that first.
 - **The GitHub release fails** after the push: **Re-run failed jobs**. The
   last job finds the tag on the version commit it made and goes on; it stops
   if the tag is on any other commit. A new run of the same version stops at
-  once, since the tag exists. If it keeps failing, delete the tag
-  (`git push --delete origin vX.Y.Z`), fix the cause on `main` and run the
-  same version again; the version commit already merged into `main` stays.
+  once, since the tag exists. If it keeps failing, delete the tag and any
+  half-made release (`gh release delete vX.Y.Z --cleanup-tag --yes`, or
+  `git push --delete origin vX.Y.Z` when no release was made), fix the cause
+  on `main` and run the same version again; the version commit already
+  merged into `main` stays.
 - **PyPI or prefix.dev fails** after the GitHub release: **Re-run failed
   jobs**: both skip files already uploaded.
 
