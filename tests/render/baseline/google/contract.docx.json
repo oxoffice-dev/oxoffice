@@ -1,12 +1,12 @@
 {
   "file": "google/contract.docx",
-  "reason": "a right-aligned or centred header or footer line keeps its alignment once its page fields hold their values (#404)",
+  "reason": "link annotations are tagged under /Link and pages with links tab in structure order",
   "resources": "45954bdc1477a7c2e391cc6b02f450be99984c583dcdf68d7e23f19b90163cd6",
-  "outline_and_tags": "36a8ac6beb92597bd0c1ceaeb62ac85929cc37442e1377ac53af839e781297cd",
+  "outline_and_tags": "84323470a2d3f746d531a1b1e8a87bea2aa3a6dbe096a885b671ea8f35e146f4",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
     {"page": 1, "pixels": "e355e519ac5ac6afe642ed0eaafb7e65044a44e4de071eb72edaa726913e64d2", "content": "03132f66764a525a77708f28bb6ee3214520cdceaea2667b2af17a6b2b79598c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "69344787ca91f3b2ea41aa801a6a44277f454c5b72afaef3c189ba1bf249347b", "content": "2adbca7c430accb293dcbdd53870155a265d184782f539a809a9f6a3f3eabc95", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
-    {"page": 3, "pixels": "b7374511f3c2d19d915423f8db855fb9d63ae3aed8d05767f2cc088a7fff42c0", "content": "821dfc5a5fd29706dd2ec33ede13a0484277b8ab7d05a1a60eb79a2fa7a65825", "annotations": "df78de2ada9019615c76245592c1c20331603087d38ccae985452606d53e03f7", "dictionary": "1ef65fa789b8f45a1caeab080a9c6d44082d18c0f8dd0263eb7d061ae4e89a9d"}
+    {"page": 3, "pixels": "b7374511f3c2d19d915423f8db855fb9d63ae3aed8d05767f2cc088a7fff42c0", "content": "821dfc5a5fd29706dd2ec33ede13a0484277b8ab7d05a1a60eb79a2fa7a65825", "annotations": "de9ebf7b036c01d0cd956ce8a70fcbdace2694fb83517f11b7603ec8ad4a25b7", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
   ]
 }

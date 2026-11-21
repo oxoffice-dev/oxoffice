@@ -1,10 +1,10 @@
 {
   "file": "authored/cv.docx",
-  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "reason": "link annotations are tagged under /Link and pages with links tab in structure order",
   "resources": "3385ca9c82c916b34ddd8356df3e38ff33eeb7c8946c75dc24f718805e388fc2",
-  "outline_and_tags": "6c9abf072059fa7b1d53995185fc1024007b0a4bbf5327e5a104e287c651cba7",
+  "outline_and_tags": "8d2f18f5f126dfeb268b3e271ec725d7b09a430b895b356821a1afb4e15911a1",
   "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
   "pages": [
-    {"page": 1, "pixels": "32c4c33f510d2879100da9ccb0817f4f8983294710046499a673c89de914ff6f", "content": "0f8d431cf14a29de400ff61c087149d3ef75d7e526be08463a4c735eb2290d3b", "annotations": "34288d4edee3ba8ba60421be98d6f32e36aa5e7d590817876040155a6bb2d661", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+    {"page": 1, "pixels": "32c4c33f510d2879100da9ccb0817f4f8983294710046499a673c89de914ff6f", "content": "0f8d431cf14a29de400ff61c087149d3ef75d7e526be08463a4c735eb2290d3b", "annotations": "59a0c228193027c9aaa7b5d634853f0f15748cd5d6a59bed892611c0ad3b02b7", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"}
   ]
 }
