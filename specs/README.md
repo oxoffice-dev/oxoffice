@@ -64,7 +64,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | shipped |
 | 2026-11-21 | [Comparison: bookmark ids and generated TOC names are no change](2026-11-21-comparison-bookmark-identities.md) | shipped |
 | 2026-11-21 | [Comparison: a footnote whose reference moved](2026-11-21-comparison-moved-footnotes.md) | shipped |
-| 2026-11-21 | [A whole paragraph's simple field is tracked as Word tracks it](2026-11-21-simple-field-retired-with-its-paragraph.md) | draft |
+| 2026-11-21 | [A whole paragraph's simple field is tracked as Word tracks it](2026-11-21-simple-field-retired-with-its-paragraph.md) | accepted |
 | 2026-11-21 | [Release wheels run on the main thread before publishing](2026-11-21-release-wheel-smoke-test.md) | shipped |
 | 2026-11-21 | [Render fidelity: a baseline on every pull request, Word, PowerPoint and LibreOffice every night](2026-11-21-render-fidelity.md) | accepted |
 | 2026-11-21 | [The limitations page is built at release](2026-11-21-limitations-page-built-at-release.md) | accepted |
