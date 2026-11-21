@@ -418,6 +418,17 @@ fn a_simple_field_inside_a_hyperlink_in_a_file_reads_and_saves_as_written() {
         .compare(&doc_with_body(body), "Ana", "2026-01-01T00:00:00Z")
         .unwrap();
     assert_eq!(texts(&compared), ["See page 2 of "]);
+    // A comparison with an edit in the link's text maps the link's runs,
+    // its fields included.
+    let mut compared = doc_with_body(body);
+    compared
+        .compare(
+            &doc_with_body(&body.replace(" of </w:t>", " out of </w:t>")),
+            "Ana",
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+    assert_eq!(texts(&compared), ["See page 2 out of "]);
 }
 
 #[test]
