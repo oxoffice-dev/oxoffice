@@ -151,29 +151,6 @@ struct ScopeGeneration {
     retired: std::sync::OnceLock<InvalidationCause>,
 }
 
-#[cfg(debug_assertions)]
-thread_local! {
-    // All actual ScopeGeneration creations, then the owner-successor subset.
-    static SCOPE_GENERATION_WORK: std::cell::Cell<[[usize; 2]; 2]> = const { std::cell::Cell::new([[0; 2]; 2]) };
-}
-
-#[cfg(debug_assertions)]
-fn note_scope_generation_allocation(row: usize) {
-    SCOPE_GENERATION_WORK.with(|work| {
-        let mut counts = work.get();
-        counts[row][0] += 1;
-        counts[row][1] += std::mem::size_of::<ScopeGeneration>();
-        work.set(counts);
-    });
-}
-
-/// Actual creation calls and value payload bytes, then their owner-successor subset.
-/// Excludes Arc headers and allocator overhead. Reading resets both debug rows.
-#[cfg(debug_assertions)]
-pub fn take_scope_generation_work() -> [[usize; 2]; 2] {
-    SCOPE_GENERATION_WORK.with(|work| work.replace([[0; 2]; 2]))
-}
-
 /// Hashes an allocation address, unique while the allocation is held, for
 /// the scope set of one preparation.
 #[derive(Default)]
@@ -330,8 +307,6 @@ impl RevisionCounter {
             scope: RevisionScope::Document,
             retired: std::sync::OnceLock::new(),
         }));
-        #[cfg(debug_assertions)]
-        note_scope_generation_allocation(0);
         Self {
             current: 0,
             next_generation: 0,
@@ -355,15 +330,12 @@ impl RevisionCounter {
     }
 
     fn state(&self, generation: u64, scope: RevisionScope) -> RevisionState {
-        let state = RevisionState(std::sync::Arc::new(ScopeGeneration {
+        RevisionState(std::sync::Arc::new(ScopeGeneration {
             origin: self.origin.clone(),
             generation,
             scope,
             retired: std::sync::OnceLock::new(),
-        }));
-        #[cfg(debug_assertions)]
-        note_scope_generation_allocation(0);
-        state
+        }))
     }
 
     /// Only construction uses this operation, before returning captured handles.
@@ -531,10 +503,6 @@ impl RevisionCounter {
                 continue;
             }
             successors.push(self.state(generation, old.scope()));
-            #[cfg(debug_assertions)]
-            if index != 0 {
-                note_scope_generation_allocation(1);
-            }
         }
         let mut births = Vec::new();
         births

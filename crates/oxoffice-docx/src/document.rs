@@ -3264,25 +3264,6 @@ fn is_modeled_word_child(parent: Option<&[u8]>, local_name: &[u8]) -> bool {
     }
 }
 
-fn note_modeled_namespace_scope_copy(bindings: &[(String, String)]) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        MODELED_NAMESPACE_SCOPE_COPIES.with(|work| {
-            let [calls, bytes] = work.get();
-            work.set([
-                calls + 1,
-                bytes
-                    + bindings
-                        .iter()
-                        .map(|(name, uri)| name.len() + uri.len())
-                        .sum::<usize>(),
-            ]);
-        });
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bindings;
-}
-
 /// Keep the exact ordered binding vector when this element declares nothing.
 /// Declaring elements retain the original decoder and retain-then-append policy.
 fn shared_namespace_bindings(
@@ -3293,7 +3274,6 @@ fn shared_namespace_bindings(
         let attribute = attribute.map_err(oxoffice_docx_oxml::OxmlError::from)?;
         let name = attribute.key.as_ref();
         if name == b"xmlns" || name.starts_with(b"xmlns:") {
-            note_modeled_namespace_scope_copy(inherited);
             let mut bindings = inherited.as_ref().clone();
             apply_namespace_declarations(element, &mut bindings)?;
             return Ok(Arc::new(bindings));
@@ -4159,7 +4139,6 @@ fn marker_multiset_matches(
 }
 
 fn nested_modeled_namespace_owners(xml: &[u8]) -> Result<Vec<NestedNamespaceOwner>> {
-    note_staging_work(|work| work.scanned += xml.len());
     let spans = modeled_owner_spans(xml)?;
     namespace_owners_from_spans(xml, &spans)
 }
@@ -5731,7 +5710,6 @@ impl DocumentIdentifiers {
                 match reused {
                     Some(scanned) => (scanned.definitions.clone(), None),
                     None => {
-                        note_reopen_work(|work| work.scanned += bytes.len());
                         if identifier_xml_is_well_formed(bytes) {
                             let mut definitions = Vec::new();
                             let unreadable =
@@ -6599,17 +6577,14 @@ fn read_child_canonical_facts(
         return None;
     }
     let child = child_start..child_end;
-    note_canonical_fragment(xml.len());
     let bound =
         xml_relationship_ids_in_collection_range(xml, &frame.body_bindings, Some(child.clone()))
             .ok()?;
     let plain = if frame.body_bindings.is_empty() {
         bound.clone()
     } else {
-        note_canonical_fragment(xml.len());
         xml_relationship_ids_in_collection_range(xml, &[], Some(child)).ok()?
     };
-    note_canonical_fragment(xml.len());
     let (mut drawings, error) = drawing_occurrences(xml);
     if error.is_some() {
         return None;
@@ -6622,7 +6597,6 @@ fn read_child_canonical_facts(
             *span = span.start - child_start..span.end - child_start;
         }
     }
-    note_canonical_fragment(xml.len());
     let drawing_ids = drawing_ids_in_xml(xml).ok()?;
     Some(CanonicalChildFacts {
         root_declarations: frame.root_declarations.clone(),
@@ -6640,12 +6614,10 @@ fn read_child_canonical_facts(
 /// Drawing facts on a frame stay on the whole scanner. A relationship id does
 /// not. The note is the scan that actually runs.
 fn frame_drawings_are_absent(xml: &[u8]) -> bool {
-    note_canonical_fragment(xml.len());
     let (drawings, error) = drawing_occurrences(xml);
     if error.is_some() || !drawings.is_empty() {
         return false;
     }
-    note_canonical_fragment(xml.len());
     drawing_ids_in_xml(xml)
         .ok()
         .is_some_and(|ids| ids.is_empty())
@@ -6663,9 +6635,7 @@ fn split_relationship_ids_at_head(
     bindings: &[(String, String)],
 ) -> Option<(Vec<String>, Vec<String>)> {
     let head = shell.get(..head_len)?;
-    note_canonical_fragment(shell.len());
     let shell_ids = xml_relationship_ids_in_order_with_bindings(shell, bindings).ok()?;
-    note_canonical_fragment(head.len());
     let head_ids = xml_relationship_ids_in_order_with_bindings(head, bindings).ok()?;
     let tail_start = head_ids.len();
     if shell_ids.get(..tail_start) != Some(head_ids.as_slice()) {
@@ -7338,131 +7308,6 @@ thread_local! {
     static CANONICAL_BLOCK_PROOF_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-// These debug units count actual named transaction clones and current main
-// outputs inside the two immutable read phases. They are not staging slots.
-#[cfg(debug_assertions)]
-thread_local! {
-    static TRANSACTION_WORK: std::cell::Cell<[usize; 6]> = const { std::cell::Cell::new([0; 6]) };
-    static TRANSACTION_OUTPUTS: std::cell::RefCell<std::collections::BTreeMap<String, [usize; 2]>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
-    static SCOPED_NORMALIZATION_WORK: std::cell::RefCell<std::collections::BTreeMap<String, [usize; 2]>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
-    static TRANSACTION_READ_PHASE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
-    static MODELED_NAMESPACE_SCOPE_COPIES: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
-}
-
-#[cfg(debug_assertions)]
-struct TransactionReadPhase(u8);
-
-#[cfg(debug_assertions)]
-impl TransactionReadPhase {
-    fn enter(phase: u8) -> Self {
-        Self(TRANSACTION_READ_PHASE.with(|current| current.replace(phase)))
-    }
-}
-
-#[cfg(debug_assertions)]
-impl Drop for TransactionReadPhase {
-    fn drop(&mut self) {
-        TRANSACTION_READ_PHASE.with(|current| current.set(self.0));
-    }
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static STAGING_CLONES: Cell<usize> = const { Cell::new(0) };
-    static STAGED_PROPERTIES_FORCED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whole-document staging clones made on this thread since the last read.
-/// Debug builds only. Reading resets the count.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn take_staging_clones() -> usize {
-    STAGING_CLONES.with(|count| count.replace(0))
-}
-
-/// Make the properties setters stage a whole document, the reference their
-/// direct route is compared with. Debug builds only. Returns the previous
-/// choice.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn force_staged_properties(force: bool) -> bool {
-    STAGED_PROPERTIES_FORCED.with(|forced| forced.replace(force))
-}
-
-fn staged_properties_forced() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        STAGED_PROPERTIES_FORCED.with(Cell::get)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        false
-    }
-}
-
-fn note_transaction_clone() {
-    #[cfg(debug_assertions)]
-    TRANSACTION_WORK.with(|work| {
-        let mut counts = work.get();
-        counts[0] += 1;
-        work.set(counts);
-    });
-}
-
-// Counts outputs where they are actually produced. Copies and rewritten buffers
-// stay distinct from current-model writer calls and from each other.
-pub(crate) fn note_transaction_buffer(kind: &str, bytes: usize) {
-    #[cfg(debug_assertions)]
-    TRANSACTION_READ_PHASE.with(|phase| {
-        let prefix = match phase.get() {
-            1 => "scoped",
-            2 => "picture",
-            _ => "ordinary",
-        };
-        TRANSACTION_OUTPUTS.with(|outputs| {
-            let mut outputs = outputs.borrow_mut();
-            let counts = outputs.entry(format!("{prefix}.{kind}")).or_default();
-            counts[0] += 1;
-            counts[1] += bytes;
-        });
-    });
-    #[cfg(not(debug_assertions))]
-    let _ = (kind, bytes);
-}
-
-pub(crate) fn note_transaction_output(kind: &str, bytes: usize) {
-    note_transaction_buffer(kind, bytes);
-    #[cfg(debug_assertions)]
-    TRANSACTION_READ_PHASE.with(|phase| {
-        let index = match phase.get() {
-            1 => 1,
-            2 => 3,
-            _ => return,
-        };
-        TRANSACTION_WORK.with(|work| {
-            let mut counts = work.get();
-            counts[index] += 1;
-            counts[index + 1] += bytes;
-            work.set(counts);
-        });
-    });
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-// Actual parser attempts and successful writer bytes at each normalization site.
-fn note_scoped_normalization_work(side: &str, operation: &str, calls: usize, bytes: usize) {
-    #[cfg(debug_assertions)]
-    SCOPED_NORMALIZATION_WORK.with(|work| {
-        let mut work = work.borrow_mut();
-        let count = work.entry(format!("{side}.{operation}")).or_default();
-        count[0] += calls;
-        count[1] += bytes;
-    });
-    #[cfg(not(debug_assertions))]
-    let _ = (side, operation, calls, bytes);
-}
-
 fn block_proofs_enabled() -> bool {
     #[cfg(debug_assertions)]
     {
@@ -7520,17 +7365,16 @@ fn relationship_ids_by_blocks(
     let blocks = offered_canonical_blocks(blocks);
     if let Some(ids) = blocks.and_then(|blocks| blocks.proved_relationship_ids(xml, bindings)) {
         #[cfg(debug_assertions)]
-        without_staging_work(|| {
+        {
             let scanned = xml_relationship_ids_in_order_with_bindings(xml, bindings).ok();
             assert_eq!(
                 scanned.as_deref(),
                 Some(ids.as_slice()),
                 "relationship proof disagrees with a whole scan"
             );
-        });
+        }
         return Ok(ids);
     }
-    note_staging_work(|work| work.canonicalized += xml.len());
     xml_relationship_ids_in_order_with_bindings(xml, bindings)
 }
 
@@ -7545,7 +7389,7 @@ fn authored_drawing_slots_by_blocks(
         blocks.proved_drawing_slots(xml, modeled_ids, nested_image_relationship_ids)
     }) {
         #[cfg(debug_assertions)]
-        without_staging_work(|| {
+        {
             let scanned = authored_drawing_slots_in_source_order(
                 xml,
                 modeled_ids,
@@ -7560,10 +7404,9 @@ fn authored_drawing_slots_by_blocks(
                 shown(&scanned),
                 "drawing-slot proof disagrees with a whole scan"
             );
-        });
+        }
         return slots;
     }
-    note_staging_work(|work| work.canonicalized += xml.len());
     authored_drawing_slots_in_source_order(xml, modeled_ids, nested_image_relationship_ids)
 }
 
@@ -7571,16 +7414,15 @@ fn drawing_ids_by_blocks(xml: &[u8], blocks: Option<&MainPartBlocks>) -> Option<
     let blocks = offered_canonical_blocks(blocks);
     if let Some(ids) = blocks.and_then(|blocks| blocks.proved_drawing_ids(xml)) {
         #[cfg(debug_assertions)]
-        without_staging_work(|| {
+        {
             assert_eq!(
                 drawing_ids_in_xml(xml).ok().as_ref(),
                 Some(&ids),
                 "drawing-id proof disagrees with a whole scan"
             );
-        });
+        }
         return Some(ids);
     }
-    note_staging_work(|work| work.canonicalized += xml.len());
     drawing_ids_in_xml(xml).ok()
 }
 
@@ -7687,7 +7529,6 @@ fn remap_xml_relationship_ids_with_bindings(
     if remap.is_empty() {
         return Ok(xml.to_vec());
     }
-    note_staging_work(|work| work.canonicalized += xml.len());
     let mut updated = xml.to_vec();
     for (start, end, value) in relationship_remap_edits(xml, remap, inherited_bindings)?
         .into_iter()
@@ -8164,8 +8005,6 @@ impl Parsed {
         self.main_document
             .get_or_init(|| {
                 let xml = self.main_part_xml()?;
-                note_staging_work(|work| work.parsed += xml.len());
-                note_reopen_work(|work| work.main_parses += 1);
                 CT_Document::from_xml(xml).ok().map(DocumentModel::unproved)
             })
             .as_ref()
@@ -8269,253 +8108,6 @@ fn bundle_relationship_precedes_story(rel_type: &str) -> bool {
     matches!(rel_type, rel_types::STYLES | rel_types::SETTINGS)
 }
 
-thread_local! {
-    static DIRECT_FRAGMENT_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Bytes of direct body fragments emitted since the last take.
-///
-/// The binding debug counter reads this. It is not a stable API.
-#[doc(hidden)]
-pub fn take_direct_fragment_bytes() -> usize {
-    DIRECT_FRAGMENT_BYTES.with(|cell| cell.replace(0))
-}
-
-/// Bytes staging touched on this thread. `serialized_children` counts child
-/// writes on the main-part block path, including a whole-writer fallback.
-/// `children_read` counts each one-child read attempt, including a failed
-/// attempt and a retry. A zero there is not skipped work. An empty-body frame
-/// parse, a frame copy and a frame write are separate and are not in these
-/// six slots. Model walks, hashes, copies and whole serialization stay
-/// separate costs.
-#[derive(Clone, Copy, Default)]
-struct StagingWork {
-    parsed: usize,
-    scanned: usize,
-    canonicalized: usize,
-    zip_written: usize,
-    serialized_children: usize,
-    children_read: usize,
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static STAGING_WORK: std::cell::Cell<StagingWork> = const { std::cell::Cell::new(StagingWork {
-        parsed: 0,
-        scanned: 0,
-        canonicalized: 0,
-        zip_written: 0,
-        serialized_children: 0,
-        children_read: 0,
-    }) };
-    static STAGING_WORK_PAUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Bytes of a namespace shell or a declaring child wrapper passed to the
-    /// empty-owner proof. A closed-body rejection still records the wrapper it
-    /// was given. This is not `StagingWork.scanned` and not `children_read`.
-    static FRAME_NAMESPACE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn note_frame_namespace_scan(bytes: usize) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        FRAME_NAMESPACE_BYTES.with(|cell| cell.set(cell.get() + bytes));
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Bytes passed to `document_namespace_scopes` while proving empty nested
-    /// owners. This is not a staging slot and not frame owner-walk input.
-    static NAMESPACE_SCOPE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn note_namespace_scope_bytes(bytes: usize) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        NAMESPACE_SCOPE_BYTES.with(|cell| cell.set(cell.get() + bytes));
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Bytes read to prove one canonical frame or child. This is not one of
-    /// the six staging slots.
-    static CANONICAL_FRAGMENT_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn note_canonical_fragment(bytes: usize) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        CANONICAL_FRAGMENT_BYTES.with(|cell| cell.set(cell.get() + bytes));
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// HashSet inserts while composing cached relationship ids. Each insert is
-    /// one membership operation. This is not a staging slot.
-    static RELATIONSHIP_MEMBERSHIP_OPS: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
-}
-
-fn note_relationship_membership() {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        RELATIONSHIP_MEMBERSHIP_OPS.with(|cell| cell.set(cell.get() + 1));
-    }
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Bytes passed to the closed-body guard. This is not reopen identifier
-    /// input and not one of the six staging slots.
-    static CLOSED_BODY_GUARD_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn note_closed_body_guard(bytes: usize) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        CLOSED_BODY_GUARD_BYTES.with(|cell| cell.set(cell.get() + bytes));
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Bytes passed to a modeled-owner span parse of one frame shell or one
-    /// wrapped child. This is not `StagingWork.scanned` and not one of the
-    /// six staging slots. A cache hit adds nothing.
-    static NAMESPACE_SPAN_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn note_namespace_span_bytes(bytes: usize) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        NAMESPACE_SPAN_BYTES.with(|cell| cell.set(cell.get() + bytes));
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-fn note_staging_work(count: impl FnOnce(&mut StagingWork)) {
-    #[cfg(debug_assertions)]
-    if !STAGING_WORK_PAUSED.with(std::cell::Cell::get) {
-        STAGING_WORK.with(|cell| {
-            let mut work = cell.get();
-            count(&mut work);
-            cell.set(work);
-        });
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = count;
-}
-
-/// Parsed, namespace-scanned, canonicalized and ZIP bytes, then serialized
-/// children and children read. Debug builds only. Reading resets all six.
-/// The first four slots are whole-part byte work. `children_read` is the
-/// one-child read attempts on the block path. Frame parse, copy and write
-/// are not added to that slot.
-#[doc(hidden)]
-#[cfg(debug_assertions)]
-pub fn take_staging_work() -> [usize; 6] {
-    let work = STAGING_WORK.with(|cell| cell.replace(StagingWork::default()));
-    [
-        work.parsed,
-        work.scanned,
-        work.canonicalized,
-        work.zip_written,
-        work.serialized_children,
-        work.children_read,
-    ]
-}
-
-/// ZIP writes, main-part parses, and identifier-part bytes scanned while
-/// reopening a staged package. A hit skips the XML identifier scan.
-/// Byte proof, model serialization, copying, and other validation are
-/// separate. Namespace input bytes are on the staging scan slot.
-#[derive(Clone, Copy, Default)]
-struct ReopenWork {
-    zip_writes: usize,
-    main_parses: usize,
-    scanned: usize,
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static REOPEN_WORK: std::cell::Cell<ReopenWork> = const { std::cell::Cell::new(ReopenWork {
-        zip_writes: 0,
-        main_parses: 0,
-        scanned: 0,
-    }) };
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static REOPEN_WORK_PAUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-fn note_reopen_work(count: impl FnOnce(&mut ReopenWork)) {
-    #[cfg(debug_assertions)]
-    if !REOPEN_WORK_PAUSED.with(std::cell::Cell::get) {
-        REOPEN_WORK.with(|cell| {
-            let mut work = cell.get();
-            count(&mut work);
-            cell.set(work);
-        });
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = count;
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Main-part body children scanned for story lookup since the thread
-    /// started. Reading does not reset it. Callers record a delta. A failed
-    /// attempt is included. The frame scan, part serialization, fingerprint
-    /// hash, and debug agreement scans are not included.
-    static MAIN_BODY_BLOCK_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static MAIN_BODY_BLOCK_SCANS_PAUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(debug_assertions)]
-fn note_main_body_block_scans(children: usize) {
-    if !MAIN_BODY_BLOCK_SCANS_PAUSED.with(std::cell::Cell::get) {
-        MAIN_BODY_BLOCK_SCANS.with(|cell| cell.set(cell.get() + children));
-    }
-}
-
-/// Run `scan` without adding its body-child scans to the debug counter.
-fn uncounted_scan<T>(scan: impl FnOnce() -> T) -> T {
-    #[cfg(debug_assertions)]
-    {
-        let paused = MAIN_BODY_BLOCK_SCANS_PAUSED.with(|cell| cell.replace(true));
-        let result = scan();
-        MAIN_BODY_BLOCK_SCANS_PAUSED.with(|cell| cell.set(paused));
-        result
-    }
-    #[cfg(not(debug_assertions))]
-    scan()
-}
-
-#[cfg(debug_assertions)]
-fn without_reopen_work<T>(run: impl FnOnce() -> T) -> T {
-    let paused = REOPEN_WORK_PAUSED.with(|cell| cell.replace(true));
-    let result = run();
-    REOPEN_WORK_PAUSED.with(|cell| cell.set(paused));
-    result
-}
-
 #[cfg(debug_assertions)]
 fn assert_same_reopen(reopened: &Result<Document>, through_zip: &Result<Document>) {
     match (reopened, through_zip) {
@@ -8525,8 +8117,7 @@ fn assert_same_reopen(reopened: &Result<Document>, through_zip: &Result<Document
             assert!(reopened.package.same_package_as(&expected.package));
             let saved = |document: &Document| {
                 let mut copy = document.clone_for_debug_reference();
-                without_reopen_work(|| without_staging_work(|| copy.to_bytes()))
-                    .map_err(|error| error.to_string())
+                copy.to_bytes().map_err(|error| error.to_string())
             };
             assert_eq!(saved(reopened), saved(expected));
         }
@@ -8543,16 +8134,6 @@ fn assert_same_reopen(reopened: &Result<Document>, through_zip: &Result<Document
                 .unwrap_or_else(|| "ok".to_string())
         ),
     }
-}
-
-/// ZIP package writes, main document parses, then identifier-part bytes
-/// scanned. Debug builds only. Reading resets all three. The count is the
-/// work at those sites, not a constant per entry.
-#[doc(hidden)]
-#[cfg(debug_assertions)]
-pub fn take_reopen_work() -> [usize; 3] {
-    let work = REOPEN_WORK.with(|cell| cell.replace(ReopenWork::default()));
-    [work.zip_writes, work.main_parses, work.scanned]
 }
 
 /// Compare an already initialized retained read without warming its shared cache.
@@ -8575,19 +8156,6 @@ fn assert_kept_main_document_without_initializing(
         fresh_matches,
         "opened-main serialization proof disagrees with a parse"
     );
-}
-
-/// Keep a debug comparison from counting as staging work.
-#[cfg(debug_assertions)]
-#[allow(dead_code)]
-fn without_staging_work<T>(run: impl FnOnce() -> T) -> T {
-    let paused = STAGING_WORK_PAUSED.with(|cell| cell.replace(true));
-    // A debug reference stages clones of its own, which are not the call's.
-    let clones = STAGING_CLONES.with(Cell::get);
-    let result = run();
-    STAGING_CLONES.with(|count| count.set(clones));
-    STAGING_WORK_PAUSED.with(|cell| cell.set(paused));
-    result
 }
 
 #[cfg(debug_assertions)]
@@ -8618,10 +8186,6 @@ fn assert_same_canonicalization(
         document.identifiers == full.identifiers,
         "canonicalizing beside the unchanged main part changes the identifiers otherwise"
     );
-}
-
-fn note_direct_fragment_bytes(bytes: usize) {
-    DIRECT_FRAGMENT_BYTES.with(|cell| cell.set(cell.get().saturating_add(bytes)));
 }
 
 fn direct_body_paragraph_slot(location: &ContentLocation) -> Option<usize> {
@@ -9480,7 +9044,6 @@ impl BodyBlockScan {
             let _ = self.identifier_proof.set(None);
             return None;
         }
-        note_reopen_work(|work| work.scanned += xml.len());
         let definitions = scan_identifier_definitions(&xml, categories);
         let stored = definitions
             .as_ref()
@@ -9528,7 +9091,6 @@ impl BodyBlockScan {
         xml.extend_from_slice(head);
         xml.extend_from_slice(&self.bytes);
         xml.extend_from_slice(tail);
-        note_canonical_fragment(xml.len());
         if closed_word_body(&xml, child_start..child_end).is_none() {
             let _ = self.canonical_read.set(None);
             return None;
@@ -9574,7 +9136,6 @@ impl BodyBlockScan {
             let _ = self.empty_namespace_owners.set(None);
             return None;
         }
-        note_namespace_scope_bytes(xml.len());
         let context_matches = document_namespace_scopes(&xml).ok().is_some_and(|scopes| {
             scopes.root_declarations == frame.root_declarations
                 && scopes.body_declarations == frame.body_declarations
@@ -9585,7 +9146,6 @@ impl BodyBlockScan {
             return None;
         }
         let proved_empty = if self.declares_namespace {
-            note_frame_namespace_scan(xml.len());
             matches!(
                 modeled_owner_spans(&xml)
                     .and_then(|spans| namespace_owners_from_spans(&xml, &spans)),
@@ -9649,7 +9209,6 @@ impl BodyBlockScan {
             let _ = self.namespace_spans.set(None);
             return None;
         }
-        note_namespace_scope_bytes(xml.len());
         let context_matches = document_namespace_scopes(&xml).ok().is_some_and(|wrapped| {
             wrapped.root_declarations == scopes.root_declarations
                 && wrapped.body_declarations == scopes.body_declarations
@@ -9659,7 +9218,6 @@ impl BodyBlockScan {
             let _ = self.namespace_spans.set(None);
             return None;
         }
-        note_namespace_span_bytes(xml.len());
         let relative = match modeled_owner_piece_spans(&xml, Some(child_start..child_end)) {
             Ok(Some(spans)) => {
                 let mut relative = Vec::new();
@@ -9779,15 +9337,14 @@ impl PreparedMainRead<'_> {
     ) -> Result<()> {
         if self.scoped_main_source_by_blocks(canonical, &canonical_span, original, &retained_span) {
             #[cfg(debug_assertions)]
-            without_staging_work(|| {
-                let _reference_only = TransactionReadPhase::enter(0);
+            {
                 self.document.prove_whole_scoped_main_source(
                     canonical,
                     canonical_span,
                     original,
                     retained_span,
                 )
-            })
+            }
             .expect("the child proof differs from the whole scoped proof");
             return Ok(());
         }
@@ -9963,7 +9520,7 @@ impl PreparedMainRead<'_> {
             let range = span.start.checked_sub(at)?..span.end.checked_sub(at)?;
             bytes.get(range.clone())?;
             bytes.splice(range, sentinel.bytes());
-            normalized_scoped_child(&self.document.document, record, serialized, &bytes, "probe")
+            normalized_scoped_child(&self.document.document, record, serialized, &bytes)
                 .map(|(item, written, _)| (item, written))
         };
         match (
@@ -10649,7 +10206,6 @@ impl MainPartBlocks {
                 let mut part = self.head.clone();
                 part.extend_from_slice(&block.bytes);
                 part.extend_from_slice(&self.tail);
-                note_canonical_fragment(part.len());
                 for (first, last, value) in relationship_remap_edits(&part, remap, bindings).ok()? {
                     if first < self.head.len()
                         || last > self.head.len().checked_add(block.bytes.len())?
@@ -10666,7 +10222,6 @@ impl MainPartBlocks {
                 return None;
             }
         }
-        note_canonical_fragment(shell.len());
         for (first, last, value) in relationship_remap_edits(&shell, remap, bindings).ok()? {
             if first < self.head.len() || last > shell.len() {
                 return None;
@@ -10840,7 +10395,6 @@ impl MainPartBlocks {
                 blocks.push(Arc::clone(block));
             } else {
                 all_reused = false;
-                note_staging_work(|work| work.serialized_children += 1);
                 let xml = if let Some(template) = &mut template
                     && let Some(source) = &template.sources.reader_source
                 {
@@ -10925,7 +10479,6 @@ impl MainPartBlocks {
             }
             None if reused => Self::serialize_in(frame, content, None, template),
             None => {
-                note_staging_work(|work| work.serialized_children += content.len());
                 let xml = if let Some(template) = &mut template {
                     let source = template.document_source(frame)?;
                     let copied = template.operation.repeat_source(&source)?;
@@ -11211,7 +10764,6 @@ impl MainPartBlocks {
                 }
                 let gap = self.head.len()..self.head.len();
                 closed_word_body(shell, gap)?;
-                note_reopen_work(|work| work.scanned += shell.len());
                 let scopes = document_namespace_scopes(shell).ok()?;
                 let mut categories = HashSet::new();
                 categories.insert(IdentifierXmlCategory::Bookmark);
@@ -11289,7 +10841,6 @@ impl MainPartBlocks {
         let mut ids = Vec::new();
         let mut seen = HashSet::new();
         let mut push = |id: &String| {
-            note_relationship_membership();
             let owned = id.clone();
             if seen.insert(owned.clone()) {
                 ids.push(owned);
@@ -11377,17 +10928,14 @@ impl MainPartBlocks {
                     return None;
                 }
                 let gap = self.head.len()..self.head.len();
-                note_canonical_fragment(shell.len());
                 closed_word_body(shell, gap)?;
                 let scopes = document_namespace_scopes(shell).ok()?;
                 let bindings = scopes.body_bindings.as_slice();
-                note_canonical_fragment(shell.len());
                 let shell_bound =
                     xml_relationship_ids_in_order_with_bindings(shell, bindings).ok()?;
                 if !frame_drawings_are_absent(shell) {
                     return None;
                 }
-                note_canonical_fragment(self.head.len());
                 let head_bound =
                     xml_relationship_ids_in_order_with_bindings(&self.head, bindings).ok()?;
                 if shell_bound.get(..head_bound.len()) != Some(head_bound.as_slice()) {
@@ -11426,10 +10974,8 @@ impl MainPartBlocks {
                 if self.head.is_empty() || shell.len() != self.head.len() + self.tail.len() {
                     return None;
                 }
-                note_frame_namespace_scan(shell.len());
                 let gap = self.head.len()..self.head.len();
                 closed_word_body(shell, gap)?;
-                note_namespace_scope_bytes(shell.len());
                 let scopes = document_namespace_scopes(shell).ok()?;
                 let spans = modeled_owner_spans(shell).ok()?;
                 let owners = namespace_owners_from_spans(shell, &spans).ok()?;
@@ -11514,12 +11060,10 @@ impl MainPartBlocks {
             let _ = self.namespace_frame_spans.set(None);
             return None;
         }
-        note_namespace_scope_bytes(shell.len());
         let Some(scopes) = document_namespace_scopes(&shell).ok() else {
             let _ = self.namespace_frame_spans.set(None);
             return None;
         };
-        note_namespace_span_bytes(shell.len());
         let split = match modeled_owner_spans(&shell) {
             Ok(spans) => {
                 let mut head_spans = Vec::new();
@@ -11648,14 +11192,14 @@ impl MainPartBlocks {
             });
         }
         #[cfg(debug_assertions)]
-        without_staging_work(|| {
+        {
             let scanned = modeled_owner_spans(xml).ok();
             assert_eq!(
                 format!("{:?}", Some(&spans)),
                 format!("{scanned:?}"),
                 "proved namespace spans differ from the old parser"
             );
-        });
+        }
         Some(spans)
     }
 
@@ -11738,7 +11282,7 @@ impl MainPartBlocks {
             });
         }
         #[cfg(debug_assertions)]
-        without_staging_work(|| {
+        {
             assert_eq!(
                 format!("{spans:?}"),
                 format!(
@@ -11747,7 +11291,7 @@ impl MainPartBlocks {
                 ),
                 "masked namespace query changed physical spans"
             );
-        });
+        }
         Some(spans)
     }
 
@@ -11768,7 +11312,6 @@ impl MainPartBlocks {
         let mut ids = Vec::new();
         let mut seen = HashSet::new();
         let mut push = |id: &String| {
-            note_relationship_membership();
             if seen.insert(id.clone()) {
                 ids.push(id.clone());
             }
@@ -11790,13 +11333,13 @@ impl MainPartBlocks {
             push(id);
         }
         #[cfg(debug_assertions)]
-        without_staging_work(|| {
+        {
             assert_eq!(
                 xml_relationship_ids_in_order_with_bindings(xml, &[]).ok(),
                 Some(ids.clone()),
                 "masked relationship query changed occurrence order"
             );
-        });
+        }
         Some(ids)
     }
 
@@ -11933,11 +11476,8 @@ fn scoped_children_correspond(
     let left_result = match first_read
         .filter(|item| scoped_normalization_reuse_allowed(source, normal, left, right, item))
     {
-        Some(item) => {
-            note_scoped_normalization_work("left", "seed_used", 1, left.bytes.len());
-            normalize_scoped_parsed_child(document, normal, item, "left")
-        }
-        None => normalized_scoped_child(document, source, normal, &left.bytes, "left"),
+        Some(item) => normalize_scoped_parsed_child(document, normal, item),
+        None => normalized_scoped_child(document, source, normal, &left.bytes),
     };
     // The already executed normal-frame read of C1 produced a and C2. At this
     // checked fixed point both right rounds repeat that exact read/write with
@@ -11947,10 +11487,6 @@ fn scoped_children_correspond(
             && first == &right.bytes
             && written == &right.bytes
     });
-    if fixed {
-        note_scoped_normalization_work("pair", "fixed_eligible", 1, right.bytes.len());
-        note_scoped_normalization_work("pair", "fixed_used", 1, right.bytes.len());
-    }
     // C1 is not retained across fallback. A failed left still executes the full
     // right side, as the old eager tuple did, including private field parsing.
     let left_result = left_result.map(|(item, written, first)| {
@@ -11960,7 +11496,7 @@ fn scoped_children_correspond(
     let right_result = if fixed {
         None
     } else {
-        normalized_scoped_child(document, normal, normal, &right.bytes, "right")
+        normalized_scoped_child(document, normal, normal, &right.bytes)
             .map(|(item, written, _)| (item, written))
     };
     let Some((a, written)) = left_result else {
@@ -11992,42 +11528,20 @@ fn scoped_children_correspond(
 }
 
 /// One actual closed child read, including both authoritative shell writers.
-fn read_scoped_normalization_child(
-    record: &MainPartBlocks,
-    bytes: &[u8],
-    side: &str,
-    round: u8,
-) -> Option<BodyContent> {
+fn read_scoped_normalization_child(record: &MainPartBlocks, bytes: &[u8]) -> Option<BodyContent> {
     let mut xml = record.head.clone();
     let end = xml.len().checked_add(bytes.len())?;
     xml.extend_from_slice(bytes);
     xml.extend_from_slice(&record.tail);
     closed_word_body(&xml, record.head.len()..end)?;
-    note_staging_work(|work| work.children_read += 1);
-    let read = if round == 1 { "read1" } else { "read2" };
-    note_scoped_normalization_work(side, read, 1, xml.len());
     let mut parsed = CT_Document::from_xml(&xml).ok()?;
     if parsed.body.content.len() != 1 {
         return None;
     }
     let item = parsed.body.content.pop()?;
-    let actual_kind = if round == 1 {
-        "frame_actual1"
-    } else {
-        "frame_actual2"
-    };
-    note_scoped_normalization_work(side, actual_kind, 1, 0);
     let actual = parsed.to_xml().ok()?;
-    note_scoped_normalization_work(side, actual_kind, 0, actual.len());
     let frame = record.frame.get()?.as_ref()?;
-    let expected_kind = if round == 1 {
-        "frame_expected1"
-    } else {
-        "frame_expected2"
-    };
-    note_scoped_normalization_work(side, expected_kind, 1, 0);
     let expected = frame.to_xml().ok()?;
-    note_scoped_normalization_work(side, expected_kind, 0, expected.len());
     if actual != expected {
         return None;
     }
@@ -12039,11 +11553,8 @@ fn normalize_scoped_parsed_child(
     document: &CT_Document,
     normal: &MainPartBlocks,
     item: &BodyContent,
-    side: &str,
 ) -> Option<(BodyContent, Vec<u8>, Vec<u8>)> {
-    note_scoped_normalization_work(side, "write1", 1, 0);
     let written = document.body_item_xml(item).ok()?;
-    note_scoped_normalization_work(side, "write1", 0, written.len());
     let root = normal.head.get(normal.root.clone())?;
     if !root.windows(10).any(|bytes| bytes == b"xmlns:w14=")
         && written.windows(5).any(|bytes| {
@@ -12052,10 +11563,8 @@ fn normalize_scoped_parsed_child(
     {
         return None;
     }
-    let item = read_scoped_normalization_child(normal, &written, side, 2)?;
-    note_scoped_normalization_work(side, "write2", 1, 0);
+    let item = read_scoped_normalization_child(normal, &written)?;
     let rewritten = document.body_item_xml(&item).ok()?;
-    note_scoped_normalization_work(side, "write2", 0, rewritten.len());
     Some((item, rewritten, written))
 }
 
@@ -12065,10 +11574,9 @@ fn normalized_scoped_child(
     source: &MainPartBlocks,
     normal: &MainPartBlocks,
     bytes: &[u8],
-    side: &str,
 ) -> Option<(BodyContent, Vec<u8>, Vec<u8>)> {
-    let item = read_scoped_normalization_child(source, bytes, side, 1)?;
-    normalize_scoped_parsed_child(document, normal, &item, side)
+    let item = read_scoped_normalization_child(source, bytes)?;
+    normalize_scoped_parsed_child(document, normal, &item)
 }
 
 fn prove_empty_body_frame(head: &[u8], tail: &[u8]) -> Option<CT_Document> {
@@ -12128,7 +11636,6 @@ impl BodyBlockScan {
             xml.extend_from_slice(b"<w:body>");
             xml.extend_from_slice(&self.bytes);
             xml.extend_from_slice(b"</w:body></w:document>");
-            note_canonical_fragment(xml.len());
             xml_decodes(&xml)
         })
     }
@@ -12149,16 +11656,12 @@ impl BodyBlockScan {
         xml.extend_from_slice(&self.bytes);
         xml.extend_from_slice(tail);
         closed_word_body(&xml, head.len()..end)?;
-        note_staging_work(|work| work.children_read += 1);
-        note_scoped_normalization_work("source_read", "child_parse", 1, xml.len());
         let mut parsed = CT_Document::from_xml(&xml).ok()?;
         if parsed.body.content.len() != 1 {
             return None;
         }
         let item = parsed.body.content.pop()?;
-        note_scoped_normalization_work("source_read", "child_write", 1, 0);
         let written_child = parsed.body_item_xml(&item).ok()?;
-        note_scoped_normalization_work("source_read", "child_write", 0, written_child.len());
         let round_trips = written_child == self.bytes;
         drop(written_child);
         if !round_trips
@@ -12169,17 +11672,12 @@ impl BodyBlockScan {
             return None;
         }
         let shell_xml = [head, tail].concat();
-        note_scoped_normalization_work("source_read", "shell_parse", 1, shell_xml.len());
         let shell = CT_Document::from_xml(&shell_xml).ok()?;
         if !shell.body.content.is_empty() {
             return None;
         }
-        note_scoped_normalization_work("source_read", "emptied_write", 1, 0);
         let emptied = parsed.to_xml().ok()?;
-        note_scoped_normalization_work("source_read", "emptied_write", 0, emptied.len());
-        note_scoped_normalization_work("source_read", "shell_write", 1, 0);
         let expected_shell = shell.to_xml().ok()?;
-        note_scoped_normalization_work("source_read", "shell_write", 0, expected_shell.len());
         let frames_match = emptied == expected_shell;
         drop(emptied);
         drop(expected_shell);
@@ -12212,23 +11710,18 @@ impl BodyBlockScan {
         scopes: &DocumentNamespaceScopes,
     ) -> Option<Cow<'a, BodyContent>> {
         if self.reads_anew() {
-            note_staging_work(|work| work.children_read += 1);
             return parse_one_child(head, tail, &self.bytes).map(Cow::Owned);
         }
-        let cached = self.proved.get_or_init(|| {
-            note_staging_work(|work| work.children_read += 1);
-            ParsedChild {
-                root_declarations: scopes.root_declarations.clone(),
-                body_declarations: scopes.body_declarations.clone(),
-                body_bindings: scopes.body_bindings.clone(),
-                parsed: parse_one_child(head, tail, &self.bytes),
-            }
+        let cached = self.proved.get_or_init(|| ParsedChild {
+            root_declarations: scopes.root_declarations.clone(),
+            body_declarations: scopes.body_declarations.clone(),
+            body_bindings: scopes.body_bindings.clone(),
+            parsed: parse_one_child(head, tail, &self.bytes),
         });
         if cached.root_declarations != scopes.root_declarations
             || cached.body_declarations != scopes.body_declarations
             || cached.body_bindings != scopes.body_bindings
         {
-            note_staging_work(|work| work.children_read += 1);
             return parse_one_child(head, tail, &self.bytes).map(Cow::Owned);
         }
         cached.parsed.as_ref().map(Cow::Borrowed)
@@ -12596,7 +12089,6 @@ impl MainStoryLayout {
 /// body is an unproved wrapper. Callers keep the whole scanner and publish
 /// no new error.
 fn closed_word_body(xml: &[u8], covered: Range<usize>) -> Option<()> {
-    note_closed_body_guard(xml.len());
     let owners = scan_story_owners(xml, StoryKind::Body).ok()?;
     single_frame_body(&owners, Some(covered)).ok().map(|_| ())
 }
@@ -13166,7 +12658,6 @@ fn canonical_retained_main_part(
     canonical_drawing_ids: &[(u32, u32)],
 ) -> Result<Option<(Vec<u8>, CT_Document)>> {
     let mut retained = remap_xml_relationship_ids(retained, remap)?;
-    note_staging_work(|work| work.canonicalized += retained.len());
     let slots = authored_drawing_slots_in_source_order(
         &retained,
         modeled_drawing_ids,
@@ -13187,7 +12678,6 @@ fn canonical_retained_main_part(
     {
         retained.splice(span, id.to_string().into_bytes());
     }
-    note_staging_work(|work| work.parsed += retained.len());
     let document = CT_Document::from_xml(&retained)?;
     Ok(Some((retained, document)))
 }
@@ -16489,7 +15979,6 @@ fn set_story_source_xml_in(
         let (parsed, blocks) = match rebuilt {
             Some((parsed, blocks)) => (parsed, Some(blocks)),
             None => {
-                note_staging_work(|work| work.parsed += xml.len());
                 let parsed = if let Some((template, source)) = main_scoped.take() {
                     template.sources.invalidate_model();
                     let parsed = template
@@ -16514,7 +16003,7 @@ fn set_story_source_xml_in(
         };
         #[cfg(debug_assertions)]
         if blocks.is_some() {
-            without_staging_work(|| {
+            {
                 let whole = CT_Document::from_xml(&xml).expect("proved source parses whole");
                 assert_eq!(parsed, whole, "source pieces changed the parsed model");
                 assert_eq!(
@@ -16522,7 +16011,7 @@ fn set_story_source_xml_in(
                     whole.to_xml().ok(),
                     "source normalization changed"
                 );
-            });
+            }
         }
         let nested_namespace_owners = OnceLock::new();
         if let Some(owners) = blocks
@@ -24471,38 +23960,8 @@ impl Document {
         Ok(())
     }
 
-    /// Actual named clones, scoped and picture output calls/bytes, then source
-    /// package-origin clones. Debug builds only, reset on read.
-    #[cfg(debug_assertions)]
-    #[doc(hidden)]
-    pub fn take_transaction_work() -> [usize; 6] {
-        TRANSACTION_WORK.with(|work| work.replace([0; 6]))
-    }
-
-    /// Actual ordinary and phase outputs by provenance, as call and byte counts. Debug only.
-    #[cfg(debug_assertions)]
-    #[doc(hidden)]
-    pub fn take_transaction_outputs() -> std::collections::BTreeMap<String, [usize; 2]> {
-        let mut outputs =
-            TRANSACTION_OUTPUTS.with(|outputs| std::mem::take(&mut *outputs.borrow_mut()));
-        outputs.insert(
-            "allphase.modeled_namespace_scope_copies".into(),
-            MODELED_NAMESPACE_SCOPE_COPIES.with(|work| work.replace([0; 2])),
-        );
-        outputs
-    }
-
-    /// Actual scoped child parser/writer rounds, calls and bytes. Debug only.
-    #[cfg(debug_assertions)]
-    #[doc(hidden)]
-    pub fn take_scoped_normalization_work() -> std::collections::BTreeMap<String, [usize; 2]> {
-        SCOPED_NORMALIZATION_WORK.with(|work| std::mem::take(&mut *work.borrow_mut()))
-    }
-
     /// Clone all package and typed state while discarding derived layout caches.
     pub fn clone_for_staging(&self) -> Self {
-        #[cfg(debug_assertions)]
-        STAGING_CLONES.with(|count| count.set(count.get() + 1));
         Self {
             package: self.package.clone(),
             document: self.document.clone(),
@@ -24577,7 +24036,7 @@ impl Document {
     /// Independent cold reference state for debug agreement oracles only.
     #[cfg(debug_assertions)]
     fn clone_for_debug_reference(&self) -> Self {
-        let mut copy = without_staging_work(|| self.clone_for_staging());
+        let mut copy = self.clone_for_staging();
         copy.parsed = None;
         copy.main_part_blocks = None;
         copy.main_body_scans = Arc::new(Mutex::new(MainBodyScans::default()));
@@ -24866,28 +24325,27 @@ impl Document {
                     .and_then(|blocks| blocks.proved_document_matches(source, &self.document))
                 {
                     #[cfg(debug_assertions)]
-                    without_staging_work(|| {
+                    {
                         let fresh = CT_Document::from_xml(source).ok();
                         assert_eq!(
                             fresh.as_ref() == Some(&*self.document),
                             proved,
                             "the proved main part disagrees with a fresh parse"
                         );
-                    });
+                    }
                     proved
                 } else {
-                    note_staging_work(|work| work.parsed += source.len());
                     CT_Document::from_xml(source).ok().as_ref() == Some(&*self.document)
                 };
                 #[cfg(debug_assertions)]
                 if let Some(kept) = model_kept.as_deref() {
-                    without_staging_work(|| {
+                    {
                         assert_kept_main_document_without_initializing(
                             Some(kept),
                             Some(source),
                             &self.document,
                         );
-                    });
+                    }
                 }
                 matches
             }
@@ -24903,7 +24361,7 @@ impl Document {
                 #[cfg(debug_assertions)]
                 {
                     let source = self.package.get_part(&self.doc_part_name);
-                    without_staging_work(|| {
+                    {
                         assert_eq!(
                             format!("{owners:?}"),
                             format!(
@@ -24917,7 +24375,7 @@ impl Document {
                             ),
                             "the kept nested namespace owners differ from a scan"
                         );
-                    });
+                    }
                 }
                 owners
             }
@@ -24930,7 +24388,7 @@ impl Document {
                 });
                 if let Some(owners) = proved_owners {
                     #[cfg(debug_assertions)]
-                    without_staging_work(|| {
+                    {
                         let fresh = nested_source
                             .map(nested_modeled_namespace_owners)
                             .transpose()
@@ -24942,7 +24400,7 @@ impl Document {
                             format!("{fresh:?}"),
                             "the proved nested owners differ from a scan"
                         );
-                    });
+                    }
                     scanned = owners;
                     &scanned
                 } else {
@@ -24976,9 +24434,6 @@ impl Document {
                     // A failed optional writer proof does not replace the
                     // authoritative full writer or its original error.
                     let xml = document.to_xml()?;
-                    note_staging_work(|work| {
-                        work.serialized_children += document.body.content.len()
-                    });
                     let spans = self
                         .main_part_blocks
                         .as_ref()
@@ -25133,7 +24588,7 @@ impl Document {
         #[cfg(debug_assertions)]
         {
             let _proof_off = CanonicalBlockProofOff::enter();
-            let full_result = without_staging_work(|| full.canonicalize_all_drawing_ids(None));
+            let full_result = full.canonicalize_all_drawing_ids(None);
             assert_same_canonicalization(self, &result, &full, &full_result);
         }
         result
@@ -25337,7 +24792,6 @@ impl Document {
                 } else if let Some(parsed) = kept.as_deref().and_then(Parsed::main_document) {
                     parsed == &*self.document
                 } else {
-                    note_staging_work(|work| work.parsed += xml.len());
                     CT_Document::from_xml(xml).ok().as_ref() == Some(&*self.document)
                 };
                 matches
@@ -25776,7 +25230,6 @@ impl Document {
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .serialized = Some(record);
                 } else {
-                    note_staging_work(|work| work.parsed += updated.len());
                     self.document =
                         crate::document::DocumentModel::unproved(CT_Document::from_xml(&updated)?);
                     if let Some(writer) = template.as_deref_mut() {
@@ -25969,7 +25422,6 @@ impl Document {
                         relationship_remap,
                         &self.body_namespace_bindings,
                     )?;
-                    note_staging_work(|work| work.parsed += updated.len());
                     self.document =
                         crate::document::DocumentModel::unproved(CT_Document::from_xml(&updated)?);
                 }
@@ -26045,7 +25497,6 @@ impl Document {
                         .collect::<Vec<_>>();
                     (ordered.len() == semantic.len()).then_some(ordered)
                 } else {
-                    note_staging_work(|work| work.canonicalized += xml.len());
                     authored_relationship_ids_in_source_order(&xml, &semantic)
                 }
             }
@@ -26432,12 +25883,6 @@ impl Document {
     /// Commit staged package state without discarding reusable layout work.
     fn take_staged_commit_origin(&mut self) -> StagedCommitOrigin {
         let package = self.package.clone();
-        #[cfg(debug_assertions)]
-        TRANSACTION_WORK.with(|work| {
-            let mut counts = work.get();
-            counts[5] += 1;
-            work.set(counts);
-        });
         StagedCommitOrigin {
             package,
             signature_invalidated: self.package_signatures_invalidated,
@@ -26487,14 +25932,8 @@ impl Document {
     /// records a package mutation. Debug builds run the staged edit on a
     /// clone and compare. `edit` is `Fn` for that second run.
     fn edit_properties(&mut self, edit: impl Fn(&mut Self) -> Result<()>) -> Result<()> {
-        if staged_properties_forced() {
-            let mut candidate = self.clone_for_staging();
-            edit(&mut candidate)?;
-            self.commit_staged_mutation(candidate);
-            return Ok(());
-        }
         #[cfg(debug_assertions)]
-        let staged = without_staging_work(|| self.clone_for_staging());
+        let staged = self.clone_for_staging();
         let package = self.package.clone();
         let identifiers = self.identifiers.clone();
         let result = edit(self);
@@ -26803,14 +26242,10 @@ impl Document {
         } else {
             match kept.and_then(|kept| kept.main_document().cloned()) {
                 Some(document) => document,
-                None => {
-                    note_reopen_work(|work| work.main_parses += 1);
-                    note_staging_work(|work| work.parsed += doc_xml.len());
-                    match scoped_source.as_mut() {
-                        Some(input) => input.operation.source_document(input.source)?,
-                        None => CT_Document::from_xml(doc_xml)?,
-                    }
-                }
+                None => match scoped_source.as_mut() {
+                    Some(input) => input.operation.source_document(input.source)?,
+                    None => CT_Document::from_xml(doc_xml)?,
+                },
             }
         };
 
@@ -27355,9 +26790,6 @@ impl Document {
                 self.saved_package()?.write_to(&mut bytes)?;
                 let mut other_bytes = std::io::Cursor::new(Vec::new());
                 other.saved_package()?.write_to(&mut other_bytes)?;
-                note_staging_work(|work| {
-                    work.zip_written += bytes.get_ref().len() + other_bytes.get_ref().len();
-                });
                 Ok(bytes.into_inner() == other_bytes.into_inner())
             }
         })();
@@ -27367,9 +26799,9 @@ impl Document {
                 document.validate_model_resource_limits()?;
                 Ok(document.clone_for_debug_reference())
             };
-            let bytes = without_staging_work(|| -> Result<bool> {
+            let bytes = (|| -> Result<bool> {
                 Ok(forgetting(self)?.to_bytes()? == forgetting(other)?.to_bytes()?)
-            });
+            })();
             match (&same, bytes) {
                 (Ok(same), Ok(bytes)) => assert_eq!(*same, bytes, "saves_as differs from to_bytes"),
                 (Err(same), Err(bytes)) => assert_eq!(same.to_string(), bytes.to_string()),
@@ -27537,7 +26969,6 @@ impl Document {
         let mut buf = std::io::Cursor::new(Vec::new());
         candidate.package.write_to(&mut buf)?;
         let bytes = buf.into_inner();
-        note_staging_work(|work| work.zip_written += bytes.len());
         if normalized {
             *self = candidate;
         }
@@ -27807,8 +27238,7 @@ impl Document {
         let reopened = self.reopen_staged(in_memory, limits);
         #[cfg(debug_assertions)]
         if let Some(copy) = through_zip {
-            let expected =
-                without_reopen_work(|| without_staging_work(|| copy.reopen_staged(false, limits)));
+            let expected = copy.reopen_staged(false, limits);
             assert_same_reopen(&reopened, &expected);
         }
         reopened
@@ -27891,8 +27321,6 @@ impl Document {
             None => {
                 let mut output = std::io::Cursor::new(Vec::new());
                 self.package.write_to(&mut output)?;
-                note_reopen_work(|work| work.zip_writes += 1);
-                note_staging_work(|work| work.zip_written += output.get_ref().len());
                 Self::from_bytes_with_limits(output.get_ref(), limits)?
             }
         };
@@ -28081,7 +27509,6 @@ impl Document {
             let mut record = record.clone();
             record.part = None;
             drop(scans);
-            note_transaction_output("normalized_opening_copy", xml.len());
             return Ok((xml, Some(record)));
         }
         let (xml, record) = MainPartBlocks::serialize_in(
@@ -28094,7 +27521,6 @@ impl Document {
             scans.serialized = (!record.head.is_empty()).then(|| record.clone());
         }
         drop(scans);
-        note_transaction_output("assembled_current_writer", xml.len());
         Ok((xml, (!record.head.is_empty()).then_some(record)))
     }
 
@@ -28119,7 +27545,6 @@ impl Document {
                 xml.clone()
             };
             record.part = Some(Arc::new(part));
-            note_transaction_buffer("canonical_record_copy", xml.len());
         }
         Ok((xml, record))
     }
@@ -28132,11 +27557,7 @@ impl Document {
                 (xml, content, children)
             }
             None => {
-                note_staging_work(|work| {
-                    work.serialized_children += self.document.body.content.len()
-                });
                 let (xml, content, children) = self.document.to_xml_with_body_spans()?;
-                note_transaction_output("current_span_writer", xml.len());
                 (xml, content, children)
             }
         };
@@ -28159,7 +27580,7 @@ impl Document {
             let start = content.start;
             let end = content.end;
             #[cfg(debug_assertions)]
-            without_staging_work(|| {
+            {
                 // The canonical spans must point at the exact canonical
                 // blocks. This holds for every child, including a direct
                 // paragraph whose root keeps a foreign `w` binding.
@@ -28191,12 +27612,9 @@ impl Document {
                         }
                     }
                 }
-            });
+            }
             return Ok((xml, start..end, children));
         }
-        note_staging_work(|work| {
-            work.serialized_children += self.document.body.content.len();
-        });
         self.document.to_xml_with_body_spans().map_err(Error::from)
     }
 
@@ -28361,18 +27779,7 @@ impl Document {
             namespace_frame_spans: OnceLock::new(),
         };
         // Complete actual source equality is read authority only.
-        note_scoped_normalization_work("producer_current", "compare_attempt", 1, source.len());
         let source_matches = record.proved_document_matches(source, &self.document)?;
-        note_scoped_normalization_work(
-            "producer_current",
-            if source_matches {
-                "compare_true"
-            } else {
-                "compare_false"
-            },
-            1,
-            source.len(),
-        );
         if record.blocks.len() != normal.blocks.len() {
             return None;
         }
@@ -28388,32 +27795,9 @@ impl Document {
                     scoped_normalization_reuse_allowed(&record, normal, left, right, item)
                 });
             if lexical_and_private && let Some(actual_normal_part) = &normal.part {
-                note_scoped_normalization_work(
-                    "producer_current",
-                    "writer_attempt",
-                    1,
-                    actual_normal_part.len(),
-                );
                 let writer_matches = normal.writer_bytes_match(&self.document, actual_normal_part);
-                let label = match writer_matches {
-                    Some(true) => "writer_true",
-                    Some(false) => "writer_false",
-                    None => "writer_none",
-                };
-                note_scoped_normalization_work(
-                    "producer_current",
-                    label,
-                    1,
-                    actual_normal_part.len(),
-                );
                 if writer_matches == Some(true) {
                     // No scoped correspondence memo is created by this different proof.
-                    note_scoped_normalization_work(
-                        "producer_current",
-                        "admitted_children",
-                        record.blocks.len(),
-                        source.len(),
-                    );
                     return Some(record);
                 }
             }
@@ -28422,14 +27806,6 @@ impl Document {
             let seed = producer_scoped_normalization_seed(
                 &record, normal, children.0, children.1, &scopes,
             );
-            if seed.is_some() {
-                note_scoped_normalization_work(
-                    "producer",
-                    "seed_eligible",
-                    1,
-                    children.0.bytes.len(),
-                );
-            }
             if !scoped_children_correspond(
                 &self.document,
                 &record,
@@ -28579,7 +27955,6 @@ impl Document {
         {
             return parsed == &*self.document;
         }
-        note_staging_work(|work| work.parsed += source.len());
         CT_Document::from_xml(source).ok().as_ref() == Some(&*self.document)
     }
 
@@ -29262,24 +28637,24 @@ impl Document {
         let existing_document_xml = self.package.get_part(&self.doc_part_name);
         let typed_document_is_unchanged = if kept.is_some() && self.opened_main_still_serializes() {
             #[cfg(debug_assertions)]
-            without_staging_work(|| {
+            {
                 assert_kept_main_document_without_initializing(
                     kept.as_deref(),
                     existing_document_xml,
                     &self.document,
                 );
-            });
+            }
             true
         } else if let Some(parsed) = kept.as_deref().and_then(Parsed::main_document) {
             #[cfg(debug_assertions)]
-            without_staging_work(|| {
+            {
                 let fresh = existing_document_xml.and_then(|xml| CT_Document::from_xml(xml).ok());
                 assert_eq!(
                     fresh.as_ref(),
                     Some(parsed),
                     "the retained source parse disagrees with a fresh parse"
                 );
-            });
+            }
             parsed == &*self.document
         } else if let Some(proved) = existing_document_xml.and_then(|xml| {
             self.main_part_blocks
@@ -29287,19 +28662,16 @@ impl Document {
                 .and_then(|blocks| blocks.proved_document_matches(xml, &self.document))
         }) {
             #[cfg(debug_assertions)]
-            without_staging_work(|| {
+            {
                 let fresh = existing_document_xml.and_then(|xml| CT_Document::from_xml(xml).ok());
                 assert_eq!(
                     fresh.as_ref() == Some(&*self.document),
                     proved,
                     "the proved existing part disagrees with a fresh parse"
                 );
-            });
+            }
             proved
         } else {
-            note_staging_work(|work| {
-                work.parsed += existing_document_xml.map_or(0, <[u8]>::len);
-            });
             let parsed = existing_document_xml.and_then(|xml| CT_Document::from_xml(xml).ok());
             let unchanged = parsed.as_ref() == Some(&*self.document);
             drop(parsed);
@@ -29323,7 +28695,7 @@ impl Document {
             match kept.as_deref().and_then(Parsed::nested_namespace_owners) {
                 Some(owners) => {
                     #[cfg(debug_assertions)]
-                    without_staging_work(|| {
+                    {
                         assert_eq!(
                             format!("{owners:?}"),
                             format!(
@@ -29337,7 +28709,7 @@ impl Document {
                             ),
                             "the kept nested namespace owners differ from a scan"
                         );
-                    });
+                    }
                     owners
                 }
                 None => {
@@ -29348,7 +28720,7 @@ impl Document {
                     });
                     if let Some(owners) = proved_owners {
                         #[cfg(debug_assertions)]
-                        without_staging_work(|| {
+                        {
                             let fresh = existing_document_xml
                                 .map(nested_modeled_namespace_owners)
                                 .transpose()
@@ -29360,7 +28732,7 @@ impl Document {
                                 format!("{fresh:?}"),
                                 "the proved nested owners differ from a scan"
                             );
-                        });
+                        }
                         scanned = owners;
                         &scanned
                     } else {
@@ -30182,13 +29554,7 @@ impl Document {
         for (index, source) in sources.into_iter().enumerate() {
             let owners = match main.as_ref().filter(|_| index == 0) {
                 Some(layout) => layout.owners(&source.xml)?,
-                None => {
-                    if index == 0 {
-                        #[cfg(debug_assertions)]
-                        note_main_body_block_scans(_child_count);
-                    }
-                    scan_story_owners(&source.xml, source.root_kind)?
-                }
+                None => scan_story_owners(&source.xml, source.root_kind)?,
             };
             for owner in owners {
                 let identity = (owner.kind, source.part_name.clone(), owner.owner_index);
@@ -30244,10 +29610,6 @@ impl Document {
                 } else {
                     None
                 };
-                if index == 0 && layout.is_none() {
-                    #[cfg(debug_assertions)]
-                    note_main_body_block_scans(children.len());
-                }
                 (source, layout)
             }
             None => {
@@ -30303,7 +29665,7 @@ impl Document {
             _ => {
                 let serialized = scans.serialized.take();
                 *scans = MainBodyScans::default();
-                let frame = Arc::new(uncounted_scan(|| scan_body_block(head, None, tail, true))?);
+                let frame = Arc::new(scan_body_block(head, None, tail, true)?);
                 *scans = MainBodyScans {
                     head: head.to_vec(),
                     tail: tail.to_vec(),
@@ -30363,8 +29725,6 @@ impl Document {
         let scanned = if !whole_walk {
             let mut scanned = Vec::with_capacity(todo.len());
             for index in &todo {
-                #[cfg(debug_assertions)]
-                note_main_body_block_scans(1);
                 let bytes = &xml[children[*index].clone()];
                 match scan_body_block(head, Some(bytes), tail, items) {
                     Ok(scan) => scanned.push(scan),
@@ -30376,8 +29736,6 @@ impl Document {
             }
             scanned
         } else {
-            #[cfg(debug_assertions)]
-            note_main_body_block_scans(children.len());
             match scan_body_children(xml, children, &todo, items) {
                 Ok((scanned, fingerprint)) => {
                     scans.fingerprint = Some(fingerprint);
@@ -30407,9 +29765,9 @@ impl Document {
             fingerprint,
         };
         #[cfg(debug_assertions)]
-        uncounted_scan(|| {
+        {
             assert_main_story_layout(xml, &layout, items);
-        });
+        }
         Ok(layout)
     }
 
@@ -31856,7 +31214,6 @@ impl Document {
     // qualify every owner before a restored declaration can reinterpret a name.
     pub(crate) fn namespace_restored_main_source(&self) -> Result<Vec<u8>> {
         let canonical = self.main_part_with_body_spans()?.0;
-        note_transaction_output("namespace_current_writer", canonical.len());
         let original = self
             .package
             .get_part(&self.doc_part_name)
@@ -31901,7 +31258,6 @@ impl Document {
             }
         }
         let restored = replay_nested_namespace_declarations(&canonical, &needed)?;
-        note_transaction_buffer("namespace_replay_output", restored.len());
         if restored == canonical {
             return Ok(canonical);
         }
@@ -32115,20 +31471,6 @@ impl Document {
         ))
     }
 
-    /// Main-part body children this thread actually scanned. The count is
-    /// cumulative and is not reset on read. An independent scan adds one
-    /// child when that scan starts, including a scan that fails. A whole-part
-    /// walk adds every child in that part when the walk starts. A checked
-    /// full fallback in story listing, story lookup, or this method adds that
-    /// same whole-part child count. The frame scan, part serialization, and
-    /// body fingerprint hash are not included. Debug agreement scans are not
-    /// included. Debug builds only.
-    #[cfg(debug_assertions)]
-    #[doc(hidden)]
-    pub fn main_body_block_scans() -> usize {
-        MAIN_BODY_BLOCK_SCANS.with(std::cell::Cell::get)
-    }
-
     /// The body story location of the direct body child at `slot`.
     /// `Ok(None)` is absence. A scan that cannot be proved uses the whole
     /// story snapshot lookup. The error is that lookup's error.
@@ -32146,8 +31488,6 @@ impl Document {
         slot: usize,
     ) -> Result<Option<ContentLocation>> {
         let Ok(layout) = self.main_story_layout(xml, content, children, true) else {
-            #[cfg(debug_assertions)]
-            note_main_body_block_scans(children.len());
             return full_direct_body_item_location(xml, &self.doc_part_name, slot);
         };
         let owner = layout
@@ -32164,8 +31504,7 @@ impl Document {
         });
         #[cfg(debug_assertions)]
         {
-            let whole =
-                uncounted_scan(|| full_direct_body_item_location(xml, &self.doc_part_name, slot));
+            let whole = full_direct_body_item_location(xml, &self.doc_part_name, slot);
             match (&located, &whole) {
                 (Ok(actual), Ok(expected)) => {
                     assert_eq!(actual, expected, "direct body item location {slot}")
@@ -32699,7 +32038,6 @@ impl Document {
             options,
         )?;
         let candidate = self.clone_for_staging();
-        note_transaction_clone();
         let (updated, location) = Self::insert_picture_candidate(
             candidate,
             story,
@@ -32951,8 +32289,6 @@ impl Document {
         }
         let reopened = candidate.prepare_and_reopen_staged()?;
         let location = {
-            #[cfg(debug_assertions)]
-            let read_phase = TransactionReadPhase::enter(2);
             let read = reopened.prepared_main_read()?;
             let related = reopened.related_story_sources()?;
             let refreshed_story = read
@@ -32987,8 +32323,6 @@ impl Document {
                 .ok_or_else(|| {
                     Error::Other("inserted picture paragraph was not projected".to_owned())
                 })?;
-            #[cfg(debug_assertions)]
-            drop(read_phase);
             if let Some(inventory) = inventory
                 && !holds_field_words(&read.xml)
                 && related.iter().all(|source| !holds_field_words(&source.xml))
@@ -34281,7 +33615,6 @@ impl Document {
         let part = self.document.standalone_body_item_xml(item)?;
         let (start, end) = standalone_body_item_span(&part)?;
         let xml = self.close_direct_fragment(&part, start..end)?;
-        note_direct_fragment_bytes(xml.len());
         Ok((part, xml))
     }
 
@@ -34359,7 +33692,6 @@ impl Document {
             ),
         ]);
         let closed = close_content_fragment_namespaces(&bytes, &scope)?;
-        note_direct_fragment_bytes(closed.len());
         Ok(Some(closed))
     }
 
@@ -34399,7 +33731,6 @@ impl Document {
             .ok_or_else(|| Error::Other("standalone body table has no item".into()))?;
         let owner = physical_table_cell_owner(&part, StoryKind::Body, &table, row, cell)?;
         let xml = self.close_direct_fragment(&part, owner.full)?;
-        note_direct_fragment_bytes(xml.len());
         Ok(Some(xml))
     }
 
@@ -38445,7 +37776,7 @@ impl Document {
                 let reference = self.clone_for_debug_reference();
                 assert_eq!(
                     kept,
-                    &without_staging_work(|| reference.compute_unsavable_body_edit()),
+                    &reference.compute_unsavable_body_edit(),
                     "kept unsavable body answer"
                 );
             }
@@ -38525,7 +37856,6 @@ impl Document {
         let item = BodyContent::Paragraph(Box::new(Self::detached_text_paragraph("")));
         let mut block = BodyBlockScan::from_source(self.document.body_item_xml(&item).ok()?);
         block.staged = Some(Arc::new(item));
-        note_staging_work(|work| work.serialized_children += 1);
         let mut blocks = record.blocks.as_ref().clone();
         blocks.push(Arc::new(block));
         let (probe, mut proof) = MainPartBlocks::assemble(
@@ -47825,7 +47155,6 @@ impl Document {
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let literal_input = Cell::new(false);
         let candidate = self.clone_for_staging();
-        note_transaction_clone();
         match Self::replace_scoped_candidate(
             candidate,
             target,
@@ -48117,8 +47446,6 @@ impl Document {
         };
         // Flush only the private candidate before choosing the preserved physical span.
         candidate.prepare_staged_package()?;
-        #[cfg(debug_assertions)]
-        let read_phase = TransactionReadPhase::enter(1);
         let read = candidate.prepared_main_read()?;
         let related = candidate.related_story_sources()?;
         let (canonical, canonical_owner, layout) =
@@ -48257,8 +47584,6 @@ impl Document {
         drop(canonical);
         drop(read);
         drop(related);
-        #[cfg(debug_assertions)]
-        drop(read_phase);
         set_story_source_xml(&mut candidate, &part, xml)?;
         candidate.prepare_staged_package()?;
         let limits = PackageReadLimits::UNBOUNDED;
@@ -48290,19 +47615,13 @@ impl Document {
             .ok_or_else(|| Error::Other("scoped end has no physical namespace boundary".into()))?;
         // One typed serialization establishes the same canonical defaults and
         // root namespace inventory on both sides before model comparison.
-        let normalize = |xml: &[u8], kind: &str| -> Result<CT_Document> {
-            note_staging_work(|work| work.parsed += xml.len());
+        let normalize = |xml: &[u8]| -> Result<CT_Document> {
             let written = CT_Document::from_xml(xml)?.to_xml()?;
-            note_transaction_buffer(kind, written.len());
-            note_staging_work(|work| work.parsed += written.len());
             Ok(CT_Document::from_xml(&written)?)
         };
-        let baseline = normalize(original, "normalized_retained_writer")?;
+        let baseline = normalize(original)?;
         let current = self.document.to_xml()?;
-        note_transaction_output("proof_current_writer", current.len());
-        if normalize(&current, "normalized_current_writer")? != baseline
-            || normalize(&restored, "normalized_restored_writer")? != baseline
-        {
+        if normalize(&current)? != baseline || normalize(&restored)? != baseline {
             return Err(Error::Other(
                 "scoped source has no equivalent checked model projection".into(),
             ));
@@ -48313,16 +47632,12 @@ impl Document {
         let sentinel = scoped_proof_sentinel(&selected_closed, &marker)?;
         let mut checked_probe = restored;
         checked_probe.splice(start..end, sentinel.bytes());
-        note_transaction_buffer("masked_checked_rewrite", checked_probe.len());
         let mut retained_probe = original.to_vec();
-        note_transaction_buffer("retained_probe_copy", retained_probe.len());
         retained_probe.splice(retained_span, sentinel.bytes());
-        note_transaction_buffer("masked_retained_rewrite", retained_probe.len());
-        let checked_model = normalize(&checked_probe, "normalized_masked_checked_writer")?;
-        let retained_model = normalize(&retained_probe, "normalized_masked_retained_writer")?;
+        let checked_model = normalize(&checked_probe)?;
+        let retained_model = normalize(&retained_probe)?;
         let occurrences = |model: &CT_Document| -> Result<usize> {
             let written = model.to_xml()?;
-            note_transaction_buffer("masked_occurrence_writer", written.len());
             Ok(written
                 .windows(marker.len())
                 .filter(|bytes| *bytes == marker.as_bytes())

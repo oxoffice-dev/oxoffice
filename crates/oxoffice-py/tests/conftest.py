@@ -20,7 +20,7 @@ TIMED_TESTS = ("test_call_cost_does_not_grow_with_the_document", "test_call_cost
 def debug_build():
     import oxoffice.docx._native as native
 
-    return hasattr(native, "_staging_work")
+    return native._debug_build
 
 
 def pytest_configure(config):

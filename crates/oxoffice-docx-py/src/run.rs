@@ -200,7 +200,6 @@ impl PyRun {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("run XML owner route is unsupported"))?;
         let current = || -> PyResult<Vec<u8>> {
-            crate::document::note_word_whole_source_read();
             let (location, path) = document.current_run_owner(owner)?;
             document
                 .inner

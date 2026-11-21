@@ -176,7 +176,6 @@ impl ParagraphLocation {
         document: &oxoffice_docx::Document,
         location: &oxoffice_docx::ContentLocation,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        crate::document::note_word_story_walk();
         let owner = location.story();
         let story = document
             .stories()?
@@ -200,9 +199,6 @@ impl ParagraphLocation {
         &self,
         document: &oxoffice_docx::Document,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        if !matches!(self, Self::Related(_)) {
-            crate::document::note_word_story_walk();
-        }
         match self {
             Self::Body(index) => document.paragraph_story_location(*index)?.ok_or_else(|| {
                 oxoffice_docx::Error::Other("paragraph has no checked physical owner".to_owned())
@@ -753,7 +749,6 @@ impl PyParagraph {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("paragraph XML owner route is unsupported"))?;
         let current = || -> PyResult<Vec<u8>> {
-            crate::document::note_word_whole_source_read();
             let location = document.current_paragraph_owner(owner)?;
             document
                 .inner
