@@ -193,6 +193,55 @@ fn title_author_subject_and_keywords_survive_a_save() {
 }
 
 #[test]
+fn a_carriage_return_in_a_property_survives_a_save() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_title("first\rsecond");
+    let mut app = doc.application_properties().cloned().unwrap_or_default();
+    app.company = Some("Contoso\rFils".to_owned());
+    doc.set_application_properties(app).unwrap();
+    doc.set_custom_property(custom(
+        "Note",
+        2,
+        CustomPropertyValue::Lpwstr("a\r\nb".to_owned()),
+    ))
+    .unwrap();
+    doc.set_custom_property(custom(
+        "Tab\tname",
+        3,
+        CustomPropertyValue::Lpwstr("x".to_owned()),
+    ))
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.title(), Some("first\rsecond"));
+    assert_eq!(
+        doc.application_properties().unwrap().company.as_deref(),
+        Some("Contoso\rFils")
+    );
+    assert_eq!(
+        doc.custom_property("Note").map(|property| &property.value),
+        Some(&CustomPropertyValue::Lpwstr("a\r\nb".to_owned()))
+    );
+    // A name is an attribute: its tab is written as a reference too.
+    assert!(
+        doc.custom_property("Tab\tname").is_some(),
+        "{:?}",
+        custom_names(&doc)
+    );
+    // Written as a reference, which XML end-of-line handling keeps.
+    for part in [
+        "docProps/core.xml",
+        "docProps/app.xml",
+        "docProps/custom.xml",
+    ] {
+        let xml = doc.part_xml(part).unwrap();
+        assert!(
+            xml.contains("&#13;") && !xml.contains('\r'),
+            "{part}: {xml}"
+        );
+    }
+}
+
+#[test]
 fn every_core_property_round_trips_through_the_complete_model() {
     let mut doc = Document::new();
     let core = CoreProperties {

@@ -4,7 +4,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::error::Result;
-use crate::xml::local_name;
+use crate::xml::{escape_text, local_name};
 
 /// Document metadata from `docProps/core.xml` (Dublin Core).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -124,7 +124,7 @@ impl CoreProperties {
         ) -> Result<()> {
             if let Some(val) = value {
                 writer.write_event(Event::Start(BytesStart::new(tag)))?;
-                writer.write_event(Event::Text(BytesText::new(val)))?;
+                writer.write_event(Event::Text(BytesText::from_escaped(escape_text(val))))?;
                 writer.write_event(Event::End(BytesEnd::new(tag)))?;
             }
             Ok(())
@@ -139,7 +139,7 @@ impl CoreProperties {
                 let mut e = BytesStart::new(tag);
                 e.push_attribute(("xsi:type", "dcterms:W3CDTF"));
                 writer.write_event(Event::Start(e))?;
-                writer.write_event(Event::Text(BytesText::new(val)))?;
+                writer.write_event(Event::Text(BytesText::from_escaped(escape_text(val))))?;
                 writer.write_event(Event::End(BytesEnd::new(tag)))?;
             }
             Ok(())

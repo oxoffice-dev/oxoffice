@@ -422,7 +422,9 @@ fn write_text(writer: &mut Writer<Vec<u8>>, tag: &str, value: Option<&str>) -> R
         return Ok(());
     };
     writer.write_event(Event::Start(BytesStart::new(tag)))?;
-    writer.write_event(Event::Text(BytesText::new(value)))?;
+    writer.write_event(Event::Text(BytesText::from_escaped(
+        crate::xml::escape_text(value),
+    )))?;
     writer.write_event(Event::End(BytesEnd::new(tag)))?;
     Ok(())
 }
