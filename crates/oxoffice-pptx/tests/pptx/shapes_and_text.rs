@@ -2052,10 +2052,8 @@ fn the_connectors_of_the_training_deck_read_their_arrowheads_from_every_producer
                 Some(oxoffice_pptx::LineEndType::Triangle),
                 "{producer}"
             );
-            assert!(
-                matches!(head, None | Some(oxoffice_pptx::LineEndType::None)),
-                "{producer}: {head:?}"
-            );
+            let bare = (producer == "google").then_some(oxoffice_pptx::LineEndType::None);
+            assert_eq!(head, bare, "{producer}");
         }
     }
 }
