@@ -2,4 +2,5 @@
 //! `cargo test -p oxoffice-pdf --test pdf`.
 
 mod forms;
+mod metadata;
 mod support;

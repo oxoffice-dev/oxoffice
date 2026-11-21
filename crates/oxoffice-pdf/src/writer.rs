@@ -592,7 +592,8 @@ pub(crate) fn write_pdf_impl(
     let language = layout
         .metadata
         .as_ref()
-        .and_then(|meta| meta.language.as_deref());
+        .and_then(|meta| meta.language.as_deref())
+        .filter(|language| oxoffice_layout::is_language_tag(language));
 
     // ── Write catalog ────────────────────────────────────────────────
     {
@@ -1000,7 +1001,8 @@ pub(crate) fn write_pdf_impl(
     // The file identifier is a digest of everything written so far, so two
     // documents get different identifiers and one document always the same.
     // The metadata stream, which carries it, comes last.
-    let file_id = file_identifier(pdf.as_bytes());
+    // The archival part goes in too: it is only written in the metadata.
+    let file_id = file_identifier(pdf.as_bytes(), profile.map(PdfConformance::part));
     if let Some(metadata_id) = metadata_id {
         let xmp = if let Some(profile) = profile {
             conformance::archival_xmp(layout, profile, declares_pdfua, &file_id)
@@ -1018,10 +1020,17 @@ pub(crate) fn write_pdf_impl(
     pdf.finish()
 }
 
-/// The first 16 bytes of the SHA-256 digest of `bytes`.
-fn file_identifier(bytes: &[u8]) -> [u8; 16] {
+/// The first 16 bytes of the SHA-256 digest of `bytes` and of the PDF/A
+/// part, if any.
+fn file_identifier(bytes: &[u8], archival_part: Option<u8>) -> [u8; 16] {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    if let Some(part) = archival_part {
+        hasher.update(b"PDF/A-");
+        hasher.update([part]);
+    }
+    let digest = hasher.finalize();
     let mut id = [0; 16];
     id.copy_from_slice(&digest[..16]);
     id

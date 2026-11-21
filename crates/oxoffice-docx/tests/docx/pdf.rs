@@ -1938,6 +1938,9 @@ fn each_document_has_its_own_file_identifier() {
         assert_eq!(file_id(&Pdf::read(&convert(&first))), id);
         assert_ne!(file_id(&Pdf::read(&convert(&second))), id);
     }
+    // The two archival profiles of one document are two files.
+    let part = |profile| file_id(&Pdf::read(&first.to_pdfa_deterministic(profile).unwrap()));
+    assert_ne!(part(PdfConformance::PdfA2b), part(PdfConformance::PdfA3b));
     // The PDF/A metadata names the document by the same identifier.
     let pdf = Pdf::read(&first.to_pdfa_deterministic(PdfConformance::PdfA2b).unwrap());
     let hex: String = file_id(&pdf)
@@ -2007,6 +2010,26 @@ fn the_catalog_language_is_the_language_of_the_document() {
         format!("{}{style}{}", &xml[..at], &xml[end..])
     });
     assert_eq!(catalog_language(&pdf_of(&swiss)).as_deref(), Some("fr-CH"));
+    // A value that names no language (Word's x-none, a locale number) is
+    // passed over.
+    for value in ["x-none", "0409"] {
+        let mut doc = doc_with(&["Bonjour"]);
+        let doc = defaults(&mut doc, value);
+        assert_eq!(
+            catalog_language(&pdf_of(&doc)).as_deref(),
+            Some("und"),
+            "{value}"
+        );
+    }
+    // Without one in the styles, the document's language property names it.
+    let mut doc = doc_with(&["Guten Tag"]);
+    let mut properties = doc.core_properties().cloned().unwrap_or_default();
+    properties.language = Some("de-DE".to_owned());
+    doc.set_core_properties(properties).unwrap();
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("de-DE"));
+    // Styles that name no language leave the word to that property.
+    let doc = defaults(&mut doc, "x-none");
+    assert_eq!(catalog_language(&pdf_of(&doc)).as_deref(), Some("de-DE"));
     // A PDF/A file says it too.
     let archived = Pdf::read(
         &french

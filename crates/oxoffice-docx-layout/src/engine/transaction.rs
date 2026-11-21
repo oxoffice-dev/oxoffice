@@ -1989,7 +1989,15 @@ impl Engine {
         let mut retained_pages = restart_record_eligible.then(|| pages.clone());
 
         // Convert core properties to document metadata
-        let language = document_language(&input.styles);
+        let language = document_language(&input.styles).or_else(|| {
+            input
+                .core_properties
+                .as_ref()
+                .and_then(|cp| cp.language.as_deref())
+                .map(str::trim)
+                .filter(|language| oxoffice_layout::is_language_tag(language))
+                .map(str::to_owned)
+        });
         let metadata = (input.core_properties.is_some() || language.is_some()).then(|| {
             let cp = input.core_properties.as_ref();
             DocumentMetadata {
@@ -2692,11 +2700,12 @@ impl Engine {
 
 /// The document's main language, as Word reads it: the language of the
 /// default paragraph style, else of the document defaults (`w:lang/@w:val`).
+/// A value that is not a language tag (Word's `x-none`) names none.
 fn document_language(styles: &CT_Styles) -> Option<String> {
     let language = |rpr: Option<&CT_RPr>| {
         rpr.and_then(|rpr| rpr.language.as_deref())
             .map(str::trim)
-            .filter(|language| !language.is_empty())
+            .filter(|language| oxoffice_layout::is_language_tag(language))
             .map(str::to_owned)
     };
     language(

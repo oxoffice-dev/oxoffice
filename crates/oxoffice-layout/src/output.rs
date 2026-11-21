@@ -694,6 +694,30 @@ pub struct DocumentMetadata {
     pub language: Option<String>,
 }
 
+/// Whether `value` reads as a BCP 47 language tag: a primary subtag of two
+/// to eight letters, then subtags of one to eight letters or digits, joined
+/// by hyphens (`en`, `en-US`, `zh-Hant-TW`). Word's `x-none` ("no
+/// language"), a hexadecimal locale id such as `0409`, or a value with
+/// spaces is not.
+///
+/// ```
+/// use oxoffice_layout::is_language_tag;
+///
+/// assert!(is_language_tag("fr-CH"));
+/// assert!(!is_language_tag("x-none"));
+/// assert!(!is_language_tag("0409"));
+/// ```
+pub fn is_language_tag(value: &str) -> bool {
+    let mut subtags = value.split('-');
+    let primary = subtags.next().unwrap_or_default();
+    (2..=8).contains(&primary.len())
+        && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && subtags.all(|subtag| {
+            (1..=8).contains(&subtag.len())
+                && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
 /// An outline/bookmark entry for PDF generation.
 #[derive(Debug, Clone)]
 pub struct OutlineEntry {
