@@ -6785,21 +6785,26 @@ fn refuse_shared_note_references(
 ) -> Result<()> {
     let left = note_reference_counts(original)?;
     let right = note_reference_counts(edited)?;
-    let held_endnotes = if endnotes_ignored {
-        original.normal_endnote_ids()?
-    } else {
-        HashSet::new()
-    };
+    // Read only when the result references an endnote.
+    let mut held_endnotes = None;
     let mut pending = note_reference_counts(candidate)?
         .into_iter()
         .collect::<Vec<_>>();
     pending.sort();
     for ((element, id), count) in pending {
         let key = (element, id);
-        if endnotes_ignored && key.0 == "endnoteReference" && !held_endnotes.contains(&id) {
-            return Err(Error::Other(format!(
-                "ignored endnotes cannot supply the edited reference to endnote {id}"
-            )));
+        if endnotes_ignored && key.0 == "endnoteReference" {
+            if held_endnotes.is_none() {
+                held_endnotes = Some(original.normal_endnote_ids()?);
+            }
+            if held_endnotes
+                .as_ref()
+                .is_some_and(|held: &HashSet<i32>| !held.contains(&id))
+            {
+                return Err(Error::Other(format!(
+                    "ignored endnotes cannot supply the edited reference to endnote {id}"
+                )));
+            }
         }
         let (Some(&left), Some(&right)) = (left.get(&key), right.get(&key)) else {
             continue;
