@@ -151,17 +151,22 @@ edit.
    highest drawing id in use plus one, the next relationship id above the
    preserved ones, the lowest free bookmark id. Reads match the file only
    because staged commits reopen after each edit. After, an insert takes its
-   value by the same rule when it is made, and the save keeps it, as it
-   keeps the source's. One change to save output: ids added by edits follow
-   the order of the edits, not of the document. The pull requests that change it say so in
-   their body, and the changelog carries it. In detail (amended 2026-11-21,
-   before lot 3a-0):
+   value by its insert rule (see *The rule* below) when it is made, and the
+   save keeps it, as it keeps the source's. One change to save output: ids
+   added by edits follow the order of the edits, not of the document, and
+   keep their value after earlier content is removed. The pull requests that
+   change it say so in their body, and the changelog carries it. In detail
+   (amended 2026-11-21, before lot 3a-0):
    - **Scope**: every id the save renumbers today: bookmark ids, the
      bookmark ids of a rebuilt table of contents, numbering instance and
      definition ids, relationship ids of the main part and of the story
-     parts (headers, footers, notes), the relationship ids of the parts a
-     document gains (styles, numbering, settings, notes, comments, glossary),
-     drawing ids, and the names of media parts (`/word/media/imageN`).
+     parts (headers, footers, notes, comments), the relationship ids of the
+     parts a document gains (styles, settings, numbering, footnotes,
+     comments, extended comments), drawing ids, and the names of media parts
+     (`/word/media/imageN`). A gained endnotes or glossary part keeps its
+     provisional relationship id (`rdocxDeferredEndnotes`,
+     `rdocxDeferredGlossary`) in the saved file today; it takes `rIdN` too,
+     a second change to save output that the same pull request announces.
    - **Removed content**: the save does not compact. An id keeps its value
      after earlier content is removed. An id a removal frees is taken again
      only if that removal released it from the registry; otherwise it stays
@@ -171,10 +176,11 @@ edit.
      relationship ids were numbered from the source's highest), the insert's
      rule, which is what reads already show after an in-place edit. A part a
      document gains takes the relationship rule (`rIdN`) when it is
-     reserved, instead of a provisional name the save replaced.
+     reserved, instead of a provisional name.
    - **Ids a save creates** on the copy it writes (a part a model needs and
-     the package lacks) are allocated at that save, by the same rule; the
-     live document does not hold them, as today.
+     the package lacks) are allocated at that save, by the same rule. The
+     live document does not hold them, as today, except after `sign` and a
+     save that normalizes a field, which install the copy they wrote.
 4. **Edits say what they touched.** The binding drains the same journal,
    through a `#[doc(hidden)]` facade call as it reaches
    `direct_body_paragraph_facts` today, and updates its handle inventory from
@@ -219,7 +225,8 @@ What moves, and is accepted:
   on saved files and leave every call linear, with one more route to keep in
   step. The decision above removes the routes instead.
 - **No other change to save.** Saving stays linear in the document, as it
-  must, and keeps its checks; decision 3 is its only output change. The guard
+  must, and keeps its checks; decision 3 is its only output change (the
+  order of added ids, their value after a removal). The guard
   run once per part write (62 passes per staged save) is worth a later look
   at save time, outside this item.
 - **No PowerPoint work here.** pptx calls pass the scaling gate, but many
@@ -227,8 +234,8 @@ What moves, and is accepted:
   `presentation.rs`). PR 0 runs the pptx scaling test once at 16N as a
   measurement; any growth it shows becomes its own item.
 - **No Rust signature change.** The behaviour changes are the ones above:
-  saveability errors at save, and the id order of added content in saved
-  files.
+  saveability errors at save, and the ids of added content in saved files
+  (in edit order, kept after a removal).
 - **No caching layer, no parallelism.** They would hide the slope, not
   remove it.
 
