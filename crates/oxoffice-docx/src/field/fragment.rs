@@ -1692,16 +1692,55 @@ fn remap_fragment_style_collisions(
         .chain(fragment.styles.styles.iter())
         .map(|style| style.style_id.clone())
         .collect::<HashSet<_>>();
+    // A default of its type under an id the destination lacks, such as
+    // Word's localized Policepardfaut or a German Standard, takes the
+    // destination's default, as a type has one default. The character,
+    // table and numbering defaults always do, as before: content that names
+    // none of them takes the destination's (a table without a style takes
+    // its cell margins). A paragraph default carries the document's look: it
+    // does when it keeps the destination's look or is that default under
+    // another id (from another editing session), and a different one keeps its look
+    // under its own id, no longer a default, as a different default under
+    // the destination's id is renamed. The result does not depend on the
+    // language of the Word that wrote either file.
+    let mut demoted = HashSet::new();
+    for style in &fragment.styles.styles {
+        if !style.is_default || destination.styles.get_by_id(&style.style_id).is_some() {
+            continue;
+        }
+        let Some(default) = destination.styles.get_default(style.style_type) else {
+            continue;
+        };
+        let mut under_destination_id = style.clone();
+        under_destination_id.style_id = default.style_id.clone();
+        if keep_destination_styles
+            || style.style_type != StyleType::Paragraph
+            || without_revision_session(default) == without_revision_session(&under_destination_id)
+        {
+            replacements.insert(style.style_id.clone(), default.style_id.clone());
+        } else {
+            demoted.insert(style.style_id.clone());
+        }
+    }
+    // Styles are compared once their references to a mapped default name
+    // the destination's: a style based on Policepardfaut equals one based on
+    // DefaultParagraphFont.
+    let defaults = replacements.clone();
+    let with_mapped_defaults = |style: &oxoffice_docx_oxml::styles::CT_Style| {
+        let mut style = style.clone();
+        for reference in [
+            &mut style.based_on,
+            &mut style.next_style,
+            &mut style.linked_style,
+        ] {
+            if let Some(target) = reference.as_ref().and_then(|id| defaults.get(id)) {
+                *reference = Some(target.clone());
+            }
+        }
+        style
+    };
     for style in &fragment.styles.styles {
         let Some(existing) = destination.styles.get_by_id(&style.style_id) else {
-            // A default of its type under an id the destination lacks, such as
-            // Word's localized Policepardfaut or TableauNormal: the content
-            // takes the destination's default, as a type has one default.
-            if style.is_default
-                && let Some(default) = destination.styles.get_default(style.style_type)
-            {
-                replacements.insert(style.style_id.clone(), default.style_id.clone());
-            }
             continue;
         };
         // The destination's definition wins: the content keeps the id. A
@@ -1724,11 +1763,13 @@ fn remap_fragment_style_collisions(
         // Compare the source-owned projection with only the selected numbering
         // reference remapped. Preservation snapshots and generated namespace
         // closures are not new style facts, while opaque XML remains exact.
-        let styles_match = if existing == style {
+        let compared = without_revision_session(&with_mapped_defaults(style));
+        let existing = &without_revision_session(existing);
+        let styles_match = if *existing == compared {
             true
         } else if let Some(num_id) = reusable_num_id {
             fragment_style_numbering_projection(existing, None)?
-                == fragment_style_numbering_projection(style, Some(num_id))?
+                == fragment_style_numbering_projection(&compared, Some(num_id))?
         } else {
             false
         };
@@ -1805,10 +1846,13 @@ fn remap_fragment_style_collisions(
             }
         }
     }
-    if replacements.is_empty() {
+    if replacements.is_empty() && demoted.is_empty() {
         return Ok(false);
     }
     for style in &mut std::sync::Arc::make_mut(&mut fragment.styles).styles {
+        if demoted.contains(&style.style_id) {
+            style.is_default = false;
+        }
         if let Some(replacement) = replacements.get(&style.style_id) {
             style.style_id = replacement.clone();
             // A renamed copy is not the destination default: the destination
@@ -1837,9 +1881,7 @@ fn remap_fragment_style_collisions(
             style.linked_style = Some(replacement.clone());
         }
         for (_, raw) in &mut style.extra_xml {
-            for (old, new) in &replacements {
-                patch_word_value(raw, b"link", old, new)?;
-            }
+            patch_word_values(raw, &[b"link"], &replacements)?;
         }
     }
     if let Some(numbering) = &mut fragment.numbering {
@@ -1851,16 +1893,15 @@ fn remap_fragment_style_collisions(
         )?;
         *numbering = oxoffice_docx_oxml::numbering::CT_Numbering::from_xml(&xml)?;
     }
-    for (old, new) in &replacements {
-        for element in [b"pStyle".as_slice(), b"rStyle", b"tblStyle"] {
-            if let Some((operation, source, _)) = source.as_mut() {
-                let replacements = BTreeMap::from([(old.clone(), new.clone())]);
-                let edits = word_value_edits(fragment_xml, &[element], &replacements)?;
-                apply_fragment_xml_edits(fragment_xml, source, Some(operation), edits)?;
-            } else {
-                patch_word_value(fragment_xml, element, old, new)?;
-            }
-        }
+    // One pass with the whole map: a replacement can also be a key, as when a
+    // source default maps to the destination's Standard and the source's own
+    // Standard is renamed StandardMerge1.
+    const STYLE_REFERENCES: [&[u8]; 3] = [b"pStyle", b"rStyle", b"tblStyle"];
+    if let Some((operation, source, _)) = source.as_mut() {
+        let edits = word_value_edits(fragment_xml, &STYLE_REFERENCES, &replacements)?;
+        apply_fragment_xml_edits(fragment_xml, source, Some(operation), edits)?;
+    } else {
+        patch_word_values(fragment_xml, &STYLE_REFERENCES, &replacements)?;
     }
     for kind in [StoryKind::Footnote, StoryKind::Endnote] {
         let stories = fragment.stories()?;
@@ -1882,20 +1923,14 @@ fn remap_fragment_style_collisions(
             } else {
                 storage.as_ref().clone()
             };
-            let mut changed = false;
-            for (old, new) in &replacements {
-                for element in [b"pStyle".as_slice(), b"rStyle", b"tblStyle"] {
-                    let values = BTreeMap::from([(old.clone(), new.clone())]);
-                    let edits = word_value_edits(&xml, &[element], &values)?;
-                    changed |= !edits.is_empty();
-                    apply_fragment_xml_edits(
-                        &mut xml,
-                        &mut note_source,
-                        source.as_mut().map(|(operation, _, _)| &mut **operation),
-                        edits,
-                    )?;
-                }
-            }
+            let edits = word_value_edits(&xml, &STYLE_REFERENCES, &replacements)?;
+            let changed = !edits.is_empty();
+            apply_fragment_xml_edits(
+                &mut xml,
+                &mut note_source,
+                source.as_mut().map(|(operation, _, _)| &mut **operation),
+                edits,
+            )?;
             if changed {
                 fragment.package.set_part(&part, xml);
                 if let (Some((_, _, sources)), Some(parent)) = (source.as_mut(), note_source) {
@@ -1913,11 +1948,7 @@ fn remap_fragment_style_collisions(
     }
     if let Some(comments) = fragment.comments.as_mut() {
         let mut xml = comments.to_xml()?;
-        for (old, new) in &replacements {
-            for element in [b"pStyle".as_slice(), b"rStyle", b"tblStyle"] {
-                patch_word_value(&mut xml, element, old, new)?;
-            }
-        }
+        patch_word_values(&mut xml, &STYLE_REFERENCES, &replacements)?;
         *comments = CT_Comments::from_xml(&xml)?;
     }
     // Header and footer parts are copied whole: they take the renames here,
@@ -1993,12 +2024,16 @@ fn remap_fragment_style_collisions(
     Ok(true)
 }
 
-fn patch_word_value(xml: &mut Vec<u8>, element_local: &[u8], old: &str, new: &str) -> Result<()> {
-    patch_word_values(
-        xml,
-        &[element_local],
-        &BTreeMap::from([(old.to_owned(), new.to_owned())]),
-    )
+/// `style` without its `w:rsid`, the editing session Word last saved it in:
+/// two files with the same style from two sessions hold the same style.
+fn without_revision_session(
+    style: &oxoffice_docx_oxml::styles::CT_Style,
+) -> oxoffice_docx_oxml::styles::CT_Style {
+    let mut style = style.clone();
+    style
+        .extra_xml
+        .retain(|(rank, _)| *rank != oxoffice_docx_oxml::styles::STYLE_RSID_RANK);
+    style
 }
 
 fn patch_word_values(
