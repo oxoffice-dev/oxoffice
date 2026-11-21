@@ -37,3 +37,12 @@ file = "google/thesis.docx"
 workflow = "redline-rebuilt-toc"
 issue = 66
 message = "comparison cannot track a whole paragraph's simple field"
+
+# Google Docs writes a paragraph mark with empty run properties; the first
+# pass leaves an empty paragraph properties element there, which the second
+# pass removes.
+[[known]]
+file = "word-google/record.docx"
+workflow = "page-numbers"
+issue = 440
+message = "word-google/record.docx: a second pass changes no byte"

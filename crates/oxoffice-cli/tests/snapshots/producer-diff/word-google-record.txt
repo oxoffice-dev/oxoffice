@@ -1,0 +1,2 @@
+changed footer: "Internal - Page 1 of 1" -> "Internal - Page  of "
+removed comment: "Confirm the two new sites with the regio" -> "-"
