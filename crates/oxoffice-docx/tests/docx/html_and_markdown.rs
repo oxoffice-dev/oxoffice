@@ -1430,12 +1430,14 @@ fn equations_reach_both_exports_in_their_place() {
     // EPUB writes MathML too, and names the documents that hold it.
     let epub = doc.to_epub_bytes().unwrap();
     assert!(
-        !epub
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("equation")),
+        !epub.diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("equation") || diagnostic.path.contains("/xml[")
+        }),
         "{:?}",
         epub.diagnostics
+            .iter()
+            .map(|diagnostic| format!("{} {}", diagnostic.path, diagnostic.message))
+            .collect::<Vec<_>>()
     );
     let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
     let mut chapters = String::new();
@@ -1544,8 +1546,131 @@ fn every_equation_of_the_word_paper_reaches_both_exports() {
     let (html, diagnostics) = doc.to_html_fragment_with_diagnostics();
     assert_eq!(html.matches("<math").count(), count, "{diagnostics:?}");
     let (markdown, _) = doc.to_markdown_with_diagnostics();
-    let dollars = markdown.matches('$').count();
-    assert!(dollars >= 2 * count, "{markdown}");
+    let (inline, display): (usize, usize) = doc
+        .paragraphs()
+        .iter()
+        .flat_map(|paragraph| paragraph.equations().cloned().collect::<Vec<_>>())
+        .map(|equation| match equation {
+            oxoffice_docx_oxml::math::OfficeMath::Inline(_) => (1, 0),
+            oxoffice_docx_oxml::math::OfficeMath::Display(display) => (0, display.equations.len()),
+        })
+        .fold((0, 0), |(a, b), (c, d)| (a + c, b + d));
+    // Unescaped dollars: two per inline equation, four per display one.
+    let dollars = markdown
+        .match_indices('$')
+        .filter(|(at, _)| !markdown[..*at].ends_with('\\'))
+        .count();
+    assert_eq!(dollars, 2 * inline + 4 * display, "{markdown}");
+}
+
+#[test]
+fn equation_content_outside_the_supported_subset_is_reported() {
+    // m:func (sin x) is kept as preserved XML, not as a typed expression.
+    let func = concat!(
+        r#"<m:func><m:funcPr/><m:fName><m:r><m:t>sin</m:t></m:r></m:fName>"#,
+        r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func>"#
+    );
+    let doc = reopen(&mut doc_with_body(&format!(
+        concat!(
+            r#"<w:p><m:oMath xmlns:m="{ns}">{func}<m:r><m:t>=0</m:t></m:r></m:oMath></w:p>"#,
+            r#"<w:p><m:oMath xmlns:m="{ns}">{func}</m:oMath></w:p>"#,
+        ),
+        ns = MATH_NAMESPACE,
+        func = func
+    )));
+    let (html, diagnostics) = doc.to_html_fragment_with_diagnostics();
+    assert!(
+        diagnostics.iter().any(|message| message
+            == "equation 1 written as MathML without its content outside the supported subset"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message.starts_with("equation 2 left out of the MathML")),
+        "{diagnostics:?}"
+    );
+    assert_eq!(html.matches("<math").count(), 1, "{html}");
+    let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message.starts_with("equation 2 left out of the LaTeX")),
+        "{diagnostics:?}"
+    );
+    assert_eq!(markdown.matches('$').count(), 2, "{markdown}");
+}
+
+#[test]
+fn equations_in_wrappers_and_tracked_changes_reach_both_exports_in_their_place() {
+    let equation = |text: &str| {
+        format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}"><m:r><m:t>{text}</m:t></m:r></m:oMath>"#)
+    };
+    let date = r#"w:author="A" w:date="2026-01-01T00:00:00Z""#;
+    let doc = reopen(&mut doc_with_body(&format!(
+        concat!(
+            // In a smart tag.
+            r#"<w:p><w:smartTag w:uri="urn:u" w:element="e"><w:r><w:t xml:space="preserve">tag </w:t></w:r>{y}</w:smartTag>"#,
+            r#"<w:r><w:t xml:space="preserve"> end</w:t></w:r></w:p>"#,
+            // In a tracked insertion, and a deleted one left out.
+            r#"<w:p><w:ins w:id="1" {date}><w:r><w:t xml:space="preserve">new </w:t></w:r>{z}</w:ins>"#,
+            r#"<w:del w:id="2" {date}>{q}</w:del><w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#,
+            // In a paragraph whose mark is deleted: it joins the next one.
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {date}/></w:rPr></w:pPr>"#,
+            r#"<w:r><w:t xml:space="preserve">first </w:t></w:r>{a}</w:p>"#,
+            r#"<w:p><w:r><w:t xml:space="preserve"> second</w:t></w:r></w:p>"#,
+            // Document text with a dollar.
+            r#"<w:p><w:r><w:t xml:space="preserve">costs $5 if </w:t></w:r>{x}</w:p>"#,
+        ),
+        y = equation("y"),
+        z = equation("z"),
+        q = equation("q"),
+        a = equation("a"),
+        x = equation("x"),
+        date = date,
+    )));
+    let markdown = doc.to_markdown();
+    for line in [
+        "tag $y$ end",
+        "new $z$ kept",
+        "first $a$ second",
+        "costs \\$5 if $x$",
+    ] {
+        assert!(markdown.contains(line), "{line}: {markdown}");
+    }
+    assert!(!markdown.contains("$q$"), "{markdown}");
+    let html = doc.to_html_fragment();
+    assert_eq!(html.matches("<math").count(), 4, "{html}");
+    assert!(
+        html.find("tag ").unwrap() < html.find("<mi>y</mi>").unwrap(),
+        "{html}"
+    );
+    assert!(
+        html.find("first ").unwrap() < html.find("<mi>a</mi>").unwrap(),
+        "{html}"
+    );
+}
+
+#[test]
+fn an_equation_after_a_link_is_not_part_of_the_link() {
+    let mut doc = Document::new();
+    let link = doc.add_hyperlink_relationship("https://example.com/");
+    let mut paragraph = doc.add_paragraph("");
+    paragraph.add_hyperlink("see", &link);
+    let expressions = oxoffice_docx::equation_from_latex("y").unwrap().value;
+    paragraph
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            expressions.expressions.clone(),
+        ))
+        .unwrap();
+    paragraph.add_run(" here");
+    let html = doc.to_html_fragment();
+    assert!(html.contains("see</a><math"), "{html}");
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.contains("[see](https://example.com/)$y$ here"),
+        "{markdown}"
+    );
 }
 
 // ---- Corpus ----

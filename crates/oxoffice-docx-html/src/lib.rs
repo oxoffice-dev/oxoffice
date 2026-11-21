@@ -12,7 +12,7 @@ use oxoffice_docx_layout::style_resolver::{NumberingState, generate_marker};
 use oxoffice_docx_layout::table::effective_table_paragraph_properties;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document};
-use oxoffice_docx_oxml::math::{CT_OMath, OfficeMath};
+use oxoffice_docx_oxml::math::{CT_OMath, CT_OMathPara, OfficeMath};
 use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_NumberFormat};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Tbl, CT_Tc, CellContent};
@@ -95,6 +95,10 @@ pub trait EquationWriter {
     /// One equation as LaTeX, without delimiters, or `None` when it cannot
     /// be written.
     fn latex(&self, equation: &CT_OMath) -> Option<String>;
+    /// Called before the equations of a display group are written, so that
+    /// a writer can report what the group holds beyond them. Does nothing
+    /// by default.
+    fn display(&self, _display: &CT_OMathPara) {}
 }
 
 /// The writer of the functions that take none: every equation is left out.

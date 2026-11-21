@@ -352,8 +352,15 @@ fn emit_paragraph_content(
     let mut current_link: Option<&str> = None;
 
     for (run_idx, run) in para.runs.iter().enumerate() {
-        emit_equations(out, para, run_idx, equations);
         let in_link = hyperlink_map.get(&run_idx).copied();
+        // An equation between a link and what follows it is not in the link.
+        if crate::equations_at(para, run_idx).next().is_some() {
+            if current_link.is_some() && current_link != in_link {
+                out.push_str("</a>");
+                current_link = None;
+            }
+            emit_equations(out, para, run_idx, equations);
+        }
 
         // Open/close link tags as needed
         match (current_link, in_link) {
@@ -394,6 +401,7 @@ fn emit_equations(out: &mut String, para: &CT_P, boundary: usize, equations: &dy
                 }
             }
             OfficeMath::Display(display) => {
+                equations.display(display);
                 for math in &display.equations {
                     if let Some(mathml) = equations.mathml(math) {
                         out.push_str(&match mathml.strip_prefix("<math") {

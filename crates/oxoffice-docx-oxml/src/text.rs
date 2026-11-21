@@ -2148,6 +2148,40 @@ fn append_accepted_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec
     }
 }
 
+/// The equations of a nested accepted view, at `offset` in the outer one.
+fn shifted_equations(
+    view: &CT_P,
+    offset: usize,
+) -> impl Iterator<Item = (usize, usize, OfficeMath)> + '_ {
+    view.equations
+        .iter()
+        .map(move |(at, slot, equation)| (offset + at, *slot, equation.clone()))
+}
+
+/// The equations a tracked insertion or move in holds, placed among the
+/// `count` runs it added at `offset` of the accepted view.
+fn push_inserted_equations(
+    revision: &CT_Revision,
+    offset: usize,
+    count: usize,
+    equations: &mut Vec<(usize, usize, OfficeMath)>,
+) {
+    if !matches!(
+        revision.kind(),
+        RevisionKind::Insertion | RevisionKind::MoveTo
+    ) {
+        return;
+    }
+    if let Some(paragraph) = revision.content_paragraph() {
+        let (view, _) = paragraph.accepted_view_projection(false);
+        equations.extend(
+            view.equations
+                .iter()
+                .map(|(at, slot, equation)| (offset + (*at).min(count), *slot, equation.clone())),
+        );
+    }
+}
+
 #[allow(non_snake_case)]
 impl CT_P {
     pub fn new() -> Self {
@@ -2420,8 +2454,8 @@ impl CT_P {
                     }
                     BoundaryOwner::Revision(index) => {
                         let (_, slot, revision) = &self.revisions[index];
+                        let offset = runs.len();
                         if preserve_field_owners {
-                            let offset = runs.len();
                             append_accepted_inline_revision(
                                 revision,
                                 &mut runs,
@@ -2431,9 +2465,16 @@ impl CT_P {
                                 hyperlink_revision_index(*slot),
                                 runs.len() - offset,
                             ));
+                            push_inserted_equations(
+                                revision,
+                                offset,
+                                runs.len() - offset,
+                                &mut equations,
+                            );
                             continue;
                         }
                         append_accepted_revision_runs(revision, &mut owned);
+                        push_inserted_equations(revision, offset, owned.len(), &mut equations);
                         hyperlink_revision_index(*slot)
                     }
                     BoundaryOwner::Wrapper(index) => {
@@ -2451,6 +2492,7 @@ impl CT_P {
                                 inline_boundaries.push(offset + view.runs.len());
                             }
                             links.extend(std::iter::repeat_n(None, view.runs.len()));
+                            equations.extend(shifted_equations(&view, offset));
                             runs.extend(view.runs);
                         }
                         continue;
@@ -2483,6 +2525,7 @@ impl CT_P {
                             inline_boundaries.push(offset + view.runs.len());
                         }
                         links.extend(std::iter::repeat_n(link, view.runs.len()));
+                        equations.extend(shifted_equations(&view, offset));
                         runs.extend(view.runs);
                     }
                     None => {

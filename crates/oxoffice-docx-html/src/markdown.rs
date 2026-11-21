@@ -720,6 +720,7 @@ fn equations_latex(para: &CT_P, boundary: usize, equations: &dyn EquationWriter)
         match equation {
             OfficeMath::Inline(math) => push(math, "$"),
             OfficeMath::Display(display) => {
+                equations.display(display);
                 for math in &display.equations {
                     push(math, "$$");
                 }
@@ -826,7 +827,11 @@ fn escape_reference_across(last: &mut String, next: &str) {
 /// Append a character of document text, escaping the punctuation that would
 /// otherwise start emphasis, a code span, a link, raw HTML or strikethrough.
 fn push_escaped(text: &mut String, character: char) {
-    if matches!(character, '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '~') {
+    // `$` delimits the equations this export writes.
+    if matches!(
+        character,
+        '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '~' | '$'
+    ) {
         text.push('\\');
     }
     text.push(character);

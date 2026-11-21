@@ -1149,7 +1149,8 @@ impl<'a> EpubWriter<'a> {
             }
         }
         for (extra_index, consumed) in consumed_raw.into_iter().enumerate() {
-            if consumed {
+            // An equation is written as MathML.
+            if consumed || crate::math::raw_is_equation(paragraph, extra_index) {
                 continue;
             }
             let raw_path = format!("{path}/xml[{extra_index}]");

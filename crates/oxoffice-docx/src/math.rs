@@ -199,6 +199,8 @@ pub(crate) fn raw_is_equation(paragraph: &oxoffice_docx_oxml::text::CT_P, index:
 #[derive(Default)]
 pub(crate) struct ExportEquations {
     diagnostics: std::cell::RefCell<Vec<String>>,
+    /// The equations written so far, which numbers them in the messages.
+    count: std::cell::Cell<usize>,
 }
 
 impl ExportEquations {
@@ -213,19 +215,39 @@ impl ExportEquations {
         format: &str,
         convert: fn(&MathArgument) -> MathConversionResult<String>,
     ) -> Option<String> {
-        let result = convert(&MathArgument::new(equation.expressions.clone()));
+        let number = self.count.get() + 1;
+        self.count.set(number);
         let mut diagnostics = self.diagnostics.borrow_mut();
+        // What the reader keeps outside the typed expressions (m:func,
+        // m:groupChr, m:eqArr, a tracked change...) is not converted.
+        let mut container = equation.clone();
+        container.expressions.clear();
+        let unsupported = container.has_unsupported_content();
+        if equation.expressions.is_empty() {
+            diagnostics.push(format!(
+                "equation {number} left out of the {format}: none of its content is in the supported subset"
+            ));
+            return None;
+        }
+        let result = convert(&MathArgument::new(equation.expressions.clone()));
         if result.value.is_empty() {
             let reason = result
                 .diagnostics
                 .first()
                 .map_or("no content", |diagnostic| diagnostic.message.as_str());
-            diagnostics.push(format!("equation left out of the {format}: {reason}"));
+            diagnostics.push(format!(
+                "equation {number} left out of the {format}: {reason}"
+            ));
             return None;
+        }
+        if unsupported {
+            diagnostics.push(format!(
+                "equation {number} written as {format} without its content outside the supported subset"
+            ));
         }
         for diagnostic in &result.diagnostics {
             diagnostics.push(format!(
-                "equation written as {format} at {}: {}",
+                "equation {number} written as {format} at {}: {}",
                 diagnostic.path, diagnostic.message
             ));
         }
@@ -240,6 +262,23 @@ impl oxoffice_docx_html::EquationWriter for ExportEquations {
 
     fn latex(&self, equation: &oxoffice_docx_oxml::math::CT_OMath) -> Option<String> {
         self.write(equation, "LaTeX", equation_to_latex)
+    }
+
+    fn display(&self, display: &oxoffice_docx_oxml::math::CT_OMathPara) {
+        let mut wrapper = display.clone();
+        wrapper.equations.clear();
+        let number = self.count.get() + 1;
+        let mut diagnostics = self.diagnostics.borrow_mut();
+        if wrapper.has_unsupported_content() {
+            diagnostics.push(format!(
+                "display group of equation {number}: its content outside the supported subset was left out"
+            ));
+        }
+        if display.properties.justification.is_some() {
+            diagnostics.push(format!(
+                "display group of equation {number}: its justification was left out"
+            ));
+        }
     }
 }
 
