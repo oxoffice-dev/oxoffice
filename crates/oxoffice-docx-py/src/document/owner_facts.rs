@@ -73,19 +73,20 @@ pub(super) fn word_table_read_facts(
         .collect()
 }
 
-/// The facade paragraph count of each modeled cell of a standalone table.
+/// The facade paragraph count of each modeled cell of a standalone table,
+/// rows and cells counted as the facade counts them: those of row and cell
+/// content controls included.
 pub(super) fn word_table_facts(xml: &[u8]) -> Option<WordReadFacts> {
     let table = oxoffice_docx_oxml::table::CT_Tbl::from_xml_fragment_checked(xml).ok()?;
-    let rows = table
-        .rows
-        .iter()
+    let table = oxoffice_docx::TableRef::from_model(&table);
+    let rows = (0..table.row_count())
         .map(|row| {
-            row.cells
-                .iter()
-                .map(|cell| cell.paragraphs().len())
-                .collect()
+            let row = table.row(row)?;
+            (0..row.cell_count())
+                .map(|cell| Some(row.cell(cell)?.paragraph_count()))
+                .collect::<Option<Vec<_>>>()
         })
-        .collect();
+        .collect::<Option<Vec<_>>>()?;
     Some(WordReadFacts::Table(rows))
 }
 

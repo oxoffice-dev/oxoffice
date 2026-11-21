@@ -251,6 +251,11 @@ impl Document {
         {
             return Ok(None);
         }
+        // A row or cell content control numbers the rows or cells apart
+        // from the table's own; the checked route edits such a table.
+        if crate::table::table_holds_controls(source) {
+            return Ok(None);
+        }
         let Some(source_row) = source.rows.get(row) else {
             return Ok(None);
         };
@@ -450,6 +455,7 @@ impl Document {
     /// operations and scoped literal replacement accept this form. Returns
     /// `None` when the index is out of range or the paragraph belongs to a
     /// Resolve a modeled body cell paragraph to its checked physical story owner.
+    /// `row` and `cell` count as [`crate::TableRef::cell`] does.
     #[doc(hidden)]
     pub fn cell_paragraph_story_location(
         &self,
@@ -667,18 +673,8 @@ impl Document {
         &self,
     ) -> Result<HashMap<(usize, usize, usize), Vec<ContentLocation>>> {
         let mut candidate = self.clone_for_staging();
-        let mut addresses = HashMap::<*const CT_Tc, (usize, usize, usize)>::new();
-        for (table_index, table) in candidate.tables().into_iter().enumerate() {
-            for (row_index, row) in table.inner.rows.iter().enumerate() {
-                for (cell_index, cell) in row.cells.iter().enumerate() {
-                    addresses.entry(cell as *const CT_Tc).or_insert((
-                        table_index,
-                        row_index,
-                        cell_index,
-                    ));
-                }
-            }
-        }
+        let addresses =
+            crate::table::cell_addresses(candidate.tables().into_iter().map(|table| table.inner));
         let xml = candidate.document.to_xml()?;
         let owners = scan_story_owners(&xml, StoryKind::Body)?;
         let body = owners

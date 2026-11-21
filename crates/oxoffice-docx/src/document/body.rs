@@ -17,7 +17,7 @@ impl Document {
             }
             BodyContent::Table(table) => BodyItemRef::Table(TableRef { inner: table }),
             BodyContent::ContentControl(control) => {
-                BodyItemRef::ContentControl(ContentControlRef { inner: control })
+                BodyItemRef::ContentControl(ContentControlRef::borrowed(control))
             }
             BodyContent::RawXml(raw) => BodyItemRef::UnsupportedXml(raw),
         })

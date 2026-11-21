@@ -29,9 +29,42 @@ const CUSTOM_XML_PROPS_NS: &[u8] =
     b"http://schemas.openxmlformats.org/officeDocument/2006/customXml";
 
 /// Read-only view of one structured document tag in document order.
-#[derive(Debug, Clone, Copy)]
+///
+/// A control of the body borrows the document's model. One of another story
+/// (a header, a footer, a note, a comment or a text box) is read from its part
+/// when listed, and the view holds that copy.
+#[derive(Debug, Clone)]
 pub struct ContentControlRef<'a> {
-    pub(crate) inner: &'a CT_Sdt,
+    pub(crate) inner: ControlSource<'a>,
+}
+
+/// Where a [`ContentControlRef`] reads its control.
+#[derive(Debug, Clone)]
+pub(crate) enum ControlSource<'a> {
+    /// The document's model holds it.
+    Borrowed(&'a CT_Sdt),
+    /// A copy read from a story part.
+    Owned(Box<CT_Sdt>),
+}
+
+impl std::ops::Deref for ControlSource<'_> {
+    type Target = CT_Sdt;
+
+    fn deref(&self) -> &CT_Sdt {
+        match self {
+            Self::Borrowed(control) => control,
+            Self::Owned(control) => control,
+        }
+    }
+}
+
+impl<'a> ContentControlRef<'a> {
+    /// A view of a control the document's model holds.
+    pub(crate) fn borrowed(inner: &'a CT_Sdt) -> Self {
+        Self {
+            inner: ControlSource::Borrowed(inner),
+        }
+    }
 }
 
 impl ContentControlRef<'_> {
@@ -70,7 +103,7 @@ impl ContentControlRef<'_> {
     /// lines of their own.
     pub fn text(&self) -> String {
         let mut text = String::new();
-        collect_sdt_text(self.inner, &mut text);
+        collect_sdt_text(&self.inner, &mut text);
         text
     }
 }
@@ -129,14 +162,27 @@ fn prepare_control_value(control: &CT_Sdt, value: &str) -> Result<ControlValue> 
 }
 
 impl Document {
-    /// Return every typed content control in document order.
+    /// Return every typed content control: those of the body in document
+    /// order, nested controls included, then those of the other stories, as
+    /// [`Self::fill_form`] finds them: the body's text boxes, then the
+    /// headers, footers, notes and comments in story order, with their text
+    /// boxes. When the other stories cannot be read, the body's controls
+    /// alone are listed; the setters then return the error.
     pub fn content_controls(&self) -> Vec<ContentControlRef<'_>> {
-        self.document
+        let mut controls: Vec<ContentControlRef<'_>> = self
+            .document
             .body
             .content_controls()
             .into_iter()
-            .map(|inner| ContentControlRef { inner })
-            .collect()
+            .map(ContentControlRef::borrowed)
+            .collect();
+        if let Ok(stories) = flushed_form_document(self).and_then(|staged| story_controls(&staged))
+        {
+            controls.extend(stories.into_iter().map(|story| ContentControlRef {
+                inner: ControlSource::Owned(Box::new(story.control)),
+            }));
+        }
+        controls
     }
 
     /// Return every content control whose tag equals `tag`.
@@ -155,7 +201,10 @@ impl Document {
             .collect()
     }
 
-    /// Replace the display and bound custom XML value of controls with `tag`.
+    /// Replace the display and bound custom XML value of controls with `tag`,
+    /// in every story [`Self::content_controls`] lists. Two selected controls
+    /// of which one holds the other are refused, as one value would
+    /// overwrite the other.
     pub fn set_content_control_value_by_tag(&mut self, tag: &str, value: &str) -> Result<usize> {
         self.apply_content_control_values(|control| {
             (control.tag() == Some(tag)).then(|| value.to_owned())
@@ -190,7 +239,8 @@ impl Document {
         Ok(counts)
     }
 
-    /// Replace the display and bound custom XML value of controls with `alias`.
+    /// Replace the display and bound custom XML value of controls with `alias`,
+    /// in every story, as [`Self::set_content_control_value_by_tag`] does.
     pub fn set_content_control_value_by_alias(
         &mut self,
         alias: &str,
@@ -212,6 +262,10 @@ impl Document {
         })
     }
 
+    /// Write the value `select` gives each control it selects. The body's
+    /// controls change in the typed model. Those of the other stories change
+    /// in their parts, as [`Self::fill_form`] writes a value, with the checks
+    /// and display rules of the body's.
     fn apply_content_control_values(
         &mut self,
         select: impl Fn(ContentControlRef<'_>) -> Option<String>,
@@ -223,7 +277,7 @@ impl Document {
             .into_iter()
             .enumerate()
             .filter_map(|(index, inner)| {
-                let value = select(ContentControlRef { inner })?;
+                let value = select(ContentControlRef::borrowed(inner))?;
                 let binding = inner
                     .properties
                     .as_ref()
@@ -231,44 +285,262 @@ impl Document {
                 Some(prepare_control_value(inner, &value).map(|value| (index, value, binding)))
             })
             .collect::<Result<Vec<_>>>()?;
-        if selected.is_empty() {
-            return Ok(0);
+        refuse_nested_selection(&self.document.body, &selected)?;
+
+        let body = if selected.is_empty() {
+            None
+        } else {
+            let replacements = ControlReplacements {
+                values: selected
+                    .iter()
+                    .map(|(index, value, _)| (*index, value.clone()))
+                    .collect(),
+                placeholder_styles: placeholder_style_ids(&self.styles),
+            };
+            let mut staged_document = self.document.clone();
+            replace_document_controls(&mut staged_document.body, &replacements)?;
+            staged_document.to_xml()?;
+
+            let mut staged_package = self.package.clone();
+            let mut edits_by_part: HashMap<String, Vec<XmlEdit>> = HashMap::new();
+            for (_, value, binding) in &selected {
+                let Some(binding) = binding else {
+                    continue;
+                };
+                let (part_name, edit) = resolve_binding_edit(
+                    &staged_package,
+                    &self.doc_part_name,
+                    binding,
+                    &value.bound,
+                )?;
+                edits_by_part.entry(part_name).or_default().push(edit);
+            }
+            for (part_name, edits) in edits_by_part {
+                let original = staged_package.get_part(&part_name).ok_or_else(|| {
+                    Error::Other(format!("custom XML part {part_name} is missing"))
+                })?;
+                let changed = apply_xml_edits(original, edits)?;
+                staged_package.set_part(&part_name, changed);
+            }
+            Some((staged_document, staged_package))
+        };
+
+        // The other stories, read as fill_form reads them: a story that
+        // cannot be read fails the call, as it fails fill_form.
+        let mut candidate = self.clone_for_staging();
+        if let Some((document, package)) = &body {
+            candidate.document = document.clone();
+            candidate.package = package.clone();
+        }
+        candidate.flush_to_package()?;
+        let stories = story_controls(&candidate)?;
+        let picked = stories
+            .iter()
+            .filter_map(|story| {
+                let value = select(ContentControlRef::borrowed(&story.control))?;
+                Some(prepare_control_value(&story.control, &value).map(|value| (story, value)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if picked.is_empty() {
+            let Some((document, package)) = body else {
+                return Ok(0);
+            };
+            self.document = document;
+            self.package = package;
+            self.invalidate_layout();
+            return Ok(selected.len());
         }
 
-        let replacements = ControlReplacements {
-            values: selected
-                .iter()
-                .map(|(index, value, _)| (*index, value.clone()))
-                .collect(),
-            placeholder_styles: placeholder_style_ids(&self.styles),
-        };
-        let mut staged_document = self.document.clone();
-        replace_document_controls(&mut staged_document.body, &replacements)?;
-        staged_document.to_xml()?;
+        write_story_control_values(&mut candidate, &picked)?;
+        self.commit_staged_mutation(candidate.prepare_and_reopen_staged()?);
+        Ok(selected.len() + picked.len())
+    }
+}
 
-        let mut staged_package = self.package.clone();
-        let mut edits_by_part: HashMap<String, Vec<XmlEdit>> = HashMap::new();
-        for (_, value, binding) in &selected {
-            let Some(binding) = binding else {
+/// Refuse two selected body controls of which one holds the other, as the
+/// story controls are refused: the outer value would overwrite the inner one.
+/// `selected` holds indices of `body.content_controls()`.
+fn refuse_nested_selection(
+    body: &CT_Body,
+    selected: &[(usize, ControlValue, Option<CT_DataBinding>)],
+) -> Result<()> {
+    if selected.len() < 2 {
+        return Ok(());
+    }
+    let controls = body.content_controls();
+    for (index, _, _) in selected {
+        let nested = controls[*index].nested_content_controls();
+        if selected.iter().any(|(other, _, _)| {
+            nested
+                .iter()
+                .any(|control| std::ptr::eq(*control, controls[*other]))
+        }) {
+            return Err(Error::Other(
+                "content controls nested in one another cannot take values at once".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A typed content control outside the body's model: in a text box of the
+/// body, or in a header, a footer, a note or a comment, with its text boxes.
+/// `start..end` is its span in `part`, in the package of the flushed
+/// document it was read from.
+struct StoryControl {
+    part: String,
+    start: usize,
+    end: usize,
+    control: CT_Sdt,
+}
+
+/// The typed content controls of every story but the body's model, as
+/// [`Document::fill_form`] finds them: those of the body's text boxes, then
+/// those of the related parts in story order, each part's in document order,
+/// nested controls included. A control the typed parser does not read is left
+/// out, as the body's model keeps one as raw XML. `document` is flushed.
+fn story_controls(document: &Document) -> Result<Vec<StoryControl>> {
+    let (controls, _, text_boxes) = document.accepted_form_regions()?;
+    let main = document.doc_part_name.as_str();
+    let mut parts: Vec<(String, Vec<Range<usize>>)> = Vec::new();
+    for (part, range) in controls {
+        // The body's own controls are those of its model.
+        if part == main
+            && !text_boxes.iter().any(|(owner, text_box)| {
+                owner == main && text_box.start <= range.start && range.end <= text_box.end
+            })
+        {
+            continue;
+        }
+        match parts.iter_mut().find(|(name, _)| *name == part) {
+            Some((_, ranges)) => ranges.push(range),
+            None => parts.push((part, vec![range])),
+        }
+    }
+    let mut found = Vec::new();
+    for (part, mut ranges) in parts {
+        ranges.sort_by_key(|range| (range.start, range.end));
+        let xml = document
+            .package
+            .get_part(&part)
+            .ok_or_else(|| Error::Other(format!("story part {part} is missing")))?;
+        for range in ranges {
+            let scope = crate::document::story_namespace_scope_at(xml, range.start)?;
+            let closed =
+                crate::document::close_content_fragment_namespaces(&xml[range.clone()], &scope)?;
+            let Some(control) = std::str::from_utf8(&closed)
+                .ok()
+                .and_then(|text| parse_control(text).ok())
+            else {
                 continue;
             };
-            let (part_name, edit) =
-                resolve_binding_edit(&staged_package, &self.doc_part_name, binding, &value.bound)?;
-            edits_by_part.entry(part_name).or_default().push(edit);
+            found.push(StoryControl {
+                part: part.clone(),
+                start: range.start,
+                end: range.end,
+                control,
+            });
         }
-        for (part_name, edits) in edits_by_part {
-            let original = staged_package
-                .get_part(&part_name)
-                .ok_or_else(|| Error::Other(format!("custom XML part {part_name} is missing")))?;
-            let changed = apply_xml_edits(original, edits)?;
-            staged_package.set_part(&part_name, changed);
-        }
-
-        self.document = staged_document;
-        self.package = staged_package;
-        self.invalidate_layout();
-        Ok(selected.len())
     }
+    Ok(found)
+}
+
+/// Write `picked`, values prepared as the body's are, into the controls'
+/// parts of the flushed `candidate`, and their bound custom XML values. Two
+/// selected controls of which one holds the other are refused, as one value
+/// would overwrite the other.
+fn write_story_control_values(
+    candidate: &mut Document,
+    picked: &[(&StoryControl, ControlValue)],
+) -> Result<()> {
+    let placeholder_styles = placeholder_style_ids(&candidate.styles);
+    let mut parts: Vec<&str> = Vec::new();
+    let mut patches = Vec::with_capacity(picked.len());
+    for (story, value) in picked {
+        if !parts.contains(&story.part.as_str()) {
+            parts.push(&story.part);
+        }
+        patches.push((*story, story_value_patch(&story.control, value)?));
+    }
+    // From the last control to the first, so that each start holds.
+    patches.sort_by_key(|(story, _)| std::cmp::Reverse(story.start));
+    for part in parts {
+        let in_part: Vec<&(&StoryControl, ControlPatch)> = patches
+            .iter()
+            .filter(|(story, _)| story.part == part)
+            .collect();
+        if in_part
+            .windows(2)
+            .any(|pair| pair[1].0.end > pair[0].0.start)
+        {
+            return Err(Error::Other(
+                "content controls nested in one another cannot take values at once".to_owned(),
+            ));
+        }
+        let mut xml = candidate
+            .package
+            .get_part(part)
+            .ok_or_else(|| Error::Other(format!("story part {part} is missing")))?
+            .to_vec();
+        for (story, patch) in in_part {
+            apply_control_patch(&mut xml, story.start, patch, &placeholder_styles)?;
+        }
+        candidate.write_story_part(part, xml)?;
+    }
+    let mut edits_by_part: HashMap<String, Vec<XmlEdit>> = HashMap::new();
+    for (story, value) in picked {
+        let Some(binding) = story
+            .control
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.data_binding.as_ref())
+        else {
+            continue;
+        };
+        let (part_name, edit) = resolve_binding_edit(
+            &candidate.package,
+            &candidate.doc_part_name,
+            binding,
+            &value.bound,
+        )?;
+        edits_by_part.entry(part_name).or_default().push(edit);
+    }
+    for (part_name, edits) in edits_by_part {
+        let original = candidate
+            .package
+            .get_part(&part_name)
+            .ok_or_else(|| Error::Other(format!("custom XML part {part_name} is missing")))?;
+        let changed = apply_xml_edits(original, edits)?;
+        candidate.package.set_part(&part_name, changed);
+    }
+    Ok(())
+}
+
+/// The part edit that gives a story control `value`, as `replace_one_control`
+/// gives one of the body: the prompt flag goes, a date takes its full date,
+/// a check box its state, and the display text changes when it differs or
+/// the control is a check box.
+fn story_value_patch(control: &CT_Sdt, value: &ControlValue) -> Result<ControlPatch> {
+    let showing_placeholder = match &control.properties {
+        Some(properties) => properties.showing_placeholder()?,
+        None => false,
+    };
+    let mut current = String::new();
+    collect_sdt_text(control, &mut current);
+    let rewrite = current != value.display || value.checkbox.is_some();
+    Ok(ControlPatch {
+        placeholder: control.properties.is_some().then_some(false),
+        full_date: match &value.full_date {
+            Some(full_date) => FullDateEdit::Set(full_date.clone()),
+            None => FullDateEdit::Keep,
+        },
+        last_value: LastValueEdit::Keep,
+        checked: value.checkbox.as_ref().map(|(checked, _)| *checked),
+        display: rewrite.then(|| value.display.clone()),
+        font: value.checkbox.as_ref().map(|(_, font)| font.clone()),
+        prompt: Some(showing_placeholder),
+    })
 }
 
 fn collect_sdt_text(sdt: &CT_Sdt, output: &mut String) {

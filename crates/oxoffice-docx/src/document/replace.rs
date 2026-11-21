@@ -106,7 +106,8 @@ impl Document {
     }
 
     /// Replace text in exactly one physical body table cell or one of its paragraphs.
-    /// Whole-cell scope includes supported nested tables and controls.
+    /// Whole-cell scope includes supported nested tables and controls. The
+    /// row and cell count as [`crate::TableRef::cell`] does.
     #[doc(hidden)]
     pub fn try_replace_text_in_cell(
         &mut self,
