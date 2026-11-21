@@ -35,9 +35,10 @@ RATIO, FIXED, FLOOR_MS = 2.5, 1.5, 5
 # A call of GROWING may cost a time linear in the body, about 4 times at most from N to 4N; it fails over LINEAR
 # times, which a cost that grows faster, about 16 times for a quadratic one, exceeds.
 LINEAR = 6
-# A call over its bound is measured again, up to REMEASURE times, the fastest of every measure counting at each size:
-# a load spike on a shared CI runner rarely comes back, a cost that grows with the document does every time. A call of
-# GROWING (a strict xfail) is not measured again, so that a second chance cannot read as an XPASS.
+# A call outside the band it is expected in is measured again, up to REMEASURE times, the fastest of every measure
+# counting at each size: a load spike on a shared CI runner rarely comes back, a cost that grows with the document does
+# every time. Any call is expected under RATIO times, a call of GROWING between FIXED and LINEAR times, so that a spike
+# can neither fail a flat call nor read as the fix of a growing one (an XPASS of its strict xfail).
 REMEASURE = 2
 STAMP = "2026-10-01T12:00:00Z"
 LICENSE = oxdocx.FontEmbeddingLicense(authorized=True, identity="CC0-1.0: Aileron")
@@ -735,6 +736,18 @@ def costs_ms(paths, setup):
     return [b * 1000 for b in best]
 
 
+def measured(documents, name, expected):
+    """The costs of `name` at N and 4N, measured again up to REMEASURE times while expected(small, large) is false,
+    the fastest of every measure counting at each size."""
+    small, large = costs_ms(documents, (TIMED | READS_TIMED)[name])
+    for _ in range(REMEASURE):
+        if expected(small, large):
+            break
+        again = costs_ms(documents, (TIMED | READS_TIMED)[name])
+        small, large = min(small, again[0]), min(large, again[1])
+    return small, large
+
+
 @pytest.fixture(scope="module")
 def documents(tmp_path_factory):
     folder = tmp_path_factory.mktemp("scaling")
@@ -787,20 +800,15 @@ QUICK = {
                                                                            reason=GROWS))
                                   if name in GROWING else name for name in TIMED | READS_TIMED])
 def test_call_cost_does_not_grow_with_the_document(documents, name):
-    small, large = costs_ms(documents, (TIMED | READS_TIMED)[name])
-    message = f"{name}: {large:.1f} ms at {4 * N} paragraphs, {small:.1f} ms at {N}"
     if name in GROWING:
+        small, large = measured(documents, name, lambda s, l: FIXED * s + FLOOR_MS <= l < LINEAR * s + FLOOR_MS)
+        message = f"{name}: {large:.1f} ms at {4 * N} paragraphs, {small:.1f} ms at {N}"
         if large >= LINEAR * small + FLOOR_MS:
             pytest.fail(f"grows faster than the body: {message}")
         assert large < FIXED * small + FLOOR_MS, message
         return
-    for _ in range(REMEASURE):
-        if large < RATIO * small + FLOOR_MS:
-            break
-        again = costs_ms(documents, (TIMED | READS_TIMED)[name])
-        small, large = min(small, again[0]), min(large, again[1])
-        message = f"{name}: {large:.1f} ms at {4 * N} paragraphs, {small:.1f} ms at {N}"
-    assert large < RATIO * small + FLOOR_MS, message
+    small, large = measured(documents, name, lambda s, l: l < RATIO * s + FLOOR_MS)
+    assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {4 * N} paragraphs, {small:.1f} ms at {N}"
 
 
 def test_every_mutating_call_is_timed():
