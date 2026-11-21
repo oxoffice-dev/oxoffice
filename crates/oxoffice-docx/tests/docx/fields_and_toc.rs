@@ -129,9 +129,7 @@ fn a_simple_field_keeps_its_instruction_and_result_after_a_save() {
     assert_eq!(texts(&doc), ["Page 1"]);
 }
 
-// Fails today: a field added with Run::add_field is left out of the paragraph text until a save and reopen. Issue: #31
 #[test]
-#[should_panic(expected = "the field result is part of the paragraph text")]
 fn a_field_result_is_part_of_the_paragraph_text_before_a_save() {
     let mut doc = Document::new();
     doc.add_paragraph("Page ")
@@ -143,6 +141,35 @@ fn a_field_result_is_part_of_the_paragraph_text_before_a_save() {
         ["Page 1"],
         "the field result is part of the paragraph text"
     );
+    assert_eq!(doc.text(), "Page 1\n");
+}
+
+#[test]
+fn a_field_added_between_texts_of_a_run_reads_in_place_in_files_from_every_producer() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        let title = doc.paragraph(0).unwrap().text();
+        let mut paragraph = doc.paragraph_mut(0).unwrap();
+        let mut run = paragraph.add_run(" (page ");
+        run.add_field("PAGE", "3").unwrap();
+        run.add_text(")");
+        let expected = format!("{title} (page 3)");
+        assert_eq!(doc.paragraph(0).unwrap().text(), expected, "{name}");
+        assert!(
+            doc.text().starts_with(&format!("{expected}\n")),
+            "{name}: the document text shows the field result"
+        );
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.paragraph(0).unwrap().text(),
+            expected,
+            "{name}: the same text after a reopen"
+        );
+    }
 }
 
 #[test]
@@ -380,20 +407,70 @@ fn an_if_field_picks_its_result_from_a_nested_merge_field() {
     assert_eq!(texts(&reopen(&mut doc)), ["Dear Madam"]);
 }
 
-// Fails today: a nested field inside a quoted IF operand breaks the IF ("requires 5 positional operands"), so the stored result stays. Issue: #31
+/// An IF whose first operand quotes a nested merge field, split over runs
+/// as Word writes it: `{ IF "{ MERGEFIELD Country }" = "<value>" ... }`.
+fn quoted_if_body(value: &str, stored: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "{value}" "Bonjour" "Hello" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{stored}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    )
+}
+
 #[test]
-#[should_panic(expected = "the IF field follows its quoted merge field")]
 fn an_if_field_with_a_quoted_nested_merge_field_is_updated() {
     // Quoting the nested field is the form Word recommends for comparisons.
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "France" "Bonjour" "Hello" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Hello</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    );
+    let mut doc = doc_with_body(&quoted_if_body("France", "Hello"));
     doc.update_fields(&merge_context(&[("Country", "France")]))
         .unwrap();
     assert_eq!(
         texts(&doc),
         ["Bonjour"],
         "the IF field follows its quoted merge field"
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Bonjour"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    let mut rest = xml.as_str();
+    for piece in [
+        r#"<w:instrText xml:space="preserve"> IF "</w:instrText>"#,
+        r#"<w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText>"#,
+        r#"<w:instrText xml:space="preserve">" = "France" "Bonjour" "Hello" </w:instrText>"#,
+    ] {
+        let at = rest
+            .find(piece)
+            .unwrap_or_else(|| panic!("the instruction keeps {piece} in order: {xml}"));
+        rest = &rest[at + piece.len()..];
+    }
+}
+
+#[test]
+fn an_if_field_picks_a_quoted_nested_merge_field_as_its_result() {
+    // The mail-merge form: the result to show is itself a quoted merge field.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "France" "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD City </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«City»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" "Abroad" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Abroad</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    for (country, shown) in [("France", "Lyon"), ("Spain", "Abroad")] {
+        let outcome = doc
+            .evaluate_fields(&merge_context(&[("Country", country), ("City", "Lyon")]))
+            .unwrap()
+            .remove(0)
+            .outcome;
+        assert_eq!(outcome, FieldOutcome::Resolved(shown.into()), "{country}");
+    }
+}
+
+// Fails today: a quoted operand made of text and a nested field has no model, so the IF gets too many operands and keeps its stored result. Issue: #50
+#[test]
+#[should_panic(expected = "the IF field compares the text joined to its nested field")]
+fn an_if_field_whose_quoted_operand_joins_text_and_a_nested_field_is_updated() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "Mr </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Name»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Mr Smith" "Known" "Unknown" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Unknown</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    doc.update_fields(&merge_context(&[("Name", "Smith")]))
+        .unwrap();
+    assert_eq!(
+        texts(&doc),
+        ["Known"],
+        "the IF field compares the text joined to its nested field"
     );
 }
 
@@ -991,11 +1068,13 @@ fn rebuilding_changes_nothing_without_a_toc_it_supports() {
 
 #[test]
 fn rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings() {
-    // Word for Mac in French names the heading styles Titre1, Titre2.
+    // Word for Mac in French names the heading styles Titre1, Titre2. The
+    // table insert_toc wrote already holds the six headings and their
+    // bookmarks, so the rebuild finds them all and adds none.
     let mut doc = corpus_doc("word/report.docx");
     doc.insert_toc(0, 3).unwrap();
     let report = doc.rebuild_toc().unwrap();
-    assert_eq!((report.entry_count, report.bookmark_count), (6, 6));
+    assert_eq!((report.entry_count, report.bookmark_count), (6, 0));
     let doc = reopen(&mut doc);
     assert_eq!(
         texts(&doc)[1..7],
@@ -1019,9 +1098,7 @@ fn rebuilding_the_toc_of_a_word_file_saved_in_french_finds_its_headings() {
     );
 }
 
-// Fails today: insert_toc finds headings by the English style ids Heading1 to Heading9, so a Word file saved in French gets an empty table. Issue: #27
 #[test]
-#[should_panic(expected = "insert_toc lists the headings of a Word file saved in French")]
 fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {
     let mut doc = corpus_doc("word/report.docx");
     doc.insert_toc(0, 3).unwrap();
@@ -1030,6 +1107,36 @@ fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {
         "1. Highlights\t",
         "insert_toc lists the headings of a Word file saved in French"
     );
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..7],
+        [
+            "1. Highlights\t",
+            "2. Financial overview\t",
+            "3. Operations\t",
+            "3.1 Support\t",
+            "3.2 Next steps\t",
+            "Appendix A. Regional detail\t"
+        ]
+    );
+    // insert_toc indents each level by a quarter inch.
+    let indents: Vec<_> = doc.paragraphs()[1..7]
+        .iter()
+        .map(|paragraph| paragraph.indent_left().map(|indent| indent.to_twips()))
+        .collect();
+    assert_eq!(
+        indents,
+        [None, None, None, Some(360), Some(360), None],
+        "levels"
+    );
+    // Each entry links to the bookmark around its own heading.
+    let expected: Vec<(String, String)> = bookmark_list(&doc)
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("_Toc"))
+        .map(|(name, heading)| (heading, name))
+        .collect();
+    assert_eq!(expected.len(), 6, "one bookmark per heading");
+    assert_eq!(link_anchors(&doc), expected);
 }
 
 #[test]
@@ -1061,4 +1168,181 @@ fn a_toc_in_a_google_docs_file_links_each_heading_beside_google_bookmarks() {
     for kept in &google {
         assert!(after.contains(kept), "lost {kept:?}");
     }
+}
+
+/// Every glyph run a laid-out document draws, as (text, size, font family).
+fn drawn_runs(doc: &Document) -> Vec<(String, f64, String)> {
+    let result = doc.layout().expect("the document lays out");
+    let mut runs = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                let family = result
+                    .layout
+                    .fonts
+                    .iter()
+                    .find(|font| font.id == run.font_id)
+                    .map(|font| font.family.clone())
+                    .unwrap_or_default();
+                runs.push((run.text.clone(), run.font_size, family));
+            }
+        });
+    }
+    runs
+}
+
+/// A legacy checkbox as Word saves it: `w:ffData` and no result run.
+fn word_checkbox(size: &str, checked: bool) -> String {
+    format!(
+        r#"<w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox>{size}<w:default w:val="0"/>{checked}</w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>"#,
+        checked = if checked { r#"<w:checked/>"# } else { "" },
+    )
+}
+
+#[test]
+fn a_word_saved_legacy_checkbox_draws_its_box_at_its_size() {
+    let doc = doc_with_body(&format!(
+        "<w:p>{}<w:r><w:t xml:space=\"preserve\"> I agree</w:t></w:r></w:p><w:p>{}</w:p>",
+        word_checkbox(r#"<w:size w:val="24"/>"#, true),
+        word_checkbox("<w:sizeAuto/>", false),
+    ));
+    let runs = drawn_runs(&doc);
+    let checked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2612}")
+        .expect("checked box drawn");
+    assert_eq!(checked.1, 12.0, "w:size is in half-points");
+    let unchecked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2610}")
+        .expect("empty box drawn");
+    assert_eq!(unchecked.1, 10.0, "w:sizeAuto takes the run's size");
+    assert_eq!(
+        unchecked.2, "Noto Sans Symbols 2",
+        "a font that has the box"
+    );
+}
+
+#[test]
+fn a_legacy_checkbox_with_a_stored_result_draws_its_box_from_its_state_once() {
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    let texts: Vec<String> = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(
+        texts.concat(),
+        "\u{2612}",
+        "the box of its state, and not the stored X"
+    );
+}
+
+#[test]
+fn a_legacy_checkbox_set_through_the_facade_keeps_its_size() {
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}</w:p>",
+        word_checkbox(r#"<w:size w:val="24"/>"#, false)
+    ));
+    let field = doc.legacy_form_fields().unwrap().remove(0);
+    doc.set_legacy_form_field_value(
+        &field.source_part,
+        field.ordinal,
+        oxoffice_docx::LegacyFormFieldValue::Checked(true),
+    )
+    .unwrap();
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        let runs = drawn_runs(doc);
+        let checked = runs
+            .iter()
+            .find(|(text, _, _)| text == "\u{2612}")
+            .expect("checked box");
+        assert_eq!(checked.1, 12.0, "w:size still sizes the box");
+    }
+}
+
+#[test]
+fn a_legacy_checkbox_reads_its_opening_run_under_any_prefix() {
+    let doc = doc_with_body(
+        r#"<ns0:p xmlns:ns0="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><ns0:r><ns0:rPr><ns0:sz ns0:val="20"/></ns0:rPr><ns0:fldChar ns0:fldCharType="begin"><ns0:ffData><ns0:name ns0:val="Check1"/><ns0:enabled/><ns0:calcOnExit ns0:val="0"/><ns0:checkBox><ns0:sizeAuto/><ns0:default ns0:val="0"/></ns0:checkBox></ns0:ffData></ns0:fldChar></ns0:r><ns0:r><ns0:instrText xml:space="preserve"> FORMCHECKBOX </ns0:instrText></ns0:r><ns0:r><ns0:fldChar ns0:fldCharType="end"/></ns0:r></ns0:p>"#,
+    );
+    let runs = drawn_runs(&doc);
+    let unchecked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2610}")
+        .expect("empty box");
+    assert_eq!(unchecked.1, 10.0, "the opening run's size under ns0");
+}
+
+#[test]
+fn a_legacy_checkbox_in_a_table_cell_draws_its_box() {
+    let doc = doc_with_body(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="dxa"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        word_checkbox(r#"<w:size w:val="24"/>"#, true)
+    ));
+    let runs = drawn_runs(&doc);
+    let checked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2612}")
+        .expect("checked box in a cell");
+    assert_eq!(checked.1, 12.0);
+}
+
+#[test]
+fn a_legacy_checkbox_set_through_the_facade_keeps_its_opening_run_formatting() {
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}</w:p>",
+        word_checkbox("<w:sizeAuto/>", false)
+    ));
+    let field = doc.legacy_form_fields().unwrap().remove(0);
+    doc.set_legacy_form_field_value(
+        &field.source_part,
+        field.ordinal,
+        oxoffice_docx::LegacyFormFieldValue::Checked(true),
+    )
+    .unwrap();
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        let runs = drawn_runs(doc);
+        let checked = runs
+            .iter()
+            .find(|(text, _, _)| text == "\u{2612}")
+            .expect("checked box");
+        assert_eq!(
+            checked.1, 10.0,
+            "the opening run's size, the stored result has none"
+        );
+    }
+}
+
+#[test]
+fn a_legacy_checkbox_takes_its_opening_run_style() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:rPr><w:rStyle w:val="FormBox"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    doc.add_style(oxoffice_docx::StyleBuilder::character("FormBox", "Form box").size(14.0))
+        .unwrap();
+    let runs = drawn_runs(&doc);
+    let unchecked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2610}")
+        .expect("empty box");
+    assert_eq!(unchecked.1, 14.0, "the character style of the opening run");
+}
+
+#[test]
+fn a_locked_legacy_checkbox_draws_its_box() {
+    let checkbox = word_checkbox("<w:sizeAuto/>", true).replacen(
+        r#"<w:fldChar w:fldCharType="begin">"#,
+        r#"<w:fldChar w:fldCharType="begin" w:fldLock="1">"#,
+        1,
+    );
+    let doc = doc_with_body(&format!("<w:p>{checkbox}</w:p>"));
+    let runs = drawn_runs(&doc);
+    assert!(
+        runs.iter().any(|(text, _, _)| text == "\u{2612}"),
+        "a locked checkbox still draws its box"
+    );
 }

@@ -9,6 +9,15 @@
     "issue": 66
   },
   {
+    "id": "docx-compare-final-table",
+    "format": "docx",
+    "area": "compare",
+    "title": "Comparison refuses a paragraph moved after a final table, or added or deleted after a moved or redlined final table",
+    "symptom": "compare refuses with \"needs an adjacent paragraph for a final paragraph move\" or \"... for a final paragraph change\" (after a table moved to the end), or \"holds an existing tracked revision\" (after a table that holds tracked changes)",
+    "workaround": "put a paragraph after the table in both versions, or resolve the earlier tracked changes on both copies first",
+    "issue": 120
+  },
+  {
     "id": "docx-python-replace-slower",
     "format": "docx",
     "area": "replace",
@@ -36,21 +45,21 @@
     "issue": 7
   },
   {
-    "id": "docx-replace-across-tabs",
+    "id": "docx-text-hyphens-and-positional-tabs",
     "format": "docx",
-    "area": "replace",
-    "title": "Text replacement does not see tabs and line breaks",
-    "symptom": "a search holding a tab or a break finds nothing, one across a break moves it, and one across a tab inside a run panics in debug builds and garbles the run in release builds",
-    "workaround": "replace the text on each side of the tab or break separately",
+    "area": "text",
+    "title": "Non-breaking hyphens and positional tabs are missing from paragraph text",
+    "symptom": "Paragraph text and text search skip w:noBreakHyphen and w:ptab, so \"co-op\" written with a non-breaking hyphen reads \"coop\", a search for \"co-op\" finds nothing, and replacing \"coop\" leaves the hyphen after the replacement",
+    "workaround": "search for the text on each side of the hyphen or positional tab",
     "issue": 26
   },
   {
     "id": "docx-localized-style-ids",
     "format": "docx",
     "area": "styles",
-    "title": "Word files saved in another language: headings and tables of contents find no heading",
-    "symptom": "insert_toc lists nothing, and the Rust headings() and document_outline() are empty, when Word wrote localised style ids such as Titre1",
-    "workaround": "call rebuild_toc() after insert_toc(); find headings through the styles named \"heading N\"",
+    "title": "Word files saved in another language: new comments do not use the file's comment styles",
+    "symptom": "a comment added to a Word file with localised style ids, such as Commentaire, gets new CommentText and CommentReference styles based on Normal, so it does not look like Word's comments",
+    "workaround": "set the new comment's paragraphs and its reference mark to the file's comment styles, the styles named \"annotation text\" and \"annotation reference\"",
     "issue": 27
   },
   {
@@ -63,15 +72,6 @@
     "issue": 28
   },
   {
-    "id": "docx-word-list-restart",
-    "format": "docx",
-    "area": "lists",
-    "title": "A numbered list cannot be restarted in a file saved by Word",
-    "symptom": "restarting fails with \"numbering restart cannot project unsupported override source\" (Rust try_add_numbered_list_item_with_restart and restart_numbering, Python add_numbered_list_item(restart=True) and restart_numbering)",
-    "workaround": "start a new list instead: a new numbering definition and instance on the new paragraphs (Rust add_list_definition; Python add_numbering_definition then add_numbering_instance and Paragraph.numbering)",
-    "issue": 29
-  },
-  {
     "id": "docx-removed-notes",
     "format": "docx",
     "area": "notes",
@@ -81,13 +81,13 @@
     "issue": 30
   },
   {
-    "id": "docx-compare-final-table",
+    "id": "docx-restart-style-numbered-item",
     "format": "docx",
-    "area": "compare",
-    "title": "Comparison refuses a paragraph added after a final table",
-    "symptom": "compare fails with \"needs an adjacent paragraph for a final paragraph change\" when the edited version adds a paragraph after a table that ends the body",
-    "workaround": "put a paragraph after the final table in both versions before comparing",
-    "issue": 32
+    "area": "lists",
+    "title": "A list item numbered through its style cannot be restarted",
+    "symptom": "restart_numbering fails with \"paragraph has no explicit numbering level\" on the List Number paragraphs of Word and python-docx files, whose numbering comes from the style",
+    "workaround": "Rust: give the paragraph its own numbering first (set_numbering with the num_id and level of effective_paragraph_properties), then restart; Python: start a new list (add_numbering_definition, add_numbering_instance, Paragraph.numbering)",
+    "issue": 82
   },
   {
     "id": "docx-compare-endnotes",
@@ -106,5 +106,50 @@
     "symptom": "open fails with \"PackageError ... holds U+0001\" and `oxoffice pptx validate` exits 1, while PowerPoint opens the file",
     "workaround": "remove the character from that part's bytes, then open the file",
     "issue": 8
+  },
+  {
+    "id": "pptx-removed-slide-parts",
+    "format": "pptx",
+    "area": "slides",
+    "title": "Removing a slide leaves its charts, embedded workbooks and legacy comments in the file",
+    "symptom": "after removing a slide the saved deck still holds its chart parts, their workbooks with the data, and its legacy comment part with the reviewers' text",
+    "workaround": "remove each chart first (Rust remove_shape, Python shapes.remove), then the slide; none through the CLI, and none for legacy comments",
+    "issue": 38
+  },
+  {
+    "id": "pptx-duplicate-commented-slide",
+    "format": "pptx",
+    "area": "comments",
+    "title": "A slide with comments cannot be duplicated",
+    "symptom": "duplicating fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
+    "workaround": "import the slide into its own deck right after itself: Rust prs.import_slide(&prs.clone(), i, layout, Some(i + 1)), Python slides.import_slide(slide, index=i + 1), CLI oxoffice pptx slide import deck.pptx deck.pptx --slides N --at N+1 -o out.pptx",
+    "issue": 39
+  },
+  {
+    "id": "pptx-import-source-notes",
+    "format": "pptx",
+    "area": "slides",
+    "title": "Importing slides with their source formatting refuses PowerPoint and Google slides that have notes",
+    "symptom": "import_slides with keep_source_formatting fails with \"unrepresentable source notes-master ... authority\", calling the producer's part malformed",
+    "workaround": "import onto this deck's layouts instead, without keeping the source formatting",
+    "issue": 40
+  },
+  {
+    "id": "pptx-sections-follow-slides",
+    "format": "pptx",
+    "area": "slides",
+    "title": "Sections do not follow added, duplicated, imported or moved slides",
+    "symptom": "a new slide belongs to no section, and a moved slide stays listed in its old section",
+    "workaround": "set the sections again after the slide edits (set_sections in Rust and Python); none through the CLI",
+    "issue": 41
+  },
+  {
+    "id": "pptx-producer-tables",
+    "format": "pptx",
+    "area": "tables",
+    "title": "Tables merged by LibreOffice cannot be split, and Google tables cannot lose columns down to one",
+    "symptom": "split fails with \"merge origin does not have a valid continuation rectangle\"; remove_column fails with \"table frame size must remain positive\"",
+    "workaround": "before removing columns, set the first column to its own width (Rust set_column_width, Python column.width) to resync the frame; to split, give the covered cells the origin's spans in the table XML (Rust replace_table_xml_at, Python table element replace_xml)",
+    "issue": 44
   }
 ]

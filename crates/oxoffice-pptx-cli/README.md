@@ -112,8 +112,9 @@ geometry and full text. It is the CLI side of `Shapes::walk` in Rust and
 but are not listed. `list` shows each comment and reply as `open`, `resolved`,
 or `closed`, and its JSON carries the `resolved` flag beside the raw `status`
 token. `add --slide` takes a one-based slide number. `add` and `reply` require
-an RFC 3339 `--date`, reuse an existing author with the same name, and add the
-author otherwise. New ids are sequential GUIDs, so the output depends on
+a `--date` such as `2026-11-21T10:00:00Z`, where the time zone may be omitted
+as `xsd:dateTime` allows, reuse an existing author with the same name, and add
+the author otherwise. New ids are sequential GUIDs, so the output depends on
 neither a clock nor a random source. `resolve` takes a thread id. `remove`
 takes a thread id, which also removes its replies, or a reply id. Every
 mutation requires `-o/--output`, refuses an existing output, publishes only a

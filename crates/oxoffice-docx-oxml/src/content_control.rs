@@ -2214,20 +2214,13 @@ impl CT_Sdt {
         }
     }
 
-    pub(crate) fn split_accepted_run_segments(
-        &mut self,
-        path: &[AcceptedRunPathSegment],
-        offset: usize,
-    ) -> Result<bool> {
-        self.split_accepted_run_segments_in(path, offset, None, None)
-    }
-
     pub(crate) fn split_accepted_run_segments_in(
         &mut self,
         path: &[AcceptedRunPathSegment],
         offset: usize,
         work: Option<&mut crate::text::WordOperationWork>,
         emission: Option<&crate::text::FieldXmlEmission>,
+        edge: crate::text::SplitEdge,
     ) -> Result<bool> {
         let Some((first, rest)) = path.split_first() else {
             return Ok(false);
@@ -2240,7 +2233,7 @@ impl CT_Sdt {
                 let mut paragraph = CT_P::new();
                 paragraph.runs.push(run.clone());
                 paragraph
-                    .split_run(0, offset)
+                    .split_run_with(0, offset, edge)
                     .map_err(|error| OxmlError::InvalidValue(error.to_string()))?;
                 let replacement = paragraph.runs.drain(..).map(SdtContent::Run);
                 self.content.splice(index..=index, replacement);
@@ -2260,13 +2253,13 @@ impl CT_Sdt {
                 let Some(SdtContent::ContentControl(control)) = self.content.get_mut(index) else {
                     return Ok(false);
                 };
-                control.split_accepted_run_segments_in(rest, offset, work, emission)
+                control.split_accepted_run_segments_in(rest, offset, work, emission, edge)
             }
             AcceptedRunPathSegment::Revision(index) => {
                 let Some((_, revision)) = self.revisions.get_mut(index) else {
                     return Ok(false);
                 };
-                revision.split_accepted_run_segments_in(rest, offset, work, emission)
+                revision.split_accepted_run_segments_in(rest, offset, work, emission, edge)
             }
             AcceptedRunPathSegment::Run(_) => Ok(false),
         }

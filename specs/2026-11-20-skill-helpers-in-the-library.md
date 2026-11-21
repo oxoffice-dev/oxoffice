@@ -81,6 +81,132 @@ One pull request per row group, each with tests on the corpus:
   list of `(depth, shape)` with live handles, on slides, groups, layouts and
   masters. The CLI gains `oxoffice pptx shapes [--slide N] [--json]`, the flat
   listing the skills' `pptx_ops.py shapes` printed, with paths in JSON.
+- **4. Story paragraphs and counts** (#18): `Document::story_paragraphs()` gives a
+  `StoryParagraph` for every paragraph of every story: the body with its
+  table cells, text boxes and block content controls, each header and footer
+  part, the notes (separators left out) and the comments. Each one carries
+  the kind of its part's story (`Body`, `Header`, `Footer`, `Footnote`,
+  `Endnote`, `Comment`: a table cell or a text box takes the kind of the story
+  around it), its location (owner story, part name, and the item path of
+  `story_items`, which counts every item, not paragraphs), its direct style
+  id and the text a reader sees in the accepted view. Parts come in
+  `stories()` order, paragraphs in document order within a part.
+  `Document::count_text(text)` counts by story kind, in a fixed order,
+  without overlaps or crossing a paragraph end, and refuses an empty text.
+  CLI `docx count FILE TEXT [--json]`, with the total and the total outside
+  comments; `docx text --json` story items gain `style` (the part name and
+  the body styles were already there). Python `Document.story_paragraphs`,
+  `StoryParagraph`, `Document.count_text(text)` returning `{kind: count}`.
+- Design moves: comments are listed (the helper left them out), as kind
+  `comment`, so a caller that wants the replacement's reach filters them
+  (`docx count` gives `outside comments`). The story item inventory lists a
+  block content control, a table of contents for one, as one item with its
+  paragraphs' texts joined; story paragraphs split it with the paragraph
+  paths that comment ranges already use, so a TOC entry keeps its `TOC1`
+  style. Style ids are the document's own, localised by Word (`Titre1`,
+  `En-tte`). Part names are OPC names (`/word/header1.xml`), where the
+  helper gave ZIP names.
+- The text is read by a pass of its own over each paragraph, not by the
+  story item reader: that reader keeps `w:smartTag` and `w:customXml` opaque
+  and skips their text, which `Paragraph::text` and replacement read (found
+  by the independent review). The pass reads every `w:t` but deleted and
+  moved-away text, properties, the phonetic guide of a ruby (`w:rt`),
+  `mc:Fallback` copies, text boxes and field codes (nested fields included),
+  and matches `Paragraph::text` on every corpus file. It also reads what no
+  other call reaches: a smart tag inside a tracked insertion, the base of a
+  ruby Word writes in a run (which `Paragraph::text` leaves out), and the
+  paragraphs of a block `w:customXml`, text boxes inside it included, which
+  are listed with the element's path then their index. Counts see that
+  text, so item 2 can refuse to leave it behind. Known gap: a text box in a
+  run inside an inline smart tag or custom XML element is not listed (#78).
+  The cost is linear in the document (measured ×3.8 per 4× paragraphs), and
+  the scaling tests now time `story_paragraphs` and `count_text` against
+  the linear bound.
+- **5. Find and isolate a span**: `ParagraphRef::find_text(text,
+  occurrence)` (and the same on `Paragraph`) returns a `TextSpan { start,
+  end }` in the paragraph's literal run text, the text `split_run` offsets
+  count: case-sensitive, without overlaps, in the accepted view, inline
+  controls, hyperlinks and tracked insertions included. What
+  `Paragraph::text` shows besides (a tab, a break, a field result, simple or
+  complex, a drawing, a symbol) is not searched and a match never crosses
+  it, nor a non-breaking hyphen or a picture, shape or object kept as raw
+  XML; each stretch between two of these is searched on its own, so a
+  refused match never hides an overlapping one. Smart tags and custom XML
+  are not searched either; reference marks are not barriers.
+  `Paragraph::isolate_span(span)` splits runs so that the span is whole runs
+  and returns their index range, as `Paragraph::run` counts runs; each run
+  keeps its formatting, its insertion or its control, the text does not
+  change, and on error the paragraph is unchanged. A tab, a break or another
+  text-free item at either edge of the span stays out of those runs, even
+  when it starts or ends the run that holds the span's text (Word often
+  starts a run with the tab before its text), so bolding the span or
+  setting its text leaves it alone; `add_comment_on_text` shares the split
+  and keeps such an item out of the comment range. Python:
+  `Paragraph.find_text(text, occurrence=0)` returns a `TextSpan` (paragraph,
+  start, end), and `Document.isolate_span(span)` returns `(first, last)` for
+  a paragraph of the body, a table cell, a header, a footer, a note or a
+  comment; a change stales the document's earlier handles, the paragraphs
+  of other spans included, as every structural edit does.
+- Design move: the plan had `Document::isolate_span(span)`. A Rust paragraph
+  handle holds no place in the document, so a span is paragraph-relative and
+  isolating it is a paragraph method (`doc.paragraph_mut(i)` or a cell's
+  `paragraph_mut`); in Python, where edits go through the document's
+  revision tracking, it stays `Document.isolate_span`, the span carrying its
+  paragraph. No CLI: the CLI has no run formatting to apply to the runs.
+- **2. Text left out of a replacement's reach** (#24): counts and the
+  ordered, all-or-nothing batch were already there
+  (`try_replace_all_expected`, Python `replace_all([(old, new, expected)])`,
+  CLI `--map`). New `Document::try_replace_all_checked(pairs,
+  ReplaceOptions)` also refuses a pair after which a story paragraph that
+  held its text (comments aside) does not read as that text with every
+  occurrence replaced, with `ReplacementRefusal::Unreached(
+  UnreachedReplacement { index, placeholder, left, paragraphs })`, the
+  paragraphs being those that keep occurrences;
+  `ReplaceOptions { allow_unreached: true }` skips the check. Python
+  `replace_all(pairs, *, allow_unreached=False)` raises `UnreachedTextError`
+  (index, placeholder, left, paragraphs). CLI literal `replace` (one pair or
+  `--map`) refuses, with `--allow-unreached`.
+- Decisions: the check covers the stories replacement searches, so comments
+  are left out (they would refuse every batch whose text a comment quotes);
+  `count_text` still shows them. The check compares each paragraph before
+  and after the pair, keyed by its place without the story fingerprint: the
+  text after must read as the text before with each occurrence replaced or
+  left as it was, and the fewest left over such readings count (an
+  ambiguous reading, as with a value that holds its placeholder, gets the
+  benefit of the doubt). Replacement reads tabs and breaks as the story
+  view does since #88, so a text no reading explains only comes from a
+  change the check does not model, and counts what it holds beyond a full
+  replacement. The readings followed at once are capped; past the cap, how
+  far the text moved tells how many occurrences were made. Before #88,
+  replacement matched across a tab or a line break that the story view
+  reads as `\t` and `\n` (#26), and four review rounds went into a second
+  reading that modelled it; #88 removed the cause, and that reading with
+  it. Four designs came before the check, each answered by an independent
+  review: looking for the text after the pair refused a value that forms
+  its text again (`"  "` to `" "` on three spaces); counting over the
+  document let a match outside a paragraph offset one left in it; adding
+  "a paragraph left unchanged" refused a value equal to its placeholder and
+  missed a changed paragraph that keeps a cut match; and working out the
+  occurrences made from how far the text moved let a match across a line
+  break offset a cut one in the same paragraph. A document the check
+  cannot read, such as one whose header relationship targets a missing part,
+  is refused with `ReplacementRefusal::Unchecked` (Python
+  `UnreachedTextError` with `left=None`; Python already refuses to open such
+  a file) and a hint at `allow_unreached`, which replaces as before.
+  `try_replace_text` and the regex batches are not checked.
+  `try_replace_all_expected` keeps its signature and behaviour, so the
+  change is additive for Rust; Python `replace_all` and the CLI refuse by
+  default, as the helper did, which changes their 0.1.0 behaviour (a
+  breaking change in the changelog). A match cut by a content control, a
+  tracked insertion or a simple field is refused; one cut by a hyperlink is
+  replaced. A table of contents, written by oxoffice (`insert_toc`) or as
+  Word writes it (a block control holding a TOC field result with `PAGEREF`
+  fields), is reached like the body: its entries are replaced with their
+  headings, so it never refuses a batch. A text box inside a note and the
+  paragraphs of a block `w:customXml` are not searched and refuse.
+- PowerPoint: the helper only checked counts, which
+  `Presentation::try_replace_all_expected` and `pptx replace --map --expect`
+  already do; nothing new there.
 
 ## Links
 

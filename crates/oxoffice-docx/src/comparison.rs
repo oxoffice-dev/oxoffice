@@ -9,7 +9,7 @@ use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
 use oxoffice_docx_oxml::namespace::W_NS;
 use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::shared::ST_PageOrientation;
-use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_TblPr, CT_Tc, CT_TrPr, CellContent};
+use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_TblPr, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::{
     CT_P, CT_R, CT_Text, CommentRangeMarker, RunContent, declare_w14_on_part_root,
 };
@@ -5678,8 +5678,13 @@ fn generated_heading_bookmark(name: &str) -> bool {
 /// follow, so it reads the same. A new heading's `_Toc` bookmark takes a
 /// fresh name where the original uses its own, and a bookmark only the
 /// edited input holds a fresh id. When a reference cannot follow, because a
-/// field splits the name across runs or another story names it, the edited
-/// input stays as it is.
+/// field splits the name across runs or another story names it, or when the
+/// comparison would pair a renamed heading otherwise, the names stay as they
+/// are and only the ids follow, but a body heading's `_Toc` name, or one a
+/// paired heading claims, does not take the original's id for it unless a
+/// pairing kept it, since the original may give that name to another
+/// heading: it keeps its own id, or a fresh one where the original uses
+/// that. Links to another file are left alone.
 fn reconcile_body_bookmarks(
     original: &Document,
     edited: &mut Document,
@@ -5785,6 +5790,11 @@ fn reconcile_body_bookmarks(
     };
     let left_generated = generated(original);
     let right_generated = generated(edited);
+    let seen = right_generated
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<HashSet<_>>();
     let left_names = left
         .iter()
         .filter_map(|bookmark| bookmark.name.as_deref())
@@ -5792,6 +5802,9 @@ fn reconcile_body_bookmarks(
     let mut names = HashMap::new();
     let mut unpaired = HashSet::new();
     let mut renamed_pairs = Vec::new();
+    // Generated names a pairing keeps as they are, among those of the body
+    // paragraphs it saw.
+    let mut kept = HashSet::new();
     if right_generated.iter().any(|names| !names.is_empty()) {
         let (left_signatures, right_signatures) = (signatures(original), signatures(edited));
         let mut paired = vec![false; right_generated.len()];
@@ -5805,7 +5818,9 @@ fn reconcile_body_bookmarks(
                 && right_generated[right].len() == left_generated[left].len()
             {
                 paired[right] = true;
-                if right_generated[right] != left_generated[left] {
+                if right_generated[right] == left_generated[left] {
+                    kept.extend(right_generated[right].iter().cloned());
+                } else {
                     renamed_pairs.push((left, right));
                 }
                 names.extend(
@@ -5874,20 +5889,6 @@ fn reconcile_body_bookmarks(
         }
     }
     names.retain(|from, to| from != to);
-    let final_name = |bookmark: &BodyBookmark| {
-        bookmark
-            .name
-            .as_ref()
-            .map(|name| names.get(name).unwrap_or(name).clone())
-    };
-    let mut final_names = HashSet::new();
-    if right
-        .iter()
-        .filter_map(final_name)
-        .any(|name| !final_names.insert(name))
-    {
-        return Ok(());
-    }
 
     // The original's id for a name both hold, and a fresh id where a
     // bookmark only the edited input holds uses an id of the original.
@@ -5913,71 +5914,130 @@ fn reconcile_body_bookmarks(
             left_id_set.extend(bookmark_ids(part_xml(document, name)?)?);
         }
     }
-    let mut allocator = None;
-    let mut ids = HashMap::new();
-    let mut targets = HashSet::new();
-    for bookmark in &right {
-        let Some(id) = bookmark.id else {
-            continue;
-        };
-        let name = final_name(bookmark);
-        // Footnote custody markers are reconciled by their own owner.
-        let custody = name
-            .as_deref()
-            .is_some_and(|name| name.starts_with("_rdocxCmp"));
-        let target = match name.as_deref().and_then(|name| left_ids.get(name)) {
-            _ if custody => id,
-            Some(&target) => target,
-            None if left_id_set.contains(&id) => {
-                let allocator = match &mut allocator {
-                    Some(allocator) => allocator,
-                    slot => {
-                        let mut occupied = HashSet::new();
-                        for (document, name) in &parts {
-                            occupied.extend(word_ids(part_xml(document, name)?)?);
-                        }
-                        slot.insert(IdAllocator::new(occupied))
-                    }
-                };
-                allocator.allocate()?
+    // The edited ids under these names, or None when two bookmarks would
+    // share a name or an id.
+    let id_map =
+        |names: &HashMap<String, String>, fallback: bool| -> Result<Option<HashMap<i32, i32>>> {
+            let final_name = |bookmark: &BodyBookmark| {
+                bookmark
+                    .name
+                    .as_ref()
+                    .map(|name| names.get(name).unwrap_or(name).clone())
+            };
+            let mut final_names = HashSet::new();
+            if right
+                .iter()
+                .filter_map(final_name)
+                .any(|name| !final_names.insert(name))
+            {
+                return Ok(None);
             }
-            None => id,
+            let mut allocator = None;
+            let mut ids = HashMap::new();
+            let mut targets = HashSet::new();
+            for bookmark in &right {
+                let Some(id) = bookmark.id else {
+                    continue;
+                };
+                let name = final_name(bookmark);
+                // Footnote custody markers are reconciled by their own owner.
+                let custody = name
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with("_rdocxCmp"));
+                // Without the renames, a body heading's name, or a name a
+                // paired heading claims, may name another heading of the
+                // original unless a pairing kept it: it keeps its own id, or
+                // a fresh one where the original uses that.
+                let unkept = fallback
+                    && name.as_deref().is_some_and(|name| {
+                        (seen.contains(name) || claimed.contains(name)) && !kept.contains(name)
+                    });
+                let target = match name
+                    .as_deref()
+                    .filter(|_| !unkept)
+                    .and_then(|name| left_ids.get(name))
+                {
+                    _ if custody => id,
+                    Some(&target) => target,
+                    None if left_id_set.contains(&id) => {
+                        let allocator = match &mut allocator {
+                            Some(allocator) => allocator,
+                            slot => {
+                                let mut occupied = HashSet::new();
+                                for (document, name) in &parts {
+                                    occupied.extend(word_ids(part_xml(document, name)?)?);
+                                }
+                                slot.insert(IdAllocator::new(occupied))
+                            }
+                        };
+                        allocator.allocate()?
+                    }
+                    None => id,
+                };
+                if ids.insert(id, target).is_some() || !targets.insert(target) {
+                    return Ok(None);
+                }
+            }
+            ids.retain(|from, to| from != to);
+            Ok(Some(ids))
         };
-        if ids.insert(id, target).is_some() || !targets.insert(target) {
-            return Ok(());
+    let unnamed = HashMap::new();
+    // The rewritten main story, when references can follow every rename.
+    let rewritten = |names: &HashMap<String, String>, fallback: bool| -> Result<Option<Vec<u8>>> {
+        let Some(ids) = id_map(names, fallback)? else {
+            return Ok(None);
+        };
+        if names.is_empty() && ids.is_empty() {
+            return Ok(None);
         }
-    }
-    ids.retain(|from, to| from != to);
-    if names.is_empty() && ids.is_empty() {
-        return Ok(());
-    }
-    for (document, name) in &parts {
-        if std::ptr::eq(*document, &*edited)
-            && *name != edited.doc_part_name
-            && name_tokens(part_xml(document, name)?).any(|token| names.contains_key(token))
-        {
-            return Ok(());
+        for (document, name) in &parts {
+            if std::ptr::eq(*document, &*edited)
+                && *name != edited.doc_part_name
+                && name_tokens(part_xml(document, name)?).any(|token| names.contains_key(token))
+            {
+                return Ok(None);
+            }
         }
-    }
-    let Some(xml) = rewrite_body_bookmarks(right_xml, &names, &ids)? else {
-        return Ok(());
+        rewrite_body_bookmarks(right_xml, names, &ids)
     };
     let part = edited.doc_part_name.clone();
-    let mut candidate = edited.clone_for_staging();
-    crate::document::set_story_source_xml(&mut candidate, &part, xml)?;
-    // The comparison pairs the rewritten blocks again: a renamed heading it
-    // pairs with another one would hold that heading's bookmark beside the
-    // original's, so the input stays as it is unless every pair holds.
-    if !renamed_pairs.is_empty() {
-        let (left, right) = (plain_signatures(original), plain_signatures(&candidate));
-        let pairs = pair_gaps_by_kind(align(&left, &right), &left, &right)
-            .into_iter()
-            .filter_map(|pair| Some((pair.0?, pair.1?)))
-            .collect::<HashSet<_>>();
-        if renamed_pairs.iter().any(|pair| !pairs.contains(pair)) {
-            return Ok(());
+    let staged = |xml: Vec<u8>| -> Result<Document> {
+        let mut candidate = edited.clone_for_staging();
+        crate::document::set_story_source_xml(&mut candidate, &part, xml)?;
+        Ok(candidate)
+    };
+    let candidate = match rewritten(&names, false)? {
+        Some(xml) if renamed_pairs.is_empty() => staged(xml)?,
+        Some(xml) => {
+            let candidate = staged(xml)?;
+            // The comparison pairs the rewritten blocks again: a renamed
+            // heading it pairs with another one would hold that heading's
+            // bookmark beside the original's, so the names stay as they are
+            // unless every pair holds.
+            let (left, right) = (plain_signatures(original), plain_signatures(&candidate));
+            let pairs = pair_gaps_by_kind(align(&left, &right), &left, &right)
+                .into_iter()
+                .filter_map(|pair| Some((pair.0?, pair.1?)))
+                .collect::<HashSet<_>>();
+            if renamed_pairs.iter().all(|pair| pairs.contains(pair)) {
+                candidate
+            } else {
+                // Ids are matched by name and need no rename: they still
+                // follow the original's.
+                let Some(xml) = rewritten(&unnamed, true)? else {
+                    return Ok(());
+                };
+                staged(xml)?
+            }
         }
-    }
+        None if names.is_empty() => return Ok(()),
+        None => {
+            let Some(xml) = rewritten(&unnamed, true)? else {
+                return Ok(());
+            };
+            staged(xml)?
+        }
+    };
     *edited = candidate;
     Ok(())
 }
@@ -6473,11 +6533,17 @@ fn moved_pending_references(
 /// the original's: the notes referenced in the main story are paired in
 /// reference order by their text (the longest common sequence, then the
 /// notes left between two pairs, by position, when both sides leave as many).
-/// A note only the edited input holds keeps its id, or takes a new one where
-/// the original uses it. Nothing changes when a note is referenced twice or
-/// outside the main story, when a reference sits in a tracked change, or
-/// while note custody of an earlier comparison is pending.
-/// Returns each edited id it changed, mapped to the id it gave.
+/// An unpaired edited note keeps its id, so the comparison revises in place
+/// a note one version does not reference; it takes a new id only when a
+/// paired note takes its id or both versions reference a note under it. A
+/// pair is dropped when it would take the id of a note the edited version
+/// does not reference, or move an edited note away from the id of a note the
+/// original does not reference. Notes in `renumbered`, moved to new ids by an
+/// earlier pass, are left out of the pairing: pairing them back would undo
+/// the move and the passes would never end. Nothing changes when a note is
+/// referenced twice or outside the main story, when a reference sits in a
+/// tracked change, or while note custody of an earlier comparison is
+/// pending. Returns each edited id it changed, mapped to the id it gave.
 fn reconcile_footnote_ids(
     original: &Document,
     edited: &mut Document,
@@ -6547,21 +6613,38 @@ fn reconcile_footnote_ids(
     for (index, other) in strict_pairs(&text_of(&left), &text_of(&right)) {
         ids.insert(right[other].0, left[index].0);
     }
+    // A note one version does not reference keeps its id and is revised in
+    // place, so a pair is dropped when it would take the id of such an
+    // edited note, or leave the id of such an original note to nothing.
+    let unreferenced = |normal: &BTreeMap<i32, &FootnoteOwner>, referenced: &[i32]| {
+        normal
+            .keys()
+            .filter(|id| !referenced.contains(id))
+            .copied()
+            .collect::<HashSet<_>>()
+    };
+    let (left_unreferenced, right_unreferenced) = (
+        unreferenced(&left_normal, &left_ids),
+        unreferenced(&right_normal, &right_ids),
+    );
+    ids.retain(|from, to| !right_unreferenced.contains(to) && !left_unreferenced.contains(from));
     let mut next = left_normal
         .keys()
         .chain(right_normal.keys())
         .copied()
         .max()
         .unwrap_or(0);
-    // A note the edited version references beside an original one under the
-    // same id, or whose id a paired note takes, moves to a new id. A note
-    // neither version references keeps its id: it is the same unused note.
+    // A note both versions reference under the same id without pairing, or
+    // whose id a paired note takes, moves to a new id. A note one version
+    // does not reference keeps its id: the comparison revises it in place.
     let targets = ids.values().copied().collect::<HashSet<_>>();
-    let referenced = right.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+    let referenced =
+        |notes: &[(i32, String)]| notes.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+    let (left_referenced, right_referenced) = (referenced(&left), referenced(&right));
     for &id in right_normal.keys() {
         if !ids.contains_key(&id)
             && (targets.contains(&id)
-                || (referenced.contains(&id) && left_normal.contains_key(&id)))
+                || (right_referenced.contains(&id) && left_referenced.contains(&id)))
         {
             next = next
                 .checked_add(1)
@@ -12181,6 +12264,7 @@ fn compare_body_impl(
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
     let mut trailing_merged = PropertySide::default();
+    let mut trailing_after_table = false;
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();
@@ -12314,10 +12398,17 @@ fn compare_body_impl(
                         diagnostics,
                     )?
                 };
-                output.push((
-                    EmittedOwner::of(original_content, edited_content, None, metadata)?,
-                    compared,
-                ));
+                // A table holding tracked revisions may not survive a
+                // resolution, so only one free of them counts as kept.
+                let owner = match (original_content, edited_content) {
+                    (BodyContent::Table(_), BodyContent::Table(_))
+                        if !held_original.holds(Some(left)) && !held_edited.holds(Some(right)) =>
+                    {
+                        EmittedOwner::KeptTable
+                    }
+                    _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
+                };
+                output.push((owner, compared));
             }
             (Some(left), None) => {
                 let content = &original.body.content[left];
@@ -12366,11 +12457,18 @@ fn compare_body_impl(
                     && trailing_paragraph_delete_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_delete_start == Some(position) {
-                        refuse_held_mark(previous_mark_position(&output, "del"))?;
-                        trailing_merged =
-                            mark_previous_paragraph(&mut output, "del", source_bindings, metadata)?;
+                        trailing_after_table = after_kept_table(&output, "del", location);
+                        if !trailing_after_table {
+                            refuse_held_mark(previous_mark_position(&output, "del"))?;
+                            trailing_merged = mark_previous_paragraph(
+                                &mut output,
+                                "del",
+                                source_bindings,
+                                metadata,
+                            )?;
+                        }
                     }
-                    if next_takes_mark {
+                    if next_takes_mark || trailing_after_table {
                         output.push((
                             EmittedOwner::of(content, content, Some("del"), metadata)?,
                             deleted_body_content(content, metadata)?,
@@ -12386,6 +12484,7 @@ fn compare_body_impl(
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
+                    && !after_kept_table(&output, "del", location)
                 {
                     refuse_held_mark(previous_mark_position(&output, "del"))?;
                     let merged =
@@ -12440,11 +12539,18 @@ fn compare_body_impl(
                     && trailing_paragraph_insert_start.is_some_and(|start| position >= start)
                 {
                     if trailing_paragraph_insert_start == Some(position) {
-                        refuse_held_mark(previous_mark_position(&output, "ins"))?;
-                        trailing_merged =
-                            mark_previous_paragraph(&mut output, "ins", source_bindings, metadata)?;
+                        trailing_after_table = after_kept_table(&output, "ins", location);
+                        if !trailing_after_table {
+                            refuse_held_mark(previous_mark_position(&output, "ins"))?;
+                            trailing_merged = mark_previous_paragraph(
+                                &mut output,
+                                "ins",
+                                source_bindings,
+                                metadata,
+                            )?;
+                        }
                     }
-                    if next_takes_mark {
+                    if next_takes_mark || trailing_after_table {
                         output.push((
                             EmittedOwner::of(content, content, None, metadata)?,
                             inserted_body_content(content, metadata)?,
@@ -12460,6 +12566,7 @@ fn compare_body_impl(
                     }
                 } else if let BodyContent::Paragraph(paragraph) = content
                     && !next_takes_mark
+                    && !after_kept_table(&output, "ins", location)
                 {
                     refuse_held_mark(previous_mark_position(&output, "ins"))?;
                     let merged =
@@ -14217,6 +14324,11 @@ enum EmittedOwner<'a> {
     MarkedTable(&'static str),
     /// Source whitespace between owners, which every change crosses.
     Whitespace,
+    /// A table both versions hold, which both resolutions keep. A final
+    /// paragraph after it carries its own change: the resolution removing
+    /// its mark removes it, and the body ends with the table, as it did on
+    /// that side.
+    KeptTable,
     Other,
 }
 
@@ -14304,8 +14416,22 @@ fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> 
     output.iter().rposition(|(owner, _)| match owner {
         EmittedOwner::MarkedTable(marked) => *marked != kind,
         EmittedOwner::Whitespace => false,
-        EmittedOwner::Paragraph { .. } | EmittedOwner::Other => true,
+        EmittedOwner::Paragraph { .. } | EmittedOwner::KeptTable | EmittedOwner::Other => true,
     })
+}
+
+/// Whether the owner a final `kind` change would mark is a table this
+/// change's resolution keeps: one both versions hold, or one the other
+/// resolution removes (a table marked with the same kind is crossed before
+/// it). The final paragraph then carries its own change.
+fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str, location: &str) -> bool {
+    // Only the body may end with a table; every other story ends with a
+    // paragraph.
+    location == "body"
+        && matches!(
+            previous_mark_position(output, kind).map(|position| &output[position].0),
+            Some(EmittedOwner::KeptTable | EmittedOwner::MarkedTable(_))
+        )
 }
 
 /// Mark the paragraph before a final inserted or deleted paragraph, and
@@ -14557,7 +14683,7 @@ fn coalesced_paragraph_signature(paragraph: &CT_P, options: &ComparisonOptions) 
                 })
                 .sum::<usize>();
             // Empty text and ignored whitespace still carry a real format.
-            let current = run.properties.as_ref();
+            let current = run_formatting(run);
             if let Some((previous, count)) = properties.last_mut()
                 && *previous == current
             {
@@ -14862,7 +14988,15 @@ fn coalesced_paragraphs_equal(
                     None
                 }
             }));
-    original.properties == edited.properties
+    (original.properties == edited.properties
+        || original
+            .properties
+            .clone()
+            .and_then(nonempty_paragraph_properties)
+            == edited
+                .properties
+                .clone()
+                .and_then(nonempty_paragraph_properties))
         && equal_fields
         && coalesced_paragraph_signature(original, options)
             == coalesced_paragraph_signature(edited, options)
@@ -16049,7 +16183,7 @@ fn align_words_between_shells(
             if let Some(kind) = class(&units[at]) {
                 while end < span.end
                     && class(&units[end]) == Some(kind)
-                    && units[end].run.properties == units[at].run.properties
+                    && run_formatting(&units[end].run) == run_formatting(&units[at].run)
                 {
                     end += 1;
                 }
@@ -16081,8 +16215,8 @@ fn align_words_between_shells(
         for (a, b) in align(&left_signatures, &right_signatures) {
             if !ignore_formatting
                 && let (Some(a), Some(b)) = (a, b)
-                && original[left[a].1.start].run.properties
-                    != edited[right[b].1.start].run.properties
+                && run_formatting(&original[left[a].1.start].run)
+                    != run_formatting(&edited[right[b].1.start].run)
             {
                 // Formatting transitions retain the existing Word replacement
                 // owner and its ignore-formatting left bias.
@@ -16176,7 +16310,16 @@ fn unit_is_empty(unit: &AttributedRunUnit) -> bool {
     unit.run.content.is_empty()
         && semantic_run_raw(&unit.run).is_empty()
         && unit.run.alt_drawings.is_empty()
-        && unit.run.properties.is_none()
+        && run_formatting(&unit.run).is_none()
+}
+
+/// The properties of a run, none when empty: LibreOffice writes
+/// `<w:rPr></w:rPr>`, which the model writes back as nothing, and which
+/// carries no format.
+fn run_formatting(run: &CT_R) -> Option<&oxoffice_docx_oxml::properties::CT_RPr> {
+    run.properties
+        .as_ref()
+        .filter(|properties| **properties != oxoffice_docx_oxml::properties::CT_RPr::default())
 }
 
 fn granular_action(
@@ -16869,7 +17012,7 @@ fn grouped_text_alignment(
         |left: Option<usize>, right: Option<usize>, units: &[AttributedRunUnit]| {
             left.zip(right).is_none_or(|(left, right)| {
                 units[left].owner == units[right].owner
-                    || units[left].run.properties == units[right].run.properties
+                    || run_formatting(&units[left].run) == run_formatting(&units[right].run)
             })
         };
     let mut blocks = Vec::<Block>::new();
@@ -16881,7 +17024,7 @@ fn grouped_text_alignment(
         let (left_text, right_text) = (left_text.flatten(), right_text.flatten());
         let same_formatting = match (left, right) {
             (Some(i), Some(j)) => {
-                original_units[i].run.properties == edited_units[j].run.properties
+                run_formatting(&original_units[i].run) == run_formatting(&edited_units[j].run)
             }
             _ => true,
         };
@@ -17855,7 +17998,8 @@ fn compare_complex_paragraph(
             formatting_diagnostic(diagnostics, location.to_owned());
         }
         for (index, (left, right)) in original.runs.iter().zip(&edited.runs).enumerate() {
-            if !metadata.options.ignore_formatting && left.properties != right.properties {
+            if !metadata.options.ignore_formatting && run_formatting(left) != run_formatting(right)
+            {
                 formatting_diagnostic(diagnostics, format!("{location}/run[{index}]"));
             }
         }
@@ -18065,7 +18209,7 @@ fn coalesced_run_boundaries(paragraph: &CT_P, options: &ComparisonOptions) -> Ve
             && !cuts.contains(&index)
             && coalescible_plain_run(run)
             && coalescible_plain_run(&paragraph.runs[index - 1])
-            && run.properties == paragraph.runs[index - 1].properties;
+            && run_formatting(run) == run_formatting(&paragraph.runs[index - 1]);
         boundaries.push(boundaries[index] + usize::from(!joins));
     }
     boundaries
@@ -18324,6 +18468,41 @@ fn split_paragraph_mark(
     }
 }
 
+/// Whether `source` is one element without children or attributes, namespace
+/// declarations aside, such as LibreOffice's `<w:rPr></w:rPr>`.
+fn bare_empty_element(source: &str) -> bool {
+    let bare = |element: &BytesStart<'_>| {
+        element.attributes().flatten().all(|attribute| {
+            attribute.key.as_ref() == b"xmlns" || attribute.key.as_ref().starts_with(b"xmlns:")
+        })
+    };
+    let mut reader = Reader::from_str(source);
+    reader.config_mut().trim_text(true);
+    match reader.read_event() {
+        Ok(Event::Empty(element)) => bare(&element),
+        Ok(Event::Start(element)) if bare(&element) => {
+            matches!(reader.read_event(), Ok(Event::End(_)))
+        }
+        _ => false,
+    }
+}
+
+/// Paragraph properties without an empty mark `w:rPr`, which LibreOffice
+/// writes `<w:rPr></w:rPr>` and the model writes back as nothing, and none
+/// when nothing else is left.
+fn without_empty_mark(xml: Option<&str>) -> Result<Option<String>> {
+    let Some(xml) = xml else {
+        return Ok(None);
+    };
+    let mut stripped = xml.to_owned();
+    for span in direct_word_element_spans(xml, "rPr")?.into_iter().rev() {
+        if bare_empty_element(&xml[span.clone()]) {
+            stripped.replace_range(span, "");
+        }
+    }
+    Ok((!bare_empty_element(&stripped)).then_some(stripped))
+}
+
 /// The `w:pPr` of a [`final_paragraph`]: the `own` properties when both
 /// resolutions agree, otherwise the `accepted` ones with the section break of
 /// `own`, a `w:pPrChange` holding the rejected paragraph properties, and a
@@ -18341,7 +18520,9 @@ fn final_paragraph_properties_xml(
     let accepted_modeled = modeled_paragraph_properties(accepted.typed);
     let rejected_modeled = modeled_paragraph_properties(rejected.typed);
     if metadata.options.ignore_formatting
-        || (accepted_modeled == rejected_modeled && accepted.xml == rejected.xml)
+        || (accepted_modeled == rejected_modeled
+            && without_empty_mark(accepted.xml.as_deref())?
+                == without_empty_mark(rejected.xml.as_deref())?)
     {
         return Ok(own.xml.clone().unwrap_or_default());
     }
@@ -18357,18 +18538,18 @@ fn final_paragraph_properties_xml(
         .flatten()
         .unwrap_or_default();
     current = replace_property_slot(&current, "sectPr", &own_section)?;
-    let accepted_mark = accepted
-        .xml
-        .as_deref()
-        .map(|xml| direct_property(xml, "rPr"))
-        .transpose()?
-        .flatten();
-    let rejected_mark = rejected
-        .xml
-        .as_deref()
-        .map(|xml| direct_property(xml, "rPr"))
-        .transpose()?
-        .flatten();
+    // An empty mark carries no format, written either way.
+    let mark = |side: &PropertySide<'_>| -> Result<Option<String>> {
+        Ok(side
+            .xml
+            .as_deref()
+            .map(|xml| direct_property(xml, "rPr"))
+            .transpose()?
+            .flatten()
+            .filter(|mark| !bare_empty_element(mark)))
+    };
+    let accepted_mark = mark(accepted)?;
+    let rejected_mark = mark(rejected)?;
     if accepted_mark != rejected_mark {
         let previous = rejected_mark
             .clone()
@@ -19098,7 +19279,8 @@ fn compare_row(
                 "comparison cannot revise row boundary structures at {location}"
             )));
         }
-        if !metadata.options.ignore_formatting && row_formatting(original) != row_formatting(edited)
+        if !metadata.options.ignore_formatting
+            && row_formatting(original)? != row_formatting(edited)?
         {
             formatting_diagnostic(diagnostics, location.to_owned());
         }
@@ -19237,7 +19419,9 @@ fn compare_cell_from_xml(
                 "comparison cannot revise cell boundary structures at {location}"
             )));
         }
-        if !metadata.options.ignore_formatting && original.properties != edited.properties {
+        if !metadata.options.ignore_formatting
+            && cell_formatting(original)? != cell_formatting(edited)?
+        {
             formatting_diagnostic(diagnostics, location.to_owned());
         }
         if aligned_children {
@@ -20144,7 +20328,9 @@ fn compare_control_content(
                     diagnostics,
                 )
             } else if run_signature(left) == run_signature(right) {
-                if !metadata.options.ignore_formatting && left.properties != right.properties {
+                if !metadata.options.ignore_formatting
+                    && run_formatting(left) != run_formatting(right)
+                {
                     formatting_diagnostic(diagnostics, location.to_owned());
                 }
                 if left == right
@@ -20749,7 +20935,7 @@ fn compared_run_xml_impl(
     let original_properties = modeled_run_properties(original);
     let edited_properties = modeled_run_properties(edited);
     if original_properties == edited_properties {
-        if original.properties != edited.properties {
+        if run_formatting(original) != run_formatting(edited) {
             formatting_diagnostic(diagnostics, location.to_owned());
         }
         return metadata.ids.generated(paragraph_owned_run_xml(original)?);
@@ -22237,13 +22423,13 @@ fn containing_run(xml: &str, at: usize) -> Result<(usize, usize)> {
 }
 
 fn modeled_run_properties(run: &CT_R) -> Option<oxoffice_docx_oxml::properties::CT_RPr> {
-    run.properties.clone().map(|mut properties| {
+    run_formatting(run).cloned().and_then(|mut properties| {
         properties.revision_markers.clear();
         properties.change = None;
         properties.revision_xml.clear();
         properties.revision_xml_positions.clear();
         properties.language_extra_attributes.clear();
-        properties
+        (properties != oxoffice_docx_oxml::properties::CT_RPr::default()).then_some(properties)
     })
 }
 
@@ -23613,12 +23799,27 @@ fn paragraph_formatting(paragraph: &CT_P) -> Option<CT_PPr> {
     })
 }
 
-fn row_formatting(row: &CT_Row) -> Option<CT_TrPr> {
-    row.properties.clone().map(|mut properties| {
+/// Row properties as the model writes them, without their revision records.
+/// The writer leaves out an empty container, such as the `<w:trPr></w:trPr>`
+/// LibreOffice writes, so it reads as no properties.
+fn row_formatting(row: &CT_Row) -> Result<Vec<u8>> {
+    let mut writer = Writer::new(Vec::new());
+    if let Some(mut properties) = row.properties.clone() {
         properties.revision_markers.clear();
         properties.revision_xml.clear();
-        properties
-    })
+        properties.to_xml(&mut writer)?;
+    }
+    Ok(writer.into_inner())
+}
+
+/// Cell properties as the model writes them, which leaves out empty
+/// containers such as LibreOffice's `<w:tcBorders></w:tcBorders>`.
+fn cell_formatting(cell: &CT_Tc) -> Result<Vec<u8>> {
+    let mut writer = Writer::new(Vec::new());
+    if let Some(properties) = &cell.properties {
+        properties.to_xml(&mut writer)?;
+    }
+    Ok(writer.into_inner())
 }
 
 fn body_content_xml(content: &BodyContent) -> Result<String> {

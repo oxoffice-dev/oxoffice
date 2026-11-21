@@ -20,8 +20,9 @@ pub use line::{
     break_multilingual_into_lines,
 };
 pub use output::{
-    Color, Diagnostic, DocumentMetadata, DocumentStructure, Effect, FieldKind, FieldSource,
-    FontData, FontId, GlyphRun, GroupElement, LayoutResult, MediaId, MultilingualGlyphRun,
+    ChoiceOption, Color, Diagnostic, DocumentMetadata, DocumentStructure, Effect, FieldAlignment,
+    FieldKind, FieldSource, FontData, FontId, FormField, FormFieldFragment, FormFieldId,
+    FormFieldKind, GlyphRun, GroupElement, LayoutResult, MediaId, MultilingualGlyphRun,
     OutlineEntry, PageFrame, PathElement, Point, PositionedElement, Rect, SourceNodeId, SourceSpan,
     StructureId, StructureNode, StructureRole, TabAlignedField, walk,
 };

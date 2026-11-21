@@ -1,6 +1,6 @@
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
-use oxoffice_core::xml::{local_name, matches_local_name};
+use oxoffice_core::xml::{local_name, matches_local_name, push_escaped_attribute};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
 use std::fmt;
@@ -304,7 +304,7 @@ impl CT_OfficeStyleSheet {
         let mut start = BytesStart::new("a:theme");
         start.push_attribute(("xmlns:a", A_NS));
         if let Some(name) = self.name.as_deref() {
-            start.push_attribute(("name", name));
+            push_escaped_attribute(&mut start, "name", name);
         }
         push_attributes(&mut start, &self.raw_attributes);
         write_start(&mut writer, start)?;
@@ -466,7 +466,7 @@ impl CT_ColorScheme {
 
     fn write(&self, writer: &mut Writer<Vec<u8>>) -> Result<()> {
         let mut start = BytesStart::new("a:clrScheme");
-        start.push_attribute(("name", self.name.as_str()));
+        push_escaped_attribute(&mut start, "name", &self.name);
         push_attributes(&mut start, &self.raw_attributes);
         write_start(writer, start)?;
         for (index, (slot, color)) in self.iter().enumerate() {
@@ -564,7 +564,7 @@ impl CT_FontScheme {
 
     fn write(&self, writer: &mut Writer<Vec<u8>>) -> Result<()> {
         let mut start = BytesStart::new("a:fontScheme");
-        start.push_attribute(("name", self.name.as_str()));
+        push_escaped_attribute(&mut start, "name", &self.name);
         push_attributes(&mut start, &self.raw_attributes);
         write_start(writer, start)?;
         emit_raw(writer, self.raw_children.at(0))?;
@@ -798,7 +798,7 @@ impl CT_StyleMatrix {
     fn write(&self, writer: &mut Writer<Vec<u8>>) -> Result<()> {
         let mut start = BytesStart::new("a:fmtScheme");
         if let Some(name) = self.name.as_deref() {
-            start.push_attribute(("name", name));
+            push_escaped_attribute(&mut start, "name", name);
         }
         push_attributes(&mut start, &self.raw_attributes);
         write_start(writer, start)?;

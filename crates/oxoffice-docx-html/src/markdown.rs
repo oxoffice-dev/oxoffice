@@ -167,27 +167,14 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
     None
 }
 
-/// Detect if a paragraph is a list item. Returns (is_ordered, ilvl).
-fn detect_list(para: &CT_P, numbering: Option<&CT_Numbering>) -> Option<(bool, u32, u32, u32)> {
-    let ppr = para.properties.as_ref()?;
-    let num_id = ppr.num_id?;
-    let ilvl = ppr.num_ilvl.unwrap_or(0);
-
-    if num_id == 0 {
-        return None;
-    }
-
-    let numbering = numbering?;
-
-    let instance = numbering.nums.iter().find(|n| n.num_id == num_id)?;
-    let abstract_id = instance.abstract_num_id;
-
-    let abstract_num = numbering
-        .abstract_nums
-        .iter()
-        .find(|a| a.abstract_num_id == abstract_id)?;
-
-    let level = abstract_num.levels.iter().find(|l| l.ilvl == ilvl)?;
+/// Detect if a paragraph is a list item, through its style too. Returns
+/// (is_ordered, ilvl, num_id, start).
+fn detect_list(
+    para: &CT_P,
+    styles: &CT_Styles,
+    numbering: Option<&CT_Numbering>,
+) -> Option<(bool, u32, u32, u32)> {
+    let (num_id, ilvl, level, start) = crate::list_level(para, styles, numbering?)?;
 
     use oxoffice_docx_oxml::numbering::ST_NumberFormat;
     let is_ordered = match level.num_fmt.as_ref() {
@@ -199,19 +186,12 @@ fn detect_list(para: &CT_P, numbering: Option<&CT_Numbering>) -> Option<(bool, u
             | ST_NumberFormat::LowerRoman
             | ST_NumberFormat::UpperLetter
             | ST_NumberFormat::LowerLetter
-            | ST_NumberFormat::Ordinal
-            | ST_NumberFormat::None,
+            | ST_NumberFormat::Ordinal,
         ) => true,
+        // A `none` level draws no marker, as in layout: not a list item.
         Some(_) => return None,
     };
 
-    let start = instance
-        .level_overrides
-        .iter()
-        .find(|item| item.ilvl == ilvl)
-        .and_then(|item| item.start_override)
-        .or(level.start)
-        .unwrap_or(1);
     Some((is_ordered, ilvl, num_id, start))
 }
 
@@ -228,7 +208,10 @@ fn emit_paragraph(
     let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
     let mut heading_level = detect_heading_level(para.properties.as_ref(), styles);
-    let list_info = detect_list(para, numbering);
+    // A heading numbered through its style, as Word numbers its headings,
+    // stays a heading; only its own numbering makes it a list item.
+    let list_info = detect_list(para, styles, numbering)
+        .filter(|_| heading_level.is_none() || crate::has_own_numbering(para));
 
     // Collect inline text for the paragraph
     let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries);
@@ -321,18 +304,31 @@ fn emit_paragraph(
     }
     let quote_prefix = "> ".repeat(outer_quotes);
 
-    if para
+    let continued = if para
         .properties
         .as_ref()
         .is_some_and(|properties| properties.num_id == Some(0))
-        && let Some(level) = para
-            .properties
+    {
+        para.properties
             .as_ref()
             .and_then(|properties| properties.num_ilvl)
-        && let Some(index) = list_levels
-            .iter()
-            .position(|&(current, _, _)| current == level)
-    {
+            .and_then(|level| {
+                list_levels
+                    .iter()
+                    .position(|&(current, _, _)| current == level)
+            })
+    } else if heading_level.is_none() && list_info.is_none() {
+        // A paragraph on a `none` level goes on the open item of its list at
+        // its level or above.
+        crate::unmarked_list_level(para, styles, numbering).and_then(|(num_id, level)| {
+            list_levels
+                .iter()
+                .rposition(|&(current, _, id)| id == num_id && current <= level)
+        })
+    } else {
+        None
+    };
+    if let Some(index) = continued {
         let indent = list_levels[index].1;
         let blank_prefix = if quote_prefix.is_empty() && inner_quotes > 0 && compound_quote {
             format!("{}> ", " ".repeat(indent))

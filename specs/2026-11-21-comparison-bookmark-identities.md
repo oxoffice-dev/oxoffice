@@ -50,8 +50,13 @@ where they mean the same bookmark, in its main story:
   edited input reads the same. A link to another file (`r:id`, or a
   `HYPERLINK` with a target) names that file's bookmark and stays as it is.
 - **Checked.** The comparison pairs the rewritten blocks again; if it pairs
-  a renamed heading with another one than the pairing did, the edited input
-  stays as it is, so a wrong pairing can only keep the old refusal.
+  a renamed heading with another one than the pairing did, the names stay as
+  they are and only the ids follow (ids are matched by name and need no
+  rename), except that a body heading's `_Toc` name, or a name a paired
+  heading claims, does not take the original's id for it unless a pairing
+  kept it (the original may give that name to another heading): it keeps
+  its own id, or a fresh one where the original uses that. A wrong pairing
+  never writes a heading bookmark twice.
 
 The guarantee becomes: accepting every revision gives the edited version up
 to its bookmark ids and the names of its `_Toc` bookmarks (paired ones take
@@ -64,8 +69,8 @@ Deliberately not done:
 - Other bookmark names are content: a renamed bookmark of the author still
   differs, and its paragraph is replaced (or the pair refused, as before).
 - When a reference cannot follow (a name split across two instruction runs,
-  or named in another story), the edited input stays as it is and the
-  comparison refuses as before, rather than leave a link pointing at nothing.
+  or named in another story), the names stay as they are, rather than leave a
+  link pointing at nothing; the ids still follow.
 - LibreOffice's `__RefHeading___Toc` names are not covered yet.
 - Inserting or deleting a paragraph that holds a `w:fldSimple` is still
   refused. `Document::insert_toc` writes its page numbers that way, so adding
@@ -80,7 +85,8 @@ tests in `tests/docx/revisions_and_compare.rs` (Word-shaped tables of
 contents with a heading added, renamed, or removed with another added
 further on, renamed bookmarks, renumbered ids, a renamed author bookmark,
 simple and hyperlink fields that follow, a split reference and a reference
-from another story that keep the refusal), and the limitation entry removed.
+from another story that keep their names, the pairing check and the ids-only
+fallback, captions in tables), and the limitation entry removed.
 
 ## Outcome
 

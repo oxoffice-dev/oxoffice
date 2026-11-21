@@ -96,9 +96,9 @@ __all__ = [
     "Bookmark", "BoundingBox", "Cell", "CellCollection", "CellParagraphCollection",
     "Chart", "Comment", "ComparisonDiagnostic", "ContentFragment", "CoreProperties", "DefaultParagraphFormat", "Document", "Font", "ColorFormat",
     "FootnoteEndnote", "HeaderFooter", "SectionHandle", "Settings",
-    "HeaderFooterVariant", "Hyperlink", "FieldEvaluation", "FieldsUpdateReport", "LayoutBackedFieldUpdateReport", "LayoutFragment", "LayoutPage", "ListLevel", "Paragraph", "ParagraphCollection",
+    "HeaderFooterVariant", "Hyperlink", "FieldEvaluation", "FieldsUpdateReport", "LayoutBackedFieldUpdateReport", "LayoutFragment", "LayoutPage", "ListLevel", "Paragraph", "ParagraphCollection", "TextSpan",
     "ParagraphFormat", "Revision", "Row", "RowCollection", "Run", "RunCollection", "RunPosition",
-    "RunRange", "Section", "Story", "StoryItem", "StoryRunPosition", "StoryRunRange", "Style",
+    "RunRange", "Section", "Story", "StoryItem", "StoryParagraph", "StoryRunPosition", "StoryRunRange", "Style",
     "SvgDiagnostic", "SvgRenderResult", "Table", "TableCollection", "TabStop", "TabStops", "TocRebuildReport",
 ]
 
@@ -462,6 +462,22 @@ class StoryItem:
     def paragraph(self) -> Paragraph | None: ...
     @property
     def revision(self) -> int: ...
+
+
+@_final
+class StoryParagraph:
+    @property
+    def kind(self) -> str: ...
+    @property
+    def part_name(self) -> str: ...
+    @property
+    def story(self) -> Story: ...
+    @property
+    def index_path(self) -> tuple[int, ...]: ...
+    @property
+    def style(self) -> str | None: ...
+    @property
+    def text(self) -> str: ...
 
 
 @_final
@@ -1151,6 +1167,7 @@ class Document:
     def split_run(
         self, body_index: int | Paragraph, run_index: int, character_offset: int
     ) -> int: ...
+    def isolate_span(self, span: TextSpan) -> tuple[int, int]: ...
     def to_pdf_with_diagnostics(
         self,
         *,
@@ -1409,6 +1426,9 @@ class Document:
     @property
     def story_items(self) -> tuple[StoryItem, ...]: ...
     @property
+    def story_paragraphs(self) -> tuple[StoryParagraph, ...]: ...
+    def count_text(self, text: str) -> dict[str, int]: ...
+    @property
     def header_footer_variants(self) -> tuple[HeaderFooterVariant, ...]: ...
     def create_section_story(
         self,
@@ -1513,8 +1533,15 @@ class Document:
         self, placeholder: str, replacement: str, *, expect: int | None = None
     ) -> int: ...
     def replace_all(
-        self, pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]]
-    ) -> tuple[int, ...]: ...
+        self,
+        pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]],
+        *,
+        allow_unreached: bool = False,
+    ) -> tuple[int, ...]:
+        """Apply (old, new) or (old, new, expected) pairs in order, one after another, all or nothing: a later pair
+        sees what an earlier one wrote, unlike the Rust `Document::replace_all` over a map, whose pairs apply
+        together. Returns the count of each pair. Raises UnreachedTextError when a pair's text is still in a
+        paragraph after its replacement, unless allow_unreached is true."""
     def replace_all_regex_expected(self, pairs: _Sequence[tuple[str, str] | tuple[str, str, int | None]]) -> tuple[int, ...]: ...
     def fill_content_control_tags(self, pairs: list[tuple[str, str]]) -> tuple[int, ...]: ...
     def insert_content_control(
@@ -1627,6 +1654,16 @@ class Document:
     def add_section(self, start_type: _section.WD_SECTION_START | int | None = None) -> _Never: ...
 
 @_final
+class TextSpan:
+    @property
+    def paragraph(self) -> Paragraph: ...
+    @property
+    def start(self) -> int: ...
+    @property
+    def end(self) -> int: ...
+
+
+@_final
 class Paragraph:
     @property
     def _p(self) -> _Never: ...
@@ -1640,6 +1677,7 @@ class Paragraph:
     def replace_xml(self, xml: str) -> None: ...
     def equations(self) -> tuple[Equation, ...]: ...
     def add_equation(self, source: str, *, format: _Literal["latex", "mathml"], display: bool = False) -> EquationInsertResult: ...
+    def find_text(self, text: str, occurrence: int = 0) -> TextSpan | None: ...
 
     def __new__(cls, *, _private: _Never) -> Paragraph: ...
     def replace_text(

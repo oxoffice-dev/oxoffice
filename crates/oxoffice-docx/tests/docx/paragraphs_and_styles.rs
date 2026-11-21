@@ -527,9 +527,143 @@ fn headings_and_the_outline_follow_the_heading_styles() {
     assert!(outline[1].children.is_empty());
 }
 
-// Fails today: headings() only knows the English style IDs, so a French Word file (Titre1, Titre2) has none. Issue: #27
 #[test]
-#[should_panic(expected = "every heading of the Word report is found")]
+fn headings_and_the_outline_are_found_in_every_corpus_report() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+        "authored/report.docx",
+    ] {
+        let doc = corpus_doc(name);
+        assert_eq!(doc.headings(), report_headings(), "{name}");
+        let roots = doc.document_outline();
+        assert_eq!(
+            roots.len(),
+            report_headings()
+                .iter()
+                .filter(|(level, _)| *level == 1)
+                .count(),
+            "{name}: one outline root per heading 1"
+        );
+    }
+}
+
+#[test]
+fn a_heading_style_is_found_by_its_built_in_name_in_any_case_before_its_id() {
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Titre1", "Heading 1"))
+        .unwrap();
+    doc.set_style(StyleBuilder::paragraph("Heading8", "heading 3"))
+        .unwrap();
+    // Without a heading name, the id decides.
+    doc.set_style(StyleBuilder::paragraph("Heading2", "Section title"))
+        .unwrap();
+    doc.add_paragraph("by a capitalised name").style("Titre1");
+    doc.add_paragraph("by the name over the id")
+        .style("Heading8");
+    doc.add_paragraph("by the id").style("Heading2");
+    assert_eq!(
+        doc.headings(),
+        [
+            (1, "by a capitalised name".to_owned()),
+            (3, "by the name over the id".to_owned()),
+            (2, "by the id".to_owned()),
+        ]
+    );
+}
+
+/// The bytes of one entry of a ZIP archive, by name, read through its
+/// central directory: stored or deflated.
+fn zip_entry(archive: &[u8], wanted: &str) -> Option<Vec<u8>> {
+    let u16_at = |at: usize| u16::from_le_bytes([archive[at], archive[at + 1]]) as usize;
+    let u32_at = |at: usize| u32::from_le_bytes(archive[at..at + 4].try_into().unwrap()) as usize;
+    let end = (0..archive.len().saturating_sub(21))
+        .rev()
+        .find(|&at| archive[at..at + 4] == [0x50, 0x4b, 0x05, 0x06])?;
+    let mut at = u32_at(end + 16);
+    for _ in 0..u16_at(end + 10) {
+        let (method, size) = (u16_at(at + 10), u32_at(at + 20));
+        let (name_len, extra_len, comment_len) =
+            (u16_at(at + 28), u16_at(at + 30), u16_at(at + 32));
+        let name = std::str::from_utf8(&archive[at + 46..at + 46 + name_len]).ok()?;
+        if name == wanted {
+            let local = u32_at(at + 42);
+            let data = local + 30 + u16_at(local + 26) + u16_at(local + 28);
+            let raw = &archive[data..data + size];
+            return match method {
+                0 => Some(raw.to_vec()),
+                8 => miniz_oxide::inflate::decompress_to_vec(raw).ok(),
+                _ => None,
+            };
+        }
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    None
+}
+
+#[test]
+fn epub_navigation_lists_the_headings_of_a_word_file_saved_in_french() {
+    let epub = corpus_doc("word/report.docx").to_epub_bytes().unwrap();
+    let nav =
+        zip_entry(&epub.bytes, "EPUB/nav.xhtml").expect("the EPUB holds a navigation document");
+    let nav = String::from_utf8(nav).unwrap();
+    for (_, heading) in report_headings() {
+        assert!(
+            nav.contains(&heading),
+            "the navigation lists {heading:?}:\n{nav}"
+        );
+    }
+}
+
+/// The names of the entries of a ZIP archive, from its central directory.
+fn zip_names(archive: &[u8]) -> Vec<String> {
+    let u16_at = |at: usize| u16::from_le_bytes([archive[at], archive[at + 1]]) as usize;
+    let u32_at = |at: usize| u32::from_le_bytes(archive[at..at + 4].try_into().unwrap()) as usize;
+    let Some(end) = (0..archive.len().saturating_sub(21))
+        .rev()
+        .find(|&at| archive[at..at + 4] == [0x50, 0x4b, 0x05, 0x06])
+    else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    let mut at = u32_at(end + 16);
+    for _ in 0..u16_at(end + 10) {
+        let (name_len, extra_len, comment_len) =
+            (u16_at(at + 28), u16_at(at + 30), u16_at(at + 32));
+        names.push(String::from_utf8_lossy(&archive[at + 46..at + 46 + name_len]).into_owned());
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    names
+}
+
+#[test]
+fn epub_draws_a_localised_heading_7_as_a_level_6_heading() {
+    // Word's French "Titre7" is the built-in "heading 7": EPUB stops at h6.
+    let mut doc = corpus_doc("word/report.docx");
+    assert_eq!(
+        doc.style("Titre7")
+            .and_then(|style| style.name().map(str::to_owned))
+            .as_deref(),
+        Some("heading 7")
+    );
+    doc.add_paragraph("Deep heading").style("Titre7");
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters: String = zip_names(&epub.bytes)
+        .iter()
+        .filter(|name| name.ends_with(".xhtml") && !name.ends_with("nav.xhtml"))
+        .filter_map(|name| zip_entry(&epub.bytes, name))
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+        .collect();
+    let at = chapters
+        .find("Deep heading")
+        .expect("the paragraph is exported");
+    let open = chapters[..at].rfind('<').unwrap();
+    let tag = &chapters[open..at];
+    assert!(tag.starts_with("<h6"), "a level-6 heading, not {tag:?}");
+}
+
+#[test]
 fn headings_are_found_in_the_word_and_google_reports_alike() {
     assert_eq!(
         corpus_doc("google/report.docx").headings(),
@@ -547,11 +681,9 @@ fn headings_are_found_in_the_word_and_google_reports_alike() {
     );
 }
 
-// Fails today: Heading1 of a new document has no w:outlineLvl, where Word writes 0 and Heading2 to 9 carry theirs. Issue: #27
 #[test]
-#[should_panic(expected = "Heading 1 has outline level 0")]
 fn heading_1_of_a_new_document_has_an_outline_level_like_the_others() {
-    let doc = Document::new();
+    let mut doc = Document::new();
     for level in 2..=9 {
         assert_eq!(
             doc.resolve_paragraph_properties(Some(&format!("Heading{level}")))
@@ -565,6 +697,17 @@ fn heading_1_of_a_new_document_has_an_outline_level_like_the_others() {
         Some(0),
         "Heading 1 has outline level 0"
     );
+    // The level is written, and a style based on Heading 1 inherits it.
+    doc.add_style(StyleBuilder::paragraph("Chapter", "Chapter").based_on("Heading1"))
+        .unwrap();
+    let doc = reopen(&mut doc);
+    for style in ["Heading1", "Chapter"] {
+        assert_eq!(
+            doc.resolve_paragraph_properties(Some(style)).outline_lvl,
+            Some(0),
+            "{style} after a reopen"
+        );
+    }
 }
 
 // ---- Styles ----

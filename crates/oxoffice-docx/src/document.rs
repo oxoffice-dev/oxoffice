@@ -68,6 +68,13 @@ use crate::run::{FieldDisplaySegmentRef, RunRef};
 use crate::style::{self, Style, StyleBuilder};
 use crate::table::{Table, TableRef, row_cell_ranges, validate_table_topology};
 
+mod checked_replacement;
+mod story_paragraphs;
+pub use checked_replacement::{
+    ReplaceOptions, ReplacementRefusal, UncheckedReplacement, UnreachedReplacement,
+};
+pub use story_paragraphs::StoryParagraph;
+
 /// Options that select a native document render projection.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderOptions {
@@ -22109,10 +22116,15 @@ fn story_text_markup_tags(
     Ok(markup)
 }
 
-/// Escape new story text, writing a tab as `w:tab` and a line feed or a
-/// carriage return as `w:br` between text elements, as `Paragraph::set_text`
-/// does.
+/// Escape new story text, writing a tab as `w:tab` and a line feed, a
+/// carriage return or a Windows line ending as `w:br` between text elements,
+/// as `Paragraph::set_text` does.
 fn story_text_content(value: &str, markup: &StoryTextMarkup) -> Vec<u8> {
+    let value = if value.contains("\r\n") {
+        std::borrow::Cow::Owned(value.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    };
     let mut content = Vec::with_capacity(value.len());
     let mut separators = value
         .chars()
@@ -22137,6 +22149,28 @@ fn story_text_preserves_space(value: &str) -> bool {
     value
         .split(['\t', '\n', '\r'])
         .any(|segment| segment.starts_with(' ') || segment.ends_with(' '))
+}
+
+/// The heading level of a paragraph, from its style: the built-in name
+/// `heading N` in any case, which Word keeps whatever language it saves in
+/// (the id is localised, `Titre1` in French), else an id `HeadingN`.
+pub(crate) fn paragraph_heading_level(para: &CT_P, styles: &CT_Styles) -> Option<u32> {
+    let style_id = para.properties.as_ref()?.style_id.as_deref()?;
+    let level = |rest: &str| {
+        rest.trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=9).contains(n))
+    };
+    let by_name = styles
+        .get_by_id(style_id)
+        .and_then(|style| style.name.as_deref())
+        .and_then(|name| {
+            name.to_ascii_lowercase()
+                .strip_prefix("heading ")
+                .and_then(level)
+        });
+    by_name.or_else(|| style_id.strip_prefix("Heading").and_then(level))
 }
 
 fn hyperlink_has_visible_content(source: &[u8], range: Range<usize>) -> Result<bool> {
@@ -33780,7 +33814,7 @@ impl Document {
             style = value.based_on.as_deref();
         }
         if !level.is_some_and(|level| level < 9)
-            && Self::detect_heading_level_for_toc(&paragraph).is_none()
+            && self.detect_heading_level_for_toc(&paragraph).is_none()
         {
             return Err(Error::Other(
                 "heading target is not an outline heading".into(),
@@ -40617,15 +40651,16 @@ impl Document {
         relationship_id
     }
 
-    /// Whether the given numbering definition renders as bullets (true)
-    /// or numbers (false). None if the id is unknown.
+    /// Whether the first level of the given numbering instance renders as
+    /// bullets (true) or numbers (false), with the replacement level the
+    /// instance sets in place of its definition's and a missing format read
+    /// as decimal, as layout draws it. A `none` level, which draws no marker,
+    /// reads as false. None if the id or its first level is unknown, or the
+    /// format is not a standard one.
     pub fn numbering_is_bullet(&self, num_id: u32) -> Option<bool> {
-        let numbering = self.numbering.as_ref()?;
-        let abstract_num = numbering.get_abstract_num_for(num_id)?;
-        let fmt = abstract_num.levels.first()?.num_fmt.as_ref()?;
-        match fmt {
-            oxoffice_docx_oxml::numbering::ST_NumberFormat::Bullet => Some(true),
-            oxoffice_docx_oxml::numbering::ST_NumberFormat::Other(_) => None,
+        match self.effective_numbering_level(num_id, 0)?.num_fmt.as_ref() {
+            Some(ST_NumberFormat::Bullet) => Some(true),
+            Some(ST_NumberFormat::Other(_)) => None,
             _ => Some(false),
         }
     }
@@ -40633,21 +40668,8 @@ impl Document {
     // Concrete instance replacement levels are complete effective levels, just
     // as in layout. Keep the existing public abstract-level projection unchanged.
     fn effective_numbering_format(&self, num_id: u32, level: u32) -> Option<&str> {
-        if num_id == 0 {
-            return None;
-        }
-        let numbering = self.numbering.as_ref()?;
-        let instance = numbering.nums.iter().find(|value| value.num_id == num_id)?;
-        let definition = numbering.get_abstract_num_for(num_id)?;
-        let base = definition.levels.iter().find(|value| value.ilvl == level)?;
-        let effective = instance
-            .level_overrides
-            .iter()
-            .find(|value| value.ilvl == level)
-            .and_then(|value| value.level.as_ref())
-            .unwrap_or(base);
         Some(
-            effective
+            self.effective_numbering_level(num_id, level)?
                 .num_fmt
                 .as_ref()
                 .map(ST_NumberFormat::to_str)
@@ -40655,7 +40677,29 @@ impl Document {
         )
     }
 
+    fn effective_numbering_level(&self, num_id: u32, level: u32) -> Option<&CT_Lvl> {
+        if num_id == 0 {
+            return None;
+        }
+        let numbering = self.numbering.as_ref()?;
+        let instance = numbering.nums.iter().find(|value| value.num_id == num_id)?;
+        let definition = numbering.get_abstract_num_for(num_id)?;
+        let base = definition.levels.iter().find(|value| value.ilvl == level)?;
+        Some(
+            instance
+                .level_overrides
+                .iter()
+                .find(|value| value.ilvl == level)
+                .and_then(|value| value.level.as_ref())
+                .unwrap_or(base),
+        )
+    }
+
     /// Resolve the public reader projection for one numbering level.
+    ///
+    /// It reads the definition's level: a replacement level the instance
+    /// sets is not applied here, while [`Self::numbering_is_bullet`] and
+    /// layout apply it.
     ///
     /// `has_unmodeled_properties` reports extra XML or attributes attached to
     /// this numbering instance, definition, or level, excluding retained XML
@@ -42866,14 +42910,19 @@ impl Document {
                 "numbering restart requires a numbered non-bullet level".into(),
             ));
         }
-        let mut instance = self
-            .numbering_instance(id)
+        let source = self
+            .numbering
+            .as_ref()
+            .and_then(|numbering| numbering.nums.iter().find(|item| item.num_id == id))
             .ok_or_else(|| Error::Other("numbering instance is absent".into()))?;
-        if instance.has_unmodeled_properties {
+        if !restart_can_copy(source) {
             return Err(Error::Other(
                 "numbering restart cannot project unsupported override source".into(),
             ));
         }
+        let mut instance = self
+            .numbering_instance(id)
+            .expect("the instance was found above");
         if let Some(value) = instance
             .level_overrides
             .iter_mut()
@@ -43218,12 +43267,17 @@ impl Document {
     }
 
     /// Replace the definition and overrides used by an existing instance.
+    ///
+    /// A style linked both ways to a level of the instance keeps its link:
+    /// an update that would drop the level's name of the style is refused,
+    /// as only [`Self::unlink_style_from_numbering`] removes a link.
     pub fn update_numbering_instance(
         &mut self,
         id: u32,
         definition_id: u32,
         overrides: &[NumberingLevelOverride],
     ) -> Result<()> {
+        let links = self.two_way_style_links(id);
         let mut candidate = self.clone_for_staging();
         let numbering = candidate
             .numbering
@@ -43253,11 +43307,49 @@ impl Document {
         }
         instance.abstract_num_id = definition_id;
         instance.level_overrides = updated;
+        let kept = candidate.two_way_style_links(id);
+        if links.iter().any(|link| !kept.contains(link)) {
+            return Err(Error::Other(
+                "standalone numbering style-link mutation is not supported yet".to_owned(),
+            ));
+        }
         candidate.reserve_numbering_bundle()?;
         candidate.validate_numbering_graph()?;
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
         Ok(())
+    }
+
+    /// The styles linked both ways to a level of instance `id`, with that
+    /// level: the style points at the level, which names the style back.
+    fn two_way_style_links(&self, id: u32) -> Vec<(String, u32)> {
+        let Some(numbering) = self.numbering.as_ref() else {
+            return Vec::new();
+        };
+        let Some(instance) = numbering.nums.iter().find(|item| item.num_id == id) else {
+            return Vec::new();
+        };
+        let definition = numbering.get_abstract_num_for(id);
+        self.styles
+            .styles
+            .iter()
+            .filter_map(|style| {
+                let properties = style.ppr.as_ref()?;
+                if properties.num_id != Some(id) {
+                    return None;
+                }
+                let level = properties.num_ilvl.unwrap_or(0);
+                let named = instance
+                    .level_overrides
+                    .iter()
+                    .find(|item| item.ilvl == level)
+                    .and_then(|item| item.level.as_ref())
+                    .or_else(|| definition?.levels.iter().find(|item| item.ilvl == level))?
+                    .p_style
+                    .as_deref();
+                (named == Some(style.style_id.as_str())).then(|| (style.style_id.clone(), level))
+            })
+            .collect()
     }
 
     /// Remove an unreferenced numbering instance.
@@ -43403,15 +43495,14 @@ impl Document {
             };
             // A `w:ilvl` without a `w:numId` is schema-valid. The style takes
             // the instance of its `basedOn` chain, as layout and Word resolve
-            // it, and is not numbered when the chain has none. It owns no link
-            // of its own, so only a level that names it back records one.
-            let (num_id, inherited) = match properties.num_id {
-                Some(num_id) => (num_id, false),
+            // it, and is not numbered when the chain has none.
+            let num_id = match properties.num_id {
+                Some(num_id) => num_id,
                 None if properties.num_ilvl.is_some() => {
                     match style::resolve_paragraph_properties(Some(&style.style_id), &self.styles)
                         .num_id
                     {
-                        Some(num_id) => (num_id, true),
+                        Some(num_id) => num_id,
                         None => continue,
                     }
                 }
@@ -43452,16 +43543,13 @@ impl Document {
                 .find(|value| value.ilvl == level)
                 .and_then(|value| value.level.as_ref())
                 .unwrap_or(base);
-            if effective.p_style.as_deref() != Some(style.style_id.as_str()) {
-                if inherited {
-                    continue;
-                }
-                return Err(Error::Other(format!(
-                    "style '{}' and numbering instance {num_id} level {level} are not reciprocally linked",
-                    style.style_id
-                )));
+            // Only a level that names the style back links the two. Without
+            // that, the style is numbered by the level one way, which Word
+            // reads and LibreOffice writes: its List Bullet style keeps its
+            // `w:numPr` and the level loses its `w:pStyle`.
+            if effective.p_style.as_deref() == Some(style.style_id.as_str()) {
+                style_links.insert(style.style_id.as_str(), (num_id, level));
             }
-            style_links.insert(style.style_id.as_str(), (num_id, level));
         }
         for definition in &numbering.abstract_nums {
             for level in &definition.levels {
@@ -43809,9 +43897,11 @@ impl Document {
     /// back. A style that holds only a `w:ilvl`, takes its instance from its
     /// `basedOn` chain and is named back by the level loses only that name
     /// and keeps its level. A style holding only a `w:ilvl` that no level
-    /// names is not linked, and unlinking it changes nothing. A repeated
-    /// style ID resolves to its first definition, and the style graph is
-    /// validated as in [`Document::add_style`].
+    /// names is not linked, and unlinking it changes nothing. A style that
+    /// points at the level without being named back, the one-way link
+    /// LibreOffice writes, loses its numbering and the level stays as it is.
+    /// A repeated style ID resolves to its first definition, and the style
+    /// graph is validated as in [`Document::add_style`].
     pub fn unlink_style_from_numbering(
         &mut self,
         style_id: &str,
@@ -43881,9 +43971,10 @@ impl Document {
         let inherited = style_numbering == (None, Some(level))
             && style::resolve_paragraph_properties(Some(style_id), &candidate.styles).num_id
                 == Some(num_id);
-        if (style_numbering != (Some(num_id), Some(level)) && !inherited)
-            || target_style != Some(style_id)
-        {
+        // A style may point at the level without being named back, the
+        // one-way link LibreOffice writes: only the style's side goes.
+        let named_back = target_style == Some(style_id);
+        if !(style_numbering == (Some(num_id), Some(level)) || inherited && named_back) {
             return Err(Error::Other(format!(
                 "style '{style_id}' and numbering instance {num_id} level {level} are not linked"
             )));
@@ -43903,14 +43994,17 @@ impl Document {
             .numbering
             .as_mut()
             .expect("the numbering part was resolved above");
-        if let Some(index) = override_index {
-            numbering.nums[instance_index].level_overrides[index]
-                .level
-                .as_mut()
-                .expect("the override was selected only when it owns a level")
-                .p_style = None;
-        } else {
-            numbering.abstract_nums[definition_index].levels[definition_level_index].p_style = None;
+        if named_back {
+            if let Some(index) = override_index {
+                numbering.nums[instance_index].level_overrides[index]
+                    .level
+                    .as_mut()
+                    .expect("the override was selected only when it owns a level")
+                    .p_style = None;
+            } else {
+                numbering.abstract_nums[definition_index].levels[definition_level_index].p_style =
+                    None;
+            }
         }
 
         style::validate_style_graph_change(&self.styles, &candidate.styles)?;
@@ -48148,7 +48242,8 @@ impl Document {
 
     /// Insert a Table of Contents at the given body content index.
     ///
-    /// Scans the document for heading paragraphs (Heading1..HeadingN where N <= max_level),
+    /// Scans the document for heading paragraphs (styles named `heading 1`
+    /// to `heading N`, whatever their localised id, where N <= max_level),
     /// inserts bookmark markers at each heading, and generates TOC entry paragraphs
     /// with internal hyperlinks and dot-leader tab stops.
     ///
@@ -48208,7 +48303,7 @@ impl Document {
 
         for (idx, content) in self.document.body.content.iter().enumerate() {
             if let BodyContent::Paragraph(p) = content
-                && let Some(level) = Self::detect_heading_level_for_toc(p)
+                && let Some(level) = self.detect_heading_level_for_toc(p)
                 && level <= max_level
             {
                 let text = p.text();
@@ -48404,12 +48499,9 @@ impl Document {
         }
     }
 
-    /// Detect heading level from a paragraph's style ID.
-    fn detect_heading_level_for_toc(para: &CT_P) -> Option<u32> {
-        let ppr = para.properties.as_ref()?;
-        let style_id = ppr.style_id.as_deref()?;
-        let rest = style_id.strip_prefix("Heading")?;
-        rest.parse::<u32>().ok().filter(|n| (1..=9).contains(n))
+    /// The heading level of a paragraph, see [`paragraph_heading_level`].
+    fn detect_heading_level_for_toc(&self, para: &CT_P) -> Option<u32> {
+        paragraph_heading_level(para, &self.styles)
     }
 
     // ---- Placeholder replacement ----
@@ -48429,6 +48521,12 @@ impl Document {
     /// multiple runs. A match that straddles a content-control or a
     /// tracked-insertion boundary is not replaced. Returns the total number
     /// of replacements made.
+    ///
+    /// A tab reads as `\t` and every break, a page or column break included,
+    /// as `\n`, as in [`crate::Paragraph::text`], so a match does not skip
+    /// them and one that holds them removes them. A `\t` in `replacement`
+    /// becomes a tab and a `\n`, `\r` or `\r\n` one line break: a page or
+    /// column break written back by a replacement is a line break.
     ///
     /// A `replacement` that contains `placeholder` is substituted once, not
     /// repeatedly.
@@ -49077,14 +49175,45 @@ impl Document {
 
     /// Replace multiple placeholders at once. Returns total replacements.
     ///
+    /// The pairs apply together, each to the text as it was before the call:
+    /// a value is never searched by another pair, so `{"left": "right",
+    /// "right": "left"}` swaps the two words. Where two placeholders overlap,
+    /// the longer one (in characters) wins, then the one that sorts first,
+    /// whatever the order of the map. [`Self::try_replace_all_expected`] and
+    /// [`Self::try_replace_all_checked`] apply ordered pairs one after another
+    /// instead, as Python `Document.replace_all` and the CLI's `replace --map`
+    /// do through the checked one: their pairs come in a list, so a later pair
+    /// sees what an earlier one wrote.
+    ///
     /// Cheaper than calling [`Self::replace_text`] per entry: the document is
-    /// serialised and re-parsed once for the whole batch rather than once per
-    /// placeholder.
+    /// serialised and re-parsed once per pass for the whole batch rather than
+    /// once per placeholder.
     pub fn replace_all(&mut self, replacements: &std::collections::HashMap<&str, &str>) -> usize {
-        let pairs: Vec<(&str, &str)> = replacements.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut pairs: Vec<(&str, &str)> = replacements.iter().map(|(k, v)| (*k, *v)).collect();
+        pairs.sort_by(|(left, _), (right, _)| {
+            (right.chars().count().cmp(&left.chars().count())).then(left.cmp(right))
+        });
+        // Each placeholder becomes a private marker first, then each marker
+        // its value, so that no value meets another pair.
+        let markers = batch_markers(&pairs);
+        let to_markers = pairs
+            .iter()
+            .zip(&markers)
+            .map(|((placeholder, _), marker)| (*placeholder, marker.as_str()))
+            .collect::<Vec<_>>();
+        let to_values = markers
+            .iter()
+            .zip(&pairs)
+            .map(|(marker, (_, value))| (marker.as_str(), *value))
+            .collect::<Vec<_>>();
         let mut candidate = self.clone_for_staging();
         let count = candidate
-            .replace_batch(&pairs)
+            .replace_batch(&to_markers)
+            .expect("text replacement package preflight failed");
+        // Even with no match counted: the VML copy of a text box is rewritten
+        // without counting.
+        candidate
+            .replace_batch(&to_values)
             .expect("text replacement package preflight failed");
         self.commit_staged_mutation(candidate);
         count
@@ -49170,7 +49299,9 @@ impl Document {
     ///
     /// Tags use `{{ path.to.value }}` syntax and may cross ordinary Word run
     /// boundaries. String, number and boolean leaves render as text, while
-    /// `null` renders as an empty string. Missing paths, malformed tags, and
+    /// `null` renders as an empty string. In paragraphs and text boxes, a tab
+    /// in a value renders as a tab and a line ending as a line break; chart
+    /// labels take the value as plain text. Missing paths, malformed tags, and
     /// object or array leaves return an error without changing the document.
     /// Dedicated main-body paragraphs and table rows may contain nested
     /// `{% for item in path %}` or `{% if path %}` blocks with their matching
@@ -50052,6 +50183,11 @@ impl Document {
     /// footnotes, endnotes and text boxes, the content controls at every level
     /// of them and the text of tracked insertions. Returns the total number of replacements made, or an error if the
     /// regex is invalid.
+    ///
+    /// The text reads tabs and breaks as [`Self::replace_text`] does: `\s`
+    /// matches a tab and any break, a page break included, so a pattern such
+    /// as `\s+` replaces them too, and a break a capture group writes back
+    /// becomes a line break.
     pub fn replace_regex(&mut self, pattern: &str, replacement: &str) -> Result<usize> {
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let re =
@@ -52031,13 +52167,15 @@ impl Document {
 
     /// Get all headings in the document as (level, text) pairs.
     ///
-    /// Detects heading paragraphs by their style ID (e.g. "Heading1", "Heading2")
-    /// among the body paragraphs, including those that body-level content
+    /// Detects heading paragraphs by their style's built-in name (`heading
+    /// 1`, `heading 2`...), which Word keeps when it saves in another language
+    /// and localises the id, else by an id `Heading1`, `Heading2`..., among the
+    /// body paragraphs, including those that body-level content
     /// controls wrap. Table cells are not searched.
     pub fn headings(&self) -> Vec<(u32, String)> {
         let mut result = Vec::new();
         for p in block_paragraphs(&self.document.body.content) {
-            if let Some(level) = Self::detect_heading_level_for_toc(p) {
+            if let Some(level) = self.detect_heading_level_for_toc(p) {
                 result.push((level, p.text()));
             }
         }
@@ -53471,6 +53609,26 @@ fn numbering_level_has_unmodeled(level: &CT_Lvl) -> bool {
         || matches!(level.num_fmt.as_ref(), Some(ST_NumberFormat::Other(_)))
 }
 
+/// Whether a restart can copy this instance into a new one: everything it
+/// holds is modelled, but namespace declarations and Word's
+/// `w16cid:durableId`, which names the source instance and which the copy
+/// must not take. The durable id is matched with the prefix Word writes, so
+/// an attribute of that name under another prefix is refused, not dropped.
+fn restart_can_copy(instance: &CT_Num) -> bool {
+    instance.extra_xml.is_empty()
+        && instance.extra_attributes.iter().all(|(name, _)| {
+            name == "xmlns" || name.starts_with("xmlns:") || name == "w16cid:durableId"
+        })
+        && !instance
+            .abstract_num_id_raw
+            .as_ref()
+            .is_some_and(|(_, raw, prefixes)| typed_numbering_leaf_has_unmodeled(raw, prefixes))
+        && !instance
+            .level_overrides
+            .iter()
+            .any(numbering_override_has_unmodeled)
+}
+
 fn numbering_override_has_unmodeled(value: &CT_NumLvl) -> bool {
     !value.extra_xml.is_empty()
         || !value.extra_attributes.is_empty()
@@ -54463,6 +54621,39 @@ fn document_story_parts(stories: &[StoryText]) -> Vec<(StoryKind, &str, Vec<&str
     }
     parts.retain(|(_, _, texts)| texts.iter().any(|text| !text.trim().is_empty()));
     parts
+}
+
+/// One marker per pair of a [`Document::replace_all`] batch: a character of
+/// the supplementary private use area between two copies of a delimiter that
+/// no placeholder or value holds, so that no marker overlaps another or text
+/// the caller wrote.
+fn batch_markers(pairs: &[(&str, &str)]) -> Vec<String> {
+    let delimiter = (0x10_FF00..=0x10_FFFD)
+        .rev()
+        .filter_map(char::from_u32)
+        .find(|delimiter| {
+            pairs.iter().all(|(placeholder, value)| {
+                !placeholder.contains(*delimiter) && !value.contains(*delimiter)
+            })
+        })
+        .unwrap_or('\u{10FFFD}');
+    // The index in base 0xFF00, one private character per digit, below the
+    // delimiters, so a marker never holds its delimiter.
+    (0..pairs.len())
+        .map(|index| {
+            let mut marker = String::from(delimiter);
+            let mut rest = index;
+            loop {
+                marker.extend(char::from_u32(0x10_0000 + (rest % 0xFF00) as u32));
+                rest /= 0xFF00;
+                if rest == 0 {
+                    break;
+                }
+            }
+            marker.push(delimiter);
+            marker
+        })
+        .collect()
 }
 
 fn document_story_kind_name(kind: StoryKind) -> &'static str {

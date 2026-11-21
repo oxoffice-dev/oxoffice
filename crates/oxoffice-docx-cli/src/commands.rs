@@ -10,9 +10,10 @@ use oxoffice_cli_support::{
     ensure_output_paths_available, json_envelope, parse_range,
 };
 use oxoffice_docx::{
-    BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, CoreProperties,
-    CustomProperty, CustomPropertyValue, Document, FieldDateTime, FieldEvaluationContext,
-    HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat, RasterOptions, RasterOutput,
+    BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, ContentLocation,
+    CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
+    FieldEvaluationContext, HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat,
+    RasterOptions, RasterOutput, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal,
     RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId, StoryItemKind, StoryKind,
     StoryRevision,
 };
@@ -197,6 +198,19 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
         } else {
             "main"
         };
+        // The direct style of each paragraph of the other stories. Styles
+        // that cannot be read leave the text as it is, with a warning.
+        let styles = match stories.as_ref().map(|_| doc.story_paragraphs()) {
+            Some(Ok(paragraphs)) => paragraphs
+                .into_iter()
+                .map(|paragraph| (paragraph.location, paragraph.style))
+                .collect::<HashMap<_, _>>(),
+            Some(Err(error)) => {
+                eprintln!("Warning: styles of the other stories left out: {error}");
+                HashMap::new()
+            }
+            None => HashMap::new(),
+        };
         let stories = stories
             .unwrap_or_default()
             .iter()
@@ -205,7 +219,13 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
                     .items
                     .iter()
                     .map(|(index_path, kind, text)| {
-                        json!({ "index_path": index_path, "kind": kind, "text": text })
+                        let location = ContentLocation::new(
+                            story.story.clone(),
+                            StoryItemKind::Paragraph,
+                            index_path.clone(),
+                        );
+                        let style = styles.get(&location).cloned().flatten();
+                        json!({ "index_path": index_path, "kind": kind, "style": style, "text": text })
                     })
                     .collect::<Vec<_>>();
                 json!({
@@ -228,6 +248,40 @@ pub fn text(file: &Path, json_output: bool) -> Result<()> {
             eprintln!("Warning: {}", diagnostic.message);
         }
         write!(io::stdout().lock(), "{}", report.text)?;
+    }
+    Ok(())
+}
+
+/// Count a literal text in every story of a DOCX file, by story kind.
+pub fn count(file: &Path, text: &str, json_output: bool) -> Result<()> {
+    let doc = Document::open(file)?;
+    let counts = doc.count_text(text)?;
+    let total = counts.iter().map(|(_, count)| count).sum::<usize>();
+    // What replacement searches: every story but the comments.
+    let outside_comments = counts
+        .iter()
+        .filter(|(kind, _)| *kind != StoryKind::Comment)
+        .map(|(_, count)| count)
+        .sum::<usize>();
+    if json_output {
+        let by_kind = counts
+            .iter()
+            .map(|(kind, count)| (story_kind_name(*kind).to_owned(), json!(count)))
+            .collect::<serde_json::Map<_, _>>();
+        print_json(json!({
+            "text": text,
+            "revision_view": "accepted",
+            "counts": by_kind,
+            "total": total,
+            "outside_comments": outside_comments,
+        }))?;
+    } else {
+        let mut stdout = io::stdout().lock();
+        for (kind, count) in &counts {
+            writeln!(stdout, "{}: {count}", story_kind_name(*kind))?;
+        }
+        writeln!(stdout, "total: {total}")?;
+        writeln!(stdout, "outside comments: {outside_comments}")?;
     }
     Ok(())
 }
@@ -2234,6 +2288,7 @@ pub struct ReplaceInput<'a> {
     pub map: Option<&'a Path>,
     pub expect: Option<usize>,
     pub regex: bool,
+    pub allow_unreached: bool,
 }
 
 /// Replace one pair or an ordered map through the shared checked transaction.
@@ -2260,17 +2315,30 @@ pub fn replace(
         .map(|pair| (pair.placeholder.as_str(), pair.value.as_str(), pair.expect))
         .collect::<Vec<_>>();
     let mut doc = Document::open(file)?;
-    let counts = if input.regex {
-        doc.try_replace_all_regex_expected(&borrowed)?
-    } else {
-        doc.try_replace_all_expected(&borrowed)?
-    }
-    .map_err(|mismatch| {
+    let mismatch_message = |mismatch: ReplacementCountMismatch| {
         format!(
             "pair {}: expected {} replacement(s) of {:?}, found {}",
             mismatch.index, mismatch.expected, mismatch.placeholder, mismatch.found
         )
-    })?;
+    };
+    let counts = if input.regex {
+        doc.try_replace_all_regex_expected(&borrowed)?
+            .map_err(mismatch_message)?
+    } else {
+        let options = ReplaceOptions {
+            allow_unreached: input.allow_unreached,
+        };
+        doc.try_replace_all_checked(&borrowed, options)?
+            .map_err(|refusal| match refusal {
+                ReplacementRefusal::Count(mismatch) => mismatch_message(mismatch),
+                ReplacementRefusal::Unreached(unreached) => {
+                    format!("{unreached}; pass --allow-unreached once handled")
+                }
+                ReplacementRefusal::Unchecked(unchecked) => {
+                    format!("{unchecked}; pass --allow-unreached to replace without the check")
+                }
+            })?
+    };
     let total = counts
         .iter()
         .try_fold(0usize, |sum, count| sum.checked_add(*count))

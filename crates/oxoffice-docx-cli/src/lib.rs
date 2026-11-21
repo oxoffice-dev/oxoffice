@@ -121,6 +121,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Count a literal text in every story, by story kind
+    ///
+    /// Counts what `text --json` reads, paragraph by paragraph, in the
+    /// accepted view: the body with its table cells, text boxes and content
+    /// controls, each header and footer part, the footnotes, the endnotes and
+    /// the comments. Occurrences do not overlap and never cross the end of a
+    /// paragraph, so a count above what `replace` replaces names text that
+    /// replacement cannot reach, such as a match across the edge of a
+    /// content control.
+    Count {
+        /// Path to the DOCX file
+        file: PathBuf,
+        /// Literal, case-sensitive text to count
+        text: String,
+        /// Output the counts as schema-1 JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect deterministic top-level body layout geometry
     Layout {
         /// Path to the DOCX file
@@ -200,7 +218,13 @@ enum Command {
     /// Replace placeholders in a DOCX file
     ///
     /// Give one pair with -p and -v, or many with --map. Nothing is written
-    /// unless every pair with an expected count replaced exactly that count.
+    /// unless every pair with an expected count replaced exactly that count,
+    /// and, without --regex or --allow-unreached, unless no placeholder is
+    /// left after its replacement, out of its reach. A tab reads as a tab
+    /// character and a break as a line feed, as `text` prints them: a
+    /// placeholder holding one matches it, a value holding one writes it, a
+    /// carriage return writing a line break too (in --map JSON, "\t" and
+    /// "\n"); a page or column break written back becomes a line break.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,
@@ -229,6 +253,10 @@ enum Command {
         /// Require exactly this many replacements before publishing output
         #[arg(long, conflicts_with = "map")]
         expect: Option<usize>,
+        /// Publish even when a placeholder is still in the document after its
+        /// replacement, out of its reach
+        #[arg(long, conflicts_with = "regex")]
+        allow_unreached: bool,
         /// Output the count of each pair as JSON
         #[arg(long)]
         json: bool,
@@ -820,6 +848,7 @@ pub fn run(cli: Cli) {
 
         Command::Inspect { file, json } => commands::inspect(&file, json),
         Command::Text { file, json } => commands::text(&file, json),
+        Command::Count { file, text, json } => commands::count(&file, &text, json),
         Command::Layout {
             file,
             json,
@@ -879,6 +908,7 @@ pub fn run(cli: Cli) {
             regex,
             output,
             expect,
+            allow_unreached,
             json,
         } => commands::replace(
             &file,
@@ -887,6 +917,7 @@ pub fn run(cli: Cli) {
                 map: map.as_deref(),
                 expect,
                 regex,
+                allow_unreached,
             },
             &output,
             json,

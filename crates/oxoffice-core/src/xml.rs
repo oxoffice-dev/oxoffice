@@ -1,5 +1,6 @@
 //! Shared OOXML namespace and attribute helpers.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use quick_xml::XmlVersion;
@@ -49,6 +50,39 @@ pub fn reject_non_xml_characters(what: &str, value: &str) -> Result<()> {
         ))),
         None => Ok(()),
     }
+}
+
+/// Escapes `value` for an attribute so that every XML reader reads it back as
+/// written: the markup characters, and the tab, line feed and carriage return
+/// that attribute-value normalisation turns into spaces.
+pub fn escape_attribute_value(value: &str) -> Cow<'_, str> {
+    let escaped = quick_xml::escape::escape(value);
+    if !value.contains(['\t', '\n', '\r']) {
+        return escaped;
+    }
+    Cow::Owned(
+        escaped
+            .replace('\t', "&#9;")
+            .replace('\n', "&#10;")
+            .replace('\r', "&#13;"),
+    )
+}
+
+/// Pushes `key="value"` onto `start`, `value` escaped by
+/// [`escape_attribute_value`].
+pub fn push_escaped_attribute(start: &mut BytesStart<'_>, key: &str, value: &str) {
+    start.push_attribute((key.as_bytes(), escape_attribute_value(value).as_bytes()));
+}
+
+/// Escapes `value` for a text node so that every XML reader reads it back as
+/// written: the markup characters, and the carriage return that end-of-line
+/// handling turns into a line feed.
+pub fn escape_text(value: &str) -> Cow<'_, str> {
+    let escaped = quick_xml::escape::escape(value);
+    if !value.contains('\r') {
+        return escaped;
+    }
+    Cow::Owned(escaped.replace('\r', "&#13;"))
 }
 
 /// Validate the format-neutral lexical rules required by strict OOXML readers.

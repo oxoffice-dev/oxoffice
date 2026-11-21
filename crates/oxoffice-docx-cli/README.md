@@ -64,6 +64,7 @@ cargo install oxoffice-cli --version '^0.1.0'
 oxoffice docx inspect report.docx
 oxoffice docx text report.docx
 oxoffice docx text report.docx --json
+oxoffice docx count report.docx 'Acme Corp' --json
 oxoffice docx layout report.docx --json
 oxoffice docx replace template.docx -p TOKEN -v ready --expect 1 -o report.docx
 oxoffice docx convert report.docx --to pdf -o report.pdf
@@ -190,7 +191,27 @@ language, and character style values. The record has `all-supported-stories`
 scope, and its `stories` array lists the other stories as plain `text` does,
 one entry per story with its Python `Story.kind` name as `kind`, its
 `part_name`, its `owner_index`, and `items`. Each item is a direct paragraph or
-block content control with its story `index_path`, its `kind`, and its `text`.
+block content control with its story `index_path`, its `kind`, its direct
+`style` (always `null` for a content control), and its `text`. When the styles
+cannot be read, `style` is `null` throughout and one warning goes to stderr.
+
+`count` counts a literal, case-sensitive text in every paragraph of every
+story, as `Document::count_text` does: the body with its table cells, text
+boxes and block content controls, each header and footer part, the footnotes,
+the endnotes and the comments, in the accepted view. A text box in a run inside
+an inline smart tag or custom XML element is not counted yet (#78). It prints one
+`kind: count` line per story kind that holds the text, in the order body,
+header, footer, footnote, endnote, comment, then `total: N` and
+`outside comments: N`, the count of what `replace` searches. With `--json`,
+the record holds `text`, `revision_view`, `counts` (an object keyed by story
+kind), `total` and `outside_comments`. Occurrences do not overlap and never cross the end of a
+paragraph. A header or footer counts once per part, as `replace` replaces it
+once per part, so an `outside comments` count above what `replace --expect`
+finds names text that replacement cannot reach, such as a match across the
+edge of a content control or a tracked insertion, or the paragraphs of a block
+custom XML element. Comments are counted in `total` only: `replace` never
+searches them. Part names are OPC names, with a leading slash
+(`/word/header1.xml`). An empty text exits unsuccessfully.
 
 `convert --to md` and `convert --to html` append the same stories after the
 body, one section per part under a bold label. They leave comments out,
@@ -263,6 +284,31 @@ remains in `not_compared` even when another story differs. Without
 `replace --expect N` publishes only when the run-aware replacement count is
 exactly `N`. A mismatch exits unsuccessfully without creating or replacing the
 requested output.
+
+A tab reads as a tab character and a line, page or column break as a line
+feed, as `text` prints them: a placeholder holding one matches it, and a value
+holding one writes a `w:tab` or a line break (a carriage return or a Windows
+line ending writes one line break too, and a page or column break matched and
+written back becomes a line break). In a `--map` file write them `\t` and
+`\n`; on a shell command line, pass the characters themselves (`$'a\tb'` in
+bash).
+
+A literal `replace`, one pair or a `--map`, also refuses a pair after which a
+paragraph that held the placeholder (outside the comments) does not read as its
+text with every occurrence replaced: the occurrences it keeps are out of the
+replacement's reach, such as a match across the edge of a content control, a
+tracked change or a simple field, text in a text box inside a note, or the
+paragraphs of a block custom XML element. The error names the pair, how many
+occurrences are left, and the first paragraphs that hold them with their part
+and style, and nothing is written. A value that forms the placeholder again
+with its neighbours, as `"  "` to `" "` on three spaces, or a value equal to
+the placeholder, is not refused.
+Comments are not searched and do not refuse. A document whose stories the
+check cannot read, such as one whose header relationship targets a missing
+part, is refused with the reason. `--allow-unreached` skips the check and
+publishes with the reachable occurrences replaced. `--regex` pairs are not
+checked, and `--allow-unreached` conflicts with `--regex`. A table of contents
+is reached like the body: its cached entries are replaced with their headings.
 
 The count covers the text a reader sees in the body, tables,
 content controls, headers, footers, footnotes, endnotes, and tracked insertions,

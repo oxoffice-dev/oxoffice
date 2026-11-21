@@ -1,6 +1,7 @@
 """Synthetic documents for the tests, built with python-docx and python-pptx so that they carry the traits of a
 document another program wrote. Each builder writes a file and returns its path."""
 import io
+import itertools
 import random
 import re
 import zipfile
@@ -13,6 +14,7 @@ from PIL import Image
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.util import Inches
 
+W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
 W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
 
 
@@ -56,7 +58,9 @@ def edit_cost_docx(path, paragraphs, picture_side=0, probes=3):
     each, since making one costs about as much as a timed call: paragraphs "alpha beta k" of two runs (twice as
     many), paragraphs holding a picture, paragraphs "commented k" with comment k, paragraphs with a tracked insertion
     of id 901 + k, block content controls tagged probe_k each followed by a paragraph "spot k", a repeating section
-    tagged rows, 2x2 tables with "alpha k" in their first cell, and a last paragraph."""
+    tagged rows, 2x2 tables with "alpha k" in their first cell, and a last paragraph. Every paragraph, run and table
+    row of the body carries the identifiers Word writes when it saves (saved_by_word); the header and the comments do
+    not."""
     d = docx.Document()
     for i in range(paragraphs):
         p = d.add_paragraph()
@@ -97,7 +101,29 @@ def edit_cost_docx(path, paragraphs, picture_side=0, probes=3):
         d.add_table(rows=2, cols=2).cell(0, 0).text = f"alpha {k}"
     d.add_paragraph("end")
     d.save(path)
-    return lean_template(path)
+    return saved_by_word(lean_template(path))
+
+
+def saved_by_word(path):
+    """Give every paragraph, run and table row of the body the identifiers Word writes on them when it saves:
+    w14:paraId and w14:textId, w:rsidR and w:rsidRDefault. A document Word or Google Docs saved has them on every
+    element, and the library reads such paragraphs on other routes than the bare ones python-docx writes."""
+    ids = itertools.count(0x1000)
+    with zipfile.ZipFile(path) as z:
+        parts = {name: z.read(name) for name in z.namelist()}
+    xml = parts["word/document.xml"].decode()
+    if "xmlns:w14=" not in xml:
+        xml = xml.replace("<w:document ", f'<w:document xmlns:w14="{W14}" ', 1)
+    xml = re.sub(r"<w:p(?=[ />])", lambda m: f'<w:p w14:paraId="{next(ids):08X}" w14:textId="77777777" '
+                 'w:rsidR="006333BD" w:rsidRDefault="0044216F"', xml)
+    xml = re.sub(r"<w:r(?=[ />])", '<w:r w:rsidR="006333BD"', xml)
+    xml = re.sub(r"<w:tr(?=[ />])", lambda m: f'<w:tr w14:paraId="{next(ids):08X}" w14:textId="77777777" '
+                 'w:rsidR="006333BD"', xml)
+    parts["word/document.xml"] = xml.encode()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    return path
 
 
 def lean_template(path):

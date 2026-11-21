@@ -27,6 +27,9 @@
 //! the full families. Each ships only its approved fixture repertoire, which
 //! its `fonts/SUBSET-*.md` record names and reproduces.
 
+/// Liberation Sans Regular, the face PDF form fields type with.
+pub const LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../fonts/LiberationSans-Regular.ttf");
+
 /// Returns bundled font data: `(family_name, font_bytes)` pairs.
 ///
 /// Returns Carlito, Caladea, Liberation Sans, Liberation Serif, and Liberation
@@ -92,10 +95,7 @@ pub fn bundled_font_data() -> Vec<(&'static str, &'static [u8])> {
             include_bytes!("../fonts/NotoSansSymbols2-bullets-subset.ttf").as_slice(),
         ),
         // Liberation Sans — metric-compatible replacement for Arial
-        (
-            "Liberation Sans",
-            include_bytes!("../fonts/LiberationSans-Regular.ttf").as_slice(),
-        ),
+        ("Liberation Sans", LIBERATION_SANS_REGULAR),
         (
             "Liberation Sans",
             include_bytes!("../fonts/LiberationSans-Bold.ttf").as_slice(),
