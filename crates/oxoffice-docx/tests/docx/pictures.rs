@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
 use oxoffice_docx::{
-    ChartData, ChartKind, ContentControlTypePayload, Document, DrawingHorizontalAlignment,
-    DrawingHorizontalRelativeFrom, DrawingKind, DrawingVerticalAlignment,
-    DrawingVerticalRelativeFrom, DrawingWrap, Error, HdrFtrType, HeaderFooterKind,
-    ImageWatermarkOptions, LegendPosition, LegendSettings, Length, PictureAnchor, PictureCrop,
-    PictureOccurrence, PictureOptions, RunItemRef, StoryId, StoryItemKind, StoryKind,
+    ChartData, ChartKind, ContentControlTypePayload, ContentLocation, Document,
+    DrawingHorizontalAlignment, DrawingHorizontalRelativeFrom, DrawingKind,
+    DrawingVerticalAlignment, DrawingVerticalRelativeFrom, DrawingWrap, Error, HdrFtrType,
+    HeaderFooterKind, ImageWatermarkOptions, LegendPosition, LegendSettings, Length, PictureAnchor,
+    PictureCrop, PictureOccurrence, PictureOptions, RunItemRef, StoryId, StoryItemKind, StoryKind,
     StoryRunPosition, TextBoxDirection, TextBoxOptions, TextWatermarkOptions,
 };
 use oxoffice_opc::{OpcPackage, Relationship};
@@ -1535,12 +1535,7 @@ fn media_another_picture_still_shows_survives_removing_one() {
     );
 }
 
-// Fails today: remove_content_at keeps the image relationship and the media
-// part of the picture it removes, in the body and in a header. Issue: #197
 #[test]
-#[should_panic(
-    expected = "a picture removed through its location left its media in the saved file: body, header"
-)]
 fn removing_a_picture_through_its_location_drops_its_media() {
     let image = png(2, 2, 123);
     let inch = Length::inches(1.0);
@@ -1575,6 +1570,14 @@ fn removing_a_picture_through_its_location_drops_its_media() {
             stories.push(story);
             media.push(names);
         }
+        // Its image relationship goes too, in every part.
+        let images: usize = saved
+            .package
+            .part_rels
+            .values()
+            .map(|relationships| relationships.get_all_by_type(IMAGE).len())
+            .sum();
+        assert_eq!(images, 0, "{story}: an image relationship is left");
     }
     assert!(
         stories.is_empty(),
@@ -2598,4 +2601,134 @@ fn a_picture_control_takes_the_linked_picture_it_holds() {
         doc.pictures().unwrap()[0].external_url.as_deref(),
         Some(LINKED_IMAGE)
     );
+}
+
+#[test]
+fn a_picture_cut_and_pasted_through_its_location_keeps_its_media() {
+    let image = png(2, 2, 77);
+    let mut doc = doc_with(&["Body"]);
+    doc.add_picture(&image, "cut.png", Length::inches(1.0), Length::inches(1.0));
+    let mut doc = reopen(&mut doc);
+    let picture = doc.pictures().unwrap().remove(0);
+    let cut = doc.remove_content_at(&picture.location).unwrap();
+    // A write while the picture is cut drops it from the bytes written, and
+    // the live document keeps it for the paste.
+    let written = doc.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(written)).unwrap();
+    assert!(
+        !package
+            .parts
+            .keys()
+            .any(|part| part.starts_with("/word/media/"))
+    );
+    let body = body(&doc);
+    doc.insert_content(
+        &ContentLocation::new(body, StoryItemKind::Paragraph, vec![0]),
+        cut,
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].bytes, image);
+    assert_eq!(Saved::of(&mut doc).media().len(), 1);
+}
+
+#[test]
+fn a_removed_picture_keeps_media_another_part_still_shows() {
+    let image = png(2, 2, 88);
+    let mut doc = doc_with(&["Body"]);
+    doc.add_picture(
+        &image,
+        "shared.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    doc.set_header("Header");
+    let header = header_story(&doc);
+    doc.add_picture_to_story(
+        &header,
+        &image,
+        "shared.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    )
+    .unwrap();
+    // Make the header picture reach the body's media part.
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let header_part = header.part_name().to_owned();
+    let body_media = package
+        .get_part_rels("/word/document.xml")
+        .unwrap()
+        .items
+        .iter()
+        .find(|relationship| relationship.rel_type.ends_with("/image"))
+        .map(|relationship| {
+            OpcPackage::resolve_rel_target("/word/document.xml", &relationship.target)
+        })
+        .unwrap();
+    let header_relationship = package
+        .get_part_rels_mut(&header_part)
+        .unwrap()
+        .items
+        .iter_mut()
+        .find(|relationship| relationship.rel_type.ends_with("/image"))
+        .unwrap();
+    let header_media = OpcPackage::resolve_rel_target(&header_part, &header_relationship.target);
+    header_relationship.target = format!("media/{}", body_media.rsplit('/').next().unwrap());
+    if header_media != body_media {
+        package.remove_part(&header_media);
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let body_picture = doc
+        .pictures()
+        .unwrap()
+        .into_iter()
+        .find(|picture| picture.location.story().kind() == StoryKind::Body)
+        .unwrap();
+    doc.remove_content_at(&body_picture.location).unwrap();
+    let mut doc = reopen(&mut doc);
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].location.story().kind(), StoryKind::Header);
+    assert_eq!(pictures[0].bytes, image);
+    assert_eq!(Saved::of(&mut doc).media().len(), 1);
+}
+
+#[test]
+fn a_removed_picture_leaves_a_document_saved_as_a_template() {
+    let mut doc = doc_with(&["Body"]);
+    doc.add_picture(
+        &png(2, 2, 66),
+        "gone.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    let mut doc = reopen(&mut doc);
+    let picture = doc.pictures().unwrap().remove(0);
+    doc.remove_content_at(&picture.location).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "oxoffice-removed-picture-{}.dotx",
+        std::process::id()
+    ));
+    doc.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    assert!(
+        !package
+            .parts
+            .keys()
+            .any(|part| part.starts_with("/word/media/"))
+    );
+    let images = package
+        .get_part_rels("/word/document.xml")
+        .map_or(0, |relationships| {
+            relationships.get_all_by_type(IMAGE).len()
+        });
+    assert_eq!(images, 0);
 }
