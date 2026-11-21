@@ -179,7 +179,10 @@ pub(crate) fn alignment_to_int(value: oxoffice_docx::Alignment) -> i32 {
 
 fn checked_underline_code(value: i32) -> PyResult<i32> {
     match value {
-        0 | 1 | 2 | 3 | 4 | 6 | 7 | 9 | 10 | 11 => Ok(value),
+        // Word's WdUnderline values, heavy and long styles included.
+        0 | 1 | 2 | 3 | 4 | 6 | 7 | 9 | 10 | 11 | 20 | 23 | 25 | 26 | 27 | 39 | 43 | 55 => {
+            Ok(value)
+        }
         _ => Err(PyValueError::new_err("unsupported underline style")),
     }
 }

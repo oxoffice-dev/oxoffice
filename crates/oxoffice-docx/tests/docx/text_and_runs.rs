@@ -147,6 +147,67 @@ fn superscript_subscript_and_underline_styles_survive_a_save() {
 }
 
 #[test]
+fn heavy_and_long_underline_styles_are_read_and_kept() {
+    // The heavy and long values of ST_Underline, with the WdUnderline code
+    // bindings use.
+    for (value, code) in [
+        ("dottedHeavy", 20),
+        ("dashedHeavy", 23),
+        ("dashDotHeavy", 25),
+        ("dashDotDotHeavy", 26),
+        ("wavyHeavy", 27),
+        ("dashLong", 39),
+        ("wavyDouble", 43),
+        ("dashLongHeavy", 55),
+    ] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:rPr><w:u w:val="{value}"/></w:rPr><w:t>styled</w:t></w:r></w:p>"#
+        ));
+        let paragraph = doc.paragraph(0).unwrap();
+        let run = paragraph.run(0).unwrap();
+        assert!(run.is_underline(), "{value}");
+        assert_eq!(run.underline_code_value(), Some(code), "{value}");
+        assert!(doc.to_html_fragment().contains("<u>"), "{value} in HTML");
+        let reopened = reopen(&mut doc);
+        let xml = reopened.part_xml("word/document.xml").unwrap();
+        assert!(
+            xml.contains(&format!(r#"w:u w:val="{value}""#)),
+            "{value}: {xml}"
+        );
+    }
+    // Through the typed style.
+    let mut doc = Document::new();
+    doc.add_paragraph("")
+        .add_run("double wave")
+        .underline_style(UnderlineStyle::WavyDouble);
+    let reopened = reopen(&mut doc);
+    assert_eq!(
+        reopened
+            .paragraph(0)
+            .unwrap()
+            .run(0)
+            .unwrap()
+            .underline_code_value(),
+        Some(43)
+    );
+    // And through the binding's code.
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_run("long");
+    doc.paragraph_mut(0)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_underline_code_value(Some(39));
+    let reopened = reopen(&mut doc);
+    assert!(
+        reopened
+            .part_xml("word/document.xml")
+            .unwrap()
+            .contains(r#"w:u w:val="dashLong""#)
+    );
+}
+
+#[test]
 fn clearing_a_toggle_differs_from_turning_it_off() {
     let mut doc = Document::new();
     let mut paragraph = doc.add_paragraph("");

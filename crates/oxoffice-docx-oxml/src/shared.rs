@@ -88,6 +88,14 @@ pub enum ST_Underline {
     DotDash,
     DotDotDash,
     Wave,
+    DottedHeavy,
+    DashedHeavy,
+    DashLong,
+    DashLongHeavy,
+    DashDotHeavy,
+    DashDotDotHeavy,
+    WavyHeavy,
+    WavyDouble,
 }
 
 impl ST_Underline {
@@ -103,6 +111,14 @@ impl ST_Underline {
             "dotDash" => Ok(ST_Underline::DotDash),
             "dotDotDash" => Ok(ST_Underline::DotDotDash),
             "wave" => Ok(ST_Underline::Wave),
+            "dottedHeavy" => Ok(ST_Underline::DottedHeavy),
+            "dashedHeavy" => Ok(ST_Underline::DashedHeavy),
+            "dashLong" => Ok(ST_Underline::DashLong),
+            "dashLongHeavy" => Ok(ST_Underline::DashLongHeavy),
+            "dashDotHeavy" => Ok(ST_Underline::DashDotHeavy),
+            "dashDotDotHeavy" => Ok(ST_Underline::DashDotDotHeavy),
+            "wavyHeavy" => Ok(ST_Underline::WavyHeavy),
+            "wavyDouble" => Ok(ST_Underline::WavyDouble),
             _ => Err(OxmlError::InvalidValue(format!(
                 "invalid ST_Underline: {s}"
             ))),
@@ -121,6 +137,14 @@ impl ST_Underline {
             ST_Underline::DotDash => "dotDash",
             ST_Underline::DotDotDash => "dotDotDash",
             ST_Underline::Wave => "wave",
+            ST_Underline::DottedHeavy => "dottedHeavy",
+            ST_Underline::DashedHeavy => "dashedHeavy",
+            ST_Underline::DashLong => "dashLong",
+            ST_Underline::DashLongHeavy => "dashLongHeavy",
+            ST_Underline::DashDotHeavy => "dashDotHeavy",
+            ST_Underline::DashDotDotHeavy => "dashDotDotHeavy",
+            ST_Underline::WavyHeavy => "wavyHeavy",
+            ST_Underline::WavyDouble => "wavyDouble",
         }
     }
 }
