@@ -772,8 +772,7 @@ def documents(tmp_path_factory):
 # fix makes it flat, which the strict xfail reports as an XPASS.
 GROWING = {
     "Cell.add_paragraph", "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text",
-    "Cell.replace_xml", "Cell.set_border", "Cell.set_margins", "Cell.shading", "Cell.split", "Cell.text",
-    "Cell.vertical_alignment", "Cell.width", "Document.accept_revision_id", "Document.add_bullet_list_item",
+    "Cell.replace_xml", "Cell.split", "Cell.text", "Document.accept_revision_id", "Document.add_bullet_list_item",
     "Document.add_chart", "Document.add_comment", "Document.add_custom_xml_store", "Document.add_endnote",
     "Document.add_footnote", "Document.add_heading_hyperlink", "Document.add_hyperlink_to_story",
     "Document.add_numbered_list_item", "Document.add_numbering_definition", "Document.add_numbering_instance",
@@ -802,16 +801,12 @@ GROWING = {
     "FootnoteEndnote.delete", "HeaderFooter.add_paragraph", "HeaderFooter.add_table",
     "HeaderFooter.is_linked_to_previous", "Paragraph.add_equation", "Paragraph.add_hyperlink",
     "Paragraph.add_internal_hyperlink", "Paragraph.add_run", "Paragraph.replace_text", "Paragraph.replace_xml",
-    "Paragraph.text", "Row.cant_split", "Row.height", "Row.height_rule", "Row.is_header", "Run.add_field",
+    "Paragraph.text", "Run.add_field",
     "Run.add_legacy_form_field", "Run.add_picture", "Run.remove", "Run.replace_xml", "Run.text",
     "SectionHandle.remove_watermark", "SectionHandle.replace_xml", "SectionHandle.set_image_watermark",
     "SectionHandle.set_note_policy", "SectionHandle.set_page_border", "SectionHandle.set_text_watermark",
-    "Settings.odd_and_even_pages_header_footer", "Table.add_row", "Table.alignment", "Table.autofit",
-    "Table.banded_columns", "Table.banded_rows", "Table.clone_row", "Table.delete_column", "Table.first_column",
-    "Table.first_row", "Table.grid_widths", "Table.indent", "Table.insert_column", "Table.last_column",
-    "Table.last_row", "Table.remove_row", "Table.replace_xml", "Table.set_border", "Table.set_borders",
-    "Table.set_cell_grid_span", "Table.set_cell_margins", "Table.set_cell_vertical_merge", "Table.set_column_width",
-    "Table.width",
+    "Settings.odd_and_even_pages_header_footer", "Table.add_row", "Table.clone_row", "Table.delete_column",
+    "Table.insert_column", "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 

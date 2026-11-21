@@ -7039,7 +7039,7 @@ impl PyDocument {
             inserted,
         );
         #[cfg(debug_assertions)]
-        self.assert_word_inventory_rebuilds();
+        self.assert_word_inventory_rebuilds(true);
         Ok(())
     }
 
@@ -7064,9 +7064,11 @@ impl PyDocument {
 
     /// Under debug assertions, prove the inventory and its document indexes
     /// equal their rebuild from the current document, story fingerprints
-    /// aside, which local edits leave stale in the inventory too.
+    /// aside, which local edits leave stale in the inventory too. Unless
+    /// `in_order`, the owners may come in any order, each known by its route
+    /// and its parent's: a local cell edit appends the owners it adds.
     #[cfg(debug_assertions)]
-    fn assert_word_inventory_rebuilds(&self) {
+    pub(crate) fn assert_word_inventory_rebuilds(&self, in_order: bool) {
         let address = |location: &WordOwnerLocation,
                        parent: Option<usize>,
                        body_slot: Option<usize>,
@@ -7104,7 +7106,30 @@ impl PyDocument {
                 )
             })
             .collect::<Vec<_>>();
-        assert_eq!(actual, expected, "spliced Word owner inventory");
+        if in_order {
+            assert_eq!(actual, expected, "spliced Word owner inventory");
+        } else {
+            let records = |addresses: &[WordOwnerAddress]| {
+                let mut records = addresses
+                    .iter()
+                    .map(|address| {
+                        format!(
+                            "{:?}",
+                            (
+                                &address.location,
+                                address.parent.map(|parent| &addresses[parent].location),
+                                address.body_slot,
+                                address.projection_ordinal,
+                                &address.read_facts,
+                            )
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                records.sort();
+                records
+            };
+            assert_eq!(records(&actual), records(&expected), "Word owner inventory");
+        }
         let indexes =
             WordOwnerIndexes::prepare(&self.owners, WordIndexProjections::of(&self.inner))
                 .expect("a spliced inventory has rebuilt indexes");

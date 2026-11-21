@@ -627,14 +627,27 @@ impl PyTable {
     }
 
     /// Apply one checked native table edit without advancing the revision.
+    /// A body table whose edit changes properties only is edited in place,
+    /// and its owners stay as they are; any other edit is published from a
+    /// candidate document.
     fn edit<T>(
         &self,
         py: Python<'_>,
-        edit: impl FnOnce(&mut oxoffice_docx::Table<'_>) -> oxoffice_docx::Result<T>,
+        edit: impl Fn(&mut oxoffice_docx::Table<'_>) -> oxoffice_docx::Result<T>,
     ) -> PyResult<T> {
         let index = self.validate(py)?;
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
+        if current_related.is_none()
+            && let Some(result) = document
+                .inner
+                .edit_table_properties_in_place(index, &edit)
+                .map_err(|error| docx_to_pyerr(py, error))?
+        {
+            #[cfg(debug_assertions)]
+            document.assert_word_inventory_rebuilds(false);
+            return Ok(result);
+        }
         let mut candidate = document.inner.clone_for_staging();
         let result = TableLocation::new(index, &current_related.clone())
             .edit(&mut candidate, edit)
@@ -1669,15 +1682,32 @@ impl PyRow {
     }
 
     /// Apply one checked native row edit that moves no content, so live
-    /// handles stay valid.
+    /// handles stay valid: in place in a body table, from a candidate
+    /// document elsewhere.
     fn edit(
         &self,
         py: Python<'_>,
-        edit: impl FnOnce(&mut oxoffice_docx::Row<'_>) -> oxoffice_docx::Result<()>,
+        edit: impl Fn(&mut oxoffice_docx::Row<'_>) -> oxoffice_docx::Result<()>,
     ) -> PyResult<()> {
         let (table, row) = self.validate(py)?;
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
+        if current_related.is_none()
+            && document
+                .inner
+                .edit_table_properties_in_place(table, |table| {
+                    let mut row = table.row(row).ok_or_else(|| {
+                        oxoffice_docx::Error::Other("row index out of range".to_owned())
+                    })?;
+                    edit(&mut row)
+                })
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .is_some()
+        {
+            #[cfg(debug_assertions)]
+            document.assert_word_inventory_rebuilds(false);
+            return Ok(());
+        }
         let mut candidate = document.inner.clone_for_staging();
         TableLocation::new(table, &current_related.clone())
             .edit(&mut candidate, |table| {
@@ -2113,6 +2143,22 @@ impl PyCell {
                 None,
             )?
         {
+            return Ok(());
+        }
+        if current_related.is_none()
+            && document
+                .inner
+                .edit_table_properties_in_place(table, |table| {
+                    let mut cell = table.cell(row, cell).ok_or_else(|| {
+                        oxoffice_docx::Error::Other("cell index out of range".to_owned())
+                    })?;
+                    edit(&mut cell)
+                })
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .is_some()
+        {
+            #[cfg(debug_assertions)]
+            document.assert_word_inventory_rebuilds(false);
             return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();

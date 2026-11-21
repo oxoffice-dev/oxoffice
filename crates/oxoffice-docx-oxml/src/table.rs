@@ -2321,7 +2321,8 @@ impl CT_TcPr {
         Ok(())
     }
 
-    fn is_empty(&self) -> bool {
+    /// Whether these properties write nothing: an empty `w:tcPr` is left out.
+    pub fn is_empty(&self) -> bool {
         self.width.is_none()
             && self.grid_span.is_none()
             && self.h_merge.is_none()
