@@ -10975,7 +10975,9 @@ impl Presentation {
     /// presentation.
     ///
     /// `import` is `None` for a copy whose relationship targets already live
-    /// in this package or are bounded by the caller's preflight. An import
+    /// in this package or are bounded by the caller's preflight. Its modern
+    /// comments are then taken as this presentation's own, with its authors:
+    /// a duplicate is the only such copy that may carry any. An import
     /// also copies charts and embedded objects, and maps or drops slide
     /// jumps. Copied comments and replies take fresh ids wherever this
     /// presentation already uses theirs.
@@ -12467,10 +12469,19 @@ impl Presentation {
                     format!("modern comment author {author_id} is absent"),
                 ));
             };
-            if let Some(existing) = self.comment_authors.authors.iter().find(|existing| {
-                let mut identity = (**existing).clone();
-                identity.id.clone_from(&author.id);
-                &identity == author
+            // The same author, id included, comes first, so that two equal
+            // authors with different ids each keep their own.
+            let same = self
+                .comment_authors
+                .authors
+                .iter()
+                .find(|existing| *existing == author);
+            if let Some(existing) = same.or_else(|| {
+                self.comment_authors.authors.iter().find(|existing| {
+                    let mut identity = (**existing).clone();
+                    identity.id.clone_from(&author.id);
+                    &identity == author
+                })
             }) {
                 author_ids.insert(author_id.clone(), existing.id.clone());
                 continue;

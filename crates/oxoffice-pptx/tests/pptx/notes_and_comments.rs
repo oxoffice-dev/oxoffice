@@ -1295,3 +1295,28 @@ fn a_duplicated_powerpoint_comment_keeps_its_position_and_reply() {
     );
     assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
 }
+
+#[test]
+fn a_duplicated_comment_keeps_its_author_among_namesakes() {
+    const SMITH_2: &str = "{33333333-3333-3333-3333-333333333333}";
+    let mut prs = blank_deck(1);
+    prs.add_comment_author(author(GRACE, "J. Smith", Some("JS")))
+        .unwrap();
+    prs.add_comment_author(author(SMITH_2, "J. Smith", Some("JS")))
+        .unwrap();
+    prs.add_comment(
+        0,
+        comment(&guid(1), SMITH_2, MONDAY, "From the second J. Smith"),
+    )
+    .unwrap();
+    prs.reply_to_comment(0, &guid(1), reply(&guid(2), SMITH_2, TUESDAY, "Still me"))
+        .unwrap();
+
+    prs.duplicate_slide(0).unwrap();
+
+    let reopened = reopen(&prs);
+    let copy = &reopened.comments(1).unwrap()[0];
+    assert_eq!(copy.author_id, SMITH_2);
+    assert_eq!(copy.replies()[0].author_id, SMITH_2);
+    assert_eq!(reopened.comment_authors().len(), 2);
+}
