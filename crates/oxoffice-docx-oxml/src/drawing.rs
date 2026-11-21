@@ -1422,6 +1422,12 @@ pub struct CT_Inline {
     /// Raw XML bytes for the entire wp:inline element (used for round-trip preservation).
     /// When present, to_xml uses this instead of structured serialization.
     pub raw_xml: Option<Vec<u8>>,
+    /// Whether `doc_pr_id` is still to be given. A picture a run, cell or
+    /// paragraph handle adds from a relationship id cannot reach the
+    /// document's identifier registry, so the save gives it its id; a
+    /// drawing read from a file never carries this mark, whatever its id.
+    #[doc(hidden)]
+    pub doc_pr_id_unallocated: bool,
 }
 
 impl CT_Inline {
@@ -1439,6 +1445,7 @@ impl CT_Inline {
             name: None,
             source_rect: None,
             raw_xml: None,
+            doc_pr_id_unallocated: false,
         }
     }
 
@@ -1457,6 +1464,7 @@ impl CT_Inline {
             name: Some("Chart".to_owned()),
             source_rect: None,
             raw_xml: None,
+            doc_pr_id_unallocated: false,
         }
     }
 
@@ -1583,6 +1591,7 @@ impl CT_Inline {
             name,
             source_rect,
             raw_xml: None, // Will be set by CT_Drawing::from_xml
+            doc_pr_id_unallocated: false,
         })
     }
 

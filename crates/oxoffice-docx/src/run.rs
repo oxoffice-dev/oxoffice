@@ -582,7 +582,7 @@ impl<'a> Run<'a> {
     /// saved.
     pub fn add_picture(&mut self, relationship_id: &str, width: Length, height: Length) {
         let mut inline = CT_Inline::new(relationship_id, width.to_emu(), height.to_emu());
-        inline.doc_pr_id = crate::document::UNALLOCATED_DRAWING_ID;
+        inline.doc_pr_id_unallocated = true;
         self.inner
             .append_content(RunContent::Drawing(CT_Drawing::inline(inline)));
     }

@@ -329,10 +329,6 @@ use walkers::{
 };
 
 mod canonicalize;
-/// The `wp:docPr/@id` of a picture a run, cell or paragraph handle adds from
-/// a relationship id: a handle cannot reach the identifier registry, so the
-/// save gives such a picture its id, by the rule an insert uses.
-pub(crate) const UNALLOCATED_DRAWING_ID: u32 = 0;
 #[cfg(debug_assertions)]
 use canonicalize::IdentifierSummary;
 mod element_routes;

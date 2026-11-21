@@ -19,21 +19,17 @@ fn relationship_number(relationship: &oxoffice_opc::relationship::Relationship) 
 }
 
 impl Document {
-    /// Give each picture a handle added from a relationship id its drawing
-    /// id, in document order, by the rule an insert uses. Every other id is
-    /// kept.
+    /// Give each picture a handle added from a relationship id, the ones
+    /// marked [`CT_Inline::doc_pr_id_unallocated`], its drawing id, in
+    /// document order, by the rule an insert uses. Every other id is kept,
+    /// whatever its value.
     pub(super) fn allocate_handle_drawing_ids(&mut self) -> Result<()> {
-        let unallocated = |id: u32, raw: bool| id == UNALLOCATED_DRAWING_ID && !raw;
         let mut pending = false;
         super::walkers::visit_all_drawings(&self.document.body.content, &mut |drawing| {
             pending |= drawing
                 .inline
                 .as_ref()
-                .is_some_and(|inline| unallocated(inline.doc_pr_id, inline.raw_xml.is_some()))
-                || drawing
-                    .anchor
-                    .as_ref()
-                    .is_some_and(|anchor| unallocated(anchor.doc_pr_id, anchor.raw_xml.is_some()));
+                .is_some_and(|inline| inline.doc_pr_id_unallocated);
         });
         // Reaching the body mutably drops the proof that it is the opened
         // model, so a body without such a picture is left untouched.
@@ -43,14 +39,15 @@ impl Document {
         let mut result = Ok(());
         let identifiers = &mut self.identifiers;
         visit_authored_drawings_mut(&mut self.document.body.content, &mut |drawing| {
-            let id = match (&mut drawing.inline, &mut drawing.anchor) {
-                (Some(inline), _) => &mut inline.doc_pr_id,
-                (None, Some(anchor)) => &mut anchor.doc_pr_id,
-                (None, None) => return,
-            };
-            if *id == UNALLOCATED_DRAWING_ID && result.is_ok() {
+            if let Some(inline) = &mut drawing.inline
+                && inline.doc_pr_id_unallocated
+                && result.is_ok()
+            {
                 match identifiers.reserve_drawing_id() {
-                    Ok(allocated) => *id = allocated,
+                    Ok(allocated) => {
+                        inline.doc_pr_id = allocated;
+                        inline.doc_pr_id_unallocated = false;
+                    }
                     Err(error) => result = Err(error),
                 }
             }
@@ -498,6 +495,10 @@ impl Document {
 /// references), the numbering each body paragraph names, the numbering,
 /// comment and footnote definitions, every relationship by owner, and the
 /// media part names.
+/// The relationships of one owner: id to type, target and target mode.
+#[cfg(debug_assertions)]
+type RelationshipTargets = BTreeMap<String, (String, String, Option<String>)>;
+
 #[cfg(debug_assertions)]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct IdentifierSummary {
@@ -508,7 +509,7 @@ pub(super) struct IdentifierSummary {
     main: Option<(Vec<IdentifierDefinition>, Vec<String>, Vec<String>)>,
     numbering: BTreeSet<(u32, u32)>,
     abstract_numbering: BTreeSet<u32>,
-    relationships: BTreeMap<String, BTreeMap<String, (String, String, Option<String>)>>,
+    relationships: BTreeMap<String, RelationshipTargets>,
     media: BTreeSet<String>,
 }
 

@@ -2413,7 +2413,7 @@ impl<'a> Cell<'a> {
         use oxoffice_docx_oxml::text::{CT_R, RunContent};
 
         let mut inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
-        inline.doc_pr_id = crate::document::UNALLOCATED_DRAWING_ID;
+        inline.doc_pr_id_unallocated = true;
         let drawing = CT_Drawing::inline(inline);
         let run = CT_R {
             alt_drawings: Vec::new(),
