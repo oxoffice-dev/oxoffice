@@ -2407,11 +2407,14 @@ impl<'a> XmlTree<'a> {
             })
     }
 
-    /// Relocation preserves the source context, including prefixes used only
-    /// in opaque values. A child-local declaration wins over inherited context.
-    /// Identical source and destination bindings need no extra declaration.
-    /// A default namespace the destination declares and the source lacks is
-    /// undeclared only for a subtree with an unprefixed element.
+    /// Relocation preserves the source's prefixed context, including prefixes
+    /// used only in opaque values. A child-local declaration wins over
+    /// inherited context. Identical source and destination bindings need no
+    /// extra declaration. The source's default namespace (`xmlns="X"` or
+    /// `xmlns=""`) is copied, and a default the destination declares and the
+    /// source lacks is undeclared, only when an unprefixed element of the
+    /// subtree takes the default from above it: an element that declares its
+    /// own default does not.
     fn relocation_namespaces(
         &self,
         index: usize,
@@ -2433,14 +2436,12 @@ impl<'a> XmlTree<'a> {
                     && !(prefix.is_empty()
                         && value.is_empty()
                         && !destination.iter().any(|(name, _)| name.is_empty()))
-                    // A default namespace binds only the unprefixed
-                    // elements that take it from above the subtree.
-                    && !(prefix.is_empty()
-                        && !value.is_empty()
-                        && !self.uses_inherited_default(index))
                     && !destination
                         .iter()
                         .any(|(name, target)| name == prefix && target == value)
+                    // A default namespace binds only the unprefixed
+                    // elements that take it from above the subtree.
+                    && !(prefix.is_empty() && !self.uses_inherited_default(index))
             })
             .collect::<Vec<_>>();
         if !self

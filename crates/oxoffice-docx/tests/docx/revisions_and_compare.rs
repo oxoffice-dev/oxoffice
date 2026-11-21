@@ -2983,6 +2983,91 @@ fn an_element_taking_the_inherited_default_moves_with_an_undeclaration() {
 }
 
 #[test]
+fn a_merged_paragraph_takes_no_undeclaration_its_runs_do_not_use() {
+    // The second paragraph undeclares the default namespace, which no
+    // element of it takes: its run moves into the first paragraph without it.
+    let xml = accepted_main_part(&format!(
+        r#"<w:p xmlns="urn:example:tasks">{DELETED_MARK}<w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p xmlns=""><w:r><w:t>two</w:t></w:r></w:p>"#
+    ));
+    assert!(xml.contains("<w:t>two</w:t>"), "{xml}");
+    assert!(!xml.contains(r#"xmlns="""#), "{xml}");
+}
+
+#[test]
+fn an_element_taking_its_paragraph_default_keeps_it_when_moved() {
+    // The moved element has no prefix and takes its paragraph's default
+    // namespace: it keeps that namespace in the first paragraph.
+    let xml = accepted_main_part(&format!(
+        r#"<w:p>{DELETED_MARK}<w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p xmlns="urn:example:tasks"><w:r><w:t>two</w:t></w:r><extra/></w:p>"#
+    ));
+    assert!(
+        xml.contains(r#"<extra xmlns="urn:example:tasks"/>"#),
+        "{xml}"
+    );
+}
+
+/// `doc` saved with the content of story `part` (inside its root, or inside
+/// note `note` of a notes part) replaced by `content`, every revision
+/// accepted, and that part as the resolution wrote it.
+fn accepted_story_part(mut doc: Document, part: &str, note: Option<i32>, content: &str) -> String {
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let (start, end) = match note.and_then(|id| xml.find(&format!(r#"w:id="{id}""#))) {
+        Some(note) => {
+            let start = note + xml[note..].find('>').unwrap() + 1;
+            (start, start + xml[start..].find("</w:footnote>").unwrap())
+        }
+        _ => {
+            let root = xml.find("?>").map_or(0, |end| end + 2);
+            let start = root + xml[root..].find('>').unwrap() + 1;
+            (start, xml.rfind("</w:").unwrap())
+        }
+    };
+    let xml = format!("{}{content}{}", &xml[..start], &xml[end..]);
+    package.set_part(part, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.accept_all().expect("accept all");
+    let bytes = doc.to_bytes().unwrap();
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap()
+}
+
+#[test]
+fn merged_paragraphs_of_a_header_and_a_note_take_no_unused_default_namespace() {
+    let content = format!(
+        r#"<w:p>{DELETED_MARK}<w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p xmlns="urn:example:tasks"><w:r><w:t>two</w:t></w:r></w:p>"#
+    );
+    let mut with_header = doc_with(&["Body"]);
+    with_header.set_header("Header");
+    let header = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(
+        with_header.to_bytes().unwrap(),
+    ))
+    .unwrap()
+    .parts
+    .keys()
+    .find(|part| part.starts_with("/word/header"))
+    .cloned()
+    .expect("a header part");
+    let mut with_note = Document::new();
+    let id = with_note.add_footnote("Note");
+    with_note.add_paragraph("Body ").add_footnote_ref(id);
+    for (doc, part, note) in [
+        (with_header, header.as_str(), None),
+        (with_note, "/word/footnotes.xml", Some(id)),
+    ] {
+        let xml = accepted_story_part(doc, part, note, &content);
+        assert!(xml.contains("<w:t>two</w:t>"), "{part}: {xml}");
+        assert!(
+            !xml.contains(r#"xmlns="urn:example:tasks""#),
+            "{part}: {xml}"
+        );
+    }
+}
+
+#[test]
 fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
     // Word 2019 declares a default namespace on the document root; the
     // rejection check must still see the original's hyperlinks unchanged.
@@ -3017,7 +3102,13 @@ fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
             let mut doc = Document::from_bytes(&base).unwrap();
             doc.insert_toc(position, 3).unwrap();
             if rebuilt {
-                doc.rebuild_toc().unwrap();
+                let report = doc.rebuild_toc().unwrap();
+                assert_eq!(
+                    (report.entry_count, report.diagnostics.len()),
+                    (1, 0),
+                    "{:?}",
+                    report.diagnostics
+                );
             }
             doc.to_bytes().unwrap()
         };
