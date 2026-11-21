@@ -52,15 +52,26 @@ moved = texts_of("restructured.docx")
 lead = report.index("The main findings are:")
 assert moved[moved.index("The main findings are:") - 1] == report[lead + 1]   # moved one item down
 assert len(moved) == len(report) - 1
+def toc_links(name):   # a rebuilt TOC links each entry to a _Toc bookmark and gets its page from a PAGEREF
+    with zipfile.ZipFile(d / name) as z:
+        xml = z.read("word/document.xml").decode()
+    return xml.count('w:anchor="_Toc'), xml.count("PAGEREF _Toc"), xml.count('w:name="_Toc')
+
+
+assert toc_links("report.docx") == (0, 0, 0)   # the input's TOC is plain cached text
 for name in ("toc.docx", "fields.docx"):
-    entries = [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs if q.style == "TOC1"]
+    entries = [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs if re.fullmatch(r"TOC\d", q.style or "")]
     assert len(entries) > 3 and all(s.split("\t")[-1].isdigit() for s in entries)
+    assert toc_links(name) == (len(entries), len(entries), len(entries)), (name, toc_links(name), len(entries))
 styled = next(q for q in oxoffice.docx.Document.open(d / "styled.docx").paragraphs if q.text.startswith("The overall condition index"))
 assert (styled.style, styled.paragraph_format.space_after, styled.paragraph_format.keep_with_next) == ("Caption", oxoffice.docx.Pt(12), True)
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cli.docx").comments] == [("about 12 mm", "Which reference?")]
 assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cell.docx").comments] == [("spalled concrete", "Which face?")]
 assert all(c.date for name in ("commented-cli.docx", "commented-cell.docx") for c in oxoffice.docx.Document.open(d / name).comments)
-assert set(json.loads((d / "report.json").read_text())) >= {"paragraphs", "stories"}
+record = json.loads((d / "report.json").read_text())
+assert len(record["paragraphs"]) > 100 and any(s["kind"] == "footer" for s in record["stories"]), record["stories"][:1]
+assert sorted(f.name for f in (d / "checked-pages").iterdir()) == [f"checked_page{k}.png" for k in (1, 2, 3)]
+assert all(f.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" for f in (d / "checked-pages").iterdir())
 assert json.loads((d / "layout.json").read_text())["page_count"] > 1
 assert any(line.startswith("footer\t") for line in (d / "all-stories.txt").read_text().splitlines())
 assert (d / "redline-tracked.pdf").read_bytes()[:5] == b"%PDF-"
@@ -125,7 +136,10 @@ assert works.text == "Works: EUR 188,000" and works.font.size is not None
 with zipfile.ZipFile(p / "c3.pptx") as z:
     thread = b"".join(z.read(n) for n in z.namelist() if n.startswith("ppt/comments/"))
 assert b"Source for the costs?" in thread and b"Framework rates, 2025." in thread and b'status="resolved"' in thread
-assert (p / "deck.pdf").read_bytes()[:5] == b"%PDF-" and json.loads((p / "deck.json").read_text())["slides"]
+assert (p / "deck.pdf").read_bytes()[:5] == b"%PDF-"
+slides = json.loads((p / "deck.json").read_text())["slides"]
+assert len(slides) == 7 and any("Three options" in json.dumps(s) for s in slides)
+assert [f.name for f in (p / "slide-5").iterdir()] == ["deck_slide5.png"]
 texts = "\n".join(sh.text_frame.text for s in pptx.Presentation(p / "edited.pptx").slides for sh in s.shapes if sh.has_text_frame)
 assert "EUR 236,000" in texts and "eight weeks" in texts
 shapes = pptx.Presentation(p / "shapes.pptx").slides[3].shapes

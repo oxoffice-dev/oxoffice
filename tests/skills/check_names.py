@@ -177,7 +177,7 @@ def source_words():
 def attribute_problems(path):
     """Every `.attribute` of a Python code span is a word of the installed sources or of the skills' scripts."""
     for n, span, fenced in spans(path):
-        if fenced or "://" in span or re.match(r"(oxoffice|ox|oxpy|python3?|pip|bash|uvx?|pixi|conda|curl|irm|\$)\b|[A-Z]+=", span):
+        if fenced or "://" in span or re.match(r"(oxoffice|ox|oxpy|python3?|pip|bash|uvx?|pixi|conda|curl|irm) |(ox|oxpy)\(\)|\$|[A-Z]+=", span):
             continue
         code = re.sub(r"\"[^\"]*\"|'[^']*'", "''", span)
         for attr in re.findall(r"(?<=[\w)\]])\.([A-Za-z_]\w*)(?!\w*\*)", code):
