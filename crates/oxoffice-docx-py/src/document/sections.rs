@@ -39,9 +39,20 @@ impl PySectionHandle {
 
     fn geometry(&mut self, py: Python<'_>, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
         self.validate(py)?;
-        let value = checked_section_length(Some(&value), name)?
-            .map(|emu| crate::length_object(py, oxoffice_docx::Length::emu(emu)))
-            .transpose()?;
+        crate::required_length(
+            &value,
+            &format!("SectionHandle.{name}"),
+            crate::LengthUnit::Twips,
+        )?;
+        // python-docx's `top_margin` and the others name the same margins.
+        let name = match name {
+            "top_margin" => "margin_top",
+            "right_margin" => "margin_right",
+            "bottom_margin" => "margin_bottom",
+            "left_margin" => "margin_left",
+            name => name,
+        };
+        let value = Some(value.unbind());
         let mut document = self.document.borrow_mut(py);
         document.update_section(
             py,
@@ -215,7 +226,7 @@ impl PySectionHandle {
     }
     #[setter]
     fn set_top_margin(&mut self, py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
-        self.geometry(py, "margin_top", value)
+        self.geometry(py, "top_margin", value)
     }
     #[getter]
     fn right_margin(&self, py: Python<'_>) -> PyResult<Option<i64>> {
@@ -223,7 +234,7 @@ impl PySectionHandle {
     }
     #[setter]
     fn set_right_margin(&mut self, py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
-        self.geometry(py, "margin_right", value)
+        self.geometry(py, "right_margin", value)
     }
     #[getter]
     fn bottom_margin(&self, py: Python<'_>) -> PyResult<Option<i64>> {
@@ -231,7 +242,7 @@ impl PySectionHandle {
     }
     #[setter]
     fn set_bottom_margin(&mut self, py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
-        self.geometry(py, "margin_bottom", value)
+        self.geometry(py, "bottom_margin", value)
     }
     #[getter]
     fn left_margin(&self, py: Python<'_>) -> PyResult<Option<i64>> {
@@ -239,7 +250,7 @@ impl PySectionHandle {
     }
     #[setter]
     fn set_left_margin(&mut self, py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
-        self.geometry(py, "margin_left", value)
+        self.geometry(py, "left_margin", value)
     }
     #[getter]
     fn gutter(&self, py: Python<'_>) -> PyResult<Option<i64>> {
@@ -435,9 +446,21 @@ impl PySectionHandle {
                 ));
             }
         };
-        let width = checked_section_length(Some(width), "watermark width")?.unwrap();
-        let height = checked_section_length(Some(height), "watermark height")?.unwrap();
-        let font_size = checked_section_length(Some(font_size), "watermark font size")?.unwrap();
+        let width = crate::required_length(
+            width,
+            "SectionHandle.set_text_watermark(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "SectionHandle.set_text_watermark(height)",
+            crate::LengthUnit::Emu,
+        )?;
+        let font_size = crate::required_length(
+            font_size,
+            "SectionHandle.set_text_watermark(font_size)",
+            crate::LengthUnit::HalfPoints,
+        )?;
         let mut document = self.document.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
         candidate
@@ -500,8 +523,16 @@ impl PySectionHandle {
                 ));
             }
         };
-        let width = checked_section_length(Some(width), "watermark width")?.unwrap();
-        let height = checked_section_length(Some(height), "watermark height")?.unwrap();
+        let width = crate::required_length(
+            width,
+            "SectionHandle.set_image_watermark(width)",
+            crate::LengthUnit::Emu,
+        )?;
+        let height = crate::required_length(
+            height,
+            "SectionHandle.set_image_watermark(height)",
+            crate::LengthUnit::Emu,
+        )?;
         let mut document = self.document.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
         candidate

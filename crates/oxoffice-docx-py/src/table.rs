@@ -7,8 +7,8 @@ use smallvec::smallvec;
 use crate::document::PyDocument;
 use crate::paragraph::PyParagraph;
 use crate::{
-    color_hex, color_object, docx_to_pyerr, enum_object, length_object, normalize_index,
-    stale_to_pyerr,
+    LengthUnit, color_hex, color_object, docx_to_pyerr, enum_object, length_argument,
+    length_object, normalize_index, required_length, stale_to_pyerr,
 };
 
 fn path_index(
@@ -1018,7 +1018,8 @@ impl PyTable {
     }
 
     #[setter]
-    fn set_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_indent(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = length_argument(value, "Table.indent", LengthUnit::Twips)?;
         self.edit(py, |table| {
             table.set_indent_value(value.map(oxoffice_docx::Length::emu))
         })
@@ -1049,7 +1050,8 @@ impl PyTable {
     }
 
     #[setter]
-    fn set_width(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_width(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = required_length(value, "Table.width", LengthUnit::Twips)?;
         self.edit(py, |table| {
             table.set_width(oxoffice_docx::Length::emu(value));
             Ok(())
@@ -1107,18 +1109,27 @@ impl PyTable {
     fn set_cell_margins(
         &self,
         py: Python<'_>,
-        top: i64,
-        right: i64,
-        bottom: i64,
-        left: i64,
+        top: &Bound<'_, PyAny>,
+        right: &Bound<'_, PyAny>,
+        bottom: &Bound<'_, PyAny>,
+        left: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        self.edit(py, |table| {
-            table.set_cell_margins_checked(
-                oxoffice_docx::Length::emu(top),
-                oxoffice_docx::Length::emu(right),
-                oxoffice_docx::Length::emu(bottom),
-                oxoffice_docx::Length::emu(left),
+        let margin = |value, name: &str| {
+            required_length(
+                value,
+                &format!("Table.set_cell_margins({name})"),
+                LengthUnit::Twips,
             )
+            .map(oxoffice_docx::Length::emu)
+        };
+        let (top, right, bottom, left) = (
+            margin(top, "top")?,
+            margin(right, "right")?,
+            margin(bottom, "bottom")?,
+            margin(left, "left")?,
+        );
+        self.edit(py, |table| {
+            table.set_cell_margins_checked(top, right, bottom, left)
         })
     }
 
@@ -1133,15 +1144,24 @@ impl PyTable {
     }
 
     #[setter]
-    fn set_grid_widths(&self, py: Python<'_>, value: Vec<i64>) -> PyResult<()> {
+    fn set_grid_widths(&self, py: Python<'_>, value: Vec<Bound<'_, PyAny>>) -> PyResult<()> {
         let widths = value
-            .into_iter()
-            .map(oxoffice_docx::Length::emu)
-            .collect::<Vec<_>>();
+            .iter()
+            .map(|width| {
+                required_length(width, "Table.grid_widths", LengthUnit::Twips)
+                    .map(oxoffice_docx::Length::emu)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         self.edit(py, |table| table.set_grid_widths(&widths))
     }
 
-    fn set_column_width(&self, py: Python<'_>, column: isize, width: i64) -> PyResult<()> {
+    fn set_column_width(
+        &self,
+        py: Python<'_>,
+        column: isize,
+        width: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let width = required_length(width, "Table.set_column_width(width)", LengthUnit::Twips)?;
         let columns = self.read(py, |table| table.grid_widths().len())?;
         let column = normalize_index(column, columns, "column")?;
         let applied = self.edit(py, |table| {
@@ -1380,11 +1400,33 @@ impl PyTable {
             None => candidate.remove_table_row(table_index, row_index),
         }
         .map_err(|error| docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::TableGrid(
-            document
-                .table_route(table_index, &current_related)
-                .map_err(|error| docx_to_pyerr(py, error))?,
-        );
+        // A removed row takes the notes only it referenced. The table-grid
+        // route keeps note handles by position, so once a note goes every
+        // handle is checked again.
+        let note_count = |doc: &oxoffice_docx::Document| {
+            doc.stories().map(|stories| {
+                stories
+                    .iter()
+                    .filter(|story| {
+                        matches!(
+                            story.kind(),
+                            oxoffice_docx::StoryKind::Footnote | oxoffice_docx::StoryKind::Endnote
+                        )
+                    })
+                    .count()
+            })
+        };
+        let notes_kept = note_count(&document.inner).map_err(|error| docx_to_pyerr(py, error))?
+            == note_count(&candidate).map_err(|error| docx_to_pyerr(py, error))?;
+        let publication = if notes_kept {
+            crate::document::WordPublication::TableGrid(
+                document
+                    .table_route(table_index, &current_related)
+                    .map_err(|error| docx_to_pyerr(py, error))?,
+            )
+        } else {
+            crate::document::WordPublication::Conservative
+        };
         let prepared =
             document.prepare_word_revision(py, &candidate, "Table.remove_row", publication)?;
         document.commit_word_revision(prepared)?;
@@ -1750,7 +1792,8 @@ impl PyRow {
     // including one whose w:trHeight has an auto rule or no value, which the
     // native reader reports as no height.
     #[setter]
-    fn set_height(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_height(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = required_length(value, "Row.height", LengthUnit::Twips)?;
         let exact = self
             .read(py, |row| row.height())?
             .is_some_and(|height| row_height_parts(height).1);
@@ -2260,10 +2303,12 @@ impl PyCell {
     ) -> PyResult<Py<crate::document::PyPicture>> {
         let (table, row, cell) = self.validate(py)?;
         let (data, filename) = crate::document::picture_input(data, filename)?;
-        let width = crate::document::checked_section_length(width, "picture width")?
-            .map(oxoffice_docx::Length::emu);
-        let height = crate::document::checked_section_length(height, "picture height")?
-            .map(oxoffice_docx::Length::emu);
+        let width =
+            crate::length_argument(width, "Cell.add_picture(width)", crate::LengthUnit::Emu)?
+                .map(oxoffice_docx::Length::emu);
+        let height =
+            crate::length_argument(height, "Cell.add_picture(height)", crate::LengthUnit::Emu)?
+                .map(oxoffice_docx::Length::emu);
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
         let story = if current_related.is_none() {
@@ -2761,7 +2806,8 @@ impl PyCell {
             .transpose()
     }
     #[setter]
-    fn set_width(&self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_width(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = required_length(value, "Cell.width", LengthUnit::Twips)?;
         self.edit(py, |cell| {
             cell.set_width(oxoffice_docx::Length::emu(value));
             Ok(())
@@ -2842,18 +2888,27 @@ impl PyCell {
     fn set_margins(
         &self,
         py: Python<'_>,
-        top: i64,
-        right: i64,
-        bottom: i64,
-        left: i64,
+        top: &Bound<'_, PyAny>,
+        right: &Bound<'_, PyAny>,
+        bottom: &Bound<'_, PyAny>,
+        left: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        self.edit(py, |cell| {
-            cell.set_margins_checked(
-                oxoffice_docx::Length::emu(top),
-                oxoffice_docx::Length::emu(right),
-                oxoffice_docx::Length::emu(bottom),
-                oxoffice_docx::Length::emu(left),
+        let margin = |value, name: &str| {
+            required_length(
+                value,
+                &format!("Cell.set_margins({name})"),
+                LengthUnit::Twips,
             )
+            .map(oxoffice_docx::Length::emu)
+        };
+        let (top, right, bottom, left) = (
+            margin(top, "top")?,
+            margin(right, "right")?,
+            margin(bottom, "bottom")?,
+            margin(left, "left")?,
+        );
+        self.edit(py, |cell| {
+            cell.set_margins_checked(top, right, bottom, left)
         })
     }
 }

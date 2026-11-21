@@ -203,7 +203,12 @@ impl Document {
                 .as_ref()
                 != Some(comments);
         }
-        self.prepare_staged_package()
+        let normalized = self.prepare_staged_package()?;
+        // Pictures `remove_content_at` freed leave the written copy only: a
+        // copy that released one is not installed, so the live document can
+        // still take the removed fragment back.
+        let released = self.release_freed_image_relationships()?;
+        Ok(normalized && !released)
     }
 
     pub(crate) fn prepare_and_reopen_staged(mut self) -> Result<Self> {
@@ -292,6 +297,7 @@ impl Document {
         let comments_owned = self.comments_owned;
         let comments_extended_owned = self.comments_extended_owned;
         let embedded_invalidated_signatures = self.embedded_invalidated_signatures.clone();
+        let freed_image_relationships = self.freed_image_relationships.clone();
         let package_signatures_invalidated = self.package_signatures_invalidated;
         let source_path = self.source_path.clone();
         let opened = self.parsed.as_deref().filter(|_| in_memory);
@@ -335,6 +341,7 @@ impl Document {
         reopened.comments_owned = comments_owned;
         reopened.comments_extended_owned = comments_extended_owned;
         reopened.embedded_invalidated_signatures = embedded_invalidated_signatures;
+        reopened.freed_image_relationships = freed_image_relationships;
         reopened.package_signatures_invalidated = package_signatures_invalidated;
         reopened.source_path = source_path;
         reopened.install_carried_body_scans(carried_scans);

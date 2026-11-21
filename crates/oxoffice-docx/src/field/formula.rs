@@ -579,7 +579,8 @@ pub(super) fn unsupported_switch(instruction: &FieldInstruction) -> Option<&str>
     let allowed: &[&str] = match instruction.name.as_str() {
         "PAGE" | "NUMPAGES" | "SECTION" | "SECTIONPAGES" => &["*", "#"],
         "REF" => &["h", "n", "r", "t", "w", "p", "f", "d", "*", "#"],
-        "PAGEREF" => &["h", "p", "*", "#"],
+        // `\p` writes "on page N", "above" or "below": not computed.
+        "PAGEREF" => &["h", "*", "#"],
         "IF" => &["*", "#"],
         "SEQ" => &["n", "c", "h", "r", "s", "*", "#"],
         "DOCPROPERTY" | "DOCVARIABLE" => &["*", "#", "@"],

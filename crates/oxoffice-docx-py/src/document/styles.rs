@@ -307,9 +307,16 @@ impl StyleFormatting {
             }
         }
         if let Some(value) = &self.tab_stops {
-            let entries = value.bind(py).extract::<Vec<(i64, i32, Option<i32>)>>()?;
+            let entries = value
+                .bind(py)
+                .extract::<Vec<(Bound<'_, PyAny>, i32, Option<i32>)>>()?;
             let mut tabs = Vec::with_capacity(entries.len());
             for (position, alignment, leader) in entries {
+                let position = crate::required_length(
+                    &position,
+                    &format!("{}(tab_stops)", self.method),
+                    crate::LengthUnit::Twips,
+                )?;
                 use oxoffice_docx_oxml::{ST_TabJc, ST_TabLeader};
                 let val = match crate::formatting::tab_alignment_from_int(alignment)? {
                     oxoffice_docx::TabAlignment::Left => ST_TabJc::Left,

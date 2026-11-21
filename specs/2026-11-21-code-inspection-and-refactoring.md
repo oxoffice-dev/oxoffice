@@ -52,12 +52,12 @@ code is one dense job, size alone is not a reason.
 | pptx `lib.rs` | About 20 responsibilities: state, raw XML owners, stored validation, open, save and commit, render and export (5,600 lines, all behind `render`), masters and themes, slide import, media, shape handles, arrange, headers and footers, properties, fonts, charts, comments, transitions | **Split** into about 20 modules, `render/` as one gated module. `Presentation` stays in `lib.rs`, as `html.rs`, `odp.rs` and `pdf.rs` already assume. |
 | docx-oxml `text.rs` | Fields (46%: model, parse, write, rewrite), `CT_P`, `CT_R`, and the namespace and emission infrastructure the whole crate imports (`FieldXmlEmission`, `raw_with_external_bindings`, `WordOperationWork`) | **Split** into flat `text/` modules: bindings, owner check, work, emission, run, `field.rs` and `field_*.rs`, `paragraph_*.rs`. |
 | docx `field.rs` | About 10 unrelated features: TOC, mail merge (4,700), fragment import and identity remapping (3,900), index and tables of figures and authorities, legacy form fields, evaluator, formulas, span scanning, REF copies, fields in other stories | **Split** into `field/`, about 15 modules. |
-| docx `comparison.rs` | One recursive engine (12,700 lines, body to paragraph, table or control to cell and back, one shared context), postconditions, source snapshots; plus comment snapshots and footnote custody, which accept and reject also use | **Trim only.** Delete 580 dead lines; move comments and footnotes to `comparison/`. Cutting the engine by element kind would spread one algorithm over files, with about 300 visibility changes, and make it no easier to follow. Revisit with items 3 and 6. |
+| docx `comparison.rs` | One recursive engine (12,700 lines, body to paragraph, table or control to cell and back, one shared context), postconditions, source snapshots; plus comment snapshots and footnote custody, which accept and reject also use | **Trim only.** Delete 580 dead lines; move comments and footnotes to `comparison/`. Cutting the engine by element kind would spread one algorithm over files, with about 300 visibility changes, and make it no easier to follow. Revisit with items 3 and 6. Superseded: split, see the [amendment](#amendment-2026-11-21-files-over-about-6000-lines-are-split). |
 | docx-py `document.rs` | 74 Python classes in families (values, sub-handles, styles, properties, forms, mail merge, content controls, exports), the owner inventory that keeps live handles valid (7,100 lines), and the single `#[pymethods] impl PyDocument` (5,155 lines) | **Split** by class family into `document/`. The `#[pymethods]` block moves whole: PyO3 allows one per class, and `multiple-pymethods` stays off. |
 | docx-layout `engine.rs` | Stages with one-way dependencies: source registry, field formatting, SEQ, revision projection, caches, the layout transaction, paragraph layout, field substitution after pagination, structure, section geometry, headers and footers, fonts and East Asian text, bidi | **Split** into `engine/`, about 17 modules. The boundary with `paginator.rs` is sound. The two giant functions (1,700 and 1,800 lines) are not touched. |
 | docx `bibliography.rs` | 48% data (APA languages 4,100, citation grammars 3,500); sources, update state, citations and rendering in between | **Split** into `bibliography/`, one PR. Low coupling, and item 5 will grow it. |
 | docx-oxml `document.rs` | Two unrelated halves: the crate-wide admission and publication machinery (68%) and the document model (`CT_Body`, `CT_Document`, `CT_SectPr`) | **Split** into `document/section.rs` and `document/source.rs`; about 10 items cross the halves. |
-| chart `lib.rs` | The ChartML model with parse and write (7,600, one dense job), the renderer (3,700), authoring on part bytes (1,600) | **Mostly harmless.** One cheap cut: `render.rs` and `authoring.rs`, about 6 visibility changes. The model stays whole. |
+| chart `lib.rs` | The ChartML model with parse and write (7,600, one dense job), the renderer (3,700), authoring on part bytes (1,600) | **Mostly harmless.** One cheap cut: `render.rs` and `authoring.rs`, about 6 visibility changes. The model stays whole. Superseded: split, see the [amendment](#amendment-2026-11-21-files-over-about-6000-lines-are-split). |
 
 ### How a split is done
 
@@ -304,6 +304,57 @@ publication), docx-oxml `text.rs` and `document.rs`, and the docx-py owner
 inventory. The moves of those files (4 to 7, then 13, 15, 16, 17) go first,
 then the performance code, so that neither rebases over the other. Item 3's
 spec and measurements go on in parallel.
+
+## Amendment 2026-11-21: files over about 6,000 lines are split
+
+User decision of 2026-11-21: every source file over about 6,000 lines is
+split, by pure moves, as wave 3 did for docx `document.rs`. Size now is a
+reason on its own, even where the code is one dense job (see
+[File by file](#file-by-file)): this replaces "Trim only" for docx
+`comparison.rs` and "Mostly harmless" for chart `lib.rs` in the table
+above. The method is [How a split is done](#how-a-split-is-done),
+unchanged, with its rule for a file that is already a child: docx-oxml
+`document/source.rs` is split by hand-checked moves, or with
+`check_pure_move.py` extended then.
+
+The list is complete at 41e6576: the next files, pptx-py `presentation.rs`
+(5,660 lines) and docx-oxml `text.rs` (5,629), are not split. Order: docx
+`comparison.rs` (22,106 lines), docx-layout `paginator.rs` (8,564), docx
+`content_control.rs` (6,784), docx-oxml `document/source.rs` (9,075), chart
+`lib.rs` (7,711). Each file after the first gets its module plan in its
+first pull request.
+
+**docx `comparison.rs`** (22,106 lines on `main` at 2740c2e, unchanged at
+41e6576). The table above expected about 300 visibility changes to cut the
+engine; the dry run of the plan below, on 2740c2e, needs 279, all
+`pub(super)` on items inside `comparison/` (none on a field, none visible
+outside the module). The user chose a findable engine over that cost.
+
+- 30 modules under `comparison/`, beside `comments.rs` and `footnotes.rs`.
+  The parent keeps 1,386 lines: the public option and diagnostic types,
+  `Metadata`, `IdAllocator`, the `impl Document` entry points, the footnote
+  types, a few small structs and enums, and 18 structs whose private fields
+  several modules read (`SourceSnapshots`, `RunSource`, `LeafPublication`,
+  `GuardField`, ...).
+- `check_pure_move.py`: "31 Rust files: only moves"; `cargo check` dev and
+  release, clippy `-D warnings` dev and `--profile scaling`: clean.
+
+Three pull requests, each re-cut from the plan on the `main` of its day:
+
+1. Around the engine (6,500 lines): `move_pairs`, `stories`,
+   `relationships`, `text_boxes`, `namespaces`, `source_scopes`,
+   `bookmarks`, `postconditions`, `field_conversions`, `source_metadata`,
+   `guard`.
+2. Source publication (5,500 lines): `run_source`, `source_snapshots`,
+   `property_sources`, `leaf_publications`, `signatures`, `alignment`,
+   `run_properties`, `xml`.
+3. The engine (9,100 lines): `body`, `paragraph_marks`, `paragraphs`,
+   `granular`, `projection`, `granular_text`, `attributed_runs`,
+   `paragraph_properties`, `tables`, `controls`, `fields`.
+
+The file is frozen during each cut only, as the orchestrator announces; a
+fix merged between two cuts goes to the modules already cut, and the next
+cut is re-cut on top of it.
 
 ## Links
 

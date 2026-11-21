@@ -540,6 +540,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
+            freed_image_relationships: Vec::new(),
             package_signatures_invalidated,
             source_path: None,
             glossary,
@@ -794,6 +795,51 @@ impl Document {
             candidate.package_signatures_invalidated,
         )?;
         Ok((candidate, normalized))
+    }
+
+    /// Drop the image relationships `remove_content_at` freed that no
+    /// element of their part names any more, and their media when no other
+    /// relationship reaches it. Other parts nobody references, such as a
+    /// producer's orphan media, are left as they are.
+    ///
+    /// Returns whether anything was released. A signed package that loses a
+    /// relationship or a part has its signature marked invalid.
+    pub(super) fn release_freed_image_relationships(&mut self) -> Result<bool> {
+        let mut by_owner: BTreeMap<String, HashSet<String>> = BTreeMap::new();
+        for (owner, id) in std::mem::take(&mut self.freed_image_relationships) {
+            by_owner.entry(owner).or_default().insert(id);
+        }
+        let mut released = false;
+        for (owner, freed) in by_owner {
+            let Some(xml) = self.package.get_part(&owner) else {
+                continue;
+            };
+            let referenced = xml_attribute_values(xml)?;
+            if freed.iter().all(|id| referenced.contains(id)) {
+                continue;
+            }
+            let before = self
+                .package
+                .get_part_rels(&owner)
+                .map_or(0, |relationships| relationships.items.len());
+            self.release_unreferenced_images(&owner, &freed, &referenced);
+            let after = self
+                .package
+                .get_part_rels(&owner)
+                .map_or(0, |relationships| relationships.items.len());
+            released |= after < before;
+        }
+        if released
+            && self
+                .package
+                .package_rels
+                .items
+                .iter()
+                .any(|relationship| relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN)
+        {
+            self.package_signatures_invalidated = true;
+        }
+        Ok(released)
     }
 
     fn saved_package(&self) -> Result<OpcPackage> {
