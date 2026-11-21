@@ -166,7 +166,9 @@ entry and closes the issue.
   commit, or close and reopen the pull request.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
-  pull requests into `main`, every call on the three platforms on `main`.
+  pull requests into `main`, every call on Linux on each push to `main`, and
+  every call on the three platforms in the nightly run (02:23 UTC) or on
+  `workflow_dispatch`. A platform-only growth shows in the nightly run.
 - The `skill-examples` job runs the examples of
   [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) on
   `main` only, against the Linux wheel of `build`

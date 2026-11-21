@@ -1,0 +1,39 @@
+---
+date: 2026-11-21
+status: shipped
+scope: ci
+---
+
+# Nightly scaling on macOS and Windows
+
+## Context
+
+Every push to `main` ran the full scaling set on Linux, macOS and Windows.
+On macOS and Windows that job takes 27 to 31 minutes. GitHub runs at most
+5 macOS jobs at a time for the organization, and on the night of
+2026-11-21 about 60 merges each queued one of these jobs behind the pull
+request builds: a CI run waited about 40 minutes in the queue for 13 minutes
+of work.
+
+## Decision
+
+- A push to `main` times every call on **Linux** only.
+- A nightly run (02:23 UTC, `schedule`) and `workflow_dispatch` time every
+  call on the three platforms. A growth that shows on one platform only is
+  caught there, at most a day later, and fixed like any red `main`.
+- Pull requests are unchanged: the QUICK set on Linux for a ready pull
+  request into `main`.
+
+Not here: the merge queue and a single pending run of `main`, which come
+with their own spec.
+
+## Outcome
+
+- One `ci.yml` change: a `schedule` trigger and the scaling matrix chosen by
+  event. The nightly run also builds and tests on the three platforms, a
+  daily health check of `main`.
+
+## Links
+
+- [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md)
+- [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#ci)

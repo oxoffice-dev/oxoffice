@@ -24,6 +24,10 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   workflow_dispatch:
+  # The full scaling set on macOS and Windows runs once a night instead of on
+  # every push to main (specs/2026-11-21-nightly-scaling-on-macos-and-windows.md).
+  schedule:
+    - cron: "23 2 * * *"
 
 # A pull request keeps only its latest run. Every commit of main gets its own
 # run, so no run of main is queued behind or cancelled by another.
@@ -127,16 +131,17 @@ jobs:
   # The scaling tests time every mutating call at N and 16N (docx) or 4N
   # (pptx). They need a build without debug assertions (the `scaling`
   # profile), built here beside the `ci` one so that pull requests wait no
-  # longer. A ready pull request into main times the QUICK set on Linux; main
-  # times every call on the three platforms. Drafts and stacked pull requests
-  # skip it.
+  # longer. A ready pull request into main times the QUICK set on Linux; a
+  # push to main times every call on Linux; the nightly run and
+  # workflow_dispatch time every call on the three platforms. Drafts and
+  # stacked pull requests skip it.
   scaling:
     name: Scaling (${{ matrix.os }})
     if: github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
