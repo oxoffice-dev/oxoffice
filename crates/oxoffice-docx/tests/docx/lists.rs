@@ -707,6 +707,36 @@ fn an_instance_update_keeps_the_style_links_of_its_levels() {
 }
 
 #[test]
+fn an_instance_update_keeps_a_style_link_held_by_a_swapped_in_level() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let swapped = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet())],
+        )
+        .unwrap();
+    doc.add_style(StyleBuilder::paragraph("Points", "Points"))
+        .unwrap();
+    doc.link_style_to_numbering("Points", swapped, 0).unwrap();
+    let link = doc.numbering_instance(swapped).unwrap().level_overrides[0]
+        .paragraph_style_link
+        .clone();
+    assert_eq!(
+        link.as_deref(),
+        Some("Points"),
+        "the swapped-in level holds the link"
+    );
+
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(swapped, definition_of(&doc, swapped), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
 fn a_level_that_names_a_style_not_numbered_by_it_is_refused() {
     // The other way round from LibreOffice's one-way link: the level names
     // Heading2, whose style no longer points at any list.
@@ -883,7 +913,7 @@ fn list_items_of_every_producer_read_the_same_after_a_save() {
 }
 
 #[test]
-fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
+fn items_added_to_the_corpus_reports_continue_their_lists() {
     for (name, bullet) in [
         ("word/report.docx", SYMBOL_BULLET),
         ("google/report.docx", "●"),
