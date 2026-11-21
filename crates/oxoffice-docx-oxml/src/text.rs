@@ -31043,6 +31043,15 @@ mod legacy_checkbox_size_tests {
             Some(LegacyCheckBoxSize::HalfPoints(48))
         );
         assert_eq!(
+            checkbox_size(r#"<w:size w:val="1pi"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(24))
+        );
+        assert_eq!(
+            checkbox_size(r#"<w:size w:val="10mm"/>"#),
+            Some(LegacyCheckBoxSize::HalfPoints(57)),
+            "28.35 points"
+        );
+        assert_eq!(
             checkbox_size("<w:sizeAuto/>"),
             Some(LegacyCheckBoxSize::Auto)
         );

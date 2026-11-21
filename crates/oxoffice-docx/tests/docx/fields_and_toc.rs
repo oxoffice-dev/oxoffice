@@ -1182,3 +1182,60 @@ fn a_legacy_checkbox_in_a_table_cell_draws_its_box() {
         .expect("checked box in a cell");
     assert_eq!(checked.1, 12.0);
 }
+
+#[test]
+fn a_legacy_checkbox_set_through_the_facade_keeps_its_opening_run_formatting() {
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}</w:p>",
+        word_checkbox("<w:sizeAuto/>", false)
+    ));
+    let field = doc.legacy_form_fields().unwrap().remove(0);
+    doc.set_legacy_form_field_value(
+        &field.source_part,
+        field.ordinal,
+        oxoffice_docx::LegacyFormFieldValue::Checked(true),
+    )
+    .unwrap();
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        let runs = drawn_runs(doc);
+        let checked = runs
+            .iter()
+            .find(|(text, _, _)| text == "\u{2612}")
+            .expect("checked box");
+        assert_eq!(
+            checked.1, 10.0,
+            "the opening run's size, the stored result has none"
+        );
+    }
+}
+
+#[test]
+fn a_legacy_checkbox_takes_its_opening_run_style() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:rPr><w:rStyle w:val="FormBox"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    doc.add_style(oxoffice_docx::StyleBuilder::character("FormBox", "Form box").size(14.0))
+        .unwrap();
+    let runs = drawn_runs(&doc);
+    let unchecked = runs
+        .iter()
+        .find(|(text, _, _)| text == "\u{2610}")
+        .expect("empty box");
+    assert_eq!(unchecked.1, 14.0, "the character style of the opening run");
+}
+
+#[test]
+fn a_locked_legacy_checkbox_draws_its_box() {
+    let checkbox = word_checkbox("<w:sizeAuto/>", true).replacen(
+        r#"<w:fldChar w:fldCharType="begin">"#,
+        r#"<w:fldChar w:fldCharType="begin" w:fldLock="1">"#,
+        1,
+    );
+    let doc = doc_with_body(&format!("<w:p>{checkbox}</w:p>"));
+    let runs = drawn_runs(&doc);
+    assert!(
+        runs.iter().any(|(text, _, _)| text == "\u{2612}"),
+        "a locked checkbox still draws its box"
+    );
+}
