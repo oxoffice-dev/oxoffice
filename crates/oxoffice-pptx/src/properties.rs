@@ -29,6 +29,10 @@ impl Presentation {
     }
 
     /// Changes known core fields while retaining every unowned imported byte.
+    ///
+    /// The core title (`dc:title`) is the user's: a slide edit never changes
+    /// it, while a save after a slide edit refreshes `docProps/app.xml` (see
+    /// [`Self::application_properties`]).
     pub fn set_core_properties(&mut self, mut properties: CoreProperties) -> Result<()> {
         // An empty value reads back as no value: it removes the property.
         for value in [
@@ -135,6 +139,13 @@ impl Presentation {
     }
 
     /// Returns cached application properties without dirtying retained XML.
+    ///
+    /// A save after a slide edit refreshes the slide, notes and hidden-slide
+    /// counts of `docProps/app.xml`. After a change of slide text or of the
+    /// slide list it also drops what oxoffice does not recount: the title
+    /// lists (`HeadingPairs`, `TitlesOfParts`) and the `Words` and
+    /// `Paragraphs` counts, which PowerPoint writes again on its next save.
+    /// A hide or a show alone keeps them.
     pub fn application_properties(&self) -> Option<&AppProperties> {
         self.application_properties.as_ref()
     }
@@ -331,21 +342,20 @@ impl Presentation {
     ///
     /// `docProps/app.xml` gets the deck's counts where it has them: after a
     /// slide is added or removed, the slide, notes and hidden-slide counts,
-    /// and its title lists (`HeadingPairs`, `TitlesOfParts`) go, as they may
-    /// name a removed slide or miss a new one: their group names are
-    /// localised, so a title cannot be picked out, and PowerPoint writes them
-    /// again on its next save. After a hide or a show, only the hidden-slide
-    /// count. A move changes no count and is left out; the lists then keep
-    /// the old order. An app.xml the source-preserving patch cannot edit (one
-    /// outside its namespace, or with a count in a foreign namespace) is left
-    /// as it was rather than refusing the edit.
+    /// and what the edit makes stale goes (see
+    /// [`Self::refreshed_application_properties`]). After a hide or a show,
+    /// only the hidden-slide count. A save refreshes them again whenever a
+    /// slide, its notes or the slide list changed, so text edits, notes and
+    /// moves are covered too. An app.xml the source-preserving patch cannot
+    /// edit (one outside its namespace, or with a count in a foreign
+    /// namespace) is left as it was rather than refusing the edit.
     ///
     /// After a removal the package thumbnail goes too: it pictures the slide
     /// that was first when the deck was last saved, which moves and inserts
     /// may have taken anywhere.
     pub(super) fn refresh_document_metadata(&mut self, edit: MetadataEdit) -> Result<()> {
         let thumbnail = edit == MetadataEdit::Removal;
-        let titles = edit != MetadataEdit::Visibility;
+        let structure = edit != MetadataEdit::Visibility;
         let thumbnails = self
             .package
             .package_rels
@@ -367,6 +377,29 @@ impl Presentation {
                 || relationship.rel_type != rel_types::THUMBNAIL
                 || relationship_is_external(relationship)
         });
+        let Some((part, xml, properties)) =
+            self.refreshed_application_properties(structure, structure)?
+        else {
+            return Ok(());
+        };
+        self.package.set_part(&part, xml);
+        self.application_properties = Some(properties);
+        Ok(())
+    }
+
+    /// `docProps/app.xml` with the deck's counts, or `None` when there is
+    /// none, or the source-preserving patch cannot edit it. `counts` refreshes
+    /// the slide and notes counts (the hidden-slide count always follows);
+    /// `stale` drops what an edit of slide text, order or structure makes
+    /// stale and oxoffice does not recount: the title lists
+    /// (`HeadingPairs`, `TitlesOfParts`, whose group names are localised) and
+    /// the `Words` and `Paragraphs` counts. PowerPoint writes them again on
+    /// its next save. The core title (`dc:title`) is the user's and is kept.
+    pub(super) fn refreshed_application_properties(
+        &self,
+        counts: bool,
+        stale: bool,
+    ) -> Result<Option<(String, Vec<u8>, AppProperties)>> {
         let (Some(old), Some(part)) = (
             self.application_properties.clone(),
             property_part(
@@ -375,14 +408,14 @@ impl Presentation {
                 content_types::EXTENDED_PROPERTIES,
             )?,
         ) else {
-            return Ok(());
+            return Ok(None);
         };
         let count = |keep: fn(&SlideRecord) -> bool| {
             i32::try_from(self.slides.iter().filter(|record| keep(record)).count())
                 .unwrap_or(i32::MAX)
         };
         let mut new = old.clone();
-        if titles {
+        if counts {
             new.slides = old.slides.map(|_| count(|_| true));
             // `Notes` counts slides containing notes, not empty notes pages.
             new.notes = old.notes.map(|_| {
@@ -404,24 +437,28 @@ impl Presentation {
                 Ok((patched, ranges))
             })
         else {
-            return Ok(());
+            return Ok(None);
         };
         let mut xml = Vec::with_capacity(patched.len());
         let mut cursor = 0;
         for (_, _, start, end) in children.iter().filter(|(uri, local, _, _)| {
-            titles
+            stale
                 && uri.as_deref() == Some(EXTENDED_PROPERTIES_NS)
-                && matches!(local.as_str(), "HeadingPairs" | "TitlesOfParts")
+                && matches!(
+                    local.as_str(),
+                    "HeadingPairs" | "TitlesOfParts" | "Words" | "Paragraphs"
+                )
         }) {
             xml.extend_from_slice(&patched[cursor..*start]);
             cursor = *end;
         }
         xml.extend_from_slice(&patched[cursor..]);
+        if xml.as_slice() == source {
+            return Ok(None);
+        }
         let properties = AppProperties::from_xml(&xml)
             .map_err(|error| footer_malformed(&part, error.to_string()))?;
-        self.package.set_part(&part, xml);
-        self.application_properties = Some(properties);
-        Ok(())
+        Ok(Some((part, xml, properties)))
     }
 }
 

@@ -338,20 +338,23 @@ impl Presentation {
                 package.package_rels.add(rel_types::CORE_PROPERTIES, target);
             }
         }
-        let presentation_changed = match self
+        let old_presentation = match self
             .parsed
             .as_deref()
             .and_then(|parsed| parsed.presentation(&self.package, &self.presentation_part))
         {
-            Some(parsed) => *parsed != self.presentation,
-            None => {
-                self.package
-                    .get_part(&self.presentation_part)
-                    .and_then(|xml| CT_Presentation::from_xml(xml).ok())
-                    .as_ref()
-                    != Some(&self.presentation)
-            }
+            Some(parsed) => Some(parsed.clone()),
+            None => self
+                .package
+                .get_part(&self.presentation_part)
+                .and_then(|xml| CT_Presentation::from_xml(xml).ok()),
         };
+        let presentation_changed = old_presentation.as_ref() != Some(&self.presentation);
+        // The slide list changed: app.xml's title lists and text counts are
+        // stale.
+        let slide_list_changed = old_presentation
+            .as_ref()
+            .is_none_or(|old| old.slide_ids != self.presentation.slide_ids);
         if !preserve_unchanged_modelled_parts || presentation_changed {
             package.set_part(
                 &self.presentation_part,
@@ -467,6 +470,13 @@ impl Presentation {
                 );
             }
         }
+        // What app.xml must follow: its counts after a slide, its notes or
+        // the slide list changed; its title lists and text counts go after
+        // the slide list or a slide's text changed, not after a hide or a
+        // show alone.
+        let mut counts_changed = slide_list_changed;
+        let mut text_changed = slide_list_changed;
+        let mut visibility_changed = false;
         for record in &self.slides {
             // A record parsed from the bytes its parts still hold is unchanged
             // without parsing them again.
@@ -476,13 +486,27 @@ impl Presentation {
                 .filter(|parsed| parsed.holds_slide(record));
             let parsed_from =
                 |part: &str| parsed.is_some_and(|parsed| parsed.same_bytes(&self.package, part));
-            let slide_changed = !parsed_from(&record.part_name) && {
-                self.package
+            let mut slide_changed = false;
+            if !parsed_from(&record.part_name) {
+                let old = self
+                    .package
                     .get_part(&record.part_name)
-                    .and_then(|xml| CT_Slide::from_xml(xml).ok())
-                    .as_ref()
-                    != Some(&record.slide)
-            };
+                    .and_then(|xml| CT_Slide::from_xml(xml).ok());
+                slide_changed = old.as_ref() != Some(&record.slide);
+                if slide_changed {
+                    // A hide or a show alone changes no text.
+                    let shown_alike = old.is_some_and(|mut old| {
+                        old.set_hidden(record.slide.hidden());
+                        old == record.slide
+                    });
+                    if shown_alike {
+                        visibility_changed = true;
+                    } else {
+                        counts_changed = true;
+                        text_changed = true;
+                    }
+                }
+            }
             if !preserve_unchanged_modelled_parts || slide_changed {
                 package.set_part(
                     &record.part_name,
@@ -503,6 +527,8 @@ impl Presentation {
                         .as_ref()
                         != Some(&notes.notes)
                 };
+                // The notes count follows a notes text set or cleared.
+                counts_changed |= notes_changed;
                 if !preserve_unchanged_modelled_parts || notes_changed {
                     package.set_part(
                         &notes.part_name,
@@ -528,6 +554,14 @@ impl Presentation {
                     .content_types
                     .add_override(&comments.part_name, content_types::POWERPOINT_COMMENTS);
             }
+        }
+        // PowerPoint rewrites app.xml on every save; a save after a slide edit
+        // refreshes the counts and drops what oxoffice does not recount.
+        if (counts_changed || visibility_changed)
+            && let Some((part, xml, _)) =
+                self.refreshed_application_properties(counts_changed, text_changed)?
+        {
+            package.set_part(&part, xml);
         }
         Ok(package)
     }

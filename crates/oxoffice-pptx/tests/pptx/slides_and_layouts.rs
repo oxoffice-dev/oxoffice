@@ -1386,10 +1386,19 @@ fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
         let end = xml[start..].find(to).expect("the element closes") + start + to.len();
         format!("{}{}", &xml[..start], &xml[end..])
     };
+    // The text counts go too: oxoffice does not recount them.
     let expected = cut(
-        &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
-        "<TitlesOfParts>",
-        "</TitlesOfParts>",
+        &cut(
+            &cut(
+                &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
+                "<TitlesOfParts>",
+                "</TitlesOfParts>",
+            ),
+            "<Words>",
+            "</Words>",
+        ),
+        "<Paragraphs>",
+        "</Paragraphs>",
     )
     .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
     .replace("<Notes>1</Notes>", "<Notes>0</Notes>");
@@ -1469,10 +1478,12 @@ fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
     assert!(app.contains("<Slides>3</Slides>"), "{app}");
     assert!(app.contains("<Notes>1</Notes>"), "{app}");
 
-    // Google writes no app.xml, LibreOffice one without counts or titles.
+    // Google writes no app.xml, LibreOffice one without slide counts or
+    // titles, whose zero text counts go as any stale text count does.
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
         let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml");
+        let before = saved_part_text(&prs, "/docProps/app.xml")
+            .map(|app| app.replace("<Words>0</Words><Paragraphs>0</Paragraphs>", ""));
         prs.remove_slide(1).unwrap();
         let prs = reopen(&prs);
         assert_eq!(saved_part_text(&prs, "/docProps/app.xml"), before, "{name}");
@@ -1577,7 +1588,8 @@ fn slide_edits_leave_decks_without_counts_alone_and_an_unedited_deck_unchanged()
 
     for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
         let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml");
+        let before = saved_part_text(&prs, "/docProps/app.xml")
+            .map(|app| app.replace("<Words>0</Words><Paragraphs>0</Paragraphs>", ""));
         prs.duplicate_slide(1).unwrap();
         prs.slide_mut(0).unwrap().set_hidden(true);
         assert_eq!(
@@ -2094,4 +2106,65 @@ fn a_removed_property_removes_its_element() {
         !saved.contains("<Slides>") && !saved.contains("Company"),
         "{saved}"
     );
+}
+
+#[test]
+fn the_notes_count_follows_notes_text_set_or_cleared() {
+    // The PowerPoint deck has notes text on one slide of four.
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let with_notes = (0..prs.len())
+        .find(|index| {
+            prs.slide(*index)
+                .unwrap()
+                .notes_text()
+                .is_some_and(|text| !text.trim().is_empty())
+        })
+        .unwrap();
+    prs.slide_mut(with_notes)
+        .unwrap()
+        .set_notes_text("")
+        .unwrap();
+    let mut prs = reopen(&prs);
+    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>0</Notes>"), "{app}");
+    // Notes text changes no slide text: the title lists and text counts stay.
+    assert!(
+        app.contains("<TitlesOfParts>") && app.contains("<Words>61</Words>"),
+        "{app}"
+    );
+    prs.slide_mut(with_notes)
+        .unwrap()
+        .set_notes_text("Say hello")
+        .unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>1</Notes>"), "{app}");
+}
+
+#[test]
+fn a_slide_text_edit_drops_the_stale_title_lists_and_text_counts_and_keeps_the_title() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let core = saved_part_text(&prs, "/docProps/core.xml").unwrap();
+    assert!(
+        core.contains("<dc:title>Quarterly Operations Review</dc:title>"),
+        "{core}"
+    );
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("A new title")
+        .unwrap();
+    let saved = reopen(&prs);
+    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
+    for gone in [
+        "<HeadingPairs>",
+        "<TitlesOfParts>",
+        "<Words>",
+        "<Paragraphs>",
+    ] {
+        assert!(!app.contains(gone), "{gone}: {app}");
+    }
+    assert!(app.contains("<Slides>4</Slides>"), "{app}");
+    // The core title is the user's: a slide edit leaves it alone.
+    assert_eq!(saved_part_text(&saved, "/docProps/core.xml").unwrap(), core);
 }
