@@ -1866,3 +1866,23 @@ fn section_entry_data_that_leans_on_its_old_section_is_left_behind_on_a_move() {
     let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
     assert!(!xml.contains("x:keep"), "{xml}");
 }
+
+#[test]
+fn a_carriage_return_in_a_core_property_survives_a_save() {
+    // The core properties part is written whole at the save.
+    let mut prs = new_deck();
+    prs.core_properties_mut().title = Some("first\rsecond".to_owned());
+    prs.core_properties_mut().description = Some("one\r\ntwo".to_owned());
+    let prs = reopen(&prs);
+    let core = prs.core_properties().expect("core properties");
+    assert_eq!(core.title.as_deref(), Some("first\rsecond"));
+    assert_eq!(core.description.as_deref(), Some("one\r\ntwo"));
+    // Written as a reference, which every reader keeps; a raw CR reads as a
+    // line feed elsewhere.
+    let package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/docProps/core.xml").unwrap());
+    assert!(
+        xml.contains("first&#13;second") && !xml.contains('\r'),
+        "{xml}"
+    );
+}
