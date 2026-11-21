@@ -1718,3 +1718,112 @@ fn a_locked_legacy_checkbox_draws_its_box() {
         "a locked checkbox still draws its box"
     );
 }
+
+/// What a tool does after each edit pass on a long document: rebuild the
+/// table of contents, refresh the page fields from the layout, save. The TOC
+/// lists the headings to its depth, in the file's own TOC styles, with the
+/// pages of the layout; the header and footer parts keep the page caches
+/// Word left there; a second pass changes no byte; and the PDF has as many
+/// pages as the layout.
+#[test]
+fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
+    let copies = crate::support::workflow_copies(&["word", "libreoffice", "authored", "google"])
+        .into_iter()
+        .map(|producer| format!("{producer}/thesis.docx"))
+        .collect::<Vec<_>>();
+    crate::support::run_workflow("page-numbers", &copies, |path| {
+        let source = std::fs::read(crate::support::corpus_root().join("files").join(path)).unwrap();
+        let pass = |bytes: &[u8]| {
+            let mut doc = Document::from_bytes(bytes).unwrap();
+            let toc = doc
+                .rebuild_toc()
+                .unwrap_or_else(|e| panic!("{path}: rebuild: {e}"));
+            let fields = doc.update_layout_backed_fields().unwrap();
+            (toc, fields, doc.to_bytes().unwrap())
+        };
+        let (toc, fields, once) = pass(&source);
+        let (_, _, twice) = pass(&once);
+        assert!(once == twice, "{path}: a second pass changes no byte");
+
+        // Only the body's caches move; header and footer parts stay as saved.
+        let before = crate::support::package_parts(&source);
+        let after = crate::support::package_parts(&once);
+        let changed = after
+            .iter()
+            .filter(|(name, bytes)| before.get(*name) != Some(*bytes))
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(changed, ["word/document.xml"], "{path}");
+        assert!(fields.page_reference_fields > 0, "{path}: {fields:?}");
+
+        // Two fields: the contents (`\o "1-3" \u`) list the headings of levels
+        // 1 to 3, the list of figures and tables (`\t "Caption,1"`) the
+        // captions; each entry in the TOC style of its level as the file
+        // names it (Word in French calls them TM1, TM2...).
+        let doc = Document::from_bytes(&once).unwrap();
+        let mut expected = doc
+            .headings()
+            .into_iter()
+            .filter(|(level, _)| *level <= 3)
+            .collect::<Vec<_>>();
+        expected.extend(
+            (0..doc.paragraph_count())
+                .map(|index| doc.paragraph(index).unwrap())
+                .filter(|paragraph| matches!(paragraph.style_id(), Some("Caption" | "Lgende")))
+                .map(|paragraph| (1, paragraph.text())),
+        );
+        let toc_style = |level: u32| {
+            if path.starts_with("word/") {
+                format!("TM{level}")
+            } else {
+                format!("TOC{level}")
+            }
+        };
+        let entries = (0..doc.paragraph_count())
+            .map(|index| doc.paragraph(index).unwrap())
+            .filter(|paragraph| {
+                paragraph
+                    .style_id()
+                    .is_some_and(|style| style.starts_with("TOC") || style.starts_with("TM"))
+            })
+            .map(|paragraph| {
+                let text = paragraph.text();
+                let parts = text.split('\t').collect::<Vec<_>>();
+                let title = parts[parts.len().saturating_sub(2)].to_owned();
+                (
+                    paragraph.style_id().unwrap().to_owned(),
+                    title,
+                    parts.last().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), toc.entry_count, "{path}");
+        assert_eq!(
+            entries
+                .iter()
+                .map(|(_, title, _)| title.as_str())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>(),
+            "{path}"
+        );
+        for ((style, title, page), (level, _)) in entries.iter().zip(&expected) {
+            assert_eq!(style, &toc_style(*level), "{path}: {title}");
+            assert!(
+                page.chars()
+                    .all(|c| c.is_ascii_digit() || "ivxlc".contains(c))
+                    && !page.is_empty(),
+                "{path}: {title} has a page, {page:?}"
+            );
+        }
+
+        let pdf = oxoffice_render_test::pdf::Pdf::read(&doc.to_pdf().unwrap());
+        assert_eq!(
+            pdf.page_count(),
+            doc.layout_deterministic().unwrap().layout.pages.len(),
+            "{path}: the PDF has the layout's pages"
+        );
+    });
+}

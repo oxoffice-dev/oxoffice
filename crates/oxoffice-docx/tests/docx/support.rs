@@ -200,13 +200,20 @@ pub fn workflow_known_failure(file: &str, workflow: &str) -> Option<u32> {
     let mut entries = Vec::new();
     let (mut path, mut name) = (None, None);
     for line in text.lines() {
-        let value = |prefix: &str| line.strip_prefix(prefix).map(|v| v.trim().trim_matches('"').to_owned());
+        let value = |prefix: &str| {
+            line.strip_prefix(prefix)
+                .map(|v| v.trim().trim_matches('"').to_owned())
+        };
         if let Some(v) = value("file = ") {
             path = Some(v);
         } else if let Some(v) = value("workflow = ") {
             name = Some(v);
         } else if let Some(v) = value("issue = ") {
-            entries.push((path.take().unwrap(), name.take().unwrap(), v.parse::<u32>().unwrap()));
+            entries.push((
+                path.take().unwrap(),
+                name.take().unwrap(),
+                v.parse::<u32>().unwrap(),
+            ));
         }
     }
     entries
