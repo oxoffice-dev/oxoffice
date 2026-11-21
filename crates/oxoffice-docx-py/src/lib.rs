@@ -6,7 +6,7 @@ mod paragraph;
 mod run;
 mod table;
 
-use pyo3::exceptions::{PyIndexError, PyRuntimeError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyType};
 
@@ -29,17 +29,7 @@ use table::{
     PyTableCollection,
 };
 
-pub(crate) fn normalize_index(index: isize, len: usize, kind: &str) -> PyResult<usize> {
-    let normalized = if index < 0 {
-        len as isize + index
-    } else {
-        index
-    };
-    if normalized < 0 || normalized >= len as isize {
-        return Err(PyIndexError::new_err(format!("{kind} index out of range")));
-    }
-    Ok(normalized as usize)
-}
+pub(crate) use oxoffice_py_support::normalize_index;
 
 pub(crate) fn length_object(py: Python<'_>, value: oxoffice_docx::Length) -> PyResult<Py<PyAny>> {
     py.import("oxoffice.docx")?
@@ -73,16 +63,11 @@ pub(crate) fn color_object(py: Python<'_>, value: &str) -> PyResult<Py<PyAny>> {
 }
 
 fn public_exception_type<'py>(py: Python<'py>, class_name: &str) -> PyResult<Bound<'py, PyType>> {
-    py.import("oxoffice.docx")
-        .and_then(|module| module.getattr(class_name))
-        .and_then(|class| class.cast_into::<PyType>().map_err(Into::into))
+    oxoffice_py_support::public_exception_type(py, "oxoffice.docx", class_name)
 }
 
 fn public_error(py: Python<'_>, class_name: &str, message: String) -> PyErr {
-    match public_exception_type(py, class_name) {
-        Ok(class) => PyErr::from_type(class, (message,)),
-        Err(_) => PyRuntimeError::new_err(message),
-    }
+    oxoffice_py_support::public_error(py, "oxoffice.docx", class_name, message)
 }
 
 /// A counted replacement that matched a different number of times than the

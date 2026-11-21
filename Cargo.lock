@@ -1434,6 +1434,7 @@ name = "oxoffice-py-support"
 version = "0.1.0"
 dependencies = [
  "oxoffice-core",
+ "oxoffice-layout",
  "oxoffice-opc",
  "pyo3",
  "smallvec",
