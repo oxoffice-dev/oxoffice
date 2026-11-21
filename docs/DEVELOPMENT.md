@@ -144,8 +144,8 @@ neither fails a flat call nor reads as a fix.
 The `render` module of the docx test binary renders every Word file of the
 corpus as `convert` and `render` do, with the bundled fonts, and checks two
 things (see [the spec](../specs/2026-11-21-render-fidelity.md)). The pieces
-it shares with the pptx tests (the PDF reader, the hashes, the baseline
-files and the checks) live in the dev-only crate `oxoffice-render-test`.
+that depend on no facade (the PDF reader, the hashes, the baseline files and
+the checks) live in the dev-only crate `oxoffice-render-test`.
 
 - **Invariants**, read from the PDF and the page images: page sizes in the
   order of the sections, no page with only its header and footer, every

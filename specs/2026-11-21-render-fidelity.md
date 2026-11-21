@@ -88,7 +88,9 @@ PowerPoint's.
 in `tests/corpus/` (agreed with the tests and corpus session). It runs in the
 existing `cargo test --profile ci --test '*'` step: no new build, no new job.
 The PDF behaviour tests of #173 stay in `pdf.rs`; `render` does not repeat
-them.
+them. What both binaries share and needs no facade (the PDF reader, the
+hashes, the baseline files and the checks) lives in a dev-only crate,
+`oxoffice-render-test` (never published, depending on neither facade).
 
 **What each corpus file goes through.** Open, lay out with the bundled fonts
 (the default route of `convert` and `render`), write the PDF and one PNG per

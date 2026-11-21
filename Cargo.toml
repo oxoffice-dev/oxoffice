@@ -54,7 +54,7 @@ oxoffice-chart = { path = "crates/oxoffice-chart", version = "0.1.0" }
 oxoffice-cli-support = { path = "crates/oxoffice-cli-support", version = "0.1.0" }
 oxoffice-cli = { path = "crates/oxoffice-cli", version = "0.1.0", default-features = false }
 oxoffice-py-support = { path = "crates/oxoffice-py-support", version = "0.1.0" }
-oxoffice-render-test = { path = "crates/oxoffice-render-test" }
+oxoffice-render-test = { path = "crates/oxoffice-render-test", version = "0.1.0" }
 oxoffice-docx = { path = "crates/oxoffice-docx", version = "0.1.0", default-features = false }
 oxoffice-docx-oxml = { path = "crates/oxoffice-docx-oxml", version = "0.1.0" }
 oxoffice-docx-layout = { path = "crates/oxoffice-docx-layout", version = "0.1.0", default-features = false }

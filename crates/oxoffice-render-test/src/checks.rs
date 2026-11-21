@@ -1,6 +1,5 @@
 //! The checks a coherent render passes, read from its PDF, the files of the
-//! render tests under `tests/render/`, and the runner shared by the docx and
-//! pptx test binaries.
+//! render tests under `tests/render/`, and the runner of their tests.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
