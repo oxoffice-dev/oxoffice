@@ -11,7 +11,7 @@
 [[file]]
 path = "authored/contract.docx"
 producer = "python-docx 1.2.0"
-size = 43381
+size = 43379
 features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid"]
 
 [[file]]
@@ -203,7 +203,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "conne
 [[file]]
 path = "libreoffice/contract.docx"
 producer = "LibreOffice 26.2.6.3"
-size = 29009
+size = 29010
 features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "comment-reply", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink"]
 
 [[file]]

@@ -1982,3 +1982,325 @@ fn removing_a_comment_takes_its_styled_reference_run_with_it() {
     let body = doc.part_xml("word/document.xml").unwrap();
     assert!(!body.contains("Marquedecommentaire"), "{body}");
 }
+
+/// Author, date, text, parent's text, resolved state and anchor of every
+/// comment, as a tool reads a review back.
+fn review_of(doc: &Document) -> Vec<String> {
+    let comments = doc.comments();
+    let text_of = |id: i32| {
+        comments
+            .iter()
+            .find(|comment| comment.id() == id)
+            .map(CommentRef::text)
+    };
+    comments
+        .iter()
+        .map(|comment| {
+            format!(
+                "{:?} {:?} {:?} parent {:?} resolved {:?} on {:?}",
+                comment.author(),
+                comment.date(),
+                comment.text(),
+                comment.parent_id().and_then(text_of),
+                comment.resolved(),
+                comment.anchor_text().ok().flatten(),
+            )
+        })
+        .collect()
+}
+
+const REVIEWER: &str = "Reviewer";
+
+/// The comments and tracked changes of everyone but [`REVIEWER`].
+fn other_reviewers(doc: &Document) -> (Vec<String>, Vec<String>) {
+    let comments = review_of(doc)
+        .into_iter()
+        .filter(|line| !line.starts_with(&format!("Some({REVIEWER:?})")))
+        .collect::<Vec<_>>();
+    let revisions = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .filter(|revision| revision.author() != REVIEWER)
+        .map(|revision| {
+            format!(
+                "{:?} {} {:?} {:?}",
+                revision.kind(),
+                revision.author(),
+                revision.timestamp(),
+                revision.text()
+            )
+        })
+        .collect::<Vec<_>>();
+    (comments, revisions)
+}
+
+/// Comments in one person's name on a contract other people already
+/// reviewed, one of them on a table cell: they read back dated and open, and
+/// the other reviewers' comments, replies, resolved state and tracked changes
+/// stay as they were.
+#[test]
+fn comments_in_one_name_leave_the_other_reviewers_alone() {
+    for producer in crate::support::workflow_copies(&["word", "google", "libreoffice"]) {
+        let path = format!("{producer}/contract.docx");
+        let before = corpus_doc(&path);
+        let mut doc = corpus_doc(&path);
+        for (anchor, occurrence, tables_only) in [
+            ("Effective Date", 0, false),
+            ("Business Day", 1, false),
+            ("Schedule 2", 0, false),
+            ("material breach", 0, false),
+            ("Signature:", 1, true),
+        ] {
+            doc.add_comment_on_text(
+                anchor,
+                REVIEWER,
+                &format!("Check \"{anchor}\""),
+                TextCommentOptions {
+                    occurrence,
+                    tables_only,
+                    date: CommentDate::At("2026-11-21T10:05:00Z"),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path}: comment on {anchor}: {e}"));
+        }
+        let doc = reopen(&mut doc);
+        assert_eq!(other_reviewers(&doc), other_reviewers(&before), "{path}");
+        let mine = review_of(&doc)
+            .into_iter()
+            .filter(|line| line.starts_with(&format!("Some({REVIEWER:?})")))
+            .collect::<Vec<_>>();
+        assert_eq!(mine.len(), 5, "{path}: {mine:#?}");
+        assert!(
+            mine.iter().all(|line| line.contains("2026-11-21T10:05:00Z")
+                && line.contains("parent None")
+                && !line.contains("resolved Some(true)")),
+            "{path}: {mine:#?}"
+        );
+        assert!(
+            mine.iter()
+                .any(|line| line.ends_with("on Some(\"Signature:\")")),
+            "{path}: {mine:#?}"
+        );
+    }
+}
+
+/// A redline in one person's name on that contract, then one of their
+/// changes accepted and one rejected by id: the text shows the accepted one
+/// only, and the other reviewers' tracked changes and comments stay.
+// Known failure #366: the edited copy, saved by oxoffice, writes an
+// apostrophe of a paragraph that holds another reviewer's change as an
+// entity, and the comparison refuses that paragraph. When it passes, drop
+// `should_panic` and run it on every copy like the test above.
+#[test]
+#[should_panic(expected = "the redline of a reviewed contract is made")]
+fn a_redline_in_one_name_leaves_the_other_reviewers_alone() {
+    let path = "word/contract.docx";
+    let before = corpus_doc(path);
+    let mut edited = corpus_doc(path);
+    let pairs = [
+        ("thirty-six (36) months", "forty-eight (48) months", Some(1)),
+        ("appropriately qualified staff", "trained staff", Some(1)),
+    ];
+    edited.try_replace_all_expected(&pairs).unwrap().unwrap();
+    let mut doc = corpus_doc(path);
+    doc.compare(&edited, REVIEWER, "2026-11-21T10:00:00Z")
+        .unwrap_or_else(|e| panic!("the redline of a reviewed contract is made: {e}"));
+    let mut doc = reopen(&mut doc);
+    let mine = doc
+        .story_revisions()
+        .unwrap()
+        .into_iter()
+        .filter(|revision| revision.author() == REVIEWER)
+        .collect::<Vec<_>>();
+    let id_of = |text: &str| {
+        mine.iter()
+            .find(|revision| revision.text().contains(text))
+            .unwrap_or_else(|| panic!("a revision of {REVIEWER} holds {text}: {mine:?}"))
+            .id()
+    };
+    let (kept, refused) = (id_of("forty-eight"), id_of("trained"));
+    assert!(doc.accept_revision_id(kept).unwrap() > 0);
+    assert!(doc.reject_revision_id(refused).unwrap() > 0);
+    let doc = reopen(&mut doc);
+    assert_eq!(other_reviewers(&doc), other_reviewers(&before));
+    let text = (0..doc.paragraph_count())
+        .map(|index| doc.paragraph(index).unwrap().text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("forty-eight (48) months"));
+    assert!(text.contains("appropriately qualified staff"));
+}
+
+/// A tool rebases a copy someone annotated in Google Docs onto the last clean
+/// write: it reads every thread of the annotated copy and writes it again on
+/// the clean one, anchor, author, date, replies and resolved state included.
+// Known failure #364: Google starts the first thread inside a tracked
+// deletion, and that anchor does not read. When it passes, drop
+// `should_panic`.
+#[test]
+#[should_panic(expected = "the anchor of a Google thread reads")]
+fn the_threads_of_a_google_copy_carry_over_to_a_clean_copy() {
+    let annotated = corpus_doc("google/contract.docx");
+    let mut clean = corpus_doc("authored/contract.docx");
+    let ids = clean
+        .comments()
+        .iter()
+        .map(CommentRef::id)
+        .collect::<Vec<_>>();
+    for id in ids.into_iter().rev() {
+        clean.remove_comment(id).unwrap();
+    }
+    assert!(reopen(&mut clean).comments().is_empty());
+
+    let mut carried = std::collections::HashMap::new();
+    for comment in annotated.comments() {
+        let date = CommentDate::At(comment.date().expect("Google dates its comments"));
+        let author = comment.author().unwrap();
+        let id = match comment.parent_id() {
+            Some(parent) => clean
+                .reply_to_with_date(carried[&parent], author, &comment.text(), date)
+                .unwrap(),
+            None => {
+                let anchor = match comment.anchor_text() {
+                    Ok(Some(anchor)) => anchor,
+                    other => panic!("the anchor of a Google thread reads: {other:?}"),
+                };
+                clean
+                    .add_comment_on_text(
+                        &anchor,
+                        author,
+                        &comment.text(),
+                        TextCommentOptions {
+                            date,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+            }
+        };
+        if comment.resolved() == Some(true) {
+            clean.resolve_comment(id, true).unwrap();
+        }
+        carried.insert(comment.id(), id);
+    }
+    let clean = reopen(&mut clean);
+    let normalise = |lines: Vec<String>| {
+        lines
+            .into_iter()
+            .map(|line| line.replace("resolved None", "resolved Some(false)"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        normalise(review_of(&clean)),
+        normalise(review_of(&annotated))
+    );
+    assert!(
+        annotated
+            .comments()
+            .iter()
+            .any(|comment| comment.parent_id().is_some()),
+        "the Google copy keeps reply threads"
+    );
+}
+
+/// A comment id and the ids of its paragraphs.
+type CommentParagraphs = (i32, Vec<String>);
+/// A `commentEx` entry: paraId, paraIdParent, done.
+type CommentEntry = (String, Option<String>, bool);
+
+/// The ids of the paragraphs of each comment in `comments.xml`, by comment
+/// id, and the `commentEx` entries of `commentsExtended.xml` as (paraId,
+/// paraIdParent, done).
+fn comment_paragraph_ids(bytes: &[u8]) -> (Vec<CommentParagraphs>, Vec<CommentEntry>) {
+    let parts = crate::support::package_parts(bytes);
+    let comments = String::from_utf8(parts["word/comments.xml"].clone()).unwrap();
+    let attribute = |tag: &str, name: &str| {
+        tag.split(&format!("{name}=\""))
+            .nth(1)
+            .map(|rest| rest.split('"').next().unwrap().to_owned())
+    };
+    let by_comment = comments
+        .split("<w:comment ")
+        .skip(1)
+        .map(|chunk| {
+            let id = attribute(chunk, "w:id").unwrap().parse().unwrap();
+            let body = chunk.split("</w:comment>").next().unwrap();
+            let ids = body
+                .split("<w:p ")
+                .skip(1)
+                .filter_map(|tag| attribute(tag.split('>').next().unwrap(), "w14:paraId"))
+                .collect();
+            (id, ids)
+        })
+        .collect();
+    let extended = String::from_utf8(parts["word/commentsExtended.xml"].clone()).unwrap();
+    let entries = extended
+        .split("<w15:commentEx ")
+        .skip(1)
+        .map(|tag| {
+            let tag = tag.split("/>").next().unwrap();
+            (
+                attribute(tag, "w15:paraId").unwrap(),
+                attribute(tag, "w15:paraIdParent"),
+                attribute(tag, "w15:done").as_deref() == Some("1"),
+            )
+        })
+        .collect();
+    (by_comment, entries)
+}
+
+/// Word and Google Docs key a comment's thread and resolved state on its
+/// last paragraph: a reply names its parent's last paragraph, and the done
+/// mark sits on the entry of the resolved comment's last paragraph.
+#[test]
+fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
+    let mut doc = doc_with(&["The fees are due within thirty days."]);
+    let parent = doc
+        .add_comment_on_text(
+            "thirty days",
+            "Ann",
+            "first line\nsecond line",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let reply = doc
+        .reply_to_with_date(parent, "Ben", "agreed\nwith a note", CommentDate::Undated)
+        .unwrap();
+    doc.resolve_comment(parent, true).unwrap();
+    let (by_comment, entries) = comment_paragraph_ids(&doc.to_bytes().unwrap());
+
+    let last = |id: i32| {
+        let (_, ids) = by_comment
+            .iter()
+            .find(|(comment, _)| *comment == id)
+            .unwrap();
+        assert_eq!(
+            ids.len(),
+            2,
+            "comment {id} keeps its two lines as paragraphs"
+        );
+        ids[1].clone()
+    };
+    let (parent_last, reply_last) = (last(parent), last(reply));
+    assert!(
+        entries.contains(&(parent_last.clone(), None, true)),
+        "{entries:?}"
+    );
+    assert!(
+        entries.contains(&(reply_last, Some(parent_last), false)),
+        "{entries:?}"
+    );
+    let firsts = by_comment
+        .iter()
+        .map(|(_, ids)| ids[0].clone())
+        .collect::<Vec<_>>();
+    assert!(
+        entries.iter().all(|(id, _, _)| !firsts.contains(id)),
+        "no entry names a first paragraph: {entries:?}"
+    );
+}

@@ -658,3 +658,255 @@ fn a_value_holding_a_break_or_a_tab_publishes_and_reads_back_as_written() {
         }
     }
 }
+
+/// What a tool compares on a paragraph it did not mean to change: style,
+/// list level, and the formatting of each run as `text --json` lists it.
+fn paragraph_form(
+    doc: &Document,
+    index: usize,
+) -> (Option<String>, Option<(u32, u32)>, Vec<String>) {
+    let paragraph = doc.paragraph(index).expect("paragraph exists");
+    let runs = paragraph
+        .runs()
+        .map(|run| {
+            format!(
+                "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                run.style_id(),
+                run.bold_value(),
+                run.italic_value(),
+                run.strike_value(),
+                run.underline_code_value(),
+                run.size(),
+                run.font_name(),
+                run.color(),
+                run.highlight(),
+                run.shading_fill(),
+            )
+        })
+        .collect();
+    (
+        paragraph.style_id().map(str::to_owned),
+        paragraph.numbering(),
+        runs,
+    )
+}
+
+fn comment_facts(doc: &Document) -> Vec<String> {
+    doc.comments()
+        .iter()
+        .map(|comment| {
+            format!(
+                "{} {:?} {:?} {:?} {:?} {:?}",
+                comment.id(),
+                comment.author(),
+                comment.date(),
+                comment.text(),
+                comment.parent_id(),
+                comment.resolved()
+            )
+        })
+        .collect()
+}
+
+/// The edit a tool makes in place on a reviewed contract: counted
+/// replacements in the body, a table, the header, the footer and inside a
+/// tracked insertion, a definition copied below itself and two clauses
+/// removed. Its guard then finds the same parts, every part it did not edit
+/// byte for byte, each paragraph it did not mean to change with the same
+/// style, list level and run formatting, and the comments and revisions of
+/// the other authors as they were.
+#[test]
+fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
+    // The header and footer lines are in two parts (first page and other
+    // pages) in LibreOffice's copy, in one elsewhere.
+    for (producer, page_parts) in
+        crate::support::workflow_copies(&["word", "google", "libreoffice"])
+            .into_iter()
+            .map(|producer| (producer, if producer == "libreoffice" { 2 } else { 1 }))
+    {
+        let path = format!("{producer}/contract.docx");
+        let source = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/corpus/files")
+                .join(&path),
+        )
+        .unwrap();
+        let before = Document::from_bytes(&source).unwrap();
+        let pairs = [
+            ("Northwind Analytics SAS", "Northwind Data SAS", 3),
+            ("Execution version", "Signature version", page_parts),
+            ("Confidential - Page", "Restricted - Page", page_parts),
+            ("one hundred and twenty", "one hundred and fifty", 1),
+            ("Signature:", "Signed:", 2),
+        ];
+        let replace = |text: String| {
+            pairs
+                .iter()
+                .fold(text, |text, (old, new, _)| text.replace(old, new))
+        };
+
+        let mut doc = Document::from_bytes(&source).unwrap();
+        let counted = pairs.map(|(old, new, count)| (old, new, Some(count)));
+        let counts = doc
+            .try_replace_all_expected(&counted)
+            .unwrap()
+            .unwrap_or_else(|mismatch| panic!("{path}: {mismatch:?}"));
+        assert_eq!(counts, pairs.map(|(_, _, count)| count), "{path}");
+        // Paragraph indexes for the copy and the check, body item indexes
+        // (tables and controls count) for the removal.
+        let paragraph_of = |doc: &Document, start: &str| {
+            (0..doc.paragraph_count())
+                .find(|&index| doc.paragraph(index).unwrap().text().starts_with(start))
+                .unwrap_or_else(|| panic!("{path}: a paragraph starts with {start}"))
+        };
+        let definition = paragraph_of(&before, "\"Business Day\" means");
+        let below = doc
+            .paragraph_story_location(definition + 1)
+            .unwrap()
+            .unwrap();
+        let copied = doc.paragraph_story_location(definition).unwrap().unwrap();
+        doc.clone_content(&copied, &below).unwrap();
+        let first = doc
+            .find_content_index("Either party may terminate")
+            .unwrap();
+        assert_eq!(
+            doc.find_content_index("Clauses 5 and 6"),
+            Some(first + 1),
+            "{path}"
+        );
+        assert_eq!(
+            doc.remove_content_range(first, first + 2).unwrap(),
+            2,
+            "{path}"
+        );
+        let saved = doc.to_bytes().unwrap();
+        let after = Document::from_bytes(&saved).unwrap();
+
+        // Same parts; the ones it did not edit, byte for byte.
+        let old_parts = crate::support::package_parts(&source);
+        let new_parts = crate::support::package_parts(&saved);
+        assert_eq!(
+            old_parts.keys().collect::<Vec<_>>(),
+            new_parts.keys().collect::<Vec<_>>(),
+            "{path}"
+        );
+        let edited = |name: &str, bytes: &[u8]| {
+            let xml = String::from_utf8_lossy(bytes);
+            name == "word/document.xml"
+                || ((name.starts_with("word/header") || name.starts_with("word/footer"))
+                    && pairs.iter().any(|(old, _, _)| xml.contains(old)))
+        };
+        let changed = new_parts
+            .iter()
+            .filter(|(name, bytes)| old_parts[*name] != **bytes)
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        let expected = old_parts
+            .iter()
+            .filter(|(name, bytes)| edited(name, bytes))
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(changed, expected, "{path}: parts the edit rewrote");
+
+        // No comment mark of the removed clauses is left without its comment,
+        // and every comment keeps its range and reference.
+        let ids_in = |xml: &str, tag: &str| {
+            let mut ids = xml
+                .split(&format!("<w:{tag} "))
+                .skip(1)
+                .map(|rest| {
+                    rest.split("w:id=\"")
+                        .nth(1)
+                        .unwrap()
+                        .split('"')
+                        .next()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        };
+        let main = String::from_utf8_lossy(&new_parts["word/document.xml"]);
+        let comments = ids_in(
+            &String::from_utf8_lossy(&new_parts["word/comments.xml"]),
+            "comment",
+        );
+        for tag in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            assert_eq!(
+                ids_in(&main, tag),
+                comments,
+                "{path}: every {tag} has its comment"
+            );
+        }
+
+        // Each paragraph: its text with the replacements, its form unchanged.
+        // The copy follows its source; the two removed clauses are gone.
+        let removed = paragraph_of(&before, "Either party may terminate");
+        let mut origin = (0..before.paragraph_count()).collect::<Vec<_>>();
+        origin.drain(removed..removed + 2);
+        origin.insert(definition + 1, definition);
+        assert_eq!(after.paragraph_count(), origin.len(), "{path}");
+        for (index, &old) in origin.iter().enumerate() {
+            let text = before.paragraph(old).unwrap().text();
+            assert_eq!(
+                after.paragraph(index).unwrap().text(),
+                replace(text.clone()),
+                "{path}: paragraph {index}"
+            );
+            let (style, numbering, runs) = paragraph_form(&before, old);
+            let (new_style, new_numbering, new_runs) = paragraph_form(&after, index);
+            assert_eq!(
+                (style, numbering),
+                (new_style, new_numbering),
+                "{path}: paragraph {index}"
+            );
+            if replace(text.clone()) == text {
+                assert_eq!(runs, new_runs, "{path}: runs of paragraph {index}");
+            }
+        }
+        let cells = |doc: &Document| {
+            let table = doc.table(0).unwrap();
+            (0..4)
+                .flat_map(|row| (0..2).map(move |col| (row, col)))
+                .map(|(row, col)| table.cell(row, col).unwrap().text())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            cells(&after),
+            cells(&before).into_iter().map(replace).collect::<Vec<_>>(),
+            "{path}"
+        );
+
+        // The review stays as the other authors left it; the replacement
+        // inside a tracked insertion is still that insertion.
+        assert_eq!(comment_facts(&after), comment_facts(&before), "{path}");
+        let revisions = |doc: &Document| {
+            doc.story_revisions()
+                .unwrap()
+                .iter()
+                .map(|revision| {
+                    (
+                        format!("{:?}", revision.kind()),
+                        revision.author().to_owned(),
+                        revision.text().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let expected_revisions = revisions(&before)
+            .into_iter()
+            .filter(|(_, _, text)| !text.contains("The Supplier may al"))
+            .map(|(kind, author, text)| (kind, author, replace(text)))
+            .collect::<Vec<_>>();
+        let found = revisions(&after);
+        assert!(
+            found
+                .iter()
+                .any(|(kind, _, text)| kind == "Insertion"
+                    && text.starts_with("one hundred and fifty")),
+            "{path}: {found:?}"
+        );
+        assert_eq!(found, expected_revisions, "{path}");
+    }
+}

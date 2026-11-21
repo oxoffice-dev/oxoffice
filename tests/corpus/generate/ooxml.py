@@ -355,9 +355,34 @@ def link_comments(doc, parents: dict[int, int], done: frozenset = frozenset()) -
         parent = f' w15:paraIdParent="{para_ids[parents[cid]]}"' if cid in parents else ""
         state = "1" if cid in done or parents.get(cid) in done else "0"
         entries.append(f'<w15:commentEx w15:paraId="{pid}"{parent} w15:done="{state}"/>')
+    _ends_parent_first(doc, parents)
     root = parse_xml(f'<w15:commentsEx {nsdecls("w15", "mc")} mc:Ignorable="w15">{"".join(entries)}</w15:commentsEx>')
     part = XmlPart(PackURI("/word/commentsExtended.xml"), COMMENTS_EXTENDED_CT, root, doc.part.package)
     doc.part.relate_to(part, COMMENTS_EXTENDED_RT)
+
+
+def _ends_parent_first(doc, parents: dict[int, int]) -> None:
+    """Write the range end and reference of a thread's parent before its replies', as Word does. python-docx
+    nests a reply's range inside its parent's, which puts the reply's end first; Word for Mac then saves the
+    replies as top-level comments."""
+    reply_ids = {str(cid) for cid in parents}
+    body = doc.element.body
+    for end in list(body.iter(q("w:commentRangeEnd"))):
+        cid = end.get(q("w:id"))
+        if cid not in reply_ids:
+            continue
+        parent = str(parents[int(cid)])
+        reference = end.getnext()
+        parent_end = next(e for e in body.iter(q("w:commentRangeEnd")) if e.get(q("w:id")) == parent)
+        parent_reference = parent_end.getnext()
+        # The reply's end and reference go right after its parent's reference (and after the replies placed
+        # there before it), so the order of a thread is parent, then replies in id order.
+        anchor = parent_reference
+        while (anchor.getnext() is not None and anchor.getnext().tag == q("w:commentRangeEnd")
+               and anchor.getnext().get(q("w:id")) in reply_ids and int(anchor.getnext().get(q("w:id"))) < int(cid)):
+            anchor = anchor.getnext().getnext()
+        anchor.addnext(end)
+        end.addnext(reference)
 
 
 # Content controls
