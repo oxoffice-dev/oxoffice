@@ -1442,10 +1442,7 @@ fn chart_data_that_cannot_be_drawn_is_refused_without_a_change() {
     assert!(doc.charts().unwrap().is_empty());
 }
 
-// Fails today: images() lists a chart as an image whose relationship ID is
-// empty. Issue: #186
 #[test]
-#[should_panic(expected = "images() lists a drawing that shows no picture")]
 fn the_image_list_leaves_out_charts() {
     let data = ChartData {
         categories: vec!["a".into()],
