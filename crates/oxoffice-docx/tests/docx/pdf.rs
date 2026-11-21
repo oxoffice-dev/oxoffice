@@ -848,14 +848,30 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     assert_eq!(pdf.page_text(0), "First section");
     assert_eq!(pdf.page_text(1), "Second section");
 
-    // Before a continuous section of the same page, the break keeps its page.
+    // Before a continuous section, which shares the page, the break keeps
+    // its page.
     let continuous = section.replace("<w:pgSz", r#"<w:type w:val="continuous"/><w:pgSz"#);
     let doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:t>First page</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{continuous}</w:pPr></w:p><w:p><w:r><w:t>Second page</w:t></w:r></w:p>"#
+        r#"<w:p><w:r><w:t>First page</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second page</w:t></w:r></w:p><w:p><w:pPr>{continuous}</w:pPr></w:p><w:p><w:r><w:t>Third page</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 3);
+    assert_eq!(pdf.page_text(0), "First page");
+    assert_eq!(pdf.page_text(1), "Second page");
+    assert_eq!(pdf.page_text(2), "Third page");
+
+    // A section printing its endnotes at its end, with none to print, drops
+    // the break too.
+    let endnotes_at_end = section.replace(
+        "<w:pgSz",
+        r#"<w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr><w:pgSz"#,
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First section</w:t></w:r></w:p>{page_break}<w:p><w:pPr>{endnotes_at_end}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
     ));
     let pdf = pdf_of(&doc);
     assert_eq!(pdf.page_count(), 2);
-    assert_eq!(pdf.page_text(1), "Second page");
+    assert_eq!(pdf.page_text(1), "Second section");
 
     // Text after the page break, in the same section, still goes to the next
     // page, then the section break starts a third one.
@@ -889,6 +905,36 @@ fn a_page_break_at_the_foot_of_a_full_page_before_a_section_break_stays_there() 
         pdf.page_text(0)
     );
     assert_eq!(pdf.page_text(1), "Next section");
+
+    // The space after the last line, Normal's in a Word document, would end
+    // below the foot: it goes with the break.
+    let spaced = exact.replace(r#"w:after="0""#, r#"w:after="160""#);
+    let doc = doc_with_body(&format!(
+        r#"{filler}<w:p>{spaced}<w:r><w:t>Last line</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    assert_eq!(pdf.page_text(1), "Next section");
+
+    // With line numbers, what follows the break gets no number: the last
+    // number is the last line's, drawn once.
+    let numbered = section.replace("</w:sectPr>", r#"<w:lnNumType w:countBy="1"/></w:sectPr>"#);
+    let doc = doc_with_body(&format!(
+        r#"{filler}<w:p>{exact}<w:r><w:t>Last line</w:t><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{numbered}</w:pPr></w:p><w:p><w:r><w:t>Next section</w:t></w:r></w:p>"#
+    ));
+    let pdf = pdf_of(&doc);
+    assert_eq!(pdf.page_count(), 2);
+    let numbers: Vec<String> = lines(&pdf.drawn(0))
+        .into_iter()
+        .filter(|line| line.text.chars().all(|c| c.is_ascii_digit()))
+        .map(|line| line.text)
+        .collect();
+    assert_eq!(
+        numbers.last().map(String::as_str),
+        Some("54"),
+        "{numbers:?}"
+    );
+    assert_eq!(numbers.len(), 54, "{numbers:?}");
 }
 
 // ---- Where text lands ----

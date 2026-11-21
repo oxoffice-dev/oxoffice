@@ -1034,8 +1034,9 @@ fn shared_paragraph(block: &SharedLayoutBlock) -> Option<&ParagraphBlock> {
 /// sections, followed only by paragraphs that draw nothing (the one holding
 /// the section break), would start the page the next section starts anyway.
 /// Word and LibreOffice give it no page of its own, so the break goes, and
-/// what follows it takes no room: the empty end of its paragraph and the
-/// empty paragraphs stay on the page it ends, even a full one.
+/// what follows it takes no room: the space after its paragraph, the empty
+/// end of that paragraph and the empty paragraphs stay on the page it ends,
+/// even a full one, with no line number and no layout fragment.
 fn absorb_page_break_before_section_break(blocks: &mut [SharedLayoutBlock]) {
     let trailing_empty = blocks
         .iter()
@@ -1068,6 +1069,9 @@ fn absorb_page_break_before_section_break(blocks: &mut [SharedLayoutBlock]) {
     }
     let paragraph = shared_paragraph_mut(&mut blocks[last]);
     paragraph.lines[last_break].forced_break_after = None;
+    // Nothing that takes room follows it on its page, and Word drops the
+    // space after a paragraph at the foot of a page.
+    paragraph.space_after = 0.0;
     paragraph.lines[last_break + 1..]
         .iter_mut()
         .for_each(take_no_room);
@@ -1097,6 +1101,39 @@ fn take_no_room(line: &mut LayoutLine) {
     line.ascent = 0.0;
     line.descent = 0.0;
     line.line_gap = 0.0;
+}
+
+/// Whether a line was made to take no room by [`take_no_room`].
+fn takes_no_room(line: &LayoutLine) -> bool {
+    line.height == 0.0 && line.ascent == 0.0 && line.descent == 0.0
+}
+
+/// The endnotes a section printing them at its end draws there, in the
+/// order of their references.
+fn section_end_endnotes(section: &SharedSection, notes: &NoteRegistry) -> Vec<NoteRef> {
+    let mut ordered = Vec::new();
+    for block in &section.blocks {
+        let references = block
+            .paragraph()
+            .map(|paragraph| {
+                paragraph
+                    .lines
+                    .iter()
+                    .flat_map(notes_in_line)
+                    .collect::<Vec<_>>()
+            })
+            .or_else(|| block.table().map(|table| table_note_references(&table)))
+            .unwrap_or_default();
+        for note in references {
+            if note.stream == NoteStream::Endnote
+                && notes.get(note, section.geometry.content_width()).is_some()
+                && !ordered.contains(&note)
+            {
+                ordered.push(note);
+            }
+        }
+    }
+    ordered
 }
 
 pub(crate) fn paginate_shared_sections(
@@ -1216,9 +1253,15 @@ pub(crate) fn paginate_shared_sections(
             .iter()
             .flat_map(|section| section.blocks.iter().cloned())
             .collect::<Vec<_>>();
+        let boundary = &sections[group_end - 1];
+        let section_endnotes = if boundary.endnotes_at_section_end {
+            section_end_endnotes(boundary, notes)
+        } else {
+            Vec::new()
+        };
         // Endnotes printed at the end of the boundary section follow the
         // break: then it ends a page that draws them, and stays.
-        if group_end < sections.len() && !sections[group_end - 1].endnotes_at_section_end {
+        if group_end < sections.len() && section_endnotes.is_empty() {
             absorb_page_break_before_section_break(&mut blocks);
         }
         let section_page_number = section
@@ -1244,31 +1287,9 @@ pub(crate) fn paginate_shared_sections(
             failure.section += section_index;
             furniture_failure.get_or_insert(failure);
         }
-        let boundary = &sections[group_end - 1];
         let mut section_end_last_page = None;
         if boundary.endnotes_at_section_end {
-            let mut ordered = Vec::new();
-            for block in &boundary.blocks {
-                let references = block
-                    .paragraph()
-                    .map(|paragraph| {
-                        paragraph
-                            .lines
-                            .iter()
-                            .flat_map(notes_in_line)
-                            .collect::<Vec<_>>()
-                    })
-                    .or_else(|| block.table().map(|table| table_note_references(&table)))
-                    .unwrap_or_default();
-                for note in references {
-                    if note.stream == NoteStream::Endnote
-                        && notes.get(note, boundary.geometry.content_width()).is_some()
-                        && !ordered.contains(&note)
-                    {
-                        ordered.push(note);
-                    }
-                }
-            }
+            let ordered = section_endnotes;
             endnotes_placed.extend(&ordered);
             match append_ordered_endnote_pages(
                 &mut result.pages,
@@ -3385,6 +3406,11 @@ impl<'a> Pager<'a> {
         };
         for (index, line) in lines.iter().enumerate() {
             y += paragraph.line_gaps.get(index).copied().unwrap_or(0.0);
+            // What follows an absorbed page break takes no room and gets no
+            // number of its own.
+            if takes_no_room(line) {
+                continue;
+            }
             let baseline =
                 if let Some(baseline) = paragraph_line_baseline(line, paragraph.baseline_policy) {
                     // The painter removes framing from the content line before
