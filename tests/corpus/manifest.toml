@@ -24,13 +24,13 @@ features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink"
 path = "authored/deck.pptx"
 producer = "python-pptx 1.0.2"
 size = 37422
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box"]
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
 
 [[file]]
 path = "authored/form.docx"
 producer = "python-docx 1.2.0"
 size = 39360
-features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection", "rsid"]
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection", "rsid"]
 
 [[file]]
 path = "authored/letter.docx"
@@ -108,7 +108,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "conne
 path = "google/deck.pptx"
 producer = "Google Slides export"
 size = 47502
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box"]
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
 
 [[file]]
 path = "google/report.docx"
@@ -138,7 +138,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "pictu
 path = "libreoffice/form.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 23950
-features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "protection"]
+features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection"]
 
 [[file]]
 path = "libreoffice/letter.docx"

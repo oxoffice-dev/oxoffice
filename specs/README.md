@@ -48,7 +48,7 @@ dependency bumps and documentation.
 | 2026-11-20 | [Names, packaging and versions](2026-11-20-names-packaging-versions.md) | shipped |
 | 2026-11-20 | [CI and release from scratch](2026-11-20-ci-and-release.md) | accepted |
 | 2026-11-20 | [A test suite from scratch](2026-11-20-test-suite-from-scratch.md) | accepted |
-| 2026-11-20 | [Skill helpers move into the library](2026-11-20-skill-helpers-in-the-library.md) | accepted |
+| 2026-11-20 | [Skill helpers move into the library](2026-11-20-skill-helpers-in-the-library.md) | shipped |
 | 2026-11-20 | [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md) | shipped |
 | 2026-11-21 | [Corpus at scale and behaviour tests by area](2026-11-21-corpus-at-scale-and-behaviour-tests.md) | shipped |
 | 2026-11-21 | [An independent review before every merge](2026-11-21-independent-review-before-merge.md) | shipped |
@@ -56,6 +56,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
 | 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
-| 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | accepted |
+| 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | shipped |
 | 2026-11-21 | [Comparison: bookmark ids and generated TOC names are no change](2026-11-21-comparison-bookmark-identities.md) | shipped |
 | 2026-11-21 | [Comparison: a footnote whose reference moved](2026-11-21-comparison-moved-footnotes.md) | shipped |
+| 2026-11-21 | [Release wheels run on the main thread before publishing](2026-11-21-release-wheel-smoke-test.md) | shipped |

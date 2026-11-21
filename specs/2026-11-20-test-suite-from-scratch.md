@@ -157,3 +157,23 @@ a manifest: producer and version, features it carries, licence, size.
   had turned 22 of them into passing tests.
 - Pictures, charts, content controls and conversions on the docx side, and
   rendering on the pptx side, are the next round.
+### Skill examples (from the review)
+
+- `tests/skills/` runs the examples of oxoffice-skills (`references/examples.md`
+  of each skill, the recipes renamed) in the `skill-examples` job, on main
+  only: it waits for `build`, takes the Linux wheel that `build` made and
+  tested (the `ci` profile), and reads the skills' default branch, so a
+  change on either side shows on the next push to main.
+- Inputs are built at each run and come out the same every time: the
+  synthetic report and deck, Pillow's bundled CC0 font and a drawn picture
+  (python-docx, python-pptx and Pillow are already in `ci.txt`).
+- Three checks: every block runs (64 blocks), what they wrote is what they
+  describe (`check_outputs.py`), and every function, keyword, attribute,
+  command and flag the skills cite exists in the build (`check_names.py`,
+  which fails on the first list of problems).
+- Measured locally on 0.1.0 (Linux): 8 min 41 s on a `ci` build, 2 min 56 s on
+  a `scaling` build. The `ci` build was kept: it is the wheel the other jobs
+  test, and its debug assertions check the examples' edits too. On a runner
+  the examples take about 18 minutes; the job has a 40 minute timeout. The
+  checks read paragraphs through `docx text --json`: walking
+  `Document.paragraphs` on that build took over 6 minutes.

@@ -1155,6 +1155,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "encoding_rs",
+ "lopdf",
  "miniz_oxide 0.9.1",
  "oxoffice-chart",
  "oxoffice-core",

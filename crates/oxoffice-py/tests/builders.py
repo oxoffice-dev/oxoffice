@@ -104,6 +104,23 @@ def edit_cost_docx(path, paragraphs, picture_side=0, probes=3):
     return saved_by_word(lean_template(path))
 
 
+
+def body_namespace_docx(path):
+    """A python-docx document of one paragraph and one table whose w:body element declares a namespace of its own, as
+    some producers write it: the body saves as it was opened, and a typed edit of it cannot be saved."""
+    d = docx.Document()
+    d.add_paragraph("first")
+    d.add_table(rows=1, cols=1)
+    d.save(path)
+    with zipfile.ZipFile(path) as z:
+        parts = {name: z.read(name) for name in z.namelist()}
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b"<w:body>", b'<w:body xmlns:x="urn:example:x">', 1)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    return path
+
 def saved_by_word(path):
     """Give every paragraph, run and table row of the body the identifiers Word writes on them when it saves:
     w14:paraId and w14:textId, w:rsidR and w:rsidRDefault. A document Word or Google Docs saved has them on every

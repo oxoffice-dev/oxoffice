@@ -914,7 +914,8 @@ def long_deck(path: Path) -> None:
 @family("deck", "pptx")
 def deck(path: Path) -> None:
     prs = Presentation()
-    # The pilot's size, 305 EMU short of 16:9: every producer's copy has it.
+    # The pilot source's size, 305 EMU short of 16:9, so that the source
+    # matches the pilot's copies (PowerPoint and LibreOffice round it to 16:9).
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
 
     slide = prs.slides.add_slide(prs.slide_layouts[0])

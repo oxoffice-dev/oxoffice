@@ -7,7 +7,8 @@ name: Release
 #      SHA256SUMS and a signed build provenance attestation covering them all
 #   4. publishes the wheels and the sdist to PyPI and the conda packages to
 #      prefix.dev, both through trusted publishers
-# With dry_run, it builds from main and publishes nothing.
+# With dry_run, it builds the commit main points at when its first job starts,
+# in every job, and publishes nothing.
 
 on:
   workflow_dispatch:
@@ -46,8 +47,10 @@ jobs:
           fetch-depth: 0
       - name: Check the version
         run: |
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::'$VERSION' is not a SemVer version"; exit 1
+          # No prereleases yet: conda, PyPI and the GitHub release would each
+          # need their own spelling or flag, and nothing maps them.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$VERSION' is not X.Y.Z (prereleases are not supported yet)"; exit 1
           fi
           if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
             echo "::error::tag v$VERSION already exists"; exit 1
@@ -70,13 +73,16 @@ jobs:
       - name: Commit and tag
         id: commit
         run: |
+          # The commit of main this run started from: a dry run builds it in
+          # every job, while main may move during the run.
+          base="$(git rev-parse HEAD)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock CHANGELOG.md
           git commit -m "chore(release): v$VERSION"
           git tag -a "v$VERSION" -m "oxoffice v$VERSION"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "ref=main" >> "$GITHUB_OUTPUT"
+            echo "ref=$base" >> "$GITHUB_OUTPUT"
           else
             git push origin HEAD:main "v$VERSION"
             echo "ref=v$VERSION" >> "$GITHUB_OUTPUT"
@@ -180,9 +186,54 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  # Each wheel, installed on its own platform, opens, edits, saves and renders
+  # the corpus on the main thread (the tests run on an 8 MiB thread), then
+  # measures the stack the same work needs and fails above the budget in
+  # scripts/wheel_smoke.py: 1 MiB, the main thread of most Windows programs
+  # that embed Python. The script and the corpus come from the commit the
+  # workflow runs on (main, or the branch of a dry run).
+  smoke:
+    name: Smoke ${{ matrix.wheel }}
+    needs: wheels
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, wheel: wheel-ubuntu-latest-x86_64 }
+          - { runner: ubuntu-24.04-arm, wheel: wheel-ubuntu-latest-aarch64 }
+          - { runner: macos-latest, wheel: wheel-macos-latest-aarch64 }
+          - { runner: macos-15-intel, wheel: wheel-macos-latest-x86_64 }
+          - { runner: windows-latest, wheel: wheel-windows-latest-x64 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.wheel }}
+          path: dist
+      - run: python -m pip install --no-index --find-links dist oxoffice
+      - name: Open, edit, save and render the corpus, measure the stack
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # A dry run builds a commit of main without the new version.
+          extra=()
+          if [ "$DRY_RUN" != true ]; then extra=(--version "$VERSION"); fi
+          python -I scripts/wheel_smoke.py tests/corpus/files --measure "${extra[@]}"
+
   publish:
     name: GitHub release
-    needs: [prepare, cli, wheels, sdist]
+    needs: [prepare, cli, wheels, sdist, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write

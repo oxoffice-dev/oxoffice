@@ -34,7 +34,9 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
    the fix, regenerate `docs/LIMITATIONS.md`.
 9. **An independent review before every merge**, posted on the pull request;
    every finding answered first (fixed, or why it is not a defect; a major
-   is fixed unless the maintainer waives it). See
+   is fixed unless the maintainer waives it). At most two reviews: one
+   full, one delta after a major fix; minors are proved or followed up,
+   not re-reviewed. See
    [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#independent-review).
 
 ## Commands
