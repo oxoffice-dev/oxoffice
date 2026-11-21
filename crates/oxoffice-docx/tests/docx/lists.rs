@@ -1218,6 +1218,19 @@ fn exports_show_the_report_lists_of_every_producer() {
                 "{name}: Markdown shows {item:?}:\n{markdown}"
             );
         }
+        // RTF keeps them too, read back as lists.
+        let rtf = doc.to_rtf_bytes().unwrap();
+        let reread = Document::from_rtf_bytes(&rtf.bytes).unwrap().document;
+        let reread_markdown = reread.to_markdown();
+        for item in [
+            "- Subscription revenue reached 4.2 million euros, up from 3.7 million.",
+            "1. Hire two support engineers for the evening shift.",
+        ] {
+            assert!(
+                reread_markdown.lines().any(|line| line == item),
+                "{name}: RTF keeps {item:?}:\n{reread_markdown}"
+            );
+        }
         let html = doc.to_html_fragment();
         assert_eq!(
             html_list_of(&html, "Subscription revenue reached"),
@@ -1295,8 +1308,25 @@ fn rtf_export_numbers_lists_as_layout_does() {
         .unwrap();
     doc.add_paragraph("first step").style("Steps");
     doc.add_paragraph("second step").style("SubSteps");
-    assert_eq!(markers(&doc), ["1.", "2."]);
-    assert_eq!(rtf_markers(&doc), ["1.", "2."]);
+    // A direct numId 0 takes the style's list off.
+    doc.add_paragraph("third step").style("Steps");
+    doc.add_paragraph("not a step").style("Steps");
+    doc.paragraph_mut(3).unwrap().set_numbering(0, 0);
+    assert_eq!(markers(&doc), ["1.", "2.", "3.", ""]);
+    assert_eq!(rtf_markers(&doc), ["1.", "2.", "3.", ""]);
+    let diagnostics = doc.to_rtf_bytes().unwrap().diagnostics;
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("without numbering id")),
+        "{diagnostics:?}"
+    );
+
+    // A paragraph with no pPr at all, numbered through the default style.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    doc.link_style_to_numbering("Normal", id, 0).unwrap();
+    doc.add_paragraph("default style step");
+    assert_eq!(rtf_markers(&doc), ["1."]);
 
     // The level an instance swaps in, and an instance's start override.
     let (mut doc, numbered) = single_list(&[ListLevel::decimal().start(3)]);
@@ -1319,9 +1349,15 @@ fn rtf_export_numbers_lists_as_layout_does() {
     let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
     assert!(rtf.contains(r"\levelstartat7"), "{rtf}");
     assert_eq!(rtf_markers(&doc)[1], "7.", "{rtf}");
+    // The swapped-in level is a bullet (\levelnfc23), not the definition's
+    // number that starts at 3.
+    let first_list = &rtf[rtf.find(r"{\list").unwrap()..];
+    let first_list = &first_list[..first_list.find(r"\listid").unwrap()];
+    assert!(first_list.contains(r"\levelnfc23"), "{rtf}");
+    let swapped_marker = rtf_markers(&doc).remove(0);
     assert!(
-        rtf_markers(&doc)[0] != "1.",
-        "the swapped-in level is a bullet, not the definition's number: {rtf}"
+        !swapped_marker.is_empty() && !swapped_marker.ends_with('.'),
+        "{swapped_marker:?}: {rtf}"
     );
 }
 

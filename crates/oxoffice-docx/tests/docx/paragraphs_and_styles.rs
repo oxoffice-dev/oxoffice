@@ -453,6 +453,21 @@ fn a_negative_first_line_indent_is_written_as_a_hanging_indent() {
     let xml = reopened.part_xml("word/document.xml").unwrap();
     assert_eq!(xml.matches(r#"w:hanging="180""#).count(), 2, "{xml}");
     assert!(!xml.contains("w:firstLine="), "{xml}");
+
+    // Nor a negative w:hanging: it is a first-line indent.
+    let mut doc = Document::new();
+    doc.add_paragraph("outdented")
+        .hanging_indent(Length::pt(-9.0));
+    let reopened = reopen(&mut doc);
+    assert_eq!(
+        twips(reopened.paragraph(0).unwrap().first_line_indent()),
+        Some(180)
+    );
+    let xml = reopened.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"w:firstLine="180""#) && !xml.contains("w:hanging="),
+        "{xml}"
+    );
 }
 
 #[test]

@@ -676,11 +676,8 @@ impl<'a> OdtWriter<'a> {
                 "line-spacing rule without line spacing was dropped during ODT export",
             )?;
         }
-        if [Some(effective), paragraph.properties.as_ref()]
-            .into_iter()
-            .flatten()
-            .any(|properties| properties.num_ilvl.is_some() && properties.num_id.is_none())
-        {
+        // A direct level whose list comes from the style is not dropped.
+        if effective.num_ilvl.is_some() && effective.num_id.is_none() {
             self.diagnose(
                 &format!("{path}/pPr/numPr/ilvl"),
                 "numbering level without a numbering id was dropped during ODT export",
@@ -2141,7 +2138,7 @@ fn paragraph_style_xml(properties: &CT_PPr) -> String {
             write!(output, " fo:{name}=\"{}pt\"", twips_points(value.0)).unwrap();
         }
     }
-    // Word ignores `w:firstLine` when `w:hanging` is there, and so does layout.
+    // Word ignores `w:firstLine` when `w:hanging` is there.
     if let Some(value) = properties.ind_hanging {
         write!(
             output,

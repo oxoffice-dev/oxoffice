@@ -2065,6 +2065,16 @@ impl<'a> Paragraph<'a> {
         if length.is_none() && self.inner.properties.is_none() {
             return;
         }
+        // `w:hanging` cannot be negative: a negative hanging indent is a
+        // first-line indent.
+        if let Some(length) = length
+            && length.to_twips() < 0
+        {
+            self.set_signed_first_line_indent_value(Some(Length::twips(
+                length.to_twips().saturating_neg(),
+            )));
+            return;
+        }
         let ppr = self.ensure_ppr();
         ppr.ind_hanging = length.map(Length::as_twips);
         if length.is_some() {
@@ -3264,8 +3274,7 @@ impl<'a> ParagraphRef<'a> {
 
     /// Get signed first-line indentation, negative for hanging indentation.
     ///
-    /// When a paragraph holds both, the hanging indent wins, as in Word and
-    /// layout.
+    /// When a paragraph holds both, the hanging indent wins, as in Word.
     pub fn first_line_indent(&self) -> Option<Length> {
         let ppr = self.inner.properties.as_ref()?;
         if let Some(twips) = ppr.ind_hanging {

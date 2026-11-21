@@ -558,6 +558,16 @@ impl<'a> RtfWriter<'a> {
             }
         }
         if let Some(properties) = &paragraph.properties {
+            // A level whose list comes from the style is not dropped.
+            if properties.num_ilvl.is_some()
+                && properties.num_id != Some(0)
+                && self.paragraph_numbering(paragraph).is_none()
+            {
+                self.diagnose(
+                    &format!("{location}/ppr/numPr"),
+                    "paragraph numbering level without numbering id was dropped during RTF export",
+                );
+            }
             self.scan_paragraph_properties(properties, &location);
         }
         let marker_raw_positions = paragraph_marker_raw_positions(paragraph);
@@ -703,12 +713,6 @@ impl<'a> RtfWriter<'a> {
             self.diagnose(
                 &format!("{location}/ppr/rPr"),
                 "paragraph mark run properties were dropped during RTF export",
-            );
-        }
-        if properties.num_ilvl.is_some() && properties.num_id.is_none() {
-            self.diagnose(
-                &format!("{location}/ppr/numPr"),
-                "paragraph numbering level without numbering id was dropped during RTF export",
             );
         }
         if properties.sect_pr.is_some() {
@@ -1047,6 +1051,16 @@ impl<'a> RtfWriter<'a> {
         properties: Option<&CT_PPr>,
         paragraph: &CT_P,
     ) -> Result<()> {
+        // A paragraph numbered through its style may carry no pPr at all.
+        if let Some((num_id, level)) = self.paragraph_numbering(paragraph)
+            && level <= 8
+            && let Some(list_index) = self.list_indexes.get(&num_id)
+            && let Some(writer_level) = self.lists[*list_index].levels.get(level as usize)
+            && writer_level.format.is_some()
+        {
+            let list = &self.lists[*list_index];
+            write!(output, "\\ls{}\\ilvl{}", list.override_id, level)?;
+        }
         let Some(properties) = properties else {
             return Ok(());
         };
@@ -1079,18 +1093,6 @@ impl<'a> RtfWriter<'a> {
                 Some("exact") => write!(output, "\\sl{}\\slmult0", value.0.saturating_neg())?,
                 Some("atLeast") => write!(output, "\\sl{}\\slmult0", value.0)?,
                 _ => write!(output, "\\sl{}\\slmult1", value.0)?,
-            }
-        }
-        if let Some((num_id, level)) = self.paragraph_numbering(paragraph)
-            && level <= 8
-            && let Some(list_index) = self.list_indexes.get(&num_id)
-        {
-            let list = &self.lists[*list_index];
-            let Some(writer_level) = list.levels.get(level as usize) else {
-                return Ok(());
-            };
-            if writer_level.format.is_some() {
-                write!(output, "\\ls{}\\ilvl{}", list.override_id, level)?;
             }
         }
         Ok(())
@@ -1901,6 +1903,8 @@ struct State {
     font_charset: Option<i32>,
     font_code_page: Option<u16>,
     font_name: Vec<u8>,
+    /// The name read so far when `\u` characters interrupt its bytes.
+    font_name_text: String,
     color_red: Option<u8>,
     color_green: Option<u8>,
     color_blue: Option<u8>,
@@ -1926,6 +1930,7 @@ impl Default for State {
             font_charset: None,
             font_code_page: None,
             font_name: Vec::new(),
+            font_name_text: String::new(),
             color_red: None,
             color_green: None,
             color_blue: None,
@@ -1954,6 +1959,7 @@ impl State {
             font_charset: (!in_font_table).then_some(self.font_charset).flatten(),
             font_code_page: (!in_font_table).then_some(self.font_code_page).flatten(),
             font_name: Vec::new(),
+            font_name_text: String::new(),
             color_red: self.color_red,
             color_green: self.color_green,
             color_blue: self.color_blue,
@@ -3401,6 +3407,17 @@ impl Parser {
                 self.retain_output(offset, character.len_utf8())?;
                 self.active_list_marker_unicode.push(character);
             }
+            // A font named outside the code page, such as LibreOffice's
+            // "ＭＳ ゴシック", comes as \u characters between its bytes.
+            Destination::FontTable => {
+                self.retain_output(offset, character.len_utf8())?;
+                let state = self.states.last_mut().unwrap();
+                let bytes = std::mem::take(&mut state.font_name);
+                if let Some((text, _)) = decode(state.code_page, &bytes) {
+                    state.font_name_text.push_str(&text);
+                }
+                state.font_name_text.push(character);
+            }
             _ => {
                 self.diagnostics.push(RtfDiagnostic {
                     offset,
@@ -3603,11 +3620,12 @@ impl Parser {
                 let charset = state.font_charset.take();
                 let explicit_code_page = state.font_code_page.take();
                 let name_bytes = std::mem::take(&mut state.font_name);
+                let name_text = std::mem::take(&mut state.font_name_text);
                 let Some(id) = id else {
                     continue;
                 };
                 let name = decode(state.code_page, &name_bytes)
-                    .map(|value| value.0.trim().to_owned())
+                    .map(|value| format!("{name_text}{}", value.0).trim().to_owned())
                     .filter(|name| !name.is_empty())
                     .ok_or_else(|| rtf_error(offset, "font table entry has no valid name"))?;
                 let code_page = match (explicit_code_page, charset) {
