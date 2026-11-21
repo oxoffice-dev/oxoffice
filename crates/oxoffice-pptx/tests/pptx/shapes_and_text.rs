@@ -1022,6 +1022,47 @@ fn a_carriage_return_in_run_text_is_saved_so_that_other_readers_keep_it() {
 }
 
 #[test]
+fn every_kind_of_shape_keeps_a_name_with_a_tab_or_a_line_feed() {
+    const NAME: &str = "Flow\tA\nB";
+    let mut prs = blank_slide_deck();
+    {
+        let mut slide = prs.slide_mut(0).unwrap();
+        slide.add_textbox(Emu(0), Emu(0), Emu(IN), Emu(IN)).unwrap();
+        slide
+            .add_shape("ellipse", Emu(0), Emu(0), Emu(IN), Emu(IN))
+            .unwrap();
+        slide
+            .add_connector(ConnectorType::Straight, Emu(0), Emu(0), Emu(IN), Emu(IN))
+            .unwrap();
+        slide.add_group_shape().unwrap();
+        slide
+            .add_table(2, 2, Emu(0), Emu(0), Emu(2 * IN), Emu(IN))
+            .unwrap();
+    }
+    let count = prs.slide(0).unwrap().shapes().count();
+    assert_eq!(count, 5);
+    for index in 0..count {
+        prs.slide_mut(0)
+            .unwrap()
+            .shape_mut(index)
+            .unwrap()
+            .set_name(NAME)
+            .unwrap();
+    }
+
+    let saved = reopen(&prs);
+    for index in 0..count {
+        assert_eq!(
+            shape_at(&saved, 0, index).non_visual_name().as_deref(),
+            Some(NAME),
+            "shape {index}"
+        );
+    }
+    let slide = saved_part(&saved, "/ppt/slides/slide1.xml");
+    assert_eq!(slide.matches("Flow&#9;A&#10;B").count(), count, "{slide}");
+}
+
+#[test]
 fn tabs_line_feeds_and_carriage_returns_in_names_and_runs_survive_on_every_editors_deck() {
     const NAME: &str = "Highlights\tbody\nQ3";
     const TEXT: &str = "Revenue\tup\rQ3";

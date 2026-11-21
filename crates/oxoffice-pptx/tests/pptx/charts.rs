@@ -945,6 +945,22 @@ fn removing_the_slide_that_holds_a_chart_drops_its_chart_part_and_workbook() {
     );
 }
 
+#[test]
+fn a_carriage_return_in_chart_text_is_saved_so_that_other_readers_keep_it() {
+    let mut prs = blank_deck(1);
+    let labels = data(
+        &["North\rcoast", "South"],
+        &[("Revenue\r2026", &[1.0, 2.0])],
+    );
+    let id = chart_on(&mut prs, 0, ChartKind::Bar, &labels);
+
+    let saved = reopen(&prs);
+    assert_eq!(chart(&saved, 0, id), (ChartKind::Bar, labels));
+    let xml = only_chart_xml(&saved);
+    assert!(xml.contains("North&#13;coast"), "{xml}");
+    assert!(!xml.contains('\r'), "{xml}");
+}
+
 // --- Copies, groups ----------------------------------------------------------
 
 #[test]
