@@ -2379,6 +2379,10 @@ fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
             r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
             1,
         );
+        assert!(
+            xml.contains("documenttasks"),
+            "the root declares the default namespace"
+        );
         package.set_part(&main, xml.into_bytes());
         let mut out = std::io::Cursor::new(Vec::new());
         package.write_to(&mut out).unwrap();
@@ -2399,8 +2403,10 @@ fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
             granularity,
             ..Default::default()
         };
-        doc.compare_with_options(&without, AUTHOR, DATE, &options)
+        let diagnostics = doc
+            .compare_with_options(&without, AUTHOR, DATE, &options)
             .expect("a table of contents removed whole compares");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let mut doc = reopen(&mut doc);
         assert_eq!(texts(&accepted(&mut doc)), texts(&without));
         assert_eq!(
