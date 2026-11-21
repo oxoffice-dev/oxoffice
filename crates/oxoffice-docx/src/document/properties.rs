@@ -13,32 +13,11 @@ impl Document {
     /// Replace the complete core-properties model.
     ///
     /// A value holding a character XML 1.0 cannot carry is refused, naming the
-    /// property, and the document is left unchanged.
+    /// property, and the document is left unchanged. That includes a value
+    /// the file already held, which the message says: the part is written
+    /// again from the properties, and no XML reader would read it back.
     pub fn set_core_properties(&mut self, properties: CoreProperties) -> Result<()> {
-        for (name, value) in [
-            ("title", &properties.title),
-            ("creator", &properties.creator),
-            ("subject", &properties.subject),
-            ("description", &properties.description),
-            ("keywords", &properties.keywords),
-            ("last modified by", &properties.last_modified_by),
-            ("created", &properties.created),
-            ("modified", &properties.modified),
-            ("category", &properties.category),
-            ("content status", &properties.content_status),
-            ("identifier", &properties.identifier),
-            ("language", &properties.language),
-            ("last printed", &properties.last_printed),
-            ("revision", &properties.revision),
-            ("version", &properties.version),
-        ] {
-            if let Some(value) = value {
-                oxoffice_core::xml::reject_non_xml_characters(
-                    &format!("core property {name}"),
-                    value,
-                )?;
-            }
-        }
+        properties.reject_non_xml_characters(self.core_properties.as_deref())?;
         self.edit_properties(|document| {
             document.reserve_core_properties_bundle()?;
             document.core_properties = Some(Box::new(properties.clone()));
@@ -142,10 +121,19 @@ impl Document {
             &property.fmtid,
         )?;
         if let crate::CustomPropertyValue::Raw(raw) = &property.value {
+            let raw = String::from_utf8_lossy(raw);
             oxoffice_core::xml::reject_non_xml_characters(
                 &format!("custom property {name:?}"),
-                &String::from_utf8_lossy(raw),
+                &raw,
             )?;
+            // A raw value is written as given, so a character reference such
+            // as `&#7;` would reach the part as it is.
+            if let Ok(text) = quick_xml::escape::unescape(&raw) {
+                oxoffice_core::xml::reject_non_xml_characters(
+                    &format!("custom property {name:?}, through a character reference,"),
+                    &text,
+                )?;
+            }
         }
         if let crate::CustomPropertyValue::Lpstr(value)
         | crate::CustomPropertyValue::Lpwstr(value)

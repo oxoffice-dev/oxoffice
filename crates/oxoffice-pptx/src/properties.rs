@@ -30,29 +30,11 @@ impl Presentation {
 
     /// Changes known core fields while retaining every unowned imported byte.
     pub fn set_core_properties(&mut self, properties: CoreProperties) -> Result<()> {
-        for value in [
-            &properties.title,
-            &properties.creator,
-            &properties.subject,
-            &properties.description,
-            &properties.keywords,
-            &properties.last_modified_by,
-            &properties.created,
-            &properties.modified,
-            &properties.category,
-            &properties.content_status,
-            &properties.identifier,
-            &properties.language,
-            &properties.last_printed,
-            &properties.revision,
-            &properties.version,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            oxoffice_core::xml::reject_non_xml_characters("core property", value)
-                .map_err(|error| invalid_shape_mutation("core properties", error.to_string()))?;
-        }
+        // An unchanged field keeps the bytes the file wrote, so only a new
+        // value is refused.
+        properties
+            .reject_new_non_xml_characters(self.core_properties.as_ref())
+            .map_err(|error| invalid_shape_mutation("core properties", error.to_string()))?;
         properties
             .to_xml()
             .map_err(|error| invalid_shape_mutation("core properties", error.to_string()))?;
@@ -982,7 +964,7 @@ fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
     Ok(result)
 }
 
-fn patch_core_properties(
+pub(crate) fn patch_core_properties(
     source: &[u8],
     old: &CoreProperties,
     new: &CoreProperties,

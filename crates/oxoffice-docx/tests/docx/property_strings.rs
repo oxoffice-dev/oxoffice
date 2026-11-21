@@ -141,27 +141,91 @@ fn every_application_and_custom_string_xml_cannot_carry_is_refused() {
         bad_fmtid,
     ] {
         let name = property.name.clone().unwrap();
-        assert!(doc.set_custom_property(property).is_err(), "{name}");
+        let message = doc
+            .set_custom_property(property)
+            .expect_err(&name)
+            .to_string();
+        let named = if name == "Fmt" {
+            "the format id of custom property \"Fmt\""
+        } else {
+            &format!("custom property {name:?}")
+        };
+        assert!(
+            message.contains(named) && message.contains("a character XML 1.0 cannot carry"),
+            "{name}: {message}"
+        );
     }
     assert_eq!(doc.to_bytes().unwrap(), before, "nothing changed");
+}
+
+#[test]
+fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
+    let mut doc = Document::new();
+    let before = doc.to_bytes().unwrap();
+    for raw in [
+        &b"<vt:lpstr>a&#7;b</vt:lpstr>"[..],
+        b"<vt:lpstr>a&#x1F;b</vt:lpstr>",
+    ] {
+        let message = doc
+            .set_custom_property(custom("Raw", CustomPropertyValue::Raw(raw.to_vec())))
+            .expect_err("a reference to a control character is refused")
+            .to_string();
+        assert!(
+            message.contains("custom property \"Raw\"")
+                && message.contains("a character XML 1.0 cannot carry"),
+            "{message}"
+        );
+    }
+    doc.set_custom_property(custom(
+        "Raw",
+        CustomPropertyValue::Raw(b"<vt:lpstr>a&#9;b&amp;c</vt:lpstr>".to_vec()),
+    ))
+    .expect("a tab reference and an escaped ampersand are fine");
+    assert_ne!(doc.to_bytes().unwrap(), before);
+}
+
+/// A new document whose core part holds what another producer wrote: a
+/// title and a `lastModifiedBy` with a character reference XML 1.0 forbids.
+fn with_bad_last_modified_by() -> Document {
+    let bytes = Document::new().to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Report</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
+    assert!(package.contains_part("/docProps/core.xml"));
+    package.set_part("/docProps/core.xml", core.as_bytes().to_vec());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn setting_core_properties_names_a_bad_character_the_file_already_held() {
+    // The part is written again from the properties, so the value read from
+    // the file cannot stay; the message says it came from the file.
+    let mut doc = with_bad_last_modified_by();
+    let mut core = doc.core_properties().cloned().unwrap();
+    core.title = Some("Q3".into());
+    let message = doc
+        .set_core_properties(core.clone())
+        .expect_err("the value read from the file is refused")
+        .to_string();
+    assert!(
+        message.contains("core property last modified by, as the file holds it,")
+            && message.contains("U+000B"),
+        "{message}"
+    );
+    assert_eq!(doc.title(), Some("Report"), "nothing changed");
+    core.last_modified_by = Some("J Doe".into());
+    doc.set_core_properties(core)
+        .expect("a cleaned value is taken");
+    let doc = Document::from_bytes(&doc.to_bytes().expect("it saves")).unwrap();
+    assert_eq!(doc.title(), Some("Q3"));
 }
 
 #[test]
 fn a_file_whose_core_part_already_holds_a_bad_character_reference_still_edits_and_saves() {
     // Another producer wrote a character reference XML 1.0 forbids; the file
     // opens, and the part is kept as it was through edits and saves.
-    let bytes = Document::new().to_bytes().unwrap();
-    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
-    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Report</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
-    let part = if package.contains_part("/docProps/core.xml") {
-        "/docProps/core.xml"
-    } else {
-        panic!("a new document has a core part")
-    };
-    package.set_part(part, core.as_bytes().to_vec());
-    let mut out = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let mut doc = with_bad_last_modified_by();
     doc.add_paragraph("an edit");
     let saved = doc.to_bytes().expect("the file still saves");
     let reopened = Document::from_bytes(&saved).unwrap();

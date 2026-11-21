@@ -1868,6 +1868,49 @@ fn section_entry_data_that_leans_on_its_old_section_is_left_behind_on_a_move() {
 }
 
 #[test]
+fn setting_core_properties_keeps_a_bad_character_the_file_held_and_refuses_a_new_one() {
+    // Another producer wrote a character reference XML 1.0 forbids. The
+    // core part is patched field by field, so the untouched field keeps the
+    // file's bytes; a new value with such a character is refused by name.
+    let mut package = OpcPackage::from_reader(Cursor::new(new_deck().to_bytes().unwrap())).unwrap();
+    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Deck</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
+    package.set_part("/docProps/core.xml", core.as_bytes().to_vec());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    let mut core = prs.core_properties().cloned().expect("core properties");
+    core.subject = Some("bell\u{7}".to_owned());
+    let message = prs
+        .set_core_properties(core.clone())
+        .expect_err("a new bad value is refused")
+        .to_string();
+    assert!(
+        message.contains("core property subject") && message.contains("U+0007"),
+        "{message}"
+    );
+    core.subject = None;
+    core.title = Some("Q3".to_owned());
+    prs.set_core_properties(core)
+        .expect("the untouched field is the file's");
+    let saved = prs.to_bytes().expect("it saves");
+    let package = OpcPackage::from_reader(Cursor::new(saved.clone())).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/docProps/core.xml").unwrap());
+    assert!(xml.contains("J&#11;Doe") && xml.contains(">Q3<"), "{xml}");
+    let mut prs = Presentation::from_bytes(&saved).unwrap();
+    let core = prs.core_properties().unwrap();
+    assert_eq!(core.last_modified_by.as_deref(), Some("J\u{b}Doe"));
+    // The mutable model goes through the same patch at the save.
+    prs.core_properties_mut().category = Some("Plans".to_owned());
+    let saved = prs.to_bytes().expect("it saves after a mutable edit");
+    let package = OpcPackage::from_reader(Cursor::new(saved)).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/docProps/core.xml").unwrap());
+    assert!(
+        xml.contains("J&#11;Doe") && xml.contains(">Plans<"),
+        "{xml}"
+    );
+}
+
+#[test]
 fn a_carriage_return_in_a_core_property_survives_a_save() {
     // The core properties part is written whole at the save.
     let mut prs = new_deck();

@@ -295,10 +295,26 @@ impl Presentation {
             .as_ref()
             .filter(|_| self.core_properties_dirty)
         {
-            let xml = properties.to_xml().map_err(|error| Error::MalformedPart {
-                part_name: self.core_properties_part_name.clone(),
-                message: error.to_string(),
-            })?;
+            // The part the file holds is patched field by field, as
+            // set_core_properties does: an untouched field keeps its bytes.
+            let source = self
+                .package
+                .package_rels
+                .get_by_type(rel_types::CORE_PROPERTIES)
+                .and_then(|_| self.package.get_part(&self.core_properties_part_name));
+            let xml = if let Some(source) = source {
+                let old =
+                    CoreProperties::from_xml(source).map_err(|error| Error::MalformedPart {
+                        part_name: self.core_properties_part_name.clone(),
+                        message: error.to_string(),
+                    })?;
+                crate::properties::patch_core_properties(source, &old, properties)?
+            } else {
+                properties.to_xml().map_err(|error| Error::MalformedPart {
+                    part_name: self.core_properties_part_name.clone(),
+                    message: error.to_string(),
+                })?
+            };
             package.set_part(&self.core_properties_part_name, xml);
             package.content_types.add_override(
                 &self.core_properties_part_name,

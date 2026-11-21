@@ -42,6 +42,82 @@ pub struct CoreProperties {
 }
 
 impl CoreProperties {
+    /// Each field with the name messages give it. The struct is destructured
+    /// without `..`, so a field added later has to be named here.
+    pub fn named_fields(&self) -> [(&'static str, Option<&str>); 15] {
+        let Self {
+            title,
+            creator,
+            subject,
+            description,
+            keywords,
+            last_modified_by,
+            created,
+            modified,
+            category,
+            content_status,
+            identifier,
+            language,
+            last_printed,
+            revision,
+            version,
+        } = self;
+        [
+            ("title", title.as_deref()),
+            ("creator", creator.as_deref()),
+            ("subject", subject.as_deref()),
+            ("description", description.as_deref()),
+            ("keywords", keywords.as_deref()),
+            ("last modified by", last_modified_by.as_deref()),
+            ("created", created.as_deref()),
+            ("modified", modified.as_deref()),
+            ("category", category.as_deref()),
+            ("content status", content_status.as_deref()),
+            ("identifier", identifier.as_deref()),
+            ("language", language.as_deref()),
+            ("last printed", last_printed.as_deref()),
+            ("revision", revision.as_deref()),
+            ("version", version.as_deref()),
+        ]
+    }
+
+    /// Refuses a field holding a character XML 1.0 cannot carry, naming it,
+    /// for a writer that writes every field again. A field equal to the one
+    /// in `current` came from the file as read, and the message says so: the
+    /// caller did not type that character, but has to clean that value.
+    pub fn reject_non_xml_characters(&self, current: Option<&Self>) -> Result<()> {
+        self.reject_fields(current, true)
+    }
+
+    /// Refuses a changed field holding a character XML 1.0 cannot carry,
+    /// naming it, for a writer that keeps the bytes of an unchanged field: a
+    /// field equal to the one in `current` stays as the file wrote it.
+    pub fn reject_new_non_xml_characters(&self, current: Option<&Self>) -> Result<()> {
+        self.reject_fields(current, false)
+    }
+
+    fn reject_fields(&self, current: Option<&Self>, check_unchanged: bool) -> Result<()> {
+        let current = current.map(Self::named_fields);
+        for (index, (name, value)) in self.named_fields().into_iter().enumerate() {
+            let Some(value) = value else {
+                continue;
+            };
+            let unchanged = current
+                .as_ref()
+                .is_some_and(|fields| fields[index].1 == Some(value));
+            if unchanged && !check_unchanged {
+                continue;
+            }
+            let what = if unchanged {
+                format!("core property {name}, as the file holds it,")
+            } else {
+                format!("core property {name}")
+            };
+            crate::xml::reject_non_xml_characters(&what, value)?;
+        }
+        Ok(())
+    }
+
     /// Parse `docProps/core.xml` content.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
         let mut reader = Reader::from_reader(xml);
