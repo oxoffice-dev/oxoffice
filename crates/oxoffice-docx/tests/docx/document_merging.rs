@@ -2236,3 +2236,33 @@ fn a_link_to_another_file_and_a_nested_field_keep_their_places_on_rename() {
     assert!(username < closing, "{ask}");
     let _ = doc.to_bytes().unwrap();
 }
+
+#[test]
+fn an_inserted_reference_deleted_in_word_follows_its_renamed_bookmark() {
+    // The source's REF to Mark was deleted in Word: its code is in
+    // w:delInstrText, and it follows the rename as the standing one does.
+    let mut source = doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+        r#"<w:p><w:del w:id="3" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:delInstrText xml:space="preserve"> REF Mark \h </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:r><w:delText>src marked</w:delText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#,
+    ));
+    let source = reopen(&mut source);
+    let mut doc = with_identities("dst");
+    let end = doc.content_count();
+    doc.insert_document(end, &source);
+    let renamed = bookmark_list(&reopen(&mut doc))
+        .into_iter()
+        .map(|(name, _)| name)
+        .find(|name| name != "Mark")
+        .expect("the inserted bookmark is renamed");
+    let package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    assert!(
+        xml.contains(&format!(
+            r#"<w:delInstrText xml:space="preserve"> REF {renamed} \h </w:delInstrText>"#
+        )),
+        "{xml}"
+    );
+}

@@ -3137,7 +3137,10 @@ pub(super) fn body_identity_values(xml: &[u8]) -> Result<BodyIdentityValues> {
                 }
             }
             Event::End(element) => {
-                if word && matches_local_name(element.name().as_ref(), b"instrText") {
+                if word
+                    && (matches_local_name(element.name().as_ref(), b"instrText")
+                        || matches_local_name(element.name().as_ref(), b"delInstrText"))
+                {
                     in_instruction_text = false;
                 }
                 depth = depth.saturating_sub(1);
@@ -3268,7 +3271,8 @@ fn collect_body_reference_values(
             _ => {}
         }
     }
-    Ok(local.as_ref() == b"instrText")
+    // Word writes the code of a deleted field in delInstrText.
+    Ok(matches!(local.as_ref(), b"instrText" | b"delInstrText"))
 }
 
 fn append_complex_instruction_text(text: &str, complex: &mut [ComplexInstruction]) -> Result<()> {
@@ -3490,7 +3494,8 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
             }
             Event::End(element) => {
                 if identity_namespace.word
-                    && matches_local_name(element.name().as_ref(), b"instrText")
+                    && (matches_local_name(element.name().as_ref(), b"instrText")
+                        || matches_local_name(element.name().as_ref(), b"delInstrText"))
                 {
                     in_instruction_text = false;
                 }
@@ -3926,7 +3931,8 @@ fn collect_body_reference_edits(
             _ => {}
         }
     }
-    Ok(local.as_ref() == b"instrText")
+    // Word writes the code of a deleted field in delInstrText.
+    Ok(matches!(local.as_ref(), b"instrText" | b"delInstrText"))
 }
 
 fn add_attribute_value_edit(

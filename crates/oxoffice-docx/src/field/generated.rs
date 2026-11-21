@@ -1147,7 +1147,30 @@ fn generated_table_sources(
             let mut caption_tail = Vec::new();
             let mut after_sequence = false;
             let mut caption_has_source = false;
-            let mut field_index = 0u32;
+            // Physical field identities count every field of the paragraph,
+            // deleted ones included, as the sequence snapshot does.
+            let mut physical_indices = HashMap::new();
+            let mut next_index = 0u32;
+            for run in paragraph.source_runs() {
+                for content in &run.content {
+                    let RunContent::Field(field) = content else {
+                        continue;
+                    };
+                    physical_indices.insert(std::ptr::from_ref(field), next_index);
+                    next_index = next_index
+                        .checked_add(
+                            1 + u32::try_from(field.all_nested_fields_in_source_order().len())
+                                .map_err(|_| {
+                                    Error::Other(
+                                        "generated source field inventory is too large".into(),
+                                    )
+                                })?,
+                        )
+                        .ok_or_else(|| {
+                            Error::Other("generated source field inventory overflow".into())
+                        })?;
+                }
+            }
             for (accepted_index, accepted) in accepted_toc_runs(paragraph).into_iter().enumerate() {
                 let position = TocOwnedPosition {
                     paragraph: paragraph_index,
@@ -1172,18 +1195,11 @@ fn generated_table_sources(
                         continue;
                     };
                     let instruction = field.effective_instruction();
-                    let physical_field_index = field_index;
-                    field_index = field_index
-                        .checked_add(
-                            1 + u32::try_from(field.all_nested_fields_in_source_order().len())
-                                .map_err(|_| {
-                                    Error::Other(
-                                        "generated source field inventory is too large".into(),
-                                    )
-                                })?,
-                        )
+                    let physical_field_index = physical_indices
+                        .get(&std::ptr::from_ref(field))
+                        .copied()
                         .ok_or_else(|| {
-                            Error::Other("generated source field inventory overflow".into())
+                            Error::Other("generated source field has no physical identity".into())
                         })?;
                     if owned {
                         continue;

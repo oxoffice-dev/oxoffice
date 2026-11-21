@@ -1499,8 +1499,8 @@ fn legacy_fields_draw_exactly_what_the_static_layout_draws() {
 }
 
 /// A legacy text field inside a tracked deletion, its instruction and result
-/// in plain runs, so the model reads it as a field. Word writes `delInstrText`
-/// there, which the model does not read as a field at all (checked below).
+/// in plain runs. Word writes `delInstrText` and `delText` there (checked
+/// below): the model reads both shapes as the same field.
 const DELETED_LEGACY: &str = r#"<w:del w:id="90" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Old"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Old value</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
 
 #[test]
@@ -1522,7 +1522,7 @@ fn a_legacy_field_in_a_tracked_deletion_is_no_field_and_says_so() {
     let layout = doc.layout_with_options(fillable()).unwrap();
     assert_eq!(field_names(&layout.layout), ["notes"]);
 
-    // Word's own shape of a deleted field is no field to begin with.
+    // Word's own shape of a deleted field says so too.
     let word_shape = DELETED_LEGACY
         .replace("w:instrText", "w:delInstrText")
         .replace("<w:t>Old value</w:t>", "<w:delText>Old value</w:delText>");
@@ -1531,6 +1531,10 @@ fn a_legacy_field_in_a_tracked_deletion_is_no_field_and_says_so() {
     ));
     let layout = doc.layout_with_options(fillable()).unwrap();
     assert!(field_names(&layout.layout).is_empty());
+    assert_eq!(
+        diagnostics_about(&layout.layout, "Old"),
+        ["form field \"Old\" stays static: a tracked change deletes it"]
+    );
 }
 
 #[test]
