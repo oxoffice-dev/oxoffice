@@ -44,6 +44,23 @@ fn every_limitation_has_an_id_a_format_a_workaround_and_an_issue() {
 }
 
 #[test]
+fn the_listing_holds_every_file_of_the_directory_in_file_name_order() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("limitations");
+    let mut stems: Vec<String> = std::fs::read_dir(dir)
+        .expect("limitations/ exists")
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".json") && !name.starts_with('.'))
+        .map(|name| name.trim_end_matches(".json").to_owned())
+        .collect();
+    stems.sort();
+    let ids: Vec<String> = limitations(&[])
+        .iter()
+        .map(|entry| entry["id"].as_str().expect("id").to_owned())
+        .collect();
+    assert_eq!(ids, stems);
+}
+
+#[test]
 fn a_format_keeps_only_its_limitations() {
     let all = limitations(&[]);
     let docx = limitations(&["docx"]);

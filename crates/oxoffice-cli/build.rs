@@ -5,7 +5,8 @@
 //! Each file holds one JSON object whose `id` is the file name without
 //! `.json`, in lower-case ASCII letters, digits and dashes. Entries are
 //! joined in file name order, as written, so the array is the same on every
-//! platform.
+//! platform. Hidden and editor backup files are skipped; anything else that
+//! is not a valid `<id>.json` fails the build, naming the file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,8 +17,14 @@ fn main() {
     println!("cargo:rerun-if-changed={DIR}");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets it"));
     let dir = manifest.join(DIR);
-    let mut files: Vec<(String, PathBuf)> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+    // No directory is no limitation: git drops the directory with its last file.
+    let listing = match fs::read_dir(&dir) {
+        Ok(listing) => listing.collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => panic!("cannot read {}: {e}", dir.display()),
+    };
+    let mut files: Vec<(String, PathBuf)> = listing
+        .into_iter()
         .map(|entry| {
             let path = entry.expect("directory entry").path();
             let name = path
@@ -26,6 +33,11 @@ fn main() {
                 .unwrap_or_else(|| fail(&path, "the file name is not UTF-8"))
                 .to_owned();
             (name, path)
+        })
+        // What file managers and editors leave beside the files (.DS_Store,
+        // .x.json.swp, x.json~, #x.json#) is not an entry.
+        .filter(|(name, _)| {
+            !(name.starts_with('.') || name.starts_with('#') || name.ends_with('~'))
         })
         .collect();
     files.sort();

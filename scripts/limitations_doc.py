@@ -19,8 +19,9 @@ ISSUES = f"{REPOSITORY}/issues"
 
 
 def render(ref: str) -> str:
-    # The order of the build script: file name order.
-    entries = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(SOURCE.glob("*.json"), key=lambda p: p.name)]
+    # The files and the order of the build script: file name order, hidden files skipped.
+    files = sorted((p for p in SOURCE.glob("*.json") if not p.name.startswith(".")), key=lambda p: p.name)
+    entries = [json.loads(p.read_text(encoding="utf-8")) for p in files]
     lines = [
         "# Known limitations",
         "",
