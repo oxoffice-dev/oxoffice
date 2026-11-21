@@ -2407,11 +2407,14 @@ impl<'a> XmlTree<'a> {
             })
     }
 
-    /// Relocation preserves the source context, including prefixes used only
-    /// in opaque values. A child-local declaration wins over inherited context.
-    /// Identical source and destination bindings need no extra declaration.
-    /// A default namespace the destination declares and the source lacks is
-    /// undeclared only for a subtree with an unprefixed element.
+    /// Relocation preserves the source's prefixed context, including prefixes
+    /// used only in opaque values. A child-local declaration wins over
+    /// inherited context. Identical source and destination bindings need no
+    /// extra declaration. The source's default namespace (`xmlns="X"` or
+    /// `xmlns=""`) is copied, and a default the destination declares and the
+    /// source lacks is undeclared, only when an unprefixed element of the
+    /// subtree takes the default from above it: an element that declares its
+    /// own default does not.
     fn relocation_namespaces(
         &self,
         index: usize,
@@ -2436,6 +2439,9 @@ impl<'a> XmlTree<'a> {
                     && !destination
                         .iter()
                         .any(|(name, target)| name == prefix && target == value)
+                    // A default namespace binds only the unprefixed
+                    // elements that take it from above the subtree.
+                    && !(prefix.is_empty() && !self.uses_inherited_default(index))
             })
             .collect::<Vec<_>>();
         if !self
@@ -2445,7 +2451,7 @@ impl<'a> XmlTree<'a> {
             && destination
                 .iter()
                 .any(|(prefix, value)| prefix.is_empty() && !value.is_empty())
-            && self.has_unprefixed_element(index)
+            && self.uses_inherited_default(index)
         {
             changed.push((String::new(), String::new()));
         }
@@ -2453,12 +2459,20 @@ impl<'a> XmlTree<'a> {
         changed
     }
 
-    /// Whether an element of this subtree has no prefix, and so takes the
-    /// default namespace in scope.
-    fn has_unprefixed_element(&self, index: usize) -> bool {
+    /// Whether an element of this subtree has no prefix and takes the
+    /// default namespace in scope above the subtree: neither it nor an
+    /// ancestor within the subtree declares a default namespace of its own.
+    fn uses_inherited_default(&self, index: usize) -> bool {
         let mut pending = vec![index];
         while let Some(at) = pending.pop() {
             let element = &self.elements[at];
+            if element
+                .namespace_declarations
+                .iter()
+                .any(|(prefix, _)| prefix.is_empty())
+            {
+                continue;
+            }
             if !element.name.contains(':') {
                 return true;
             }
