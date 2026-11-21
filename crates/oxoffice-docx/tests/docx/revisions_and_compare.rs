@@ -986,8 +986,16 @@ fn a_final_table_replaced_by_a_paragraph_is_compared() {
         .set_text("cell");
     let edited = doc_with(&["intro", "closing"]);
     let mut doc = redline(original, &edited);
-    assert_eq!(texts(&accepted(&mut doc)), ["intro", "closing"]);
-    assert_eq!(texts(&rejected(&mut doc)), ["intro"]);
+    let copy = accepted(&mut doc);
+    assert_eq!(
+        (texts(&copy), copy.tables().len()),
+        (vec!["intro".to_owned(), "closing".to_owned()], 0)
+    );
+    let copy = rejected(&mut doc);
+    assert_eq!(
+        (texts(&copy), copy.tables().len()),
+        (vec!["intro".to_owned()], 1)
+    );
 }
 
 #[test]
@@ -996,8 +1004,16 @@ fn a_final_paragraph_replaced_by_a_table_is_compared() {
     let mut edited = doc_with(&["intro"]);
     edited.add_table(1, 1).cell(0, 0).unwrap().set_text("cell");
     let mut doc = redline(original, &edited);
-    assert_eq!(texts(&accepted(&mut doc)), ["intro"]);
-    assert_eq!(texts(&rejected(&mut doc)), ["intro", "closing"]);
+    let copy = accepted(&mut doc);
+    assert_eq!(
+        (texts(&copy), copy.tables().len()),
+        (vec!["intro".to_owned()], 1)
+    );
+    let copy = rejected(&mut doc);
+    assert_eq!(
+        (texts(&copy), copy.tables().len()),
+        (vec!["intro".to_owned(), "closing".to_owned()], 0)
+    );
 }
 
 #[test]
@@ -1017,9 +1033,7 @@ fn a_paragraph_appended_after_a_redlined_final_table_keeps_the_refusal() {
     edited.add_paragraph("closing");
     let error = original.compare(&edited, AUTHOR, DATE).unwrap_err();
     assert!(
-        error
-            .to_string()
-            .contains("holds an existing tracked revision"),
+        error.to_string().contains("cannot mark the paragraph mark"),
         "{error}"
     );
     assert!(!kinds(&original).is_empty());

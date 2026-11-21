@@ -13229,18 +13229,18 @@ fn previous_mark_position(output: &[(EmittedOwner<'_>, String)], kind: &str) -> 
     })
 }
 
-/// Whether the owner a final `kind` change would mark is a table both
-/// versions hold, so that the final paragraph carries its own change.
+/// Whether the owner a final `kind` change would mark is a table this
+/// change's resolution keeps: one both versions hold, or one the other
+/// resolution removes (a table marked with the same kind is crossed before
+/// it). The final paragraph then carries its own change.
 fn after_kept_table(output: &[(EmittedOwner<'_>, String)], kind: &str, location: &str) -> bool {
     // Only the body may end with a table; every other story ends with a
     // paragraph.
     location == "body"
-        && match previous_mark_position(output, kind).map(|position| &output[position].0) {
-            Some(EmittedOwner::KeptTable) => true,
-            // A table the other resolution removes stays on this one's side.
-            Some(EmittedOwner::MarkedTable(marked)) => *marked != kind,
-            _ => false,
-        }
+        && matches!(
+            previous_mark_position(output, kind).map(|position| &output[position].0),
+            Some(EmittedOwner::KeptTable | EmittedOwner::MarkedTable(_))
+        )
 }
 
 /// Mark the paragraph before a final inserted or deleted paragraph, and
@@ -13798,8 +13798,14 @@ fn coalesced_paragraphs_equal(
                 }
             }));
     (original.properties == edited.properties
-        || without_empty_mark_properties(original.properties.as_ref())
-            == without_empty_mark_properties(edited.properties.as_ref()))
+        || original
+            .properties
+            .clone()
+            .and_then(nonempty_paragraph_properties)
+            == edited
+                .properties
+                .clone()
+                .and_then(nonempty_paragraph_properties))
         && equal_fields
         && coalesced_paragraph_signature(original, options)
             == coalesced_paragraph_signature(edited, options)
@@ -17384,21 +17390,6 @@ fn final_paragraph_properties_xml(
         current = append_word_child(&current, "pPr", &change)?;
     }
     Ok(current)
-}
-
-/// Paragraph properties with an empty mark read as none, and none when
-/// nothing else is left.
-fn without_empty_mark_properties(properties: Option<&CT_PPr>) -> Option<CT_PPr> {
-    properties.cloned().and_then(|mut properties| {
-        if properties
-            .rpr
-            .as_ref()
-            .is_some_and(|mark| *mark == oxoffice_docx_oxml::properties::CT_RPr::default())
-        {
-            properties.rpr = None;
-        }
-        (properties != CT_PPr::default()).then_some(properties)
-    })
 }
 
 fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Option<CT_PPr> {
