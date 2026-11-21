@@ -58,39 +58,34 @@ impl Document {
         self.commit_staged_mutation(candidate);
     }
 
-    /// Append the content of another document with a section break.
+    /// Append the content of another document with a section break, as
+    /// [`Self::append`] does. The destination's pages keep their layout; the
+    /// appended content starts a new section of `break_type` (continuous, on
+    /// the next, an even or an odd page) with the same page geometry, and
+    /// the same headers and footers until it sets its own.
     pub fn append_with_break(&mut self, other: &Document, break_type: crate::SectionBreak) {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
-        // Insert a section break paragraph before the merged content
-        let mut p = CT_P::new();
-        let sect_pr = match break_type {
-            crate::SectionBreak::NextPage => CT_SectPr::default_letter(),
-            crate::SectionBreak::Continuous => {
-                let mut sp = CT_SectPr::default_letter();
-                sp.section_type = Some(ST_SectionType::Continuous);
-                sp
-            }
-            crate::SectionBreak::EvenPage => {
-                let mut sp = CT_SectPr::default_letter();
-                sp.section_type = Some(ST_SectionType::EvenPage);
-                sp
-            }
-            crate::SectionBreak::OddPage => {
-                let mut sp = CT_SectPr::default_letter();
-                sp.section_type = Some(ST_SectionType::OddPage);
-                sp
-            }
-        };
-        p.properties = Some(CT_PPr {
-            sect_pr: Some(sect_pr),
-            ..Default::default()
-        });
+        // The destination's section properties stay on its own pages: they
+        // move to the break paragraph, and the appended content starts a new
+        // final section with the same page geometry, inheriting the headers
+        // and footers. The break kind is how that new section starts.
+        let sections = candidate.section_count();
         candidate
+            .insert_section_in_place(sections)
+            .expect("a section can always be appended");
+        let started = candidate
             .document
             .body
-            .content
-            .push(BodyContent::Paragraph(Box::new(p)));
+            .sect_pr
+            .as_mut()
+            .expect("the appended section owns the final section properties");
+        started.section_type = match break_type {
+            crate::SectionBreak::NextPage => None,
+            crate::SectionBreak::Continuous => Some(ST_SectionType::Continuous),
+            crate::SectionBreak::EvenPage => Some(ST_SectionType::EvenPage),
+            crate::SectionBreak::OddPage => Some(ST_SectionType::OddPage),
+        };
         candidate
             .import_document_at(None, other)
             .expect("document append-with-break preflight failed");

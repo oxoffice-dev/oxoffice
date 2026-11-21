@@ -602,14 +602,11 @@ fn appending_with_a_break_puts_the_other_document_in_a_section_of_its_own() {
     }
 }
 
-// Fails today: the break's type is written on the section that ends at the
-// break (the destination's) instead of the section that starts there, so a
-// continuous break starts the appended content on a new page. Issue: #193
 #[test]
-#[should_panic(expected = "the appended section starts as the break asks")]
 fn each_break_kind_starts_the_appended_section_as_asked() {
     let mut wrong = Vec::new();
     for (kind, expected) in [
+        (SectionBreak::NextPage, ST_SectionType::NextPage),
         (SectionBreak::Continuous, ST_SectionType::Continuous),
         (SectionBreak::EvenPage, ST_SectionType::EvenPage),
         (SectionBreak::OddPage, ST_SectionType::OddPage),
@@ -617,8 +614,10 @@ fn each_break_kind_starts_the_appended_section_as_asked() {
         let mut doc = doc_with(&["dest"]);
         doc.append_with_break(&doc_with(&["source"]), kind);
         let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["dest", "", "source"], "{kind:?}");
+        assert_eq!(doc.section_count(), 2, "{kind:?}");
         let started = doc.section(1).unwrap().break_type();
-        if started != Some(expected) {
+        if started.unwrap_or(ST_SectionType::NextPage) != expected {
             wrong.push(format!("{kind:?}: the appended section starts {started:?}"));
         }
         if kind == SectionBreak::Continuous {
@@ -634,11 +633,7 @@ fn each_break_kind_starts_the_appended_section_as_asked() {
     );
 }
 
-// Fails today: the break paragraph gets new Letter section properties, so
-// the destination's own pages lose their size, margins and header (the
-// destination's section properties move to the appended content). Issue: #193
 #[test]
-#[should_panic(expected = "the destination's pages keep their layout")]
 fn appending_with_a_break_keeps_the_destination_pages_layout_and_header() {
     let a4 = (Length::mm(210.0), Length::mm(297.0));
     let margin = Length::inches(0.5);
@@ -657,6 +652,16 @@ fn appending_with_a_break_keeps_the_destination_pages_layout_and_header() {
         (first.page_size(), first.margins(), header_shown(&doc, 0)),
         (size, margins, Some("Dest header".to_owned())),
         "the destination's pages keep their layout"
+    );
+    let appended = doc.section(1).unwrap();
+    assert_eq!(
+        (
+            appended.page_size(),
+            appended.margins(),
+            header_shown(&doc, 1)
+        ),
+        (size, margins, Some("Dest header".to_owned())),
+        "the appended section takes the same layout and header"
     );
 }
 

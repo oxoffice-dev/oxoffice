@@ -1,9 +1,0 @@
-{
-  "id": "docx-append-with-break-sections",
-  "format": "docx",
-  "area": "merge",
-  "title": "append_with_break puts the break kind and the page layout on the wrong section",
-  "symptom": "Rust append_with_break writes the break kind on the destination's last section and gives the destination's pages Letter size, 1 inch margins and no header, so a continuous break starts a new page",
-  "workaround": "Rust: insert_section at the end, set_break_type on the new section, then import_fragment the source body there with FragmentConflictPolicy::for_insert_document(None)",
-  "issue": 193
-}
