@@ -69,6 +69,7 @@ oxoffice docx layout report.docx --json
 oxoffice docx replace template.docx -p TOKEN -v ready --expect 1 -o report.docx
 oxoffice docx convert report.docx --to pdf -o report.pdf
 oxoffice docx convert redline.docx --to pdf --revision-view tracked -o redline.pdf
+oxoffice docx convert form.docx --to pdf --fillable-forms -o form.pdf
 oxoffice docx render redline.docx --revision-view tracked --revision-style legal
 oxoffice docx diff before.docx after.docx
 oxoffice docx diff before.docx after.docx --exit-code --json
@@ -229,6 +230,13 @@ blue with a double underline, deletions red and struck through, moved text
 green. `--revision-style` needs `--revision-view tracked`.
 Unknown view names are usage errors. HTML and Markdown conversion refuse
 the tracked view before creating output.
+
+`convert --to pdf --fillable-forms` exports the content controls of the body as
+fillable PDF form fields: text, check boxes, lists and dates, with their
+current values. A control tagged `signature` or `signature:<name>` becomes an
+empty signature field. The flag needs `--to pdf` and the accepted view.
+`oxoffice limitations` lists the kinds of controls it leaves static, and a
+control of the body left static says why on standard error.
 
 `validate` exits unsuccessfully when a relationship of the main document points
 at a missing part, when a part has no declared content type, when an XML part

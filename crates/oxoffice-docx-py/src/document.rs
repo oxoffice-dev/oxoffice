@@ -14800,7 +14800,7 @@ impl PyDocument {
         Ok(boundary)
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain", fillable_forms = false))]
     #[allow(clippy::too_many_arguments)]
     fn to_pdf<'py>(
         &self,
@@ -14811,9 +14811,11 @@ impl PyDocument {
         system_fonts: bool,
         revision_view: &str,
         revision_style: &str,
+        fillable_forms: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let mut options = parse_render_options(revision_view, revision_style)?;
         options.use_system_fonts = system_fonts;
+        options.fillable_forms = check_fillable_forms(fillable_forms, revision_view)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -14840,7 +14842,7 @@ impl PyDocument {
         .map_err(|error| docx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain", fillable_forms = false))]
     #[allow(clippy::too_many_arguments)]
     fn to_pdf_with_diagnostics<'py>(
         &self,
@@ -14851,9 +14853,11 @@ impl PyDocument {
         system_fonts: bool,
         revision_view: &str,
         revision_style: &str,
+        fillable_forms: bool,
     ) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyTuple>)> {
         let mut options = parse_render_options(revision_view, revision_style)?;
         options.use_system_fonts = system_fonts;
+        options.fillable_forms = check_fillable_forms(fillable_forms, revision_view)?;
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
             files
@@ -14878,11 +14882,12 @@ impl PyDocument {
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((PyBytes::new(py, &payload), messages))
     }
-    #[pyo3(signature = (profile = "pdfa-2b"))]
+    #[pyo3(signature = (profile = "pdfa-2b", *, fillable_forms = false))]
     fn to_pdfa_deterministic<'py>(
         &self,
         py: Python<'py>,
         profile: &str,
+        fillable_forms: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let profile = match profile {
             "pdfa-2b" => oxoffice_docx::PdfConformance::PdfA2b,
@@ -14893,9 +14898,13 @@ impl PyDocument {
                 )));
             }
         };
-        py.detach(|| self.inner.to_pdfa_deterministic(profile))
-            .map(|bytes| PyBytes::new(py, &bytes))
-            .map_err(|error| docx_to_pyerr(py, error))
+        let options = oxoffice_docx::RenderOptions::default().with_fillable_forms(fillable_forms);
+        py.detach(|| {
+            self.inner
+                .to_pdfa_deterministic_with_options(profile, options)
+        })
+        .map(|bytes| PyBytes::new(py, &bytes))
+        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (page_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, system_fonts = false, revision_view = "accepted", revision_style = "plain"))]
@@ -18678,6 +18687,17 @@ impl PyDocument {
         };
         Ok(PyMailMergePreparedData { inner: prepared })
     }
+}
+
+/// Fillable forms need the accepted view: a field value would mix inserted
+/// and deleted text. Refused here, before Rust, like the other clashes.
+fn check_fillable_forms(fillable_forms: bool, revision_view: &str) -> PyResult<bool> {
+    if fillable_forms && revision_view == "tracked" {
+        return Err(PyValueError::new_err(
+            "fillable_forms applies only with revision_view=\"accepted\"",
+        ));
+    }
+    Ok(fillable_forms)
 }
 
 fn parse_render_options(

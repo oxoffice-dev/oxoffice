@@ -193,6 +193,11 @@ enum Command {
         /// Preserve unpainted PNG pixels as transparent
         #[arg(long)]
         transparent: bool,
+        /// Export the content controls of the body as fillable PDF form
+        /// fields (PDF only, accepted view). A control tagged `signature` or
+        /// `signature:<name>` becomes an empty signature field.
+        #[arg(long)]
+        fillable_forms: bool,
     },
     /// Compare the paragraph text of every story of two DOCX files
     ///
@@ -884,6 +889,7 @@ pub fn run(cli: Cli) {
             pages,
             quality,
             transparent,
+            fillable_forms,
         } => commands::convert_input(
             &file,
             to.as_deref(),
@@ -895,7 +901,8 @@ pub fn run(cli: Cli) {
                 || pages.is_some()
                 || transparent
                 || font_dir.is_some()
-                || system_fonts,
+                || system_fonts
+                || fillable_forms,
             output.as_deref(),
             force,
             dpi.unwrap_or(150),
@@ -908,6 +915,7 @@ pub fn run(cli: Cli) {
                 quality: quality.unwrap_or(90),
                 transparent,
             },
+            fillable_forms,
         ),
         Command::Diff {
             file_a,
