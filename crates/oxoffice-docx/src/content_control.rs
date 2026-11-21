@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use oxoffice_docx_oxml::CT_RPr;
 use oxoffice_docx_oxml::content_control::{CT_DataBinding, CT_Sdt, SdtContent, SdtType};
-use oxoffice_docx_oxml::date_format::check_word_date_format;
+use oxoffice_docx_oxml::date_format::{check_word_date_format, word_date_format_shows_time};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
@@ -5763,7 +5763,19 @@ fn date_issue(control: &PhysicalControl) -> Option<&'static str> {
         return Some("current form value is invalid");
     };
     if !canonical_full_date(full_date) {
-        return Some("current form value is invalid");
+        // A time typed in Word into a control whose format shows one: the
+        // value is not wrong, oxoffice only writes dates.
+        let timed = full_date.len() > 10
+            && full_date.get(..10).is_some_and(civil_date_text)
+            && facts
+                .format
+                .as_deref()
+                .is_some_and(word_date_format_shows_time);
+        return Some(if timed {
+            "unsupported date metadata"
+        } else {
+            "current form value is invalid"
+        });
     }
     let Ok((display, bound, prepared)) = prepare_control_text(control, &full_date[..10]) else {
         return Some("current form value is invalid");

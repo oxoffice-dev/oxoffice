@@ -7,9 +7,11 @@
 //! with `AM/PM` or `am/pm`. The value is a date, so a time shows midnight, as
 //! Word shows a date picked from its calendar. Names exist for English (full
 //! and short) and, full names only, for French, German, Spanish, Italian,
-//! Portuguese and Dutch: short names and day periods differ between Windows
-//! and Office versions outside English. Any other letter, or a name in another
-//! language, is refused.
+//! Portuguese and Dutch: short names differ between Windows and Office
+//! versions outside English. The day period is the locale's designator whatever
+//! the token's case, known for United States English only (`AM`): other
+//! English locales write `am`. Any other letter, or a name in another language,
+//! is refused.
 
 use crate::error::{OxmlError, Result};
 
@@ -23,7 +25,6 @@ struct Names {
 struct ShortNames {
     months: [&'static str; 12],
     days: [&'static str; 7],
-    am: &'static str,
 }
 
 const ENGLISH: Names = Names {
@@ -55,7 +56,6 @@ const ENGLISH: Names = Names {
             "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ],
         days: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-        am: "AM",
     }),
 };
 
@@ -235,12 +235,10 @@ const DUTCH: Names = Names {
     short: None,
 };
 
-/// The names of a `w:lid` value: a BCP 47 tag (`fr-FR`) or a hexadecimal
-/// Windows language identifier (`040C`). No `w:lid` reads as `en-US`.
-fn names_of(language: Option<&str>) -> Option<&'static Names> {
-    let Some(language) = language else {
-        return Some(&ENGLISH);
-    };
+/// The primary language and region subtags of a `w:lid` value: a BCP 47 tag
+/// (`fr-FR`) or a hexadecimal Windows language identifier (`040C`), `None`
+/// for an identifier of another language.
+fn subtags(language: &str) -> Option<(&'static str, String)> {
     let tag = language.to_ascii_lowercase();
     let (primary, region) = match u16::from_str_radix(&tag, 16) {
         Ok(lcid) if tag.len() == 4 => {
@@ -254,15 +252,39 @@ fn names_of(language: Option<&str>) -> Option<&'static Names> {
                 0x13 => "nl",
                 _ => return None,
             };
-            (primary, if lcid == 0x0c07 { "at" } else { "" })
+            let region = match lcid {
+                0x0c07 => "at",
+                0x0409 => "us",
+                _ => "",
+            };
+            (primary, region.to_owned())
         }
         _ => {
             let mut parts = tag.split(['-', '_']);
-            let primary = parts.next().unwrap_or("");
-            (primary, parts.find(|part| part.len() == 2).unwrap_or(""))
+            let primary = match parts.next().unwrap_or("") {
+                "en" => "en",
+                "fr" => "fr",
+                "de" => "de",
+                "es" => "es",
+                "it" => "it",
+                "pt" => "pt",
+                "nl" => "nl",
+                _ => return None,
+            };
+            let region = parts.find(|part| part.len() == 2).unwrap_or("");
+            (primary, region.to_owned())
         }
     };
-    Some(match (primary, region) {
+    Some((primary, region))
+}
+
+/// The names of a `w:lid` value. No `w:lid` reads as `en-US`.
+fn names_of(language: Option<&str>) -> Option<&'static Names> {
+    let Some(language) = language else {
+        return Some(&ENGLISH);
+    };
+    let (primary, region) = subtags(language)?;
+    Some(match (primary, region.as_str()) {
         ("en", _) => &ENGLISH,
         ("fr", _) => &FRENCH,
         ("de", "at") => &AUSTRIAN_GERMAN,
@@ -275,9 +297,17 @@ fn names_of(language: Option<&str>) -> Option<&'static Names> {
     })
 }
 
-/// Show the Gregorian date `year-month-day` in the Word date pattern `pattern`,
-/// with the names of the language `language` (`w:lid`).
-pub fn format_word_date(
+/// The morning designator of a `w:lid` value, known for `en-US` only.
+fn morning_of(language: Option<&str>) -> Option<&'static str> {
+    let Some(language) = language else {
+        return Some("AM");
+    };
+    matches!(subtags(language), Some(("en", region)) if region == "us").then_some("AM")
+}
+
+/// Show the Gregorian date `year-month-day` (already checked) in the Word date
+/// pattern `pattern`, with the names of the language `language` (`w:lid`).
+pub(crate) fn format_word_date(
     pattern: &str,
     language: Option<&str>,
     year: u16,
@@ -313,21 +343,42 @@ pub fn format_word_date(
     while index < chars.len() {
         let current = chars[index];
         if current == '\'' {
-            let Some(length) = chars[index + 1..].iter().position(|&c| c == '\'') else {
-                return Err(unsupported("unterminated quote"));
-            };
-            output.extend(&chars[index + 1..index + 1 + length]);
-            index += length + 2;
+            // A quoted literal; two quotes in a row are one quote, inside
+            // a literal or outside.
+            index += 1;
+            if chars.get(index) == Some(&'\'') {
+                output.push('\'');
+                index += 1;
+                continue;
+            }
+            loop {
+                match (chars.get(index), chars.get(index + 1)) {
+                    (None, _) => return Err(unsupported("unterminated quote")),
+                    (Some('\''), Some('\'')) => {
+                        output.push('\'');
+                        index += 2;
+                    }
+                    (Some('\''), _) => {
+                        index += 1;
+                        break;
+                    }
+                    (Some(&literal), _) => {
+                        output.push(literal);
+                        index += 1;
+                    }
+                }
+            }
             continue;
         }
         let rest: String = chars[index..chars.len().min(index + 5)].iter().collect();
-        if rest == "AM/PM" || rest == "am/pm" {
-            let am = short("a day period")?.am;
-            if rest == "am/pm" {
-                output.push_str(&am.to_lowercase());
-            } else {
-                output.push_str(am);
-            }
+        if rest.eq_ignore_ascii_case("AM/PM") {
+            let morning = morning_of(language).ok_or_else(|| {
+                unsupported(&format!(
+                    "the day period in language {:?} cannot be shown, 24-hour times can",
+                    language.unwrap_or_default()
+                ))
+            })?;
+            output.push_str(morning);
             index += 5;
             continue;
         }
@@ -362,7 +413,19 @@ pub fn format_word_date(
     Ok(output)
 }
 
-/// Refuse a pattern [`format_word_date`] cannot show in `language`.
+/// Whether the date pattern `pattern` shows a time (an hour, minute, second
+/// or day period token outside quotes).
+pub fn word_date_format_shows_time(pattern: &str) -> bool {
+    let mut quoted = false;
+    pattern.chars().any(|c| {
+        if c == '\'' {
+            quoted = !quoted;
+        }
+        !quoted && matches!(c, 'h' | 'H' | 'm' | 's' | 'A' | 'a')
+    })
+}
+
+/// Refuse a pattern Word date controls cannot show in `language`.
 pub fn check_word_date_format(pattern: &str, language: Option<&str>) -> Result<()> {
     // A Wednesday in September: every token and name kind is exercised.
     format_word_date(pattern, language, 2026, 9, 30).map(|_| ())
@@ -407,7 +470,10 @@ mod tests {
             ("MMMM yy", "January 15"),
             ("MMM-yy", "Jan-15"),
             ("M/d/yyyy h:mm AM/PM", "1/2/2015 12:00 AM"),
-            ("M/d/yyyy h:mm:ss am/pm", "1/2/2015 12:00:00 am"),
+            // Word shows the locale's designator whatever the token's case.
+            ("M/d/yyyy h:mm:ss am/pm", "1/2/2015 12:00:00 AM"),
+            ("h 'o''clock' am/pm", "12 o'clock AM"),
+            ("''d''", "'2'"),
             ("HH:mm", "00:00"),
             ("H:m:s", "0:0:0"),
             ("ddd dd/MM/yyyy", "Fri 02/01/2015"),
@@ -418,6 +484,16 @@ mod tests {
                 shown,
                 "{pattern}"
             );
+        }
+    }
+
+    #[test]
+    fn a_pattern_shows_a_time_when_it_holds_a_time_token_outside_quotes() {
+        for pattern in ["M/d/yyyy h:mm am/pm", "HH:mm", "d 's' s"] {
+            assert!(word_date_format_shows_time(pattern), "{pattern}");
+        }
+        for pattern in ["d MMMM yyyy", "dddd, d' de 'MMMM", "'hh:mm' d"] {
+            assert!(!word_date_format_shows_time(pattern), "{pattern}");
         }
     }
 
@@ -457,12 +533,23 @@ mod tests {
                 "short month name in language \"fr-FR\"",
             ),
             ("ddd d", Some("de-DE"), "short day name"),
-            ("h:mm AM/PM", Some("fr-FR"), "day period"),
+            (
+                "h:mm AM/PM",
+                Some("fr-FR"),
+                "day period in language \"fr-FR\"",
+            ),
+            (
+                "h:mm am/pm",
+                Some("en-GB"),
+                "day period in language \"en-GB\"",
+            ),
+            ("h:mm am/pm", Some("0809"), "day period"),
             ("y", None, "unknown token \"y\""),
             ("yyy", None, "unknown token \"yyy\""),
             ("ddddd", None, "unknown token"),
             ("MMMMM", None, "unknown token"),
             ("d 'of MMMM", None, "unterminated quote"),
+            ("d 'o''", None, "unterminated quote"),
             ("gg yyyy", None, "unknown token \"gg\""),
             ("", None, "empty"),
         ] {

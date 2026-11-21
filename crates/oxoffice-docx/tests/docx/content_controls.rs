@@ -2018,7 +2018,7 @@ fn a_date_is_shown_with_the_names_of_the_controls_language() {
             "Friday, January 2, 2015",
         ),
         ("MMM. d, yy", None, "Jan. 2, 15"),
-        ("M/d/yyyy h:mm am/pm", Some("en-US"), "1/2/2015 12:00 am"),
+        ("M/d/yyyy h:mm am/pm", Some("en-US"), "1/2/2015 12:00 AM"),
         ("yyyy年M月d日", Some("ja-JP"), "2015年1月2日"),
     ] {
         for by_form in [false, true] {
@@ -2075,6 +2075,45 @@ fn a_date_name_the_controls_language_has_no_table_for_is_refused() {
         assert_eq!(issues.len(), 1, "{format}: {issues:?}");
         assert_eq!(issues[0].message, "unsupported date metadata");
     }
+}
+
+/// `doc` saved, with `from` replaced by `to` once in its main part.
+fn with_main_part_edit(doc: &mut Document, from: &str, to: &str) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    assert_eq!(xml.matches(from).count(), 1, "{from} in {xml}");
+    package.set_part(&part, xml.replace(from, to).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("the edited document opens")
+}
+
+#[test]
+fn a_time_typed_in_word_is_reported_as_unsupported_not_as_a_wrong_value() {
+    let mut doc = date_control("due", "M/d/yyyy h:mm am/pm", Some("en-US"));
+    set_value(&mut doc, "due", "2015-01-02", false);
+    let rule = prompt(target("due"), false, "");
+    assert!(
+        doc.validate_form(std::slice::from_ref(&rule))
+            .unwrap()
+            .is_empty()
+    );
+    // Word saves the time typed in the control, 3:05 PM.
+    let mut doc = with_main_part_edit(&mut doc, "2015-01-02T00:00:00Z", "2015-01-02T15:05:00Z");
+    let doc = with_main_part_edit(&mut doc, "1/2/2015 12:00 AM", "1/2/2015 3:05 PM");
+    let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].message, "unsupported date metadata");
+    // A date-only format with a time is a wrong value, as before.
+    let mut doc = date_control("due", "d MMMM yyyy", None);
+    set_value(&mut doc, "due", "2015-01-02", false);
+    let doc = with_main_part_edit(&mut doc, "2015-01-02T00:00:00Z", "2015-01-02T15:05:00Z");
+    let issues = doc.validate_form(&[rule]).unwrap();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].message, "current form value is invalid");
 }
 
 #[test]
