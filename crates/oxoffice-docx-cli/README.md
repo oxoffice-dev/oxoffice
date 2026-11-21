@@ -254,7 +254,10 @@ id.
 Empty paragraphs, heading level gaps, missing metadata, and paragraphs numbered
 by a numbering instance or level the document does not define are warnings.
 
-`layout --json` uses bundled deterministic fonts. It lists every direct body
+`layout --json` uses the fonts of a render: font families resolve in the
+bundled fonts, and a system font only draws the characters they lack;
+`--bundled-fonts-only` gives the same geometry on every machine and
+`--system-fonts` resolves families in the system fonts first. It lists every direct body
 item, including preserved items that have no fragments. Each laid-out fragment
 uses points from the top-left page origin and records one-based physical and
 displayed page numbers. A body item that crosses a page boundary has one

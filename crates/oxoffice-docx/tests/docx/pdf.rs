@@ -1835,6 +1835,29 @@ fn text_the_bundled_fonts_cover_renders_the_same_with_the_system_fallback() {
     assert_eq!(default, doc.to_pdf_deterministic().unwrap());
 }
 
+// A run the bundled fonts partly draw keeps its bundled face for that part:
+// only the characters they lack may take a system font, so the Latin words
+// are drawn alike in both modes, on any machine (the line's height may grow
+// with a taller system face, so only the horizontal placement is compared).
+#[test]
+fn latin_words_beside_text_the_bundled_fonts_lack_are_drawn_alike_in_both_modes() {
+    let doc = doc_with(&["Version 2 of the plan 计划书已经批准"]);
+    let latin = |options: RenderOptions| {
+        let pdf = Pdf::read(&doc.to_pdf_with_options(options).unwrap());
+        pdf.drawn(0)
+            .into_iter()
+            .filter(|piece| !has_cjk(&piece.text) && !piece.text.trim().is_empty())
+            .map(|piece| (piece.text, piece.glyphs, piece.x, piece.end, piece.size))
+            .collect::<Vec<_>>()
+    };
+    let default = latin(RenderOptions::default());
+    assert!(!default.is_empty());
+    assert_eq!(
+        default,
+        latin(RenderOptions::default().with_bundled_fonts_only(true))
+    );
+}
+
 #[test]
 fn system_fonts_first_and_bundled_fonts_only_are_refused_together() {
     let options = RenderOptions::default()
@@ -1844,6 +1867,36 @@ fn system_fonts_first_and_bundled_fonts_only_are_refused_together() {
         .to_pdf_with_options(options)
         .expect_err("the two switches exclude each other");
     assert!(error.to_string().contains("exclude each other"), "{error}");
+
+    // The caller-font renders follow the same switches.
+    let doc = doc_with(&["Text"]);
+    let fonts: [(&str, &[u8]); 1] = [(
+        "Caller",
+        oxoffice_layout::bundled_fonts::LIBERATION_SANS_REGULAR,
+    )];
+    let raster = oxoffice_pdf::RasterOptions {
+        dpi: 36.0,
+        format: oxoffice_pdf::RasterFormat::Png {
+            transparent_background: false,
+        },
+    };
+    assert!(doc.to_pdf_with_fonts_and_options(&fonts, options).is_err());
+    assert!(
+        doc.render_page_to_png_with_fonts_and_options(0, 36.0, &fonts, options)
+            .is_err()
+    );
+    assert!(
+        doc.render_page_to_svg_with_fonts_and_options(0, &fonts, options)
+            .is_err()
+    );
+    assert!(
+        doc.render_pages_with_fonts_and_options(&[0], raster, &fonts, options)
+            .is_err()
+    );
+    assert!(
+        doc.render_all_pages_with_fonts_and_options(36.0, &fonts, options)
+            .is_err()
+    );
 }
 
 // ---- Tags, PDF/A and metadata ----

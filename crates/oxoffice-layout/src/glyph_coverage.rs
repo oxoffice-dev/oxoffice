@@ -66,16 +66,9 @@ fn system_font_diagnostics(
             let Some(family) = families.get(&font_id) else {
                 return;
             };
+            // A system fallback font draws only characters no bundled face
+            // has, symbols and emoji included.
             for character in text.chars().filter(|character| draws_a_glyph(*character)) {
-                // Latin and symbols in a CJK run are not what the font was
-                // chosen for.
-                if matches!(
-                    script_for_char(character),
-                    TextScript::Latin | TextScript::Common
-                ) && !matches!(character, '\u{3000}'..='\u{303f}' | '\u{ff00}'..='\u{ffef}')
-                {
-                    continue;
-                }
                 drawn
                     .entry((script_name(character), family))
                     .or_default()

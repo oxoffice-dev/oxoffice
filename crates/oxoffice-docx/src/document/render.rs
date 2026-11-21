@@ -1138,7 +1138,8 @@ impl Document {
         Ok((bytes, layout.layout.diagnostics.clone()))
     }
 
-    /// Render caller-selected normal fonts to one zero-based PNG page.
+    /// Render one zero-based PNG page with caller fonts, under the font
+    /// policy of [`Self::layout_for_render`].
     pub fn render_page_to_png_with_fonts_and_options(
         &self,
         page_index: usize,
@@ -1146,7 +1147,7 @@ impl Document {
         font_files: &[(&str, &[u8])],
         options: RenderOptions,
     ) -> Result<Option<Vec<u8>>> {
-        let layout = self.layout_with_additional_fonts_and_options(font_files, options)?;
+        let layout = self.layout_for_render(font_files, options)?;
         Ok(oxoffice_pdf::render_page_to_png(
             &layout.layout,
             page_index,
@@ -1154,18 +1155,20 @@ impl Document {
         ))
     }
 
-    /// Render caller-selected normal fonts to one searchable SVG page.
+    /// Render one searchable SVG page with caller fonts, under the font
+    /// policy of [`Self::layout_for_render`].
     pub fn render_page_to_svg_with_fonts_and_options(
         &self,
         page_index: usize,
         font_files: &[(&str, &[u8])],
         options: RenderOptions,
     ) -> Result<Option<crate::SvgRenderResult>> {
-        let layout = self.layout_with_additional_fonts_and_options(font_files, options)?;
+        let layout = self.layout_for_render(font_files, options)?;
         Ok(crate::svg::render_page(&layout.layout, page_index))
     }
 
-    /// Render selected pages from one caller-selected normal-font bundle.
+    /// Render selected pages with caller fonts, under the font policy of
+    /// [`Self::layout_for_render`].
     pub fn render_pages_with_fonts_and_options(
         &self,
         page_indices: &[usize],
@@ -1173,7 +1176,7 @@ impl Document {
         font_files: &[(&str, &[u8])],
         options: RenderOptions,
     ) -> Result<oxoffice_pdf::RasterOutput> {
-        let layout = self.layout_with_additional_fonts_and_options(font_files, options)?;
+        let layout = self.layout_for_render(font_files, options)?;
         Ok(oxoffice_pdf::render_pages(
             &layout.layout,
             page_indices,
@@ -1181,14 +1184,15 @@ impl Document {
         )?)
     }
 
-    /// Render every PNG page from one caller-selected normal-font bundle.
+    /// Render every PNG page with caller fonts, under the font policy of
+    /// [`Self::layout_for_render`].
     pub fn render_all_pages_with_fonts_and_options(
         &self,
         dpi: f64,
         font_files: &[(&str, &[u8])],
         options: RenderOptions,
     ) -> Result<Vec<Vec<u8>>> {
-        let layout = self.layout_with_additional_fonts_and_options(font_files, options)?;
+        let layout = self.layout_for_render(font_files, options)?;
         Ok(oxoffice_pdf::render_all_pages(&layout.layout, dpi))
     }
 

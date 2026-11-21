@@ -137,19 +137,55 @@ fn a_run_the_bundled_fonts_cover_between_them_never_takes_a_system_font() {
 }
 
 #[test]
-fn a_run_with_a_character_no_bundled_font_has_takes_the_system_font_covering_it_all() {
+fn a_run_the_bundled_fonts_partly_draw_keeps_a_bundled_face() {
+    // The named test font has every character of both runs, but a system
+    // face never takes characters a bundled face draws: the run keeps a
+    // bundled face and only the missing graphemes take a system font.
     let mut fonts = FontManager::new_with_fallback_fonts(&fallback_fonts(&[(
         "Oxoffice Named Test",
         NAMED_TEST,
     )]))
     .unwrap();
 
-    let mixed = fonts
+    let latin = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "abc猫")
+        .unwrap();
+    assert_eq!(family(&fonts, latin), "Carlito");
+    let han = fonts
         .resolve_font_for_text(Some("Calibri"), false, false, "你好猫")
         .unwrap();
+    assert_eq!(family(&fonts, han), "Noto Sans SC");
 
-    assert!(fonts.is_system_fallback_font(mixed));
-    assert_eq!(family(&fonts, mixed), "Oxoffice Named Test");
+    // The missing grapheme alone takes the system font.
+    let cat = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "猫")
+        .unwrap();
+    assert!(fonts.is_system_fallback_font(cat));
+}
+
+#[test]
+fn a_run_no_bundled_font_draws_any_of_takes_one_system_font() {
+    let mut fonts = manager();
+
+    let run = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "猫犬 山川")
+        .unwrap();
+
+    assert!(fonts.is_system_fallback_font(run));
+    assert_eq!(family(&fonts, run), "Oxoffice Fallback Test");
+}
+
+#[test]
+fn a_skipped_system_search_does_not_mark_characters_as_missing_everywhere() {
+    let mut fonts = manager();
+    fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "abc猫")
+        .unwrap();
+    // 猫 was not searched for in the system tier above; alone it is found.
+    let cat = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "猫")
+        .unwrap();
+    assert!(fonts.is_system_fallback_font(cat));
 }
 
 #[test]
@@ -169,6 +205,31 @@ fn a_character_no_system_font_has_is_searched_for_once() {
         .unwrap();
     assert_eq!(second, first);
     assert_eq!(fonts.system_fallback_scans(), 1);
+}
+
+#[test]
+fn a_system_family_is_read_once_for_its_coverage() {
+    let mut fonts = manager();
+    fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "猫한")
+        .unwrap();
+    let reads = fonts.system_fallback_family_reads();
+    assert_eq!(reads, 2, "both test families were read once");
+
+    // A new character no font has scans the tier again, from memory.
+    fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "犬희")
+        .unwrap();
+    assert_eq!(fonts.system_fallback_scans(), 2);
+    assert_eq!(fonts.system_fallback_family_reads(), reads);
+}
+
+#[test]
+fn a_manager_with_the_host_fonts_first_says_so_on_any_host() {
+    #[cfg(feature = "system-fonts")]
+    assert_eq!(FontManager::new().system_fonts(), SystemFonts::First);
+    #[cfg(not(feature = "system-fonts"))]
+    assert_eq!(FontManager::new().system_fonts(), SystemFonts::Off);
 }
 
 #[test]

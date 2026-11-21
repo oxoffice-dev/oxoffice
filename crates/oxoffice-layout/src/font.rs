@@ -677,6 +677,50 @@ static FILE_FONT_CACHE: OnceLock<Mutex<FileFontCache>> = OnceLock::new();
 #[cfg(feature = "system-fonts")]
 static HOST_FONT_DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
 
+/// Codepoint coverage of host faces already read, by file and face index.
+#[cfg(feature = "system-fonts")]
+type HostCoverage = HashMap<(PathBuf, u32), Arc<[(u32, u32)]>>;
+
+#[cfg(feature = "system-fonts")]
+static HOST_FAMILY_COVERAGE: OnceLock<Mutex<HostCoverage>> = OnceLock::new();
+
+#[cfg(feature = "system-fonts")]
+fn host_family_coverage() -> std::sync::MutexGuard<'static, HostCoverage> {
+    HOST_FAMILY_COVERAGE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The Unicode codepoints a face maps, as sorted inclusive ranges.
+fn coverage_ranges(face: &ttf_parser::Face<'_>) -> Arc<[(u32, u32)]> {
+    let mut codepoints = Vec::new();
+    if let Some(cmap) = face.tables().cmap {
+        for subtable in cmap.subtables {
+            if subtable.is_unicode() {
+                subtable.codepoints(|codepoint| codepoints.push(codepoint));
+            }
+        }
+    }
+    codepoints.sort_unstable();
+    codepoints.dedup();
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    for codepoint in codepoints {
+        match ranges.last_mut() {
+            Some((_, end)) if *end + 1 == codepoint => *end = codepoint,
+            _ => ranges.push((codepoint, codepoint)),
+        }
+    }
+    ranges.into()
+}
+
+/// Whether sorted coverage ranges hold `ch`.
+fn range_covers(ranges: &[(u32, u32)], ch: char) -> bool {
+    let codepoint = ch as u32;
+    let index = ranges.partition_point(|(start, _)| *start <= codepoint);
+    index > 0 && ranges[index - 1].1 >= codepoint
+}
+
 /// The host's font faces, scanned once per process: face records only,
 /// whose bytes are read when a face is loaded.
 #[cfg(feature = "system-fonts")]
@@ -919,6 +963,13 @@ pub struct FontManager {
     system_misses: HashSet<char>,
     /// Full scans of the system tier's families so far.
     system_scans: usize,
+    /// System families whose bytes were read to learn their coverage.
+    system_family_reads: usize,
+    /// Coverage of the fixed fallback families, by family (the host's are
+    /// shared by the whole process, see [`HOST_FAMILY_COVERAGE`]).
+    fixed_family_coverage: HashMap<String, Arc<[(u32, u32)]>>,
+    /// Built with the host's fonts first ([`FontManager::new`]).
+    system_first: bool,
 }
 
 /// How a font manager reaches the host's fonts.
@@ -1089,6 +1140,9 @@ impl FontManager {
             system_fallback: SystemFallback::None,
             system_misses: HashSet::new(),
             system_scans: 0,
+            system_family_reads: 0,
+            fixed_family_coverage: HashMap::new(),
+            system_first: false,
         }
     }
 
@@ -1106,7 +1160,9 @@ impl FontManager {
                 }
                 db
             });
-            Self::from_base_database(db.clone())
+            let mut manager = Self::from_base_database(db.clone());
+            manager.system_first = true;
+            manager
         }
 
         #[cfg(not(feature = "system-fonts"))]
@@ -1173,7 +1229,7 @@ impl FontManager {
                 SystemFonts::Unavailable
             }
             SystemFallback::Pending(_) | SystemFallback::Open(_) => SystemFonts::Fallback,
-            SystemFallback::None if self.has_host_faces() => SystemFonts::First,
+            SystemFallback::None if self.system_first => SystemFonts::First,
             SystemFallback::None => SystemFonts::Off,
         }
     }
@@ -1187,13 +1243,6 @@ impl FontManager {
         }
     }
 
-    /// Whether the font database holds faces discovered on the host.
-    fn has_host_faces(&self) -> bool {
-        self.base_db
-            .faces()
-            .any(|face| !matches!(face.source, fontdb::Source::Binary(_)))
-    }
-
     /// Whether the system tier of [`SystemFonts::Fallback`] has been scanned.
     #[doc(hidden)]
     pub fn system_fallback_opened(&self) -> bool {
@@ -1205,6 +1254,12 @@ impl FontManager {
     #[doc(hidden)]
     pub fn system_fallback_scans(&self) -> usize {
         self.system_scans
+    }
+
+    /// How many system families have had their bytes read for coverage.
+    #[doc(hidden)]
+    pub fn system_fallback_family_reads(&self) -> usize {
+        self.system_family_reads
     }
 
     /// Whether `font_id` is a system font the glyph-coverage fallback chose
@@ -2037,8 +2092,16 @@ impl FontManager {
         if missing.is_empty() {
             return Ok(primary);
         }
+        // A system font takes the whole run only when no bundled face draws
+        // any of it. Otherwise the run keeps a bundled face, and the
+        // multilingual layout gives the graphemes it lacks a font of their own
+        // (see `font_for_multilingual_span`), so text the bundled fonts draw is
+        // the same on every machine.
+        let primary_draws_some = text
+            .chars()
+            .any(|ch| !ch.is_whitespace() && !ch.is_control() && !missing.contains(&ch));
 
-        match self.font_covering(&missing, bold, italic) {
+        match self.font_covering_run(&missing, bold, italic, !primary_draws_some) {
             // Nothing installed can draw it. Keep the original font so the
             // text still occupies the right space.
             None => Ok(primary),
@@ -2422,6 +2485,19 @@ impl FontManager {
     /// characters shared with Chinese and not the simplified-only ones, so it
     /// would look like a fix and still leave gaps.
     fn font_covering(&mut self, missing: &[char], bold: bool, italic: bool) -> Option<FontId> {
+        self.font_covering_run(missing, bold, italic, true)
+    }
+
+    /// [`Self::font_covering`] for a run whose other characters the primary
+    /// face draws unless `primary_draws_none`: the system tier is then left
+    /// out unless no bundled face has any of `missing`.
+    fn font_covering_run(
+        &mut self,
+        missing: &[char],
+        bold: bool,
+        italic: bool,
+        primary_draws_none: bool,
+    ) -> Option<FontId> {
         if missing.iter().all(|ch| self.coverage_misses.contains(ch)) {
             return None;
         }
@@ -2440,10 +2516,16 @@ impl FontManager {
             return Some(id);
         }
         let first_tier_lacks_some = missing.iter().any(|ch| !covered.contains(ch));
+        let first_tier_draws_none = primary_draws_none && covered.is_empty();
+        let mut system_skipped = false;
         if first_tier_lacks_some && !matches!(self.system_fallback, SystemFallback::None) {
-            self.open_system_fallback();
-            if let Some(id) = self.system_coverage_pass(missing, bold, italic, &mut best) {
-                return Some(id);
+            if first_tier_draws_none {
+                self.open_system_fallback();
+                if let Some(id) = self.system_coverage_pass(missing, bold, italic, &mut best) {
+                    return Some(id);
+                }
+            } else {
+                system_skipped = true;
             }
         }
 
@@ -2455,7 +2537,11 @@ impl FontManager {
                 Some(id)
             }
             None => {
-                self.remember_coverage_misses(missing);
+                // A character the system tier was not asked for may still
+                // be found there for a grapheme of its own.
+                if !system_skipped {
+                    self.remember_coverage_misses(missing);
+                }
                 None
             }
         }
@@ -2591,16 +2677,12 @@ impl FontManager {
         let mut found = HashSet::new();
         let mut best_family: Option<(usize, String)> = None;
         for (name, db_id) in families {
-            let mut scratch = HashMap::new();
-            let Some((data, face_index)) = font_data_for_face(&self.db, db_id, &mut scratch) else {
-                continue;
-            };
-            let Ok(face) = ttf_parser::Face::parse(&data, face_index) else {
+            let Some(coverage) = self.family_coverage(&name, db_id) else {
                 continue;
             };
             let mut covered = 0;
             for &ch in missing {
-                if face.glyph_index(ch).is_some() {
+                if range_covers(&coverage, ch) {
                     covered += 1;
                     found.insert(ch);
                 }
@@ -2644,6 +2726,42 @@ impl FontManager {
             *best = Some((loaded, idx));
         }
         None
+    }
+
+    /// The codepoints a system family's first face maps, read from its bytes
+    /// once and kept: the host's for the whole process, keyed by file and
+    /// face, the fixed fallback fonts' by this manager.
+    fn family_coverage(&mut self, name: &str, db_id: fontdb::ID) -> Option<Arc<[(u32, u32)]>> {
+        #[cfg(feature = "system-fonts")]
+        let file_key = {
+            let face = self.db.face(db_id)?;
+            match &face.source {
+                fontdb::Source::File(path) => Some((path.clone(), face.index)),
+                _ => None,
+            }
+        };
+        #[cfg(feature = "system-fonts")]
+        if let Some(key) = &file_key
+            && let Some(coverage) = host_family_coverage().get(key)
+        {
+            return Some(Arc::clone(coverage));
+        }
+        if let Some(coverage) = self.fixed_family_coverage.get(name) {
+            return Some(Arc::clone(coverage));
+        }
+
+        self.system_family_reads += 1;
+        let (data, face_index) = font_data_for_face(&self.db, db_id, &mut HashMap::new())?;
+        let face = ttf_parser::Face::parse(&data, face_index).ok()?;
+        let coverage = coverage_ranges(&face);
+        #[cfg(feature = "system-fonts")]
+        if let Some(key) = file_key {
+            host_family_coverage().insert(key, Arc::clone(&coverage));
+            return Some(coverage);
+        }
+        self.fixed_family_coverage
+            .insert(name.to_owned(), Arc::clone(&coverage));
+        Some(coverage)
     }
 
     /// Index into `fonts` for a FontId.
