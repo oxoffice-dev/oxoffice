@@ -901,6 +901,69 @@ fn headers_and_footers_with_page_numbers_are_drawn_on_every_page() {
     }
 }
 
+// A page field whose page value is wider or narrower than its stored result
+// keeps a right-aligned header on the margin and a centred one centred: the
+// line moves by the change, as Word draws it (the Word thesis' running
+// header, right-aligned STYLEREF fields, ends at its margin on every page).
+#[test]
+fn a_right_aligned_or_centred_header_stays_aligned_with_its_page_value() {
+    for (jc, edge) in [("right", 540.0), ("center", 306.0)] {
+        let paragraphs: Vec<String> = (1..=12).map(|page| format!("Body {page}")).collect();
+        let paragraphs: Vec<&str> = paragraphs.iter().map(String::as_str).collect();
+        let mut doc = doc_with(&paragraphs);
+        for index in 1..12 {
+            doc.paragraph_mut(index)
+                .unwrap()
+                .set_page_break_before(true);
+        }
+        doc.set_header("Page ");
+        let header = first_paragraph_of(&doc, StoryKind::Header);
+        let position = StoryRunPosition {
+            location: header,
+            run_index: 1,
+        };
+        doc.insert_field(&position, Field::new("PAGE", "5"))
+            .unwrap();
+        // The facade sets no alignment on a header paragraph: write it.
+        let bytes = doc.to_bytes().unwrap();
+        let mut package = oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+        let headers: Vec<String> = (1..=3)
+            .map(|index| format!("/word/header{index}.xml"))
+            .filter(|name| package.contains_part(name))
+            .collect();
+        assert!(!headers.is_empty());
+        for part in headers {
+            let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+            // The paragraph tag may carry namespace declarations.
+            let tag = xml
+                .match_indices("<w:p")
+                .map(|(at, _)| at)
+                .find(|at| matches!(xml.as_bytes()[at + 4], b' ' | b'>'))
+                .expect("a header paragraph");
+            let end = tag + xml[tag..].find('>').unwrap() + 1;
+            let xml = format!(
+                r#"{}<w:pPr><w:jc w:val="{jc}"/></w:pPr>{}"#,
+                &xml[..end],
+                &xml[end..]
+            );
+            package.set_part(&part, xml.into_bytes());
+        }
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let pdf = pdf_of(&Document::from_bytes(&out.into_inner()).unwrap());
+        assert_eq!(pdf.page_count(), 12);
+        for page in [0, 11] {
+            let header = &lines(&pdf.drawn(page))[0];
+            assert_eq!(header.text, format!("Page {}", page + 1));
+            let at = match jc {
+                "right" => header.right,
+                _ => (header.left + header.right) / 2.0,
+            };
+            assert!((at - edge).abs() < 0.5, "{jc}, page {page}: {header:?}");
+        }
+    }
+}
+
 #[test]
 fn a_first_page_header_replaces_the_header_on_the_first_page_only() {
     let mut doc = doc_with(&["Cover", "Content"]);

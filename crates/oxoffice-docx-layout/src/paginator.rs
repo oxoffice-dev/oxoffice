@@ -6012,6 +6012,48 @@ fn tab_aligned_fields(items: &[LineItem]) -> Vec<Option<TabAlignedField>> {
     fields
 }
 
+/// Marks the fields of a right-aligned or centred line, which has no tab
+/// that aligns them already, as aligned text: the whole line, which moves
+/// back by all (right) or half (centred) of the change in width its fields
+/// make once they hold their page's value, so that a header such as a right
+/// aligned STYLEREF still ends at the margin. It moves back no further than
+/// the room the alignment left before the text.
+fn paragraph_aligned_fields(
+    mut fields: Vec<Option<TabAlignedField>>,
+    items: &[LineItem],
+    jc: Option<Align>,
+    remaining_width: f64,
+) -> Vec<Option<TabAlignedField>> {
+    let (shift, gap) = match jc {
+        Some(Align::End) => (1.0, remaining_width),
+        Some(Align::Center) => (0.5, remaining_width / 2.0),
+        _ => return fields,
+    };
+    if items
+        .iter()
+        .any(|item| matches!(item, LineItem::Tab { .. }))
+    {
+        return fields;
+    }
+    let end = items.iter().map(LineItem::width).sum::<f64>();
+    for (field, item) in fields.iter_mut().zip(items) {
+        let text = match item {
+            LineItem::Text(text) => text,
+            LineItem::MultilingualText(text) if text.uses_legacy_shaping() => text.base(),
+            _ => continue,
+        };
+        if text.field_kind.is_some() || text.field_source.is_some() {
+            *field = Some(TabAlignedField {
+                start: 0.0,
+                end,
+                shift,
+                gap: gap.max(0.0),
+            });
+        }
+    }
+    fields
+}
+
 /// A form field marker: no drawing, only the box a marked item drew on its
 /// line. The engine's numbering pass gathers what lies wholly inside it
 /// into the field's fragment, whose widget takes `band` when there is one.
@@ -6212,7 +6254,12 @@ fn render_paragraph_lines(
 
         let mut x = x_offset - hanging_left;
         let mut _accumulated_extra = 0.0;
-        let tab_aligned = tab_aligned_fields(&line.items);
+        let tab_aligned = paragraph_aligned_fields(
+            tab_aligned_fields(&line.items),
+            &line.items,
+            para.jc,
+            remaining_width,
+        );
         // Each marked item gets a marker over the box it drew, which is what
         // its field gathers. A line that draws one form field only gives the
         // widget its whole text band, from where this line starts (a first
