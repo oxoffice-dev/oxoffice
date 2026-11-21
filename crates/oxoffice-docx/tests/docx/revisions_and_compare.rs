@@ -4538,6 +4538,7 @@ fn a_heading_added_to_a_word_2019_file_with_rebuilt_contents_is_compared() {
     original.rebuild_toc().unwrap();
     let mut original = reopen(&mut original);
     let mut edited = reopen(&mut original);
+    let original_texts = texts(&original);
     let original = with_part(&mut original, "document.xml", |xml| {
         xml.replacen(
             "<w:document ",
@@ -4550,7 +4551,10 @@ fn a_heading_added_to_a_word_2019_file_with_rebuilt_contents_is_compared() {
     edited.rebuild_toc().unwrap();
     let edited = reopen(&mut edited);
     let mut doc = redline(original, &edited);
-    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(field_instructions(&copy), field_instructions(&edited));
+    assert_eq!(texts(&rejected(&mut doc)), original_texts);
 }
 
 #[test]
