@@ -162,7 +162,8 @@ pub use paragraph::{
     Alignment, BorderStyle, DropCap, FrameAnchor, FrameWrap, HyperlinkItemRef, HyperlinkRef,
     Paragraph, ParagraphBorderEdge, ParagraphBorderRef, ParagraphFrame, ParagraphItemRef,
     ParagraphMark, ParagraphMarkRef, ParagraphRef, ParagraphTextAlignment, ParagraphTextDirection,
-    SectionBreak, TabAlignment, TabLeader, TabStopRef, TextboxTightWrap, auto_line_spacing,
+    SectionBreak, TabAlignment, TabLeader, TabStopRef, TextSpan, TextboxTightWrap,
+    auto_line_spacing,
 };
 pub use redaction::RedactionReport;
 pub use revision::{RevisionKind, RevisionRef, StoryRevision};

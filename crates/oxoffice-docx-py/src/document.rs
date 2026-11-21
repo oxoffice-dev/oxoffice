@@ -15185,6 +15185,54 @@ impl PyDocument {
         .map_err(|error| docx_to_pyerr(py, error))
     }
 
+    /// Split runs so that `span`, from `Paragraph.find_text`, covers whole
+    /// runs, and return the indexes `(first, last)` of those runs, the last
+    /// excluded, as `Paragraph.runs` counts them. The text does not change,
+    /// and a tab, a break or another text-free item right before or right
+    /// after the span stays out of those runs, so formatting them or setting
+    /// their text leaves it alone.
+    /// A paragraph of the body, a table cell, a header, a footer, a note or a
+    /// comment is accepted. A change stales the document's earlier handles,
+    /// the paragraphs of other spans included: find the next span after.
+    fn isolate_span(
+        slf: Py<Self>,
+        py: Python<'_>,
+        span: PyRef<'_, crate::paragraph::PyTextSpan>,
+    ) -> PyResult<(usize, usize)> {
+        let paragraph = span.paragraph.bind(py).borrow();
+        if !paragraph.belongs_to(py, &slf) {
+            return Err(PyValueError::new_err(
+                "span belongs to a different document",
+            ));
+        }
+        let location = paragraph.validate(py)?;
+        let mut document = slf.borrow_mut(py);
+        let run_count = |document: &oxoffice_docx::Document| {
+            location.read(document, |paragraph| paragraph.run_count())
+        };
+        let before = run_count(&document.inner).map_err(|error| docx_to_pyerr(py, error))?;
+        let mut candidate = document.inner.clone_for_staging();
+        let runs = location
+            .edit(&mut candidate, |paragraph| {
+                paragraph.isolate_span(oxoffice_docx::TextSpan {
+                    start: span.start,
+                    end: span.end,
+                })
+            })
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        if run_count(&candidate).map_err(|error| docx_to_pyerr(py, error))? != before {
+            let prepared = document.prepare_word_revision(
+                py,
+                &candidate,
+                "Document.isolate_span",
+                crate::document::WordPublication::Conservative,
+            )?;
+            document.commit_word_revision(prepared)?;
+            document.install_inner(candidate);
+        }
+        Ok((runs.start, runs.end))
+    }
+
     fn split_run(
         slf: Py<Self>,
         py: Python<'_>,

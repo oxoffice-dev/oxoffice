@@ -862,23 +862,16 @@ impl CT_Revision {
         Ok(true)
     }
 
-    pub(crate) fn split_accepted_run_segments(
-        &mut self,
-        path: &[AcceptedRunPathSegment],
-        offset: usize,
-    ) -> crate::Result<bool> {
-        self.split_accepted_run_segments_in(path, offset, None, None)
-    }
-
     pub(crate) fn split_accepted_run_segments_in(
         &mut self,
         path: &[AcceptedRunPathSegment],
         offset: usize,
         work: Option<&mut crate::text::WordOperationWork>,
         emission: Option<&crate::text::FieldXmlEmission>,
+        edge: crate::text::SplitEdge,
     ) -> crate::Result<bool> {
         self.edit_accepted_paragraph_in(work, emission, |paragraph, work| {
-            paragraph.split_accepted_run_segments_in(path, offset, work, emission)
+            paragraph.split_accepted_run_segments_in(path, offset, work, emission, edge)
         })
     }
 

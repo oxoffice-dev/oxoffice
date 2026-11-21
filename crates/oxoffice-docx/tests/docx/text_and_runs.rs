@@ -975,3 +975,452 @@ fn replace_all_rewrites_a_placeholder_found_only_in_a_text_box_fallback() {
         "no private marker is left"
     );
 }
+
+// ---- Find and isolate a span ----
+
+/// The paragraph of the corpus report of `producer` that starts with `prefix`,
+/// by its index in `Document::paragraphs`.
+fn paragraph_starting(doc: &Document, prefix: &str) -> usize {
+    doc.paragraphs()
+        .iter()
+        .position(|paragraph| paragraph.text().starts_with(prefix))
+        .unwrap_or_else(|| panic!("no paragraph starting with {prefix:?}"))
+}
+
+/// Whether each character of the literal run text of paragraph `index` is
+/// bold by direct formatting.
+fn bold_characters(doc: &Document, index: usize) -> Vec<bool> {
+    let paragraph = doc.paragraph(index).unwrap();
+    (0..paragraph.run_count())
+        .flat_map(|run| {
+            let run = paragraph.run(run).unwrap();
+            let bold = run.bold_value() == Some(true);
+            run.text().chars().map(move |_| bold).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn runs_text(doc: &Document, index: usize, runs: std::ops::Range<usize>) -> String {
+    let paragraph = doc.paragraph(index).unwrap();
+    runs.map(|run| paragraph.run(run).unwrap().text()).collect()
+}
+
+#[test]
+fn find_text_gives_the_span_of_the_chosen_match_in_the_paragraph() {
+    for producer in ["word", "google"] {
+        let doc = corpus_doc(&format!("{producer}/report.docx"));
+        let index = paragraph_starting(&doc, "Summary. Revenue grew");
+        let paragraph = doc.paragraph(index).unwrap();
+        let text = paragraph.text();
+        let span = paragraph.find_text("the", 0).expect("a first match");
+        let chars = text.chars().collect::<Vec<_>>();
+        assert_eq!(
+            chars[span.start..span.end].iter().collect::<String>(),
+            "the",
+            "{producer}"
+        );
+        let second = paragraph.find_text("the", 1).expect("a second match");
+        assert!(
+            second.start >= span.end,
+            "{producer}: matches do not overlap"
+        );
+        assert_eq!(paragraph.find_text("not in the paragraph", 0), None);
+        assert_eq!(paragraph.find_text("", 0), None, "{producer}");
+        assert_eq!(paragraph.find_text("the", 99), None, "{producer}");
+    }
+}
+
+#[test]
+fn isolate_span_makes_the_span_whole_runs_that_can_be_formatted() {
+    for producer in ["word", "google"] {
+        let mut doc = corpus_doc(&format!("{producer}/report.docx"));
+        let index = paragraph_starting(&doc, "Summary. Revenue grew");
+        let before = doc.paragraph(index).unwrap().text();
+        let was_bold = bold_characters(&doc, index);
+        let span = doc
+            .paragraph(index)
+            .unwrap()
+            .find_text("grew by 12 %", 0)
+            .unwrap();
+        let runs = doc
+            .paragraph_mut(index)
+            .unwrap()
+            .isolate_span(span)
+            .unwrap();
+        assert_eq!(
+            runs_text(&doc, index, runs.clone()),
+            "grew by 12 %",
+            "{producer}"
+        );
+        assert_eq!(doc.paragraph(index).unwrap().text(), before, "{producer}");
+        for run in runs.clone() {
+            doc.paragraph_mut(index)
+                .unwrap()
+                .run_mut(run)
+                .unwrap()
+                .set_bold(true);
+        }
+        let doc = reopen(&mut doc);
+        let paragraph = doc.paragraph(index).unwrap();
+        assert_eq!(paragraph.text(), before, "{producer}");
+        let expected = was_bold
+            .iter()
+            .enumerate()
+            .map(|(at, bold)| *bold || (span.start..span.end).contains(&at))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bold_characters(&doc, index),
+            expected,
+            "{producer}: the span is bold, the rest as it was"
+        );
+    }
+}
+
+#[test]
+fn isolate_span_splits_runs_inside_an_insertion_and_an_inline_control() {
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">say AC</w:t></w:r><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">ME now</w:t></w:r></w:ins></w:p><w:p><w:r><w:t xml:space="preserve">say AC</w:t></w:r><w:sdt><w:sdtContent><w:r><w:t xml:space="preserve">ME now</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
+    for index in [0, 1] {
+        let mut doc = doc_with_body(body);
+        let before = doc.paragraph(index).unwrap().text();
+        let span = doc.paragraph(index).unwrap().find_text("ACME", 0).unwrap();
+        assert_eq!((span.start, span.end), (4, 8));
+        let runs = doc
+            .paragraph_mut(index)
+            .unwrap()
+            .isolate_span(span)
+            .unwrap();
+        assert_eq!(
+            runs.len(),
+            2,
+            "paragraph {index}: one run each side of the edge"
+        );
+        assert_eq!(runs_text(&doc, index, runs), "ACME", "paragraph {index}");
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.paragraph(index).unwrap().text(),
+            before,
+            "paragraph {index}"
+        );
+    }
+}
+
+#[test]
+fn find_text_does_not_search_a_simple_field_result() {
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">by </w:t></w:r><w:fldSimple w:instr=" AUTHOR "><w:r><w:t>Ann</w:t></w:r></w:fldSimple></w:p>"#;
+    let doc = doc_with_body(body);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        paragraph.text(),
+        "by Ann",
+        "Paragraph::text shows the result"
+    );
+    assert_eq!(paragraph.find_text("Ann", 0), None);
+}
+
+#[test]
+fn isolating_an_empty_or_outside_span_is_refused_and_changes_nothing() {
+    let mut doc = doc_with(&["alpha beta"]);
+    let before = doc.to_bytes().unwrap();
+    for (start, end) in [(3, 3), (5, 40), (40, 41)] {
+        assert!(
+            doc.paragraph_mut(0)
+                .unwrap()
+                .isolate_span(oxoffice_docx::TextSpan { start, end })
+                .is_err(),
+            "{start}..{end}"
+        );
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn find_text_never_crosses_a_tab_or_a_complex_field_result() {
+    let body = r#"<w:p><w:r><w:t>Total:</w:t><w:tab/><w:t>100</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> end</w:t></w:r></w:p>"#;
+    let doc = doc_with_body(body);
+    let total = doc.paragraph(0).unwrap();
+    assert_eq!(total.find_text("Total:100", 0), None, "across the tab");
+    assert_eq!(
+        total.find_text("100", 0).map(|span| (span.start, span.end)),
+        Some((6, 9))
+    );
+    let page = doc.paragraph(1).unwrap();
+    assert_eq!(
+        page.text(),
+        "Page 1 end",
+        "Paragraph::text shows the result"
+    );
+    assert_eq!(
+        page.find_text("Page 1", 0),
+        None,
+        "the result is not searched"
+    );
+    assert_eq!(page.find_text("Page  end", 0), None, "nor crossed");
+    assert!(page.find_text("Page", 0).is_some());
+}
+
+#[test]
+fn isolate_span_across_runs_of_different_formatting_keeps_each_one() {
+    for producer in ["word", "google"] {
+        let mut doc = corpus_doc(&format!("{producer}/report.docx"));
+        let index = paragraph_starting(&doc, "Summary. Revenue grew");
+        let before = doc.paragraph(index).unwrap().text();
+        let was_bold = bold_characters(&doc, index);
+        assert_ne!(
+            was_bold[0], was_bold[10],
+            "{producer}: the span starts bold and ends plain"
+        );
+        let span = doc
+            .paragraph(index)
+            .unwrap()
+            .find_text("Summary. Revenue", 0)
+            .unwrap();
+        let runs = doc
+            .paragraph_mut(index)
+            .unwrap()
+            .isolate_span(span)
+            .unwrap();
+        assert!(runs.len() >= 2, "{producer}: {runs:?}");
+        assert_eq!(
+            runs_text(&doc, index, runs),
+            "Summary. Revenue",
+            "{producer}"
+        );
+        let doc = reopen(&mut doc);
+        assert_eq!(doc.paragraph(index).unwrap().text(), before, "{producer}");
+        assert_eq!(bold_characters(&doc, index), was_bold, "{producer}");
+    }
+}
+
+#[test]
+fn isolate_span_keeps_the_insertion_and_the_control_around_their_runs() {
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">say AC</w:t></w:r><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">ME now</w:t></w:r></w:ins></w:p><w:p><w:r><w:t xml:space="preserve">say AC</w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="probe"/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">ME now</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
+    let mut doc = doc_with_body(body);
+    for index in [0, 1] {
+        let span = doc.paragraph(index).unwrap().find_text("ACME", 0).unwrap();
+        doc.paragraph_mut(index)
+            .unwrap()
+            .isolate_span(span)
+            .unwrap();
+    }
+    let doc = reopen(&mut doc);
+    let insertions = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| revision.text().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(insertions, ["ME now"], "one insertion, all its text");
+    let controls = doc
+        .content_controls()
+        .iter()
+        .map(|control| control.text())
+        .collect::<Vec<_>>();
+    assert_eq!(controls, ["ME now"], "one control, all its text");
+}
+
+#[test]
+fn isolate_span_leaves_a_tab_before_and_a_break_after_the_span_outside_its_runs() {
+    let body = r#"<w:p><w:r><w:t>Name:</w:t><w:tab/><w:t>John Smith</w:t><w:br/><w:t>signed</w:t></w:r></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let span = doc
+        .paragraph(0)
+        .unwrap()
+        .find_text("John Smith", 0)
+        .unwrap();
+    assert_eq!((span.start, span.end), (5, 15), "the tab has no width");
+    let runs = doc.paragraph_mut(0).unwrap().isolate_span(span).unwrap();
+    assert_eq!(runs_text(&doc, 0, runs.clone()), "John Smith");
+    for run in runs.clone() {
+        doc.paragraph_mut(0)
+            .unwrap()
+            .run_mut(run)
+            .unwrap()
+            .set_bold(true);
+    }
+    let mut doc = reopen(&mut doc);
+    let formatted = doc
+        .paragraph(0)
+        .unwrap()
+        .runs()
+        .map(|run| (run.text(), run.bold_value() == Some(true)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        formatted,
+        [
+            ("Name:\t".to_owned(), false),
+            ("John Smith".to_owned(), true),
+            ("\nsigned".to_owned(), false),
+        ],
+        "the bold leaves the tab and the break alone"
+    );
+    doc.paragraph_mut(0)
+        .unwrap()
+        .run_mut(runs.start)
+        .unwrap()
+        .set_text("Jane Doe");
+    assert_eq!(
+        doc.paragraph(0).unwrap().text(),
+        "Name:\tJane Doe\nsigned",
+        "new text in the span keeps the tab and the break"
+    );
+}
+
+#[test]
+fn a_match_refused_at_a_tab_does_not_hide_the_next_one() {
+    let doc = doc_with_body(r#"<w:p><w:r><w:t>a</w:t><w:tab/><w:t>aa</w:t></w:r></w:p>"#);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(
+        paragraph
+            .find_text("aa", 0)
+            .map(|span| (span.start, span.end)),
+        Some((1, 3))
+    );
+    assert_eq!(paragraph.find_text("aa", 1), None);
+}
+
+#[test]
+fn find_text_never_crosses_a_picture_or_an_object_kept_as_raw_xml() {
+    let body = r#"<w:p><w:r><w:t>left</w:t><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:10pt;height:10pt"/></w:pict><w:t>right</w:t></w:r></w:p><w:p><w:r><w:t>Total</w:t><w:lastRenderedPageBreak/><w:t xml:space="preserve"> due</w:t></w:r></w:p>"#;
+    let doc = doc_with_body(body);
+    let picture = doc.paragraph(0).unwrap();
+    assert_eq!(
+        picture.find_text("leftright", 0),
+        None,
+        "across the picture"
+    );
+    assert_eq!(
+        picture
+            .find_text("right", 0)
+            .map(|span| (span.start, span.end)),
+        Some((4, 9))
+    );
+    assert!(
+        doc.paragraph(1)
+            .unwrap()
+            .find_text("Total due", 0)
+            .is_some(),
+        "a last rendered page break shows nothing"
+    );
+}
+
+#[test]
+fn isolate_span_leaves_a_tab_starting_its_run_and_a_break_ending_it_outside() {
+    // Word often starts a run with the tab that comes before its text.
+    let body = r#"<w:p><w:r><w:t>Name:</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:tab/><w:t>John Smith</w:t><w:br/></w:r><w:r><w:t>signed</w:t></w:r></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let span = doc
+        .paragraph(0)
+        .unwrap()
+        .find_text("John Smith", 0)
+        .unwrap();
+    let runs = doc.paragraph_mut(0).unwrap().isolate_span(span).unwrap();
+    assert_eq!(runs_text(&doc, 0, runs.clone()), "John Smith");
+    doc.paragraph_mut(0)
+        .unwrap()
+        .run_mut(runs.start)
+        .unwrap()
+        .set_text("Jane Doe");
+    let doc = reopen(&mut doc);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(paragraph.text(), "Name:\tJane Doe\nsigned");
+    let formatted = paragraph
+        .runs()
+        .map(|run| (run.text(), run.italic_value() == Some(true)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        formatted,
+        [
+            ("Name:".to_owned(), false),
+            ("\t".to_owned(), true),
+            ("Jane Doe".to_owned(), true),
+            ("\n".to_owned(), true),
+            ("signed".to_owned(), false),
+        ],
+        "each piece of the italic run keeps its formatting"
+    );
+}
+
+#[test]
+fn isolate_span_does_not_split_off_what_shows_nothing() {
+    let body = r#"<w:p><w:r><w:lastRenderedPageBreak/><w:t>John</w:t></w:r><w:r><w:t xml:space="preserve"> and </w:t></w:r><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:10pt;height:10pt"/></w:pict><w:t>Ann</w:t></w:r></w:p>"#;
+    let mut doc = doc_with_body(body);
+    let john = doc.paragraph(0).unwrap().find_text("John", 0).unwrap();
+    let runs = doc.paragraph_mut(0).unwrap().isolate_span(john).unwrap();
+    assert_eq!(runs, 0..1, "the page break mark stays in the run");
+    let ann = doc.paragraph(0).unwrap().find_text("Ann", 0).unwrap();
+    let runs = doc.paragraph_mut(0).unwrap().isolate_span(ann).unwrap();
+    assert_eq!(runs, 3..4, "the picture goes to a run of its own");
+    assert_eq!(runs_text(&doc, 0, runs), "Ann");
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(0).unwrap().run_count(), 4);
+    assert_eq!(doc.paragraph(0).unwrap().text(), "John and Ann");
+}
+
+/// The saved XML of the body run whose text element reads exactly `text`.
+fn saved_run_holding(doc: &mut Document, text: &str) -> String {
+    let bytes = doc.to_bytes().unwrap();
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let at = main
+        .find(&format!(">{text}</w:t>"))
+        .unwrap_or_else(|| panic!("no text element {text:?}"));
+    let start = main[..at]
+        .rfind("<w:r>")
+        .or(main[..at].rfind("<w:r "))
+        .unwrap();
+    let end = at + main[at..].find("</w:r>").unwrap();
+    main[start..end].to_owned()
+}
+
+#[test]
+fn isolate_span_leaves_a_picture_between_texts_or_ending_its_run_outside() {
+    let pict = r#"<w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:10pt;height:10pt"/></w:pict>"#;
+    let body = format!(
+        "<w:p><w:r><w:t>left</w:t>{pict}<w:t>right</w:t></w:r></w:p><w:p><w:r><w:t>Ann</w:t>{pict}</w:r></w:p>"
+    );
+    let mut doc = doc_with_body(&body);
+    for (index, word) in [(0, "right"), (1, "Ann")] {
+        let span = doc.paragraph(index).unwrap().find_text(word, 0).unwrap();
+        let runs = doc
+            .paragraph_mut(index)
+            .unwrap()
+            .isolate_span(span)
+            .unwrap();
+        assert_eq!(runs.len(), 1, "{word}");
+        assert_eq!(
+            doc.paragraph(index).unwrap().run_count(),
+            2,
+            "{word}: the picture is in the other run"
+        );
+        assert!(
+            !saved_run_holding(&mut doc, word).contains("w:pict"),
+            "{word}: the picture is outside the span's run"
+        );
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["leftright", "Ann"]);
+}
+
+#[test]
+fn isolate_span_at_the_edges_of_a_run_inside_an_insertion_or_a_control() {
+    let run = r#"<w:r><w:tab/><w:t>John</w:t><w:br/></w:r>"#;
+    let body = format!(
+        r#"<w:p><w:ins w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z">{run}</w:ins></w:p><w:p><w:sdt><w:sdtPr><w:tag w:val="probe"/></w:sdtPr><w:sdtContent>{run}</w:sdtContent></w:sdt></w:p>"#
+    );
+    let mut doc = doc_with_body(&body);
+    for index in [0, 1] {
+        let span = doc.paragraph(index).unwrap().find_text("John", 0).unwrap();
+        let runs = doc
+            .paragraph_mut(index)
+            .unwrap()
+            .isolate_span(span)
+            .unwrap();
+        assert_eq!(runs, 1..2, "paragraph {index}: tab, span, break");
+        assert_eq!(runs_text(&doc, index, runs), "John", "paragraph {index}");
+        assert_eq!(doc.paragraph(index).unwrap().run_count(), 3);
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["\tJohn\n", "\tJohn\n"]);
+    assert_eq!(doc.story_revisions().unwrap().len(), 1, "one insertion");
+    assert_eq!(doc.content_controls().len(), 1, "one control");
+}
