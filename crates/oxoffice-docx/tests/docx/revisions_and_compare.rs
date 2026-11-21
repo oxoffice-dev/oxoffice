@@ -1446,6 +1446,79 @@ fn a_toc_caption_in_a_table_takes_the_original_id_in_the_fallback() {
     assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
 }
 
+#[test]
+fn a_kept_heading_takes_back_its_renumbered_id_in_the_fallback() {
+    // As in the late-heading pair, which forces the fallback, with a Kept
+    // heading that did not change but whose id Word renumbered: it takes
+    // back the original's, and is no change.
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}{}{}",
+            heading_with("A", &[]),
+            heading_with("Old", &[(0, "_Toc1")]),
+            body("Body."),
+            heading_with("Kept", &[(1, "_Toc3")]),
+            body("End."),
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}{}{}",
+        body("New first."),
+        heading_with("A", &[(5, "_Toc11")]),
+        heading_with("New", &[(6, "_Toc12")]),
+        body("Body."),
+        heading_with("Kept", &[(7, "_Toc3")]),
+        body("End."),
+    ));
+    let mut doc = redline(original(), &edited);
+    let changed = revision_texts(&doc, RevisionKind::Insertion)
+        .into_iter()
+        .chain(revision_texts(&doc, RevisionKind::Deletion))
+        .collect::<Vec<_>>();
+    assert!(!changed.iter().any(|text| text == "Kept"), "{changed:?}");
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
+}
+
+#[test]
+fn a_claimed_toc_name_in_a_table_keeps_its_own_id_in_the_fallback() {
+    // Intro is renamed `_Toc2` -> `_Toc1`, but a footnote names `_Toc2`, so
+    // the names fall back; the caption holds `_Toc1`, which the original
+    // gives Intro: it keeps its own id rather than take Intro's.
+    let document = |intro: (u32, &str), caption: Option<u32>, note: bool| {
+        let table = caption.map_or(String::new(), |id| {
+            format!(
+                r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:bookmarkStart w:id="{id}" w:name="_Toc1"/><w:r><w:t>Figure 1</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p></w:tc></w:tr></w:tbl>"#
+            )
+        });
+        let mut doc = doc_with_body(&format!(
+            "{}{table}<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+            heading_with("Intro", &[intro]),
+        ));
+        if note {
+            let at = doc.paragraphs().len() - 1;
+            let location = doc.paragraph_story_location(at).unwrap().unwrap();
+            doc.create_footnote(&location, "See _Toc2.").unwrap();
+        }
+        doc
+    };
+    let mut doc = redline(
+        document((0, "_Toc1"), None, true),
+        &document((1, "_Toc2"), Some(2), true),
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(
+        (texts(&copy), copy.tables().len()),
+        (vec!["Intro".to_owned(), "Body.".to_owned()], 1)
+    );
+    let copy = rejected(&mut doc);
+    assert_eq!(
+        (texts(&copy), copy.tables().len()),
+        (vec!["Intro".to_owned(), "Body.".to_owned()], 0)
+    );
+}
+
 /// The instruction of every field of the body, in order.
 fn field_instructions(doc: &Document) -> Vec<String> {
     let mut instructions = Vec::new();

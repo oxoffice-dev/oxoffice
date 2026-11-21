@@ -5875,11 +5875,13 @@ fn reconcile_body_bookmarks(
                 let custody = name
                     .as_deref()
                     .is_some_and(|name| name.starts_with("_rdocxCmp"));
-                // Without the renames, a generated name no pairing kept may name
-                // another heading of the original: it keeps the edited id.
+                // Without the renames, a body heading's name, or a name a
+                // paired heading claims, may name another heading of the
+                // original unless a pairing kept it: it keeps its own id, or
+                // a fresh one where the original uses that.
                 let unkept = fallback
                     && name.as_deref().is_some_and(|name| {
-                        (seen.contains(name) && !kept.contains(name)) || claimed.contains(name)
+                        (seen.contains(name) || claimed.contains(name)) && !kept.contains(name)
                     });
                 let target = match name
                     .as_deref()
