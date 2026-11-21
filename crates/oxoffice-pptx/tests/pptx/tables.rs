@@ -1146,25 +1146,71 @@ fn a_slide_imported_from_google_slides_brings_its_table_style() {
         .unwrap();
 }
 
-#[test]
-fn the_key_figures_slide_saved_without_edits_keeps_its_bytes() {
-    // Read the slide parts as stored, on both sides: a table child the
-    // parser does not model would be missing from the saved part.
-    fn slide_parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-        let mut parts = Vec::new();
-        for index in 0..zip.len() {
-            let mut entry = zip.by_index(index).unwrap();
-            let name = entry.name().unwrap().into_owned();
-            if name.starts_with("ppt/slides/slide") {
-                let mut data = Vec::new();
-                std::io::Read::read_to_end(&mut entry, &mut data).unwrap();
-                parts.push((name, data));
+/// The table element of the one slide holding a table, as a list of events
+/// in a canonical form: attributes sorted, `<x></x>` the same as `<x/>`,
+/// namespace declarations left out. A lost child, attribute or text changes it;
+/// the order the writer puts attributes in does not.
+fn canonical_table(bytes: &[u8]) -> Vec<String> {
+    use quick_xml::events::Event;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut tables = Vec::new();
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index).unwrap();
+        if !entry.name().unwrap().starts_with("ppt/slides/slide") {
+            continue;
+        }
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xml).unwrap();
+        let (Some(start), Some(end)) = (xml.find("<a:tbl"), xml.find("</a:tbl>")) else {
+            continue;
+        };
+        let mut reader = quick_xml::Reader::from_str(&xml[start..end + "</a:tbl>".len()]);
+        let mut events = Vec::new();
+        loop {
+            let tag = |e: &quick_xml::events::BytesStart<'_>| {
+                let mut attributes: Vec<String> = e
+                    .attributes()
+                    .map(|a| a.unwrap())
+                    .filter(|a| !a.key.as_ref().starts_with(b"xmlns"))
+                    .map(|a| {
+                        format!(
+                            "{}={}",
+                            String::from_utf8_lossy(a.key.as_ref()),
+                            String::from_utf8_lossy(&a.value)
+                        )
+                    })
+                    .collect();
+                attributes.sort();
+                format!(
+                    "<{} {}>",
+                    String::from_utf8_lossy(e.name().as_ref()),
+                    attributes.join(" ")
+                )
+            };
+            match reader.read_event().unwrap() {
+                Event::Start(e) => events.push(tag(&e)),
+                Event::Empty(e) => {
+                    events.push(tag(&e));
+                    events.push(format!("</{}>", String::from_utf8_lossy(e.name().as_ref())));
+                }
+                Event::End(e) => {
+                    events.push(format!("</{}>", String::from_utf8_lossy(e.name().as_ref())))
+                }
+                Event::Text(t) => events.push(String::from_utf8_lossy(&t).into_owned()),
+                Event::Eof => break,
+                _ => {}
             }
         }
-        parts.sort();
-        parts
+        tables.push(events);
     }
+    assert_eq!(tables.len(), 1, "one table in the deck");
+    tables.remove(0)
+}
+
+#[test]
+fn the_key_figures_table_keeps_its_content_when_its_slide_is_edited() {
+    // An unedited slide is saved from its stored bytes, so the title is
+    // edited to make the facade write the slide again from its model.
     for producer in PRODUCERS {
         let path = format!("{producer}/deck.pptx");
         let original = std::fs::read(
@@ -1173,10 +1219,16 @@ fn the_key_figures_slide_saved_without_edits_keeps_its_bytes() {
                 .join(&path),
         )
         .unwrap();
-        let saved = corpus_deck(&path).to_bytes().unwrap();
+        let mut prs = corpus_deck(&path);
+        assert_eq!(
+            prs.replace_text("Key figures", "Key numbers"),
+            1,
+            "{producer}"
+        );
+        let saved = prs.to_bytes().unwrap();
         assert!(
-            slide_parts(&saved) == slide_parts(&original),
-            "{producer}: a slide part changed"
+            canonical_table(&saved) == canonical_table(&original),
+            "{producer}: the table lost or changed content"
         );
     }
 }

@@ -336,6 +336,10 @@ fn notes_keep_unicode_markup_characters_and_spacing_as_typed() {
 fn notes_with_a_windows_line_ending_are_saved_so_that_other_readers_keep_them() {
     let mut prs = blank_deck(1);
     prs.set_notes_text(0, "Windows line\r\nending").unwrap();
+    assert_eq!(
+        reopen(&prs).slide(0).unwrap().notes_text().as_deref(),
+        Some("Windows line\r\nending")
+    );
     let notes = parts_under(&prs, "ppt/notesSlides/");
     assert_eq!(notes.len(), 1);
     let xml = part_xml(&prs, &format!("/{}", notes[0]));
