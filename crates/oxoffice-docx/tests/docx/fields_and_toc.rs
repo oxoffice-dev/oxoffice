@@ -1944,3 +1944,30 @@ fn a_heading_holding_a_field_deleted_in_word_keeps_its_result_in_tracked_navigat
         "Results Q3Results Q3"
     );
 }
+
+#[test]
+fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
+    // Word records a whole deleted heading as its runs in w:del and its
+    // paragraph mark in w:pPr/w:rPr/w:del; a heading whose mark alone is
+    // deleted joins the next paragraph, whose entry it opens.
+    let toc = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:r><w:t>stale</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let deleted_mark =
+        r#"<w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"{toc}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Kept</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:del w:id="8" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Next</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/>{deleted_mark}</w:pPr><w:r><w:t xml:space="preserve">twice </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>tail</w:t></w:r></w:p>"#
+    ));
+    let revisions = doc.revisions().len();
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!(report.entry_count, 3, "{report:?}");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..4],
+        ["Kept\t1", "Next\t1", "Joined twice tail\t1"]
+    );
+    assert_eq!(
+        doc.paragraph(3).unwrap().style_id(),
+        Some("TOC2"),
+        "the joined entry takes the level of the paragraph it joins"
+    );
+    assert_eq!(doc.revisions().len(), revisions, "the revisions stay");
+}
