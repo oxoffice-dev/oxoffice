@@ -3,7 +3,9 @@
 use super::*;
 
 /// A package or presentation invariant that would make a saved deck unsafe.
+/// New checks add variants, so a match needs a wildcard arm.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ValidationIssue {
     DuplicateShapeId {
         slide: usize,
@@ -48,6 +50,14 @@ pub enum ValidationIssue {
     MissingThemeRel {
         master: usize,
     },
+    /// A part that belongs to one slide (its legacy or PowerPoint comments,
+    /// its notes slide) related from more than one slide. PowerPoint repairs
+    /// such a deck and drops the part from all but one slide.
+    SharedSlidePart {
+        part: String,
+        /// The zero-based indices of the slides that relate to it.
+        slides: Vec<usize>,
+    },
     /// One violation at an explicitly supported checked XML grammar frontier.
     InvalidXmlChild {
         part: String,
@@ -58,6 +68,19 @@ pub enum ValidationIssue {
 
 /// One sentence per issue. Slides, masters and shapes are numbered from 1, as
 /// PowerPoint shows them, where the fields hold zero-based indexes.
+impl ValidationIssue {
+    /// Whether the issue is reported without blocking a save or an edit: a
+    /// checked XML grammar finding, or a slide part shared by older decks
+    /// (oxoffice 0.1.0 shared legacy comments after `duplicate_slide`),
+    /// which PowerPoint repairs on open.
+    pub(crate) fn is_report_only(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidXmlChild { .. } | Self::SharedSlidePart { .. }
+        )
+    }
+}
+
 impl std::fmt::Display for ValidationIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -108,6 +131,15 @@ impl std::fmt::Display for ValidationIssue {
             Self::MissingThemeRel { master } => {
                 write!(f, "slide master {} has no theme relationship", master + 1)
             }
+            Self::SharedSlidePart { part, slides } => write!(
+                f,
+                "{part} belongs to one slide but slides {} relate to it",
+                slides
+                    .iter()
+                    .map(|slide| (slide + 1).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::InvalidXmlChild {
                 part,
                 path,
@@ -1172,6 +1204,40 @@ impl Presentation {
             }
         }
 
+        // Comments and notes are per slide: no two slides relate to one part.
+        let mut owners_by_part: Vec<(String, Vec<usize>)> = Vec::new();
+        for (slide_index, slide) in self.slides.iter().enumerate() {
+            let Some(relationships) = self.package.get_part_rels(&slide.part_name) else {
+                continue;
+            };
+            for relationship in &relationships.items {
+                if relationship_is_external(relationship)
+                    || ![
+                        rel_types::COMMENTS,
+                        rel_types::POWERPOINT_COMMENTS,
+                        rel_types::NOTES_SLIDE,
+                    ]
+                    .contains(&relationship.rel_type.as_str())
+                {
+                    continue;
+                }
+                let part = OpcPackage::resolve_rel_target(&slide.part_name, &relationship.target);
+                match owners_by_part
+                    .iter_mut()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(&part))
+                {
+                    Some((_, slides)) if !slides.contains(&slide_index) => slides.push(slide_index),
+                    Some(_) => {}
+                    None => owners_by_part.push((part.to_string(), vec![slide_index])),
+                }
+            }
+        }
+        let shared_slide_parts = owners_by_part
+            .into_iter()
+            .filter(|(_, slides)| slides.len() > 1)
+            .map(|(part, slides)| ValidationIssue::SharedSlidePart { part, slides })
+            .collect::<Vec<_>>();
+
         for (master_index, master) in self.presentation.slide_master_ids.iter().enumerate() {
             let Some(relationship) = presentation_relationships
                 .and_then(|relationships| relationships.get_by_id(&master.relationship_id))
@@ -1240,6 +1306,7 @@ impl Presentation {
             .chain(custom_show_references)
             .chain(missing_layout_relationships)
             .chain(missing_theme_relationships)
+            .chain(shared_slide_parts)
             .chain(invalid_xml)
             .collect()
     }

@@ -150,7 +150,9 @@ impl From<&oxoffice_pptx::ValidationIssue> for PyValidationIssue {
             Issue::CustomShowReference { .. } => "custom_show_reference",
             Issue::MissingLayoutRel { .. } => "missing_layout_rel",
             Issue::MissingThemeRel { .. } => "missing_theme_rel",
+            Issue::SharedSlidePart { .. } => "shared_slide_part",
             Issue::InvalidXmlChild { .. } => "invalid_xml_child",
+            _ => "other",
         };
         Self {
             kind,

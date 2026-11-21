@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::rel_types;
-use oxoffice_pptx::{Comment, CommentAuthor, CommentReply, Error, Presentation};
+use oxoffice_pptx::{Comment, CommentAuthor, CommentReply, Error, Presentation, ValidationIssue};
 
 use crate::support::{corpus_deck, new_deck, reopen, slide_texts};
 
@@ -1380,6 +1380,55 @@ fn a_duplicated_legacy_thread_keeps_its_reply_on_the_copied_parent() {
     assert!(
         copied.contains(r#"parentCm authorId="2" idx="2""#),
         "the reply points at the copied comment: {copied}"
+    );
+}
+
+#[test]
+fn validate_names_a_comment_part_two_slides_share_and_the_deck_still_saves() {
+    // oxoffice 0.1.0 left such decks after duplicate_slide.
+    let prs = deck_with_legacy_comments(2);
+    let mut package = package_of(&prs);
+    package
+        .get_or_create_part_rels("/ppt/slides/slide2.xml")
+        .add(rel_types::COMMENTS, "../comments/comment1.xml");
+    let mut prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
+    let shared = ValidationIssue::SharedSlidePart {
+        part: "/ppt/comments/comment1.xml".to_owned(),
+        slides: vec![0, 1],
+    };
+    assert!(prs.validate().contains(&shared), "{:?}", prs.validate());
+    assert_eq!(
+        shared.to_string(),
+        "/ppt/comments/comment1.xml belongs to one slide but slides 1, 2 relate to it"
+    );
+    // Reported, not blocking: the deck still saves and edits.
+    prs.set_notes_text(0, "kept").unwrap();
+    let reopened = reopen(&prs);
+    assert!(reopened.validate().contains(&shared));
+}
+
+#[test]
+fn validate_names_a_notes_slide_two_slides_share() {
+    let mut prs = blank_deck(2);
+    prs.set_notes_text(0, "Shared notes").unwrap();
+    let mut package = package_of(&prs);
+    let notes = package
+        .get_part_rels("/ppt/slides/slide1.xml")
+        .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
+        .map(|relationship| relationship.target.clone())
+        .expect("slide 1 has notes");
+    package
+        .get_or_create_part_rels("/ppt/slides/slide2.xml")
+        .add(rel_types::NOTES_SLIDE, &notes);
+    let prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
+    assert!(
+        prs.validate().iter().any(|issue| matches!(
+            issue,
+            ValidationIssue::SharedSlidePart { part, slides }
+                if part.starts_with("/ppt/notesSlides/") && slides == &[0, 1]
+        )),
+        "{:?}",
+        prs.validate()
     );
 }
 

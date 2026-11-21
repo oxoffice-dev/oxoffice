@@ -127,7 +127,7 @@ impl Presentation {
         let issues = staged
             .validate()
             .into_iter()
-            .filter(|issue| !matches!(issue, ValidationIssue::InvalidXmlChild { .. }))
+            .filter(|issue| !issue.is_report_only())
             .collect::<Vec<_>>();
         if !issues.is_empty() {
             return Err(Error::InvalidPresentationMutation {
