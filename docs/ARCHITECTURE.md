@@ -6,7 +6,7 @@ the code is organised today. Decisions and their history live in `specs/`.
 
 ## Crates
 
-One workspace, three families.
+One workspace, three families, and one crate of test support.
 
 ```
 crates/
@@ -51,6 +51,10 @@ crates/
   # Entry points
   oxoffice-cli           the `oxoffice` binary
   oxoffice-py            the `oxoffice` Python extension and package
+
+  # Test support (dev-dependency only, never published)
+  oxoffice-render-test   the render tests' shared pieces: a PDF read back,
+                         page hashes, baseline files and the checks
 ```
 
 ## The dependency rule
