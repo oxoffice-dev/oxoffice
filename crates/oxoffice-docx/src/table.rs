@@ -1,6 +1,7 @@
 //! Table — a block-level container for rows and cells of content.
 
 use oxoffice_docx_oxml::borders::CT_BorderEdge;
+use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::drawing::AnchorAlignH;
 use oxoffice_docx_oxml::properties::CT_Shd;
 use oxoffice_docx_oxml::shared::ST_Jc;
@@ -588,7 +589,306 @@ fn checked_table_border(
     })
 }
 
+/// The rows of `table` in document order: its own rows and, at their place
+/// among them, the rows of its row content controls, nested controls
+/// included, in the order the layout reads them. These are the rows
+/// [`TableRef::row`] and [`Table::row`] count.
+fn table_rows(table: &CT_Tbl) -> Vec<&CT_Row> {
+    let mut rows = Vec::with_capacity(table.rows.len());
+    for boundary in 0..=table.rows.len() {
+        for (_, _, control) in table
+            .content_controls
+            .iter()
+            .filter(|(at, _, _)| *at == boundary)
+        {
+            push_control_rows(control, &mut rows);
+        }
+        if let Some(row) = table.rows.get(boundary) {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+fn push_control_rows<'a>(control: &'a CT_Sdt, rows: &mut Vec<&'a CT_Row>) {
+    for content in &control.content {
+        match content {
+            SdtContent::Row(row) => rows.push(row),
+            SdtContent::ContentControl(nested) => push_control_rows(nested, rows),
+            _ => {}
+        }
+    }
+}
+
+/// [`table_rows`], mutable.
+fn table_rows_mut(table: &mut CT_Tbl) -> Vec<&mut CT_Row> {
+    let CT_Tbl {
+        rows: own,
+        content_controls,
+        ..
+    } = table;
+    let mut own: Vec<Option<&mut CT_Row>> = own.iter_mut().map(Some).collect();
+    let mut controls: Vec<Option<(usize, &mut CT_Sdt)>> = content_controls
+        .iter_mut()
+        .map(|(at, _, control)| Some((*at, control)))
+        .collect();
+    let mut rows = Vec::with_capacity(own.len());
+    for boundary in 0..=own.len() {
+        for slot in &mut controls {
+            if slot.as_ref().is_some_and(|(at, _)| *at == boundary)
+                && let Some((_, control)) = slot.take()
+            {
+                push_control_rows_mut(control, &mut rows);
+            }
+        }
+        if let Some(row) = own.get_mut(boundary).and_then(Option::take) {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+fn push_control_rows_mut<'a>(control: &'a mut CT_Sdt, rows: &mut Vec<&'a mut CT_Row>) {
+    for content in &mut control.content {
+        match content {
+            SdtContent::Row(row) => rows.push(row),
+            SdtContent::ContentControl(nested) => push_control_rows_mut(nested, rows),
+            _ => {}
+        }
+    }
+}
+
+/// Row `index` of [`table_rows`].
+fn table_row(table: &CT_Tbl, index: usize) -> Option<&CT_Row> {
+    if table.content_controls.is_empty() {
+        table.rows.get(index)
+    } else {
+        table_rows(table).into_iter().nth(index)
+    }
+}
+
+/// Row `index` of [`table_rows_mut`].
+fn table_row_mut(table: &mut CT_Tbl, index: usize) -> Option<&mut CT_Row> {
+    if table.content_controls.is_empty() {
+        table.rows.get_mut(index)
+    } else {
+        table_rows_mut(table).into_iter().nth(index)
+    }
+}
+
+/// The number of [`table_rows`].
+fn table_row_count(table: &CT_Tbl) -> usize {
+    if table.content_controls.is_empty() {
+        table.rows.len()
+    } else {
+        table_rows(table).len()
+    }
+}
+
+/// The cells of `row` in document order: its own cells and, at their place
+/// among them, the cells of its cell content controls, nested controls
+/// included. These are the cells [`RowRef::cell`] and [`Row::cell`] count.
+fn row_cells(row: &CT_Row) -> Vec<&CT_Tc> {
+    let mut cells = Vec::with_capacity(row.cells.len());
+    for boundary in 0..=row.cells.len() {
+        for (_, _, control) in row
+            .content_controls
+            .iter()
+            .filter(|(at, _, _)| *at == boundary)
+        {
+            push_control_cells(control, &mut cells);
+        }
+        if let Some(cell) = row.cells.get(boundary) {
+            cells.push(cell);
+        }
+    }
+    cells
+}
+
+fn push_control_cells<'a>(control: &'a CT_Sdt, cells: &mut Vec<&'a CT_Tc>) {
+    for content in &control.content {
+        match content {
+            SdtContent::Cell(cell) => cells.push(cell),
+            SdtContent::ContentControl(nested) => push_control_cells(nested, cells),
+            _ => {}
+        }
+    }
+}
+
+/// [`row_cells`], mutable.
+fn row_cells_mut(row: &mut CT_Row) -> Vec<&mut CT_Tc> {
+    let CT_Row {
+        cells: own,
+        content_controls,
+        ..
+    } = row;
+    let mut own: Vec<Option<&mut CT_Tc>> = own.iter_mut().map(Some).collect();
+    let mut controls: Vec<Option<(usize, &mut CT_Sdt)>> = content_controls
+        .iter_mut()
+        .map(|(at, _, control)| Some((*at, control)))
+        .collect();
+    let mut cells = Vec::with_capacity(own.len());
+    for boundary in 0..=own.len() {
+        for slot in &mut controls {
+            if slot.as_ref().is_some_and(|(at, _)| *at == boundary)
+                && let Some((_, control)) = slot.take()
+            {
+                push_control_cells_mut(control, &mut cells);
+            }
+        }
+        if let Some(cell) = own.get_mut(boundary).and_then(Option::take) {
+            cells.push(cell);
+        }
+    }
+    cells
+}
+
+fn push_control_cells_mut<'a>(control: &'a mut CT_Sdt, cells: &mut Vec<&'a mut CT_Tc>) {
+    for content in &mut control.content {
+        match content {
+            SdtContent::Cell(cell) => cells.push(cell),
+            SdtContent::ContentControl(nested) => push_control_cells_mut(nested, cells),
+            _ => {}
+        }
+    }
+}
+
+/// Cell `index` of [`row_cells`].
+fn row_cell(row: &CT_Row, index: usize) -> Option<&CT_Tc> {
+    if row.content_controls.is_empty() {
+        row.cells.get(index)
+    } else {
+        row_cells(row).into_iter().nth(index)
+    }
+}
+
+/// Cell `index` of [`row_cells_mut`].
+fn row_cell_mut(row: &mut CT_Row, index: usize) -> Option<&mut CT_Tc> {
+    if row.content_controls.is_empty() {
+        row.cells.get_mut(index)
+    } else {
+        row_cells_mut(row).into_iter().nth(index)
+    }
+}
+
+/// The number of [`row_cells`].
+fn row_cell_count(row: &CT_Row) -> usize {
+    if row.content_controls.is_empty() {
+        row.cells.len()
+    } else {
+        row_cells(row).len()
+    }
+}
+
+/// The cell at `(row, cell)` of `table`, counted as [`TableRef::cell`]
+/// counts it: rows of row controls and cells of cell controls included.
+pub(crate) fn table_cell(table: &CT_Tbl, row: usize, cell: usize) -> Option<&CT_Tc> {
+    table_row(table, row).and_then(|row| row_cell(row, cell))
+}
+
+/// [`table_cell`], mutable.
+pub(crate) fn table_cell_mut(table: &mut CT_Tbl, row: usize, cell: usize) -> Option<&mut CT_Tc> {
+    table_row_mut(table, row).and_then(|row| row_cell_mut(row, cell))
+}
+
+/// The table's own row (`w:tr` child of `w:tbl`) that is row `index` as
+/// [`TableRef::row`] counts rows, or `None` when that row sits in a row
+/// content control or `index` is out of range.
+pub(crate) fn own_row_index(table: &CT_Tbl, index: usize) -> Option<usize> {
+    if table.content_controls.is_empty() {
+        return (index < table.rows.len()).then_some(index);
+    }
+    let row = *table_rows(table).get(index)?;
+    table.rows.iter().position(|own| std::ptr::eq(own, row))
+}
+
+/// Where a row inserted before row `index` (as [`TableRef::row`] counts
+/// rows), or after the last row when `index` is their count, goes among the
+/// table's own rows: its own index, and what of that boundary follows it.
+/// `None` there: it goes after the boundary's row controls, and only the
+/// preserved children written after the last of them follow it.
+/// `Some((raw, control))` when it goes before the first row
+/// of the row control `control` (its index in `content_controls`), written
+/// after `raw` preserved children of the boundary: that control and what is
+/// written after it follow. `None` overall where only a control could hold
+/// the row, after the first row of one.
+pub(crate) fn own_row_insertion(
+    table: &CT_Tbl,
+    index: usize,
+) -> Option<(usize, Option<(usize, usize)>)> {
+    let rows = table_rows(table);
+    if index == rows.len() {
+        return Some((table.rows.len(), None));
+    }
+    let target = *rows.get(index)?;
+    if let Some(own) = table.rows.iter().position(|row| std::ptr::eq(row, target)) {
+        return Some((own, None));
+    }
+    for (control_index, (boundary, raw_before, control)) in
+        table.content_controls.iter().enumerate()
+    {
+        let mut held = Vec::new();
+        push_control_rows(control, &mut held);
+        if let Some(position) = held.iter().position(|row| std::ptr::eq(*row, target)) {
+            return (position == 0).then_some((*boundary, Some((*raw_before, control_index))));
+        }
+    }
+    None
+}
+
+/// The address `(table, row, cell)` of every cell of `tables`, rows and
+/// cells counted as [`TableRef::cell`] counts them, keyed by the cell, the
+/// first address kept when a cell is reached twice.
+pub(crate) fn cell_addresses<'a>(
+    tables: impl Iterator<Item = &'a CT_Tbl>,
+) -> std::collections::HashMap<*const CT_Tc, (usize, usize, usize)> {
+    let mut addresses = std::collections::HashMap::new();
+    for (table_index, table) in tables.enumerate() {
+        for (row_index, row) in table_rows(table).into_iter().enumerate() {
+            for (cell_index, cell) in row_cells(row).into_iter().enumerate() {
+                addresses.entry(cell as *const CT_Tc).or_insert((
+                    table_index,
+                    row_index,
+                    cell_index,
+                ));
+            }
+        }
+    }
+    addresses
+}
+
+/// Whether `table` holds a row or cell content control: then its rows and
+/// cells are not all its own, and an index names a row or cell in the
+/// numbering of [`table_rows`] and [`row_cells`].
+pub(crate) fn table_holds_controls(table: &CT_Tbl) -> bool {
+    !table.content_controls.is_empty()
+        || table
+            .rows
+            .iter()
+            .any(|row| !row.content_controls.is_empty())
+}
+
+/// Row `index` of [`table_rows`] for an edit of its grid, which addresses
+/// its own cells: a row whose cells sit in content controls is refused, as
+/// the column edits refuse one.
+fn grid_edit_row(table: &CT_Tbl, index: usize) -> Result<&CT_Row> {
+    let row = table_row(table, index)
+        .ok_or_else(|| Error::Other(format!("table row {index} does not exist")))?;
+    if !row.content_controls.is_empty() {
+        return Err(Error::Other(
+            "a row's grid cannot be edited while its cells sit in content controls".to_owned(),
+        ));
+    }
+    Ok(row)
+}
+
 pub(crate) fn row_cell_ranges(row: &CT_Row, grid_columns: usize) -> Result<Vec<(usize, usize)>> {
+    cell_ranges(row, &row.cells.iter().collect::<Vec<_>>(), grid_columns)
+}
+
+/// The active-grid range of each of `cells`, the cells of `row` from its
+/// grid omission before.
+fn cell_ranges(row: &CT_Row, cells: &[&CT_Tc], grid_columns: usize) -> Result<Vec<(usize, usize)>> {
     let before = row
         .properties
         .as_ref()
@@ -602,14 +902,14 @@ pub(crate) fn row_cell_ranges(row: &CT_Row, grid_columns: usize) -> Result<Vec<(
     let limit = grid_columns.checked_sub(after).ok_or_else(|| {
         Error::Other("table row grid omissions exceed the active grid".to_owned())
     })?;
-    if before > limit || row.cells.is_empty() {
+    if before > limit || cells.is_empty() {
         return Err(Error::Other(
             "table row does not cover a valid active-grid range".to_owned(),
         ));
     }
     let mut start = before;
-    let mut ranges = Vec::with_capacity(row.cells.len());
-    for cell in &row.cells {
+    let mut ranges = Vec::with_capacity(cells.len());
+    for cell in cells {
         let span = cell
             .properties
             .as_ref()
@@ -652,10 +952,13 @@ pub(crate) fn validate_table_topology(table: &CT_Tbl) -> Result<()> {
     }
     let grid_columns = grid.columns.len();
     let mut previous_vertical_ranges = std::collections::BTreeSet::new();
-    for row in &table.rows {
-        let ranges = row_cell_ranges(row, grid_columns)?;
+    // The rows of row controls take part in the merges, and the cells of
+    // cell controls cover the grid with their row's own.
+    for row in table_rows(table) {
+        let cells = row_cells(row);
+        let ranges = cell_ranges(row, &cells, grid_columns)?;
         let mut current_vertical_ranges = std::collections::BTreeSet::new();
-        for (cell, range) in row.cells.iter().zip(ranges) {
+        for (cell, range) in cells.into_iter().zip(ranges) {
             match cell
                 .properties
                 .as_ref()
@@ -676,6 +979,52 @@ pub(crate) fn validate_table_topology(table: &CT_Tbl) -> Result<()> {
             }
         }
         previous_vertical_ranges = current_vertical_ranges;
+    }
+    Ok(())
+}
+
+/// Before the table's own row `own` is removed, hand the vertical merges it
+/// starts to the row below it, rows counted as [`TableRef::row`] counts
+/// them: a continuing cell of the same grid columns becomes the start.
+pub(crate) fn hand_on_vertical_restarts(table: &mut CT_Tbl, own: usize) -> Result<()> {
+    let grid_columns = table
+        .grid
+        .as_ref()
+        .map(|grid| grid.columns.len())
+        .ok_or_else(|| Error::Other("table has no active grid".to_owned()))?;
+    let Some(removed) = table.rows.get(own) else {
+        return Ok(());
+    };
+    let rows = table_rows(table);
+    let Some(index) = rows.iter().position(|row| std::ptr::eq(*row, removed)) else {
+        return Ok(());
+    };
+    let cells = row_cells(removed);
+    let restarted = cell_ranges(removed, &cells, grid_columns)?
+        .into_iter()
+        .zip(cells)
+        .filter_map(|(range, cell)| {
+            (cell
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.v_merge.as_ref())
+                == Some(&VMerge::Restart))
+            .then_some(range)
+        })
+        .collect::<std::collections::HashSet<_>>();
+    if restarted.is_empty() || index + 1 >= rows.len() {
+        return Ok(());
+    }
+    let below = rows[index + 1];
+    let ranges = cell_ranges(below, &row_cells(below), grid_columns)?;
+    let below = table_row_mut(table, index + 1).expect("the row below was read above");
+    for (range, cell) in ranges.into_iter().zip(row_cells_mut(below)) {
+        if restarted.contains(&range)
+            && let Some(properties) = cell.properties.as_mut()
+            && properties.v_merge == Some(VMerge::Continue)
+        {
+            properties.v_merge = Some(VMerge::Restart);
+        }
     }
     Ok(())
 }
@@ -1882,7 +2231,8 @@ impl<'a> Table<'a> {
     /// `cell_is_consumable` admits.
     /// Decreasing it inserts empty cells with the corresponding grid widths.
     /// The complete table is validated before the candidate replaces the live
-    /// value.
+    /// value. `row_index` counts rows as [`Self::row`] does; a row whose
+    /// cells sit in content controls is refused.
     pub fn set_row_grid_omissions(
         &mut self,
         row_index: usize,
@@ -1899,16 +2249,8 @@ impl<'a> Table<'a> {
             .iter()
             .map(|column| column.width.0)
             .collect::<Vec<_>>();
-        row_cell_ranges(
-            candidate
-                .rows
-                .get(row_index)
-                .ok_or_else(|| Error::Other(format!("table row {row_index} does not exist")))?,
-            grid_widths.len(),
-        )?;
-        let row = candidate
-            .rows
-            .get_mut(row_index)
+        row_cell_ranges(grid_edit_row(&candidate, row_index)?, grid_widths.len())?;
+        let row = table_row_mut(&mut candidate, row_index)
             .ok_or_else(|| Error::Other(format!("table row {row_index} does not exist")))?;
         let current_before = row
             .properties
@@ -1979,7 +2321,8 @@ impl<'a> Table<'a> {
 
     /// Set one cell's horizontal grid span. A widening span consumes only
     /// cells that `cell_is_consumable` admits, and a narrowing one restores
-    /// empty cells.
+    /// empty cells. `row_index` counts rows as [`Self::row`] does; a row
+    /// whose cells sit in content controls is refused.
     pub fn set_cell_grid_span_checked(
         &mut self,
         row_index: usize,
@@ -1999,13 +2342,7 @@ impl<'a> Table<'a> {
             .map(|grid| grid.columns.len())
             .filter(|count| *count > 0)
             .ok_or_else(|| Error::Other("table has no active grid".to_owned()))?;
-        let ranges = row_cell_ranges(
-            candidate
-                .rows
-                .get(row_index)
-                .ok_or_else(|| Error::Other(format!("table row {row_index} does not exist")))?,
-            grid_columns,
-        )?;
+        let ranges = row_cell_ranges(grid_edit_row(&candidate, row_index)?, grid_columns)?;
         let (start, end) = *ranges.get(cell_index).ok_or_else(|| {
             Error::Other(format!(
                 "table row {row_index} cell {cell_index} does not exist"
@@ -2028,7 +2365,7 @@ impl<'a> Table<'a> {
             .iter()
             .try_fold(0_i32, |total, width| total.checked_add(*width))
             .ok_or_else(|| Error::Other("horizontal merge width overflows".to_owned()))?;
-        let row = &mut candidate.rows[row_index];
+        let row = table_row_mut(&mut candidate, row_index).expect("the row was read above");
         if desired > current {
             let mut covered = current;
             while covered < desired {
@@ -2075,7 +2412,8 @@ impl<'a> Table<'a> {
     }
 
     /// Set or clear one cell's vertical merge state after validating the
-    /// complete merge topology.
+    /// complete merge topology. `row_index` and `cell_index` count as
+    /// [`Self::cell`] does.
     pub fn set_cell_vertical_merge(
         &mut self,
         row_index: usize,
@@ -2083,15 +2421,11 @@ impl<'a> Table<'a> {
         merge: Option<VMerge>,
     ) -> Result<()> {
         let mut candidate = self.inner.clone();
-        let cell = candidate
-            .rows
-            .get_mut(row_index)
-            .and_then(|row| row.cells.get_mut(cell_index))
-            .ok_or_else(|| {
-                Error::Other(format!(
-                    "table row {row_index} cell {cell_index} does not exist"
-                ))
-            })?;
+        let cell = table_cell_mut(&mut candidate, row_index, cell_index).ok_or_else(|| {
+            Error::Other(format!(
+                "table row {row_index} cell {cell_index} does not exist"
+            ))
+        })?;
         cell.properties.get_or_insert_with(CT_TcPr::default).v_merge = merge;
         validate_table_topology(&candidate)?;
         *self.inner = candidate;
@@ -2171,23 +2505,22 @@ impl<'a> Table<'a> {
         true
     }
 
-    /// Get the number of rows.
+    /// Get the number of rows: the table's own rows and those of its row
+    /// content controls, as Word writes repeating table rows.
     pub fn row_count(&self) -> usize {
-        self.inner.rows.len()
+        table_row_count(self.inner)
     }
 
-    /// Get a mutable reference to a row by index.
+    /// Get a mutable reference to a row by index, among the rows
+    /// [`Self::row_count`] counts, in document order.
     pub fn row(&mut self, index: usize) -> Option<Row<'_>> {
-        self.inner.rows.get_mut(index).map(|r| Row { inner: r })
+        table_row_mut(self.inner, index).map(|r| Row { inner: r })
     }
 
-    /// Get a mutable reference to a cell at (row, col).
+    /// Get a mutable reference to a cell at (row, col), `row` counted as
+    /// [`Self::row`] counts it and `col` as [`Row::cell`] does.
     pub fn cell(&mut self, row: usize, col: usize) -> Option<Cell<'_>> {
-        self.inner
-            .rows
-            .get_mut(row)
-            .and_then(|r| r.cells.get_mut(col))
-            .map(|c| Cell { inner: c })
+        table_cell_mut(self.inner, row, col).map(|c| Cell { inner: c })
     }
 
     fn ensure_tbl_pr(&mut self) -> &mut CT_TblPr {
@@ -2325,14 +2658,16 @@ impl<'a> Row<'a> {
         self.ensure_tr_pr().hidden = value;
     }
 
-    /// Get a mutable reference to a cell by index.
+    /// Get a mutable reference to a cell by index, among the cells
+    /// [`Self::cell_count`] counts, in document order.
     pub fn cell(&mut self, index: usize) -> Option<Cell<'_>> {
-        self.inner.cells.get_mut(index).map(|c| Cell { inner: c })
+        row_cell_mut(self.inner, index).map(|c| Cell { inner: c })
     }
 
-    /// Get the number of cells in this row.
+    /// Get the number of cells in this row: its own cells and those of its
+    /// cell content controls.
     pub fn cell_count(&self) -> usize {
-        self.inner.cells.len()
+        row_cell_count(self.inner)
     }
 
     fn ensure_tr_pr(&mut self) -> &mut CT_TrPr {
@@ -2405,13 +2740,17 @@ impl<'a> Cell<'a> {
     ///
     /// Obtain the `rel_id` by calling [`crate::Document::embed_image`] first, then
     /// pass it here along with the desired display dimensions. This matches
-    /// the python-docx `run.add_picture()` pattern.
+    /// the python-docx `run.add_picture()` pattern. A cell cannot reach the
+    /// document's identifiers: the saved file gives the picture its drawing
+    /// id (`wp:docPr/@id`), the document keeps a placeholder, and an insert
+    /// between two saves can change that id.
     pub fn add_picture(&mut self, rel_id: &str, width: Length, height: Length) {
         use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
         use oxoffice_docx_oxml::table::CellContent;
         use oxoffice_docx_oxml::text::{CT_R, RunContent};
 
-        let inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        let mut inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        inline.doc_pr_id_unallocated = true;
         let drawing = CT_Drawing::inline(inline);
         let run = CT_R {
             alt_drawings: Vec::new(),
@@ -2753,9 +3092,17 @@ pub struct TableRef<'a> {
 }
 
 impl<'a> TableRef<'a> {
-    /// Get the number of rows.
+    /// A view of a table model the bindings read alone, so that they count
+    /// its rows and cells as the facade does.
+    #[doc(hidden)]
+    pub fn from_model(inner: &'a CT_Tbl) -> Self {
+        Self { inner }
+    }
+
+    /// Get the number of rows: the table's own rows and those of its row
+    /// content controls, as Word writes repeating table rows.
     pub fn row_count(&self) -> usize {
-        self.inner.rows.len()
+        table_row_count(self.inner)
     }
 
     /// Get the number of columns (from the grid definition).
@@ -2800,18 +3147,16 @@ impl<'a> TableRef<'a> {
             .is_some_and(|grid| grid.grid_change_xml.is_some())
     }
 
-    /// Get an immutable row reference.
+    /// Get an immutable row reference, among the rows [`Self::row_count`]
+    /// counts, in document order.
     pub fn row(&self, index: usize) -> Option<RowRef<'_>> {
-        self.inner.rows.get(index).map(|r| RowRef { inner: r })
+        table_row(self.inner, index).map(|r| RowRef { inner: r })
     }
 
-    /// Get a cell reference at (row, col).
+    /// Get a cell reference at (row, col), `row` counted as [`Self::row`]
+    /// counts it and `col` as [`RowRef::cell`] does.
     pub fn cell(&self, row: usize, col: usize) -> Option<CellRef<'_>> {
-        self.inner
-            .rows
-            .get(row)
-            .and_then(|r| r.cells.get(col))
-            .map(|c| CellRef { inner: c })
+        table_cell(self.inner, row, col).map(|c| CellRef { inner: c })
     }
 
     /// Get the table style ID, if set.
@@ -3048,9 +3393,10 @@ pub struct RowRef<'a> {
 }
 
 impl<'a> RowRef<'a> {
-    /// Get the number of cells.
+    /// Get the number of cells: the row's own cells and those of its cell
+    /// content controls.
     pub fn cell_count(&self) -> usize {
-        self.inner.cells.len()
+        row_cell_count(self.inner)
     }
 
     /// Whether the row contains direct content other than cells.
@@ -3110,9 +3456,10 @@ impl<'a> RowRef<'a> {
         self.inner.properties.as_ref()?.hidden
     }
 
-    /// Get a cell reference by index.
+    /// Get a cell reference by index, among the cells [`Self::cell_count`]
+    /// counts, in document order.
     pub fn cell(&self, index: usize) -> Option<CellRef<'_>> {
-        self.inner.cells.get(index).map(|c| CellRef { inner: c })
+        row_cell(self.inner, index).map(|c| CellRef { inner: c })
     }
 
     /// Check if this row is a header row.
@@ -3253,7 +3600,7 @@ impl<'a> CellRef<'a> {
                     }
                     CellContent::Table(table) => CellItemRef::Table(TableRef { inner: table }),
                     CellContent::ContentControl(control) => {
-                        CellItemRef::ContentControl(ContentControlRef { inner: control })
+                        CellItemRef::ContentControl(ContentControlRef::borrowed(control))
                     }
                 });
             }

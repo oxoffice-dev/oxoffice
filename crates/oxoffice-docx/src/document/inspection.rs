@@ -143,12 +143,9 @@ impl Document {
 
         let mut result = Vec::new();
         for p in block_paragraphs(&self.document.body.content) {
-            for hl in &p.hyperlinks {
-                // `HyperlinkSpan`'s bounds are public and can be set by
-                // hand, so clamp rather than slice-panic on a bad range.
-                let start = hl.run_start.min(p.runs.len());
-                let end = hl.run_end.clamp(start, p.runs.len());
-                let text: String = p.runs[start..end].iter().map(|r| r.text()).collect();
+            for (index, hl) in p.hyperlinks.iter().enumerate() {
+                // The text a reader sees, tracked insertions included.
+                let text = p.accepted_hyperlink_text(index);
 
                 let url = hl.rel_id.as_ref().and_then(|id| url_map.get(id)).cloned();
 
@@ -162,7 +159,10 @@ impl Document {
             for field in p.complex_field_hyperlinks() {
                 let start = field.run_start.min(p.runs.len());
                 let end = field.run_end.clamp(start, p.runs.len());
-                let text: String = p.runs[start..end].iter().map(|run| run.text()).collect();
+                let text: String = p.runs[start..end]
+                    .iter()
+                    .map(|run| run.accepted_text())
+                    .collect();
                 result.push(LinkInfo {
                     text,
                     url: Some(field.target),

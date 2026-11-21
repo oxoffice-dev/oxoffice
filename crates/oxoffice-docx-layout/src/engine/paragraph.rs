@@ -438,12 +438,16 @@ fn layout_paragraph_with_source_and_table(
     let mut multilingual_styles = HashMap::<usize, WordMultilingualStyle>::new();
     let mut requested_context_bytes = 0usize;
     let mut requested_context_entries = 0usize;
-    let current_bookmarks = para.current_bookmark_projection();
+    let block_bookmarks = input.block_bookmarks();
+    let current_bookmarks = block_bookmarks.paragraph_projection(para);
+    let (block_before, block_after) = block_bookmarks.markers(para);
 
     if let Some(source_node) = source_node {
         for name in para
             .bookmark_markers
             .iter()
+            .chain(block_before)
+            .chain(block_after)
             .filter(|bookmark| bookmark.is_start())
             .filter_map(|bookmark| bookmark.name())
         {
@@ -460,6 +464,8 @@ fn layout_paragraph_with_source_and_table(
                 for name in para
                     .bookmark_markers
                     .iter()
+                    .chain(block_before)
+                    .chain(block_after)
                     .filter(|bookmark| bookmark.is_start())
                     .filter_map(|bookmark| bookmark.name())
                 {

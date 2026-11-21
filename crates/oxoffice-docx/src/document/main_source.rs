@@ -6,19 +6,18 @@ impl Document {
     /// Compare current writer bytes without constructing an owned result when
     /// the existing writer memo proves every current child and the full frame.
     pub(super) fn serialized_main_part_matches(&self, expected: &[u8]) -> Result<bool> {
-        if block_proofs_enabled() {
-            let scans = self
-                .main_body_scans
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(matched) = scans
-                .serialized
-                .as_ref()
-                .and_then(|record| record.writer_bytes_match(&self.document, expected))
-            {
-                return Ok(matched);
-            }
+        let scans = self
+            .main_body_scans
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(matched) = scans
+            .serialized
+            .as_ref()
+            .and_then(|record| record.writer_bytes_match(&self.document, expected))
+        {
+            return Ok(matched);
         }
+        drop(scans);
         self.serialized_main_part().map(|(xml, _)| xml == expected)
     }
 
@@ -36,7 +35,7 @@ impl Document {
             .main_body_scans
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(record) = offered_canonical_blocks(scans.serialized.as_ref())
+        if let Some(record) = scans.serialized.as_ref()
             && let Some(kept) = self.kept_main_part()
             && let Some(expected) = kept.serialization_proof.as_deref()
             && record.writer_bytes_match(&self.document, expected) == Some(true)
@@ -65,17 +64,15 @@ impl Document {
         let (xml, record) = MainPartBlocks::serialize_in(
             &self.document,
             &self.document.body.content,
-            offered_canonical_blocks(scans.serialized.as_ref().or(self.main_part_blocks.as_ref())),
+            scans.serialized.as_ref().or(self.main_part_blocks.as_ref()),
             template,
         )?;
-        if offered_canonical_blocks(Some(&record)).is_some() {
-            scans.serialized = (!record.head.is_empty()).then(|| record.clone());
-        }
+        scans.serialized = (!record.head.is_empty()).then(|| record.clone());
         drop(scans);
         Ok((xml, (!record.head.is_empty()).then_some(record)))
     }
 
-    /// Temporary main-part bytes for canonicalization. The returned record
+    /// Temporary main-part bytes, as the save would write them. The returned record
     /// proves these bytes, without replacing the package or flushed record.
     pub(super) fn canonical_source(&self) -> Result<(Vec<u8>, Option<MainPartBlocks>)> {
         self.canonical_source_in(None)
@@ -176,9 +173,6 @@ impl Document {
         &self,
         xml: &Arc<Vec<u8>>,
     ) -> Option<(CT_Document, MainPartBlocks)> {
-        if !block_proofs_enabled() {
-            return None;
-        }
         if let Some(record) = &self.main_part_blocks
             && let Some(current) = &record.part
             && self.package.get_part(&self.doc_part_name) == Some(current.as_slice())
@@ -476,9 +470,6 @@ impl Document {
     }
 
     pub(super) fn package_main_part_blocks(&self) -> Option<MainPartBlocks> {
-        if !block_proofs_enabled() {
-            return None;
-        }
         let source = self.package.get_part(&self.doc_part_name)?;
         if let Some(record) = &self.main_part_blocks
             && record
@@ -496,7 +487,9 @@ impl Document {
         let Some(source) = self.package.get_part(&self.doc_part_name) else {
             return false;
         };
-        if let Some(parsed) = offered_canonical_blocks(self.main_part_blocks.as_ref())
+        if let Some(parsed) = self
+            .main_part_blocks
+            .as_ref()
             .and_then(|record| record.proved_document_matches(source, &self.document))
         {
             return parsed;
@@ -519,11 +512,7 @@ impl Document {
         kept: Option<&MainPartBlocks>,
     ) -> Result<(Vec<u8>, Option<MainPartBlocks>)> {
         document.validate_resource_limits()?;
-        let (xml, mut record) = MainPartBlocks::serialize(
-            document,
-            &document.body.content,
-            offered_canonical_blocks(kept),
-        )?;
+        let (xml, mut record) = MainPartBlocks::serialize(document, &document.body.content, kept)?;
         record.part = Some(Arc::new(xml.clone()));
         Ok((xml, (!record.head.is_empty()).then_some(record)))
     }

@@ -86,8 +86,6 @@ impl Document {
             styles: Arc::clone(&self.styles),
             styles_part_cache: self.styles_part_cache.clone(),
             numbering: self.numbering.clone(),
-            published_abstract_by_live: self.published_abstract_by_live.clone(),
-            published_instance_by_live: self.published_instance_by_live.clone(),
             core_properties: self.core_properties.clone(),
             application_properties: self.application_properties.clone(),
             custom_properties: self.custom_properties.clone(),

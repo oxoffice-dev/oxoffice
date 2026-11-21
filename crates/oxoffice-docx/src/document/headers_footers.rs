@@ -453,8 +453,8 @@ impl Document {
             None => candidate.identifiers.reserve_drawing_id()?,
         };
         // Retire only the already qualified API owner before allocating its
-        // replacement. Otherwise final relationship canonicalization can reuse
-        // the retired ID after the new owner's fingerprint has been written.
+        // replacement, so that the replacement's ids are reserved against the
+        // document without the retired owner.
         if let Some((span, _)) = &owned {
             let mut without_owner = original.clone();
             without_owner.drain(span.clone());
@@ -1470,6 +1470,9 @@ impl Document {
             }
         }
         let xml = remap_xml_relationship_ids(&xml, &relationship_remap)?;
+        // The given drawings take their ids now, as a cloned section story
+        // does: the save keeps every id it finds.
+        let xml = rewrite_authored_doc_pr_ids(&xml, &mut self.identifiers.drawing_ids)?;
         let part_name =
             self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)?;
 
@@ -1575,9 +1578,15 @@ impl Document {
             };
             self.first_usable_header_footer_reference(refs, hdr_type, is_header)
         })?;
+        // The text a reader sees: simple field results and tracked
+        // insertions included.
         Some(
             self.load_header_footer(&reference.rel_id, is_header)?
-                .text(),
+                .paragraphs
+                .iter()
+                .map(CT_P::accepted_text)
+                .collect::<Vec<_>>()
+                .join("\n"),
         )
     }
 }

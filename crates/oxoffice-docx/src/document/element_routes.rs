@@ -448,10 +448,11 @@ impl Document {
                 .main_body_scans
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut models = offered_canonical_blocks(
-                scans.serialized.as_ref().or(self.main_part_blocks.as_ref()),
-            )
-            .filter(|record| record.blocks.len() == current.len());
+            let mut models = scans
+                .serialized
+                .as_ref()
+                .or(self.main_part_blocks.as_ref())
+                .filter(|record| record.blocks.len() == current.len());
             let staged_origin = same_opening
                 && models.is_some_and(|record| {
                     kept.initial_writer_blocks
@@ -797,10 +798,7 @@ impl Document {
         validate_element_owner_relationships(self, &owner, WordXmlOwner::Cell(&replacement))?;
         validate_element_xml_identity_change(self, &owner, &current, xml.as_bytes())?;
         let original_table = self.story_table_model(table)?;
-        let original_cell = original_table
-            .rows
-            .get(row)
-            .and_then(|row| row.cells.get(cell))
+        let original_cell = crate::table::table_cell(&original_table, row, cell)
             .ok_or_else(|| Error::Other("element XML original physical cell disappeared".into()))?;
         let profiles = |cell: &CT_Tc| {
             let mut profiles = Vec::new();

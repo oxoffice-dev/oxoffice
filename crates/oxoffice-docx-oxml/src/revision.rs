@@ -750,6 +750,34 @@ impl CT_Revision {
         self.content_paragraph.as_deref()
     }
 
+    /// The content an insertion or a move destination adds to the accepted
+    /// view, its simple fields read even while their parse is deferred, as a
+    /// reader sees it. A deletion, a move source or a marker adds none.
+    #[doc(hidden)]
+    pub fn accepted_content(&self) -> Option<std::borrow::Cow<'_, CT_P>> {
+        if !matches!(self.kind, RevisionKind::Insertion | RevisionKind::MoveTo) {
+            return None;
+        }
+        // An in-place edit of the stored paragraph makes it the authority;
+        // the raw XML is read only while it is still what was opened.
+        let edited = self.accepted_fields_pending || self.accepted_payload_pending;
+        match self.content_paragraph.as_deref() {
+            // Equations keep their places in the stored paragraph only:
+            // its run axis is the one their positions count on.
+            Some(paragraph)
+                if !self.semantic_fields_pending || edited || !paragraph.equations.is_empty() =>
+            {
+                Some(std::borrow::Cow::Borrowed(paragraph))
+            }
+            stored => {
+                parse_accepted_revision_content(&self.raw_xml, &self.parse_word_prefixes, None)
+                    .ok()
+                    .map(std::borrow::Cow::Owned)
+                    .or_else(|| stored.map(std::borrow::Cow::Borrowed))
+            }
+        }
+    }
+
     /// Mutate physical read-projection metadata without rewriting revision XML.
     /// Used on layout-only clones before selecting the accepted revision view.
     /// The original raw XML remains the serializer's authority.

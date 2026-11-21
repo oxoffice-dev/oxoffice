@@ -943,9 +943,6 @@ pub(super) fn import_fragment_content_with_state(
                 ))
             })?;
         if selected_owner {
-            if used_relationships.contains(&relationship_id) {
-                document.register_pending_relationship(&destination_owner, &destination_id);
-            }
             relationship_map.insert(relationship_id, destination_id);
         } else {
             comment_relationship_map.insert(relationship_id, destination_id);
@@ -958,7 +955,6 @@ pub(super) fn import_fragment_content_with_state(
             &relationship.target,
         )?;
         if selected_owner {
-            document.register_pending_relationship(&destination_owner, &destination_id);
             relationship_map.insert(relationship_id, destination_id);
         } else {
             comment_relationship_map.insert(relationship_id, destination_id);
@@ -1126,7 +1122,13 @@ pub(super) fn import_fragment_content_with_state(
         let xml = patch_relationship_ids(&xml, &comment_relationship_map)?;
         let wrapped =
             patch_body_identity_attributes(&wrap_fragment_companion(&xml), &identity_remap)?;
-        let xml = unwrap_fragment_companion(&wrapped);
+        let mut xml = unwrap_fragment_companion(&wrapped);
+        let edits = document
+            .identifiers
+            .fresh_drawing_id_edits(&xml, &BTreeMap::new())?;
+        for (start, end, replacement) in edits.into_iter().rev() {
+            xml.splice(start..end, replacement);
+        }
         Ok(CT_Comments::from_xml(&freshen_fragment_marker_ids(
             document, &xml,
         )?)?)
@@ -1309,6 +1311,26 @@ pub(super) fn import_fragment_content_with_state(
             &identity_remap,
         )?;
         let edits = fragment_marker_id_edits(document, &note.xml)?;
+        apply_fragment_xml_edits(
+            &mut note.xml,
+            &mut note.source,
+            template
+                .as_mut()
+                .map(|(evaluation, _)| &mut evaluation.operation),
+            edits,
+        )?;
+        // The note's drawings were made unique with the body's, then patched
+        // by value: each takes its own id now, as the save keeps them.
+        let edits = document
+            .identifiers
+            .fresh_drawing_id_edits(&note.xml, &BTreeMap::new())?
+            .into_iter()
+            .map(|(start, end, replacement)| FieldSourceEdit {
+                start,
+                end,
+                replacement,
+            })
+            .collect();
         apply_fragment_xml_edits(
             &mut note.xml,
             &mut note.source,
@@ -3554,48 +3576,6 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
 
     edits.sort_by_key(|edit: &FieldSourceEdit| edit.start);
     Ok(edits)
-}
-
-pub(crate) fn patch_bookmark_source(
-    operation: &mut oxoffice_docx_oxml::document::ScopedWordOperation<'_>,
-    source: oxoffice_docx_oxml::document::ScopedWordSource,
-    bookmark_ids: &BTreeMap<String, String>,
-) -> Result<oxoffice_docx_oxml::document::ScopedWordSource> {
-    let edits = body_identity_edits(
-        source.as_bytes(),
-        &BodyIdentityRemap {
-            bookmark_ids: bookmark_ids.clone(),
-            ..Default::default()
-        },
-    )?;
-    if edits.is_empty() {
-        return Ok(source);
-    }
-    let mut chunks = Vec::new();
-    let mut at = 0;
-    for edit in &edits {
-        if at > edit.start {
-            return Err(Error::Other("overlapping document identity edits".into()));
-        }
-        chunks.push((Some(&source), at..edit.start, &[][..]));
-        chunks.push((None, 0..0, edit.replacement.as_slice()));
-        at = edit.end;
-    }
-    chunks.push((Some(&source), at..source.as_bytes().len(), &[][..]));
-    Ok(operation.compose_sources(&chunks)?)
-}
-
-pub(crate) fn patch_bookmark_ids(
-    xml: &[u8],
-    bookmark_ids: &BTreeMap<String, String>,
-) -> Result<Vec<u8>> {
-    patch_body_identity_attributes(
-        xml,
-        &BodyIdentityRemap {
-            bookmark_ids: bookmark_ids.clone(),
-            ..Default::default()
-        },
-    )
 }
 
 pub(crate) fn freshen_content_fragment_identities(

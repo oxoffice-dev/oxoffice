@@ -2,44 +2,6 @@
 
 use super::*;
 
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Forces the whole-input canonical scanners. The debug cross-checks turn
-    /// it on; release builds always use the block proofs.
-    static CANONICAL_BLOCK_PROOF_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-pub(super) fn block_proofs_enabled() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        !CANONICAL_BLOCK_PROOF_OFF.with(|cell| cell.get())
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        true
-    }
-}
-
-pub(super) fn offered_canonical_blocks(blocks: Option<&MainPartBlocks>) -> Option<&MainPartBlocks> {
-    block_proofs_enabled().then_some(blocks).flatten()
-}
-
-#[cfg(debug_assertions)]
-impl CanonicalBlockProofOff {
-    pub(super) fn enter() -> Self {
-        Self {
-            previous: CANONICAL_BLOCK_PROOF_OFF.with(|cell| cell.replace(true)),
-        }
-    }
-}
-
-#[cfg(debug_assertions)]
-impl Drop for CanonicalBlockProofOff {
-    fn drop(&mut self) {
-        CANONICAL_BLOCK_PROOF_OFF.with(|cell| cell.set(self.previous));
-    }
-}
-
 pub(super) struct StandaloneParagraphValue {
     keys: StandaloneParagraphKeys,
     model: std::sync::Weak<BodyContent>,
@@ -778,9 +740,6 @@ impl PreparedMainRead<'_> {
         original: &[u8],
         retained_span: &Range<usize>,
     ) -> bool {
-        if !block_proofs_enabled() {
-            return false;
-        }
         let Some(held) = self.document.package_main_part_blocks() else {
             return false;
         };
@@ -1023,63 +982,6 @@ fn same_query_namespace_bindings(left: &[(String, String)], right: &[(String, St
     left == right
 }
 
-fn apply_readback_replacements(
-    current: &mut CT_Document,
-    mut frame: CT_Document,
-    mut replacements: Vec<(usize, BodyContent)>,
-) -> bool {
-    if !frame.body.content.is_empty()
-        || replacements
-            .iter()
-            .any(|(index, _)| *index >= current.body.content.len())
-        || replacements.windows(2).any(|pair| pair[0].0 >= pair[1].0)
-    {
-        return false;
-    }
-    let swap_frame = |left: &mut CT_Document, right: &mut CT_Document| {
-        let CT_Document {
-            body:
-                oxoffice_docx_oxml::document::CT_Body {
-                    content: _,
-                    sect_pr: left_sect,
-                },
-            extra_namespaces: left_ns,
-            background_xml: left_bg,
-            background_extra_xml: left_bg_extra,
-            root_attributes: left_attrs,
-        } = left;
-        let CT_Document {
-            body:
-                oxoffice_docx_oxml::document::CT_Body {
-                    content: _,
-                    sect_pr: right_sect,
-                },
-            extra_namespaces: right_ns,
-            background_xml: right_bg,
-            background_extra_xml: right_bg_extra,
-            root_attributes: right_attrs,
-        } = right;
-        std::mem::swap(left_sect, right_sect);
-        std::mem::swap(left_ns, right_ns);
-        std::mem::swap(left_bg, right_bg);
-        std::mem::swap(left_bg_extra, right_bg_extra);
-        std::mem::swap(left_attrs, right_attrs);
-    };
-    swap_frame(current, &mut frame);
-    for (index, replacement) in &mut replacements {
-        std::mem::swap(&mut current.body.content[*index], replacement);
-    }
-    // Only this exact pure validator runs while displaced values are held.
-    let valid = current.validate_resource_limits().is_ok();
-    if !valid {
-        for (index, displaced) in &mut replacements {
-            std::mem::swap(&mut current.body.content[*index], displaced);
-        }
-        swap_frame(current, &mut frame);
-    }
-    valid
-}
-
 impl MainPartBlocks {
     pub(super) fn body_spans(&self) -> Result<(Range<usize>, Vec<Range<usize>>)> {
         let start = self.head.len();
@@ -1105,73 +1007,6 @@ impl MainPartBlocks {
         Some((starts, at))
     }
 
-    fn bytes(&self) -> Vec<u8> {
-        let mut bytes = self.head.clone();
-        for block in self.blocks.iter() {
-            bytes.extend_from_slice(&block.bytes);
-        }
-        bytes.extend_from_slice(&self.tail);
-        bytes
-    }
-
-    pub(super) fn edited(&self, edits: &[(usize, usize, Vec<u8>)]) -> Option<Self> {
-        let (starts, content_end) = self.child_starts()?;
-        let total = content_end.checked_add(self.tail.len())?;
-        let mut previous = 0;
-        for (start, end, _) in edits {
-            if *start < previous || *start > *end || *end > total || *start < self.head.len() {
-                return None;
-            }
-            previous = *end;
-        }
-        let mut result = self.clone();
-        result.part = None;
-        result.nested_namespace_owners = OnceLock::new();
-        let mut tail_changed = false;
-        for (start, end, value) in edits.iter().rev() {
-            if *start >= content_end {
-                let range = start.checked_sub(content_end)?..end.checked_sub(content_end)?;
-                result.tail.get(range.clone())?;
-                result.tail.splice(range, value.iter().copied());
-                tail_changed = true;
-            } else {
-                let index = starts.partition_point(|at| at <= start).checked_sub(1)?;
-                let at = *starts.get(index)?;
-                if *end > at.checked_add(self.blocks.get(index)?.bytes.len())? {
-                    return None;
-                }
-                let range = start.checked_sub(at)?..end.checked_sub(at)?;
-                let mut bytes = result.blocks.get(index)?.bytes.clone();
-                bytes.get(range.clone())?;
-                bytes.splice(range, value.iter().copied());
-                Arc::make_mut(&mut result.blocks)[index] =
-                    Arc::new(BodyBlockScan::from_source(bytes));
-            }
-        }
-        if tail_changed {
-            result.blocks = Arc::new(
-                result
-                    .blocks
-                    .iter()
-                    .map(BodyBlockScan::fresh_context_piece)
-                    .collect(),
-            );
-            let shell = [result.head.as_slice(), result.tail.as_slice()].concat();
-            closed_word_body(&shell, result.head.len()..result.head.len())?;
-            let frame = CT_Document::from_xml(&shell).ok()?;
-            if !frame.body.content.is_empty() {
-                return None;
-            }
-            result.frame = OnceLock::from(Some(frame));
-            result.identifier_frame = OnceLock::new();
-            result.canonical_frame = OnceLock::new();
-            result.namespace_frame = OnceLock::new();
-            result.namespace_frame_spans = OnceLock::new();
-        }
-        result.part = Some(Arc::new(result.bytes()));
-        Some(result)
-    }
-
     // Actual source reads only. Staged writer models never certify a paragraph
     // projection, and this optional inventory proof never fills a read memo.
     // The immutable block carries its read context: assemble and tail edits
@@ -1182,7 +1017,7 @@ impl MainPartBlocks {
         &self,
         xml: &[u8],
     ) -> Option<Vec<(Range<usize>, StoryItemKind)>> {
-        if !block_proofs_enabled() || !self.part_partition_matches(xml) {
+        if !self.part_partition_matches(xml) {
             return None;
         }
         let (_, scopes) = self.proved_document_context(xml)?;
@@ -1218,199 +1053,6 @@ impl MainPartBlocks {
             at = end;
         }
         Some(ranges)
-    }
-
-    fn cached_document_read_context(
-        &self,
-        xml: &[u8],
-        current: &CT_Document,
-    ) -> Option<(&CT_Document, DocumentNamespaceScopes)> {
-        // The shared context proves part identity, children and tail. Complete
-        // the literal partition with its head before borrowing any read facts.
-        if !block_proofs_enabled() || !xml.starts_with(&self.head) {
-            return None;
-        }
-        let (frame, scopes) = self.proved_document_context(xml)?;
-        if current.body.content.len() != self.blocks.len()
-            || holds_field_words(&self.head)
-            || holds_field_words(&self.tail)
-            || !current
-                .body
-                .content
-                .iter()
-                .all(BodyContent::owner_facts_reusable_by_value)
-        {
-            return None;
-        }
-        for block in self.blocks.iter() {
-            let read = block.proved.get()?;
-            if block.reads_anew()
-                || read.root_declarations != scopes.root_declarations
-                || read.body_declarations != scopes.body_declarations
-                || read.body_bindings != scopes.body_bindings
-                || !read
-                    .parsed
-                    .as_ref()
-                    .is_some_and(BodyContent::owner_facts_reusable_by_value)
-            {
-                return None;
-            }
-        }
-        Some((frame, scopes))
-    }
-
-    pub(super) fn current_source_model_matches(&self, xml: &[u8], current: &CT_Document) -> bool {
-        if self.cached_document_read_context(xml, current).is_none() {
-            return false;
-        }
-        let compared = self.proved_document_matches(xml, current);
-        if compared != Some(true) {
-            return false;
-        }
-        current.validate_resource_limits().is_ok()
-    }
-
-    pub(super) fn reconcile_readback(&self, xml: &[u8], current: &mut CT_Document) -> bool {
-        let Some((frame, _scopes)) = self.cached_document_read_context(xml, current) else {
-            return false;
-        };
-        let mut replacements = Vec::new();
-        for (index, block) in self.blocks.iter().enumerate() {
-            // The complete guard above qualified this exact immutable read.
-            // Consume it without repeating private-owner or namespace checks.
-            let Some(actual) = block.proved.get().and_then(|proof| proof.parsed.as_ref()) else {
-                return false;
-            };
-            if actual != &current.body.content[index] {
-                let replacement = actual.clone();
-                replacements.push((index, replacement));
-            }
-        }
-        let replacement_frame = frame.clone();
-        // Same mandatory certificate completion as old proved_document, before validation.
-        self.store_empty_namespace_owners();
-        // This helper has no fallible/memo/registry work between swap and validation/rollback.
-        apply_readback_replacements(current, replacement_frame, replacements)
-    }
-
-    pub(super) fn qualify_document_children(&mut self) -> Option<Arc<Vec<u8>>> {
-        let xml = self.part.as_ref()?.clone();
-        if !self.part_partition_matches(&xml) {
-            return None;
-        }
-        let scopes = document_namespace_scopes(&xml).ok()?;
-        for block in Arc::make_mut(&mut self.blocks) {
-            if block.proved.get().is_none() {
-                Arc::make_mut(block).read_source_child(&self.head, &self.tail, &scopes)?;
-            }
-        }
-        Some(xml)
-    }
-
-    pub(super) fn relationship_remap_edits(
-        &self,
-        remap: &HashMap<String, String>,
-        bindings: &[(String, String)],
-    ) -> Option<Vec<(usize, usize, Vec<u8>)>> {
-        if remap.is_empty() {
-            return Some(Vec::new());
-        }
-        let xml = self.part.as_deref()?;
-        if !self.part_partition_matches(xml) {
-            return None;
-        }
-        let root = self.head.get(self.root.clone())?;
-        let facts = self.canonical_child_facts(xml, bindings)?;
-        let shell = [self.head.as_slice(), self.tail.as_slice()].concat();
-        let frame = self.canonical_frame_proof(&shell)?;
-        if !frame.head_plain_relationship_ids.is_empty()
-            || !frame.head_bound_relationship_ids.is_empty()
-            || !xml_decodes(&shell)
-        {
-            return None;
-        }
-        let (starts, content_end) = self.child_starts()?;
-        let mut edits = Vec::new();
-        for ((block, fact), start) in self.blocks.iter().zip(facts).zip(starts) {
-            let ids = if bindings.is_empty() {
-                &fact.plain_relationship_ids
-            } else {
-                &fact.bound_relationship_ids
-            };
-            if ids
-                .iter()
-                .any(|id| remap.get(id).is_some_and(|value| value != id))
-            {
-                let mut part = self.head.clone();
-                part.extend_from_slice(&block.bytes);
-                part.extend_from_slice(&self.tail);
-                for (first, last, value) in relationship_remap_edits(&part, remap, bindings).ok()? {
-                    if first < self.head.len()
-                        || last > self.head.len().checked_add(block.bytes.len())?
-                    {
-                        return None;
-                    }
-                    edits.push((
-                        start.checked_add(first.checked_sub(self.head.len())?)?,
-                        start.checked_add(last.checked_sub(self.head.len())?)?,
-                        value,
-                    ));
-                }
-            } else if !block.decodes(root) {
-                return None;
-            }
-        }
-        for (first, last, value) in relationship_remap_edits(&shell, remap, bindings).ok()? {
-            if first < self.head.len() || last > shell.len() {
-                return None;
-            }
-            edits.push((
-                content_end.checked_add(first.checked_sub(self.head.len())?)?,
-                content_end.checked_add(last.checked_sub(self.head.len())?)?,
-                value,
-            ));
-        }
-        edits.sort_by_key(|(start, _, _)| *start);
-        Some(edits)
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub(super) fn canonical_retained(
-        &self,
-        remap: &HashMap<String, String>,
-        modeled: &[u32],
-        nested: &HashSet<String>,
-        ids: &[(u32, u32)],
-        current: &mut CT_Document,
-    ) -> Option<Option<(Vec<u8>, Self)>> {
-        let mut remapped = self.edited(&self.relationship_remap_edits(remap, &[])?)?;
-        let xml = remapped.bytes();
-        let slots =
-            authored_drawing_slots_by_blocks(&xml, Some(&remapped), modeled, nested).ok()?;
-        if slots.len() != ids.len()
-            || slots
-                .iter()
-                .zip(ids)
-                .any(|((_, _, old), (expected, _))| old != expected)
-        {
-            return Some(None);
-        }
-        let edits = slots
-            .into_iter()
-            .zip(ids)
-            .map(|((_, span, _), (_, id))| (span.start, span.end, id.to_string().into_bytes()))
-            .collect::<Vec<_>>();
-        remapped = remapped.edited(&edits)?;
-        let qualified_xml = remapped.qualify_document_children()?;
-        // Finish output allocation before any reconciliation transaction.
-        let output = remapped.bytes();
-        if !remapped.reconcile_readback(&qualified_xml, current) {
-            // Original phase2 and validation, once after original phase1.
-            let document = remapped.proved_document(&qualified_xml)?;
-            document.validate_resource_limits().ok()?;
-            *current = document;
-        }
-        Some(Some((output, remapped)))
     }
 
     /// A comparison using complete current writer facts. It never grants read
@@ -2014,58 +1656,6 @@ impl MainPartBlocks {
         Some(ids)
     }
 
-    pub(super) fn proved_drawing_slots(
-        &self,
-        xml: &[u8],
-        modeled_ids: &[u32],
-        nested_image_relationship_ids: &HashSet<String>,
-    ) -> Option<Result<AuthoredDrawingSlots>> {
-        let facts = self.canonical_child_facts(xml, &[])?;
-        let mut drawings = Vec::new();
-        let mut cursor = self.head.len();
-        for (child, block) in facts.into_iter().zip(self.blocks.iter()) {
-            for drawing in &child.drawings {
-                let doc_pr = match &drawing.doc_pr {
-                    Some((id, span)) => {
-                        if span.start > span.end || span.end > block.bytes.len() {
-                            return None;
-                        }
-                        let start = cursor.checked_add(span.start)?;
-                        let end = cursor.checked_add(span.end)?;
-                        if end > xml.len() {
-                            return None;
-                        }
-                        Some((*id, start..end))
-                    }
-                    None => None,
-                };
-                drawings.push(DrawingOccurrence {
-                    doc_pr,
-                    embeds: drawing.embeds.clone(),
-                });
-            }
-            cursor = cursor.checked_add(block.bytes.len())?;
-        }
-        if xml.get(cursor..) != Some(self.tail.as_slice()) {
-            return None;
-        }
-        Some(select_authored_drawing_slots(
-            &drawings,
-            None,
-            modeled_ids,
-            nested_image_relationship_ids,
-        ))
-    }
-
-    pub(super) fn proved_drawing_ids(&self, xml: &[u8]) -> Option<HashSet<u32>> {
-        let facts = self.canonical_child_facts(xml, &[])?;
-        let mut ids = HashSet::new();
-        for child in facts {
-            ids.extend(child.drawing_ids.iter().copied());
-        }
-        Some(ids)
-    }
-
     fn canonical_frame_proof(&self, shell: &[u8]) -> Option<&CanonicalFrameProof> {
         self.canonical_frame
             .get_or_init(|| {
@@ -2282,7 +1872,7 @@ impl MainPartBlocks {
     /// including a section-tail owner, stay last. One ineligible piece
     /// declines the whole list.
     pub(super) fn proved_namespace_spans(&self, xml: &[u8]) -> Option<Vec<ModeledOwnerSpan>> {
-        if offered_canonical_blocks(Some(self)).is_none() || !self.part_partition_matches(xml) {
+        if !self.part_partition_matches(xml) {
             return None;
         }
         let content_end = xml.len().checked_sub(self.tail.len())?;
@@ -2360,8 +1950,7 @@ impl MainPartBlocks {
         xml: &[u8],
         original: &'a Self,
     ) -> Option<(&'a NamespaceFrameSpans, &'a NamespaceFrameSpans)> {
-        if !block_proofs_enabled()
-            || self.head != original.head
+        if self.head != original.head
             || self.blocks.len() != original.blocks.len()
             || !self.part_partition_matches(xml)
             || !original.part_partition_matches(original.part.as_deref()?)
