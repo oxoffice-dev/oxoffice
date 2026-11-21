@@ -796,15 +796,26 @@ fn removing_a_custom_marked_note_in_a_deletion_removes_its_deleted_mark() {
         .create_footnote_with_mark(&paragraph_at(&doc, 0), "Dagger note", "\u{2020}")
         .unwrap();
     let mut doc = with_main_part(&mut doc, |xml| {
-        let run = reference_run(xml, dagger);
-        let deleted = xml[run.clone()]
+        let run = &xml[reference_run(xml, dagger)];
+        // The expanded form of a rendered page break sits before the mark.
+        let mark = run
+            .find("<w:t ")
+            .or_else(|| run.find("<w:t>"))
+            .expect("the mark");
+        let run = format!(
+            "{}<w:lastRenderedPageBreak></w:lastRenderedPageBreak>{}",
+            &run[..mark],
+            &run[mark..]
+        );
+        let deleted = run
             .replace("<w:t>", "<w:delText>")
             .replace("<w:t ", "<w:delText ")
             .replace("</w:t>", "</w:delText>");
+        let span = reference_run(xml, dagger);
         format!(
             r#"{}<w:del w:id="90" w:author="Reviewer" w:date="2026-01-01T00:00:00Z">{deleted}</w:del>{}"#,
-            &xml[..run.start],
-            &xml[run.end..]
+            &xml[..span.start],
+            &xml[span.end..]
         )
     });
     assert!(
@@ -812,7 +823,12 @@ fn removing_a_custom_marked_note_in_a_deletion_removes_its_deleted_mark() {
             .unwrap()
             .contains("<w:delText")
     );
+    let before = doc.part_xml("word/document.xml").unwrap();
+    assert!(before.contains("<w:lastRenderedPageBreak"), "{before}");
     doc.remove_footnote(dagger).unwrap();
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(!main.contains('\u{2020}'), "{main}");
+    assert!(main.contains("lastRenderedPageBreak"), "{main}");
     let mut doc = reopen(&mut doc);
     assert!(doc.footnotes().is_empty());
     let main = doc.part_xml("word/document.xml").unwrap();
