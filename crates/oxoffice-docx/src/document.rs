@@ -43218,12 +43218,17 @@ impl Document {
     }
 
     /// Replace the definition and overrides used by an existing instance.
+    ///
+    /// A style linked both ways to a level of the instance keeps its link:
+    /// an update that would drop the level's name of the style is refused,
+    /// as only [`Self::unlink_style_from_numbering`] removes a link.
     pub fn update_numbering_instance(
         &mut self,
         id: u32,
         definition_id: u32,
         overrides: &[NumberingLevelOverride],
     ) -> Result<()> {
+        let links = self.two_way_style_links(id);
         let mut candidate = self.clone_for_staging();
         let numbering = candidate
             .numbering
@@ -43253,11 +43258,49 @@ impl Document {
         }
         instance.abstract_num_id = definition_id;
         instance.level_overrides = updated;
+        let kept = candidate.two_way_style_links(id);
+        if links.iter().any(|link| !kept.contains(link)) {
+            return Err(Error::Other(
+                "standalone numbering style-link mutation is not supported yet".to_owned(),
+            ));
+        }
         candidate.reserve_numbering_bundle()?;
         candidate.validate_numbering_graph()?;
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
         Ok(())
+    }
+
+    /// The styles linked both ways to a level of instance `id`, with that
+    /// level: the style points at the level, which names the style back.
+    fn two_way_style_links(&self, id: u32) -> Vec<(String, u32)> {
+        let Some(numbering) = self.numbering.as_ref() else {
+            return Vec::new();
+        };
+        let Some(instance) = numbering.nums.iter().find(|item| item.num_id == id) else {
+            return Vec::new();
+        };
+        let definition = numbering.get_abstract_num_for(id);
+        self.styles
+            .styles
+            .iter()
+            .filter_map(|style| {
+                let properties = style.ppr.as_ref()?;
+                if properties.num_id != Some(id) {
+                    return None;
+                }
+                let level = properties.num_ilvl.unwrap_or(0);
+                let named = instance
+                    .level_overrides
+                    .iter()
+                    .find(|item| item.ilvl == level)
+                    .and_then(|item| item.level.as_ref())
+                    .or_else(|| definition?.levels.iter().find(|item| item.ilvl == level))?
+                    .p_style
+                    .as_deref();
+                (named == Some(style.style_id.as_str())).then(|| (style.style_id.clone(), level))
+            })
+            .collect()
     }
 
     /// Remove an unreferenced numbering instance.
@@ -43805,9 +43848,11 @@ impl Document {
     /// back. A style that holds only a `w:ilvl`, takes its instance from its
     /// `basedOn` chain and is named back by the level loses only that name
     /// and keeps its level. A style holding only a `w:ilvl` that no level
-    /// names is not linked, and unlinking it changes nothing. A repeated
-    /// style ID resolves to its first definition, and the style graph is
-    /// validated as in [`Document::add_style`].
+    /// names is not linked, and unlinking it changes nothing. A style that
+    /// points at the level without being named back, the one-way link
+    /// LibreOffice writes, loses its numbering and the level stays as it is.
+    /// A repeated style ID resolves to its first definition, and the style
+    /// graph is validated as in [`Document::add_style`].
     pub fn unlink_style_from_numbering(
         &mut self,
         style_id: &str,
@@ -43877,9 +43922,10 @@ impl Document {
         let inherited = style_numbering == (None, Some(level))
             && style::resolve_paragraph_properties(Some(style_id), &candidate.styles).num_id
                 == Some(num_id);
-        if (style_numbering != (Some(num_id), Some(level)) && !inherited)
-            || target_style != Some(style_id)
-        {
+        // A style may point at the level without being named back, the
+        // one-way link LibreOffice writes: only the style's side goes.
+        let named_back = target_style == Some(style_id);
+        if !(style_numbering == (Some(num_id), Some(level)) || inherited && named_back) {
             return Err(Error::Other(format!(
                 "style '{style_id}' and numbering instance {num_id} level {level} are not linked"
             )));
@@ -43899,14 +43945,17 @@ impl Document {
             .numbering
             .as_mut()
             .expect("the numbering part was resolved above");
-        if let Some(index) = override_index {
-            numbering.nums[instance_index].level_overrides[index]
-                .level
-                .as_mut()
-                .expect("the override was selected only when it owns a level")
-                .p_style = None;
-        } else {
-            numbering.abstract_nums[definition_index].levels[definition_level_index].p_style = None;
+        if named_back {
+            if let Some(index) = override_index {
+                numbering.nums[instance_index].level_overrides[index]
+                    .level
+                    .as_mut()
+                    .expect("the override was selected only when it owns a level")
+                    .p_style = None;
+            } else {
+                numbering.abstract_nums[definition_index].levels[definition_level_index].p_style =
+                    None;
+            }
         }
 
         style::validate_style_graph_change(&self.styles, &candidate.styles)?;

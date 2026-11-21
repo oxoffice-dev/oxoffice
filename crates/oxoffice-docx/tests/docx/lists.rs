@@ -679,6 +679,34 @@ fn a_style_linked_to_a_list_level_numbers_every_paragraph_of_that_style() {
 }
 
 #[test]
+fn an_instance_update_keeps_the_style_links_of_its_levels() {
+    // Heading1 and Heading2 are linked both ways to the list's levels; an
+    // update that would drop the levels' names of them is refused.
+    let (mut doc, id) = numbered_headings();
+    let plain = doc
+        .add_numbering_definition(&[ListLevel::decimal(), ListLevel::decimal()])
+        .unwrap();
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(id, plain, &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    doc.update_numbering_instance(
+        id,
+        definition_of(&doc, id),
+        &[NumberingLevelOverride::new(0).start(3)],
+    )
+    .unwrap();
+    assert_eq!(
+        markers(&doc)[0],
+        "3",
+        "an update that keeps the links goes through"
+    );
+}
+
+#[test]
 fn a_level_that_names_a_style_not_numbered_by_it_is_refused() {
     // The other way round from LibreOffice's one-way link: the level names
     // Heading2, whose style no longer points at any list.
@@ -859,6 +887,7 @@ fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
     for (name, bullet) in [
         ("word/report.docx", SYMBOL_BULLET),
         ("google/report.docx", "●"),
+        ("libreoffice/report.docx", SYMBOL_BULLET),
         ("authored/report.docx", SYMBOL_BULLET),
     ] {
         let mut doc = corpus_doc(name);
@@ -932,6 +961,18 @@ fn every_list_edit_works_on_a_libreoffice_report() {
     assert_ne!(doc.add_list_definition(&[ListLevel::decimal()]), 0);
     doc.add_numbering_definition(&[ListLevel::bullet()])
         .unwrap();
+    let mut unlinked = corpus_doc("libreoffice/report.docx");
+    unlinked
+        .unlink_style_from_numbering("ListBullet", id, level)
+        .unwrap();
+    let style = unlinked.style("ListBullet").unwrap();
+    let properties = style.paragraph_properties().unwrap();
+    assert_eq!(
+        (properties.num_id, properties.num_ilvl),
+        (None, None),
+        "unlinking removes the style's side of a one-way link"
+    );
+    unlinked.validate_numbering_graph().unwrap();
     doc.link_style_to_numbering("ListBullet", id, level)
         .unwrap();
     assert_eq!(
