@@ -2175,11 +2175,17 @@ impl PyDocument {
             .split_run(body_index, run_index, character_offset)
             .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate) != before {
-            let publication =
-                match paragraph_index.map(|index| self.inner.paragraph_story_location(index)) {
-                    Some(Ok(Some(location))) => WordPublication::ParagraphEdit(location),
-                    _ => WordPublication::Conservative,
-                };
+            // The route comes from the inventory; a paragraph without one
+            // retires every handle.
+            let publication = paragraph_index
+                .and_then(|index| {
+                    self.paragraph_route(&ParagraphLocation::Body(index), None)
+                        .ok()
+                })
+                .map_or(
+                    WordPublication::Conservative,
+                    WordPublication::ParagraphEdit,
+                );
             self.publish_block_edit(py, candidate, "Document.split_run", publication)?;
         }
         Ok(boundary)

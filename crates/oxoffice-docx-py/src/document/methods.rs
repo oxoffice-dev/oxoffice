@@ -1404,10 +1404,12 @@ impl PyDocument {
             .split_run(run_index, character_offset)
             .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate) != before {
-            let publication = match document.inner.paragraph_story_location(paragraph_index) {
-                Ok(Some(location)) => WordPublication::ParagraphEdit(location),
-                _ => WordPublication::Conservative,
-            };
+            let publication = document
+                .paragraph_route(&ParagraphLocation::Body(paragraph_index), None)
+                .map_or(
+                    WordPublication::Conservative,
+                    WordPublication::ParagraphEdit,
+                );
             document.publish_block_edit(py, candidate, "Document.split_run", publication)?;
         }
         Ok(boundary)
