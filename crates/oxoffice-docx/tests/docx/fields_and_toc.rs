@@ -402,29 +402,32 @@ fn an_if_field_with_a_quoted_nested_merge_field_is_updated() {
     let doc = reopen(&mut doc);
     assert_eq!(texts(&doc), ["Bonjour"]);
     let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains(r#"<w:instrText xml:space="preserve"> IF "</w:instrText>"#)
-            && xml.contains(
-                r#"<w:instrText xml:space="preserve">" = "France" "Bonjour" "Hello" </w:instrText>"#
-            ),
-        "the instruction keeps its quotes: {xml}"
-    );
+    let mut rest = xml.as_str();
+    for piece in [
+        r#"<w:instrText xml:space="preserve"> IF "</w:instrText>"#,
+        r#"<w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText>"#,
+        r#"<w:instrText xml:space="preserve">" = "France" "Bonjour" "Hello" </w:instrText>"#,
+    ] {
+        let at = rest
+            .find(piece)
+            .unwrap_or_else(|| panic!("the instruction keeps {piece} in order: {xml}"));
+        rest = &rest[at + piece.len()..];
+    }
 }
 
 #[test]
-fn a_quoted_nested_field_is_one_operand_when_its_result_holds_spaces() {
-    let doc = doc_with_body(&quoted_if_body("United Kingdom", "Hello"));
-    for (country, greeting) in [("United Kingdom", "Bonjour"), ("United States", "Hello")] {
+fn an_if_field_picks_a_quoted_nested_merge_field_as_its_result() {
+    // The mail-merge form: the result to show is itself a quoted merge field.
+    let doc = doc_with_body(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "France" "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD City </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«City»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" "Abroad" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Abroad</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    for (country, shown) in [("France", "Lyon"), ("Spain", "Abroad")] {
         let outcome = doc
-            .evaluate_fields(&merge_context(&[("Country", country)]))
+            .evaluate_fields(&merge_context(&[("Country", country), ("City", "Lyon")]))
             .unwrap()
             .remove(0)
             .outcome;
-        assert_eq!(
-            outcome,
-            FieldOutcome::Resolved(greeting.into()),
-            "{country}"
-        );
+        assert_eq!(outcome, FieldOutcome::Resolved(shown.into()), "{country}");
     }
 }
 
