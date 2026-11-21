@@ -142,15 +142,17 @@ def fits(corpus, kib):
     return probe.returncode == 0
 
 
-def stack_needed(corpus, low=64, high=8192):
+def stack_needed(corpus, low=128, high=8192):
     """The smallest thread stack on which the work completes, or None above `high`, in steps of 16 KiB, or 64 KiB on
     Windows, which rounds a stack reserve up to that.
 
-    The work must fail on `low` KiB: if it does not, the thread did not get the stack it asked for, and any number
-    would be wrong."""
+    `low` is the smallest stack every platform accepts (glibc on aarch64 refuses less than 128 KiB). The work must
+    fail on it: if it does not, either the thread did not get the stack it asked for, and any number would be wrong,
+    or the work now needs less, and `low` can go down where the platform allows it."""
     step = 64 if sys.platform == "win32" else 16
     if fits(corpus, low):
-        raise SystemExit(f"the work completed on a {low} KiB thread stack: the stack size is not honoured here")
+        raise SystemExit(f"the work completed on a {low} KiB thread stack, the smallest this measure tries: "
+                         "either the stack size is not honoured here, or the work needs less than that")
     if not fits(corpus, high):
         return None
     while high - low > step:

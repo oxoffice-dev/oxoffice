@@ -44,8 +44,9 @@ the main thread of most Windows programs that embed Python. On Windows the
 probe threads are made with `CreateThread` and
 `STACK_SIZE_PARAM_IS_A_RESERVATION`: `threading.stack_size` only sets the
 commit size there, and the executable's 2,000,000-byte reserve would hide
-any smaller need. A measure that completes on 64 KiB fails the job too, since
-the stack size was then not honoured, and so does a probe that ends with a
+any smaller need. A measure that completes on 128 KiB, the smallest stack
+every platform accepts (glibc on aarch64), fails the job too, since the
+stack size was then not honoured, and so does a probe that ends with a
 Python error, shown with its traceback rather than read as an overflow.
 
 The version the wheel reports must be the release version, and `prepare`
