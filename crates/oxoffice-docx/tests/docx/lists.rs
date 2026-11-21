@@ -1362,6 +1362,65 @@ fn rtf_export_numbers_lists_as_layout_does() {
 }
 
 #[test]
+fn exports_keep_a_direct_level_on_the_list_of_its_style() {
+    // Word writes a sub-clause as its style's list with a direct w:ilvl and
+    // no w:numId: the level is not dropped.
+    let (mut doc, id) = single_list(&[ListLevel::decimal(), ListLevel::decimal()]);
+    doc.add_style(StyleBuilder::paragraph("Clauses", "Clauses"))
+        .unwrap();
+    doc.link_style_to_numbering("Clauses", id, 0).unwrap();
+    doc.add_paragraph("clause").style("Clauses");
+    doc.add_paragraph("sub clause").style("Clauses");
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let style = r#"<w:pStyle w:val="Clauses"/>"#;
+    let second = xml.rfind(style).expect("the sub clause's style");
+    let xml = format!(
+        "{}{style}<w:numPr><w:ilvl w:val=\"1\"/></w:numPr>{}",
+        &xml[..second],
+        &xml[second + style.len()..]
+    );
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let rtf = doc.to_rtf_bytes().unwrap();
+    let text = String::from_utf8(rtf.bytes.clone()).unwrap();
+    assert!(text.contains(r"\ilvl1"), "{text}");
+    let odt = doc.to_odt_bytes().unwrap();
+    let messages: Vec<&str> = rtf
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .chain(
+            odt.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str()),
+        )
+        .collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("without a numbering id")
+                || message.contains("without numbering id")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn rtf_reads_a_font_named_with_unicode_characters() {
+    // LibreOffice's "ＭＳ ゴシック" comes as \u characters between bytes.
+    let rtf = br"{\rtf1\ansi{\fonttbl{\f0 A\u-211?B\u-205? C;}}\f0 x\par}";
+    let doc = Document::from_rtf_bytes(rtf).unwrap().document;
+    assert_eq!(
+        doc.paragraph(0).unwrap().run(0).unwrap().font_name(),
+        Some("AＭBＳ C")
+    );
+}
+
+#[test]
 fn exports_leave_a_level_without_marker_out_of_lists() {
     let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::None)]);
     add_items(&mut doc, id, &[0]);

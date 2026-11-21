@@ -2402,7 +2402,6 @@ fn paragraph_properties_have_unsupported(properties: &CT_PPr) -> bool {
     properties.style_id.is_some()
         || properties.jc == Some(ST_Jc::Distribute)
         || (properties.line_rule.is_some() && properties.line_spacing.is_none())
-        || (properties.num_ilvl.is_some() && properties.num_id.is_none())
         || (properties.ind_first_line.is_some() && properties.ind_hanging.is_some())
         || properties.before_autospacing.is_some()
         || properties.after_autospacing.is_some()
