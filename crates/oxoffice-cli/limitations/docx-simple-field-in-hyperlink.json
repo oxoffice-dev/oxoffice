@@ -1,0 +1,9 @@
+{
+  "id": "docx-simple-field-in-hyperlink",
+  "format": "docx",
+  "area": "text",
+  "title": "A simple field inside a hyperlink drops out of the text after a reopen",
+  "symptom": "a w:fldSimple inside w:hyperlink, read from a file or added to a link run and saved, is missing from paragraph, document and link text, so \"See page 2\" reads \"See page \"",
+  "workaround": "write the field as a complex field (w:fldChar) inside the link",
+  "issue": 146
+}

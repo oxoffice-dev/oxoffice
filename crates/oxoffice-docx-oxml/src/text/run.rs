@@ -836,7 +836,13 @@ impl CT_R {
             }
     }
 
-    /// Get the combined text of all text content in this run.
+    /// Get the combined text of all text content in this run, as stored.
+    ///
+    /// A raw reader: it reads text, tabs, breaks and the result of a complex
+    /// field, but leaves out the result of every simple field (`w:fldSimple`),
+    /// parsed from a file or added with the facade. Layout offsets and field
+    /// result caches count on that (#150 lists the callers).
+    /// [`Self::accepted_text`] reads the text a reader of the document sees.
     pub fn text(&self) -> String {
         let mut text = String::new();
         for content in &self.content {
@@ -849,6 +855,16 @@ impl CT_R {
                 other => text.push_str(Self::content_text(other)),
             }
         }
+        text
+    }
+
+    /// Get the text a reader of the document sees in this run: that of
+    /// [`Self::text`], with the result of every field, simple ones included,
+    /// as `CT_P::accepted_text` reads the run.
+    #[doc(hidden)]
+    pub fn accepted_text(&self) -> String {
+        let mut text = String::new();
+        super::append_current_run_text(self, &mut text);
         text
     }
 

@@ -2480,10 +2480,26 @@ impl CT_Tc {
             .collect()
     }
 
+    /// Get the raw text of the cell's paragraphs, joined with `\n`.
+    ///
+    /// Each paragraph is read by `CT_P::text`, which leaves out simple field
+    /// results and tracked insertions. [`Self::accepted_text`] reads the text
+    /// a reader of the document sees.
     pub fn text(&self) -> String {
         self.paragraphs()
             .iter()
             .map(|p| p.text())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Get the text a reader of the document sees in the cell's paragraphs,
+    /// each read as `Paragraph::text` reads it, joined with `\n`.
+    #[doc(hidden)]
+    pub fn accepted_text(&self) -> String {
+        self.paragraphs()
+            .iter()
+            .map(|p| p.accepted_text())
             .collect::<Vec<_>>()
             .join("\n")
     }

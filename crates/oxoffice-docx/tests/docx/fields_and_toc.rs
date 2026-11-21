@@ -3,8 +3,8 @@
 
 use oxoffice_docx::{
     CaptionOptions, ContentLocation, CrossReferenceOptions, Document, Field, FieldDateTime,
-    FieldEvaluationContext, FieldKind, FieldOutcome, RunItemRef, RunPosition, RunRange,
-    SequenceOptions, StoryId, StoryItemKind, StoryKind, StoryRangeKind, StoryRunPosition,
+    FieldEvaluationContext, FieldKind, FieldOutcome, ParagraphItemRef, RunItemRef, RunPosition,
+    RunRange, SequenceOptions, StoryId, StoryItemKind, StoryKind, StoryRangeKind, StoryRunPosition,
     StoryRunRange, TableOfFiguresOptions, TocRebuildReport,
 };
 
@@ -142,6 +142,147 @@ fn a_field_result_is_part_of_the_paragraph_text_before_a_save() {
         "the field result is part of the paragraph text"
     );
     assert_eq!(doc.text(), "Page 1\n");
+}
+
+#[test]
+fn a_field_added_to_a_table_cell_reads_in_the_cell_and_run_text_in_files_from_every_producer() {
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        let before = doc.table(0).unwrap().cell(0, 0).unwrap().text();
+        doc.table_mut(0)
+            .unwrap()
+            .cell(0, 0)
+            .unwrap()
+            .paragraph_mut(0)
+            .unwrap()
+            .add_run("")
+            .add_field("PAGE", "7")
+            .unwrap();
+        let expected = format!("{before}7");
+        {
+            // The mutable cell and run read the same.
+            let mut table = doc.table_mut(0).unwrap();
+            let mut cell = table.cell(0, 0).unwrap();
+            assert_eq!(cell.text(), expected, "{name}: the mutable cell");
+            let mut paragraph = cell.paragraph_mut(0).unwrap();
+            let last = paragraph.runs().count() - 1;
+            assert_eq!(
+                paragraph.run_mut(last).unwrap().text(),
+                "7",
+                "{name}: the mutable run"
+            );
+        }
+        let check = |doc: &Document, when: &str| {
+            let table = doc.table(0).unwrap();
+            let cell = table.cell(0, 0).unwrap();
+            assert_eq!(
+                cell.text(),
+                expected,
+                "{name} {when}: the cell shows the result"
+            );
+            assert_eq!(
+                cell.paragraph(0).unwrap().runs().last().unwrap().text(),
+                "7",
+                "{name} {when}: the run shows the result"
+            );
+        };
+        check(&doc, "before a save");
+        check(&reopen(&mut doc), "after a reopen");
+    }
+}
+
+#[test]
+fn simple_fields_from_a_file_read_in_cell_run_and_bookmark_text() {
+    // `w:fldSimple` as Word writes it, in a cell and in a bookmark.
+    let mut doc = doc_with_body(concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>"#,
+        r#"<w:r><w:t xml:space="preserve">Page </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#,
+        r#"</w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="total"/>"#,
+        r#"<w:r><w:t xml:space="preserve">Total: </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" =2+3 "><w:r><w:t>5</w:t></w:r></w:fldSimple>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let check = |doc: &Document, when: &str| {
+        let table = doc.table(0).unwrap();
+        let cell = table.cell(0, 0).unwrap();
+        assert_eq!(cell.text(), "Page 1", "{when}: the cell shows the result");
+        let runs = cell
+            .paragraph(0)
+            .unwrap()
+            .runs()
+            .map(|run| run.text())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            runs,
+            ["Page ", "1"],
+            "{when}: the field run shows the result"
+        );
+        let bookmark = doc
+            .bookmarks()
+            .into_iter()
+            .find(|bookmark| bookmark.name() == Some("total"))
+            .expect("the bookmark is read");
+        assert_eq!(
+            bookmark.text(),
+            "Total: 5",
+            "{when}: the bookmark shows the result"
+        );
+        assert_eq!(texts(doc), ["Total: 5"]);
+    };
+    check(&doc, "as read");
+    check(&reopen(&mut doc), "after a reopen");
+}
+
+/// The text of the first hyperlink of a body paragraph.
+fn link_text(doc: &Document, paragraph: usize) -> String {
+    doc.paragraph(paragraph)
+        .unwrap()
+        .items()
+        .find_map(|item| match item {
+            ParagraphItemRef::Hyperlink(link) => Some(link.text()),
+            _ => None,
+        })
+        .expect("the paragraph holds a link")
+}
+
+#[test]
+fn a_field_added_to_a_hyperlink_reads_in_the_link_text() {
+    let mut doc = Document::new();
+    doc.add_paragraph("")
+        .add_internal_hyperlink("See page ", "total", None)
+        .add_field("PAGEREF total", "2")
+        .unwrap();
+    doc.add_paragraph("")
+        .add_internal_hyperlink("", "total", None)
+        .add_field("PAGEREF total", "2")
+        .unwrap();
+    assert_eq!(link_text(&doc, 0), "See page 2", "beside the link text");
+    assert_eq!(link_text(&doc, 1), "2", "alone in the link run");
+    assert_eq!(texts(&doc), ["See page 2", "2"]);
+}
+
+// Fails today: a w:fldSimple inside w:hyperlink is kept raw at the next open, so its result drops out of every text reader. Issue: #146
+#[test]
+#[should_panic(expected = "the link keeps the field result after a reopen")]
+fn a_simple_field_inside_a_hyperlink_reads_after_a_reopen() {
+    let mut doc = Document::new();
+    doc.add_paragraph("")
+        .add_internal_hyperlink("See page ", "total", None)
+        .add_field("PAGEREF total", "2")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc),
+        ["See page 2"],
+        "the link keeps the field result after a reopen"
+    );
+    assert_eq!(link_text(&doc, 0), "See page 2");
 }
 
 #[test]

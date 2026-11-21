@@ -2334,9 +2334,10 @@ pub struct Cell<'a> {
 }
 
 impl<'a> Cell<'a> {
-    /// Get the combined text of all paragraphs in this cell.
+    /// Get the combined text of all paragraphs in this cell, each read as
+    /// [`crate::Paragraph::text`] reads it, joined with `\n`.
     pub fn text(&self) -> String {
-        self.inner.text()
+        self.inner.accepted_text()
     }
 
     /// Set the first paragraph's text while preserving its range anchors.
@@ -3209,9 +3210,10 @@ impl<'a> CellRef<'a> {
         })
     }
 
-    /// Get the combined text of all paragraphs.
+    /// Get the combined text of all paragraphs, each read as
+    /// [`crate::Paragraph::text`] reads it, joined with `\n`.
     pub fn text(&self) -> String {
-        self.inner.text()
+        self.inner.accepted_text()
     }
 
     /// Iterate over direct cell items in source order.

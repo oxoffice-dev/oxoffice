@@ -10,7 +10,7 @@ use oxoffice_docx::{
     TableLayout, TableLook, TableWidth, TextCommentOptions, VMerge, VerticalAlignment,
 };
 
-use crate::support::{corpus_doc, doc_with, reopen, texts};
+use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
 
 const REPORTS: [&str; 4] = [
     "word/report.docx",
@@ -750,6 +750,21 @@ fn table_percentages_round_to_the_nearest_fiftieth_through_both_setters() {
             );
         }
     }
+}
+
+#[test]
+fn a_cell_reads_its_tracked_insertions_as_its_paragraphs_do() {
+    let doc = doc_with_body(concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>"#,
+        r#"<w:r><w:t>A</w:t></w:r>"#,
+        r#"<w:ins w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:t>B</w:t></w:r></w:ins>"#,
+        r#"<w:del w:id="2" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>C</w:delText></w:r></w:del>"#,
+        r#"</w:p></w:tc></w:tr></w:tbl>"#,
+    ));
+    let table = doc.table(0).unwrap();
+    let cell = table.cell(0, 0).unwrap();
+    assert_eq!(cell.paragraph(0).unwrap().text(), "AB");
+    assert_eq!(cell.text(), "AB", "the cell reads its paragraph's text");
 }
 
 #[test]
