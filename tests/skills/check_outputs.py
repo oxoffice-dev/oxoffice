@@ -38,6 +38,34 @@ assert all("high points of the deck" in t for t in method[1:]) and len(method) >
 actions = [scoped.tables[next(k for k, tb in enumerate(scoped.tables) if tb.cell(0, 0).text == "Ref")].cell(r, 5).text
            for r in (1, 5)]
 assert actions == ["Monitor", "No action"]
+texts_of = lambda name: [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs]
+issue = texts_of("issue-c.docx")
+assert any("Issue C" in s for s in issue) and not any("Issue B" in s for s in issue)
+report = texts_of("report.docx")
+for name in ("checked.docx", "accepted.docx"):
+    assert any("two points lower" in s for s in texts_of(name)) and not any("three points lower" in s for s in texts_of(name))
+assert len(oxoffice.docx.Document.open(d / "accepted.docx").revisions) == 0
+added = texts_of("added.docx")
+k = next(k for k, s in enumerate(added) if s.startswith("None of these defects"))
+assert added[k + 1] == "The next principal inspection is due in 2031." and len(added) == len(report) + 1
+moved = texts_of("restructured.docx")
+lead = report.index("The main findings are:")
+assert moved[moved.index("The main findings are:") - 1] == report[lead + 1]   # moved one item down
+assert len(moved) == len(report) - 1
+for name in ("toc.docx", "fields.docx"):
+    entries = [q.text for q in oxoffice.docx.Document.open(d / name).paragraphs if q.style == "TOC1"]
+    assert len(entries) > 3 and all(s.split("\t")[-1].isdigit() for s in entries)
+styled = next(q for q in oxoffice.docx.Document.open(d / "styled.docx").paragraphs if q.text.startswith("The overall condition index"))
+assert (styled.style, styled.paragraph_format.space_after, styled.paragraph_format.keep_with_next) == ("Caption", oxoffice.docx.Pt(12), True)
+assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cli.docx").comments] == [("about 12 mm", "Which reference?")]
+assert [(c.anchor_text, c.text) for c in oxoffice.docx.Document.open(d / "commented-cell.docx").comments] == [("spalled concrete", "Which face?")]
+assert all(c.date for name in ("commented-cli.docx", "commented-cell.docx") for c in oxoffice.docx.Document.open(d / name).comments)
+assert set(json.loads((d / "report.json").read_text())) >= {"paragraphs", "stories"}
+assert json.loads((d / "layout.json").read_text())["page_count"] > 1
+assert any(line.startswith("footer\t") for line in (d / "all-stories.txt").read_text().splitlines())
+assert (d / "redline-tracked.pdf").read_bytes()[:5] == b"%PDF-"
+nobm = oxoffice.docx.Document.open(d / "redline-nobm.docx")
+assert [(r.kind, r.story.kind) for r in nobm.revisions] == [("deletion", "body"), ("insertion", "body")]
 red = oxoffice.docx.Document.open(d / "redline.docx")
 assert [(r.kind, r.story.kind) for r in red.revisions] == [("deletion", "body"), ("insertion", "body")]
 bold = oxoffice.docx.Document.open(d / "bold.docx")
@@ -90,6 +118,14 @@ for name in ("embedded.pptx", "embedded-py.pptx"):
     fonts = oxoffice.pptx.Presentation(p / name).embedded_fonts
     assert [(t.typeface, [f.format for f in t.faces]) for t in fonts] == [("Aileron", ["eot"])]
     assert oxoffice.pptx.Presentation(p / name).embed_true_type_fonts
+frames = lambda name: [sh.text_frame for s in pptx.Presentation(p / name).slides for sh in s.shapes if sh.has_text_frame]
+assert any("9 April 2025" in f.text for f in frames("dated.pptx")) and not any("2 April 2025" in f.text for f in frames("dated.pptx"))
+works = next(f for f in frames("run-edited.pptx") if f.text.startswith("Works:")).paragraphs[0].runs[0]
+assert works.text == "Works: EUR 188,000" and works.font.size is not None
+with zipfile.ZipFile(p / "c3.pptx") as z:
+    thread = b"".join(z.read(n) for n in z.namelist() if n.startswith("ppt/comments/"))
+assert b"Source for the costs?" in thread and b"Framework rates, 2025." in thread and b'status="resolved"' in thread
+assert (p / "deck.pdf").read_bytes()[:5] == b"%PDF-" and json.loads((p / "deck.json").read_text())["slides"]
 texts = "\n".join(sh.text_frame.text for s in pptx.Presentation(p / "edited.pptx").slides for sh in s.shapes if sh.has_text_frame)
 assert "EUR 236,000" in texts and "eight weeks" in texts
 shapes = pptx.Presentation(p / "shapes.pptx").slides[3].shapes

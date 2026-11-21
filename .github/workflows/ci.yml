@@ -194,6 +194,7 @@ jobs:
           oxoffice --version
           git -C oxoffice-skills log -1 --format='oxoffice-skills %h %s'
       - name: Run the examples
+        timeout-minutes: 25
         run: |
           python tests/skills/make_fixtures.py "$RUNNER_TEMP/skills/fixtures"
           python tests/skills/run_examples.py --skills oxoffice-skills/plugin/skills \
@@ -204,7 +205,7 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python tests/skills/check_names.py oxoffice-skills/plugin/skills
       - name: Keep the logs
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: skill-examples-logs

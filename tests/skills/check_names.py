@@ -34,13 +34,18 @@ def rel(path):
 def spans(path):
     """(line, code span) for inline spans outside fences, plus each `oxoffice ...` line of a fenced bash block."""
     fenced = False
-    for n, line in enumerate(path.read_text().splitlines(), 1):
-        if line.startswith("```"):
+    lines = path.read_text().splitlines()
+    for n, line in enumerate(lines, 1):
+        if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
         if fenced:
+            k = n
+            while line.rstrip().endswith("\\") and k < len(lines):   # a command continued on the next line
+                line = line.rstrip()[:-1] + " " + lines[k]
+                k += 1
             s = line.split(" #")[0].strip()
-            for prefix in ("$OX ", "oxoffice "):
+            for prefix in ("ox ", "oxoffice "):
                 if s.startswith(prefix):
                     yield n, "oxoffice " + s[len(prefix):], True
         else:
@@ -59,7 +64,14 @@ def python_api():
                 names = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} - {"self", "cls"}
                 api.setdefault(node.name, []).append(names | ({"**"} if a.kwarg else set()))
             elif isinstance(node, ast.ClassDef):
-                api.setdefault(node.name, []).append(None)
+                # a class is called with the arguments of its __new__ or __init__
+                inits = [f.args for f in node.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                         and f.name in ("__new__", "__init__")]
+                for a in inits:
+                    names = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} - {"self", "cls"}
+                    api.setdefault(node.name, []).append(names | ({"**"} if a.kwarg else set()))
+                if not inits:
+                    api.setdefault(node.name, []).append(None)
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                 api.setdefault(node.target.id, []).append(None)
             elif isinstance(node, ast.Assign):
@@ -91,7 +103,7 @@ def calls(span):
 def python_problems(path):
     api = python_api()
     for n, span, fenced in spans(path):
-        if fenced or re.match(r"(oxoffice|python3?|pip|bash|soffice|uvx?|pixi|conda|curl|irm|sha256sum|gh) |\$|[A-Z]+=", span):
+        if fenced or re.match(r"(oxoffice|ox|oxpy|python3?|pip|bash|soffice|uvx?|pixi|conda|curl|irm|sha256sum|gh) |(ox|oxpy)\(\)|\$|[A-Z]+=", span):
             continue
         stats["spans"] += 1
         for name, args in calls(span):
@@ -124,7 +136,7 @@ def subcommands(help_text):
 def cli_problems(path):
     for n, span, _ in spans(path):
         tokens = span.replace("[", " ").replace("]", " ").split()
-        if len(tokens) < 2 or tokens[0] not in ("oxoffice", "$OX") or tokens[1] not in ("docx", "pptx"):
+        if len(tokens) < 2 or tokens[0] not in ("oxoffice", "ox") or tokens[1] not in ("docx", "pptx"):
             continue
         stats["cli_spans"] += 1
         commands, i = [(tokens[1],)], 2
@@ -135,10 +147,12 @@ def cli_problems(path):
                 break
             commands = [c + (w,) for c in commands for w in words if w in subcommands(cli_help(*c) or "")]
             i += 1
-        if len(commands) == 1 and len(commands[0]) == 1 and len(tokens) > 2 and not tokens[2].startswith("-"):
-            if re.fullmatch(r"[a-z]+", tokens[2]) and tokens[2] not in ("COMMAND",):
-                yield f"{rel(path)}:{n}: no command oxoffice {tokens[1]} {tokens[2]}: `{span}`"
-                continue
+        # a command that has subcommands takes one: a lowercase word there that is not one is a wrong command
+        known = set.union(*(subcommands(cli_help(*c) or "") for c in commands))
+        if known and i < len(tokens) and re.fullmatch(r"[a-z][a-z-]*(/[a-z][a-z-]*)*", tokens[i]):
+            wrong = [w for w in tokens[i].split("/") if w not in known]
+            yield f"{rel(path)}:{n}: no command oxoffice {' '.join(commands[0])} {'/'.join(wrong)}: `{span}`"
+            continue
         helps = [cli_help(*c) or "" for c in commands]
         for token in tokens[i:]:
             for flag in token.split("/"):
@@ -163,7 +177,7 @@ def source_words():
 def attribute_problems(path):
     """Every `.attribute` of a Python code span is a word of the installed sources or of the skills' scripts."""
     for n, span, fenced in spans(path):
-        if fenced or "://" in span or re.match(r"(oxoffice|python3?|pip|bash|uvx?|pixi|conda|curl|irm|\$)\b|[A-Z]+=", span):
+        if fenced or "://" in span or re.match(r"(oxoffice|ox|oxpy|python3?|pip|bash|uvx?|pixi|conda|curl|irm|\$)\b|[A-Z]+=", span):
             continue
         code = re.sub(r"\"[^\"]*\"|'[^']*'", "''", span)
         for attr in re.findall(r"(?<=[\w)\]])\.([A-Za-z_]\w*)(?!\w*\*)", code):

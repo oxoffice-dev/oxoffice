@@ -27,4 +27,11 @@ python tests/skills/check_names.py ../oxoffice-skills/plugin/skills
 A failure means one of two things: a change on `main` broke what the skills promise (fix it here, or say so in
 the pull request that changes the API, and update the skills), or the skills cite something that does not exist
 (fix the skills). Each block's code and output are in `<work>/<skill>/_blockNN.log`, uploaded by the job when it
-fails.
+fails or times out; the job's log names the skills commit it ran.
+
+`check_outputs.py` knows what each example writes. An example whose output changes in the skills goes with a pull
+request here that updates it: run the CI on that branch by hand (`gh workflow run ci.yml --ref BRANCH`), which runs
+this job against the skills' default branch, and merge both close together.
+
+`check_names.py` matches a method name against every class of both packages, and an attribute against every word
+of their sources: it catches a name that no longer exists anywhere, not one moved to another class.
