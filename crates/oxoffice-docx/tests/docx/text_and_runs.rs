@@ -514,6 +514,7 @@ fn replace_all_swaps_two_words_whatever_the_order_of_its_pairs() {
     let mut doc = doc_with(&["left right"]);
     let pairs = HashMap::from([("left", "right"), ("right", "left")]);
     let replaced = doc.replace_all(&pairs);
+    let doc = reopen(&mut doc);
     assert_eq!(
         (replaced, texts(&doc)),
         (2, vec!["right left".to_owned()]),

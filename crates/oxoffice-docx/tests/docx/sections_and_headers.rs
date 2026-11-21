@@ -607,7 +607,7 @@ fn unlinking_gives_a_section_its_own_copy_to_edit() {
 }
 
 #[test]
-fn inheriting_again_shows_the_header_of_the_section_before() {
+fn inheriting_again_in_the_same_session_drops_the_copy() {
     let mut doc = inherited_header_and_footer();
     doc.unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
         .unwrap();
@@ -616,6 +616,7 @@ fn inheriting_again_shows_the_header_of_the_section_before() {
     let doc = reopen(&mut doc);
     assert!(header_story(&doc, 1).is_inherited());
     assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
+    assert_eq!(header_part_count(&doc), 1);
 }
 
 // Fails today: the copy a section stops using stays in the saved file as a
@@ -632,6 +633,8 @@ fn inheriting_again_drops_the_copy_from_the_file() {
     doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
         .unwrap();
     let doc = reopen(&mut doc);
+    assert!(header_story(&doc, 1).is_inherited());
+    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
     assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
 }
 

@@ -68,7 +68,7 @@
     "area": "headers",
     "title": "Document header and footer calls ignore the headers a section inherits",
     "symptom": "the Rust header_text() and footer_text() return None when the last section inherits its header, and set_header() changes the last section only",
-    "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python sections[i].header",
+    "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python document.section(i).header",
     "issue": 28
   },
   {
@@ -76,7 +76,7 @@
     "format": "docx",
     "area": "lists",
     "title": "A numbered list cannot be restarted in a file saved by Word",
-    "symptom": "try_add_numbered_list_item_with_restart and restart_numbering fail with \"numbering restart cannot project unsupported override source\"",
+    "symptom": "restarting fails with \"numbering restart cannot project unsupported override source\" (Rust try_add_numbered_list_item_with_restart and restart_numbering, Python add_numbered_list_item(restart=True) and restart_numbering)",
     "workaround": "start a new list instead: a new numbering definition and instance on the new paragraphs (Rust add_list_definition; Python add_numbering_definition then add_numbering_instance and Paragraph.numbering)",
     "issue": 29
   },

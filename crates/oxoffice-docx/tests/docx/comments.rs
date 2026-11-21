@@ -1099,16 +1099,20 @@ fn a_comment_added_to_a_localized_word_file_uses_its_comment_styles() {
         added.is_empty(),
         "styles added beside Word's comment styles: {added:?}"
     );
-    // And the new comment does not point at styles the file does not define.
-    let ids: Vec<String> = names(&doc).into_iter().map(|(id, _)| id).collect();
-    for (part, id) in [
-        ("word/comments.xml", "CommentText"),
-        ("word/document.xml", "CommentReference"),
-    ] {
-        let xml = doc.part_xml(part).unwrap();
-        assert!(
-            ids.iter().any(|known| known == id) || !xml.contains(&format!("w:val=\"{id}\"")),
-            "{part} names the undefined style {id}"
+    // And the new comment takes Word's own comment styles: one more comment
+    // paragraph in "Commentaire" and one more mark in "Marquedecommentaire".
+    let count = |xml: &str, style: &str| xml.matches(&format!("w:val=\"{style}\"")).count();
+    let comments = doc.part_xml("word/comments.xml").unwrap();
+    for style in ["Commentaire", "Marquedecommentaire"] {
+        assert_eq!(
+            count(&comments, style),
+            2 * count(
+                &corpus_doc("word/report.docx")
+                    .part_xml("word/comments.xml")
+                    .unwrap(),
+                style
+            ),
+            "the new comment uses {style}"
         );
     }
 }
