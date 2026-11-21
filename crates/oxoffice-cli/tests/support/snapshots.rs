@@ -90,7 +90,7 @@ pub fn assert_snapshot(name: &str, lines: &[String]) {
     }
     let kept = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "{}: {e}; write it with OXOFFICE_SNAPSHOTS_UPDATE=1",
+            "{}: {e}; write it with OXOFFICE_SNAPSHOTS_UPDATE=1 OXOFFICE_WORKFLOWS=full",
             path.display()
         )
     });
