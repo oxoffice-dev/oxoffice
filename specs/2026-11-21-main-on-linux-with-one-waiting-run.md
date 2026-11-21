@@ -19,7 +19,8 @@ code on the three platforms before it merged, and the nightly run
 replays every job there once a day.
 
 The maintainer decided on the morning of 2026-11-21: a push to `main` runs
-on Linux only, and `main` keeps one run waiting.
+on Linux only, and `main` keeps one run waiting (changed the same day: every
+push runs in full, see the amendment).
 
 ## Decision
 
@@ -43,7 +44,7 @@ What this gives up, and why it is enough:
 - A commit of `main` whose run was replaced has no run of its own. A failure
   shows on the next run of `main`; to find the commit, run
   `workflow_dispatch` on a branch at each candidate (as for a red nightly
-  run).
+  run). (Since the amendment every commit has its run.)
 - A failure that only a macOS or Windows build of the merged tree shows
   (two pull requests green apart, broken together) shows in the nightly
   run, at most a day later, and counts as a red `main`.
@@ -68,7 +69,8 @@ nightly run, the larger runner limits and reviews before push.
 
 ## Outcome
 
-- One `ci.yml` change: the concurrency key of a push to `main` is `ci-main`,
+- One `ci.yml` change: the concurrency key of a push to `main` is `ci-main`
+  (since the amendment, a key per commit),
   and the build matrix of a push is Linux only (any other event not listed
   as Linux-only builds the three platforms, as before).
 - `docs/DEVELOPMENT.md` (CI) and `docs/RELEASE.md` (step 1: the
@@ -83,21 +85,22 @@ nightly run, the larger runner limits and reviews before push.
 
 By late morning the larger runner limits applied and the queue was empty,
 but `main` had a verdict 30 to 60 minutes after a merge: a run of `main`
-took about 27 to 30 minutes (Scaling 16 to 29, skill examples 10 to 17
-after the build), the next push waited behind it, and 26 of the last 30
+took about 18 to 30 minutes (Scaling 16 to 29, skill examples 8 to 18
+after the build), the next push waited behind it, and 27 of the last 30
 runs of `main` were cancelled while they waited.
 
 Letting the newest push cancel the run in progress was considered and
 dropped: between 09:00 and 11:00 UTC, 44 merges left no gap longer than
-10 minutes, so no run of `main` would have finished during the day.
+about 10 minutes, so no run of `main` would have finished during the day.
 
 The maintainer decided: every push to `main` runs in full. Pushes get a
 concurrency group per event and commit, like the nightly run: no run of
 `main` waits for another or cancels one, and each merge gets its verdict
 from lint, WebAssembly and the Linux build about 10 minutes after it, from
 the scaling and skill-examples jobs within about 30. A burst of merges runs
-two or three scaling jobs at once, on Linux runners, which cost nothing for
-a public repository and had no queue under the new limits.
+5 to 10 scaling jobs at once (up to about 15, some 30 Linux jobs of `main`
+in all at the peak), on Linux runners, which cost nothing for a public
+repository; the organization's plan allows well above that.
 
 ## Links
 
