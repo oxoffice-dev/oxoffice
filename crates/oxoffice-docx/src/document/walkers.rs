@@ -1498,17 +1498,6 @@ pub(crate) fn visit_all_drawings_mut(
     }
 }
 
-pub(super) fn visit_authored_drawings(
-    content: &[BodyContent],
-    visitor: &mut impl FnMut(&CT_Drawing),
-) {
-    visit_all_drawings(content, &mut |drawing| {
-        if authored_drawing(drawing) {
-            visitor(drawing);
-        }
-    });
-}
-
 pub(super) fn visit_authored_drawings_mut(
     content: &mut [BodyContent],
     visitor: &mut impl FnMut(&mut CT_Drawing),

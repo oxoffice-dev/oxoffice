@@ -255,38 +255,6 @@ pub(super) fn scoped_proof_sentinel(selected_closed: &[u8], marker: &str) -> Res
     })
 }
 
-pub(super) fn canonical_retained_main_part(
-    retained: &[u8],
-    remap: &HashMap<String, String>,
-    modeled_drawing_ids: &[u32],
-    nested_image_relationship_ids: &HashSet<String>,
-    canonical_drawing_ids: &[(u32, u32)],
-) -> Result<Option<(Vec<u8>, CT_Document)>> {
-    let mut retained = remap_xml_relationship_ids(retained, remap)?;
-    let slots = authored_drawing_slots_in_source_order(
-        &retained,
-        modeled_drawing_ids,
-        nested_image_relationship_ids,
-    )?;
-    if slots.len() != canonical_drawing_ids.len()
-        || slots
-            .iter()
-            .zip(canonical_drawing_ids)
-            .any(|((_, _, old), (expected, _))| old != expected)
-    {
-        return Ok(None);
-    }
-    for ((_, span, _), (_, id)) in slots
-        .into_iter()
-        .rev()
-        .zip(canonical_drawing_ids.iter().rev())
-    {
-        retained.splice(span, id.to_string().into_bytes());
-    }
-    let document = CT_Document::from_xml(&retained)?;
-    Ok(Some((retained, document)))
-}
-
 pub(super) fn word_element(namespace: &ResolveResult<'_>) -> bool {
     matches!(
         namespace,

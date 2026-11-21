@@ -440,13 +440,13 @@ impl Document {
                 // A producer source record proves reads, while the retained
                 // writer record independently proves normalized child bytes.
                 // serialize rechecks model alignment, fields and the frame.
-                offered_canonical_blocks(writer_blocks.or(blocks)),
+                writer_blocks.or(blocks),
             )
             .ok()
         });
         let (serialization_proof, serialized_blocks) = match serialized {
             Some((xml, record)) => {
-                let retained = block_proofs_enabled() && !record.head.is_empty();
+                let retained = !record.head.is_empty();
                 (Some(xml), retained.then_some(record))
             }
             None => (None, None),
@@ -461,20 +461,6 @@ impl Document {
             serialization_proof,
         );
         parsed_record.nested_namespace_owners = nested_namespace_owners;
-        if let Some(kept) = kept {
-            let relationships = package
-                .get_part_rels(&doc_part_name)
-                .map(|relationships| &relationships.items);
-            let kept_relationships = kept
-                .package
-                .get_part_rels(&kept.main_part)
-                .map(|relationships| &relationships.items);
-            if relationships == kept_relationships
-                && let Some(unchanged) = kept.unchanged_main_part.get()
-            {
-                parsed_record.unchanged_main_part = OnceLock::from((*unchanged).clone());
-            }
-        }
         // Every branch above obtained an actual parse of these exact source
         // bytes, either fresh or from a qualified source proof. Keep it at
         // this opening instead of parsing a fresh source a second time later.
@@ -503,8 +489,6 @@ impl Document {
             styles,
             styles_part_cache,
             numbering,
-            published_abstract_by_live: HashMap::new(),
-            published_instance_by_live: HashMap::new(),
             core_properties,
             application_properties,
             custom_properties,

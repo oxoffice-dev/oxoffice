@@ -577,9 +577,12 @@ impl<'a> Run<'a> {
 
     /// Append an inline picture using a relationship already embedded in the document.
     ///
-    /// Obtain `relationship_id` from [`crate::Document::embed_image`].
+    /// Obtain `relationship_id` from [`crate::Document::embed_image`]. The
+    /// picture takes its drawing id (`wp:docPr/@id`) when the document is
+    /// saved.
     pub fn add_picture(&mut self, relationship_id: &str, width: Length, height: Length) {
-        let inline = CT_Inline::new(relationship_id, width.to_emu(), height.to_emu());
+        let mut inline = CT_Inline::new(relationship_id, width.to_emu(), height.to_emu());
+        inline.doc_pr_id = crate::document::UNALLOCATED_DRAWING_ID;
         self.inner
             .append_content(RunContent::Drawing(CT_Drawing::inline(inline)));
     }

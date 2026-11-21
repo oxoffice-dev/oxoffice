@@ -136,7 +136,9 @@ impl Document {
                 .main_body_scans
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            offered_canonical_blocks(scans.serialized.as_ref())
+            scans
+                .serialized
+                .as_ref()
                 .is_some_and(|record| record.writer_bytes_match(&self.document, &xml) == Some(true))
         };
         if !same_current_writer || location.item_kind != StoryItemKind::Table || location.is_end {

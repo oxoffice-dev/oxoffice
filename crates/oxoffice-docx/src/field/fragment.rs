@@ -943,9 +943,6 @@ pub(super) fn import_fragment_content_with_state(
                 ))
             })?;
         if selected_owner {
-            if used_relationships.contains(&relationship_id) {
-                document.register_pending_relationship(&destination_owner, &destination_id);
-            }
             relationship_map.insert(relationship_id, destination_id);
         } else {
             comment_relationship_map.insert(relationship_id, destination_id);
@@ -958,7 +955,6 @@ pub(super) fn import_fragment_content_with_state(
             &relationship.target,
         )?;
         if selected_owner {
-            document.register_pending_relationship(&destination_owner, &destination_id);
             relationship_map.insert(relationship_id, destination_id);
         } else {
             comment_relationship_map.insert(relationship_id, destination_id);
@@ -3554,48 +3550,6 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
 
     edits.sort_by_key(|edit: &FieldSourceEdit| edit.start);
     Ok(edits)
-}
-
-pub(crate) fn patch_bookmark_source(
-    operation: &mut oxoffice_docx_oxml::document::ScopedWordOperation<'_>,
-    source: oxoffice_docx_oxml::document::ScopedWordSource,
-    bookmark_ids: &BTreeMap<String, String>,
-) -> Result<oxoffice_docx_oxml::document::ScopedWordSource> {
-    let edits = body_identity_edits(
-        source.as_bytes(),
-        &BodyIdentityRemap {
-            bookmark_ids: bookmark_ids.clone(),
-            ..Default::default()
-        },
-    )?;
-    if edits.is_empty() {
-        return Ok(source);
-    }
-    let mut chunks = Vec::new();
-    let mut at = 0;
-    for edit in &edits {
-        if at > edit.start {
-            return Err(Error::Other("overlapping document identity edits".into()));
-        }
-        chunks.push((Some(&source), at..edit.start, &[][..]));
-        chunks.push((None, 0..0, edit.replacement.as_slice()));
-        at = edit.end;
-    }
-    chunks.push((Some(&source), at..source.as_bytes().len(), &[][..]));
-    Ok(operation.compose_sources(&chunks)?)
-}
-
-pub(crate) fn patch_bookmark_ids(
-    xml: &[u8],
-    bookmark_ids: &BTreeMap<String, String>,
-) -> Result<Vec<u8>> {
-    patch_body_identity_attributes(
-        xml,
-        &BodyIdentityRemap {
-            bookmark_ids: bookmark_ids.clone(),
-            ..Default::default()
-        },
-    )
 }
 
 pub(crate) fn freshen_content_fragment_identities(

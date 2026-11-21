@@ -213,10 +213,7 @@ impl Document {
         } else {
             Some(
                 self.identifiers
-                    .reserve_bundle_relationship_id_checked(
-                        &self.doc_part_name,
-                        rel_types::NUMBERING,
-                    )
+                    .reserve_relationship_id_checked(&self.doc_part_name)
                     .map_err(|error| {
                         Error::Other(format!("numbering relationship allocation failed: {error}"))
                     })?,

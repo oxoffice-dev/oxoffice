@@ -41,13 +41,6 @@ impl Document {
             self.package
                 .get_or_create_part_rels(&doc_part_name)
                 .add_with_id(&id, rel_type, &target);
-            if bundle_relationship_order(rel_type).is_some() {
-                self.identifiers
-                    .authored_bundle_relationship_ids
-                    .entry(relationship_owner_identity(&doc_part_name))
-                    .or_default()
-                    .insert(id);
-            }
         }
         Ok(())
     }
@@ -78,10 +71,7 @@ impl Document {
         let pending_id = if already_linked {
             None
         } else {
-            Some(
-                self.identifiers
-                    .reserve_bundle_relationship_id_checked(&owner, rel_type)?,
-            )
+            Some(self.identifiers.reserve_relationship_id_checked(&owner)?)
         };
         self.package
             .content_types
@@ -269,12 +259,7 @@ impl Document {
 
     pub(crate) fn reserve_html_drawing_id(&mut self, story: &StoryId) -> Result<u32> {
         self.story_source_and_owner(story)?;
-        let drawing_id = self.identifiers.reserve_drawing_id()?;
-        if story.part_name == self.doc_part_name && story.kind != StoryKind::Body {
-            self.identifiers
-                .register_nested_story_drawing(story, drawing_id);
-        }
-        Ok(drawing_id)
+        self.identifiers.reserve_drawing_id()
     }
 
     /// Stage a chart, its editable workbook, and the Word drawing that reaches them.

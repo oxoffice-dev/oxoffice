@@ -2405,13 +2405,15 @@ impl<'a> Cell<'a> {
     ///
     /// Obtain the `rel_id` by calling [`crate::Document::embed_image`] first, then
     /// pass it here along with the desired display dimensions. This matches
-    /// the python-docx `run.add_picture()` pattern.
+    /// the python-docx `run.add_picture()` pattern. The picture takes its
+    /// drawing id (`wp:docPr/@id`) when the document is saved.
     pub fn add_picture(&mut self, rel_id: &str, width: Length, height: Length) {
         use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
         use oxoffice_docx_oxml::table::CellContent;
         use oxoffice_docx_oxml::text::{CT_R, RunContent};
 
-        let inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        let mut inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        inline.doc_pr_id = crate::document::UNALLOCATED_DRAWING_ID;
         let drawing = CT_Drawing::inline(inline);
         let run = CT_R {
             alt_drawings: Vec::new(),
