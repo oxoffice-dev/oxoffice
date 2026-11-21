@@ -1728,11 +1728,27 @@ fn chinese_japanese_and_korean_text_takes_a_system_font_or_says_none_was_found()
     let texts: Vec<String> = lines(&drawn).into_iter().map(|line| line.text).collect();
     assert_eq!(texts, sentences);
 
+    // Pieces the bundled fonts alone draw without boxes, such as the kana
+    // of their Japanese subset.
+    let bundled_only = Pdf::read(
+        &doc.to_pdf_with_options(RenderOptions::default().with_bundled_fonts_only(true))
+            .expect("document converts to PDF"),
+    );
+    let bundled_drawn: Vec<String> = bundled_only
+        .drawn(0)
+        .into_iter()
+        .filter(|piece| piece.notdef == 0)
+        .map(|piece| piece.text)
+        .collect();
+
     let cjk: Vec<&Drawn> = drawn.iter().filter(|piece| has_cjk(&piece.text)).collect();
     assert!(!cjk.is_empty());
     for piece in cjk {
         if piece.notdef == 0 {
             assert!(glyphs_draw_text(piece), "{piece:?}");
+            if bundled_drawn.contains(&piece.text) {
+                continue;
+            }
             assert!(
                 messages
                     .iter()
