@@ -83,7 +83,7 @@ use multilingual::{
 };
 pub(crate) use revisions::accepted_runs;
 use revisions::{
-    accepted_paragraph_is_blank, change_bar_color, prepared_semantic_layout_input,
+    accepted_paragraph_is_blank, change_bar_color, draws_nothing, prepared_semantic_layout_input,
     project_paragraph_runs, projected_content_char_starts, projected_paragraph_text,
     push_equations_before_order, tracked_marks,
 };
