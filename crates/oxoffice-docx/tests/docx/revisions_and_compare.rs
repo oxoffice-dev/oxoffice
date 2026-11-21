@@ -2199,12 +2199,116 @@ fn a_word_changed_beside_an_inline_equation_is_revised_in_place() {
     }
 }
 
-// Google writes equations with every default spelled out, LibreOffice
-// leaves defaults out and holds an equation and an endnote reference in one
-// paragraph: neither is deleted and inserted again.
+// What an equation says still counts: a run property or a fraction type
+// that changes inside it changes the equation.
+#[test]
+fn a_property_changed_inside_an_equation_is_a_change() {
+    let fraction = |kind: &str, property: &str| {
+        doc_with_body(&format!(
+            r#"<w:p><m:oMathPara xmlns:m="{MATH_NS}"><m:oMath><m:f><m:fPr><m:type m:val="{kind}"/></m:fPr><m:num><m:r><w:rPr>{property}</w:rPr><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>"#
+        ))
+    };
+    for (original, edited) in [
+        (fraction("bar", "<w:i/>"), fraction("bar", "<w:b/>")),
+        (fraction("bar", "<w:i/>"), fraction("lin", "<w:i/>")),
+    ] {
+        let mut edited = edited;
+        let mut edited = reopen(&mut edited);
+        let wanted = main_xml(&mut edited);
+        let mut doc = redline(original, &edited);
+        assert!(
+            kinds(&doc).contains(&RevisionKind::Deletion),
+            "{:?}",
+            kinds(&doc)
+        );
+        assert!(
+            kinds(&doc).contains(&RevisionKind::Insertion),
+            "{:?}",
+            kinds(&doc)
+        );
+        let accepted = main_xml(&mut accepted(&mut doc));
+        for marker in [r#"m:val="lin""#, "<w:b/>"] {
+            assert_eq!(
+                accepted.contains(marker),
+                wanted.contains(marker),
+                "{marker}"
+            );
+        }
+    }
+}
+
+// A raw child before an equation at the same run boundary (a heading's
+// bookmark, as Word writes a table of contents target) keeps the equation
+// paired with its raw child when a paragraph is inserted before it.
+#[test]
+fn a_bookmark_before_an_equation_does_not_unpair_it() {
+    let body = format!(
+        concat!(
+            r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="7" w:name="_Toc217000007"/>"#,
+            r#"<m:oMath xmlns:m="{}"><m:r><w:rPr><w:i/></w:rPr><m:t>x</m:t></m:r></m:oMath>"#,
+            r#"<w:r><w:t xml:space="preserve"> rises</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
+        ),
+        MATH_NS
+    );
+    let mut edited = doc_with_body(&body);
+    edited.insert_paragraph(1, "Inserted");
+    let edited = reopen(&mut edited);
+    let mut doc = redline(doc_with_body(&body), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Inserted"]);
+    assert!(
+        !kinds(&doc).contains(&RevisionKind::Deletion),
+        "{:?}",
+        kinds(&doc)
+    );
+    let accepted = main_xml(&mut accepted(&mut doc));
+    assert!(accepted.contains(r#"w:name="_Toc217000007""#), "{accepted}");
+    assert_eq!(math_texts(&mut rejected(&mut doc)), ["x"]);
+}
+
+// A paragraph another reviewer changed holds an equation whose fraction
+// leaves its bar type out, as Word writes it; a save writes the equation
+// again with the type spelled out: the paragraph is unchanged.
+#[test]
+fn a_held_paragraph_holding_an_equation_a_save_wrote_again_is_unchanged() {
+    let body = format!(
+        concat!(
+            r#"<w:p><w:ins w:id="1" w:author="Ada" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">held </w:t></w:r></w:ins>"#,
+            r#"<m:oMath xmlns:m="{}"><m:f><m:fPr><m:ctrlPr><w:rPr><w:i/></w:rPr></m:ctrlPr></m:fPr>"#,
+            r#"<m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></w:p>"#,
+            r#"<w:p><w:r><w:t>small</w:t></w:r></w:p>"#,
+        ),
+        MATH_NS
+    );
+    let mut edited = doc_with_body(&body);
+    assert_eq!(edited.replace_all(&HashMap::from([("small", "large")])), 1);
+    let mut edited = reopen(&mut edited);
+    assert!(
+        main_xml(&mut edited).contains(r#"<m:type m:val="bar"/>"#),
+        "the save no longer spells the bar out: this test no longer tests the comparison"
+    );
+    let mut doc = redline(doc_with_body(&body), &edited);
+    let others = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.author() != AUTHOR)
+        .map(|revision| (revision.kind(), revision.author().to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(others, [(RevisionKind::Insertion, "Ada".to_owned())]);
+    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["small"]);
+    assert_eq!(math_texts(&mut accepted(&mut doc)), ["1", "2"]);
+}
+
+// Word and LibreOffice hold an equation and an endnote reference in one
+// paragraph, Google spells every default out: no paragraph is deleted and
+// inserted again.
 #[test]
 fn a_paper_with_equations_compares_with_an_edited_copy() {
-    for name in ["google/paper.docx", "libreoffice/paper.docx"] {
+    for name in [
+        "word/paper.docx",
+        "google/paper.docx",
+        "libreoffice/paper.docx",
+    ] {
         let original = texts(&corpus_doc(name));
         let equations = math_texts(&mut corpus_doc(name));
         assert!(equations.len() > 11, "{name}: {equations:?}");

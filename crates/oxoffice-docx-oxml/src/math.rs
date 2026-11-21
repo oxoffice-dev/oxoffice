@@ -243,6 +243,20 @@ impl OfficeMath {
         }
     }
 
+    /// This equation as its model writes it, in one canonical writing: names
+    /// keep their prefixes, namespace declarations go and each element
+    /// declares the prefixes it names (in a name or in a markup-compatibility
+    /// or `xsi:type` value) whose binding is not held yet, attributes are
+    /// sorted, values and text read through their references and escaped one
+    /// way, and an element without content is written empty. Two copies of
+    /// one equation, one a save wrote again with its declarations elsewhere
+    /// or a default spelled out, give the same bytes; any change of a name,
+    /// a binding, an attribute or text gives other bytes.
+    #[doc(hidden)]
+    pub fn canonical_xml(&self) -> Result<Vec<u8>> {
+        canonical_element(&self.to_xml()?)
+    }
+
     /// Whether this value retains content outside the typed OfficeMath subset.
     pub fn has_unsupported_content(&self) -> bool {
         match self {
@@ -2873,6 +2887,199 @@ fn keep_used_root_bindings(
     Ok(())
 }
 
+/// See [`OfficeMath::canonical_xml`]. `raw` is one self-contained element.
+fn canonical_element(raw: &[u8]) -> Result<Vec<u8>> {
+    use quick_xml::name::{Namespace, QName, ResolveResult};
+    let scan_error =
+        |error: &dyn std::fmt::Display| OxmlError::InvalidValue(format!("equation scan: {error}"));
+    let mut source = Vec::with_capacity(raw.len() + 32);
+    source.extend_from_slice(b"<rdocxScope>");
+    source.extend_from_slice(raw);
+    source.extend_from_slice(b"</rdocxScope>");
+    let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
+    reader.config_mut().trim_text(false);
+    let mut output = Vec::with_capacity(raw.len());
+    // The bindings the output holds at each open element, whether the last
+    // start tag is still open (an end right after it makes it empty), and the
+    // text read since the last tag.
+    let mut declared = vec![std::collections::BTreeMap::<String, String>::new()];
+    let mut open = false;
+    let mut text = String::new();
+    let flush = |output: &mut Vec<u8>, open: &mut bool, text: &mut String| {
+        if std::mem::take(open) {
+            output.push(b'>');
+        }
+        output.extend_from_slice(quick_xml::escape::escape(text.as_str()).as_bytes());
+        text.clear();
+    };
+    let mut inside = false;
+    let mut buffer = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| scan_error(&error))?;
+        let (element, empty) = match event {
+            Event::Start(_) if !inside => {
+                inside = true;
+                buffer.clear();
+                continue;
+            }
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(element) => {
+                if declared.len() == 1 {
+                    break;
+                }
+                declared.pop();
+                if open && text.is_empty() {
+                    output.extend_from_slice(b"/>");
+                    open = false;
+                } else {
+                    flush(&mut output, &mut open, &mut text);
+                    output.extend_from_slice(b"</");
+                    output.extend_from_slice(element.name().as_ref());
+                    output.push(b'>');
+                }
+                buffer.clear();
+                continue;
+            }
+            Event::Text(content) => {
+                text.push_str(
+                    &content
+                        .xml10_content()
+                        .map_err(|error| scan_error(&error))?,
+                );
+                buffer.clear();
+                continue;
+            }
+            Event::CData(content) => {
+                text.push_str(&content.decode().map_err(|error| scan_error(&error))?);
+                buffer.clear();
+                continue;
+            }
+            Event::GeneralRef(reference) => {
+                if let Some(character) = reference
+                    .resolve_char_ref()
+                    .map_err(|error| scan_error(&error))?
+                {
+                    text.push(character);
+                } else {
+                    let name = reference.decode().map_err(|error| scan_error(&error))?;
+                    let value = quick_xml::escape::resolve_predefined_entity(&name)
+                        .ok_or_else(|| scan_error(&format!("unknown entity &{name};")))?;
+                    text.push_str(value);
+                }
+                buffer.clear();
+                continue;
+            }
+            Event::Eof => break,
+            other => {
+                flush(&mut output, &mut open, &mut text);
+                Writer::new(&mut output).write_event(other)?;
+                buffer.clear();
+                continue;
+            }
+        };
+        flush(&mut output, &mut open, &mut text);
+        let resolver = reader.resolver();
+        let mut scope = declared.last().cloned().unwrap_or_default();
+        let mut declarations = std::collections::BTreeMap::new();
+        // Declare `prefix` (empty: the default namespace) with what it
+        // resolves to here, unless the output already holds that binding.
+        let mut bind = |prefix: &str| -> Result<()> {
+            let probe = if prefix.is_empty() {
+                b"x".to_vec()
+            } else {
+                format!("{prefix}:x").into_bytes()
+            };
+            let uri = match resolver.resolve_element(QName(&probe)).0 {
+                ResolveResult::Bound(Namespace(uri)) => std::str::from_utf8(uri)?.to_owned(),
+                // An unprefixed name outside any default namespace, under an
+                // element that declared one, undeclares it.
+                ResolveResult::Unbound if prefix.is_empty() => String::new(),
+                _ => return Ok(()),
+            };
+            if prefix != "xml" && scope.get(prefix).map(String::as_str).unwrap_or_default() != uri {
+                scope.insert(prefix.to_owned(), uri.clone());
+                declarations.insert(prefix.to_owned(), uri);
+            }
+            Ok(())
+        };
+        let name = element.name();
+        let prefix_of = |name: QName<'_>| -> Result<String> {
+            Ok(name
+                .prefix()
+                .map(|prefix| std::str::from_utf8(prefix.into_inner()))
+                .transpose()?
+                .unwrap_or_default()
+                .to_owned())
+        };
+        bind(&prefix_of(name)?)?;
+        let (element_namespace, element_local) = resolver.resolve_element(name);
+        let choice = matches!(
+            element_namespace,
+            ResolveResult::Bound(Namespace(uri)) if uri == crate::namespace::MC_NS.as_bytes()
+        ) && element_local.as_ref() == b"Choice";
+        let mut attributes = Vec::new();
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(|error| scan_error(&error))?;
+            let key = attribute.key.as_ref();
+            if key == b"xmlns" || key.starts_with(b"xmlns:") {
+                continue;
+            }
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())
+                .map_err(|error| scan_error(&error))?
+                .into_owned();
+            if attribute.key.prefix().is_some() {
+                bind(&prefix_of(attribute.key)?)?;
+                let (namespace, local) = resolver.resolve_attribute(attribute.key);
+                let namespace = match namespace {
+                    ResolveResult::Bound(Namespace(uri)) => Some(std::str::from_utf8(uri)?),
+                    _ => None,
+                };
+                for named in
+                    crate::text::root_attribute_value_prefixes(namespace, local.as_ref(), &value)
+                {
+                    bind(named)?;
+                }
+            } else if choice && key == b"Requires" {
+                for named in value.split_ascii_whitespace() {
+                    bind(named)?;
+                }
+            }
+            attributes.push((key.to_vec(), value));
+        }
+        attributes.sort();
+        output.push(b'<');
+        output.extend_from_slice(name.as_ref());
+        let declarations = declarations.into_iter().map(|(prefix, uri)| {
+            let name = if prefix.is_empty() {
+                b"xmlns".to_vec()
+            } else {
+                format!("xmlns:{prefix}").into_bytes()
+            };
+            (name, uri)
+        });
+        for (key, value) in declarations.chain(attributes) {
+            output.push(b' ');
+            output.extend_from_slice(&key);
+            output.extend_from_slice(b"=\"");
+            output.extend_from_slice(quick_xml::escape::escape(value.as_str()).as_bytes());
+            output.push(b'"');
+        }
+        if empty {
+            output.extend_from_slice(b"/>");
+        } else {
+            open = true;
+            declared.push(scope);
+        }
+        buffer.clear();
+    }
+    flush(&mut output, &mut open, &mut text);
+    Ok(output)
+}
+
 fn parse_element(raw: &[u8], inherited: &[(String, String)]) -> Result<ParsedElement> {
     let mut reader = Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
@@ -3604,4 +3811,49 @@ fn parse_present_on_off(value: Option<&str>) -> Option<bool> {
 }
 fn parse_u32(value: Option<String>) -> Option<u32> {
     value.and_then(|value| value.parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_element;
+
+    const M: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    fn canonical(xml: &str) -> Vec<u8> {
+        canonical_element(xml.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_canonical_equation_leaves_out_where_and_how_it_was_declared() {
+        let declared_once = format!(
+            r#"<m:oMath xmlns:m="{M}" xmlns:w="{W}" xmlns:r="urn:unused"><m:r><w:rPr><w:i/></w:rPr><m:t>a&apos;</m:t></m:r></m:oMath>"#
+        );
+        let declared_inside = format!(
+            r#"<m:oMath xmlns:m="{M}"><m:r><w:rPr xmlns:w="{W}"><w:i></w:i></w:rPr><m:t>a'</m:t></m:r></m:oMath>"#
+        );
+        assert_eq!(canonical(&declared_once), canonical(&declared_inside));
+    }
+
+    #[test]
+    fn a_canonical_equation_keeps_what_its_names_and_values_resolve_to() {
+        // A default namespace undeclared under one that declared it.
+        let undeclared = r#"<a xmlns="urn:a"><x xmlns=""/></a>"#;
+        let inherited = r#"<a xmlns="urn:a"><x/></a>"#;
+        assert_ne!(canonical(undeclared), canonical(inherited));
+        // A prefix only a markup-compatibility value names.
+        let ignorable = |uri: &str| {
+            canonical(&format!(
+                r#"<m:oMath xmlns:m="{M}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="{uri}" mc:Ignorable="x"/>"#
+            ))
+        };
+        assert_ne!(ignorable("urn:a"), ignorable("urn:b"));
+        // A prefix `mc:Choice` requires.
+        let requires = |uri: &str| {
+            canonical(&format!(
+                r#"<m:oMath xmlns:m="{M}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="{uri}"><mc:AlternateContent><mc:Choice Requires="x"/></mc:AlternateContent></m:oMath>"#
+            ))
+        };
+        assert_ne!(requires("urn:a"), requires("urn:b"));
+    }
 }

@@ -712,10 +712,44 @@ pub(super) fn paragraph_raw_children(paragraph: &CT_P) -> Vec<(usize, std::borro
         .collect()
 }
 
+/// Keep the raw children of `paragraph` that `keep` accepts (it may rewrite
+/// them), moving each equation that follows a removed one at its boundary so
+/// that it still pairs with its raw child, as [`raw_child_identity`] reads
+/// it. An equation whose raw child goes, goes with it.
+pub(super) fn retain_raw_children(
+    paragraph: &mut CT_P,
+    mut keep: impl FnMut(&mut Vec<u8>) -> bool,
+) {
+    let mut slots = HashMap::<usize, usize>::new();
+    let mut removed = Vec::new();
+    paragraph.extra_xml.retain_mut(|(position, raw)| {
+        let slot = slots.entry(*position).or_default();
+        let current = *slot;
+        *slot += 1;
+        let kept = keep(raw);
+        if !kept {
+            removed.push((*position, current));
+        }
+        kept
+    });
+    if removed.is_empty() {
+        return;
+    }
+    paragraph.equations.retain_mut(|(at, slot, _)| {
+        if removed.contains(&(*at, *slot)) {
+            return false;
+        }
+        *slot -= removed
+            .iter()
+            .filter(|(position, before)| position == at && before < slot)
+            .count();
+        true
+    });
+}
+
 /// The raw child of `paragraph` at `slot` among those at run boundary
 /// `position`, as the comparison reads it. An equation reads as its model
-/// writes it, in the form of
-/// [`canonical_raw_child`](super::source_scopes::canonical_raw_child): the
+/// writes it, in one canonical writing (`OfficeMath::canonical_xml`): the
 /// same equation a save wrote again, with the root's namespaces declared on
 /// it or a default its source left out (a fraction's bar), reads the same.
 /// Any other raw child reads as its bytes.
@@ -729,8 +763,7 @@ pub(super) fn raw_child_identity<'a>(
         .equations
         .iter()
         .find(|(at, equation_slot, _)| *at == position && *equation_slot == slot)
-        .and_then(|(_, _, equation)| equation.to_xml().ok())
-        .and_then(|xml| super::source_scopes::canonical_raw_child(&xml).ok())
+        .and_then(|(_, _, equation)| equation.canonical_xml().ok())
         .map_or(std::borrow::Cow::Borrowed(raw), std::borrow::Cow::Owned)
 }
 

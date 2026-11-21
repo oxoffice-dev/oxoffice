@@ -980,6 +980,26 @@ fn residual_used_prefixes(
     Ok(named)
 }
 
+/// The canonical writing of the equation an opaque node holds, read in the
+/// node's scope, when the typed reader takes it.
+fn residual_equation(node: &ResidualNode, source: &[u8]) -> Option<Vec<u8>> {
+    if node.name.0.as_deref() != Some(crate::namespace::M_NS)
+        || !matches!(node.name.1.as_str(), "oMath" | "oMathPara")
+    {
+        return None;
+    }
+    let scope = node
+        .scope
+        .iter()
+        .map(|(prefix, uri)| (prefix.clone(), uri.clone()))
+        .collect::<Vec<_>>();
+    crate::math::OfficeMath::from_raw(source.get(node.range.clone())?, &scope)
+        .ok()
+        .flatten()?
+        .canonical_xml()
+        .ok()
+}
+
 fn residual_namespace(namespace: quick_xml::name::ResolveResult<'_>) -> Result<Option<String>> {
     match namespace {
         quick_xml::name::ResolveResult::Unbound => Ok(None),
@@ -1128,6 +1148,13 @@ fn residual_emit_children(
                             "revision:{child_path:?}:after:{previous}:{:?}:{:?}",
                             &source[node.range.clone()],
                             node.scope
+                        ));
+                    } else if let Some(equation) = residual_equation(node, source) {
+                        // An equation reads as its model writes it: a save that
+                        // writes it again, its declarations elsewhere or a
+                        // default spelled out, changes no fact.
+                        output.push(format!(
+                            "equation:{child_path:?}:after:{previous}:{equation:?}"
                         ));
                     } else {
                         // Only the opaque root opening admits namespace declaration
