@@ -148,7 +148,8 @@ fn superscript_subscript_and_underline_styles_survive_a_save() {
 
 #[test]
 fn heavy_and_long_underline_styles_are_read_and_kept() {
-    // Every value of ST_Underline, with the WdUnderline code bindings use.
+    // The heavy and long values of ST_Underline, with the WdUnderline code
+    // bindings use.
     for (value, code) in [
         ("dottedHeavy", 20),
         ("dashedHeavy", 23),
@@ -174,6 +175,21 @@ fn heavy_and_long_underline_styles_are_read_and_kept() {
             "{value}: {xml}"
         );
     }
+    // Through the typed style.
+    let mut doc = Document::new();
+    doc.add_paragraph("")
+        .add_run("double wave")
+        .underline_style(UnderlineStyle::WavyDouble);
+    let reopened = reopen(&mut doc);
+    assert_eq!(
+        reopened
+            .paragraph(0)
+            .unwrap()
+            .run(0)
+            .unwrap()
+            .underline_code_value(),
+        Some(43)
+    );
     // And through the binding's code.
     let mut doc = Document::new();
     doc.add_paragraph("").add_run("long");

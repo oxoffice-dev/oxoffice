@@ -395,8 +395,9 @@ fn raw_is_last_rendered_page_break(raw_xml: &[u8]) -> bool {
     local == NAME
 }
 
-/// Underline style for runs.
+/// Underline style for runs: every `w:u` value of the spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnderlineStyle {
     None,
     Single,
@@ -406,6 +407,16 @@ pub enum UnderlineStyle {
     Dash,
     Wave,
     Words,
+    DotDash,
+    DotDotDash,
+    DottedHeavy,
+    DashedHeavy,
+    DashLong,
+    DashLongHeavy,
+    DashDotHeavy,
+    DashDotDotHeavy,
+    WavyHeavy,
+    WavyDouble,
 }
 
 impl UnderlineStyle {
@@ -419,11 +430,22 @@ impl UnderlineStyle {
             Self::Thick => 6,
             Self::Dash => 7,
             Self::Wave => 11,
+            Self::DotDash => 9,
+            Self::DotDotDash => 10,
+            Self::DottedHeavy => 20,
+            Self::DashedHeavy => 23,
+            Self::DashDotHeavy => 25,
+            Self::DashDotDotHeavy => 26,
+            Self::WavyHeavy => 27,
+            Self::DashLong => 39,
+            Self::WavyDouble => 43,
+            Self::DashLongHeavy => 55,
         }
     }
 }
 
-fn underline_from_code(code: i32) -> Option<ST_Underline> {
+/// The `w:u` value of a Word `WdUnderline` code, the one language bindings use.
+pub fn underline_from_code(code: i32) -> Option<ST_Underline> {
     match code {
         0 => Some(ST_Underline::None),
         1 => Some(ST_Underline::Single),
