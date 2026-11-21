@@ -141,7 +141,9 @@ as Word shows it.
 No tracked change records a bookmark: a paragraph whose bookmarks differ is
 deleted and inserted whole, and a bookmark both files hold is written once,
 outside the revision marks, where the edited file has it, so rejecting keeps it
-beside the restored paragraph.
+beside the restored paragraph. Such a paragraph is still refused when it holds
+a complex field, a comment range both files hold, or a shared bookmark under
+another id or inside a hyperlink or control.
 Reported counts include newly created revisions only, even when a new review
 uses an existing author's name.
 

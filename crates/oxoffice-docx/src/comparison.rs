@@ -213,7 +213,7 @@ use paragraph_properties::{
     clear_default_orientation, deleted_paragraph, final_paragraph_properties_xml,
     inserted_paragraph, modeled_paragraph_properties, nonempty_paragraph_properties,
     paragraph_children_xml, paragraph_properties_differ, paragraph_properties_xml,
-    place_shared_bookmarks, section_properties_xml,
+    place_shared_bookmarks, section_properties_xml, shared_bookmark_markers,
 };
 use paragraphs::{
     coalesced_held_owner_equal, coalesced_paragraphs_equal, compare_body_content,
@@ -494,7 +494,10 @@ impl Document {
     /// No tracked change records a bookmark: a paragraph whose bookmarks
     /// differ is deleted and inserted whole, and a bookmark both documents
     /// hold is written once, outside the revision marks, where `edited` has
-    /// it, so rejecting keeps it beside the restored paragraph.
+    /// it, so rejecting keeps it beside the restored paragraph. Such a
+    /// paragraph is still refused when it holds a complex field, a comment
+    /// range both documents hold, or a shared bookmark under another id or
+    /// inside a hyperlink or control.
     pub fn compare(
         &mut self,
         edited: &Document,

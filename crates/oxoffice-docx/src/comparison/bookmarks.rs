@@ -887,3 +887,42 @@ pub(super) fn rewritten_opening(
     })?;
     Ok(Some(writer.into_inner()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_body(body: &str) -> Document {
+        let mut document = Document::new();
+        let name = document.doc_part_name.clone();
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
+        );
+        document.package.set_part(&name, xml.into_bytes());
+        document
+    }
+
+    fn marked(id: i32, name: &str) -> String {
+        format!(
+            r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>Text</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
+        )
+    }
+
+    #[test]
+    fn a_rejection_holds_each_moved_bookmark_once_under_its_name() {
+        let original = with_body(&marked(1, "Kept"));
+        let ids = HashSet::from([1]);
+        let holds = |body: &str| holds_bookmarks_once(&with_body(body), &original, &ids).unwrap();
+        assert!(holds(&marked(1, "Kept")));
+        assert!(!holds(&format!(
+            "{}{}",
+            marked(1, "Kept"),
+            marked(1, "Kept")
+        )));
+        assert!(!holds("<w:p/>"));
+        assert!(!holds(&marked(1, "Renamed")));
+        assert!(!holds(
+            r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Text</w:t></w:r></w:p>"#
+        ));
+    }
+}

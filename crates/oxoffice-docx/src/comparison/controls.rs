@@ -219,6 +219,7 @@ pub(super) fn compare_control_from_xml(
             &original_signatures,
             &edited_signatures,
             metadata.options,
+            &metadata.shared_bookmarks,
         )?;
         let trailing_paragraph_insert_start = aligned
             .iter()

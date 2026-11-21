@@ -154,6 +154,7 @@ pub(super) fn replace_changed_paragraph_runs(
     original_signatures: &[String],
     edited_signatures: &[String],
     options: &ComparisonOptions,
+    shared_bookmarks: &HashSet<i32>,
 ) -> Result<(Alignment, CarriedParagraphs)> {
     fn markers<'a>(paragraphs: impl Iterator<Item = &'a CT_P>) -> HashSet<String> {
         let mut markers = HashSet::new();
@@ -281,7 +282,9 @@ pub(super) fn replace_changed_paragraph_runs(
     // has it (see `shared_bookmark_markers`), and the insertion then comes
     // first, so that rejecting it leaves that bookmark on the restored
     // paragraph. A comment range of either side that the other input also
-    // holds would be held twice, so such a pair keeps its refusal.
+    // holds would be held twice, and so would a bookmark the other input
+    // holds that the emitters cannot write once (under another id, or
+    // inside a hyperlink or control), so such a pair keeps its refusal.
     let all_original = markers(original.iter().flatten().copied());
     let all_edited = markers(edited.iter().flatten().copied());
     let comment_ranges = |markers: HashSet<String>| {
@@ -297,6 +300,28 @@ pub(super) fn replace_changed_paragraph_runs(
         }
         !left.is_disjoint(&all_edited) || !right.is_disjoint(&all_original)
     };
+    // Whether every bookmark marker of `paragraph` that the other input also
+    // holds, by id or by name, is one `place_shared_bookmarks` writes once.
+    let movable = |paragraph: &CT_P, other: &HashSet<String>| -> Result<bool> {
+        let held = |marker: &oxoffice_docx_oxml::text::BookmarkMarker| {
+            marker
+                .id()
+                .is_some_and(|id| other.contains(&format!("bookmark id {id}")))
+                || marker
+                    .name()
+                    .is_some_and(|name| other.contains(&format!("bookmark {name}")))
+        };
+        if !paragraph.bookmark_markers.iter().any(held) {
+            return Ok(true);
+        }
+        let written_once = shared_bookmark_markers(&paragraph_xml(paragraph)?, shared_bookmarks)?
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect::<HashSet<_>>();
+        Ok(paragraph.bookmark_markers.iter().all(|marker| {
+            !held(marker) || marker.id().is_some_and(|id| written_once.contains(&id))
+        }))
+    };
     let unpaired = |position: usize, i: usize, j: usize| -> Result<bool> {
         let (Some(left), Some(right)) = (original[i], edited[j]) else {
             return Ok(false);
@@ -305,6 +330,8 @@ pub(super) fn replace_changed_paragraph_runs(
             || !paragraph_boundaries_differ(left, right, options)
             || (left.bookmark_markers == right.bookmark_markers && position + 1 != aligned.len())
             || shares(left, right, true)
+            || !movable(left, &all_edited)?
+            || !movable(right, &all_original)?
         {
             return Ok(false);
         }

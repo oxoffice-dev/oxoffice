@@ -3167,6 +3167,71 @@ fn a_footnote_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() 
     );
 }
 
+#[test]
+fn a_heading_whose_link_changed_keeps_its_bookmark_on_rejection() {
+    let document = |anchor: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="Kept"/><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = document("Second");
+    let mut doc = redline(document("First"), &edited);
+    assert_eq!(bookmark_names(&doc), ["Kept"]);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["One", "Heading", "Two"]);
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
+}
+
+#[test]
+fn a_bookmark_held_under_another_id_is_refused_rather_than_written_twice() {
+    // A header keeps the ids its producer wrote, which Word renumbers on a
+    // save: the bookmark could not be written once.
+    let document = |marks: &[(u32, &str)]| {
+        let mut doc = doc_with(&["body"]);
+        doc.set_header("Running title");
+        with_part(&mut doc, "header1.xml", |xml| {
+            bookmarked_run(xml, "Running title", marks)
+        })
+    };
+    let mut doc = document(&[(1, "Kept")]);
+    let error = doc
+        .compare(&document(&[(2, "Added"), (7, "Kept")]), AUTHOR, DATE)
+        .unwrap_err();
+    assert!(error.to_string().contains("boundary structures"), "{error}");
+}
+
+#[test]
+fn a_bookmark_inside_a_hyperlink_is_refused_rather_than_written_twice() {
+    let document = |added: bool| {
+        let (start, end) = if added {
+            (
+                r#"<w:bookmarkStart w:id="2" w:name="Added"/>"#,
+                r#"<w:bookmarkEnd w:id="2"/>"#,
+            )
+        } else {
+            ("", "")
+        };
+        doc_with_body(&format!(
+            r#"{}<w:p>{start}<w:hyperlink w:anchor="Target"><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Linked</w:t></w:r><w:bookmarkEnd w:id="1"/></w:hyperlink>{end}</w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let mut doc = document(false);
+    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("boundary structures at body/paragraph[1]"),
+        "{error}"
+    );
+}
+
 /// A became a heading after the original's table of contents was built,
 /// and its next heading was rewritten: the pairing would give the new
 /// heading the old one's name, but the comparison pairs the old heading

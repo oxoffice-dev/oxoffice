@@ -491,7 +491,10 @@ pub(super) fn place_shared_bookmarks(
 
 /// The direct `w:bookmarkStart` and `w:bookmarkEnd` children of a paragraph's
 /// XML whose bookmark both inputs hold, as byte ranges and ids.
-fn shared_bookmark_markers(xml: &str, shared: &HashSet<i32>) -> Result<Vec<(Range<usize>, i32)>> {
+pub(super) fn shared_bookmark_markers(
+    xml: &str,
+    shared: &HashSet<i32>,
+) -> Result<Vec<(Range<usize>, i32)>> {
     if shared.is_empty() {
         return Ok(Vec::new());
     }
