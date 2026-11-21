@@ -786,3 +786,54 @@ impl DocumentIdentifiers {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A body paragraph holding one typed inline picture of drawing id `id`,
+    /// marked as a handle's picture or not. A drawing read from a file keeps
+    /// its source bytes; none of these has any, so only the mark tells.
+    fn picture(id: u32, unallocated: bool) -> BodyContent {
+        let mut inline = CT_Inline::new("rIdImage", 914_400, 914_400);
+        inline.doc_pr_id = id;
+        inline.doc_pr_id_unallocated = unallocated;
+        let mut run = CT_R::new("");
+        run.content = vec![RunContent::Drawing(CT_Drawing::inline(inline))];
+        let mut paragraph = CT_P::new();
+        paragraph.runs.push(run);
+        BodyContent::Paragraph(Box::new(paragraph))
+    }
+
+    fn drawing_ids(document: &Document) -> Vec<(u32, bool)> {
+        let mut ids = Vec::new();
+        super::super::walkers::visit_all_drawings(
+            &document.document.body.content,
+            &mut |drawing| {
+                if let Some(inline) = &drawing.inline {
+                    ids.push((inline.doc_pr_id, inline.doc_pr_id_unallocated));
+                }
+            },
+        );
+        ids
+    }
+
+    #[test]
+    fn only_a_marked_picture_takes_a_drawing_id_whatever_the_others_hold() {
+        let mut document = Document::new();
+        document.document.body.content.extend([
+            picture(0, false),
+            picture(1, true),
+            picture(0, false),
+        ]);
+
+        document.allocate_handle_drawing_ids().unwrap();
+
+        let ids = drawing_ids(&document);
+        assert_eq!(ids[0], (0, false), "an unmarked picture keeps id 0");
+        assert_eq!(ids[2], (0, false), "an unmarked picture keeps id 0");
+        let (allocated, still_marked) = ids[1];
+        assert!(!still_marked, "the mark goes once the id is given");
+        assert!(document.identifiers.drawing_ids.contains(&allocated));
+    }
+}
