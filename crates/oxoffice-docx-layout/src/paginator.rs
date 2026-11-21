@@ -5780,6 +5780,7 @@ fn render_para_split(
             indent_left: para.indent_left,
             indent_right: para.indent_right,
             jc: para.jc,
+            right_to_left: para.right_to_left,
             keep_next: para.keep_next,
             keep_lines: false,
             page_break_before: false,
@@ -6200,7 +6201,13 @@ fn render_paragraph_lines(
                 0.0
             };
 
-        let x_offset = match para.jc {
+        // A justified line that is not filled (the last one) aligns on the
+        // paragraph's start side: the right in a right-to-left paragraph.
+        let jc = match para.jc {
+            Some(Align::Justify) if para.right_to_left && justify_extra <= 0.0 => Some(Align::End),
+            jc => jc,
+        };
+        let x_offset = match jc {
             Some(Align::Center) => geometry.margin_left + line.indent_left + remaining_width / 2.0,
             Some(Align::End) => geometry.margin_left + line.indent_left + remaining_width,
             Some(Align::Justify) if !line.is_last && justify_extra > 0.0 => {

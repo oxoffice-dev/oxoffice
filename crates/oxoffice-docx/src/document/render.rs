@@ -514,8 +514,15 @@ impl Document {
     ///
     /// Font resolution order:
     /// 1. Fonts embedded in the DOCX file (word/fonts/)
-    /// 2. System fonts when the default `system-fonts` feature is enabled
-    /// 3. Always-available bundled metric-compatible fonts
+    /// 2. The bundled fonts: metric-compatible twins of the common Office
+    ///    fonts, and faces for Arabic, Hebrew, Devanagari and Thai
+    ///
+    /// System fonts are only used when asked for, with
+    /// [`RenderOptions::with_system_fonts`] in [`Self::to_pdf_with_options`],
+    /// so the output is the same on every machine. Chinese, Japanese and
+    /// Korean text needs them, or a font file: the bundled faces hold only a
+    /// few of its characters, and the rest is drawn as empty boxes, which a
+    /// layout diagnostic names.
     pub fn to_pdf(&self) -> Result<Vec<u8>> {
         self.to_pdf_with_options(RenderOptions::default())
     }
@@ -627,8 +634,8 @@ impl Document {
     /// Font resolution order:
     /// 1. User-provided fonts (this parameter)
     /// 2. Fonts embedded in the DOCX file (word/fonts/)
-    /// 3. System fonts when the default `system-fonts` feature is enabled
-    /// 4. Always-available bundled metric-compatible fonts
+    /// 3. The bundled fonts, as for [`Self::to_pdf`]; system fonts only with
+    ///    [`RenderOptions::with_system_fonts`]
     pub fn to_pdf_with_fonts(&self, font_files: &[(&str, &[u8])]) -> Result<Vec<u8>> {
         self.to_pdf_with_fonts_and_options(font_files, RenderOptions::default())
     }

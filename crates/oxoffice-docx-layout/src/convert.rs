@@ -6,7 +6,7 @@ use oxoffice_docx_oxml::shared::{ST_Jc, ST_TabJc, ST_TabLeader, ST_Underline};
 use oxoffice_docx_oxml::units::Twips;
 use oxoffice_layout::{
     Align, FontManager, FontMetrics, LayoutLine, LineBreakParams, LineItem, LineSpacing, TabAlign,
-    TabLeader, TabStop, TextDirection, Underline,
+    TabLeader, TabStop, Underline,
 };
 
 pub(crate) fn alignment(value: Option<ST_Jc>) -> Option<Align> {
@@ -19,18 +19,21 @@ pub(crate) fn alignment(value: Option<ST_Jc>) -> Option<Align> {
     })
 }
 
-pub(crate) fn alignment_for_direction(
-    value: Option<ST_Jc>,
-    direction: TextDirection,
-) -> Option<Align> {
-    value.map(|value| match (value, direction) {
-        (ST_Jc::Start, TextDirection::RightToLeft) => Align::End,
-        (ST_Jc::End, TextDirection::RightToLeft) => Align::Start,
-        (ST_Jc::Start | ST_Jc::Left, _) => Align::Start,
-        (ST_Jc::End | ST_Jc::Right, _) => Align::End,
-        (ST_Jc::Center, _) => Align::Center,
-        (ST_Jc::Both, _) => Align::Justify,
-        (ST_Jc::Distribute, _) => Align::Distribute,
+/// The alignment of a paragraph, `right_to_left` when it has `w:bidi`.
+///
+/// Word reads left and right as start and end in a right-to-left
+/// paragraph, and aligns it on the right when it says nothing; a paragraph
+/// without `w:bidi` keeps the plain sides, whatever the script of its text.
+pub(crate) fn paragraph_alignment(value: Option<ST_Jc>, right_to_left: bool) -> Option<Align> {
+    if !right_to_left {
+        return alignment(value);
+    }
+    Some(match value {
+        None | Some(ST_Jc::Start | ST_Jc::Left) => Align::End,
+        Some(ST_Jc::End | ST_Jc::Right) => Align::Start,
+        Some(ST_Jc::Center) => Align::Center,
+        Some(ST_Jc::Both) => Align::Justify,
+        Some(ST_Jc::Distribute) => Align::Distribute,
     })
 }
 
@@ -145,6 +148,7 @@ pub(crate) fn line_break_params(
             properties.ind_first_line.map_or(0.0, |value| value.to_pt())
         },
         ind_hanging: properties.ind_hanging.map_or(0.0, |value| value.to_pt()),
+        first_line_at_right: false,
         tab_stops: properties
             .tabs
             .as_ref()

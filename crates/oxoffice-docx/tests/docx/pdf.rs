@@ -609,6 +609,140 @@ fn text_lands_inside_the_margins_and_aligns_on_them() {
     assert!((middle - (left + right) / 2.0).abs() < 0.5, "{centred:?}");
 }
 
+// Word 16.115 reads left and right as start and end in a `w:bidi`
+// paragraph: `jc="left"` and `jc="start"` end it at the right margin,
+// `jc="right"` and `jc="end"` start it at the left one, `w:ind w:left` and
+// `w:ind w:start` both indent it from the right, and a justified paragraph
+// ends its last line on the right. Without `w:bidi`, Arabic text keeps the
+// plain sides. The first-line indent is on the start side, the right.
+#[test]
+fn a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
+    let arabic = "مرحبا بالعالم";
+    let long =
+        "هذا نص عربي طويل يملأ أكثر من سطر واحد في الفقرة حتى نرى أين يبدأ كل سطر وأين ينتهي "
+            .repeat(3);
+    let cases = [
+        ("left", "<w:bidi/><w:jc w:val=\"left\"/>", arabic),
+        ("start", "<w:bidi/><w:jc w:val=\"start\"/>", arabic),
+        ("right", "<w:bidi/><w:jc w:val=\"right\"/>", arabic),
+        ("end", "<w:bidi/><w:jc w:val=\"end\"/>", arabic),
+        ("plain", "", arabic),
+        ("plain right", "<w:jc w:val=\"right\"/>", arabic),
+        ("ind start", "<w:bidi/><w:ind w:start=\"1440\"/>", arabic),
+        ("ind left", "<w:bidi/><w:ind w:left=\"1440\"/>", arabic),
+        (
+            "justified",
+            "<w:bidi/><w:jc w:val=\"both\"/>",
+            long.trim_end(),
+        ),
+        (
+            "first line",
+            "<w:bidi/><w:ind w:firstLine=\"720\"/>",
+            long.trim_end(),
+        ),
+    ];
+    // A list number in a bidi paragraph: Word's default list indent, the
+    // number at 18 pt from the right margin, its text at 36 pt, as the
+    // following lines.
+    let numbered = format!(
+        r#"<w:p><w:pPr><w:bidi/><w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t>1.</w:t></w:r><w:r><w:rPr><w:rtl/></w:rPr><w:tab/><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+        long.trim_end()
+    );
+    let mut body = String::new();
+    for (_, ppr, text) in cases {
+        body.push_str(&format!(
+            r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#
+        ));
+    }
+    body.push_str(&numbered);
+    let pdf = pdf_of(&doc_with_body(&body));
+    let lines = lines(&pdf.drawn(0));
+    let (left, right) = (72.0, 540.0);
+    let at = |index: usize| &lines[index];
+    let near = |value: f64, expected: f64| (value - expected).abs() < 1.0;
+    for (index, (name, ends_right)) in [
+        ("left", true),
+        ("start", true),
+        ("right", false),
+        ("end", false),
+        ("plain", false),
+        ("plain right", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let line = at(index);
+        let edge = if ends_right {
+            near(line.right, right)
+        } else {
+            near(line.left, left)
+        };
+        assert!(edge, "{name}: {line:?}");
+    }
+    for index in [6, 7] {
+        assert!(
+            near(at(index).right, right - 72.0),
+            "{:?}: {:?}",
+            cases[index].0,
+            at(index)
+        );
+    }
+    // The justified paragraph fills its lines, and its last line, wherever
+    // it is in `lines`, ends on the right without reaching the left margin.
+    let justified: Vec<&Line> = lines[8..]
+        .iter()
+        .take_while(|line| near(line.right, right))
+        .collect();
+    assert!(justified.len() >= 2, "{lines:#?}");
+    // Its first line's trailing space hangs past the left margin.
+    assert!(justified[0].left < left + 3.0, "{:?}", justified[0]);
+    let last = justified.last().unwrap();
+    assert!(last.left > left + 40.0, "the last justified line: {last:?}");
+    // The first-line indent leaves 36 pt on the right of the first line.
+    let first = &lines[8 + justified.len()];
+    assert!(near(first.right, right - 36.0), "first line: {first:?}");
+    assert!(near(lines[9 + justified.len()].right, right), "second line");
+    // The numbered paragraph: the number at the hanging indent, its text
+    // and the next line at the left (start) indent.
+    let page = pdf.page_count() - 1;
+    let drawn = pdf.drawn(page);
+    let lines = self::lines(&drawn);
+    // The number "1." may be drawn as two pieces, the digit and the stop.
+    let number = drawn
+        .iter()
+        .rfind(|piece| piece.text == "1")
+        .unwrap_or_else(|| panic!("the list number: {drawn:#?}"));
+    let on_its_line = |piece: &&Drawn| (piece.y - number.y).abs() < 0.5;
+    let is_number = |piece: &&Drawn| matches!(piece.text.trim(), "1" | "." | "1.");
+    let number_end = drawn
+        .iter()
+        .filter(on_its_line)
+        .filter(is_number)
+        .map(|piece| piece.end)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        near(number_end, right - 18.0),
+        "the number ends at {number_end:.1}"
+    );
+    let first_text = drawn
+        .iter()
+        .filter(on_its_line)
+        .filter(|piece| !is_number(piece) && !piece.text.trim().is_empty())
+        .map(|piece| piece.end)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        near(first_text, right - 36.0),
+        "text after the number ends at {first_text:.1}"
+    );
+    let next = lines
+        .iter()
+        .find(|line| line.y < number.y - 0.5)
+        .expect("a second numbered line");
+    assert!(near(next.right, right - 36.0), "{next:?}");
+}
+
+// Word and LibreOffice align a right-to-left paragraph on the right margin,
+// with no alignment set and with the `jc="left"` (start) LibreOffice writes.
 /// A paragraph holding one display equation, alone, under `ppr`.
 fn display_equation(ppr: &str, equation: &str) -> String {
     format!(
@@ -834,7 +968,6 @@ fn math_pre_and_post_spacing_add_nothing_around_a_display_equation() {
 // Word and LibreOffice align it on the right margin, with no alignment set
 // and with the `jc="left"` (start) LibreOffice writes. Issue: #157
 #[test]
-#[should_panic(expected = "right-to-left line ends at")]
 fn a_right_to_left_paragraph_ends_at_the_right_margin() {
     let mut doc = Document::new();
     doc.add_paragraph("مرحبا بالعالم").right_to_left(true);
@@ -1410,7 +1543,9 @@ fn arabic_and_hebrew_text_reads_back_in_logical_order() {
 // Fails today: the default conversion uses bundled fonts only, whose Chinese,
 // Japanese and Korean faces hold a handful of test characters, so ordinary
 // text is drawn as .notdef boxes while the text layer still reads right (the
-// corpus minutes too).
+// corpus minutes too). A diagnostic names the script and the way out (next
+// test); bundling full CJK faces or falling back to system fonts per glyph
+// is the maintainer's decision.
 // Workaround: pass a CJK font file (to_pdf_with_fonts), or
 // RenderOptions { use_system_fonts: true, .. } on a machine with a CJK font.
 // Issue: #157
@@ -1443,6 +1578,51 @@ fn chinese_japanese_and_korean_text_is_drawn_with_real_glyphs() {
             piece.glyphs
         );
     }
+}
+
+#[test]
+fn text_drawn_as_empty_boxes_names_its_script_and_the_way_out() {
+    let doc = doc_with(&["我们的公司在北京", "東京のかいしゃ", "Latin stays drawn."]);
+    let (_, diagnostics) = doc
+        .to_pdf_with_diagnostics(&[], RenderOptions::default())
+        .expect("document converts to PDF");
+    let boxes: Vec<&str> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .filter(|message| message.contains("drawn as empty boxes"))
+        .collect();
+    assert_eq!(boxes.len(), 2, "{boxes:#?}");
+    assert!(
+        boxes[0].starts_with("Chinese, Japanese or Korean ideograph (Han) text has no glyph"),
+        "{}",
+        boxes[0]
+    );
+    assert!(
+        boxes[1].starts_with("Japanese (kana) text has no glyph"),
+        "{}",
+        boxes[1]
+    );
+    for message in &boxes {
+        for way_out in [
+            "--system-fonts",
+            "system_fonts=True",
+            "RenderOptions::with_system_fonts",
+            "font file",
+        ] {
+            assert!(message.contains(way_out), "{message}");
+        }
+    }
+
+    // Text the bundled fonts draw says nothing.
+    let (_, diagnostics) = doc_with(&["Plain Latin, مرحبا, שלום"])
+        .to_pdf_with_diagnostics(&[], RenderOptions::default())
+        .expect("document converts to PDF");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("empty boxes")),
+        "{diagnostics:?}"
+    );
 }
 
 // ---- Tags, PDF/A and metadata ----

@@ -1,0 +1,9 @@
+{
+  "id": "docx-pdf-cjk",
+  "format": "docx",
+  "area": "pdf",
+  "title": "PDF text: Chinese, Japanese and Korean text is drawn as boxes by default",
+  "symptom": "with the default render options (bundled fonts only), Chinese, Japanese and Korean glyphs are empty boxes; a diagnostic names the script, the number of characters and the way out",
+  "workaround": "pass a CJK font file (Rust to_pdf_with_fonts, or to_pdfa_with_fonts_deterministic for PDF/A; Python to_pdf(fonts=...) or font_dir=...; CLI convert --font-dir) or turn system fonts on (Rust to_pdf_with_options with RenderOptions::with_system_fonts, Python to_pdf(system_fonts=True), CLI convert --system-fonts); none for PDF/A in Python and the CLI",
+  "issue": 157
+}
