@@ -1079,11 +1079,7 @@ impl<'a> Table<'a> {
             self.inner.rows.last().ok_or_else(|| {
                 Error::Other("a table without rows has no row to copy".to_owned())
             })?;
-        if last
-            .properties
-            .as_ref()
-            .is_some_and(|p| !p.extra_xml.is_empty())
-        {
+        if last.properties.as_ref().is_some_and(|p| p.has_opaque_xml()) {
             return Err(Error::Other(
                 "opaque row formatting cannot be cloned into a new owner".into(),
             ));
@@ -2218,6 +2214,7 @@ impl<'a> Row<'a> {
         let pr = self.ensure_tr_pr();
         pr.height = Some(length.as_twips());
         pr.height_rule = Some("atLeast".to_string());
+        pr.remove_bare_height();
     }
 
     /// Set exact row height.
@@ -2231,6 +2228,7 @@ impl<'a> Row<'a> {
         let pr = self.ensure_tr_pr();
         pr.height = Some(length.as_twips());
         pr.height_rule = Some("exact".to_string());
+        pr.remove_bare_height();
     }
 
     /// Set a checked minimum or exact row height.
@@ -2243,6 +2241,7 @@ impl<'a> Row<'a> {
         let properties = self.ensure_tr_pr();
         properties.height = Some(oxoffice_docx_oxml::Twips(twips));
         properties.height_rule = Some(rule.to_owned());
+        properties.remove_bare_height();
         Ok(())
     }
 

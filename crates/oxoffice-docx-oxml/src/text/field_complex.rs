@@ -80,7 +80,13 @@ fn complex_field_events(
                 break;
             }
             Event::Eof => break,
-            _ => continue,
+            Event::Comment(_) | Event::PI(_) => continue,
+            Event::Text(text) if text.iter().all(|byte| byte.is_ascii_whitespace()) => continue,
+            _ => {
+                // Other text between a reference and its mark ends the slot.
+                note_mark_empty = false;
+                continue;
+            }
         };
         let prefixes = word_prefixes_at(&root, &run_prefixes)?;
         let name = root.name();
@@ -104,8 +110,9 @@ fn complex_field_events(
                 .any(|local| is_word_element(name.as_ref(), local, &prefixes))
                     || parse_typed_special_run_child(&root, &prefixes)?.is_some()));
         if text && note_mark_empty {
-            let value = crate::xml_text::read_element_text(&mut reader, root.name());
-            note_mark_empty = value.is_empty();
+            // The first `w:t` is the mark, even an empty one.
+            crate::xml_text::read_element_text(&mut reader, root.name());
+            note_mark_empty = false;
         } else {
             if modeled && !properties {
                 typed += 1;
@@ -113,10 +120,17 @@ fn complex_field_events(
                     && (is_word_element(name.as_ref(), b"footnoteReference", &prefixes)
                         || is_word_element(name.as_ref(), b"endnoteReference", &prefixes))
                     && optional_word_attribute(&root, b"customMarkFollows", &prefixes)
-                        .is_some_and(|value| matches!(value.as_str(), "1" | "true"));
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "on"));
             }
             if !empty {
                 reader.read_to_end_into(root.name(), &mut Vec::new())?;
+            }
+            // Any other child between a reference and its mark ends the mark
+            // slot, except a rendered page break, as the note removal reads it.
+            if (!modeled || properties)
+                && !is_word_element(name.as_ref(), b"lastRenderedPageBreak", &prefixes)
+            {
+                note_mark_empty = false;
             }
         }
         if let Some(sources) = &mut sources {
