@@ -145,7 +145,7 @@ refused at open when one of its parts holds a control character.
 | Shapes and groups | ✅ | ✅ | ✅ | every shape walked, groups included; align, distribute, z-order, glued connectors |
 | Text | ✅ | ✅ | ✅ | replacements that keep run formatting, bullets and numbering |
 | Text fit | ✅ | ✅ | — | reports what overflows with oxoffice's own line breaks, shrinks text to fit |
-| Tables | ✅ | ⚠️ | ✅ | some cells merged by LibreOffice cannot be split, and a Google table cannot lose columns down to one |
+| Tables | ✅ | ✅ | ✅ | merge and split cells, add and remove rows and columns, in tables from PowerPoint, Google and LibreOffice |
 | Charts | ✅ | ✅ | ✅ | new data keeps the series formatting |
 | Pictures | ✅ | ✅ | ✅ | a replaced picture keeps its frame and crop |
 | Speaker notes | ✅ | ✅ | ✅ | notes pages and handouts as PDF |
