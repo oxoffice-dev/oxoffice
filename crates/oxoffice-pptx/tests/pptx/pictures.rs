@@ -448,15 +448,17 @@ fn an_odp_picture_a_deck_cannot_hold_is_dropped_with_a_diagnostic() {
 
     assert_eq!(read.presentation.len(), 1);
     assert_eq!(read.presentation.slide(0).unwrap().shapes().count(), 0);
-    assert!(
-        read.diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("was dropped")),
-        "{:?}",
-        read.diagnostics
-            .iter()
-            .map(|diagnostic| &diagnostic.message)
-            .collect::<Vec<_>>()
+    let dropped: Vec<_> = read
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.path.as_str(), diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        dropped,
+        [(
+            "slides/0/objects/0",
+            "ODP image in a format a presentation cannot hold was dropped"
+        )]
     );
 }
 
