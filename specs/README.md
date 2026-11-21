@@ -65,5 +65,5 @@ dependency bumps and documentation.
 | 2026-11-21 | [Release wheels run on the main thread before publishing](2026-11-21-release-wheel-smoke-test.md) | shipped |
 | 2026-11-21 | [Render fidelity: a baseline on every pull request, Word, PowerPoint and LibreOffice every night](2026-11-21-render-fidelity.md) | accepted |
 | 2026-11-21 | [The limitations page is built at release](2026-11-21-limitations-page-built-at-release.md) | accepted |
-| 2026-11-21 | [Python core property dates and shared helpers](2026-11-21-python-core-property-dates-and-shared-helpers.md) | draft |
-| 2026-11-21 | [Embedded content and signatures in oxoffice-opc](2026-11-21-embedded-content-and-signatures-in-opc.md) | draft |
+| 2026-11-21 | [Python core property dates and shared helpers](2026-11-21-python-core-property-dates-and-shared-helpers.md) | accepted |
+| 2026-11-21 | [Embedded content and signatures in oxoffice-opc](2026-11-21-embedded-content-and-signatures-in-opc.md) | accepted |

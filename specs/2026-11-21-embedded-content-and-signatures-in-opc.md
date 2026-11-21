@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: draft
+status: accepted
 scope: opc, docx, pptx
 ---
 
@@ -125,9 +125,14 @@ Each step is reviewed on the local branch before its one push.
 1. `test(docx,pptx): embedded content and package signatures as they behave today`
    - Fixture packages built in the tests, no binary blobs: OLE in a Word story and on a slide, an ActiveX control with
      its binary, and a VBA project with its signature.
-   - A package signed with `create_signature`, using a test-only key and certificate committed as PEM next to the
-     tests and marked as such.
-   - The tests run with `--features digital-signatures`, and CI runs them that way.
+   - A package signed with `create_signature`, using a test-only RSA key and self-signed certificate committed as PEM
+     next to the tests, marked as such, with the command that made them.
+     - Why not generate them in the test: opc signs with RSA (`ring::signature::RsaKeyPair`), and `ring` cannot
+       generate RSA keys. Nothing in the dependency tree can (no `rsa`, no `rcgen`).
+     - Generating them would add new dev-dependencies with their own trees and licence review, and seconds of key
+       generation per run.
+     - The key protects nothing.
+   - The tests run with `--features digital-signatures`. Adding that to CI is settled with the CI session (OX-C2).
    - They cover the four methods, the policy choices, and a save after an edit of a signed package.
    - Every PowerPoint refusal listed above is written as today's answer, on both facades:
      - on Word it must already refuse, so step 2 is checked by tests rather than assumed;
@@ -139,10 +144,18 @@ Each step is reviewed on the local branch before its one push.
      1 tests pass as they are.
    - Then `fix(docx): reachability ignores case`, with tests for its two changes.
    - `docs/ARCHITECTURE.md`: opc gains the embedded-content and signature checks.
-3. The corpus run of the Risks section; then `fix(pptx)!: embedded content and signatures check what Word checks`
-   (closes #83).
-   - PowerPoint's `embedded.rs` delegates to opc.
-   - The step 1 tests flip where listed above.
+3. **Gate: a brief to the orchestrator before any code of this step is pushed.** It carries:
+   - (a) the result of the signed corpus run of the Risks section;
+   - (b) an answer, with code, to one question. Why refuse to save a signed package over an unrelated non-normalised
+     target (an image), rather than normalise the target and refuse only when it can name a protected part (the
+     origin, a signature, embedded content)?
+     - #83 shows no demonstrated failure, and a user who can no longer save a deck is a real cost.
+     - If the narrower rule holds, it replaces Word's full-package target check on both sides, and the refusal list
+       above shrinks to match.
+   - The orchestrator takes this breaking change to the user with that answer.
+   - Then `fix(pptx)!: embedded content and signatures check what Word checks` (closes #83):
+     - PowerPoint's `embedded.rs` delegates to opc;
+     - the step 1 tests flip where listed above.
 4. Spec status to `shipped` with the learnings.
 
 None of these steps edits a file that wave 3 splits. Steps 2 and 3 wait until item 15 is done with pptx `embedded.rs` and opc

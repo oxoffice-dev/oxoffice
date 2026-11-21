@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: draft
+status: accepted
 scope: python
 ---
 
@@ -22,8 +22,10 @@ Today, on main 78f44de:
   - it reads a date and time, a date, a year and month, or a year, then an optional `+hh:mm` or `-hh:mm` offset;
   - it reads `None` when the value cannot be read or falls outside `datetime`'s range in UTC;
   - it writes `YYYY-MM-DDThh:mm:ssZ`, and takes a naive value as UTC;
-  - it loses information in two cases. Fractional seconds are dropped. An offset that follows fractional seconds
-    (`…:00.503+02:00`) is ignored, so the time reads as UTC.
+  - it drops fractional seconds;
+  - it reads a wrong instant in silence when an offset follows fractional seconds:
+    `…T10:00:00.503+02:00` reads as 10:00 UTC instead of 08:00, because everything after the 19th character is
+    ignored unless it is exactly 6 characters long (#249).
 - **The `CoreProperties` classes** have the same 30 accessors. 23 are identical; the other 7 are `author` and the six
   date accessors.
 - **`author`** reads `""` when absent in `oxoffice.docx` (as python-docx) and `None` in `oxoffice.pptx`. Every other
@@ -51,9 +53,11 @@ Today, on main 78f44de:
   - The setter takes a `datetime`: a naive value counts as UTC, an aware one is converted to UTC, and `None` removes
     the property. A `str` raises `TypeError`.
   - The stored text keeps its W3CDTF form, `YYYY-MM-DDThh:mm:ssZ`.
-  - The two lossy cases above become PowerPoint's too.
+  - No silent wrong instant in a new API: the shared conversion reads the right instant or `None`, never a shifted
+    time. Fractional seconds are accepted and dropped, and an offset after them is applied. Parity with python-docx
+    is not required.
   - This is a breaking change for Python callers: `feat(pptx)!` with a `BREAKING CHANGE:` footer. The footer names
-    the three properties, their new types, the `TypeError` on `str`, and the two lossy cases.
+    the three properties, their new types, the `TypeError` on `str`, and the loss of fractional seconds.
 - **The conversion moves to `oxoffice-py-support`** (a `dates` module), unchanged, together with the property text
   limit (`CORE_TEXT_LIMIT`, 255 characters). Both bindings call it. One conversion means the two packages cannot drift
   again.
@@ -84,9 +88,12 @@ Each step is reviewed on the local branch before its one push.
      drift before step 2:
      - a W3CDTF date written by PowerPoint reads as the right UTC `datetime`, with and without an offset;
      - a naive and an aware `datetime` save as the same UTC text, which reopens unchanged;
+     - a date with fractional seconds and an offset (`…T10:00:00.503+02:00`) reads as the right instant (08:00 UTC);
      - an unreadable stored date reads as `None`;
      - a `str` raises `TypeError`;
      - `None` removes the property.
+   - Word keeps its wrong reading of that one case until step 2. The test that runs the cases on both packages marks it
+     as a strict known failure on Word, citing #249, so it flips to a pass the day Word is fixed.
    - `test_pptx_scaling.py` passes `datetime` values.
    - It waits until item 15 (debug work counters) is done with pptx-py `presentation.rs` and py-support `lib.rs`;
      its first pull request, #211, edits py-support `lib.rs`.
@@ -95,6 +102,7 @@ Each step is reviewed on the local branch before its one push.
    - Drops the Word copy of the conversion and both bindings' copies of `normalize_index`, `checked_font_input`,
      `public_error`, `stale_to_pyerr` and `collect_caller_fonts`.
    - Adds a test on both packages: a stale handle and a package error raise that package's own class.
+   - Closes #249: Word reads the fractional-seconds-and-offset case right, and its known failure mark goes.
 3. After item 21: `checked_font_kind`, `checked_font_license` and `font_kind_name` move to `oxoffice-py-support`, with
    item 21's shared types.
 
