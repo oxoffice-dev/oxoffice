@@ -1403,16 +1403,19 @@ fn lettered_lists_triple_their_letters_after_zz_in_both_cases() {
 }
 
 #[test]
-fn a_huge_letter_start_draws_a_short_marker() {
+fn letter_markers_start_again_after_thirty_repeats() {
+    // A guard against a hostile start value: 780 is 30 "z", then "a" again.
+    let (mut doc, id) = single_list(&[ListLevel::new(ListNumberFormat::LowerLetter).start(780)]);
+    add_items(&mut doc, id, &[0; 2]);
+    assert_eq!(
+        markers(&doc),
+        [format!("{}.", "z".repeat(30)), "a.".to_owned()]
+    );
+
     let (mut doc, id) =
         single_list(&[ListLevel::new(ListNumberFormat::LowerLetter).start(u32::MAX)]);
     add_items(&mut doc, id, &[0]);
-    let marker = &markers(&doc)[0];
-    assert!(
-        marker.len() <= 31,
-        "a hostile start value stays a short marker: {} bytes",
-        marker.len()
-    );
+    assert_eq!(markers(&doc), ["uuuuuuuuuu."]);
 }
 
 #[test]
