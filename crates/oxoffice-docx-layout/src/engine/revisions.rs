@@ -429,8 +429,12 @@ pub(super) fn projected_paragraph_text(para: &CT_P, view: RevisionView) -> Resul
     for projected in project_paragraph_runs(para, view) {
         for content in &projected.run.content {
             if let RunContent::Field(field) = content {
+                let deleted = matches!(
+                    projected.revision,
+                    Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
+                );
                 for stored in
-                    stored_note_cache_runs(field, None, view, None, false, false, None, false)?
+                    stored_note_cache_runs(field, None, view, None, false, deleted, None, false)?
                 {
                     text.push_str(&stored.run.text());
                 }

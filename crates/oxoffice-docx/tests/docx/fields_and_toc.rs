@@ -1684,7 +1684,7 @@ fn a_legacy_checkbox_in_a_tracked_deletion_draws_its_box_in_the_tracked_view() {
         let doc = doc_with_body(&format!(
             r#"<w:p>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
         ));
-        let texts = drawn_text(&doc, RevisionView::Tracked);
+        let texts = drawn_text_in(&doc, RevisionView::Tracked);
         assert!(
             texts.contains('\u{2612}'),
             "the deleted box draws: {texts:?} for {deleted}"
@@ -1810,7 +1810,7 @@ fn a_locked_legacy_checkbox_draws_its_box() {
 const WORD_DELETED_PAGE: &str = r#"<w:del w:id="7" w:author="Ada" w:date="2026-01-01T00:00:00Z"><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="begin"/></w:r><w:r w:rsidDel="00A1B2C3"><w:delInstrText xml:space="preserve"> PAGE </w:delInstrText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="separate"/></w:r><w:r w:rsidDel="00A1B2C3"><w:delText>3</w:delText></w:r><w:r w:rsidDel="00A1B2C3"><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
 
 /// The text drawn on the pages in this revision view.
-fn drawn_text(doc: &Document, view: RevisionView) -> String {
+fn drawn_text_in(doc: &Document, view: RevisionView) -> String {
     let options = RenderOptions::default().with_revision_view(view);
     let result = doc.layout_with_options(options).unwrap();
     let mut text = String::new();
@@ -1843,11 +1843,11 @@ fn a_deleted_field_draws_its_stored_result_in_the_tracked_view_only() {
             r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
         ));
         assert_eq!(
-            drawn_text(&doc, RevisionView::Tracked),
+            drawn_text_in(&doc, RevisionView::Tracked),
             "Page 3 kept",
             "the stored result, not the field code nor a page number: {deleted}"
         );
-        assert_eq!(drawn_text(&doc, RevisionView::Accepted), "Page  kept");
+        assert_eq!(drawn_text_in(&doc, RevisionView::Accepted), "Page  kept");
     }
 }
 
@@ -1912,7 +1912,7 @@ fn a_standing_field_whose_result_holds_deleted_text_draws_only_its_display() {
     let doc = doc_with_body(
         r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>new</w:t></w:r><w:r><w:delText>old</w:delText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
     );
-    assert_eq!(drawn_text(&doc, RevisionView::Accepted), "new");
+    assert_eq!(drawn_text_in(&doc, RevisionView::Accepted), "new");
 }
 
 #[test]
@@ -1928,4 +1928,19 @@ fn a_standing_field_whose_code_was_deleted_is_no_story_item() {
         .map(|item| item.kind())
         .collect();
     assert!(!kinds.contains(&StoryItemKind::Field), "{kinds:?}");
+}
+
+#[test]
+fn a_heading_holding_a_field_deleted_in_word_keeps_its_result_in_tracked_navigation_text() {
+    // STYLEREF reads the heading's navigation text, the deleted result
+    // included in the tracked view, as the page draws it.
+    let deleted =
+        WORD_DELETED_PAGE.replace("<w:delText>3</w:delText>", "<w:delText>Q3</w:delText>");
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Results </w:t></w:r>{deleted}</w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> STYLEREF "Heading 1" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    ));
+    assert_eq!(
+        drawn_text_in(&doc, RevisionView::Tracked),
+        "Results Q3Results Q3"
+    );
 }
