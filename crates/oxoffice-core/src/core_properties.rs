@@ -81,39 +81,77 @@ impl CoreProperties {
         ]
     }
 
+    /// Each field, mutable, with the name messages give it.
+    pub fn named_fields_mut(&mut self) -> [(&'static str, &mut Option<String>); 15] {
+        let Self {
+            title,
+            creator,
+            subject,
+            description,
+            keywords,
+            last_modified_by,
+            created,
+            modified,
+            category,
+            content_status,
+            identifier,
+            language,
+            last_printed,
+            revision,
+            version,
+        } = self;
+        [
+            ("title", title),
+            ("creator", creator),
+            ("subject", subject),
+            ("description", description),
+            ("keywords", keywords),
+            ("last modified by", last_modified_by),
+            ("created", created),
+            ("modified", modified),
+            ("category", category),
+            ("content status", content_status),
+            ("identifier", identifier),
+            ("language", language),
+            ("last printed", last_printed),
+            ("revision", revision),
+            ("version", version),
+        ]
+    }
+
+    /// Drops the characters XML 1.0 cannot carry from each field equal to the
+    /// one in `held`, the properties a file holds (another producer wrote
+    /// them as character references), for a writer that writes every field
+    /// again: no XML reader could read them back.
+    pub fn drop_held_non_xml_characters(&mut self, held: Option<&Self>) {
+        let Some(held) = held.map(Self::named_fields) else {
+            return;
+        };
+        for ((_, value), (_, held)) in self.named_fields_mut().into_iter().zip(held) {
+            if let Some(text) = value.as_mut()
+                && held == Some(text.as_str())
+            {
+                *text = crate::xml::strip_non_xml_characters(text).into_owned();
+            }
+        }
+    }
+
     /// Refuses a field holding a character XML 1.0 cannot carry, naming it,
-    /// for a writer that writes every field again. A field equal to the one
-    /// in `current` came from the file as read, and the message says so: the
-    /// caller did not type that character, but has to clean that value.
-    pub fn reject_non_xml_characters(&self, current: Option<&Self>) -> Result<()> {
-        self.reject_fields(current, true)
-    }
-
-    /// Refuses a changed field holding a character XML 1.0 cannot carry,
-    /// naming it, for a writer that keeps the bytes of an unchanged field: a
-    /// field equal to the one in `current` stays as the file wrote it.
-    pub fn reject_new_non_xml_characters(&self, current: Option<&Self>) -> Result<()> {
-        self.reject_fields(current, false)
-    }
-
-    fn reject_fields(&self, current: Option<&Self>, check_unchanged: bool) -> Result<()> {
-        let current = current.map(Self::named_fields);
+    /// unless it is equal to the one in `kept`: a writer that keeps the bytes
+    /// of an unchanged field writes it as the file had it.
+    pub fn reject_new_non_xml_characters(&self, kept: Option<&Self>) -> Result<()> {
+        let kept = kept.map(Self::named_fields);
         for (index, (name, value)) in self.named_fields().into_iter().enumerate() {
             let Some(value) = value else {
                 continue;
             };
-            let unchanged = current
+            if kept
                 .as_ref()
-                .is_some_and(|fields| fields[index].1 == Some(value));
-            if unchanged && !check_unchanged {
+                .is_some_and(|fields| fields[index].1 == Some(value))
+            {
                 continue;
             }
-            let what = if unchanged {
-                format!("core property {name}, as the file holds it,")
-            } else {
-                format!("core property {name}")
-            };
-            crate::xml::reject_non_xml_characters(&what, value)?;
+            crate::xml::reject_non_xml_characters(&format!("core property {name}"), value)?;
         }
         Ok(())
     }

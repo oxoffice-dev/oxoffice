@@ -302,18 +302,18 @@ impl Presentation {
                 .package_rels
                 .get_by_type(rel_types::CORE_PROPERTIES)
                 .and_then(|_| self.package.get_part(&self.core_properties_part_name));
-            let xml = if let Some(source) = source {
-                let old =
-                    CoreProperties::from_xml(source).map_err(|error| Error::MalformedPart {
-                        part_name: self.core_properties_part_name.clone(),
-                        message: error.to_string(),
-                    })?;
-                crate::properties::patch_core_properties(source, &old, properties)?
-            } else {
-                properties.to_xml().map_err(|error| Error::MalformedPart {
+            // A part the patch cannot express exactly (an empty value, a
+            // duplicate or nested element) is written whole, as before.
+            let patched = source.and_then(|source| {
+                let old = CoreProperties::from_xml(source).ok()?;
+                crate::properties::patch_core_properties(source, &old, properties).ok()
+            });
+            let xml = match patched {
+                Some(xml) => xml,
+                None => properties.to_xml().map_err(|error| Error::MalformedPart {
                     part_name: self.core_properties_part_name.clone(),
                     message: error.to_string(),
-                })?
+                })?,
             };
             package.set_part(&self.core_properties_part_name, xml);
             package.content_types.add_override(

@@ -30,10 +30,14 @@ impl Presentation {
 
     /// Changes known core fields while retaining every unowned imported byte.
     pub fn set_core_properties(&mut self, properties: CoreProperties) -> Result<()> {
-        // An unchanged field keeps the bytes the file wrote, so only a new
-        // value is refused.
+        // An unchanged field keeps the bytes the file wrote, so only a value
+        // the file does not hold is refused.
+        let held = self
+            .package
+            .get_part(&self.core_properties_part_name)
+            .and_then(|source| CoreProperties::from_xml(source).ok());
         properties
-            .reject_new_non_xml_characters(self.core_properties.as_ref())
+            .reject_new_non_xml_characters(held.as_ref())
             .map_err(|error| invalid_shape_mutation("core properties", error.to_string()))?;
         properties
             .to_xml()
@@ -42,8 +46,10 @@ impl Presentation {
             return Ok(());
         }
         let mut candidate = self.clone();
+        // The patch starts from what the part holds, not from a model the
+        // mutable accessor may have changed since.
         let xml = if let (Some(old), Some(source)) = (
-            self.core_properties.as_ref(),
+            held.as_ref().or(self.core_properties.as_ref()),
             self.package.get_part(&self.core_properties_part_name),
         ) {
             patch_core_properties(source, old, &properties)?

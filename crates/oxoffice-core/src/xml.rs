@@ -52,6 +52,17 @@ pub fn reject_non_xml_characters(what: &str, value: &str) -> Result<()> {
     }
 }
 
+/// `value` without the characters XML 1.0 cannot carry, for a value read
+/// from a file (written as character references) that has to be written
+/// again.
+pub fn strip_non_xml_characters(value: &str) -> Cow<'_, str> {
+    if value.chars().all(is_xml_1_0_character) {
+        Cow::Borrowed(value)
+    } else {
+        Cow::Owned(value.chars().filter(|c| is_xml_1_0_character(*c)).collect())
+    }
+}
+
 /// Escapes `value` for an attribute so that every XML reader reads it back as
 /// written: the markup characters, and the tab, line feed and carriage return
 /// that attribute-value normalisation turns into spaces.

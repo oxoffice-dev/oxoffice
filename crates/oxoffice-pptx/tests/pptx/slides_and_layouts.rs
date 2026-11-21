@@ -1872,12 +1872,7 @@ fn setting_core_properties_keeps_a_bad_character_the_file_held_and_refuses_a_new
     // Another producer wrote a character reference XML 1.0 forbids. The
     // core part is patched field by field, so the untouched field keeps the
     // file's bytes; a new value with such a character is refused by name.
-    let mut package = OpcPackage::from_reader(Cursor::new(new_deck().to_bytes().unwrap())).unwrap();
-    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Deck</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
-    package.set_part("/docProps/core.xml", core.as_bytes().to_vec());
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    let mut prs = Presentation::from_bytes(&saved_with_reference()).unwrap();
     let mut core = prs.core_properties().cloned().expect("core properties");
     core.subject = Some("bell\u{7}".to_owned());
     let message = prs
@@ -1908,11 +1903,37 @@ fn setting_core_properties_keeps_a_bad_character_the_file_held_and_refuses_a_new
         xml.contains("J&#11;Doe") && xml.contains(">Plans<"),
         "{xml}"
     );
+    // A value the patch cannot express exactly is written whole, as before.
+    prs.core_properties_mut().title = Some(String::new());
+    prs.core_properties_mut().last_modified_by = Some("J Doe".to_owned());
+    prs.to_bytes().expect("an empty value saves");
+    // A bad value set through the mutable model is refused by name by the
+    // next set_core_properties, which compares with the part.
+    let mut prs = Presentation::from_bytes(&saved_with_reference()).unwrap();
+    prs.core_properties_mut().title = Some("a\u{7}".to_owned());
+    let mut core = prs.core_properties().cloned().unwrap();
+    core.category = Some("Plans".to_owned());
+    let message = prs
+        .set_core_properties(core)
+        .expect_err("refused")
+        .to_string();
+    assert!(message.contains("core property title"), "{message}");
+}
+
+/// A new deck whose core part holds a title and a `lastModifiedBy` with a
+/// character reference XML 1.0 forbids, as another producer wrote it.
+fn saved_with_reference() -> Vec<u8> {
+    let mut package = OpcPackage::from_reader(Cursor::new(new_deck().to_bytes().unwrap())).unwrap();
+    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Deck</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
+    package.set_part("/docProps/core.xml", core.as_bytes().to_vec());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    bytes.into_inner()
 }
 
 #[test]
 fn a_carriage_return_in_a_core_property_survives_a_save() {
-    // The core properties part is written whole at the save.
+    // A new deck's core part is patched at the save, field by field.
     let mut prs = new_deck();
     prs.core_properties_mut().title = Some("first\rsecond".to_owned());
     prs.core_properties_mut().description = Some("one\r\ntwo".to_owned());

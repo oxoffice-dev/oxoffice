@@ -165,6 +165,8 @@ fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
     for raw in [
         &b"<vt:lpstr>a&#7;b</vt:lpstr>"[..],
         b"<vt:lpstr>a&#x1F;b</vt:lpstr>",
+        b"<vt:lpstr>&#0;</vt:lpstr>",
+        b"<vt:lpstr>a&#xD800;</vt:lpstr>",
     ] {
         let message = doc
             .set_custom_property(custom("Raw", CustomPropertyValue::Raw(raw.to_vec())))
@@ -178,47 +180,110 @@ fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
     }
     doc.set_custom_property(custom(
         "Raw",
-        CustomPropertyValue::Raw(b"<vt:lpstr>a&#9;b&amp;c</vt:lpstr>".to_vec()),
+        CustomPropertyValue::Raw(
+            b"<vt:lpstr>a&#9;b&amp;c<![CDATA[&#7;]]><!-- &#7; --></vt:lpstr>".to_vec(),
+        ),
     ))
-    .expect("a tab reference and an escaped ampersand are fine");
+    .expect("a tab reference, an escaped ampersand and literal text are fine");
     assert_ne!(doc.to_bytes().unwrap(), before);
 }
 
-/// A new document whose core part holds what another producer wrote: a
-/// title and a `lastModifiedBy` with a character reference XML 1.0 forbids.
-fn with_bad_last_modified_by() -> Document {
-    let bytes = Document::new().to_bytes().unwrap();
+/// `doc` saved and reopened after `plain` in `part` became `written`: what
+/// another producer wrote, such as a character reference XML 1.0 forbids.
+fn written_by_another_producer(
+    doc: &mut Document,
+    part: &str,
+    plain: &str,
+    written: &str,
+) -> Document {
+    let bytes = doc.to_bytes().unwrap();
     let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
-    let core = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Report</dc:title><cp:lastModifiedBy>J&#11;Doe</cp:lastModifiedBy></cp:coreProperties>"#;
-    assert!(package.contains_part("/docProps/core.xml"));
-    package.set_part("/docProps/core.xml", core.as_bytes().to_vec());
+    let xml = String::from_utf8(package.get_part(part).expect("the part exists").to_vec()).unwrap();
+    assert!(xml.contains(plain), "{xml}");
+    package.set_part(part, xml.replace(plain, written).into_bytes());
     let mut out = std::io::Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     Document::from_bytes(&out.into_inner()).unwrap()
 }
 
+/// A document whose core part holds the title "Report" and a
+/// `lastModifiedBy` with a character reference XML 1.0 forbids.
+fn with_bad_last_modified_by() -> Document {
+    let mut doc = Document::new();
+    doc.set_core_properties(CoreProperties {
+        title: Some("Report".into()),
+        last_modified_by: Some("J_Doe".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    written_by_another_producer(&mut doc, "/docProps/core.xml", "J_Doe", "J&#11;Doe")
+}
+
 #[test]
-fn setting_core_properties_names_a_bad_character_the_file_already_held() {
-    // The part is written again from the properties, so the value read from
-    // the file cannot stay; the message says it came from the file.
+fn setting_core_properties_drops_a_bad_character_the_file_already_held() {
+    // The part is written again from the properties, so the character the
+    // file held cannot stay; the caller, CLI or Python, is not stuck on it.
     let mut doc = with_bad_last_modified_by();
+    assert_eq!(
+        doc.core_properties().unwrap().last_modified_by.as_deref(),
+        Some("J\u{b}Doe")
+    );
     let mut core = doc.core_properties().cloned().unwrap();
-    core.title = Some("Q3".into());
+    core.title = Some("Q3\u{7}".into());
     let message = doc
         .set_core_properties(core.clone())
-        .expect_err("the value read from the file is refused")
+        .expect_err("a new bad value is still refused")
         .to_string();
-    assert!(
-        message.contains("core property last modified by, as the file holds it,")
-            && message.contains("U+000B"),
-        "{message}"
-    );
-    assert_eq!(doc.title(), Some("Report"), "nothing changed");
-    core.last_modified_by = Some("J Doe".into());
+    assert!(message.contains("core property title"), "{message}");
+    core.title = Some("Q3".into());
     doc.set_core_properties(core)
-        .expect("a cleaned value is taken");
+        .expect("the held value is cleaned");
     let doc = Document::from_bytes(&doc.to_bytes().expect("it saves")).unwrap();
-    assert_eq!(doc.title(), Some("Q3"));
+    let core = doc.core_properties().unwrap();
+    assert_eq!(core.title.as_deref(), Some("Q3"));
+    assert_eq!(core.last_modified_by.as_deref(), Some("JDoe"));
+
+    let mut doc = with_bad_last_modified_by();
+    doc.set_title("Q4");
+    let doc = Document::from_bytes(&doc.to_bytes().expect("a one-field setter saves")).unwrap();
+    assert_eq!(doc.title(), Some("Q4"));
+    assert_eq!(
+        doc.core_properties().unwrap().last_modified_by.as_deref(),
+        Some("JDoe")
+    );
+}
+
+#[test]
+fn setting_application_or_custom_properties_drops_a_bad_character_the_file_already_held() {
+    let mut doc = Document::new();
+    let mut app = AppProperties::default();
+    app.company = Some("A_Corp".into());
+    doc.set_application_properties(app).unwrap();
+    doc.set_custom_property(custom("Owner", CustomPropertyValue::Lpwstr("J_Doe".into())))
+        .unwrap();
+    let mut doc =
+        written_by_another_producer(&mut doc, "/docProps/app.xml", "A_Corp", "A&#11;Corp");
+    let mut doc =
+        written_by_another_producer(&mut doc, "/docProps/custom.xml", "J_Doe", "J&#11;Doe");
+    let mut app = doc.application_properties().cloned().unwrap();
+    assert_eq!(app.company.as_deref(), Some("A\u{b}Corp"));
+    app.template = Some("Normal.dotm".into());
+    doc.set_application_properties(app)
+        .expect("the held company is cleaned");
+    let mut other = custom("Other", CustomPropertyValue::Lpwstr("fine".into()));
+    other.pid = 3;
+    doc.set_custom_property(other)
+        .expect("another custom property is set");
+    let doc = Document::from_bytes(&doc.to_bytes().expect("it saves")).unwrap();
+    assert_eq!(
+        doc.application_properties().unwrap().company.as_deref(),
+        Some("ACorp")
+    );
+    assert_eq!(
+        doc.custom_property("Owner")
+            .map(|property| property.value.clone()),
+        Some(CustomPropertyValue::Lpwstr("JDoe".into()))
+    );
 }
 
 #[test]

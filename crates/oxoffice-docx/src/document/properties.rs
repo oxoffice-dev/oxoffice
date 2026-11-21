@@ -13,16 +13,24 @@ impl Document {
     /// Replace the complete core-properties model.
     ///
     /// A value holding a character XML 1.0 cannot carry is refused, naming the
-    /// property, and the document is left unchanged. That includes a value
-    /// the file already held, which the message says: the part is written
-    /// again from the properties, and no XML reader would read it back.
-    pub fn set_core_properties(&mut self, properties: CoreProperties) -> Result<()> {
-        properties.reject_non_xml_characters(self.core_properties.as_deref())?;
+    /// property, and the document is left unchanged. Such a character in a
+    /// value the file already holds (another producer wrote it as a character
+    /// reference) is dropped instead: the part is written again from the
+    /// properties, and no XML reader would read it back.
+    pub fn set_core_properties(&mut self, mut properties: CoreProperties) -> Result<()> {
+        properties.drop_held_non_xml_characters(self.held_core_properties().as_ref());
+        properties.reject_new_non_xml_characters(None)?;
         self.edit_properties(|document| {
             document.reserve_core_properties_bundle()?;
             document.core_properties = Some(Box::new(properties.clone()));
             Ok(())
         })
+    }
+
+    /// The core properties the package part holds, as the file wrote them.
+    fn held_core_properties(&self) -> Option<CoreProperties> {
+        let part = self.core_properties_part_name.as_deref()?;
+        CoreProperties::from_xml(self.package.get_part(part)?).ok()
     }
 
     /// Remove the complete core-properties part and its package relationship.
@@ -48,7 +56,31 @@ impl Document {
     ///
     /// An `application_version` must have the form `XX.YYYY` (ECMA-376 Part 1,
     /// 22.2.2.3), because Word refuses to open a package with any other shape.
-    pub fn set_application_properties(&mut self, properties: AppProperties) -> Result<()> {
+    pub fn set_application_properties(&mut self, mut properties: AppProperties) -> Result<()> {
+        // The setters refuse such characters, so one in the current model is
+        // the file's, written as a reference: dropped where it is unchanged.
+        if let Some(held) = self.application_properties.as_ref() {
+            for (value, held) in [
+                (&mut properties.template, &held.template),
+                (&mut properties.manager, &held.manager),
+                (&mut properties.company, &held.company),
+                (
+                    &mut properties.presentation_format,
+                    &held.presentation_format,
+                ),
+                (&mut properties.application, &held.application),
+                (
+                    &mut properties.application_version,
+                    &held.application_version,
+                ),
+            ] {
+                if let Some(text) = value.as_mut()
+                    && held.as_deref() == Some(text.as_str())
+                {
+                    *text = oxoffice_core::xml::strip_non_xml_characters(text).into_owned();
+                }
+            }
+        }
         for (name, value) in [
             ("template", &properties.template),
             ("manager", &properties.manager),
@@ -128,12 +160,7 @@ impl Document {
             )?;
             // A raw value is written as given, so a character reference such
             // as `&#7;` would reach the part as it is.
-            if let Ok(text) = quick_xml::escape::unescape(&raw) {
-                oxoffice_core::xml::reject_non_xml_characters(
-                    &format!("custom property {name:?}, through a character reference,"),
-                    &text,
-                )?;
-            }
+            reject_non_xml_character_references(&format!("custom property {name:?}"), &raw)?;
         }
         if let crate::CustomPropertyValue::Lpstr(value)
         | crate::CustomPropertyValue::Lpwstr(value)
@@ -166,6 +193,7 @@ impl Document {
             let properties = document
                 .custom_properties
                 .get_or_insert_with(CustomProperties::default);
+            drop_held_custom_characters(properties);
             if let Some(index) = properties
                 .properties
                 .iter()
@@ -201,6 +229,7 @@ impl Document {
             properties
                 .properties
                 .retain(|property| property.name.as_deref() != Some(name));
+            drop_held_custom_characters(properties);
             if properties.properties.is_empty() && document.custom_properties_owned {
                 if let Some(part_name) = document.custom_properties_part_name.take() {
                     document
@@ -258,15 +287,10 @@ impl Document {
     /// A character XML 1.0 cannot carry is taken as given, and every later save
     /// then fails with the error of the package writer, which names the part
     /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead.
+    /// refuses such a value instead. Such a character in a value the file
+    /// already holds is dropped, as [`Self::set_core_properties`] does.
     pub fn set_title(&mut self, title: &str) {
-        let mut candidate = self.clone_for_staging();
-        candidate
-            .reserve_core_properties_bundle()
-            .expect("an in-memory document can allocate a core-properties part");
-        candidate.invalidate_layout();
-        candidate.ensure_core_properties().title = Some(title.to_string());
-        self.commit_staged_mutation(candidate);
+        self.set_core_field(|core| core.title = Some(title.to_string()));
     }
 
     /// Get the document author/creator.
@@ -279,15 +303,10 @@ impl Document {
     /// A character XML 1.0 cannot carry is taken as given, and every later save
     /// then fails with the error of the package writer, which names the part
     /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead.
+    /// refuses such a value instead. Such a character in a value the file
+    /// already holds is dropped, as [`Self::set_core_properties`] does.
     pub fn set_author(&mut self, author: &str) {
-        let mut candidate = self.clone_for_staging();
-        candidate
-            .reserve_core_properties_bundle()
-            .expect("an in-memory document can allocate a core-properties part");
-        candidate.invalidate_layout();
-        candidate.ensure_core_properties().creator = Some(author.to_string());
-        self.commit_staged_mutation(candidate);
+        self.set_core_field(|core| core.creator = Some(author.to_string()));
     }
 
     /// Get the document subject.
@@ -300,15 +319,10 @@ impl Document {
     /// A character XML 1.0 cannot carry is taken as given, and every later save
     /// then fails with the error of the package writer, which names the part
     /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead.
+    /// refuses such a value instead. Such a character in a value the file
+    /// already holds is dropped, as [`Self::set_core_properties`] does.
     pub fn set_subject(&mut self, subject: &str) {
-        let mut candidate = self.clone_for_staging();
-        candidate
-            .reserve_core_properties_bundle()
-            .expect("an in-memory document can allocate a core-properties part");
-        candidate.invalidate_layout();
-        candidate.ensure_core_properties().subject = Some(subject.to_string());
-        self.commit_staged_mutation(candidate);
+        self.set_core_field(|core| core.subject = Some(subject.to_string()));
     }
 
     /// Get the document keywords.
@@ -321,18 +335,78 @@ impl Document {
     /// A character XML 1.0 cannot carry is taken as given, and every later save
     /// then fails with the error of the package writer, which names the part
     /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead.
+    /// refuses such a value instead. Such a character in a value the file
+    /// already holds is dropped, as [`Self::set_core_properties`] does.
     pub fn set_keywords(&mut self, keywords: &str) {
+        self.set_core_field(|core| core.keywords = Some(keywords.to_string()));
+    }
+
+    fn set_core_field(&mut self, edit: impl FnOnce(&mut CoreProperties)) {
+        let held = self.held_core_properties();
         let mut candidate = self.clone_for_staging();
         candidate
             .reserve_core_properties_bundle()
             .expect("an in-memory document can allocate a core-properties part");
         candidate.invalidate_layout();
-        candidate.ensure_core_properties().keywords = Some(keywords.to_string());
+        let core = candidate.core_properties.get_or_insert_default();
+        edit(core);
+        core.drop_held_non_xml_characters(held.as_ref());
         self.commit_staged_mutation(candidate);
     }
+}
 
-    fn ensure_core_properties(&mut self) -> &mut CoreProperties {
-        self.core_properties.get_or_insert_default()
+/// The properties a file holds are kept in the model as read, and the
+/// custom properties part is written again from it: a character XML 1.0
+/// cannot carry, which another producer wrote as a reference, is dropped
+/// from the names and text values. The setters refuse such characters, so
+/// every one in the model is the file's.
+fn drop_held_custom_characters(properties: &mut CustomProperties) {
+    for property in &mut properties.properties {
+        if let Some(name) = property.name.as_mut() {
+            *name = oxoffice_core::xml::strip_non_xml_characters(name).into_owned();
+        }
+        if let crate::CustomPropertyValue::Lpstr(value)
+        | crate::CustomPropertyValue::Lpwstr(value)
+        | crate::CustomPropertyValue::FileTime(value) = &mut property.value
+        {
+            *value = oxoffice_core::xml::strip_non_xml_characters(value).into_owned();
+        }
     }
+}
+
+/// Refuses a character reference in raw XML to a character XML 1.0 cannot
+/// carry, or to no character at all. Character data in CDATA sections and
+/// comments is literal text, not a reference.
+fn reject_non_xml_character_references(what: &str, raw: &str) -> Result<()> {
+    let mut rest = raw;
+    while let Some(start) = rest.find(['&', '<']) {
+        rest = &rest[start..];
+        for (open, close) in [("<![CDATA[", "]]>"), ("<!--", "-->")] {
+            if rest.starts_with(open) {
+                rest = rest
+                    .find(close)
+                    .map_or("", |end| &rest[end + close.len()..]);
+            }
+        }
+        let Some(reference) = rest.strip_prefix("&#") else {
+            rest = rest.get(1..).unwrap_or("");
+            continue;
+        };
+        let end = reference.find(';').unwrap_or(reference.len());
+        let digits = &reference[..end];
+        let code = match digits.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok(),
+            None => digits.parse::<u32>().ok(),
+        };
+        match code.and_then(char::from_u32) {
+            Some(character) if oxoffice_core::xml::is_xml_1_0_character(character) => {}
+            _ => {
+                return Err(Error::Other(format!(
+                    "{what} holds the character reference &#{digits};, to a character XML 1.0 cannot carry"
+                )));
+            }
+        }
+        rest = &reference[end..];
+    }
+    Ok(())
 }
