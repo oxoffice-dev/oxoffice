@@ -2358,3 +2358,54 @@ fn an_endnote_added_while_endnotes_are_ignored_is_refused() {
     assert!(error.to_string().contains("ignored endnotes"), "{error}");
     assert!(doc.revisions().is_empty());
 }
+
+#[test]
+fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
+    // Word 2019 declares a default namespace on the document root; the
+    // rejection check must still see the original's hyperlinks unchanged.
+    let base = {
+        let mut doc = Document::new();
+        doc.add_paragraph("Intro").style("Heading1");
+        let rel_id = doc.add_hyperlink_relationship("https://example.org/guide");
+        doc.add_paragraph("See ")
+            .add_hyperlink("the guide", &rel_id);
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+                .unwrap();
+        let main = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen(
+            "<w:document ",
+            r#"<w:document xmlns="http://schemas.microsoft.com/office/tasks/2019/documenttasks" "#,
+            1,
+        );
+        package.set_part(&main, xml.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        out.into_inner()
+    };
+    let with_toc = {
+        let mut doc = Document::from_bytes(&base).unwrap();
+        doc.insert_toc(0, 3).unwrap();
+        doc.to_bytes().unwrap()
+    };
+    let without = Document::from_bytes(&base).unwrap();
+    for granularity in [
+        ComparisonGranularity::Word,
+        ComparisonGranularity::default(),
+    ] {
+        let mut doc = Document::from_bytes(&with_toc).unwrap();
+        let options = ComparisonOptions {
+            granularity,
+            ..Default::default()
+        };
+        doc.compare_with_options(&without, AUTHOR, DATE, &options)
+            .expect("a table of contents removed whole compares");
+        let mut doc = reopen(&mut doc);
+        assert_eq!(texts(&accepted(&mut doc)), texts(&without));
+        assert_eq!(
+            texts(&rejected(&mut doc)),
+            texts(&Document::from_bytes(&with_toc).unwrap())
+        );
+    }
+}

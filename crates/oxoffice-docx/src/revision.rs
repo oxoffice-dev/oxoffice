@@ -2455,6 +2455,8 @@ impl<'a> XmlTree<'a> {
                         .any(|(name, target)| name == prefix && target == value)
             })
             .collect::<Vec<_>>();
+        // A default namespace the destination declares is undeclared only
+        // for a subtree with an unprefixed element, the one thing it binds.
         if !self
             .source_scope(index)
             .iter()
@@ -2462,11 +2464,26 @@ impl<'a> XmlTree<'a> {
             && destination
                 .iter()
                 .any(|(prefix, value)| prefix.is_empty() && !value.is_empty())
+            && self.has_unprefixed_element(index)
         {
             changed.push((String::new(), String::new()));
         }
         changed.sort();
         changed
+    }
+
+    /// Whether an element of this subtree has no prefix, and so takes the
+    /// default namespace in scope.
+    fn has_unprefixed_element(&self, index: usize) -> bool {
+        let mut pending = vec![index];
+        while let Some(at) = pending.pop() {
+            let element = &self.elements[at];
+            if !element.name.contains(':') {
+                return true;
+            }
+            pending.extend(element.children.iter().copied());
+        }
+        false
     }
 
     fn render(
