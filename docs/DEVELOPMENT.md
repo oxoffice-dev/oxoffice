@@ -46,12 +46,13 @@ or wants to merge it runs that review or asks for one.
   an unsafe CI change, a document that misstates how things work. Everything
   else is **minor**. The reviewer classifies, the author may contest, the
   maintainer decides.
-- **The author answers every finding** in the thread: fixed, with the commit,
-  or why it is not a defect. A major finding is fixed unless the maintainer
-  waives it.
+- **The author answers every finding** in the thread: fixed, with the commit
+  (and its proof for a minor), a follow-up issue for a minor, or why it is
+  not a defect. A major finding is fixed unless the maintainer waives it.
 - **At most two reviews per pull request**: one full review, then at most
-  one delta review, and only after a major was fixed (or after a change of
-  behaviour no finding asked for). A third review needs the maintainer's
+  one delta review, after a major was fixed or after a change no finding
+  asked for that can change behaviour (new code, a conflict resolved by hand
+  in code, tests or workflows). A third review needs the maintainer's
   agreement; beyond that budget the maintainer decides from the evidence
   (mutation checks, `git range-diff`), without another round.
 - **Minors never trigger a review.** Fix one with a proof stated in the

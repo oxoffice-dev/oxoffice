@@ -44,8 +44,7 @@ from its Rust twin.
   a typo in prose. Any change to code, tests, workflows or the meaning of a
   document, fixes for findings included, gets a review of the delta, posted
   the same way. (Amended on 2026-11-21, see [A review budget](#amendment-2026-11-21-a-review-budget):
-  only a major fix, or a change of behaviour no finding asked for, gets a
-  delta review.)
+  fixes for minors get a proof instead of a delta review.)
 - **Then CI green, squash merge.**
 - **Light review** for documentation-only changes and pure code moves, still
   posted: for documentation, that links and anchors resolve and the text
@@ -64,7 +63,8 @@ convention.
 1. This spec, the review step in [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md)
    and a rule in [CLAUDE.md](../CLAUDE.md). Checked: from this pull request
    on, every merged pull request carries a `🔍 Independent review` comment
-   that covers its merged head.
+   that covers its merged head (or the head the review budget allows, see
+   the [amendment](#amendment-2026-11-21-a-review-budget)).
 
 ## Outcome
 
@@ -77,30 +77,33 @@ convention.
 
 The night of 2026-11-20 to 21 gave 231 reviews for 79 pull requests: 2.9
 each, up to 11. #81 had 7 and no major among them. A first review found a
-major in 52 % of cases, a third or later review in 26 %: most later rounds
-were delta reviews of fixes for minors.
+major in 52 % of cases, a third or later review in 26 %: the waste was
+fixes for minors triggering delta reviews.
 
-The maintainer decided on 2026-11-21 (about 08:05 UTC):
+The maintainer decided on 2026-11-21 (about 07:55 UTC):
 
 - **At most two reviews per pull request**: one full review, then at most
-  one delta review, only after a major was fixed (or after a change of
-  behaviour no finding asked for). A third review needs the maintainer's
+  one delta review, after a major was fixed or after a change no finding
+  asked for that can change behaviour (new code, a conflict resolved by hand
+  in code, tests or workflows). A third review needs the maintainer's
   agreement; beyond the budget the maintainer decides from the evidence
   (mutation checks, `git range-diff`), without another round.
 - **Minors never trigger a review**: fixed with a proof stated in the
   answer (a test that fails without the fix, or a mutation check), or a
   follow-up issue, or why it is not a defect. A minor that would need a
-  risky change goes to a follow-up issue.
+  risky change goes to a follow-up issue, not into the pull request.
 - **A rebase or merge that only resolves a conflict in data**
   (`limitations.json`, a generated page, the `GROWING` or test-module lists,
   a moved context line) needs no review: `git range-diff`, the tests, and a
   line in the thread.
 - **A delta review judges the delta only**: defects the new commits bring,
-  or majors they fail to fix.
+  or majors they fail to fix. No new finding on code the delta does not
+  touch.
 - A light review counts as the full review.
 
-This replaces, for minors, the delta review of every change after the
-reviewed head; a major fix still gets its delta review.
+This replaces the delta review of every change after the reviewed head:
+fixes for minors get a proof, not a review; a major fix, or a change no
+finding asked for that can change behaviour, still gets its delta review.
 [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#independent-review) and rule 9
 of [CLAUDE.md](../CLAUDE.md) say so.
 
