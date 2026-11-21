@@ -2122,7 +2122,7 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
         assert!(once == twice, "{path}: a second pass changes no byte");
 
         // Only the body's caches move; header and footer parts stay as saved.
-        // The small thesis gets the TOC styles it lacked.
+        // A file without TOC styles (the small thesis, Google's copy) gets them.
         let before = crate::support::package_parts(&source);
         let after = crate::support::package_parts(&once);
         let changed = after
@@ -2130,7 +2130,10 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
             .filter(|(name, bytes)| before.get(*name) != Some(*bytes))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>();
-        let expected: &[&str] = if path == crate::support::SMALL_THESIS {
+        let has_toc_styles = String::from_utf8_lossy(&before["word/styles.xml"])
+            .contains(r#"w:styleId="TOC1""#)
+            || String::from_utf8_lossy(&before["word/styles.xml"]).contains(r#"w:styleId="TM1""#);
+        let expected: &[&str] = if !has_toc_styles {
             &["word/document.xml", "word/styles.xml"]
         } else {
             &["word/document.xml"]
@@ -2141,21 +2144,26 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
         // Two fields: the contents (`\o "1-3" \u`) list the headings of levels
         // 1 to 3, the list of figures and tables (`\t "Caption,1"`) the
         // captions; each entry in the TOC style of its level as the file
-        // names it (Word in French calls them TM1, TM2...).
+        // names it (Word in French calls them TM1, TM2...). Google rewrites
+        // the list of figures as a second contents of the heading styles, so
+        // its copy lists the headings twice.
         let doc = Document::from_bytes(&once).unwrap();
         let mut expected = doc
             .headings()
             .into_iter()
             .filter(|(level, _)| *level <= 3)
             .collect::<Vec<_>>();
-        let before_captions = expected.len();
-        expected.extend(
-            (0..doc.paragraph_count())
-                .map(|index| doc.paragraph(index).unwrap())
-                .filter(|paragraph| matches!(paragraph.style_id(), Some("Caption" | "Lgende")))
-                .map(|paragraph| (1, paragraph.text())),
-        );
-        let captions = expected.len() - before_captions;
+        let first_list = expected.len();
+        if path.starts_with("google/") {
+            expected.extend(expected.clone());
+        } else {
+            expected.extend(
+                (0..doc.paragraph_count())
+                    .map(|index| doc.paragraph(index).unwrap())
+                    .filter(|paragraph| matches!(paragraph.style_id(), Some("Caption" | "Lgende")))
+                    .map(|paragraph| (1, paragraph.text())),
+            );
+        }
         let toc_style = |level: u32| {
             if path.starts_with("word/") {
                 format!("TM{level}")
@@ -2212,7 +2220,8 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
         }
         // The pages follow the layout: on the small thesis each chapter starts
         // a page; on a corpus copy the arabic pages of the contents, then of
-        // the list of figures, never go back and spread over the document.
+        // the list of figures, go back only where a section restarts at 1,
+        // and spread over the document.
         let pages = entries
             .iter()
             .map(|(_, _, page)| page.as_str())
@@ -2224,13 +2233,20 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
                 "{path}"
             );
         } else {
-            let headings = expected.len() - captions;
+            let headings = first_list;
             for list in [&pages[..headings], &pages[headings..]] {
                 let arabic = list
                     .iter()
                     .filter_map(|page| page.parse::<u32>().ok())
                     .collect::<Vec<_>>();
-                assert!(arabic.is_sorted(), "{path}: {pages:?}");
+                // A section that restarts its numbering goes back to 1
+                // (Google numbers the front matter in arabic too).
+                assert!(
+                    arabic
+                        .windows(2)
+                        .all(|pair| pair[0] <= pair[1] || pair[1] == 1),
+                    "{path}: {pages:?}"
+                );
             }
             let mut distinct = pages[..headings].to_vec();
             distinct.dedup();
