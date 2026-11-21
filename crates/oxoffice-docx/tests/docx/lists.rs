@@ -341,22 +341,25 @@ fn restart_numbering_refuses_an_instance_with_data_it_would_lose() {
         oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
             .expect("package opens");
     let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
-    let xml = xml.replacen(
-        "<w:num w:numId=\"1\"",
-        "<w:num xmlns:x=\"urn:example\" x:tag=\"kept\" w:numId=\"1\"",
-        1,
-    );
-    assert!(xml.contains("x:tag"), "the instance carries the attribute");
-    package.set_part("/word/numbering.xml", xml.into_bytes());
-    let mut bytes = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    // A durableId in another namespace is not Word's: it is refused too.
+    for attribute in [r#"x:tag="kept""#, r#"x:durableId="7""#] {
+        let xml = xml.replacen(
+            "<w:num w:numId=\"1\"",
+            &format!("<w:num xmlns:x=\"urn:example\" {attribute} w:numId=\"1\""),
+            1,
+        );
+        assert!(xml.contains(attribute), "the instance carries {attribute}");
+        package.set_part("/word/numbering.xml", xml.into_bytes());
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut bytes).unwrap();
+        let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
 
-    let error = doc.restart_numbering(0, 1).unwrap_err().to_string();
-    assert!(
-        error.contains("cannot project unsupported override source"),
-        "{error}"
-    );
+        let error = doc.restart_numbering(0, 1).unwrap_err().to_string();
+        assert!(
+            error.contains("cannot project unsupported override source"),
+            "{attribute}: {error}"
+        );
+    }
 }
 
 // List definitions and instances.

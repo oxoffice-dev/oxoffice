@@ -53573,7 +53573,7 @@ fn numbering_level_has_unmodeled(level: &CT_Lvl) -> bool {
 /// holds is modelled, but namespace declarations and Word's
 /// `w16cid:durableId`, which names the source instance and which the copy
 /// must not take. The durable id is matched with the prefix Word writes, so
-/// an attribute of that name in another namespace is refused, not dropped.
+/// an attribute of that name under another prefix is refused, not dropped.
 fn restart_can_copy(instance: &CT_Num) -> bool {
     instance.extra_xml.is_empty()
         && instance.extra_attributes.iter().all(|(name, _)| {
