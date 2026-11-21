@@ -2261,3 +2261,28 @@ fn a_created_note_mark_style_is_defined_as_word_defines_it() {
         assert!(style.contains(expected), "{expected}: {style}");
     }
 }
+
+#[test]
+fn a_note_mark_prefers_the_character_style_of_its_built_in_name_to_an_id_of_another_type() {
+    // The mark style's id is taken by a paragraph style; the character
+    // style named for it, in another case, is the mark style.
+    let mut doc = doc_with(&["Body"]);
+    doc.add_style(oxoffice_docx::StyleBuilder::paragraph(
+        "FootnoteReference",
+        "Custom",
+    ))
+    .unwrap();
+    doc.add_style(oxoffice_docx::StyleBuilder::character(
+        "Appelnotedebasdep",
+        "Footnote Reference",
+    ))
+    .unwrap();
+    doc.create_footnote_at(&boundary(&doc, 0, 1), "a footnote")
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        body.contains(r#"<w:rStyle w:val="Appelnotedebasdep"/>"#),
+        "{body}"
+    );
+}

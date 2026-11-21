@@ -1332,6 +1332,11 @@ impl Document {
         if let Some(found) = built_in_character_style_id(&self.styles, id, name) {
             return Ok(found);
         }
+        // The id taken by a style of another type is named as before rather
+        // than defined twice.
+        if self.styles.get_by_id(id).is_some() {
+            return Ok(id.to_owned());
+        }
         self.add_style(note_reference_style(kind, &self.styles))?;
         Ok(id.to_owned())
     }

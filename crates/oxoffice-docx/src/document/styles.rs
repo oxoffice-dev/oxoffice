@@ -683,16 +683,10 @@ impl Document {
         }
         let old_link = existing.linked_style.clone();
         merge_style_update(existing, &mut authored, cleared, &removed_regions);
-        let existing_numbering = existing
-            .ppr
-            .as_ref()
-            .map(|properties| (properties.num_id, properties.num_ilvl))
-            .unwrap_or((None, None));
-        let authored_numbering = authored
-            .ppr
-            .as_ref()
-            .map(|properties| (properties.num_id, properties.num_ilvl))
-            .unwrap_or((None, None));
+        // A `w:numId` without `w:ilvl` is level 0: writing it as `w:ilvl 0`
+        // changes no numbering.
+        let existing_numbering = super::numbering::style_numbering_level(existing);
+        let authored_numbering = super::numbering::style_numbering_level(&authored);
         if authored_numbering != existing_numbering {
             return Err(Error::Other(format!(
                 "style '{}' numbering must be changed with link_style_to_numbering or unlink_style_from_numbering",

@@ -673,8 +673,17 @@ impl Document {
                 };
                 let properties = p.properties.as_ref()?;
                 let id = properties.num_id?;
-                // A `w:numId` without `w:ilvl` numbers at level 0.
-                if properties.num_ilvl.unwrap_or(0) != level {
+                // A `w:numId` without `w:ilvl` numbers at the level its style
+                // chain gives, else 0, as the layout reads it.
+                let shown = properties.num_ilvl.unwrap_or_else(|| {
+                    super::numbering_types::effective_numbering_reference(
+                        self.numbering.as_ref(),
+                        &self.styles,
+                        properties,
+                    )
+                    .map_or(0, |(_, level)| level)
+                });
+                if shown != level {
                     return None;
                 }
                 let instance = self
@@ -750,10 +759,21 @@ impl Document {
             .paragraph(paragraph)
             .and_then(|p| p.inner.properties.as_ref())
             .ok_or_else(|| Error::Other("paragraph has no explicit numbering".into()))?;
-        // A `w:numId` without `w:ilvl` numbers at level 0, as Word reads it.
+        // A `w:numId` without `w:ilvl` numbers at the level its style chain
+        // gives, else 0, as the layout reads it.
         let (id, level) = properties
             .num_id
-            .map(|id| (id, properties.num_ilvl.unwrap_or(0)))
+            .map(|id| {
+                let level = properties.num_ilvl.unwrap_or_else(|| {
+                    super::numbering_types::effective_numbering_reference(
+                        self.numbering.as_ref(),
+                        &self.styles,
+                        properties,
+                    )
+                    .map_or(0, |(_, level)| level)
+                });
+                (id, level)
+            })
             .ok_or_else(|| Error::Other("paragraph has no explicit numbering level".into()))?;
         if level > 8
             || self
@@ -1956,9 +1976,10 @@ fn numbering_reference_error_in(
 }
 
 /// A style's direct numbering as `(numId, level)`. A `w:numId` without a
-/// `w:ilvl`, as Word and python-docx write List Bullet and List Number,
-/// numbers at level 0, as the graph check and the layout read it.
-fn style_numbering_level(
+/// `w:ilvl`, as Word and python-docx write List Bullet and List Number, is
+/// read at level 0, as the graph check reads it (a `w:ilvl` the style
+/// inherits through `w:basedOn` is not looked at).
+pub(super) fn style_numbering_level(
     style: &oxoffice_docx_oxml::styles::CT_Style,
 ) -> (Option<u32>, Option<u32>) {
     style

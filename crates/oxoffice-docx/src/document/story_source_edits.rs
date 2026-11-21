@@ -381,27 +381,32 @@ fn default_character_style_id(styles: &CT_Styles) -> Option<String> {
         .map(|style| style.style_id.clone())
 }
 
-/// The id of a built-in character style: its own id when the document
-/// defines it, else the id of a character style carrying its built-in name
-/// (a localized Word file names `FootnoteReference` `Appelnotedebasdep`),
-/// else `None`.
+/// The id of a built-in character style: the character style carrying its
+/// built-in name (a localized Word file names `FootnoteReference`
+/// `Appelnotedebasdep`), else the character style with its id, else `None`.
 pub(super) fn built_in_character_style_id(
     styles: &CT_Styles,
     id: &str,
     name: &str,
 ) -> Option<String> {
-    if styles.get_by_id(id).is_some() {
-        return Some(id.to_owned());
-    }
+    let character =
+        |style: &&oxoffice_docx_oxml::styles::CT_Style| style.style_type == StyleType::Character;
     styles
         .styles
         .iter()
+        .filter(character)
         .find(|style| {
-            style.style_type == StyleType::Character
-                && style
-                    .name
-                    .as_deref()
-                    .is_some_and(|known| known.eq_ignore_ascii_case(name))
+            style
+                .name
+                .as_deref()
+                .is_some_and(|known| known.eq_ignore_ascii_case(name))
+        })
+        .or_else(|| {
+            styles
+                .styles
+                .iter()
+                .filter(character)
+                .find(|style| style.style_id == id)
         })
         .map(|style| style.style_id.clone())
 }
