@@ -67,7 +67,13 @@ pub(crate) fn paragraph_style(ppr: Option<&CT_PPr>) -> String {
             styles.push(format!("margin-right:{pt:.1}pt"));
         }
     }
-    if let Some(ind) = ppr.ind_first_line {
+    // Word ignores `w:firstLine` when `w:hanging` is there.
+    if let Some(ind) = ppr.ind_hanging {
+        let pt = ind.to_pt();
+        if pt > 0.0 {
+            styles.push(format!("text-indent:-{pt:.1}pt"));
+        }
+    } else if let Some(ind) = ppr.ind_first_line {
         let pt = ind.to_pt();
         if pt > 0.0 {
             styles.push(format!("text-indent:{pt:.1}pt"));

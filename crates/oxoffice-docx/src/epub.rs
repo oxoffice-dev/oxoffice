@@ -2571,6 +2571,7 @@ fn render_paragraph_properties(
         ind_left: source.ind_left,
         ind_right: source.ind_right,
         ind_first_line: source.ind_first_line,
+        ind_hanging: source.ind_hanging,
         outline_lvl: source.outline_lvl,
         shading: source
             .shading

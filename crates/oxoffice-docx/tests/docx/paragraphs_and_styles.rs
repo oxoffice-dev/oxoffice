@@ -495,6 +495,40 @@ fn a_paragraph_holding_both_indents_reads_and_exports_its_hanging_indent() {
         Some(-180),
         "ODT carries the hanging indent"
     );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("text-indent:-9.0pt"), "{html}");
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters: String = zip_names(&epub.bytes)
+        .iter()
+        .filter(|name| name.ends_with(".xhtml") && !name.ends_with("nav.xhtml"))
+        .filter_map(|name| zip_entry(&epub.bytes, name))
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+        .collect();
+    assert!(chapters.contains("text-indent:-9.0pt"), "{chapters}");
+
+    // Layout too, even for a hanging indent of 0.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:ind w:left="720"/></w:pPr><w:r><w:t>plain</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:ind w:left="720" w:firstLine="360" w:hanging="180"/></w:pPr>"#,
+        r#"<w:r><w:t>hanging</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:ind w:left="720" w:firstLine="360" w:hanging="0"/></w:pPr>"#,
+        r#"<w:r><w:t>zero</w:t></w:r></w:p>"#
+    ));
+    let result = doc.layout().unwrap();
+    let mut starts = std::collections::HashMap::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                starts.entry(run.text.clone()).or_insert(run.origin.x);
+            }
+        });
+    }
+    let plain = starts["plain"];
+    assert!(
+        (starts["hanging"] - (plain - 9.0)).abs() < 0.01,
+        "{starts:?}"
+    );
+    assert!((starts["zero"] - plain).abs() < 0.01, "{starts:?}");
 }
 
 #[test]
