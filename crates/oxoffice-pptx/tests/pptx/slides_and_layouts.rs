@@ -818,9 +818,7 @@ fn keeping_source_formatting_brings_the_source_layout_and_master_once() {
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
-// Fails today: keep_source_formatting refuses PowerPoint and Google slides with notes. Issue: #40
 #[test]
-#[should_panic(expected = "unrepresentable source notes-master")]
 fn keeping_source_formatting_imports_a_slide_with_speaker_notes() {
     let options = ImportSlideOptions {
         keep_source_formatting: true,
@@ -840,6 +838,86 @@ fn keeping_source_formatting_imports_a_slide_with_speaker_notes() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn imported_notes_keep_their_source_fonts_and_leave_automatic_script_fonts_to_the_deck() {
+    let options = ImportSlideOptions {
+        keep_source_formatting: true,
+        ..ImportSlideOptions::default()
+    };
+    let source = corpus_deck("powerpoint/deck.pptx");
+    let mut prs = new_deck();
+    prs.import_slides(&source, &[1], &options, &[]).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(
+        prs.slide(0).unwrap().notes_text().as_deref(),
+        Some(HIGHLIGHTS_NOTES)
+    );
+    let notes: Vec<_> = saved_parts(&prs)
+        .into_iter()
+        .filter(|name| name.starts_with("ppt/notesSlides/") && name.ends_with(".xml"))
+        .collect();
+    assert_eq!(notes.len(), 1);
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(
+        package
+            .get_part(&format!("/{}", notes[0]))
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    // The source theme's Latin face is set on the notes page; its East Asian
+    // and complex-script faces are automatic, so their tokens stay and
+    // resolve against this deck's theme.
+    assert!(xml.contains(r#"typeface="Aptos""#), "{xml}");
+    assert!(!xml.contains(r#"typeface="+mn-lt""#), "{xml}");
+    assert!(xml.contains(r#"typeface="+mn-ea""#), "{xml}");
+    assert!(xml.contains(r#"typeface="+mn-cs""#), "{xml}");
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn a_notes_master_extension_other_than_its_creation_id_still_stops_a_source_formatted_import() {
+    let source = corpus_deck("powerpoint/deck.pptx");
+    let mut package = OpcPackage::from_reader(Cursor::new(source.to_bytes().unwrap())).unwrap();
+    let master = "/ppt/notesMasters/notesMaster1.xml";
+    let xml = String::from_utf8(package.get_part(master).unwrap().to_vec()).unwrap();
+    let extended = xml.replacen(
+        "</p:extLst></p:cSld>",
+        r#"<p:ext uri="{00000000-0000-0000-0000-00000000C0DE}"><x:unknown xmlns:x="urn:example:unknown"/></p:ext></p:extLst></p:cSld>"#,
+        1,
+    );
+    assert_ne!(
+        extended, xml,
+        "the notes master has a common extension list"
+    );
+    package.set_part(master, extended.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let source = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    let mut prs = new_deck();
+    let before = prs.to_bytes().unwrap();
+
+    let refused = prs
+        .import_slides(
+            &source,
+            &[1],
+            &ImportSlideOptions {
+                keep_source_formatting: true,
+                ..ImportSlideOptions::default()
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert!(
+        refused.to_string().contains("common extension authority"),
+        "{refused}"
+    );
+    assert_eq!(prs.to_bytes().unwrap(), before);
 }
 
 #[test]

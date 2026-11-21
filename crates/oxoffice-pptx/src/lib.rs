@@ -10447,7 +10447,12 @@ impl Presentation {
     /// layouts or masters are equal when their bytes and relationship ids are
     /// equal and their targets are equal by the same rule, a master's layout
     /// list aside, so the copies of one import, or of an earlier one, are
-    /// reused rather than duplicated.
+    /// reused rather than duplicated. Speaker notes stay on this
+    /// presentation's one notes master, with their source appearance set on
+    /// the notes page, except theme fonts the source theme leaves to
+    /// automatic script selection (an empty East Asian or complex-script
+    /// face): those keep their theme token, so notes text in those scripts
+    /// takes this presentation's script fonts, as in PowerPoint.
     ///
     /// Shapes, placeholders, the slide background, speaker notes, SmartArt
     /// graphs, charts with their embedded workbook, style, colour, user-shape
@@ -17766,6 +17771,59 @@ fn notes_common_extension_metadata(xml: &[u8], part: &str) -> Result<Vec<Vec<u8>
     Ok(metadata)
 }
 
+/// Whether a `p:extLst` holds nothing but a `p14:creationId`, the identity
+/// PowerPoint gives a part. It names the source notes master, which is not
+/// copied, and draws nothing, so its loss is not a loss of appearance.
+fn holds_only_a_creation_id(raw: &[u8]) -> bool {
+    const CREATION_ID_EXTENSION: &[u8] = b"{BB962C8B-B14F-4D97-AF65-F5344CB8AC3E}";
+    let mut reader = NsReader::from_reader(raw);
+    let mut path: Vec<Vec<u8>> = Vec::new();
+    let mut extensions = 0;
+    loop {
+        let Ok((namespace, event)) = reader.read_resolved_event() else {
+            return false;
+        };
+        match event {
+            event @ (XmlEvent::Start(_) | XmlEvent::Empty(_)) => {
+                let (XmlEvent::Start(start) | XmlEvent::Empty(start)) = &event else {
+                    unreachable!()
+                };
+                let local = start.local_name().as_ref().to_vec();
+                let expected = match path.len() {
+                    0 => xml_is(&namespace, P_NS) && local == b"extLst",
+                    1 => {
+                        extensions += 1;
+                        xml_is(&namespace, P_NS)
+                            && local == b"ext"
+                            && start.attributes().flatten().any(|attribute| {
+                                attribute.key.as_ref() == b"uri"
+                                    && attribute.value.as_ref() == CREATION_ID_EXTENSION
+                            })
+                    }
+                    2 => {
+                        xml_is(
+                            &namespace,
+                            "http://schemas.microsoft.com/office/powerpoint/2010/main",
+                        ) && local == b"creationId"
+                    }
+                    _ => false,
+                };
+                if !expected {
+                    return false;
+                }
+                if matches!(event, XmlEvent::Start(_)) {
+                    path.push(local);
+                }
+            }
+            XmlEvent::End(_) => {
+                path.pop();
+            }
+            XmlEvent::Eof => return extensions == 1,
+            _ => {}
+        }
+    }
+}
+
 // Notes-master owner metadata cannot be moved blindly to a notes-slide owner.
 // Admit only the explicitly materialized surface and schema scalars. Unknown
 // authority outside that surface is refused before any staged graph publication.
@@ -17778,7 +17836,7 @@ fn admit_source_notes_master_metadata(
     let destination_metadata = notes_common_extension_metadata(destination_xml, part)?;
     if source_metadata
         .iter()
-        .any(|raw| !destination_metadata.contains(raw))
+        .any(|raw| !holds_only_a_creation_id(raw) && !destination_metadata.contains(raw))
     {
         return Err(footer_malformed(
             part,
@@ -18101,21 +18159,7 @@ fn stage_source_notes_appearance(
         Some(ColorMapOverrideKind::Override(map)) => map,
         _ => &master.color_map,
     };
-    let destination_master = destination
-        .notes_master_part
-        .as_deref()
-        .ok_or_else(|| footer_malformed(notes_part, "destination notes master is absent"))?;
-    let destination_theme_part =
-        related_internal_part(&destination.package, destination_master, rel_types::THEME)?
-            .ok_or_else(|| {
-                footer_malformed(destination_master, "destination notes theme is absent")
-            })?;
-    let destination_theme = CT_OfficeStyleSheet::from_xml(required_part(
-        &destination.package,
-        &destination_theme_part,
-    )?)
-    .map_err(|error| footer_malformed(&destination_theme_part, error.to_string()))?;
-    let xml = freeze_source_notes_theme(&xml, &theme, &destination_theme, color_map, notes_part)?;
+    let xml = freeze_source_notes_theme(&xml, &theme, color_map, notes_part)?;
     CT_NotesSlide::from_xml(&xml)
         .map_err(|error| footer_malformed(notes_part, error.to_string()))?;
     package.set_part(notes_part, xml);
@@ -18899,7 +18943,6 @@ fn notes_theme_modeled_element(uri: &str, local: &[u8]) -> bool {
 fn freeze_source_notes_theme(
     xml: &[u8],
     theme: &CT_OfficeStyleSheet,
-    destination_theme: &CT_OfficeStyleSheet,
     color_map: &ColorMap,
     part: &str,
 ) -> Result<Vec<u8>> {
@@ -18985,22 +19028,10 @@ fn freeze_source_notes_theme(
                                 _ => None,
                             };
                             if face.is_some_and(|face| face.is_empty()) {
-                                let destination_fonts =
-                                    &destination_theme.theme_elements.font_scheme;
-                                let (source, destination) = if value.starts_with("+mj-") {
-                                    (&fonts.major_font, &destination_fonts.major_font)
-                                } else {
-                                    (&fonts.minor_font, &destination_fonts.minor_font)
-                                };
-                                if source != destination {
-                                    return Err(footer_malformed(
-                                        part,
-                                        "unrepresentable automatic source notes script-font inheritance",
-                                    ));
-                                }
-                                // An empty theme face denotes automatic script selection.
-                                // Keep its valid token only when the complete collection,
-                                // including supplemental script faces, has identical authority.
+                                // An empty theme face picks a font per script from the
+                                // theme's supplemental list, which a run cannot hold. The
+                                // token stays and follows the destination theme, as notes
+                                // follow the one notes master of a deck in PowerPoint.
                                 None
                             } else {
                                 face.cloned()
