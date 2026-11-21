@@ -1,7 +1,7 @@
 //! CSS generation from OXML properties.
 
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
-use oxoffice_docx_oxml::shared::ST_Jc;
+use oxoffice_docx_oxml::shared::{ST_Jc, ST_Underline};
 
 use crate::sanitize::{font_family, hex_color};
 
@@ -194,7 +194,11 @@ pub(crate) fn run_tags(rpr: Option<&CT_RPr>) -> RunTags {
     RunTags {
         bold: rpr.bold == Some(true),
         italic: rpr.italic == Some(true),
-        underline: rpr.underline.is_some(),
+        // `w:u w:val="none"` turns an underline off, as Google Docs writes it
+        // on every list item.
+        underline: rpr
+            .underline
+            .is_some_and(|underline| underline != ST_Underline::None),
         strike: rpr.strike == Some(true) || rpr.dstrike == Some(true),
         superscript: rpr.vert_align.as_deref() == Some("superscript"),
         subscript: rpr.vert_align.as_deref() == Some("subscript"),

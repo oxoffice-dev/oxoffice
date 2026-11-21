@@ -1317,10 +1317,12 @@ fn a_paragraph_with_one_drawn_edge_among_nil_ones_has_borders() {
         r#"<w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:left w:val="none"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/></w:pBdr></w:pPr><w:r><w:t>underlined</w:t></w:r></w:p><w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>plain</w:t></w:r></w:p>"#,
     );
     assert!(doc.paragraph(0).unwrap().has_borders(), "one drawn edge");
+    assert_eq!(doc.paragraph(0).unwrap().border_count(), 1);
     assert!(
         !doc.paragraph(1).unwrap().has_borders(),
         "nil and none only"
     );
+    assert_eq!(doc.paragraph(1).unwrap().border_count(), 0);
 }
 
 #[test]
@@ -1341,4 +1343,5 @@ fn a_google_list_item_whose_edges_are_all_nil_has_no_borders() {
         assert_eq!(item.border(edge).map(|border| border.style()), Some("nil"));
     }
     assert!(!item.has_borders(), "a nil edge draws no border");
+    assert_eq!(item.border_count(), 0, "nor counts as one");
 }

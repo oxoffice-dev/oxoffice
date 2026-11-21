@@ -1594,3 +1594,43 @@ fn a_row_added_beside_empty_properties_writes_none() {
         "{xml}"
     );
 }
+
+#[test]
+fn table_and_cell_edges_set_to_nil_or_none_draw_no_border() {
+    let table = |borders: &str, cell_borders: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblBorders>{borders}</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders>{cell_borders}</w:tcBorders></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        )
+    };
+    let undrawn = table(
+        r#"<w:top w:val="nil"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideH w:val="nil"/>"#,
+        r#"<w:top w:val="nil"/><w:bottom w:val="none"/>"#,
+    );
+    let drawn = table(
+        r#"<w:top w:val="nil"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#,
+        r#"<w:top w:val="nil"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#,
+    );
+
+    let doc = doc_with_body(&undrawn);
+    let table_ref = doc.table(0).unwrap();
+    assert!(!table_ref.has_borders(), "nil and none edges only");
+    assert!(!table_ref.cell(0, 0).unwrap().has_borders());
+    assert!(
+        !doc.to_html_fragment().contains("border:"),
+        "{}",
+        doc.to_html_fragment()
+    );
+
+    let doc = doc_with_body(&drawn);
+    let table_ref = doc.table(0).unwrap();
+    assert!(table_ref.has_borders(), "one drawn edge among nil ones");
+    assert!(table_ref.cell(0, 0).unwrap().has_borders());
+    assert_eq!(
+        doc.to_html_fragment()
+            .matches("border:1px solid #000")
+            .count(),
+        2,
+        "{}",
+        doc.to_html_fragment()
+    );
+}

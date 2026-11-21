@@ -415,10 +415,7 @@ fn inline_formats_become_html_elements_and_markdown_spells_bold_italic_and_strik
     );
 }
 
-// Fails today: a run with w:u w:val="none" is written inside <u>, so every
-// Google Docs list item is underlined in HTML. Issue: #260
 #[test]
-#[should_panic(expected = "is underlined in HTML although its underline is off")]
 fn text_whose_underline_is_turned_off_is_not_underlined_in_html() {
     let mut doc = Document::new();
     doc.add_paragraph("").add_run("plain").underline(false);
@@ -883,10 +880,7 @@ fn pictures_are_embedded_as_data_uris_of_their_bytes() {
     );
 }
 
-// Fails today: the HTML <img> has no alt attribute, while Markdown writes the
-// alt text. Issue: #260
 #[test]
-#[should_panic(expected = "the picture's alt text is missing from the HTML")]
 fn a_pictures_alt_text_reaches_the_html() {
     let mut doc = Document::new();
     let body = body_story(&doc);
@@ -1368,10 +1362,7 @@ fn rtl_and_cjk_text_of_the_minutes_survives_both_exports() {
     }
 }
 
-// Fails today: HTML writes a w:bidi paragraph without dir="rtl", so a browser
-// lays it out left to right. Issue: #260
 #[test]
-#[should_panic(expected = "the right-to-left paragraph is written without its direction")]
 fn a_right_to_left_paragraph_keeps_its_direction_in_html() {
     let doc = corpus_doc("word/minutes.docx");
     let paragraph = doc
