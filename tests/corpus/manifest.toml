@@ -17,7 +17,7 @@ features = ["headings", "title", "numbered-list", "multi-level-list", "table", "
 [[file]]
 path = "authored/cv.docx"
 producer = "python-docx 1.2.0"
-size = 39022
+size = 39024
 features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink", "rsid"]
 
 [[file]]
@@ -29,13 +29,13 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "pictu
 [[file]]
 path = "authored/form.docx"
 producer = "python-docx 1.2.0"
-size = 39360
+size = 39361
 features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection", "rsid"]
 
 [[file]]
 path = "authored/letter.docx"
 producer = "python-docx 1.2.0"
-size = 43276
+size = 43278
 features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink", "rsid"]
 
 [[file]]
@@ -47,19 +47,19 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "pictu
 [[file]]
 path = "authored/long-report.docx"
 producer = "python-docx 1.2.0"
-size = 75624
+size = 75626
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "rsid", "long"]
 
 [[file]]
 path = "authored/manual.docx"
 producer = "python-docx 1.2.0"
-size = 48323
+size = 48325
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "page-fields", "bookmark", "hyperlink", "rsid"]
 
 [[file]]
 path = "authored/minutes.docx"
 producer = "python-docx 1.2.0"
-size = 40392
+size = 40394
 features = ["headings", "title", "bullet-list", "table", "header-footer", "rtl", "cjk", "rsid"]
 
 [[file]]
@@ -71,13 +71,13 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "text-
 [[file]]
 path = "authored/newsletter.docx"
 producer = "python-docx 1.2.0"
-size = 43633
+size = 43635
 features = ["headings", "picture", "floating-picture", "text-box", "shape", "header-footer", "sections", "columns", "rsid"]
 
 [[file]]
 path = "authored/paper.docx"
 producer = "python-docx 1.2.0"
-size = 42565
+size = 42566
 features = ["headings", "table", "picture", "endnote", "sections", "columns", "equation", "rsid"]
 
 [[file]]
@@ -95,7 +95,7 @@ features = ["headings", "title", "bullet-list", "numbered-list", "table", "merge
 [[file]]
 path = "authored/thesis.docx"
 producer = "python-docx 1.2.0"
-size = 54437
+size = 54438
 features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid"]
 
 [[file]]
@@ -329,55 +329,55 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "conne
 [[file]]
 path = "word/contract.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 38122
+size = 37873
 features = ["headings", "title", "numbered-list", "multi-level-list", "table", "comment", "footnote", "tracked-changes", "format-change", "header-footer", "page-fields", "ref-fields", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
 path = "word/cv.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 31725
+size = 31770
 features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink", "rsid", "paraId"]
 
 [[file]]
 path = "word/form.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 31854
+size = 31878
 features = ["headings", "title", "table", "header-footer", "form-fields", "bookmark", "content-control", "checkbox-control", "date-control", "list-control", "signature-control", "locked-control", "protection", "rsid", "paraId"]
 
 [[file]]
 path = "word/letter.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 36776
+size = 36793
 features = ["picture", "header-footer", "title-page", "page-fields", "date-field", "merge-fields", "hyperlink", "rsid", "paraId"]
 
 [[file]]
 path = "word/long-report.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 144605
+size = 144678
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "header-footer", "page-fields", "rsid", "paraId", "long"]
 
 [[file]]
 path = "word/manual.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 47761
+size = 47768
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "page-fields", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
 path = "word/minutes.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 33914
+size = 33954
 features = ["headings", "title", "bullet-list", "table", "header-footer", "rtl", "cjk", "rsid", "paraId"]
 
 [[file]]
 path = "word/newsletter.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 37660
+size = 37671
 features = ["headings", "picture", "floating-picture", "text-box", "shape", "header-footer", "sections", "columns", "rsid", "paraId"]
 
 [[file]]
 path = "word/paper.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 36249
+size = 36265
 features = ["headings", "table", "picture", "endnote", "sections", "columns", "equation", "rsid", "paraId"]
 
 [[file]]
@@ -389,5 +389,5 @@ features = ["headings", "title", "bullet-list", "numbered-list", "table", "merge
 [[file]]
 path = "word/thesis.docx"
 producer = "Microsoft Word for Mac 16.115"
-size = 56262
+size = 56297
 features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid", "paraId"]

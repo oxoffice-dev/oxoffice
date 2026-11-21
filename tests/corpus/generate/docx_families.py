@@ -33,8 +33,14 @@ def _properties(doc, title: str, author: str, subject: str = "") -> None:
 
 
 def _new(font: str = "Calibri", size: int = 11, margins_cm: float = 2.5):
-    """A document with its Normal font and page margins set."""
+    """A document with its Normal font and page margins set, in Word 2013+ mode.
+
+    python-docx's template declares compatibilityMode 14 (Word 2010), which
+    Word keeps, so it saves in compatibility mode and drops reply threads
+    (w15). The pilot (report) keeps 14: the behaviour tests pin its copies."""
     doc = Document()
+    compat = doc.settings.element.find(f"{qn('w:compat')}/{qn('w:compatSetting')}[@{qn('w:name')}='compatibilityMode']")
+    compat.set(qn("w:val"), "15")
     doc.styles["Normal"].font.name = font
     doc.styles["Normal"].font.size = Pt(size)
     section = doc.sections[0]
