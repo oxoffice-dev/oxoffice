@@ -1059,7 +1059,9 @@ fn replacing_a_header_keeps_its_place_among_the_references() {
 
 #[test]
 fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
-    let bytes = headers_listed(&["first", "default"]);
+    // Neither pushing the reference at the end nor placing it by type keeps
+    // this order.
+    let bytes = headers_listed(&["even", "default", "first"]);
     let mut doc = Document::from_bytes(&bytes).unwrap();
     let first = doc
         .section_story(0, HeaderFooterKind::Header, HdrFtrType::First)
@@ -1069,7 +1071,10 @@ fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
         .clone();
     doc.link_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default, &first)
         .unwrap();
-    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["first", "default"]);
+    assert_eq!(
+        header_order(&doc.to_bytes().unwrap()),
+        ["even", "default", "first"]
+    );
 }
 
 #[test]
