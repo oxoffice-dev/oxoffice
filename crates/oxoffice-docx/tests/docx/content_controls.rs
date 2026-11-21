@@ -1772,4 +1772,3 @@ fn a_control_added_to_word_and_google_files_survives_a_save() {
         assert_eq!(after[1..], before[1..], "{name}: the rest is untouched");
     }
 }
-
