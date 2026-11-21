@@ -1844,25 +1844,27 @@ fn exports_count_the_list_items_of_a_table_as_layout_does() {
     let (mut doc, id) = single_list(&[ListLevel::decimal()]);
     add_items(&mut doc, id, &[0]);
     {
-        let mut table = doc.add_table(1, 1);
-        let mut cell = table.cell(0, 0).unwrap();
-        cell.add_paragraph("in a cell").numbering(id, 0);
+        let mut table = doc.add_table(2, 1);
+        for row in 0..2 {
+            let mut cell = table.cell(row, 0).unwrap();
+            cell.add_paragraph("in a cell").numbering(id, 0);
+        }
     }
     doc.add_paragraph("after the table").numbering(id, 0);
-    assert_eq!(markers(&doc), ["1.", "3."]);
+    assert_eq!(markers(&doc), ["1.", "4."]);
 
     let markdown = doc.to_markdown();
     assert!(
-        markdown.lines().any(|line| line == "3. after the table"),
+        markdown.lines().any(|line| line == "4. after the table"),
         "{markdown}"
     );
     let html = doc.to_html_fragment();
     assert!(
-        html.contains("<ol start=\"3\">\n<li>after the table"),
+        html.contains("<ol start=\"4\">\n<li>after the table"),
         "{html}"
     );
 
-    // Layout leaves out a row deleted as a tracked change.
+    // Layout leaves out a row deleted as a tracked change, the other kept.
     let doc = with_part(&mut doc, "/word/document.xml", |xml| {
         let at = xml.find("<w:tr").unwrap();
         let at = at + xml[at..].find('>').unwrap() + 1;
@@ -1872,15 +1874,15 @@ fn exports_count_the_list_items_of_a_table_as_layout_does() {
             &xml[at..]
         )
     });
-    assert_eq!(markers(&doc), ["1.", "2."]);
+    assert_eq!(markers(&doc), ["1.", "3."]);
     let markdown = doc.to_markdown();
     assert!(
-        markdown.lines().any(|line| line == "2. after the table"),
+        markdown.lines().any(|line| line == "3. after the table"),
         "{markdown}"
     );
     let html = doc.to_html_fragment();
     assert!(
-        html.contains("<ol start=\"2\">\n<li>after the table"),
+        html.contains("<ol start=\"3\">\n<li>after the table"),
         "{html}"
     );
 }
