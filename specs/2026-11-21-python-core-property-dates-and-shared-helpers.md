@@ -32,10 +32,14 @@ Today, on main 78f44de:
   `checked_font_input` (79 lines).
 - **`public_error` and `stale_to_pyerr` read the same but do not behave the same.** Each looks the exception class up
   in its own package (`oxoffice.docx` or `oxoffice.pptx`). `StaleElementError`, `PackageError` and `XmlError` are
-  separate classes in the two packages, and no test checks which one is raised.
-- **The font helpers** (`checked_font_kind`, `checked_font_license`, `font_kind_name`, `collect_caller_fonts`, about 100
-  lines with `checked_font_input`) differ by their `oxoffice_docx::` or `oxoffice_pptx::` types. They also differ by one
-  exception: a bad font folder raises `oxoffice.docx.LayoutError` in Word and `oxoffice.pptx.PptxError` in PowerPoint.
+  separate classes in the two packages. `test_save.py` checks `PackageError` on both, and no test checks
+  `StaleElementError` or `XmlError`.
+- **The font helpers:**
+  - `checked_font_kind`, `checked_font_license` and `font_kind_name` (32 lines) differ only by their `oxoffice_docx::`
+    or `oxoffice_pptx::` types;
+  - `collect_caller_fonts` (65 lines) uses `oxoffice_layout::FontFile` in both bindings and differs only by the line
+    that maps its error. A folder holding a font that cannot be read raises `oxoffice.docx.LayoutError` in Word and
+    `oxoffice.pptx.PptxError` in PowerPoint.
 - **Signing** is already shared (`oxoffice_py_support::signature_report_to_py`).
 - **Comment dates** (`date=` in Word, `created=` in PowerPoint) are `str` in both packages. They are not core
   properties, and they stay as they are.
@@ -59,8 +63,8 @@ Today, on main 78f44de:
 - **This amends the parent spec's table:** the `CoreProperties` classes stay one per binding instead of moving.
   - They are two Python classes, `oxoffice.docx.CoreProperties` and `oxoffice.pptx.CoreProperties`, on two hosts.
   - Their identical accessors are three-line calls into the shared helpers. A macro would save less than it hides.
-- **The font helpers follow item 21.** Sharing `collect_caller_fonts` means choosing one exception class for a bad
-  font folder, which users see, so that step names its choice.
+- **`collect_caller_fonts` moves in step 2** with the package's exception as a parameter, as `public_error` does, so
+  each package keeps raising its own class. **The three type-dependent font helpers follow item 21.**
 - **Not done here:**
   - the Rust facades and the CLI, which keep W3CDTF text: only Python changes;
   - comment dates;
@@ -89,10 +93,10 @@ Each step is reviewed on the local branch before its one push.
 2. `refactor(python): the bindings share the date conversion and the helpers`
    - After item 17 splits `oxoffice-docx-py/src/document.rs`, inside the docx freeze.
    - Drops the Word copy of the conversion and both bindings' copies of `normalize_index`, `checked_font_input`,
-     `public_error` and `stale_to_pyerr`.
+     `public_error`, `stale_to_pyerr` and `collect_caller_fonts`.
    - Adds a test on both packages: a stale handle and a package error raise that package's own class.
-3. After item 21: the font helpers move to `oxoffice-py-support`, with item 21's shared types and a named choice of
-   exception for a bad font folder.
+3. After item 21: `checked_font_kind`, `checked_font_license` and `font_kind_name` move to `oxoffice-py-support`, with
+   item 21's shared types.
 
 **Outside this repository:** oxoffice-skills documents the PowerPoint dates as RFC 3339 strings
 (`plugin/skills/pptx/references/python-api.md`, `SKILL.md`). Its update goes with the release that ships step 1, as a

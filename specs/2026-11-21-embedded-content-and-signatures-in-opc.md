@@ -13,8 +13,9 @@ objects, ActiveX controls, VBA projects) and the package-signature checks exist 
 `crates/oxoffice-docx/src/embedded.rs` (3,274 lines) and `crates/oxoffice-pptx/src/embedded.rs` (1,817 lines).
 PowerPoint's copy is the weaker one (#83).
 
-Measured on main 78f44de, comparing functions by name and text. Neither file has changed since the import, so the
-parent spec's "16 diverged" was a miscount.
+Measured on main 78f44de, comparing functions by name and text. Neither file changed between the import and the
+parent spec, so its "16 diverged" was a miscount. Since then #218 moved Word's three NCName functions to core (40
+Word-only functions, 3,239 lines).
 
 - **22 identical functions.**
 - **26 that differ:**
@@ -33,7 +34,7 @@ parent spec's "16 diverged" was a miscount.
 - **Word's target check reaches far.** `reject_unrelated_signature_incoming` and Word's reachability run the
   normalised pack URI test on every internal relationship of the package, not only on embedded content.
 - **"Would a save invalidate the signature?" is answered differently.** PowerPoint compares the written bytes of the
-  staged and current packages, writing two whole packages on every call. Word compares the package model
+  staged and current packages, writing two whole packages on every call for a signed package. Word compares the package model
   (`packages_are_semantically_equal`).
 - **Same public API in both facades:** four types (`EmbeddedContentKind`, `EmbeddedSignatureState`,
   `EmbeddedMutationPolicy`, `EmbeddedContentInfo`) and four methods (`embedded_content`, `extract_`, `replace_` and
@@ -77,7 +78,7 @@ parent spec's "16 diverged" was a miscount.
   `InvalidEmbeddedMutation`. PowerPoint uses `InvalidEmbeddedMutation` for the new refusals.
 - **PowerPoint refuses more, so this is `fix(pptx)!` with a `BREAKING CHANGE:` footer.** Closes #83.
   - **Save and commit of a signed package fail when any internal relationship of the package has a target that is
-    not a normalised pack URI**, an image or a hyperlink included. Examples: non-ASCII, a space, lowercase or needless
+    not a normalised pack URI**, an image or a slide jump included. Examples: non-ASCII, a space, lowercase or needless
     `%` escapes, `?`, `#`, `\`, `//`, `.` segments.
   - On a signed package, the save also fails on:
     - an origin or signature part without its exact content type;
@@ -103,11 +104,15 @@ parent spec's "16 diverged" was a miscount.
 ## Risks
 
 - **A signed `.pptx` that saves today could fail to save, or to commit any edit**, because of one unrelated relationship
-  with a non-normalised target. The corpus cannot show this on its own: nothing in it is signed.
-  - So before step 3, a run signs every `.pptx` and `.docx` in the corpus and in the oxoffice-skills fixtures with the
-    test key, saves each one after one edit, and checks it with the stricter graph.
-  - Any refusal of a file that a real producer wrote stops the plan for a decision. That decision could be to narrow
-    Word's full-package target check to the signature and embedded relationships, which would relax Word too.
+  with a non-normalised target.
+  - No file we hold can measure this: none of the 64 corpus files has such a target, and none is signed.
+  - So this refusal rests on the step 1 test, which pins it, and on the footer, which states it. It does not rest on a
+    measurement.
+  - Before step 3, a run signs every corpus file with the test key, saves it after one edit, and checks it with the
+    stricter graph. That run tests the content-type and incoming-relationship checks on real files.
+  - A refusal there, or a user report of a real file refused, stops the plan for a decision. That decision could be
+    to narrow Word's full-package target check to the signature and embedded relationships, which would relax Word
+    too.
 - **Word changes**: the two reachability changes above are fixes. They get their own commit and tests.
 - **No test covers this code today.** The tests come first (step 1) and pin today's behaviour of both facades.
 - **Item 15 (debug work counters)** lists pptx `embedded.rs` and opc `lib.rs` among its files; its first pull
@@ -124,9 +129,10 @@ Each step is reviewed on the local branch before its one push.
      tests and marked as such.
    - The tests run with `--features digital-signatures`, and CI runs them that way.
    - They cover the four methods, the policy choices, and a save after an edit of a signed package.
-   - Every refusal listed above is written as today's answer, on both facades:
+   - Every PowerPoint refusal listed above is written as today's answer, on both facades:
      - on Word it must already refuse, so step 2 is checked by tests rather than assumed;
      - on PowerPoint it flips in step 3.
+   - Word's two reachability changes are written as today's answers too; they flip in step 2's fix.
    - This includes the signed deck with an image target containing a raw space.
 2. `refactor(opc): embedded content and signature checks in one module`, then Word on it.
    - Adds the module and the trait, and Word's `embedded.rs` delegates to it. Word's behaviour is unchanged: the step
@@ -139,7 +145,7 @@ Each step is reviewed on the local branch before its one push.
    - The step 1 tests flip where listed above.
 4. Spec status to `shipped` with the learnings.
 
-None of these steps edits a wave 3 file. Steps 2 and 3 wait until item 15 is done with pptx `embedded.rs` and opc
+None of these steps edits a file that wave 3 splits. Steps 2 and 3 wait until item 15 is done with pptx `embedded.rs` and opc
 `lib.rs`.
 
 ## Links
