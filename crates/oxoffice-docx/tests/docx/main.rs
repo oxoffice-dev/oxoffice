@@ -11,6 +11,7 @@ mod corpus;
 mod fields_and_toc;
 mod fonts;
 mod fragment_import;
+mod html_and_markdown;
 mod inspection;
 mod lists;
 mod mail_merge_and_templates;
