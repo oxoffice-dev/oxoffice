@@ -31,9 +31,10 @@ write it: a fresh agent given only the pull request, its branch and its spec,
 never the author's reasoning, or a person. Whoever works on the pull request
 or wants to merge it runs that review or asks for one.
 
-- The reviewer posts its findings on the pull request in one comment, major
-  and minor, each with `file:line`, the defect and a failure scenario, or
-  says it found nothing.
+- The reviewer itself posts its findings on the pull request, in one comment
+  headed `🔍 Independent review` with the head it read: major and minor, each
+  with `file:line`, the defect and a failure scenario, or that it found
+  nothing. The pull request keeps the trace.
 - The author fixes them, or answers in the thread why one is not a defect. A
   major finding is fixed unless the maintainer waives it. A substantial fix
   gets a new review of what changed.

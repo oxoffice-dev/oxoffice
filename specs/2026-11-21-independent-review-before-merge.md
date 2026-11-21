@@ -23,9 +23,11 @@ from its Rust twin.
 - **Whoever works on the pull request or wants to merge it** runs that review
   or asks someone for it. No CI job: the review belongs to the merge, not to
   every push.
-- **The findings are posted on the pull request**, in one comment, major and
+- **The reviewer posts its findings on the pull request itself**, in one
+  comment headed `🔍 Independent review` with the head it read, major and
   minor alike, each with `file:line`, the defect and a concrete failure
-  scenario. A review with nothing to report says so.
+  scenario. A review with nothing to report says so. The pull request keeps
+  the trace.
 - **The author fixes the findings**, or answers in the thread why one is not
   a defect. A major finding is fixed unless the maintainer waives it in the
   thread. A substantial fix gets a new review of what changed.
