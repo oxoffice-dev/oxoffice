@@ -651,6 +651,9 @@ pub fn protected_source_residual(
     let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
     reader.config_mut().trim_text(false);
     let mut nodes = Vec::<ResidualNode>::new();
+    // The prefixes each node's subtree names: the only bindings of its scope
+    // that can change what the node says.
+    let mut used = Vec::<std::collections::BTreeSet<String>>::new();
     let mut stack = Vec::<usize>::new();
     loop {
         let before = reader.buffer_position() as usize;
@@ -751,6 +754,7 @@ pub fn protected_source_residual(
                         scope.insert(prefix, uri);
                     }
                 }
+                used.push(residual_used_prefixes(&element, reader.resolver())?);
                 let index = nodes.len();
                 let end = reader.buffer_position() as usize;
                 nodes.push(ResidualNode {
@@ -768,6 +772,9 @@ pub fn protected_source_residual(
                 }
                 if !empty {
                     stack.push(index);
+                } else if let Some(parent) = parent {
+                    let named = used[index].clone();
+                    used[parent].extend(named);
                 }
             }
             Event::End(_) => {
@@ -775,6 +782,10 @@ pub fn protected_source_residual(
                     .pop()
                     .ok_or_else(|| OxmlError::InvalidValue("unbalanced residual source".into()))?;
                 nodes[index].range.end = reader.buffer_position() as usize;
+                if let Some(parent) = stack.last().copied() {
+                    let named = used[index].clone();
+                    used[parent].extend(named);
+                }
             }
             Event::Eof => break,
             event => {
@@ -795,11 +806,60 @@ pub fn protected_source_residual(
     if !stack.is_empty() {
         return Err(OxmlError::InvalidValue("unclosed residual source".into()));
     }
+    // A binding no name of the subtree uses says nothing about it: a save
+    // that drops or adds an unused root declaration changes no fact.
+    for (node, named) in nodes.iter_mut().zip(&used) {
+        node.scope.retain(|prefix, _| named.contains(prefix));
+    }
     let mut output = Vec::new();
     if !nodes.is_empty() {
         residual_emit_children(0, &nodes, &source, &[], &mut output);
     }
     Ok(output)
+}
+
+/// The prefixes one element names: its own, its attributes' and those the
+/// values of markup-compatibility and `xsi:type` attributes name.
+fn residual_used_prefixes(
+    element: &BytesStart<'_>,
+    resolver: &quick_xml::name::NamespaceResolver,
+) -> Result<std::collections::BTreeSet<String>> {
+    let prefix_of = |name: &[u8]| -> Result<String> {
+        Ok(name
+            .iter()
+            .position(|byte| *byte == b':')
+            .map(|at| std::str::from_utf8(&name[..at]))
+            .transpose()?
+            .unwrap_or_default()
+            .to_owned())
+    };
+    let mut named = std::collections::BTreeSet::from([prefix_of(element.name().as_ref())?]);
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        let key = attribute.key.as_ref();
+        if key == b"xmlns" || key.starts_with(b"xmlns:") {
+            continue;
+        }
+        let prefix = prefix_of(key)?;
+        if prefix.is_empty() {
+            continue;
+        }
+        let (namespace, local) = resolver.resolve_attribute(attribute.key);
+        let namespace = residual_namespace(namespace)?;
+        let value =
+            attribute.decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?;
+        named.extend(
+            crate::text::root_attribute_value_prefixes(
+                namespace.as_deref(),
+                local.as_ref(),
+                &value,
+            )
+            .into_iter()
+            .map(str::to_owned),
+        );
+        named.insert(prefix);
+    }
+    Ok(named)
 }
 
 fn residual_namespace(namespace: quick_xml::name::ResolveResult<'_>) -> Result<Option<String>> {
