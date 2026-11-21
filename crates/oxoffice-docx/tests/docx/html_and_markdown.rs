@@ -500,9 +500,11 @@ fn markdown_escapes_an_entity_reference_written_as_text() {
         [Read::Paragraph(line.to_owned())],
         "a CommonMark reader reads an entity reference written as text as another character: \
          {markdown:?}"
-    ); // An `&` that starts no reference is left as it is.
-    let plain = reopen(&mut doc_with(&["R&D & sales"])).to_markdown();
-    assert_eq!(plain.trim_end(), "R&D & sales");
+    );
+    // An `&` that starts no reference is left as it is, at the end of a
+    // paragraph too.
+    let plain = reopen(&mut doc_with(&["R&D & sales", "Head of R&D"])).to_markdown();
+    assert_eq!(plain.trim_end(), "R&D & sales\n\nHead of R&D");
 }
 
 #[test]
@@ -577,10 +579,7 @@ fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
     }
     let doc = reopen(&mut doc);
     let read = read_markdown(&doc.to_markdown());
-    let [Read::Paragraph(text)] = read.as_slice() else {
-        panic!("one paragraph: {read:?}")
-    };
-    assert!(text.starts_with("a\n") && text.ends_with("\nb"), "{text:?}");
+    assert_eq!(read, [Read::Paragraph("a\n\nb".to_owned())]);
 }
 
 #[test]

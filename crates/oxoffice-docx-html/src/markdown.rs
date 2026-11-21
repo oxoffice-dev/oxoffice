@@ -461,27 +461,36 @@ fn quote_owner<'a>(id: Option<&str>, styles: &'a CT_Styles) -> Option<&'a str> {
 /// CommonMark drops the whitespace a paragraph line starts with, and reads
 /// four columns of it as an indented code block. Written as a character
 /// reference, the first whitespace character of a line keeps the line's
-/// whitespace and the paragraph. A line of spaces alone between two lines,
-/// the hard break of two line breaks in a row, would end the paragraph: a
-/// space written before it keeps it one paragraph. An empty line, as around
-/// a page break, is left.
+/// whitespace and the paragraph. Two line breaks in a row leave a line of
+/// spaces after a line of text, which a reader takes for a blank line that
+/// ends the paragraph: it is written as a backslash hard break, or with its
+/// first character as a reference when it holds more than the break.
 fn keep_leading_whitespace(text: &str) -> String {
     let lines: Vec<&str> = text.split('\n').collect();
     let last = lines.len() - 1;
-    lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| match line.chars().next() {
-            Some(first @ (' ' | '\t')) if !line.trim().is_empty() => {
+    let mut written: Vec<String> = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        let blank = !line.is_empty() && line.bytes().all(|byte| byte == b' ' || byte == b'\t');
+        let after_text = written
+            .last()
+            .is_some_and(|previous| !previous.trim().is_empty());
+        let first = line.chars().next();
+        let out = match first {
+            Some(first @ (' ' | '\t')) if !blank => {
                 format!("&#{};{}", u32::from(first), &line[1..])
             }
-            _ if index > 0 && index < last && !line.is_empty() && line.trim().is_empty() => {
-                format!("&#32;{line}")
+            Some(first) if blank && index < last && after_text && line.ends_with("  ") => {
+                if *line == "  " {
+                    "\\".to_owned()
+                } else {
+                    format!("&#{};{}", u32::from(first), &line[1..])
+                }
             }
             _ => (*line).to_owned(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        };
+        written.push(out);
+    }
+    written.join("\n")
 }
 
 fn escape_block_starts(text: &str) -> String {
@@ -706,8 +715,34 @@ fn push_piece(pieces: &mut Vec<(String, Marks)>, text: &str, marks: Marks) {
         return;
     }
     match pieces.last_mut() {
-        Some((last, last_marks)) if !last.is_empty() && *last_marks == marks => last.push_str(text),
+        Some((last, last_marks)) if !last.is_empty() && *last_marks == marks => {
+            escape_reference_across(last, text);
+            last.push_str(text);
+        }
         _ => pieces.push((text.to_owned(), marks)),
+    }
+}
+
+/// Runs with the same formatting are written as one text, so a character
+/// reference split across them (Word splits runs around a word it flags)
+/// becomes one there: escape the `&` it starts with, at the end of `last`.
+fn escape_reference_across(last: &mut String, next: &str) {
+    // A reference body is at most 32 bytes, so its `&` is among the last 33.
+    let from = last.len().saturating_sub(33);
+    let Some(at) = last.as_bytes()[from..]
+        .iter()
+        .rposition(|&byte| byte == b'&')
+        .map(|index| index + from)
+    else {
+        return;
+    };
+    let backslashes = last.as_bytes()[..at]
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte == b'\\')
+        .count();
+    if backslashes % 2 == 0 && starts_character_reference(&format!("{}{next}", &last[at + 1..])) {
+        last.insert(at, '\\');
     }
 }
 
@@ -741,8 +776,7 @@ fn push_escaped_at(out: &mut String, text: &str, index: usize, character: char) 
 /// Whether `rest`, the text after an `&`, starts as a character reference
 /// does: a name, `#` and decimal digits, or `#x` and hexadecimal digits,
 /// then `;`. A reference body is at most 32 bytes, so only that far is
-/// read. Text that runs to its end as such a body may go on in the next run
-/// (Word splits runs around a word it flags), so it counts too.
+/// read.
 fn starts_character_reference(rest: &str) -> bool {
     let bytes = rest.as_bytes();
     match bytes.iter().take(33).position(|&byte| byte == b';') {
@@ -764,12 +798,7 @@ fn starts_character_reference(rest: &str) -> bool {
                 }
             }
         }
-        None => {
-            bytes.len() <= 32
-                && bytes
-                    .iter()
-                    .all(|&byte| byte.is_ascii_alphanumeric() || byte == b'#')
-        }
+        None => false,
     }
 }
 
