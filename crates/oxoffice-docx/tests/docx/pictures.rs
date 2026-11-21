@@ -2431,3 +2431,119 @@ fn the_manual_chart_keeps_its_data_when_its_legend_moves() {
         assert_eq!(embeddings(&saved), embeddings(&source), "{producer}");
     });
 }
+
+const LINKED_IMAGE: &str = "file:///C:/Images/logo.png";
+
+/// A document whose only picture is linked ("Link to File"): the blip names
+/// an External image relationship with `r:link`, and no media part.
+fn linked_picture_document() -> Document {
+    let mut doc = Document::new();
+    doc.add_paragraph("Logo ");
+    doc.add_picture(
+        &png(2, 2, 9),
+        "logo.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let start = main.find("r:embed=\"").unwrap() + "r:embed=\"".len();
+    let embedded = main[start..start + main[start..].find('"').unwrap()].to_owned();
+    let relationships = package.get_part_rels_mut("/word/document.xml").unwrap();
+    let media = relationships.get_by_id(&embedded).unwrap().target.clone();
+    relationships
+        .items
+        .retain(|relationship| relationship.id != embedded);
+    let linked = relationships.add_external(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        LINKED_IMAGE,
+    );
+    package.remove_part(&format!("/word/{media}"));
+    package.set_part(
+        "/word/document.xml",
+        main.replace(
+            &format!("r:embed=\"{embedded}\""),
+            &format!("r:link=\"{linked}\""),
+        )
+        .into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The External image relationships of the main part of `bytes`.
+fn external_image_targets(bytes: &[u8]) -> Vec<String> {
+    let package = OpcPackage::from_reader(Cursor::new(bytes.to_vec())).unwrap();
+    package
+        .get_part_rels("/word/document.xml")
+        .unwrap()
+        .items
+        .iter()
+        .filter(|relationship| {
+            relationship.rel_type.ends_with("/image")
+                && relationship.target_mode.as_deref() == Some("External")
+        })
+        .map(|relationship| relationship.target.clone())
+        .collect()
+}
+
+#[test]
+fn a_linked_picture_keeps_its_address_through_a_save() {
+    let mut doc = linked_picture_document();
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].external_url.as_deref(), Some(LINKED_IMAGE));
+    // An untouched save, then a save after an edit elsewhere.
+    let bytes = doc.to_bytes().unwrap();
+    assert_eq!(external_image_targets(&bytes), [LINKED_IMAGE]);
+    doc.add_paragraph("After");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        external_image_targets(&doc.to_bytes().unwrap()),
+        [LINKED_IMAGE]
+    );
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures[0].external_url.as_deref(), Some(LINKED_IMAGE));
+    assert_eq!(pictures[0].media_part_name, None);
+}
+
+#[test]
+fn a_picture_inserted_after_a_linked_picture_is_the_occurrence_returned() {
+    let mut doc = linked_picture_document();
+    let linked = doc.pictures().unwrap().remove(0);
+    let position = StoryRunPosition {
+        location: linked.location.clone(),
+        run_index: doc
+            .paragraph(1)
+            .map(|paragraph| paragraph.runs().count())
+            .unwrap(),
+    };
+    let options = PictureOptions {
+        width: Length::pt(10.0),
+        height: Length::pt(10.0),
+        crop: None,
+        anchor: None,
+        name: None,
+        description: Some("Inserted".to_owned()),
+        title: None,
+        decorative: false,
+    };
+    let inserted = doc
+        .insert_picture_with_options_at(
+            &position,
+            &png(3, 3, 80),
+            "inserted.png",
+            None,
+            None,
+            Some(options),
+        )
+        .unwrap();
+    assert_eq!(inserted.description.as_deref(), Some("Inserted"));
+    assert_eq!(inserted.external_url, None);
+    assert_eq!(inserted.ordinal, 1, "the linked picture comes first");
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 2);
+    assert_eq!(pictures[1], inserted);
+}

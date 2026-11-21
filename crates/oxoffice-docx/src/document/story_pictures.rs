@@ -140,15 +140,14 @@ impl Document {
                     })
                     .chain(run.alt_drawings.iter())
             })
+            // The pictures `pictures()` lists: an embedded or a linked picture,
+            // not a chart.
             .filter(|drawing| {
-                drawing
-                    .inline
-                    .as_ref()
-                    .is_some_and(|i| !i.embed_id.is_empty())
-                    || drawing
-                        .anchor
-                        .as_ref()
-                        .is_some_and(|a| !a.embed_id.is_empty())
+                drawing.inline.as_ref().is_some_and(|i| {
+                    i.chart_rel_id.is_none() && (!i.embed_id.is_empty() || i.link_id.is_some())
+                }) || drawing.anchor.as_ref().is_some_and(|a| {
+                    a.chart_rel_id.is_none() && (!a.embed_id.is_empty() || a.link_id.is_some())
+                })
             })
             .count();
         let relationship = candidate.add_image_relationship_checked(
