@@ -512,10 +512,7 @@ fn alt_text_title_and_decorative_flag_of_a_picture_survive_a_save() {
     );
 }
 
-// Fails today: add_anchored_image writes the alt text "Background" on every
-// floating picture, which Word shows and reads aloud. Issue: #185
 #[test]
-#[should_panic(expected = "a floating picture added without alt text has none")]
 fn a_floating_picture_added_without_alt_text_has_none() {
     let mut doc = doc_with(&["Body"]);
     doc.add_anchored_image(PNG, "photo.png", Length::cm(3.0), Length::cm(2.0), false);
@@ -1167,10 +1164,7 @@ fn the_audit_of_the_corpus_names_every_picture_without_alt_text() {
     );
 }
 
-// Fails today: the audit reads `images`, which does not know a picture is
-// marked decorative, and asks for its alt text as for any other. Issue: #187
 #[test]
-#[should_panic(expected = "a decorative picture needs no alt text")]
 fn a_decorative_picture_needs_no_alt_text() {
     let mut doc = doc_with(&["Body"]);
     doc.set_title("Title");
@@ -1191,10 +1185,7 @@ fn a_decorative_picture_needs_no_alt_text() {
     );
 }
 
-// Fails today: a streak of empty paragraphs gives one issue per paragraph
-// past the second ("3 consecutive", "4 consecutive"...). Issue: #187
 #[test]
-#[should_panic(expected = "one issue for one streak of empty paragraphs")]
 fn a_streak_of_empty_paragraphs_is_one_issue() {
     let mut doc = doc_with(&["Before", "", "", "", "", "After"]);
     doc.set_title("Title");
@@ -1712,11 +1703,7 @@ fn a_missing_header_part_leaves_the_other_stories_out_with_a_diagnostic() {
     );
 }
 
-// Fails today: a header part cut short inside its text opens as an empty
-// story: it is left out of stories, other_story_texts and the text report
-// without a word, while validation reports it. Issue: #189
 #[test]
-#[should_panic(expected = "the truncated header is reported")]
 fn a_truncated_header_is_reported_not_skipped() {
     let mut doc = doc_with(&["Body"]);
     doc.set_header("Head");
@@ -1989,6 +1976,86 @@ fn validation_warns_about_a_dangling_numbering_reference_in_a_header() {
         [
             "a paragraph in /word/header1.xml is numbered by numbering instance 4242, which the \
           document does not define: Word shows it without a number"
+        ]
+    );
+}
+
+#[test]
+fn a_numbered_paragraph_in_a_text_box_word_writes_twice_warns_once() {
+    // Word writes each text box in `mc:Choice` and again in `mc:Fallback`.
+    let paragraph = numbered("in the box", 42, 0);
+    let body = format!(
+        concat!(
+            r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">"#,
+            r#"<mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps">"#,
+            r#"<wps:txbx><w:txbxContent>{0}</w:txbxContent></wps:txbx></mc:Choice>"#,
+            r#"<mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox>"#,
+            r#"<w:txbxContent>{0}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>"#,
+            r#"</mc:AlternateContent></w:r></w:p>"#
+        ),
+        paragraph
+    );
+    let warnings = numbering_warnings(&doc_with_one_level_numbering(&body));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+}
+
+#[test]
+fn a_glossary_paragraph_is_checked_against_the_glossary_numbering() {
+    use oxoffice_docx::{BuildingBlock, BuildingBlockKind};
+    use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
+    use oxoffice_docx_oxml::text::CT_P;
+    let mut paragraph = CT_P::new();
+    paragraph.add_run("entry");
+    let mut body = CT_Body::new();
+    body.sect_pr = None;
+    body.content
+        .push(BodyContent::Paragraph(Box::new(paragraph)));
+    let mut doc = doc_with_body("<w:p/>");
+    doc.create_building_block(BuildingBlock {
+        name: "Entry".to_owned(),
+        kind: BuildingBlockKind::AutoText,
+        category: Some("General".to_owned()),
+        description: None,
+        guid: None,
+        gallery: Some("autoTxt".to_owned()),
+        behaviors: Vec::new(),
+        body,
+    })
+    .unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let glossary = "/word/glossary/document.xml";
+    let xml = String::from_utf8(package.get_part(glossary).unwrap().to_vec()).unwrap();
+    assert!(xml.contains("entry"), "{xml}");
+    // Instance 5 is the glossary's own, instance 7 nobody's; the main
+    // document defines no numbering at all.
+    let start = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+    let end = xml[start..].find("</w:p>").unwrap() + start + "</w:p>".len();
+    let paragraphs = format!("{}{}", numbered("own", 5, 0), numbered("dangling", 7, 0));
+    package.set_part(
+        glossary,
+        format!("{}{paragraphs}{}", &xml[..start], &xml[end..]).into_bytes(),
+    );
+    package.set_part(
+        "/word/glossary/numbering.xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="5"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+        .as_bytes()
+            .to_vec(),
+    );
+    package.get_or_create_part_rels(glossary).add(
+        oxoffice_opc::relationship::rel_types::NUMBERING,
+        "numbering.xml",
+    );
+    package.content_types.add_override(
+        "/word/glossary/numbering.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    assert_eq!(
+        numbering_warnings(&out.into_inner()),
+        [
+            "a paragraph in /word/glossary/document.xml is numbered by numbering instance 7, \
+             which the document does not define: Word shows it without a number"
         ]
     );
 }

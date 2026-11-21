@@ -69,10 +69,13 @@ impl Document {
     /// first part that is not well-formed XML when there is one. `validate`
     /// reports the same part as an error.
     pub fn other_story_texts(&self) -> std::result::Result<Vec<StoryText>, String> {
-        self.read_other_story_texts().map_err(|error| {
-            self.malformed_story_part()
-                .unwrap_or_else(|| error.to_string())
-        })
+        // A part cut short inside its text still opens, as an empty story:
+        // it is named instead of left out without a word.
+        if let Some(malformed) = self.malformed_story_part() {
+            return Err(malformed);
+        }
+        self.read_other_story_texts()
+            .map_err(|error| error.to_string())
     }
 
     fn read_other_story_texts(&self) -> Result<Vec<StoryText>> {

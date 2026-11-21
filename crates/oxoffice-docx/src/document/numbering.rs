@@ -1460,8 +1460,8 @@ impl Document {
     /// it: removing or redefining an instance, linking a style. An addition
     /// checks the reference it makes, with [`Self::numbering_reference_error`].
     fn validate_content_numbering_references(&self) -> Result<()> {
-        for (num_id, level) in self.document_numbering_references()? {
-            if let Some(error) = self.numbering_reference_error(num_id, level) {
+        for (_, _, error) in self.document_numbering_references()? {
+            if let Some(error) = error {
                 return Err(error);
             }
         }
@@ -1471,40 +1471,7 @@ impl Document {
     /// Why a numbering reference to `num_id` at `level` does not resolve, or
     /// `None` when it does.
     fn numbering_reference_error(&self, num_id: u32, level: u32) -> Option<Error> {
-        let missing = || {
-            Error::Other(format!(
-                "document content references missing numbering instance {num_id} at level {level}"
-            ))
-        };
-        let Some(numbering) = self.numbering.as_ref() else {
-            return Some(missing());
-        };
-        let Some(instance) = numbering
-            .nums
-            .iter()
-            .find(|instance| instance.num_id == num_id)
-        else {
-            return Some(missing());
-        };
-        let Some(definition) = numbering
-            .abstract_nums
-            .iter()
-            .find(|definition| definition.abstract_num_id == instance.abstract_num_id)
-        else {
-            return Some(Error::Other(format!(
-                "numbering instance {num_id} references missing definition {}",
-                instance.abstract_num_id
-            )));
-        };
-        (!definition
-            .levels
-            .iter()
-            .any(|candidate| candidate.ilvl == level))
-        .then(|| {
-            Error::Other(format!(
-                "document content references numbering instance {num_id} at missing level {level}"
-            ))
-        })
+        numbering_reference_error_in(self.numbering.as_ref(), num_id, level)
     }
 
     /// The numbering references of the content that do not resolve, for the
@@ -1514,38 +1481,42 @@ impl Document {
         Ok(self
             .document_numbering_references()?
             .into_iter()
-            .filter(|(num_id, level)| self.numbering_reference_error(*num_id, *level).is_some())
+            .filter(|(_, _, error)| error.is_some())
+            .map(|(num_id, level, _)| (num_id, level))
             .collect())
     }
 
-    fn document_numbering_references(&self) -> Result<Vec<(u32, u32)>> {
+    /// Each numbering reference of the content with why it does not resolve,
+    /// if it does not. A glossary document resolves against its own
+    /// numbering and styles, and the `mc:Fallback` copy of a text box is not
+    /// read twice.
+    fn document_numbering_references(&self) -> Result<Vec<(u32, u32, Option<Error>)>> {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
+        let glossary = candidate.glossary_numbering()?;
         let mut references = Vec::new();
-        for xml in candidate
-            .word_story_part_names()
-            .into_iter()
-            .filter_map(|part_name| {
-                candidate
-                    .package
-                    .get_part(&part_name)
-                    .filter(|bytes| identifier_xml_is_well_formed(bytes))
-            })
-        {
+        for part_name in candidate.word_story_part_names() {
+            let Some(xml) = candidate
+                .package
+                .get_part(&part_name)
+                .filter(|bytes| identifier_xml_is_well_formed(bytes))
+            else {
+                continue;
+            };
+            let (numbering, styles) = if glossary.part_names.contains(&part_name) {
+                (glossary.numbering.as_ref(), &glossary.styles)
+            } else {
+                (candidate.numbering.as_ref(), &*candidate.styles)
+            };
             for direct in xml_paragraph_numbering_properties(xml)? {
-                let style_id = direct.style_id.as_deref().or_else(|| {
-                    candidate
-                        .styles
-                        .get_default(StyleType::Paragraph)
-                        .map(|style| style.style_id.as_str())
-                });
-                let mut effective =
-                    style::resolve_paragraph_properties(style_id, &candidate.styles);
-                candidate.apply_effective_numbering(&mut effective, Some(&direct), style_id);
-                if let Some(num_id) = effective.num_id
-                    && num_id != 0
-                {
-                    references.push((num_id, effective.num_ilvl.unwrap_or(0)));
+                if let Some((num_id, level)) = super::numbering_types::effective_numbering_reference(
+                    numbering, styles, &direct,
+                ) {
+                    references.push((
+                        num_id,
+                        level,
+                        numbering_reference_error_in(numbering, num_id, level),
+                    ));
                 }
             }
         }
@@ -1940,4 +1911,47 @@ fn raw_numbering_instance_ids(raw: &[u8], ids: &mut HashSet<u32>) {
         }
         rest = &tag[end..];
     }
+}
+
+/// Why a numbering reference to `num_id` at `level` does not resolve against
+/// `numbering`, or `None` when it does.
+fn numbering_reference_error_in(
+    numbering: Option<&CT_Numbering>,
+    num_id: u32,
+    level: u32,
+) -> Option<Error> {
+    let missing = || {
+        Error::Other(format!(
+            "document content references missing numbering instance {num_id} at level {level}"
+        ))
+    };
+    let Some(numbering) = numbering else {
+        return Some(missing());
+    };
+    let Some(instance) = numbering
+        .nums
+        .iter()
+        .find(|instance| instance.num_id == num_id)
+    else {
+        return Some(missing());
+    };
+    let Some(definition) = numbering
+        .abstract_nums
+        .iter()
+        .find(|definition| definition.abstract_num_id == instance.abstract_num_id)
+    else {
+        return Some(Error::Other(format!(
+            "numbering instance {num_id} references missing definition {}",
+            instance.abstract_num_id
+        )));
+    };
+    (!definition
+        .levels
+        .iter()
+        .any(|candidate| candidate.ilvl == level))
+    .then(|| {
+        Error::Other(format!(
+            "document content references numbering instance {num_id} at missing level {level}"
+        ))
+    })
 }
