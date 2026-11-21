@@ -1632,6 +1632,15 @@ fn removing_an_unused_linked_style_removes_its_pair() {
     );
     assert!(doc.remove_style("Titre1").is_err(), "a used heading stays");
     let removed = doc.remove_style("Titre7");
+    if let Err(refusal) = &removed {
+        // The #342 refusal, and no other, is the known failure.
+        assert!(
+            refusal
+                .to_string()
+                .contains("is referenced by style 'Titre7Car'"),
+            "unexpected refusal: {refusal}"
+        );
+    }
     assert!(
         matches!(removed, Ok(true)),
         "an unused linked pair is removed: {removed:?}"

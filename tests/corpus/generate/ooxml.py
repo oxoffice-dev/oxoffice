@@ -375,6 +375,10 @@ def _ends_parent_first(doc, parents: dict[int, int]) -> None:
         reference = end.getnext()
         parent_end = next(e for e in body.iter(q("w:commentRangeEnd")) if e.get(q("w:id")) == parent)
         parent_reference = parent_end.getnext()
+        # A reply anchored on its parent's text: both ends in one paragraph, each followed by its reference run.
+        for mark, ref, ident in ((end, reference, cid), (parent_end, parent_reference, parent)):
+            assert ref is not None and ref.find(f'{q("w:commentReference")}[@{q("w:id")}="{ident}"]') is not None, ident
+        assert end.getparent() is parent_end.getparent(), f"reply {cid} ends in its parent's paragraph"
         # The reply's end and reference go right after its parent's reference (and after the replies placed
         # there before it), so the order of a thread is parent, then replies in id order.
         anchor = parent_reference

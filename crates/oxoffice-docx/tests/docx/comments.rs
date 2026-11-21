@@ -2106,7 +2106,14 @@ fn a_redline_in_one_name_leaves_the_other_reviewers_alone() {
     edited.try_replace_all_expected(&pairs).unwrap().unwrap();
     let mut doc = corpus_doc(path);
     doc.compare(&edited, REVIEWER, "2026-11-21T10:00:00Z")
-        .unwrap_or_else(|e| panic!("the redline of a reviewed contract is made: {e}"));
+        .unwrap_or_else(|e| {
+            // The #366 refusal, and no other, is the known failure.
+            assert!(
+                e.to_string().contains("holds an existing tracked revision"),
+                "unexpected refusal: {e}"
+            );
+            panic!("the redline of a reviewed contract is made: {e}")
+        });
     let mut doc = reopen(&mut doc);
     let mine = doc
         .story_revisions()
@@ -2165,7 +2172,14 @@ fn the_threads_of_a_google_copy_carry_over_to_a_clean_copy() {
             None => {
                 let anchor = match comment.anchor_text() {
                     Ok(Some(anchor)) => anchor,
-                    other => panic!("the anchor of a Google thread reads: {other:?}"),
+                    other => {
+                        // The #364 refusal, and no other, is the known failure.
+                        assert!(
+                            format!("{other:?}").contains("outside the accepted paragraph view"),
+                            "unexpected anchor: {other:?}"
+                        );
+                        panic!("the anchor of a Google thread reads: {other:?}")
+                    }
                 };
                 clean
                     .add_comment_on_text(
@@ -2310,20 +2324,40 @@ fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
 /// comment.
 #[test]
 fn every_producer_copy_of_the_contract_keeps_its_reply_threads() {
+    // Each reply of the source, with the comment it answers.
+    let threads = [
+        ("Agreed for trade secrets", "Should trade secrets stay"),
+        ("Fine with that split", "Should trade secrets stay"),
+        ("We need the extra month", "120 days is longer"),
+    ];
     for producer in ["authored", "word", "google", "libreoffice"] {
         let doc = corpus_doc(&format!("{producer}/contract.docx"));
         let comments = doc.comments();
-        let replies = comments
+        let mut replies = comments
             .iter()
-            .filter_map(|comment| comment.parent_id().map(|parent| (comment.text(), parent)))
+            .filter_map(|comment| {
+                let parent = comment.parent_id()?;
+                let parent = comments
+                    .iter()
+                    .find(|other| other.id() == parent)
+                    .unwrap_or_else(|| {
+                        panic!("{producer}: the parent of {} is there", comment.text())
+                    });
+                assert_eq!(
+                    parent.parent_id(),
+                    None,
+                    "{producer}: a parent is top-level"
+                );
+                Some((comment.text(), parent.text()))
+            })
             .collect::<Vec<_>>();
-        assert_eq!(replies.len(), 3, "{producer}: {replies:?}");
-        for (text, parent) in replies {
-            let parent = comments
-                .iter()
-                .find(|comment| comment.id() == parent)
-                .unwrap_or_else(|| panic!("{producer}: the parent of {text:?} is there"));
-            assert_eq!(parent.parent_id(), None, "{producer}: {text:?}");
+        replies.sort();
+        assert_eq!(replies.len(), threads.len(), "{producer}: {replies:?}");
+        for ((reply, parent), (reply_start, parent_start)) in replies.iter().zip(threads) {
+            assert!(
+                reply.starts_with(reply_start) && parent.starts_with(parent_start),
+                "{producer}: {reply:?} answers {parent:?}"
+            );
         }
     }
 }

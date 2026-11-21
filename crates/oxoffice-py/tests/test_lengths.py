@@ -36,5 +36,11 @@ def test_cell_margins_take_a_zero_in_every_form(zero):
 @pytest.mark.xfail(strict=True, raises=TypeError, reason="#343")
 def test_the_default_paragraph_spacing_takes_a_bare_zero():
     doc = docx.Document()
-    doc.set_default_paragraph_format(space_before=0, space_after=0)
-    assert reopened(doc).paragraphs is not None
+    doc.set_default_paragraph_format(space_before=Pt(6), space_after=Pt(6))
+    try:
+        doc.set_default_paragraph_format(space_before=0, space_after=0)
+    except TypeError as refusal:
+        assert "requires a Length" in str(refusal), refusal  # the #343 refusal, nothing else
+        raise
+    defaults = reopened(doc).default_paragraph_format
+    assert (defaults.space_before, defaults.space_after) == (0, 0)

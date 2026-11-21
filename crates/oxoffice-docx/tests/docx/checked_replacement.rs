@@ -6,7 +6,8 @@ use std::io::Cursor;
 use std::path::Path;
 
 use oxoffice_docx::{
-    Document, ReplaceOptions, ReplacementRefusal, StoryKind, UnreachedReplacement,
+    CommentDate, Document, ReplaceOptions, ReplacementRefusal, StoryKind, TextCommentOptions,
+    UnreachedReplacement,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -691,21 +692,51 @@ fn paragraph_form(
     )
 }
 
-fn comment_facts(doc: &Document) -> Vec<String> {
+/// Each comment as (id, author, date, text, parent, resolved), and the text
+/// it is anchored on.
+fn comment_facts(doc: &Document) -> Vec<(String, Option<String>)> {
     doc.comments()
         .iter()
         .map(|comment| {
-            format!(
-                "{} {:?} {:?} {:?} {:?} {:?}",
-                comment.id(),
-                comment.author(),
-                comment.date(),
-                comment.text(),
-                comment.parent_id(),
-                comment.resolved()
+            (
+                format!(
+                    "{} {:?} {:?} {:?} {:?} {:?}",
+                    comment.id(),
+                    comment.author(),
+                    comment.date(),
+                    comment.text(),
+                    comment.parent_id(),
+                    comment.resolved()
+                ),
+                comment.anchor_text().ok().flatten(),
             )
         })
         .collect()
+}
+
+/// Whether a styles part already defines Word's comment text style.
+fn xml_has_comment_styles(bytes: &[u8]) -> bool {
+    let xml = String::from_utf8_lossy(bytes);
+    xml.contains("w:val=\"annotation text\"")
+}
+
+/// The field instructions of a part, in order, complex and simple.
+fn instructions(xml: &str) -> Vec<String> {
+    let complex = xml.split("<w:instrText").skip(1).map(|rest| {
+        rest.split_once('>')
+            .unwrap()
+            .1
+            .split('<')
+            .next()
+            .unwrap()
+            .trim()
+            .to_owned()
+    });
+    let simple = xml
+        .split("w:instr=\"")
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().trim().to_owned());
+    complex.chain(simple).collect()
 }
 
 /// The edit a tool makes in place on a reviewed contract: counted
@@ -774,6 +805,17 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
             Some(first + 1),
             "{path}"
         );
+        // A note the tool left on the first clause goes with it, marks and all.
+        doc.add_comment_on_text(
+            "material breach",
+            "Editor",
+            "Drop this clause",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(
             doc.remove_content_range(first, first + 2).unwrap(),
             2,
@@ -792,7 +834,12 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
         );
         let edited = |name: &str, bytes: &[u8]| {
             let xml = String::from_utf8_lossy(bytes);
+            // The comment parts: the tool's note came and went with its
+            // clause; their content is compared below.
+            // Google Docs writes no comment styles, so the note brings them.
             name == "word/document.xml"
+                || name.starts_with("word/comments")
+                || (name == "word/styles.xml" && !xml_has_comment_styles(bytes))
                 || ((name.starts_with("word/header") || name.starts_with("word/footer"))
                     && pairs.iter().any(|(old, _, _)| xml.contains(old)))
         };
@@ -806,7 +853,37 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
             .filter(|(name, bytes)| edited(name, bytes))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(changed, expected, "{path}: parts the edit rewrote");
+        assert!(
+            changed.iter().all(|name| expected.contains(name)),
+            "{path}: only the parts it edited are rewritten: {changed:?}, allowed {expected:?}"
+        );
+        assert!(
+            expected
+                .iter()
+                .filter(|name| !name.starts_with("word/comments") && **name != "word/styles.xml")
+                .all(|name| changed.contains(name)),
+            "{path}: every story it replaced in is rewritten: {changed:?}"
+        );
+
+        // The header and footer lines read their replacement and keep their
+        // page fields.
+        for (name, bytes) in &old_parts {
+            if name != "word/document.xml" && changed.contains(&name.as_str()) {
+                let (old_xml, new_xml) = (
+                    String::from_utf8_lossy(bytes),
+                    String::from_utf8_lossy(&new_parts[name]),
+                );
+                assert_eq!(
+                    instructions(&new_xml),
+                    instructions(&old_xml),
+                    "{path}: {name}"
+                );
+            }
+        }
+        let counts = after.count_text("Signature version").unwrap();
+        assert_eq!(counts, [(StoryKind::Header, page_parts)], "{path}");
+        let counts = after.count_text("Restricted - Page").unwrap();
+        assert_eq!(counts, [(StoryKind::Footer, page_parts)], "{path}");
 
         // No comment mark of the removed clauses is left without its comment,
         // and every comment keeps its range and reference.
@@ -880,7 +957,11 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
 
         // The review stays as the other authors left it; the replacement
         // inside a tracked insertion is still that insertion.
-        assert_eq!(comment_facts(&after), comment_facts(&before), "{path}");
+        let expected_comments = comment_facts(&before)
+            .into_iter()
+            .map(|(facts, anchor)| (facts, anchor.map(replace)))
+            .collect::<Vec<_>>();
+        assert_eq!(comment_facts(&after), expected_comments, "{path}");
         let revisions = |doc: &Document| {
             doc.story_revisions()
                 .unwrap()
@@ -889,6 +970,7 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
                     (
                         format!("{:?}", revision.kind()),
                         revision.author().to_owned(),
+                        revision.timestamp().map(str::to_owned),
                         revision.text().to_owned(),
                     )
                 })
@@ -896,15 +978,13 @@ fn a_counted_edit_of_a_reviewed_contract_changes_only_what_it_meant_to() {
         };
         let expected_revisions = revisions(&before)
             .into_iter()
-            .filter(|(_, _, text)| !text.contains("The Supplier may al"))
-            .map(|(kind, author, text)| (kind, author, replace(text)))
+            .filter(|(_, _, _, text)| !text.contains("The Supplier may al"))
+            .map(|(kind, author, date, text)| (kind, author, date, replace(text)))
             .collect::<Vec<_>>();
         let found = revisions(&after);
         assert!(
-            found
-                .iter()
-                .any(|(kind, _, text)| kind == "Insertion"
-                    && text.starts_with("one hundred and fifty")),
+            found.iter().any(|(kind, _, _, text)| kind == "Insertion"
+                && text.starts_with("one hundred and fifty")),
             "{path}: {found:?}"
         );
         assert_eq!(found, expected_revisions, "{path}");
