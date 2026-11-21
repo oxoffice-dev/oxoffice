@@ -22,10 +22,11 @@ whatever the pull request touches.
   `cargo test` did not, so crates that track it rebuilt too.
 - rust-cache: 72 % of the macOS jobs restored a cache by its restore key and
   saved a new one of about 506 MB into the pull request's own scope, which
-  no other run reads (a pull request is pushed once). The Actions cache was
-  at 10.4 GB of its 10 and evicting `main`'s entries. `cache-workspace-crates`
-  saved no compile: a fresh checkout makes the sources newer than the cached
-  workspace artifacts.
+  only that pull request's later runs read: about 2.25 GB per new pull
+  request over its four jobs. The Actions cache was at 10.4 GB of its 10 and
+  evicting `main`'s entries. `cache-workspace-crates` saved no compile: a
+  fresh checkout makes the sources newer than the cached workspace
+  artifacts.
 
 ## Decision
 
@@ -34,15 +35,24 @@ whatever the pull request touches.
   Every test that writes uses `tmp_path` or `tmp_path_factory`, which give
   each worker its own folder. The scaling job stays sequential: its timings
   need a quiet runner.
-- **Caches saved by runs on `main` only** (`save-if`), in every job, and no
-  `cache-workspace-crates`. Pull requests restore `main`'s caches. Since a
-  push to `main` builds on Linux only, the macOS and Windows caches are
-  refreshed by the nightly run; after a runner image change, pull requests
-  build those platforms cold until the next night, or until a
+- **Caches saved by runs on `main` only** (`save-if`), in every job, also
+  when a test fails after the compile (`cache-on-failure`, on `main` only),
+  and no `cache-workspace-crates`. Pull requests restore `main`'s caches.
+  Since a push to `main` builds on Linux only, the macOS and Windows caches
+  are refreshed by the nightly run; after a runner image change, pull
+  requests build those platforms cold until the next night, or until a
   `workflow_dispatch` on `main` refreshes them.
 - **One deployment target on macOS**: the build job sets
   `MACOSX_DEPLOYMENT_TARGET=11.0`, the value maturin uses, for the whole job.
   The wheel keeps its `macosx_11_0` tag.
+
+Expected, per pull request run on macOS: Python tests 8.6 to about 3.5
+minutes (three workers; locally on Linux, four workers took the suite from
+325 to 97 seconds); about 0.3 minutes of cache upload less per job and no
+2.25 GB per new pull request; for the deployment target, one crate less to
+compile on a warm cache (the workspace crates still compile twice, their
+features differ), more on a cold one, where the third-party crates both
+builds share compile once.
 
 Nothing is dropped: every test runs where it ran. Not here, and for later:
 

@@ -18,7 +18,8 @@ name: CI
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
 # command, so one build serves the Python and the CLI checks. Fat LTO is only
 # for the release workflow. Only runs on main (pushes, the nightly run, a
-# dispatch on main) save the Rust caches; pull requests restore them. See
+# dispatch on main) save the Rust caches, even when a test fails after the
+# compile; pull requests restore them. See
 # specs/2026-11-21-faster-build-job.md.
 
 # Changes that only touch documentation do not build anything.
@@ -62,6 +63,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - name: Limitations page is up to date
         run: python3 scripts/limitations_doc.py --check
@@ -81,6 +83,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
 
   build:
@@ -103,8 +106,9 @@ jobs:
           python-version: "3.12"
       - run: rustup show active-toolchain
       # maturin builds the wheel with MACOSX_DEPLOYMENT_TARGET=11.0. Set for
-      # the whole job, cargo test reuses what that build compiled instead of
-      # rebuilding the crates that track the variable.
+      # the whole job, cargo test shares the units both builds have in common
+      # instead of rebuilding them because the variable differs (the workspace
+      # crates still compile twice: their features differ).
       - name: One deployment target for the wheel and the tests
         if: runner.os == 'macOS'
         shell: bash
@@ -112,6 +116,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the wheel
         shell: bash
         run: |
@@ -172,6 +177,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the wheel without debug assertions
         shell: bash
         run: |

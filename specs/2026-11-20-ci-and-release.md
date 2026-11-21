@@ -37,7 +37,10 @@ wheel with it took more than 10 minutes on a cold runner, against 6 minutes
 with `ci` at opt-level 1, and about 30 % less again with unoptimised
 workspace crates. rust-cache also keeps the workspace crates, so a commit
 that does not touch a crate does not rebuild it, and a change that only
-touches documentation builds nothing.
+touches documentation builds nothing. (It did not: a fresh checkout makes
+the sources newer than the cached artifacts, and every workspace crate
+compiled on every run. Dropped on 2026-11-21, see
+[a faster build job](2026-11-21-faster-build-job.md).)
 
 What remains is dominated by three very large crates compiled one after the
 other: `oxoffice-docx` (59 s on a fast laptop), `oxoffice-docx-oxml` (45 s)
