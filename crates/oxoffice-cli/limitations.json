@@ -153,6 +153,24 @@
     "issue": 68
   },
   {
+    "id": "docx-counts-tracked-insertions",
+    "format": "docx",
+    "area": "text",
+    "title": "Word and character counts and the heading list leave out text inserted with tracked changes",
+    "symptom": "word_count and character_count (Rust, Python, CLI info) and headings / document_outline (Rust) read a paragraph's direct runs, so a document edited with tracking on counts fewer words than text() holds",
+    "workaround": "count the words of the accepted paragraph texts, and their characters paragraph by paragraph (text() adds a line feed after each paragraph and a tab between cells): Rust text(), Python the .text of doc.paragraphs and of table cell paragraphs, CLI paragraphs[].text of oxoffice docx text --json; read headings from numbered_document_outline (Rust)",
+    "issue": 184
+  },
+  {
+    "id": "docx-anchored-image-alt-text",
+    "format": "docx",
+    "area": "pictures",
+    "title": "A floating picture added by add_anchored_image gets the alt text \"Background\"",
+    "symptom": "Rust add_anchored_image writes descr=\"Background\" on every picture it adds, which Word shows and screen readers read aloud",
+    "workaround": "Rust: add the picture with add_picture_with_options, anchor set and the description wanted; Python add_picture and the CLI do not take this path",
+    "issue": 185
+  },
+  {
     "id": "pptx-control-character-part",
     "format": "pptx",
     "area": "open",
