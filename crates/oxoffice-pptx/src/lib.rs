@@ -18159,7 +18159,21 @@ fn stage_source_notes_appearance(
         Some(ColorMapOverrideKind::Override(map)) => map,
         _ => &master.color_map,
     };
-    let xml = freeze_source_notes_theme(&xml, &theme, color_map, notes_part)?;
+    let destination_master = destination
+        .notes_master_part
+        .as_deref()
+        .ok_or_else(|| footer_malformed(notes_part, "destination notes master is absent"))?;
+    let destination_theme_part =
+        related_internal_part(&destination.package, destination_master, rel_types::THEME)?
+            .ok_or_else(|| {
+                footer_malformed(destination_master, "destination notes theme is absent")
+            })?;
+    let destination_theme = CT_OfficeStyleSheet::from_xml(required_part(
+        &destination.package,
+        &destination_theme_part,
+    )?)
+    .map_err(|error| footer_malformed(&destination_theme_part, error.to_string()))?;
+    let xml = freeze_source_notes_theme(&xml, &theme, &destination_theme, color_map, notes_part)?;
     CT_NotesSlide::from_xml(&xml)
         .map_err(|error| footer_malformed(notes_part, error.to_string()))?;
     package.set_part(notes_part, xml);
@@ -18943,6 +18957,7 @@ fn notes_theme_modeled_element(uri: &str, local: &[u8]) -> bool {
 fn freeze_source_notes_theme(
     xml: &[u8],
     theme: &CT_OfficeStyleSheet,
+    destination_theme: &CT_OfficeStyleSheet,
     color_map: &ColorMap,
     part: &str,
 ) -> Result<Vec<u8>> {
@@ -19028,10 +19043,27 @@ fn freeze_source_notes_theme(
                                 _ => None,
                             };
                             if face.is_some_and(|face| face.is_empty()) {
-                                // An empty theme face picks a font per script from the
-                                // theme's supplemental list, which a run cannot hold. The
-                                // token stays and follows the destination theme, as notes
-                                // follow the one notes master of a deck in PowerPoint.
+                                let destination_fonts =
+                                    &destination_theme.theme_elements.font_scheme;
+                                let (source, destination) = if value.starts_with("+mj-") {
+                                    (&fonts.major_font, &destination_fonts.major_font)
+                                } else {
+                                    (&fonts.minor_font, &destination_fonts.minor_font)
+                                };
+                                // An empty East Asian or complex-script face picks a font
+                                // per script from the theme's supplemental list, which a
+                                // run cannot hold: the token stays and follows the
+                                // destination theme, as notes follow the one notes master
+                                // of a deck in PowerPoint. An empty Latin face has no such
+                                // list and is kept only under an equal font collection.
+                                let automatic_script =
+                                    value.ends_with("-ea") || value.ends_with("-cs");
+                                if !automatic_script && source != destination {
+                                    return Err(footer_malformed(
+                                        part,
+                                        "unrepresentable automatic source notes script-font inheritance",
+                                    ));
+                                }
                                 None
                             } else {
                                 face.cloned()

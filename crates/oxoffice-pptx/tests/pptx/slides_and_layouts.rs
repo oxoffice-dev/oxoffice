@@ -920,6 +920,99 @@ fn a_notes_master_extension_other_than_its_creation_id_still_stops_a_source_form
     assert_eq!(prs.to_bytes().unwrap(), before);
 }
 
+/// A corpus deck with one part rewritten by `edit`, reopened.
+fn corpus_deck_with(name: &str, part: &str, edit: impl FnOnce(&str) -> String) -> Presentation {
+    let source = corpus_deck(name);
+    let mut package = OpcPackage::from_reader(Cursor::new(source.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let edited = edit(&xml);
+    assert_ne!(edited, xml, "{part} changed");
+    package.set_part(part, edited.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    Presentation::from_bytes(&bytes.into_inner()).unwrap()
+}
+
+fn import_with_source_formatting(source: &Presentation) -> (Presentation, Result<(), String>) {
+    let mut prs = new_deck();
+    let result = prs
+        .import_slides(
+            source,
+            &[1],
+            &ImportSlideOptions {
+                keep_source_formatting: true,
+                ..ImportSlideOptions::default()
+            },
+            &[],
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    (prs, result)
+}
+
+#[test]
+fn an_empty_latin_theme_face_still_stops_a_source_formatted_import_with_notes() {
+    let source = corpus_deck_with("powerpoint/deck.pptx", "/ppt/theme/theme2.xml", |xml| {
+        let minor = xml.find("<a:minorFont>").unwrap();
+        let latin = minor + xml[minor..].find("<a:latin typeface=\"Aptos\"").unwrap();
+        format!(
+            "{}{}",
+            &xml[..latin],
+            xml[latin..].replacen("<a:latin typeface=\"Aptos\"", "<a:latin typeface=\"\"", 1)
+        )
+    });
+    let (prs, result) = import_with_source_formatting(&source);
+    let refused = result.unwrap_err();
+    assert!(refused.contains("script-font inheritance"), "{refused}");
+    assert_eq!(prs.len(), 0);
+}
+
+#[test]
+fn an_explicit_east_asian_theme_face_is_set_on_imported_notes() {
+    let source = corpus_deck_with("powerpoint/deck.pptx", "/ppt/theme/theme2.xml", |xml| {
+        let minor = xml.find("<a:minorFont>").unwrap();
+        let ea = minor + xml[minor..].find("<a:ea typeface=\"\"").unwrap();
+        format!(
+            "{}{}",
+            &xml[..ea],
+            xml[ea..].replacen("<a:ea typeface=\"\"", "<a:ea typeface=\"Yu Gothic\"", 1)
+        )
+    });
+    let (prs, result) = import_with_source_formatting(&source);
+    result.unwrap();
+    let prs = reopen(&prs);
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let (_, notes) = package
+        .parts
+        .iter()
+        .find(|(name, _)| name.starts_with("/ppt/notesSlides/"))
+        .expect("the import has notes");
+    let xml = String::from_utf8_lossy(notes);
+    assert!(xml.contains(r#"typeface="Yu Gothic""#), "{xml}");
+    assert!(!xml.contains(r#"typeface="+mn-ea""#), "{xml}");
+    assert!(xml.contains(r#"typeface="+mn-cs""#), "{xml}");
+}
+
+#[test]
+fn a_notes_tree_group_that_differs_beyond_its_id_and_name_still_stops_the_import() {
+    let source = corpus_deck_with(
+        "google/deck.pptx",
+        "/ppt/notesMasters/notesMaster1.xml",
+        |xml| {
+            xml.replacen(
+                r#"<p:cNvPr id="2" name="Shape 2"/>"#,
+                r#"<p:cNvPr id="2" name="Shape 2" hidden="1"/>"#,
+                1,
+            )
+        },
+    );
+    let (prs, result) = import_with_source_formatting(&source);
+    let refused = result.unwrap_err();
+    assert!(refused.contains("tree group authority"), "{refused}");
+    assert_eq!(prs.len(), 0);
+}
+
 #[test]
 fn the_slide_size_takes_four_by_three_widescreen_or_custom_and_refuses_nonsense() {
     let mut prs = new_deck();
