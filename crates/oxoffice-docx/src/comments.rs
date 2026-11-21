@@ -1916,10 +1916,11 @@ impl Document {
         text: &str,
         date: Option<&str>,
     ) -> Result<()> {
-        self.prepare_comment_authoring()?;
+        let styles = self.prepare_comment_authoring()?;
         let mut occupied =
             occupied_para_ids(self.comments.as_ref(), self.comments_extended.as_ref());
-        let (paragraphs, paragraph_ids, para_id) = comment_text_paragraphs(text, &mut occupied)?;
+        let (paragraphs, paragraph_ids, para_id) =
+            comment_text_paragraphs(text, &mut occupied, &styles)?;
         self.comments
             .as_mut()
             .expect("comment model was initialized")
@@ -1949,38 +1950,71 @@ impl Document {
 
     /// Prepare only the part being authored. Imported parts remain unchanged
     /// until an add or reply actually needs these Word conventions.
-    fn prepare_comment_authoring(&mut self) -> Result<()> {
+    ///
+    /// Returns the ids of the comment text and comment reference styles: Word's
+    /// built-in "annotation text" and "annotation reference", found by name
+    /// whatever their localised id (`Commentaire` in French), else by the ids
+    /// `CommentText` and `CommentReference`, else created under those ids with
+    /// the built-in names, based on the file's default paragraph style and
+    /// default paragraph font (else `Normal` and `DefaultParagraphFont`).
+    fn prepare_comment_authoring(&mut self) -> Result<(String, String)> {
         use oxoffice_docx_oxml::styles::StyleType;
         let definitions = [
-            ("CommentText", StyleType::Paragraph, "Normal"),
+            ("CommentText", "annotation text", StyleType::Paragraph),
             (
                 "CommentReference",
+                "annotation reference",
                 StyleType::Character,
-                "DefaultParagraphFont",
             ),
         ];
-        for (id, kind, _) in &definitions {
-            if let Some(existing) = self.styles.get_by_id(id)
-                && existing.style_type != *kind
-            {
-                return Err(Error::Other(format!(
-                    "comment style {id} has the wrong type"
-                )));
-            }
-        }
-        for (id, kind, base) in definitions {
-            if self.styles.get_by_id(id).is_some() {
+        let mut ids = Vec::with_capacity(definitions.len());
+        for (id, built_in, kind) in definitions {
+            let by_name = self
+                .styles
+                .styles
+                .iter()
+                .find(|style| {
+                    style.style_type == kind
+                        && style
+                            .name
+                            .as_deref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(built_in))
+                })
+                .map(|style| style.style_id.clone());
+            if let Some(found) = by_name {
+                ids.push(found);
                 continue;
             }
-            let mut builder = if kind == StyleType::Paragraph {
-                crate::StyleBuilder::paragraph(id, id)
+            if let Some(existing) = self.styles.get_by_id(id) {
+                if existing.style_type != kind {
+                    return Err(Error::Other(format!(
+                        "comment style {id} has the wrong type"
+                    )));
+                }
+                ids.push(id.to_owned());
+                continue;
+            }
+            // The file's default style of that kind, else Word's usual ids.
+            let fallback = if kind == StyleType::Paragraph {
+                "Normal"
             } else {
-                crate::StyleBuilder::character(id, id)
+                "DefaultParagraphFont"
             };
-            if self.styles.get_by_id(base).is_some() {
-                builder = builder.based_on(base);
+            let base = self
+                .styles
+                .get_default(kind)
+                .or_else(|| self.styles.get_by_id(fallback))
+                .map(|style| style.style_id.clone());
+            let mut builder = if kind == StyleType::Paragraph {
+                crate::StyleBuilder::paragraph(id, built_in)
+            } else {
+                crate::StyleBuilder::character(id, built_in)
+            };
+            if let Some(base) = base {
+                builder = builder.based_on(&base);
             }
             self.add_style(builder)?;
+            ids.push(id.to_owned());
         }
         let attributes = &mut self
             .comments
@@ -2038,7 +2072,9 @@ impl Document {
                 "http://schemas.microsoft.com/office/word/2010/wordml".to_owned(),
             ));
         }
-        Ok(())
+        let reference = ids.pop().expect("two comment styles");
+        let text = ids.pop().expect("two comment styles");
+        Ok((text, reference))
     }
 
     /// Add a reply linked to the selected comment's last paragraph, dated
@@ -2101,7 +2137,7 @@ impl Document {
             })
             .ok_or_else(|| Error::Other(format!("comment id {parent_id} does not exist")))?;
         let (id, _) = self.anchor_reply_crossing(parent_id, None)?;
-        self.prepare_comment_authoring()?;
+        let styles = self.prepare_comment_authoring()?;
         let existing_parent_para_id = last_para_id(
             &self
                 .comments
@@ -2116,7 +2152,8 @@ impl Document {
             Some(para_id) => para_id,
             None => allocate_para_id_from_occupied(&mut occupied)?,
         };
-        let (paragraphs, paragraph_ids, para_id) = comment_text_paragraphs(text, &mut occupied)?;
+        let (paragraphs, paragraph_ids, para_id) =
+            comment_text_paragraphs(text, &mut occupied, &styles)?;
         self.ensure_comment_models()?;
         self.ensure_comment_relationships()?;
 
@@ -2626,10 +2663,12 @@ fn reply_reference_has_only_metadata(
 }
 
 /// Build one comment paragraph per line of `text`, each with a fresh
-/// `w14:paraId`, and return the last one's identifier with them.
+/// `w14:paraId`, and return the last one's identifier with them. `styles` are
+/// the ids of the comment text and comment reference styles.
 fn comment_text_paragraphs(
     text: &str,
     occupied: &mut HashSet<u32>,
+    styles: &(String, String),
 ) -> Result<(Vec<CT_P>, Vec<Option<String>>, String)> {
     let mut paragraphs = Vec::new();
     let mut paragraph_ids = Vec::new();
@@ -2638,14 +2677,14 @@ fn comment_text_paragraphs(
         paragraph
             .properties
             .get_or_insert_with(Default::default)
-            .style_id = Some("CommentText".to_owned());
+            .style_id = Some(styles.0.clone());
         if index == 0 {
             let mut reference = oxoffice_docx_oxml::text::CT_R::new("");
             reference.content.clear();
             reference
                 .properties
                 .get_or_insert_with(Default::default)
-                .style_id = Some("CommentReference".to_owned());
+                .style_id = Some(styles.1.clone());
             reference.extra_xml.push(b"<w:annotationRef/>".to_vec());
             paragraph.runs.push(reference);
         }
