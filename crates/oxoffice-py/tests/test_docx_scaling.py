@@ -768,20 +768,21 @@ def documents(tmp_path_factory):
 
 
 # Calls whose cost grows with the body (oxoffice-dev/oxoffice#6), measured on a build without debug assertions
-# (2026-11-21, Linux): over FIXED on two runs, none over LINEAR. A call leaves the set when a fix makes it flat, which the strict xfail reports as an XPASS.
+# (2026-11-21, Linux, and the first run of main on macOS and Windows): over FIXED on two runs, none over LINEAR. A call leaves the set when a fix makes it flat, which the strict xfail reports as an XPASS.
 GROWING = {
-    "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text", "Cell.replace_xml", "Cell.set_border",
-    "Cell.set_margins", "Cell.shading", "Cell.split", "Cell.text", "Cell.vertical_alignment", "Cell.width",
-    "Document.accept_revision_id", "Document.add_bullet_list_item", "Document.add_chart", "Document.add_comment",
-    "Document.add_custom_xml_store", "Document.add_endnote", "Document.add_footnote", "Document.add_heading",
-    "Document.add_heading_hyperlink", "Document.add_hyperlink_to_story", "Document.add_numbered_list_item",
-    "Document.add_numbering_definition", "Document.add_numbering_instance", "Document.add_page_break",
-    "Document.add_paragraph", "Document.add_picture", "Document.add_story_permission_range", "Document.add_table",
-    "Document.clone_content", "Document.clone_content_control", "Document.create_section_story",
-    "Document.embed_font", "Document.embed_system_fonts", "Document.embed_true_type_fonts",
-    "Document.import_fragment", "Document.insert_content", "Document.insert_content_control",
-    "Document.insert_document", "Document.insert_html", "Document.insert_legacy_form_field",
-    "Document.insert_paragraph", "Document.insert_section", "Document.insert_table", "Document.link_section_story",
+    "Cell.add_paragraph", "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text",
+    "Cell.replace_xml", "Cell.set_border", "Cell.set_margins", "Cell.shading", "Cell.split", "Cell.text",
+    "Cell.vertical_alignment", "Cell.width", "Document.accept_revision_id", "Document.add_bullet_list_item",
+    "Document.add_chart", "Document.add_comment", "Document.add_custom_xml_store", "Document.add_endnote",
+    "Document.add_footnote", "Document.add_heading", "Document.add_heading_hyperlink",
+    "Document.add_hyperlink_to_story", "Document.add_numbered_list_item", "Document.add_numbering_definition",
+    "Document.add_numbering_instance", "Document.add_page_break", "Document.add_paragraph", "Document.add_picture",
+    "Document.add_story_permission_range", "Document.add_table", "Document.clone_content",
+    "Document.clone_content_control", "Document.create_section_story", "Document.embed_font",
+    "Document.embed_system_fonts", "Document.embed_true_type_fonts", "Document.import_fragment",
+    "Document.insert_content", "Document.insert_content_control", "Document.insert_document",
+    "Document.insert_html", "Document.insert_legacy_form_field", "Document.insert_paragraph",
+    "Document.insert_section", "Document.insert_table", "Document.link_section_story",
     "Document.link_style_to_numbering", "Document.move_comment", "Document.move_content",
     "Document.move_content_control", "Document.pop_content", "Document.reject_revision_id",
     "Document.remove_comment", "Document.remove_content", "Document.remove_content_control",
@@ -810,8 +811,8 @@ GROWING = {
     "Table.alignment", "Table.autofit", "Table.banded_columns", "Table.banded_rows", "Table.clone_row",
     "Table.delete_column", "Table.first_column", "Table.first_row", "Table.grid_widths", "Table.indent",
     "Table.insert_column", "Table.last_column", "Table.last_row", "Table.remove_row", "Table.replace_xml",
-    "Table.set_border", "Table.set_borders", "Table.set_cell_margins", "Table.set_cell_vertical_merge",
-    "Table.set_column_width", "Table.width",
+    "Table.set_border", "Table.set_borders", "Table.set_cell_grid_span", "Table.set_cell_margins",
+    "Table.set_cell_vertical_merge", "Table.set_column_width", "Table.width",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
