@@ -5612,8 +5612,10 @@ fn generated_heading_bookmark(name: &str) -> bool {
 /// field splits the name across runs or another story names it, or when the
 /// comparison would pair a renamed heading otherwise, the names stay as they
 /// are and only the ids follow, but a body heading's `_Toc` name the pairing
-/// did not keep keeps the edited id, since the original may give that name
-/// to another heading. Links to another file are left alone.
+/// did not keep, or one a paired heading claims, does not take the
+/// original's id for it, since the original gives that name to another
+/// heading: it keeps its own id, or a fresh one where the original uses
+/// that. Links to another file are left alone.
 fn reconcile_body_bookmarks(
     original: &Document,
     edited: &mut Document,
@@ -5876,9 +5878,9 @@ fn reconcile_body_bookmarks(
                 // Without the renames, a generated name no pairing kept may name
                 // another heading of the original: it keeps the edited id.
                 let unkept = fallback
-                    && name
-                        .as_deref()
-                        .is_some_and(|name| seen.contains(name) && !kept.contains(name));
+                    && name.as_deref().is_some_and(|name| {
+                        (seen.contains(name) && !kept.contains(name)) || claimed.contains(name)
+                    });
                 let target = match name
                     .as_deref()
                     .filter(|_| !unkept)

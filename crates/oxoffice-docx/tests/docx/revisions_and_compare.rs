@@ -1406,6 +1406,46 @@ fn a_toc_caption_in_a_table_takes_the_original_id() {
     assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
 }
 
+#[test]
+fn a_toc_caption_in_a_table_takes_the_original_id_in_the_fallback() {
+    // As above while the names fall back (the comparison pairs Old with A):
+    // the caption still takes back the id Word renumbered.
+    let caption = |id: u32| {
+        format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:bookmarkStart w:id="{id}" w:name="_Toc5"/><w:r><w:t>Figure 1</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p></w:tc></w:tr></w:tbl>"#
+        )
+    };
+    let body = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}{}",
+            heading_with("A", &[]),
+            heading_with("Old", &[(0, "_Toc1")]),
+            caption(1),
+            body("Body."),
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}{}",
+        body("New first."),
+        heading_with("A", &[(5, "_Toc11")]),
+        heading_with("New", &[(6, "_Toc12")]),
+        caption(7),
+        body("Body."),
+    ));
+    let mut doc = redline(original(), &edited);
+    let changed = revision_texts(&doc, RevisionKind::Insertion)
+        .into_iter()
+        .chain(revision_texts(&doc, RevisionKind::Deletion))
+        .collect::<Vec<_>>();
+    assert!(
+        !changed.iter().any(|text| text.contains("Figure")),
+        "{changed:?}"
+    );
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    assert_eq!(texts(&rejected(&mut doc)), texts(&original()));
+}
+
 /// The instruction of every field of the body, in order.
 fn field_instructions(doc: &Document) -> Vec<String> {
     let mut instructions = Vec::new();
