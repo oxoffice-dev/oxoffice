@@ -28,9 +28,7 @@ impl SectionScalar {
     }
     pub(super) fn decode(self, element: &[u8], attribute: &[u8], value: &str) -> Result<()> {
         match self {
-            Self::Measurement => {
-                parse_integer_measurement::<i32>(element, attribute, value).map(|_| ())
-            }
+            Self::Measurement => parse_twips_measure::<i32>(element, attribute, value).map(|_| ()),
             Self::Count => Self::count(value).map(|_| ()),
         }
     }
@@ -1128,7 +1126,7 @@ impl CT_SectPr {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
             let value = std::str::from_utf8(&attribute.value)?;
-            let measurement = || parse_integer_measurement(element.name().as_ref(), key, value);
+            let measurement = || parse_twips_measure(element.name().as_ref(), key, value);
             if is_word_attribute(key, b"w", word_prefixes) {
                 sect.page_width = Some(Twips(measurement()?));
             } else if is_word_attribute(key, b"h", word_prefixes) {
@@ -1170,7 +1168,7 @@ impl CT_SectPr {
                 continue;
             };
             let value = std::str::from_utf8(&attribute.value)?;
-            *field = Some(Twips(parse_integer_measurement(
+            *field = Some(Twips(parse_twips_measure(
                 element.name().as_ref(),
                 key,
                 value,
@@ -1412,7 +1410,7 @@ impl CT_SectPr {
                     &mut numbering.extra_attributes,
                 )?;
             } else if is_word_attribute(key, b"distance", word_prefixes) {
-                match value.parse() {
+                match parse_twips_measure(e.name().as_ref(), key, value) {
                     Ok(parsed) => numbering.distance = Some(Twips(parsed)),
                     Err(_) => numbering
                         .extra_attributes
@@ -1668,11 +1666,7 @@ impl CT_SectPr {
             if is_word_attribute(key, b"num", word_prefixes) {
                 cols.num = Some(SectionScalar::count(val_str)?);
             } else if is_word_attribute(key, b"space", word_prefixes) {
-                cols.space = Some(Twips(parse_integer_measurement(
-                    e.name().as_ref(),
-                    key,
-                    val_str,
-                )?));
+                cols.space = Some(Twips(parse_twips_measure(e.name().as_ref(), key, val_str)?));
             } else if is_word_attribute(key, b"equalWidth", word_prefixes) {
                 cols.equal_width = Some(val_str == "1" || val_str == "true");
             } else if is_word_attribute(key, b"sep", word_prefixes) {
@@ -1708,8 +1702,7 @@ impl CT_SectPr {
                         let attr = attr?;
                         let key = attr.key.as_ref();
                         let value = std::str::from_utf8(&attr.value)?;
-                        let measurement =
-                            || parse_integer_measurement(e.name().as_ref(), key, value);
+                        let measurement = || parse_twips_measure(e.name().as_ref(), key, value);
                         if is_word_attribute(key, b"w", &prefixes) {
                             width = Some(Twips(measurement()?));
                         } else if is_word_attribute(key, b"space", &prefixes) {
@@ -2765,7 +2758,7 @@ fn page_size_attributes_are_modeled(
         if is_word_attribute(key, b"w", word_prefixes)
             || is_word_attribute(key, b"h", word_prefixes)
         {
-            if parse_integer_measurement::<i32>(element.name().as_ref(), key, value).is_err() {
+            if parse_twips_measure::<i32>(element.name().as_ref(), key, value).is_err() {
                 return Ok(false);
             }
         } else if is_word_attribute(key, b"orient", word_prefixes) {
@@ -2803,9 +2796,7 @@ fn page_margin_attributes_are_modeled(
         .iter()
         .any(|local| is_word_attribute(key, local, word_prefixes));
         let value = std::str::from_utf8(&attribute.value)?;
-        if !modeled
-            || parse_integer_measurement::<i32>(element.name().as_ref(), key, value).is_err()
-        {
+        if !modeled || parse_twips_measure::<i32>(element.name().as_ref(), key, value).is_err() {
             return Ok(false);
         }
     }
@@ -2881,7 +2872,7 @@ pub(crate) fn validate_checked_section_child(
                 if is_word_attribute(key, b"w", prefixes)
                     || is_word_attribute(key, b"h", prefixes) =>
             {
-                parse_integer_measurement::<i32>(element.name().as_ref(), key, &value).is_err()
+                parse_twips_measure::<i32>(element.name().as_ref(), key, &value).is_err()
             }
             _ => false,
         };

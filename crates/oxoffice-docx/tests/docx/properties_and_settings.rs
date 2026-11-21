@@ -1989,3 +1989,9 @@ fn an_empty_core_property_writes_no_element() {
     );
     assert_eq!(doc.core_properties().unwrap().created, None);
 }
+
+#[test]
+fn a_settings_twips_measure_written_with_a_unit_reads() {
+    let doc = doc_with_settings(r#"<w:defaultTabStop w:val="0.5in"/>"#);
+    assert_eq!(doc.default_tab_stop().map(|twips| twips.0), Some(720));
+}

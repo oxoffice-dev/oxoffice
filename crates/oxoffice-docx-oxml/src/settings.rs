@@ -9,7 +9,7 @@ use crate::error::{OxmlError, Result};
 use crate::math::{MathProperties, fixed_math_prefix_is_safe, is_math_element};
 use crate::namespace::W_NS;
 use crate::numbering::{namespace_bindings, word_prefixes_at};
-use crate::properties::{is_word_attribute, is_word_element, parse_integer_measurement};
+use crate::properties::{is_word_attribute, is_word_element, parse_twips_measure};
 use crate::raw_xml::capture_element;
 
 /// The editing operation permitted by `w:documentProtection`.
@@ -2928,7 +2928,7 @@ pub(crate) fn word_value(element: &BytesStart<'_>, prefixes: &[String]) -> Optio
 
 fn parse_twips(element: &BytesStart<'_>, prefixes: &[String]) -> Option<Twips> {
     let value = word_value(element, prefixes)?;
-    parse_integer_measurement::<i32>(element.name().as_ref(), b"w:val", &value)
+    parse_twips_measure::<i32>(element.name().as_ref(), b"w:val", &value)
         .ok()
         .filter(|value| *value >= 0)
         .map(Twips)
