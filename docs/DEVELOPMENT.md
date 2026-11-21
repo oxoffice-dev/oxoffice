@@ -56,6 +56,15 @@ or wants to merge it runs that review or asks for one.
   in code, tests or workflows). A third review needs the maintainer's
   agreement; beyond that budget the maintainer decides from the evidence
   (mutation checks, `git range-diff`), without another round.
+- **A narrow, proved fix after the budget merges without asking.** When
+  the delta review finds a major, the author fixes it and merges without
+  asking the maintainer if the fix is about 30 lines outside tests in the
+  code the review pointed at, a test fails without it (the mutation result
+  shown in the thread), the crate's full suite and clippy are green, and
+  nothing else changed since the reviewed commit but merges of `main` that
+  only resolve conflicts; the merge line says "post-budget fix merged on
+  proof". A larger fix, a change of behaviour nobody asked for, or any
+  doubt goes to the maintainer.
 - **Minors never trigger a review.** A minor found in review is fixed in
   the pull request when the fix is cheap, with its proof stated in the
   answer (a test that fails without it, or a mutation check). A follow-up
