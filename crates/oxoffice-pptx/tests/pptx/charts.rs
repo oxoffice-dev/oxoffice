@@ -1075,9 +1075,15 @@ fn removing_a_chart_slide_from_every_editors_deck_drops_its_chart_and_keeps_the_
 
         let saved = reopen(&prs);
         let after: BTreeSet<String> = saved_package(&saved).parts.into_keys().collect();
-        let removed: BTreeSet<String> = before.difference(&after).cloned().collect();
-        // No corpus deck shares a part of that graph with another slide, so
-        // exactly the graph goes: nothing outside it, nothing of it stays.
+        // The package thumbnail goes with any removal, as it may picture the
+        // removed slide. Beside it, no corpus deck shares a part of that
+        // graph with another slide, so exactly the graph goes: nothing
+        // outside it, nothing of it stays.
+        let removed: BTreeSet<String> = before
+            .difference(&after)
+            .filter(|part| *part != "/docProps/thumbnail.jpeg")
+            .cloned()
+            .collect();
         assert_eq!(removed, graph, "{name}");
         assert_eq!(chart_parts(&saved), charts_before, "{name}");
         texts.remove(1);

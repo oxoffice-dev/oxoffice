@@ -9986,8 +9986,8 @@ impl Presentation {
     /// Removes one slide and its owned package graph by zero-based index.
     ///
     /// The package metadata stops naming it: `docProps/app.xml` counts the
-    /// slides left and drops its title lists, and a removed first slide
-    /// takes the package thumbnail with it.
+    /// slides left and drops its title lists, and the package thumbnail,
+    /// which may picture it, goes.
     pub fn remove_slide(&mut self, index: usize) -> Result<()> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10900,7 +10900,7 @@ impl Presentation {
         self.slides.remove(index);
         prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
-        self.forget_removed_slide_in_metadata(index == 0)
+        self.forget_removed_slide_in_metadata()
     }
 
     /// Keeps the package metadata from carrying a removed slide.
@@ -10909,31 +10909,32 @@ impl Presentation {
     /// the deck, where it has them, and loses its title lists
     /// (`HeadingPairs`, `TitlesOfParts`), which may name the removed slide:
     /// their group names are localised, so the removed title cannot be told
-    /// apart, and PowerPoint writes them again on its next save. The package
-    /// thumbnail, a picture of the first slide, goes with a removed first
-    /// slide.
-    fn forget_removed_slide_in_metadata(&mut self, first_slide: bool) -> Result<()> {
-        if first_slide {
-            let thumbnails = self
-                .package
-                .package_rels
-                .items
-                .iter()
-                .filter(|relationship| {
-                    relationship.rel_type == rel_types::THUMBNAIL
-                        && !relationship_is_external(relationship)
-                })
-                .map(|relationship| OpcPackage::resolve_rel_target("/", &relationship.target))
-                .collect::<Vec<_>>();
-            for part in &thumbnails {
-                self.package.remove_part(part);
-                self.package.content_types.remove_override(part);
-            }
-            self.package.package_rels.items.retain(|relationship| {
-                relationship.rel_type != rel_types::THUMBNAIL
-                    || relationship_is_external(relationship)
-            });
+    /// apart, and PowerPoint writes them again on its next save. An app.xml
+    /// the source-preserving patch cannot edit (one outside its namespace)
+    /// is left as it was rather than refusing the removal.
+    ///
+    /// The package thumbnail pictures the slide that was first when the deck
+    /// was last saved, which moves and inserts may have taken anywhere, so
+    /// any removal takes it.
+    fn forget_removed_slide_in_metadata(&mut self) -> Result<()> {
+        let thumbnails = self
+            .package
+            .package_rels
+            .items
+            .iter()
+            .filter(|relationship| {
+                relationship.rel_type == rel_types::THUMBNAIL
+                    && !relationship_is_external(relationship)
+            })
+            .map(|relationship| OpcPackage::resolve_rel_target("/", &relationship.target))
+            .collect::<Vec<_>>();
+        for part in &thumbnails {
+            self.package.remove_part(part);
+            self.package.content_types.remove_override(part);
         }
+        self.package.package_rels.items.retain(|relationship| {
+            relationship.rel_type != rel_types::THUMBNAIL || relationship_is_external(relationship)
+        });
         let (Some(old), Some(part)) = (
             self.application_properties.clone(),
             property_part(
@@ -10954,9 +10955,15 @@ impl Presentation {
         new.hidden_slides = old
             .hidden_slides
             .map(|_| count(|record| record.slide.hidden()));
-        let patched =
-            patch_application_properties(required_part(&self.package, &part)?, &old, &new)?;
-        let (children, _) = property_child_ranges(&patched, EXTENDED_PROPERTIES_NS, "Properties")?;
+        let source = required_part(&self.package, &part)?;
+        let Ok((patched, (children, _))) = patch_application_properties(source, &old, &new)
+            .and_then(|patched| {
+                let ranges = property_child_ranges(&patched, EXTENDED_PROPERTIES_NS, "Properties")?;
+                Ok((patched, ranges))
+            })
+        else {
+            return Ok(());
+        };
         let mut xml = Vec::with_capacity(patched.len());
         let mut cursor = 0;
         for (_, _, start, end) in children.iter().filter(|(uri, local, _, _)| {

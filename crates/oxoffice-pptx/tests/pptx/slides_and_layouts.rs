@@ -1160,37 +1160,33 @@ fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
     let prs = reopen(&prs);
     let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
     assert!(!app.contains("Highlights"), "{app}");
-    assert!(
-        !app.contains("TitlesOfParts") && !app.contains("HeadingPairs"),
-        "{app}"
-    );
-    // Three slides left, the notes went with Highlights, the last is hidden.
-    assert!(app.contains("<Slides>3</Slides>"), "{app}");
-    assert!(app.contains("<Notes>0</Notes>"), "{app}");
-    assert!(app.contains("<HiddenSlides>1</HiddenSlides>"), "{app}");
-    let application = |xml: &str| {
-        let start = xml.find("<Application>").expect("an application name");
-        xml[start..xml[start..].find("</Application>").unwrap() + start].to_owned()
+    // Three slides left, the notes went with Highlights, the last is hidden;
+    // the title lists go and every other byte stays.
+    let cut = |xml: &str, from: &str, to: &str| {
+        let start = xml.find(from).expect("the element is there");
+        let end = xml[start..].find(to).expect("the element closes") + start + to.len();
+        format!("{}{}", &xml[..start], &xml[end..])
     };
-    assert_eq!(application(&app), application(&before));
-    assert!(saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some());
+    let expected = cut(
+        &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
+        "<TitlesOfParts>",
+        "</TitlesOfParts>",
+    )
+    .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
+    .replace("<Notes>1</Notes>", "<Notes>0</Notes>")
+    .replace(
+        "<HiddenSlides>0</HiddenSlides>",
+        "<HiddenSlides>1</HiddenSlides>",
+    );
+    assert_eq!(app, expected);
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
 #[test]
-fn removing_the_first_slide_drops_the_thumbnail_that_pictures_it() {
-    for name in ["powerpoint/deck.pptx", "authored/deck.pptx"] {
-        let mut prs = corpus_deck(name);
+fn removing_any_slide_drops_the_thumbnail_that_may_picture_it() {
+    let thumbnail_gone = |prs: &Presentation, name: &str| {
         assert!(
-            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
-            "{name}"
-        );
-
-        prs.remove_slide(0).unwrap();
-
-        let prs = reopen(&prs);
-        assert!(
-            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_none(),
+            saved_part_text(prs, "/docProps/thumbnail.jpeg").is_none(),
             "{name}"
         );
         let package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
@@ -1202,9 +1198,46 @@ fn removing_the_first_slide_drops_the_thumbnail_that_pictures_it() {
                 .all(|relationship| !relationship.rel_type.ends_with("/metadata/thumbnail")),
             "{name}: the package still points at a thumbnail"
         );
-        assert_eq!(prs.len(), 3, "{name}");
         assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    };
+    for name in ["powerpoint/deck.pptx", "authored/deck.pptx"] {
+        let mut prs = corpus_deck(name);
+        assert!(
+            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
+            "{name}"
+        );
+        prs.remove_slide(0).unwrap();
+        thumbnail_gone(&reopen(&prs), name);
     }
+
+    // The pictured first slide, moved last, then removed.
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.move_slide(0, 3).unwrap();
+    prs.remove_slide(3).unwrap();
+    let prs = reopen(&prs);
+    assert!(!titles(&prs).contains(&CORPUS_TITLES[0].to_owned()));
+    thumbnail_gone(&prs, "moved first slide");
+}
+
+#[test]
+fn an_app_xml_outside_its_namespace_does_not_stop_a_removal() {
+    let prs = corpus_deck("libreoffice/deck.pptx");
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let app = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties><Slides>4</Slides><Application>Example</Application></Properties>"#;
+    package.set_part("/docProps/app.xml", app.to_vec());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(prs.len(), 3);
+    assert_eq!(
+        saved_part_text(&prs, "/docProps/app.xml").as_deref(),
+        Some(std::str::from_utf8(app).unwrap())
+    );
 }
 
 #[test]
