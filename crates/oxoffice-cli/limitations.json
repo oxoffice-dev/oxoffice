@@ -1,12 +1,12 @@
 [
   {
-    "id": "docx-compare-toc-bookmarks",
+    "id": "docx-compare-simple-field-paragraph",
     "format": "docx",
     "area": "compare",
-    "title": "Comparison refuses two versions whose TOC heading bookmarks were renumbered",
-    "symptom": "compare refuses with \"duplicate bookmark id N in authored XML\" or \"cannot revise paragraph boundary structures\"",
-    "workaround": "remove the _Toc bookmarks from both copies, compare, then rebuild the table of contents on the result",
-    "issue": 3
+    "title": "Comparison refuses to insert or delete a paragraph holding a simple field",
+    "symptom": "compare refuses with \"cannot track a whole paragraph's simple field outside a field it replaces\", so a heading added under a table of contents made by insert_toc cannot be compared",
+    "workaround": "add or remove the paragraph by hand on the redline",
+    "issue": 66
   },
   {
     "id": "docx-compare-moved-footnote",
