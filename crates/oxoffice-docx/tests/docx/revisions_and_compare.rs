@@ -4234,26 +4234,3 @@ fn a_redline_of_two_thesis_versions_with_rebuilt_contents_resolves_to_either() {
         assert_eq!(story_texts(&rejected(&mut doc)), original, "{path}");
     });
 }
-
-// Fails today: once a copy went through an oxoffice edit, its save declares
-// the root's namespaces again on a kept equation, and the comparison reads
-// the unchanged equation as changed. Issue: #408
-#[test]
-#[should_panic(
-    expected = "comparison acceptance does not reproduce the edited stories at body story item[1]"
-)]
-fn an_equation_an_edit_kept_is_no_change() {
-    let body = concat!(
-        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>"#,
-        r#"<w:p><m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>x</m:t></m:r></m:oMath></m:oMathPara></w:p>"#,
-    );
-    let mut edited = doc_with_body(body);
-    edited.add_paragraph("Added");
-    let edited = reopen(&mut edited);
-    let mut doc = doc_with_body(body);
-    doc.compare(&edited, AUTHOR, DATE)
-        .expect("an equation the edit kept is no change");
-    let mut doc = reopen(&mut doc);
-    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Added"]);
-    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
-}

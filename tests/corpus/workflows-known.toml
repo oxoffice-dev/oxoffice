@@ -38,26 +38,12 @@ workflow = "redline-rebuilt-toc"
 issue = 66
 message = "comparison cannot track a whole paragraph's simple field"
 
-# The thesis copies hold an equation, which the comparison reads as changed
-# once the edited copy went through an oxoffice edit.
-[[known]]
-file = "word/thesis.docx"
-workflow = "redline"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
-
 # LibreOffice's TOC content control is refused before the equations.
 [[known]]
 file = "libreoffice/thesis.docx"
 workflow = "redline"
 issue = 413
 message = "raw publication boundary is outside the emitted owner"
-
-[[known]]
-file = "authored/thesis.docx"
-workflow = "redline"
-issue = 408
-message = "comparison acceptance does not reproduce the edited stories at body story item[50]"
 
 # Google's copy refuses the footnote the new version adds before its equation.
 [[known]]
