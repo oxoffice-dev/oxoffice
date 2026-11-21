@@ -55925,7 +55925,7 @@ mod tests {
     }
 
     #[test]
-    fn a_body_not_savable_before_the_insert_is_not_marked_savable() {
+    fn keeping_after_an_insert_into_a_body_that_was_not_savable_marks_nothing() {
         let (_, kept) = kept_after_typed_paragraph(&control_owner(), false);
         assert!(!kept);
     }
