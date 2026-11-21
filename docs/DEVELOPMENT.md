@@ -44,9 +44,10 @@ or wants to merge it runs that review or asks for one.
 - **The author answers every finding** in the thread: fixed, with the commit,
   or why it is not a defect. A major finding is fixed unless the maintainer
   waives it.
-- **The review covers the merged head.** After the reviewed head, a rebase
-  without conflict, formatting or a typo needs nothing more; any other
-  change, fixes included, gets a review of the delta.
+- **The review covers the merged head.** After the reviewed head, what
+  cannot change behaviour needs nothing more (a rebase without conflict, a
+  typo in prose); any change to code, tests, workflows or the meaning of a
+  document, fixes included, gets a review of the delta.
 - **Light review**, still posted, for documentation (links, anchors, text
   agrees with the code and the other docs) and pure code moves (nothing but
   location changed).

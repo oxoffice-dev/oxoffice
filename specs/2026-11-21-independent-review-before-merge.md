@@ -39,10 +39,11 @@ from its Rust twin.
 - **The author answers every finding in the thread**: fixed, with the commit,
   or why it is not a defect. A major finding is fixed unless the maintainer
   waives it in the thread.
-- **The review covers the head that is merged.** Commits after the reviewed
-  head that only rebase without conflict, reformat or fix a typo need
-  nothing more. Any other change, fixes for findings included, gets a review
-  of the delta, posted the same way.
+- **The review covers the head that is merged.** After the reviewed head,
+  what cannot change behaviour needs nothing more: a rebase without conflict,
+  a typo in prose. Any change to code, tests, workflows or the meaning of a
+  document, fixes for findings included, gets a review of the delta, posted
+  the same way.
 - **Then CI green, squash merge.**
 - **Light review** for documentation-only changes and pure code moves, still
   posted: for documentation, that links and anchors resolve and the text
@@ -63,6 +64,14 @@ convention.
    on, every merged pull request carries a `🔍 Independent review` comment
    that covers its merged head.
 
+## Outcome
+
+- Shipped in #23, itself reviewed that way: a first review (one major, four
+  minor), the fixes, a review of the delta.
+- An agent reviewer is sometimes refused the right to comment on GitHub by
+  the permission system; whoever launched it then posts its report as is.
+
 ## Links
 
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md), the loop a change follows.
+- #23, this change.
