@@ -619,7 +619,10 @@ impl SourceSnapshots {
                 })?;
             let mut holes = self.budget_holes.get(key).cloned().unwrap_or_default();
             holes.sort_by_key(|(_, _, interval, _)| (interval.start, interval.end));
-            let mut facts = vec![format!("scope:{:?}", conversion_namespace_facts(bindings))];
+            let mut facts = vec![format!(
+                "scope:{:?}",
+                conversion_namespace_facts(bindings, source)?
+            )];
             let mut cursor = 0usize;
             let mut seen = HashSet::new();
             for (ordinal, (child, kind, interval, context)) in holes.into_iter().enumerate() {
@@ -648,7 +651,7 @@ impl SourceSnapshots {
                 facts.push(format!("outside:{:?}", &lexical[cursor..start]));
                 facts.push(format!(
                     "hole:{ordinal}:{child:?}:{kind}:{:?}",
-                    conversion_namespace_facts(context)
+                    conversion_namespace_facts(context, &source[interval.clone()])?
                 ));
                 cursor = end;
             }
