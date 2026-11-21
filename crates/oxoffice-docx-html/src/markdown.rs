@@ -301,10 +301,11 @@ fn emit_paragraph(
     }
     let quote_prefix = "> ".repeat(outer_quotes);
 
-    let continued = if para
-        .properties
-        .as_ref()
-        .is_some_and(|properties| properties.num_id == Some(0))
+    let continued = if detected_level.is_none()
+        && para
+            .properties
+            .as_ref()
+            .is_some_and(|properties| properties.num_id == Some(0))
     {
         crate::numbering_turned_off_level(para)
             .and_then(|level| list_levels.iter().position(|list| list.level == level))
@@ -364,20 +365,22 @@ fn emit_paragraph(
         if item_quotes > 0 && !list_levels.is_empty() && !out.ends_with("\n\n") {
             out.push('\n');
         }
+        // The outermost deeper list closed here had its markers at this
+        // item's column.
+        let mut closed = None;
         while list_levels
             .last()
             .is_some_and(|list| list.level > item.level)
         {
-            list_levels.pop();
+            closed = list_levels.pop().map(|list| list.ordered);
         }
         let ordered = item.kind.ordered();
-        let previous = list_levels
-            .last()
-            .filter(|list| list.level == item.level)
-            .map(|list| (list.ordered, list.last));
-        if previous.is_some() {
-            list_levels.pop();
-        }
+        // The kind of the list before this item at its column, and its last
+        // number when this item may go on with it.
+        let previous = match list_levels.pop_if(|list| list.level == item.level) {
+            Some(list) => Some((list.ordered, Some(list.last))),
+            None => closed.map(|ordered| (ordered, None)),
+        };
         // A nested item is indented to the text column of its parent item,
         // which is three columns after `1. ` and two after `- `.
         let indent = list_levels.last().map_or(0, |list| list.column);
@@ -387,20 +390,25 @@ fn emit_paragraph(
                 out.push('\n');
             }
         };
+        let goes_on = |last: Option<u32>| {
+            last.is_some_and(|last| !ordered || last.checked_add(1) == Some(item.count))
+        };
         match previous {
-            // A numbered item that does not continue the count of the list
-            // before it starts a new list: CommonMark would join two numbered
-            // lists, so an empty comment parts them, as its spec advises.
-            Some((true, last)) if ordered && last.checked_add(1) != Some(item.count) => {
+            // An item of the same kind that does not go on with the list
+            // before it at its column starts a new list: CommonMark would
+            // join the two, so an empty comment parts them, as its spec
+            // advises.
+            Some((was_ordered, last)) if was_ordered == ordered && !goes_on(last) => {
                 blank_line(out);
                 out.push_str(&format!("{quote_prefix}{}<!-- -->\n", " ".repeat(indent)));
                 blank_line(out);
             }
-            // Another kind starts a new list; a blank line keeps a number
-            // other than 1 from reading as text of the item before.
-            Some((was_ordered, _)) if was_ordered != ordered => blank_line(out),
-            // A nested numbered list that starts at another number than 1
-            // cannot interrupt its parent's text.
+            // Another kind starts a new list by itself, but a number other
+            // than 1 cannot interrupt the text before it, in a parent item
+            // either: a blank line comes first.
+            Some((was_ordered, _)) if was_ordered != ordered && ordered && item.count != 1 => {
+                blank_line(out)
+            }
             None if ordered && item.count != 1 && !list_levels.is_empty() => blank_line(out),
             _ => {}
         }

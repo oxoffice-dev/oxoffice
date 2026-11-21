@@ -1537,6 +1537,19 @@ fn exports_close_a_list_before_an_unmarked_paragraph_of_another_list() {
     assert!(html.contains("</ul>\n<p>indented body</p>"), "{html}");
 }
 
+/// The document after `edit` changed the XML of one of its parts, saved and
+/// reopened: markup Word writes that the facade does not.
+fn with_part(doc: &mut Document, part: &str, edit: impl Fn(String) -> String) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(package.get_part(part).expect("part exists").to_vec())
+        .expect("part is UTF-8");
+    package.set_part(part, edit(xml).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("edited document opens")
+}
+
 /// What each Markdown list item shows, in order: its number, or "-" for a
 /// bullet.
 fn markdown_item_markers(markdown: &str) -> Vec<String> {
@@ -1649,7 +1662,68 @@ fn exports_open_a_new_list_for_another_kind_of_item() {
     assert_eq!(html_list_of(&html, "point 2"), "ul", "{html}");
     assert_eq!(html_item_numbers(&html), ["-", "1", "-"], "{html}");
     let markdown = doc.to_markdown();
-    assert_eq!(markdown, "- point\n\n1. step\n\n- point 2\n", "{markdown}");
+    // A new kind starts a new list by itself in CommonMark.
+    assert_eq!(markdown, "- point\n1. step\n- point 2\n", "{markdown}");
+
+    // A numbered list from 3 cannot interrupt a bullet item's text.
+    let (mut doc, bullets) = single_list(&[ListLevel::bullet()]);
+    let numbers = doc
+        .add_numbering_definition(&[ListLevel::decimal().start(3)])
+        .unwrap();
+    let numbers = doc.add_numbering_instance(numbers, &[]).unwrap();
+    doc.add_paragraph("point").numbering(bullets, 0);
+    doc.add_paragraph("step").numbering(numbers, 0);
+    assert_eq!(markers(&doc), ["•", "3."]);
+    assert_eq!(doc.to_markdown(), "- point\n\n3. step\n");
+}
+
+#[test]
+fn exports_start_a_new_list_after_items_of_a_skipped_level() {
+    // Levels 0, 2, 1: the level-1 item is not the next item of the level-2
+    // list, though Markdown writes both at the same column.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%2."),
+        ListLevel::new(ListNumberFormat::LowerRoman).level_text("%3."),
+    ]);
+    add_items(&mut doc, id, &[0, 2, 1]);
+    assert_eq!(markers(&doc), ["1.", "i.", "a."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown, "1. item 1\n   1. item 2\n\n   <!-- -->\n\n   1. item 3\n",
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "1", "1"], "{html}");
+
+    // A list that starts at level 1, then a level-0 item.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal(),
+        ListLevel::new(ListNumberFormat::LowerLetter).level_text("%2."),
+    ]);
+    add_items(&mut doc, id, &[1, 1, 0]);
+    assert_eq!(markers(&doc), ["a.", "b.", "1."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        markdown, "1. item 1\n2. item 2\n\n<!-- -->\n\n1. item 3\n",
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "2", "1"], "{html}");
+}
+
+#[test]
+fn exports_write_a_heading_whose_numbering_is_turned_off_after_the_list() {
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0]);
+    doc.add_paragraph("Heading")
+        .style("Heading2")
+        .numbering(0, 0);
+    let markdown = doc.to_markdown();
+    assert!(markdown.contains("\n\n## Heading\n"), "{markdown}");
+    assert!(!markdown.contains("   ## Heading"), "{markdown}");
+    let html = doc.to_html_fragment();
+    assert!(html.contains("</ol>\n<h2>Heading</h2>"), "{html}");
 }
 
 #[test]
@@ -1787,6 +1861,69 @@ fn exports_count_the_list_items_of_a_table_as_layout_does() {
         html.contains("<ol start=\"3\">\n<li>after the table"),
         "{html}"
     );
+
+    // Layout leaves out a row deleted as a tracked change.
+    let doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let at = xml.find("<w:tr").unwrap();
+        let at = at + xml[at..].find('>').unwrap() + 1;
+        format!(
+            r#"{}<w:trPr><w:del w:id="90" w:author="A" w:date="2026-01-01T00:00:00Z"/></w:trPr>{}"#,
+            &xml[..at],
+            &xml[at..]
+        )
+    });
+    assert_eq!(markers(&doc), ["1.", "2."]);
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.lines().any(|line| line == "2. after the table"),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(
+        html.contains("<ol start=\"2\">\n<li>after the table"),
+        "{html}"
+    );
+}
+
+#[test]
+fn exports_restart_a_list_after_a_section_break_as_layout_does() {
+    // A definition marked to restart after a section break, as Word 2013
+    // writes it, and a section break between its items.
+    let (mut doc, id) = single_list(&[ListLevel::decimal()]);
+    add_items(&mut doc, id, &[0]);
+    doc.add_paragraph("end of the section");
+    add_items(&mut doc, id, &[0]);
+    let mut doc = with_part(&mut doc, "/word/numbering.xml", |xml| {
+        xml.replacen(
+            "<w:numbering ",
+            r#"<w:numbering xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" "#,
+            1,
+        )
+        .replacen(
+            "<w:abstractNum ",
+            r#"<w:abstractNum w15:restartNumberingAfterBreak="1" "#,
+            1,
+        )
+    });
+    let doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let text = xml.find("end of the section").unwrap();
+        let at = xml[..text].rfind("<w:p>").expect("a plain paragraph") + "<w:p>".len();
+        format!(
+            concat!(
+                "{}<w:pPr><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>",
+                "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" ",
+                "w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr></w:pPr>{}"
+            ),
+            &xml[..at],
+            &xml[at..]
+        )
+    });
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(markers(&doc), ["1.", "", "1."]);
+    let markdown = doc.to_markdown();
+    assert_eq!(markdown_item_markers(&markdown), ["1", "1"], "{markdown}");
+    let html = doc.to_html_fragment();
+    assert_eq!(html_item_numbers(&html), ["1", "1"], "{html}");
 }
 
 #[test]

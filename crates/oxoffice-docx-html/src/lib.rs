@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx_layout::style_resolver::{NumberingState, generate_marker};
+use oxoffice_docx_layout::table::effective_table_paragraph_properties;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document};
 use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_NumberFormat};
@@ -244,7 +245,7 @@ struct ListItem {
 /// that restarts after a section break starts again after one. Every
 /// paragraph on a list counts, a heading or a paragraph on a `none` level
 /// too, and so do the paragraphs of tables, which the exports write without
-/// markers.
+/// markers, as [`Self::table`] says.
 struct ListCounter<'a> {
     styles: &'a CT_Styles,
     numbering: Option<&'a CT_Numbering>,
@@ -289,16 +290,21 @@ impl<'a> ListCounter<'a> {
         counted
     }
 
-    /// Count the paragraphs of a table, nested tables too.
+    /// Count the paragraphs of a table as layout lays them out: those of a
+    /// table or rows that accepting changes removes, and of cells that go on
+    /// a vertical merge, left out, the numbering a table style gives read.
     fn table(&mut self, table: &CT_Tbl) {
-        for cell in table.rows.iter().flat_map(|row| &row.cells) {
-            for block in cell_blocks(cell) {
-                match block {
-                    Block::Paragraph(paragraph, _) => {
-                        self.count(&paragraph);
-                    }
-                    Block::Table(nested) => self.table(nested),
-                }
+        let Some(numbering) = self.numbering else {
+            return;
+        };
+        for (_, properties) in effective_table_paragraph_properties(table, self.styles) {
+            if let Some(num_id) = properties.num_id.filter(|id| *id != 0) {
+                generate_marker(
+                    num_id,
+                    properties.num_ilvl.unwrap_or(0),
+                    numbering,
+                    &mut self.state,
+                );
             }
         }
     }
