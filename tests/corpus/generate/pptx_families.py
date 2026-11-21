@@ -914,7 +914,8 @@ def long_deck(path: Path) -> None:
 @family("deck", "pptx")
 def deck(path: Path) -> None:
     prs = Presentation()
-    prs.slide_width, prs.slide_height = WIDE, HIGH
+    # The pilot's size, 305 EMU short of 16:9: every producer's copy has it.
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
 
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     slide.shapes.title.text = "Quarterly Operations Review"

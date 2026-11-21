@@ -28,7 +28,12 @@ for the tests that read real documents (round trips, edits, performance). See
 - At most 1 MiB a file and 20 MiB in all, checked by the docx corpus test, so
   clones and CI stay quick.
 - Sources are deterministic: fixed dates and seeds, zip entries with fixed
-  timestamps. Rerunning `author.py` on unchanged code changes no byte.
+  timestamps, the pilot's chart read from `generate/chart.png`. Rerunning
+  `author.py` on unchanged code changes no byte on the same machine (another
+  machine may compress the other generated pictures differently).
+- The report and the deck are the pilot: the behaviour tests pin facts of
+  every producer's copy of them, so `produce.py` saves them again only when
+  `--only` names them, and the tests then need a look.
 - Producers that drive an app close every document after its save and quit
   the app, even when a file fails.
 

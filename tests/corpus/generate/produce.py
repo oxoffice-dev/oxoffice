@@ -5,7 +5,8 @@
 Each producer reads files/authored/* and writes files/<producer>/ with the
 same file names, then the manifest is rewritten: the files this run wrote get
 the producer's version, the others keep theirs.
-Every producer by default, every family unless --only names some.
+Every producer by default, every family but the pilot (report, deck) unless
+--only names some: the behaviour tests pin facts of the pilot's copies.
 
 - word, powerpoint: Microsoft Word and PowerPoint for Mac through AppleScript.
   The apps are sandboxed, so files go through their container folder. Each
@@ -92,8 +93,14 @@ def osascript(script: str, *args: str) -> str:
     ).stdout.strip()
 
 
+# The pilot families: the behaviour tests pin facts of every producer's copy,
+# so a run saves them again only when --only names them.
+PILOT = {"report", "deck"}
+
+
 def sources(extension: str, only: list[str]) -> list[Path]:
-    return [p for p in sorted(AUTHORED.glob(f"*.{extension}")) if not only or p.stem in only]
+    chosen = (lambda stem: stem in only) if only else (lambda stem: stem not in PILOT)
+    return [p for p in sorted(AUTHORED.glob(f"*.{extension}")) if chosen(p.stem)]
 
 
 def through_office(app: str, only: list[str]) -> dict:

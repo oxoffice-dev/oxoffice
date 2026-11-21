@@ -23,8 +23,8 @@ features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink"
 [[file]]
 path = "authored/deck.pptx"
 producer = "python-pptx 1.0.2"
-size = 37419
-features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box", "widescreen"]
+size = 37422
+features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "picture", "text-box"]
 
 [[file]]
 path = "authored/form.docx"
@@ -91,7 +91,7 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "table", "merge
 [[file]]
 path = "authored/report.docx"
 producer = "python-docx 1.2.0"
-size = 41240
+size = 41241
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "rsid"]
 
 [[file]]
