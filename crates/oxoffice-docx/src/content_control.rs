@@ -9,9 +9,7 @@ use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{
-    BreakType, CT_P, CT_R, CT_Text, RunContent, is_root_attribute_record,
-};
+use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, CT_Text, RunContent};
 use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -582,8 +580,11 @@ fn drop_emptied_paragraphs(control: &mut CT_Sdt) {
 
 /// Whether a paragraph holds only runs without content. The attributes of
 /// the paragraph and of its runs, such as Word's `w14:paraId` and `w:rsidR`,
-/// are no content. A section break and a tracked paragraph mark or property
-/// change are: they would go with the paragraph.
+/// are no content, nor are the marks Word leaves for its proofing
+/// (`w:proofErr`) and layout (`w:lastRenderedPageBreak`). A comment
+/// reference shows nothing either, but it stays in the run's content and
+/// counts there. A section break and a tracked paragraph mark or property
+/// change are content: they would go with the paragraph.
 fn is_empty_paragraph(paragraph: &CT_P) -> bool {
     let keeps_state = paragraph.properties.as_ref().is_some_and(|properties| {
         properties.sect_pr.is_some()
@@ -599,10 +600,7 @@ fn is_empty_paragraph(paragraph: &CT_P) -> bool {
     !keeps_state
         && paragraph.runs.iter().all(|run| {
             run.extra_xml.iter().enumerate().all(|(index, raw)| {
-                run.extra_xml_positions
-                    .get(index)
-                    .is_some_and(|encoded| CT_R::raw_child_is_root_attributes(*encoded))
-                    && is_root_attribute_record(raw)
+                CT_R::raw_child_shows_nothing(raw, run.extra_xml_positions.get(index).copied())
             }) && run
                 .content
                 .iter()
@@ -611,14 +609,24 @@ fn is_empty_paragraph(paragraph: &CT_P) -> bool {
         && paragraph.hyperlinks.is_empty()
         && paragraph.comment_ranges.is_empty()
         && paragraph.bookmark_markers.is_empty()
-        && paragraph
-            .extra_xml
-            .iter()
-            .all(|(position, raw)| CT_P::raw_is_root_attributes(*position, raw))
+        && paragraph.extra_xml.iter().all(|(position, raw)| {
+            CT_P::raw_is_root_attributes(*position, raw) || is_proofing_mark(raw)
+        })
         && paragraph.content_controls.is_empty()
         && paragraph.revisions.is_empty()
         && paragraph.equations.is_empty()
         && paragraph.rubies.is_empty()
+}
+
+/// Whether a raw paragraph child is a `w:proofErr`, the mark Word writes at
+/// each end of a word its proofing flagged.
+fn is_proofing_mark(raw: &[u8]) -> bool {
+    let mut reader = Reader::from_reader(raw);
+    matches!(
+        reader.read_event(),
+        Ok(Event::Empty(element) | Event::Start(element))
+            if element.local_name().as_ref() == b"proofErr"
+    )
 }
 
 struct DisplayReplacement<'a> {
@@ -6151,6 +6159,10 @@ fn rewrite_display(
         )?;
     }
     if let Some(font) = font {
+        // New run properties before the value's text moved it.
+        let first = *display_text_starts(xml, sdt_start)?
+            .first()
+            .ok_or_else(|| form_fault("content control has no typed text display location"))?;
         apply_display_font(xml, first, font)?;
     }
     drop_emptied_display_paragraphs(xml, sdt_start)
@@ -6337,9 +6349,9 @@ fn drop_emptied_display_paragraphs(xml: &mut Vec<u8>, sdt_start: usize) -> Resul
 }
 
 /// Whether a paragraph holds only runs of empty text, as
-/// `is_empty_paragraph` reads one in the typed model: attributes are no
-/// content, but a section break and a tracked paragraph mark or property
-/// change in its `w:pPr` are.
+/// `is_empty_paragraph` reads one in the typed model: attributes, proofing
+/// marks and last rendered page breaks are no content, but a section break
+/// and a tracked paragraph mark or property change in its `w:pPr` are.
 fn display_paragraph_is_empty(xml: &[u8], elems: &[XmlElem], paragraph: &XmlElem) -> Result<bool> {
     for child in direct_children(elems, paragraph.id) {
         if !child.word {
@@ -6369,11 +6381,14 @@ fn display_paragraph_is_empty(xml: &[u8], elems: &[XmlElem], paragraph: &XmlElem
             b"r" => {
                 for item in direct_children(elems, child.id) {
                     let empty_text = item.local == b"t" && element_text(xml, item)?.is_empty();
-                    if !item.word || !(item.local == b"rPr" || empty_text) {
+                    let no_content =
+                        matches!(item.local.as_slice(), b"rPr" | b"lastRenderedPageBreak");
+                    if !item.word || !(no_content || empty_text) {
                         return Ok(false);
                     }
                 }
             }
+            b"proofErr" => {}
             _ => return Ok(false),
         }
     }

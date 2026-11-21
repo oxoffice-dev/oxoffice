@@ -895,6 +895,41 @@ fn a_value_set_on_a_prompt_takes_the_run_properties_of_the_control() {
             way(by_form)
         );
     }
+    // A checkbox showing its placeholder: the glyph takes the control's run
+    // properties, then the font of its state.
+    let checkbox = r#"<w:p><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="agree"/><w:id w:val="43"/><w:showingPlcHdr/><w14:checkbox xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w14:checked w14:val="0"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>☐</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(checkbox);
+        if by_form {
+            let rule = FormFieldRule {
+                target: target("agree"),
+                required: false,
+                reset: FormResetValue::Value(FormFieldValue::Checked(false)),
+            };
+            doc.fill_form(
+                &[rule],
+                &[assign(target("agree"), FormFieldValue::Checked(true))],
+            )
+            .expect("the form fill ticks the box");
+        } else {
+            doc.set_content_control_value_by_tag("agree", "true")
+                .expect("the tag setter ticks the box");
+        }
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            run_formatting(&doc),
+            [("\u{2612}".to_owned(), None, Some(true), None)],
+            "{}",
+            way(by_form)
+        );
+        let content = saved_content(&doc, "word/document.xml", "agree");
+        assert_eq!(
+            attribute(&content, "w:rFonts", "w:ascii").as_deref(),
+            Some("MS Gothic"),
+            "{}: {content}",
+            way(by_form)
+        );
+    }
     // A value over an earlier value keeps that value's formatting.
     let earlier = r#"<w:p><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="name"/><w:id w:val="42"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:i/></w:rPr><w:t>Grace Hopper</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
     for by_form in [false, true] {
@@ -1838,6 +1873,21 @@ fn a_value_set_on_a_control_of_several_paragraphs_leaves_one_paragraph() {
 fn a_value_drops_the_emptied_paragraphs_whose_paragraphs_and_runs_carry_identifiers() {
     // Google Docs writes rsids on every paragraph and run.
     let body = r#"<w:sdt><w:sdtPr><w:tag w:val="address"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3"><w:r w:rsidR="00A1B2C3"><w:t>2 Canal Wharf</w:t></w:r></w:p><w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3"><w:r w:rsidR="00D4E5F6"><w:t>Leeds</w:t></w:r></w:p></w:sdtContent></w:sdt>"#;
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(body);
+        set_value(&mut doc, "address", "1 New Road", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["1 New Road"], "{}", way(by_form));
+        let content = saved_content(&doc, "word/document.xml", "address");
+        assert_eq!(paragraph_count(&content), 1, "{}: {content}", way(by_form));
+    }
+}
+
+#[test]
+fn a_value_drops_the_emptied_paragraphs_that_hold_only_proofing_and_rendering_marks() {
+    // Word marks a flagged word with w:proofErr around it, and where its
+    // last layout broke the page with w:lastRenderedPageBreak.
+    let body = r#"<w:sdt><w:sdtPr><w:tag w:val="address"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>2 Canal Wharf</w:t></w:r></w:p><w:p><w:proofErr w:type="spellStart"/><w:r><w:t>Leeds</w:t></w:r><w:proofErr w:type="spellEnd"/></w:p><w:p><w:r><w:lastRenderedPageBreak/><w:t>United Kingdom</w:t></w:r></w:p></w:sdtContent></w:sdt>"#;
     for by_form in [false, true] {
         let mut doc = doc_with_body(body);
         set_value(&mut doc, "address", "1 New Road", by_form);
