@@ -75,7 +75,7 @@ impl Document {
         {
             missing.push((
                 "FootnoteReference",
-                note_reference_style(StoryKind::Footnote),
+                note_reference_style(StoryKind::Footnote, &self.styles),
             ));
         }
         if missing.is_empty() {
