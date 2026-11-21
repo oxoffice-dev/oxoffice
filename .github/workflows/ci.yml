@@ -8,7 +8,7 @@ name: CI
 # both a base of main and a ready pull request, on opened, synchronize,
 # reopened or ready_for_review. A change of base to main (GitHub's move of a
 # stacked pull request when its base merges, or by hand) runs nothing: push
-# again, or close and reopen, before merging. workflow_dispatch runs
+# a new commit, or close and reopen, before merging. workflow_dispatch runs
 # everything. See specs/2026-11-21-lighter-ci-on-pull-requests.md.
 # Everything is built once, with the `ci` profile (no LTO, workspace crates
 # unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`

@@ -32,8 +32,9 @@ on the work. The repository is public, so this costs time, not money.
   body edit cancel a real run. Such a pull request can be merged cleanly with
   only its old Linux run, so the merge step itself checks the platforms:
   `gh pr checks` must list `Build and test` for macOS and Windows, otherwise
-  push again, or close and reopen, first (loop step 6 of
-  `docs/DEVELOPMENT.md`).
+  push a new commit, or close and reopen, first (loop step 6 of
+  `docs/DEVELOPMENT.md`). A documentation-only pull request runs no build
+  and has nothing to check.
 - `workflow_dispatch` runs everything, like `main`.
 - `main` is unchanged: every job on the three platforms, every scaling call.
 

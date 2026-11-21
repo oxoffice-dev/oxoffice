@@ -18,9 +18,11 @@ How work lands in oxoffice. Short on purpose.
 5. **Independent review**, posted on the pull request, then answer every
    finding (see [Independent review](#independent-review)).
 6. **CI green on the three platforms**, squash merge: `gh pr checks` lists
-   `Build and test` for Linux, macOS and Windows (a pull request that was a
-   draft or stacked until now may only have the Linux run; push again, or
-   close and reopen it, first). The squash commit takes the title, so
+   `Build and test (ubuntu-latest)`, `(macos-latest)` and
+   `(windows-latest)`. A pull request whose base was changed to `main` may
+   only have its Linux run: push a new commit, or close and reopen it,
+   first. A documentation-only pull request runs no build, so there is
+   nothing to check. The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
@@ -141,8 +143,8 @@ entry and closes the issue.
   three platforms.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
   pull request when its base merges or the author changes it by hand. Before
-  merging, check the three platforms ran (loop step 6); if not, push again,
-  or close and reopen the pull request.
+  merging, check the three platforms ran (loop step 6); if not, push a new
+  commit, or close and reopen the pull request.
 - The `scaling` job builds a second wheel with the `scaling` profile, beside
   the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
   pull requests into `main`, every call on the three platforms on `main`.
