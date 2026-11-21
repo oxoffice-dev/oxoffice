@@ -82,13 +82,18 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # Clippy and the build job compile with debug assertions, and the
       # scaling job builds only the wheel, only for ready pull requests into
-      # main. This checks every crate, test and feature without them, on
-      # every pull request, drafts and stacked ones included: an item under
-      # #[cfg(debug_assertions)] used without that cfg fails here. Errors only
-      # for now (specs/2026-11-21-check-without-debug-assertions.md).
+      # main. This checks every crate and target on Linux, all features on,
+      # without them, on every pull request, drafts and stacked ones
+      # included: an item under #[cfg(debug_assertions)] used without that
+      # cfg fails here. Errors only for now
+      # (specs/2026-11-21-check-without-debug-assertions.md). It and
+      # cargo-deny run even when an earlier step failed, so one push shows
+      # every failure.
       - name: Check without debug assertions
+        if: ${{ !cancelled() }}
         run: cargo check --locked --workspace --all-targets --all-features --profile scaling
       - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
+        if: ${{ !cancelled() }}
         with:
           command: check advisories bans licenses sources
 
