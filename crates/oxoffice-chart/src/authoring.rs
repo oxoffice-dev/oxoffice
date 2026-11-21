@@ -224,10 +224,7 @@ pub fn authored_chart_parts(
     };
     let mut plot = plot.map_err(invalid_authoring_value)?;
     if let Plot::Pie { data_labels, .. } | Plot::Doughnut { data_labels, .. } = &mut plot {
-        *data_labels = Some(CT_DLbls {
-            show_percent: true,
-            ..CT_DLbls::default()
-        });
+        *data_labels = Some(CT_DLbls::percentage_only());
     }
     let plot_area = CT_PlotArea::new(vec![plot], axes).map_err(invalid_authoring_value)?;
     let chart_shell = format!(
