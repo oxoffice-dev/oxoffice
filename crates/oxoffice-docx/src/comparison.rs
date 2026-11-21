@@ -5674,9 +5674,9 @@ fn generated_heading_bookmark(name: &str) -> bool {
 /// edited input holds a fresh id. When a reference cannot follow, because a
 /// field splits the name across runs or another story names it, or when the
 /// comparison would pair a renamed heading otherwise, the names stay as they
-/// are and only the ids follow, but a body heading's `_Toc` name the pairing
-/// did not keep, or one a paired heading claims, does not take the
-/// original's id for it, since the original gives that name to another
+/// are and only the ids follow, but a body heading's `_Toc` name, or one a
+/// paired heading claims, does not take the original's id for it unless a
+/// pairing kept it, since the original may give that name to another
 /// heading: it keeps its own id, or a fresh one where the original uses
 /// that. Links to another file are left alone.
 fn reconcile_body_bookmarks(
