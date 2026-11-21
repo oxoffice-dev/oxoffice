@@ -2293,7 +2293,8 @@ fn emit_spine_fragment(
             continue;
         }
         let anchor = heading_anchors.get(&index).map(String::as_str);
-        let fragment = render_source_block(input, &content[index], media, anchor, false)?;
+        let fragment =
+            render_source_block(input, source_styles, &content[index], media, anchor, false)?;
         push_bounded_xhtml(&mut output, &fragment)?;
         index += 1;
     }
@@ -2389,6 +2390,7 @@ fn emit_list_level(
         properties.num_ilvl = Some(item.level);
         let fragment = render_source_block(
             input,
+            source_styles,
             &BodyContent::Paragraph(projected_paragraph),
             media,
             if preserve_heading { anchor } else { None },
@@ -2417,6 +2419,7 @@ fn emit_list_level(
 
 fn render_source_block(
     input: &mut oxoffice_docx_html::HtmlInput,
+    source_styles: &oxoffice_docx_oxml::styles::CT_Styles,
     content: &BodyContent,
     media: &[MediaItem],
     anchor: Option<&str>,
@@ -2426,7 +2429,7 @@ fn render_source_block(
     let mut content = render_body_projection(content)
         .ok_or_else(|| epub_error("unsupported source block reached EPUB projection"))?;
     if let BodyContent::Paragraph(paragraph) = &mut content
-        && crate::document::paragraph_heading_level(paragraph, &input.styles)
+        && crate::document::paragraph_heading_level(paragraph, source_styles)
             .is_some_and(|level| level > 6)
     {
         paragraph.properties.get_or_insert_default().style_id = Some("Heading6".to_owned());

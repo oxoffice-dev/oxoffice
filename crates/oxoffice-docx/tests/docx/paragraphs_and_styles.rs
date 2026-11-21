@@ -556,6 +556,9 @@ fn a_heading_style_is_found_by_its_built_in_name_in_any_case_before_its_id() {
         .unwrap();
     doc.set_style(StyleBuilder::paragraph("Heading8", "heading 3"))
         .unwrap();
+    // Without a heading name, the id decides.
+    doc.set_style(StyleBuilder::paragraph("Heading2", "Section title"))
+        .unwrap();
     doc.add_paragraph("by a capitalised name").style("Titre1");
     doc.add_paragraph("by the name over the id")
         .style("Heading8");
@@ -611,6 +614,53 @@ fn epub_navigation_lists_the_headings_of_a_word_file_saved_in_french() {
             "the navigation lists {heading:?}:\n{nav}"
         );
     }
+}
+
+/// The names of the entries of a ZIP archive, from its central directory.
+fn zip_names(archive: &[u8]) -> Vec<String> {
+    let u16_at = |at: usize| u16::from_le_bytes([archive[at], archive[at + 1]]) as usize;
+    let u32_at = |at: usize| u32::from_le_bytes(archive[at..at + 4].try_into().unwrap()) as usize;
+    let Some(end) = (0..archive.len().saturating_sub(21))
+        .rev()
+        .find(|&at| archive[at..at + 4] == [0x50, 0x4b, 0x05, 0x06])
+    else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    let mut at = u32_at(end + 16);
+    for _ in 0..u16_at(end + 10) {
+        let (name_len, extra_len, comment_len) =
+            (u16_at(at + 28), u16_at(at + 30), u16_at(at + 32));
+        names.push(String::from_utf8_lossy(&archive[at + 46..at + 46 + name_len]).into_owned());
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    names
+}
+
+#[test]
+fn epub_draws_a_localised_heading_7_as_a_level_6_heading() {
+    // Word's French "Titre7" is the built-in "heading 7": EPUB stops at h6.
+    let mut doc = corpus_doc("word/report.docx");
+    assert_eq!(
+        doc.style("Titre7")
+            .and_then(|style| style.name().map(str::to_owned))
+            .as_deref(),
+        Some("heading 7")
+    );
+    doc.add_paragraph("Deep heading").style("Titre7");
+    let epub = doc.to_epub_bytes().unwrap();
+    let chapters: String = zip_names(&epub.bytes)
+        .iter()
+        .filter(|name| name.ends_with(".xhtml") && !name.ends_with("nav.xhtml"))
+        .filter_map(|name| zip_entry(&epub.bytes, name))
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+        .collect();
+    let at = chapters
+        .find("Deep heading")
+        .expect("the paragraph is exported");
+    let open = chapters[..at].rfind('<').unwrap();
+    let tag = &chapters[open..at];
+    assert!(tag.starts_with("<h6"), "a level-6 heading, not {tag:?}");
 }
 
 #[test]

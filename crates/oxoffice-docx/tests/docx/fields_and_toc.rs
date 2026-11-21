@@ -1129,17 +1129,14 @@ fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {
         [None, None, None, Some(360), Some(360), None],
         "levels"
     );
-    let anchors: Vec<_> = link_anchors(&doc)
+    // Each entry links to the bookmark around its own heading.
+    let expected: Vec<(String, String)> = bookmark_list(&doc)
         .into_iter()
-        .map(|(_, anchor)| anchor)
+        .filter(|(name, _)| name.starts_with("_Toc"))
+        .map(|(name, heading)| (heading, name))
         .collect();
-    assert_eq!(anchors.len(), 6, "one link per entry");
-    for anchor in &anchors {
-        assert!(
-            bookmark_list(&doc).iter().any(|(name, _)| name == anchor),
-            "the entry links to a bookmark of its heading: {anchor}"
-        );
-    }
+    assert_eq!(expected.len(), 6, "one bookmark per heading");
+    assert_eq!(link_anchors(&doc), expected);
 }
 
 #[test]
