@@ -42,6 +42,120 @@ pub struct CoreProperties {
 }
 
 impl CoreProperties {
+    /// Each field with the name messages give it. The struct is destructured
+    /// without `..`, so a field added later has to be named here.
+    pub fn named_fields(&self) -> [(&'static str, Option<&str>); 15] {
+        let Self {
+            title,
+            creator,
+            subject,
+            description,
+            keywords,
+            last_modified_by,
+            created,
+            modified,
+            category,
+            content_status,
+            identifier,
+            language,
+            last_printed,
+            revision,
+            version,
+        } = self;
+        [
+            ("title", title.as_deref()),
+            ("creator", creator.as_deref()),
+            ("subject", subject.as_deref()),
+            ("description", description.as_deref()),
+            ("keywords", keywords.as_deref()),
+            ("last modified by", last_modified_by.as_deref()),
+            ("created", created.as_deref()),
+            ("modified", modified.as_deref()),
+            ("category", category.as_deref()),
+            ("content status", content_status.as_deref()),
+            ("identifier", identifier.as_deref()),
+            ("language", language.as_deref()),
+            ("last printed", last_printed.as_deref()),
+            ("revision", revision.as_deref()),
+            ("version", version.as_deref()),
+        ]
+    }
+
+    /// Each field, mutable, with the name messages give it.
+    pub fn named_fields_mut(&mut self) -> [(&'static str, &mut Option<String>); 15] {
+        let Self {
+            title,
+            creator,
+            subject,
+            description,
+            keywords,
+            last_modified_by,
+            created,
+            modified,
+            category,
+            content_status,
+            identifier,
+            language,
+            last_printed,
+            revision,
+            version,
+        } = self;
+        [
+            ("title", title),
+            ("creator", creator),
+            ("subject", subject),
+            ("description", description),
+            ("keywords", keywords),
+            ("last modified by", last_modified_by),
+            ("created", created),
+            ("modified", modified),
+            ("category", category),
+            ("content status", content_status),
+            ("identifier", identifier),
+            ("language", language),
+            ("last printed", last_printed),
+            ("revision", revision),
+            ("version", version),
+        ]
+    }
+
+    /// Drops the characters XML 1.0 cannot carry from each field equal to the
+    /// one in `held`, the properties a file holds (another producer wrote
+    /// them as character references), for a writer that writes every field
+    /// again: no XML reader could read them back.
+    pub fn drop_held_non_xml_characters(&mut self, held: Option<&Self>) {
+        let Some(held) = held.map(Self::named_fields) else {
+            return;
+        };
+        for ((_, value), (_, held)) in self.named_fields_mut().into_iter().zip(held) {
+            if let Some(text) = value.as_mut()
+                && held == Some(text.as_str())
+            {
+                *text = crate::xml::strip_non_xml_characters(text).into_owned();
+            }
+        }
+    }
+
+    /// Refuses a field holding a character XML 1.0 cannot carry, naming it,
+    /// unless it is equal to the one in `kept`: a writer that keeps the bytes
+    /// of an unchanged field writes it as the file had it.
+    pub fn reject_new_non_xml_characters(&self, kept: Option<&Self>) -> Result<()> {
+        let kept = kept.map(Self::named_fields);
+        for (index, (name, value)) in self.named_fields().into_iter().enumerate() {
+            let Some(value) = value else {
+                continue;
+            };
+            if kept
+                .as_ref()
+                .is_some_and(|fields| fields[index].1 == Some(value))
+            {
+                continue;
+            }
+            crate::xml::reject_non_xml_characters(&format!("core property {name}"), value)?;
+        }
+        Ok(())
+    }
+
     /// Parse `docProps/core.xml` content.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
         let mut reader = Reader::from_reader(xml);
