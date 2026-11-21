@@ -23,6 +23,7 @@ from oxoffice.pptx.util import Inches as PInches, Length as PLength, Pt as PPt
 TWIPS, HALF_POINTS, CENTIPOINTS, EMU = 635, 6350, 127, 1
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 PNG = noise_png(8, 0)
+NATIVE_PICTURE_SIDE = 8 * 12700  # 8 pixels at 72 dpi, the size a picture without one takes
 MOVIE = b"\x00\x00\x00\x18ftypmp42" + bytes(64)
 
 
@@ -32,7 +33,8 @@ class Arg:
     argument, get() reads back the stored length in EMU, or None when unset; get is None when nothing reads it back.
     `none` says what None does: "clears", "refused" (TypeError), "omits" (the argument keeps its default) or "zero".
     `zero` is False where the property itself refuses zero. `valid` is a value the property stores. `floats` is True
-    where a float means something else (a line multiple)."""
+    where a float means something else (a line multiple). `omitted` is what an omitted argument reads back, where
+    that is not the value read before."""
 
     target: Callable
     unit: int
@@ -41,13 +43,17 @@ class Arg:
     valid: object = None
     floats: bool = False
     package: str = "docx"
+    omitted: object = None
 
 
 ARGS = {}
 
 
 def arg(name, target, unit, none, **options):
-    ARGS[name] = Arg(target, unit, none, **options)
+    spec = Arg(target, unit, none, **options)
+    name = f"pptx {name}" if spec.package == "pptx" else name
+    assert name not in ARGS, name
+    ARGS[name] = spec
 
 
 def emu(value):
@@ -270,8 +276,9 @@ def list_level(keyword):
     return target
 
 
-for keyword in ("left_indent", "hanging_indent"):
-    arg(f"ListLevel({keyword})", list_level(keyword), TWIPS, "omits")
+# An omitted indent is the level's default: half an inch, with a quarter-inch hanging indent.
+for keyword, default in (("left_indent", 720 * TWIPS), ("hanging_indent", 360 * TWIPS)):
+    arg(f"ListLevel({keyword})", list_level(keyword), TWIPS, "omits", omitted=default)
 
 
 def picture(owner, keyword):
@@ -293,7 +300,8 @@ def picture(owner, keyword):
 
 for owner in ("Document", "Run", "Cell"):
     for keyword in ("width", "height"):
-        arg(f"{owner}.add_picture({keyword})", picture(owner, keyword), EMU, "omits", zero=False)
+        arg(f"{owner}.add_picture({keyword})", picture(owner, keyword), EMU, "omits", zero=False,
+            omitted=NATIVE_PICTURE_SIDE)
 
 
 def picture_size(method, keyword):
@@ -449,7 +457,8 @@ for method, (names, _) in ADDERS.items():
         size = position >= 2 and method != "add_connector"
         none = "omits" if method == "add_picture" and size else "refused"
         arg(f"ShapeCollection.{method}({name})", adder(method, position), EMU, none, package="pptx",
-            zero=not (size and method in ("add_table", "add_chart", "add_movie")))
+            zero=not (size and method in ("add_table", "add_chart", "add_movie")),
+            omitted=NATIVE_PICTURE_SIDE if none == "omits" else None)
 
 
 def slide_size(attribute):
@@ -533,7 +542,6 @@ def pptx_font(attribute):
 
 arg("Font.size", pptx_font("size"), CENTIPOINTS, "clears", zero=False, package="pptx")
 arg("Font.spacing", pptx_font("spacing"), CENTIPOINTS, "clears", package="pptx")
-ARGS = {(f"pptx {name}" if spec.package == "pptx" else name): spec for name, spec in ARGS.items()}
 
 
 # --- The rule ---------------------------------------------------------------------------------------------------------
@@ -585,13 +593,21 @@ def test_a_length_is_stored_as_given(name):
         assert read() == stored(valid(spec), spec.unit)
 
 
-@pytest.mark.parametrize("name", rows(lambda spec: spec.unit > EMU))
-def test_a_bare_integer_that_rounds_to_zero_is_refused(name):
+def rounding_rows():
+    """12, and the largest bare integers that round to zero, one unit less than a unit on each side: a property tagged
+    with a smaller unit than the one it is stored in takes them."""
+    return [pytest.param(name, value, id=f"{name}-{value}") for name, spec in ARGS.items() if spec.unit > EMU
+            for value in (12, spec.unit - 1, -(spec.unit - 1))]
+
+
+@pytest.mark.parametrize(("name", "value"), rounding_rows())
+def test_a_bare_integer_that_rounds_to_zero_is_refused(name, value):
     spec = ARGS[name]
     apply, read = spec.target()
     before = read() if read else None
-    with pytest.raises(ValueError, match=f"^{label(name)}: bare integer 12 EMU would round to zero"):
-        apply(12)
+    unit = {TWIPS: "twips", HALF_POINTS: "half-points", CENTIPOINTS: "hundredths of a point"}[spec.unit]
+    with pytest.raises(ValueError, match=f"^{label(name)}: bare integer {value} EMU would round to zero {unit};"):
+        apply(value)
     if read:
         assert read() == before
 
@@ -640,11 +656,38 @@ def test_none(name):
         return
     if spec.none in ("clears", "zero"):
         apply(valid(spec))
+    before = read() if read else None
     apply(None)
     if spec.none == "clears":
         assert read() is None
     elif spec.none == "zero":
         assert read() == 0
+    elif read:
+        assert read() == (before if spec.omitted is None else spec.omitted)
+
+
+class Index:
+    """An int-like object that is not an int, as a numpy integer is: it has only `__index__`."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+
+@pytest.mark.parametrize("name", ["ParagraphFormat.left_indent", "pptx Shape.left"])
+def test_an_int_like_object_is_a_bare_integer(name):
+    spec = ARGS[name]
+    apply, read = spec.target()
+    apply(Index(int(Pt(12))))
+    assert read() == int(Pt(12))
+    if spec.unit > EMU:
+        with pytest.raises(ValueError, match=f"^{label(name)}: bare integer 12 EMU would round to zero"):
+            apply(Index(12))
+    else:
+        apply(Index(12))
+        assert read() == 12
 
 
 def test_a_document_is_unchanged_by_a_refused_length():

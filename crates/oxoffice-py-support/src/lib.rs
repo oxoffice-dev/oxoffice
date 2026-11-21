@@ -704,9 +704,10 @@ pub struct LengthClasses {
 /// Read one optional length argument the way every length argument is read.
 ///
 /// `None`, or an omitted argument, gives `None`. A `Length` is taken as given,
-/// even when it rounds to zero in `unit`. A bare `int` is EMU: zero is
-/// accepted, and a nonzero one that would round to zero in `unit` is refused
-/// with `ValueError`. `bool`, `float` and every other type are `TypeError`.
+/// even when it rounds to zero in `unit`. A bare `int`, or an int-like object
+/// with `__index__`, is EMU: zero is accepted, and a nonzero one that would
+/// round to zero in `unit` is refused with `ValueError`. `bool`, `float` and
+/// every other type are `TypeError`.
 pub fn length_argument(
     value: Option<&Bound<'_, PyAny>>,
     classes: LengthClasses,
@@ -743,12 +744,27 @@ fn checked_length(
     unit: LengthUnit,
     accepted: &str,
 ) -> PyResult<i64> {
+    let refused = || PyTypeError::new_err(format!("{name} requires {accepted}"));
     if value.is_instance_of::<pyo3::types::PyBool>()
-        || !value.is_instance_of::<pyo3::types::PyInt>()
+        || value.is_instance_of::<pyo3::types::PyFloat>()
     {
-        return Err(PyTypeError::new_err(format!("{name} requires {accepted}")));
+        return Err(refused());
     }
-    let emu = value
+    // An int-like object, such as a numpy integer, is a bare int through
+    // `__index__`, as the typed integer arguments read it before.
+    let integer = if value.is_instance_of::<pyo3::types::PyInt>() {
+        value.clone()
+    } else if value.hasattr("__index__")? {
+        value
+            .py()
+            .import("operator")?
+            .getattr("index")?
+            .call1((value,))
+            .map_err(|_| refused())?
+    } else {
+        return Err(refused());
+    };
+    let emu = integer
         .extract::<i64>()
         .map_err(|_| PyValueError::new_err(format!("{name} does not fit 64-bit EMU")))?;
     if emu != 0
