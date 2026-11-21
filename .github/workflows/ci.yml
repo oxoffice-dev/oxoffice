@@ -36,14 +36,14 @@ on:
   schedule:
     - cron: "23 2 * * *"
 
-# A pull request keeps only its latest run. Pushes to main share one group
-# that never cancels the run in progress: one run of main runs, one waits,
-# and a newer push replaces the waiting one, so a burst of merges builds the
-# first and the last. The nightly run and a dispatch are keyed by their event
-# and commit, so they never queue behind or cancel a push run, or each other.
+# A pull request keeps only its latest run, and so does main: pushes to main
+# share one group, and a newer push cancels the run in progress and starts at
+# once, so main always runs its latest commit. The nightly run and a dispatch
+# are keyed by their event and commit, so they never cancel a push run, are
+# never cancelled by one, and never cancel each other.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 permissions:
   contents: read

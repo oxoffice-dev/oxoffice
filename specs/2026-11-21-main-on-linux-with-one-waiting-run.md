@@ -56,8 +56,9 @@ What this gives up, and why it is enough:
   skip the build); such a summary job is planned with the merge queue,
   postponed.
 - A re-run of an older run of `main` keeps its `push` event and joins
-  `ci-main`, replacing the waiting run of a newer commit: re-run only the
-  newest, and dispatch on a branch for an older commit.
+  `ci-main`, replacing the waiting run of a newer commit (since the
+  amendment below, cancelling its running one): re-run only the newest, and
+  dispatch on a branch for an older commit.
 - rust-cache entries of `main` for macOS and Windows, which pull requests
   restore, are refreshed by the nightly run instead of each push.
 
@@ -76,6 +77,23 @@ nightly run, the larger runner limits and reviews before push.
   [A test suite from scratch](2026-11-20-test-suite-from-scratch.md) and
   [CI and release from scratch](2026-11-20-ci-and-release.md), where `main`
   ran every job on the three platforms.
+
+## Amendment 2026-11-21: the latest commit first
+
+By late morning the larger runner limits applied and the queue was empty,
+but `main` had a verdict 30 to 60 minutes after a merge: a run of `main`
+took about 27 to 30 minutes (Scaling 16 to 29, skill examples about 18 after
+the build), the next push waited behind it, and 26 of the last 30 runs of
+`main` were cancelled while they waited.
+
+The maintainer decided: the latest commit takes priority. Pushes to `main`
+keep the group `ci-main`, now with `cancel-in-progress`: a new merge cancels
+the run in progress and starts at once, so `main` always runs its latest
+commit and its lint, WebAssembly and Linux build answer about 10 minutes
+after it. In a burst of merges only the last commit gets a verdict, and the
+scaling and skill-examples jobs finish only when no merge comes for about
+30 minutes; the nightly run replays everything on three platforms. A re-run
+of an older run of `main` now cancels the run of a newer commit.
 
 ## Links
 
