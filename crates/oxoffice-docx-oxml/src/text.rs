@@ -50,9 +50,7 @@ pub(crate) use bindings::{
     retained_owner_work, retained_raw_roots, retained_root_plan, retained_source_envelope,
     root_attribute_value_prefixes, root_binding_scope, write_raw_with_word_override_in,
 };
-pub use bindings::{
-    declare_w14_on_part_root, drop_w14_paragraph_identities, is_root_attribute_record,
-};
+pub use bindings::{declare_w14_on_part_root, is_root_attribute_record};
 use emission::{FieldXmlRecord, field_source_prefix};
 pub(crate) use owner_check::{discard_checked_paragraph, validate_word_owner_fragment};
 pub use run::{
@@ -603,7 +601,6 @@ pub(crate) struct WordOperationWork {
     template_current_inputs: HashSet<usize>,
     retained_inputs: HashSet<usize>,
     stored_inputs: HashSet<usize>,
-    formatting_inputs: HashSet<usize>,
     original_current_inputs: HashSet<OriginalFieldKey>,
     original_source_ranges: std::collections::BTreeMap<(usize, usize), usize>,
     pub(crate) field_origins: Arc<std::sync::Mutex<FieldOriginRegistry>>,

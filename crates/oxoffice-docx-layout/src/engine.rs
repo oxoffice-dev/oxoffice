@@ -134,7 +134,6 @@ use note_cache::{
     body_note_references, content_note_references, paragraph_note_references,
     stored_note_cache_runs,
 };
-pub use paragraph::layout_paragraph;
 pub(crate) use paragraph::{
     layout_paragraph_with_grid, layout_paragraph_with_source_and_direction,
     layout_paragraph_with_source_in_table, source_fields,

@@ -189,30 +189,6 @@ pub(crate) fn source_fields(para: &CT_P) -> Vec<&oxoffice_docx_oxml::text::Field
     fields
 }
 
-/// Lay out a single paragraph into a ParagraphBlock.
-pub fn layout_paragraph(
-    para: &CT_P,
-    available_width: f64,
-    styles: &CT_Styles,
-    input: &LayoutInput,
-    media: &MediaRegistry,
-    fm: &mut FontManager,
-    num_state: &mut NumberingState,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<ParagraphBlock> {
-    layout_paragraph_with_source(
-        para,
-        available_width,
-        styles,
-        input,
-        media,
-        fm,
-        num_state,
-        diagnostics,
-        None,
-    )
-}
-
 /// Lay out one paragraph on a section character grid.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn layout_paragraph_with_grid(
@@ -242,39 +218,6 @@ pub(crate) fn layout_paragraph_with_grid(
         None,
         None,
         doc_grid,
-        false,
-        None,
-    )
-    .map(|(block, _)| block)
-}
-
-pub(crate) fn layout_paragraph_with_source(
-    para: &CT_P,
-    available_width: f64,
-    styles: &CT_Styles,
-    input: &LayoutInput,
-    media: &MediaRegistry,
-    fm: &mut FontManager,
-    num_state: &mut NumberingState,
-    diagnostics: &mut Vec<Diagnostic>,
-    source_node: Option<SourceNodeId>,
-) -> Result<ParagraphBlock> {
-    layout_paragraph_with_source_and_table(
-        para,
-        available_width,
-        styles,
-        input,
-        media,
-        fm,
-        num_state,
-        diagnostics,
-        source_node,
-        source_node,
-        None,
-        None,
-        None,
-        None,
-        None,
         false,
         None,
     )
