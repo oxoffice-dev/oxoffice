@@ -5,7 +5,9 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, push_attributes};
+use oxoffice_core::raw_xml::{
+    capture_element, capture_empty_element, capture_event, push_attributes,
+};
 use oxoffice_drawing::color::ColorChoice;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::text::CT_TextBody;
@@ -987,7 +989,7 @@ fn root_and_children_impl(
                             ));
                         }
                         Event::Eof => return Err(missing("closing diagram root")),
-                        event => children.push(capture_direct_event(event)?),
+                        event => children.push(capture_event(event)?),
                     }
                 }
             }
@@ -1029,12 +1031,6 @@ fn ensure_document_end(reader: &mut Reader<&[u8]>, buffer: &mut Vec<u8>) -> Resu
             }
         }
     }
-}
-
-fn capture_direct_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(event.into_owned())?;
-    Ok(writer.into_inner())
 }
 
 fn first_local_name(xml: &[u8]) -> Result<Option<Vec<u8>>> {
