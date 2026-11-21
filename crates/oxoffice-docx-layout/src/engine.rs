@@ -4,9 +4,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
-#[cfg(test)]
-use std::cell::Cell;
-
 use oxoffice_docx_oxml::borders::{CT_PBdr, CT_TabStop};
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{
@@ -3077,37 +3074,19 @@ pub struct Engine {
     paragraph_cache_context: Option<ReusableEngineContext>,
     paragraph_cache: VecDeque<ParagraphCacheEntry>,
     paragraph_cache_bytes: usize,
-    paragraph_cache_hits: usize,
-    paragraph_cache_builds: usize,
     pending_paragraph_cache: Option<VecDeque<ParagraphCacheEntry>>,
     pending_paragraph_cache_bytes: usize,
-    #[cfg(test)]
-    pending_paragraph_cache_peak_entries: usize,
-    #[cfg(test)]
-    pending_paragraph_cache_peak_bytes: usize,
     paragraph_cache_reads_enabled: bool,
     paragraph_cache_notes_match: bool,
     retained_context_matches_full: bool,
     table_cache: VecDeque<TableCacheEntry>,
     table_cache_bytes: usize,
-    table_cache_hits: usize,
-    table_cache_builds: usize,
     pending_table_cache: Option<VecDeque<TableCacheEntry>>,
     pending_table_cache_bytes: usize,
-    #[cfg(test)]
-    pending_table_cache_peak_entries: usize,
-    #[cfg(test)]
-    pending_table_cache_peak_bytes: usize,
     header_footer_cache: VecDeque<HeaderFooterCacheEntry>,
     header_footer_cache_bytes: usize,
-    header_footer_cache_hits: usize,
-    header_footer_cache_builds: usize,
     pending_header_footer_cache: Option<VecDeque<HeaderFooterCacheEntry>>,
     pending_header_footer_cache_bytes: usize,
-    #[cfg(test)]
-    pending_header_footer_cache_peak_entries: usize,
-    #[cfg(test)]
-    pending_header_footer_cache_peak_bytes: usize,
     header_footer_cache_reads_enabled: bool,
     restart_cache: Option<RestartCache>,
     numbering_by_source: HashMap<SourceNodeId, ResolvedNumbering>,
@@ -3121,22 +3100,6 @@ pub struct Engine {
     last_field_source_xml: HashMap<FieldSource, Vec<u8>>,
     last_text_box_owner_indices: HashMap<WordStory, usize>,
     last_picture_draw_owners: PictureDrawOwners,
-    #[cfg(test)]
-    owned_context_builds: usize,
-    #[cfg(test)]
-    last_restart_candidate_bytes: usize,
-    #[cfg(test)]
-    last_rebuilt_page_range: Option<std::ops::Range<usize>>,
-    #[cfg(test)]
-    last_shared_block_counts: (usize, usize),
-    #[cfg(test)]
-    page_layout_invocations: usize,
-    #[cfg(test)]
-    last_restart_identity_computations: usize,
-    #[cfg(test)]
-    last_restart_identity_memo_peak_slots: usize,
-    #[cfg(test)]
-    last_restart_identity_memo_peak_bytes: usize,
 }
 
 #[derive(Clone, PartialEq)]
@@ -3180,33 +3143,11 @@ struct ReusableEngineContext {
     background_xml: Option<Vec<u8>>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static RETAINED_CONTEXT_FONT_BYTES_COMPARED: Cell<usize> = const { Cell::new(0) };
-    static RESTART_BODY_IDENTITY_COMPUTATIONS: Cell<usize> = const { Cell::new(0) };
-}
-
 fn retained_context_fonts_match(
     retained: &[oxoffice_layout::FontFile],
     input: &[oxoffice_layout::FontFile],
 ) -> bool {
-    #[cfg(test)]
-    RETAINED_CONTEXT_FONT_BYTES_COMPARED.set(
-        RETAINED_CONTEXT_FONT_BYTES_COMPARED
-            .get()
-            .saturating_add(retained.iter().map(|font| font.data.len()).sum::<usize>()),
-    );
     retained == input
-}
-
-#[cfg(test)]
-fn reset_restart_body_identity_computations() {
-    RESTART_BODY_IDENTITY_COMPUTATIONS.set(0);
-}
-
-#[cfg(test)]
-fn restart_body_identity_computations() -> usize {
-    RESTART_BODY_IDENTITY_COMPUTATIONS.get()
 }
 
 impl ReusableEngineContext {
@@ -3583,14 +3524,6 @@ enum RestartBodyIdentitySlot {
 
 struct RestartBodyIdentityMemo {
     slots: Vec<RestartBodyIdentitySlot>,
-    #[cfg(test)]
-    computations: usize,
-    #[cfg(test)]
-    populated_slots: usize,
-    #[cfg(test)]
-    retained_bytes: usize,
-    #[cfg(test)]
-    peak_retained_bytes: usize,
 }
 
 impl RestartBodyIdentityMemo {
@@ -3599,14 +3532,6 @@ impl RestartBodyIdentityMemo {
             slots: std::iter::repeat_with(|| RestartBodyIdentitySlot::NotComputed)
                 .take(len)
                 .collect(),
-            #[cfg(test)]
-            computations: 0,
-            #[cfg(test)]
-            populated_slots: 0,
-            #[cfg(test)]
-            retained_bytes: 0,
-            #[cfg(test)]
-            peak_retained_bytes: 0,
         }
     }
 
@@ -3618,20 +3543,8 @@ impl RestartBodyIdentityMemo {
             return;
         }
         let identity = restart_body_identity(content);
-        #[cfg(test)]
-        {
-            self.computations = self.computations.saturating_add(1);
-            self.populated_slots = self.populated_slots.saturating_add(1);
-        }
         let replacement = match identity {
-            Some(identity) => {
-                #[cfg(test)]
-                {
-                    self.retained_bytes = self.retained_bytes.saturating_add(identity.capacity());
-                    self.peak_retained_bytes = self.peak_retained_bytes.max(self.retained_bytes);
-                }
-                RestartBodyIdentitySlot::Computed(identity)
-            }
+            Some(identity) => RestartBodyIdentitySlot::Computed(identity),
             None => RestartBodyIdentitySlot::Unserializable,
         };
         if let Some(slot) = self.slots.get_mut(index) {
@@ -3652,18 +3565,11 @@ impl RestartBodyIdentityMemo {
         let RestartBodyIdentitySlot::Computed(identity) = self.slots.get_mut(index)? else {
             return None;
         };
-        #[cfg(test)]
-        {
-            self.retained_bytes = self.retained_bytes.saturating_sub(identity.capacity());
-        }
         Some(std::mem::take(identity))
     }
 }
 
 fn restart_body_identity(content: &BodyContent) -> Option<Vec<u8>> {
-    #[cfg(test)]
-    RESTART_BODY_IDENTITY_COMPUTATIONS
-        .set(RESTART_BODY_IDENTITY_COMPUTATIONS.get().saturating_add(1));
     if !matches!(content, BodyContent::Paragraph(_) | BodyContent::Table(_)) {
         return None;
     }
@@ -3673,12 +3579,6 @@ fn restart_body_identity(content: &BodyContent) -> Option<Vec<u8>> {
     let mut identity = document.to_xml().ok()?;
     identity.shrink_to_fit();
     Some(identity)
-}
-
-#[cfg(test)]
-thread_local! {
-    static ORDERED_STORED_PREPARATION_CALLS: Cell<usize> = const { Cell::new(0) };
-    static ORDERED_STORED_OWNED_PROJECTIONS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// One stored run from frozen operation-local prepared result storage.
@@ -3732,25 +3632,9 @@ fn stored_note_cache_runs(
     } else {
         None
     };
-    #[cfg(test)]
-    ORDERED_STORED_PREPARATION_CALLS.set(
-        ORDERED_STORED_PREPARATION_CALLS
-            .get()
-            .checked_add(1)
-            .expect("stored preparation call overflow"),
-    );
     let prepared = field.cached_result_owner_projection().map_err(|error| {
         LayoutError::Layout(format!("stored field preparation failed: {error}"))
     })?;
-    #[cfg(test)]
-    if prepared.is_some() {
-        ORDERED_STORED_OWNED_PROJECTIONS.set(
-            ORDERED_STORED_OWNED_PROJECTIONS
-                .get()
-                .checked_add(1)
-                .expect("stored projection call overflow"),
-        );
-    }
     let runs = if let Some(paragraph) = &prepared {
         project_paragraph_runs(paragraph, view)
     } else if let Some(runs) = field.cached_result_runs() {
@@ -4086,37 +3970,19 @@ impl Engine {
             paragraph_cache_context: None,
             paragraph_cache: VecDeque::new(),
             paragraph_cache_bytes: 0,
-            paragraph_cache_hits: 0,
-            paragraph_cache_builds: 0,
             pending_paragraph_cache: None,
             pending_paragraph_cache_bytes: 0,
-            #[cfg(test)]
-            pending_paragraph_cache_peak_entries: 0,
-            #[cfg(test)]
-            pending_paragraph_cache_peak_bytes: 0,
             paragraph_cache_reads_enabled: false,
             paragraph_cache_notes_match: false,
             retained_context_matches_full: false,
             table_cache: VecDeque::new(),
             table_cache_bytes: 0,
-            table_cache_hits: 0,
-            table_cache_builds: 0,
             pending_table_cache: None,
             pending_table_cache_bytes: 0,
-            #[cfg(test)]
-            pending_table_cache_peak_entries: 0,
-            #[cfg(test)]
-            pending_table_cache_peak_bytes: 0,
             header_footer_cache: VecDeque::new(),
             header_footer_cache_bytes: 0,
-            header_footer_cache_hits: 0,
-            header_footer_cache_builds: 0,
             pending_header_footer_cache: None,
             pending_header_footer_cache_bytes: 0,
-            #[cfg(test)]
-            pending_header_footer_cache_peak_entries: 0,
-            #[cfg(test)]
-            pending_header_footer_cache_peak_bytes: 0,
             header_footer_cache_reads_enabled: false,
             restart_cache: None,
             numbering_by_source: HashMap::new(),
@@ -4130,22 +3996,6 @@ impl Engine {
             last_field_source_xml: HashMap::new(),
             last_text_box_owner_indices: HashMap::new(),
             last_picture_draw_owners: Vec::new(),
-            #[cfg(test)]
-            owned_context_builds: 0,
-            #[cfg(test)]
-            last_restart_candidate_bytes: 0,
-            #[cfg(test)]
-            last_rebuilt_page_range: None,
-            #[cfg(test)]
-            last_shared_block_counts: (0, 0),
-            #[cfg(test)]
-            page_layout_invocations: 0,
-            #[cfg(test)]
-            last_restart_identity_computations: 0,
-            #[cfg(test)]
-            last_restart_identity_memo_peak_slots: 0,
-            #[cfg(test)]
-            last_restart_identity_memo_peak_bytes: 0,
         }
     }
 
@@ -4436,20 +4286,6 @@ impl Engine {
         self.pending_table_cache_bytes = 0;
         self.pending_header_footer_cache = Some(VecDeque::new());
         self.pending_header_footer_cache_bytes = 0;
-        #[cfg(test)]
-        {
-            self.pending_paragraph_cache_peak_entries = 0;
-            self.pending_paragraph_cache_peak_bytes = 0;
-            self.pending_table_cache_peak_entries = 0;
-            self.pending_table_cache_peak_bytes = 0;
-            self.pending_header_footer_cache_peak_entries = 0;
-            self.pending_header_footer_cache_peak_bytes = 0;
-            self.page_layout_invocations = 0;
-            self.last_restart_identity_computations = 0;
-            self.last_restart_identity_memo_peak_slots = 0;
-            self.last_restart_identity_memo_peak_bytes = 0;
-            reset_restart_body_identity_computations();
-        }
 
         let mut reference_seed = None;
         let mut result = match self.layout_transaction(
@@ -4529,10 +4365,6 @@ impl Engine {
                 ))
             });
         }
-        #[cfg(test)]
-        {
-            self.last_restart_identity_computations = restart_body_identity_computations();
-        }
         let pending = self.pending_paragraph_cache.take().unwrap_or_default();
         let pending_tables = self.pending_table_cache.take().unwrap_or_default();
         let pending_header_footers = self.pending_header_footer_cache.take().unwrap_or_default();
@@ -4565,10 +4397,6 @@ impl Engine {
                     &self.caller_font_aliases,
                     has_wrapping_drawing,
                 ));
-                #[cfg(test)]
-                {
-                    self.owned_context_builds += 1;
-                }
             }
             for entry in pending {
                 self.publish_paragraph_cache_entry(entry);
@@ -5013,23 +4841,6 @@ impl Engine {
                 == Some("beneathText"),
         });
         let structure = assign_shared_document_structure(&mut sections);
-        #[cfg(test)]
-        {
-            self.last_shared_block_counts = sections
-                .iter()
-                .flat_map(|section| &section.blocks)
-                .fold((0, 0), |(paragraphs, tables), block| match block {
-                    SharedLayoutBlock::Paragraph { block, .. } if Arc::strong_count(block) >= 2 => {
-                        (paragraphs + 1, tables)
-                    }
-                    SharedLayoutBlock::Table { block, .. } if Arc::strong_count(block) >= 2 => {
-                        (paragraphs, tables + 1)
-                    }
-                    SharedLayoutBlock::Owned { .. }
-                    | SharedLayoutBlock::Paragraph { .. }
-                    | SharedLayoutBlock::Table { .. } => (paragraphs, tables),
-                });
-        }
 
         // Lay the notes out once per width, before pagination, so the paginator
         // can reserve exactly the height it will later draw. A note is broken to
@@ -5247,10 +5058,6 @@ impl Engine {
                         failure.reason
                     )));
                 }
-                #[cfg(test)]
-                {
-                    self.page_layout_invocations = recorded.pages.len();
-                }
                 if recorded.stopped_at.is_none() {
                     // Completing a changed region must include references retained
                     // in the prefix, while continuing in the actual final flow band.
@@ -5405,10 +5212,6 @@ impl Engine {
                         failure.page,
                         failure.reason
                     )));
-                }
-                #[cfg(test)]
-                {
-                    self.page_layout_invocations = pagination.pages.len();
                 }
                 // Endnotes read at the end of the document, so they follow the last
                 // body page rather than sitting at the foot of their reference's page.
@@ -6039,43 +5842,17 @@ impl Engine {
             substitution_inputs.push(Some(inputs));
         }
 
-        #[cfg(test)]
-        {
-            self.last_rebuilt_page_range = Some(0..pages.len());
-        }
         if restart_checkpoint.is_some()
             && let Some(cache) = self.restart_cache.as_ref()
             && cache.font_trace == font_trace
         {
-            let mut rebuilt_start = pages.len();
-            let mut rebuilt_end = 0;
             for (page_index, (page, retained)) in pages.iter().zip(&cache.raw_pages).enumerate() {
                 if Arc::ptr_eq(page, retained)
                     && raw_policies.as_ref().and_then(|maps| maps.get(page_index))
                         == cache.raw_policies.get(page_index)
                 {
                     reuse_result_pages[page_index] = true;
-                } else {
-                    rebuilt_start = rebuilt_start.min(page_index);
-                    rebuilt_end = page_index + 1;
                 }
-            }
-            if pages.len() != cache.pages.len() {
-                rebuilt_start = rebuilt_start.min(pages.len().min(cache.pages.len()));
-                rebuilt_end = pages.len();
-            }
-            let rebuilt_range = if rebuilt_start < rebuilt_end {
-                rebuilt_start..rebuilt_end
-            } else {
-                0..0
-            };
-            #[cfg(test)]
-            {
-                self.last_rebuilt_page_range = Some(rebuilt_range);
-            }
-            #[cfg(not(test))]
-            {
-                let _ = rebuilt_range;
             }
         }
         // Metrics-only empty carriers must still resolve through the result,
@@ -6211,10 +5988,6 @@ impl Engine {
             } else {
                 usize::MAX
             };
-            #[cfg(test)]
-            {
-                self.last_restart_candidate_bytes = bytes;
-            }
             let entries = restart_cache_entries(&candidate);
             if self.restart_candidate_fits_aggregate(entries, bytes) {
                 candidate.bytes = bytes;
@@ -6224,11 +5997,6 @@ impl Engine {
             }
         } else {
             self.restart_cache = None;
-        }
-        #[cfg(test)]
-        {
-            self.last_restart_identity_memo_peak_slots = restart_identity_memo.populated_slots;
-            self.last_restart_identity_memo_peak_bytes = restart_identity_memo.peak_retained_bytes;
         }
         drop(restart_identity_memo);
         self.navigation_by_source
@@ -6394,7 +6162,6 @@ impl Engine {
             diagnostics.extend(entry.diagnostics.iter().cloned());
             self.font_manager
                 .replay_font_trace_events(&entry.font_trace)?;
-            self.paragraph_cache_hits += 1;
             return Ok(SharedLayoutBlock::Paragraph {
                 block: Arc::clone(&entry.block),
                 semantics: ParagraphSemantics {
@@ -6427,7 +6194,6 @@ impl Engine {
         let font_trace = self.font_manager.finish_paragraph_font_events();
         let (mut block, reflow_direction, paint) = block_result?;
         let paint = Arc::new(paint);
-        self.paragraph_cache_builds += 1;
 
         let cached_diagnostics = diagnostics[diagnostics_start..].to_vec();
         if let Some(font_trace) = font_trace {
@@ -6546,7 +6312,6 @@ impl Engine {
             diagnostics.extend(entry.diagnostics.iter().cloned());
             self.font_manager
                 .replay_font_trace_events(&entry.font_trace)?;
-            self.table_cache_hits += 1;
             if let Some(sources) = sources {
                 record_cached_table_omissions(table, &entry.block, sources, story, path, numbering);
             }
@@ -6582,7 +6347,6 @@ impl Engine {
         );
         let font_trace = self.font_manager.finish_paragraph_font_events();
         let (mut block, semantics) = block_result?;
-        self.table_cache_builds += 1;
 
         let cached_diagnostics = diagnostics[diagnostics_start..].to_vec();
         if let Some(font_trace) = font_trace {
@@ -6704,14 +6468,6 @@ impl Engine {
         }
         self.pending_paragraph_cache_bytes += entry.bytes;
         pending.push_back(entry);
-        #[cfg(test)]
-        {
-            self.pending_paragraph_cache_peak_entries =
-                self.pending_paragraph_cache_peak_entries.max(pending.len());
-            self.pending_paragraph_cache_peak_bytes = self
-                .pending_paragraph_cache_peak_bytes
-                .max(self.pending_paragraph_cache_bytes);
-        }
     }
 
     fn publish_table_cache_entry(&mut self, entry: TableCacheEntry) {
@@ -6757,14 +6513,6 @@ impl Engine {
         }
         self.pending_table_cache_bytes += entry.bytes;
         pending.push_back(entry);
-        #[cfg(test)]
-        {
-            self.pending_table_cache_peak_entries =
-                self.pending_table_cache_peak_entries.max(pending.len());
-            self.pending_table_cache_peak_bytes = self
-                .pending_table_cache_peak_bytes
-                .max(self.pending_table_cache_bytes);
-        }
     }
 
     fn publish_header_footer_cache_entry(&mut self, entry: HeaderFooterCacheEntry) {
@@ -6823,15 +6571,6 @@ impl Engine {
         }
         self.pending_header_footer_cache_bytes += entry.bytes;
         pending.push_back(entry);
-        #[cfg(test)]
-        {
-            self.pending_header_footer_cache_peak_entries = self
-                .pending_header_footer_cache_peak_entries
-                .max(pending.len());
-            self.pending_header_footer_cache_peak_bytes = self
-                .pending_header_footer_cache_peak_bytes
-                .max(self.pending_header_footer_cache_bytes);
-        }
     }
 }
 
@@ -15177,7 +14916,6 @@ fn layout_header_footer_variant(
         diagnostics.extend(cached_diagnostics);
         media.replay_picture_draw_owners(&picture_draw_owners);
         engine.font_manager.replay_font_trace_events(&font_trace)?;
-        engine.header_footer_cache_hits += 1;
         return Ok(content);
     }
 
@@ -15201,7 +14939,6 @@ fn layout_header_footer_variant(
     );
     let font_trace = engine.font_manager.finish_paragraph_font_events();
     let mut content = content_result?;
-    engine.header_footer_cache_builds += 1;
     let cached_diagnostics = diagnostics[diagnostics_start..].to_vec();
     let picture_draw_owners = media.picture_draw_owners_since(owners_start);
     if let Some(font_trace) = font_trace {

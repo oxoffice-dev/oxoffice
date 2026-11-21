@@ -592,10 +592,6 @@ struct ShapingKey {
 struct ShapingMemo {
     entries: VecDeque<(ShapingKey, ShapedText, usize, u64)>,
     bytes: usize,
-    #[cfg(test)]
-    hits: usize,
-    #[cfg(test)]
-    misses: usize,
 }
 
 impl ShapingMemo {
@@ -603,21 +599,12 @@ impl ShapingMemo {
         Self {
             entries: VecDeque::new(),
             bytes: 0,
-            #[cfg(test)]
-            hits: 0,
-            #[cfg(test)]
-            misses: 0,
         }
     }
 
     fn clear(&mut self) {
         self.entries.clear();
         self.bytes = 0;
-        #[cfg(test)]
-        {
-            self.hits = 0;
-            self.misses = 0;
-        }
     }
 
     fn insert(&mut self, key: ShapingKey, shaped: ShapedText) {
@@ -687,8 +674,6 @@ const FILE_FONT_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 static NORMAL_FONT_DATABASE: OnceLock<fontdb::Database> = OnceLock::new();
 #[cfg(feature = "system-fonts")]
 static FILE_FONT_CACHE: OnceLock<Mutex<FileFontCache>> = OnceLock::new();
-#[cfg(all(test, feature = "system-fonts"))]
-static SYSTEM_FONT_DISCOVERY_RUNS: AtomicUsize = AtomicUsize::new(0);
 
 /// Internal record for a loaded font face.
 struct LoadedFont {
@@ -1045,8 +1030,6 @@ impl FontManager {
             let db = NORMAL_FONT_DATABASE.get_or_init(|| {
                 let mut db = bundled_font_database();
                 db.load_system_fonts();
-                #[cfg(test)]
-                SYSTEM_FONT_DISCOVERY_RUNS.fetch_add(1, Ordering::Relaxed);
                 db
             });
             Self::from_base_database(db.clone())
@@ -2698,15 +2681,7 @@ impl FontManager {
             })
             .map(|(_, shaped, _, _)| shaped.clone())
         {
-            #[cfg(test)]
-            {
-                memo.hits += 1;
-            }
             return Ok(shaped);
-        }
-        #[cfg(test)]
-        {
-            memo.misses += 1;
         }
 
         let positioned = self.shape_legacy(font_id, text, size_pt, kerning, false)?;
