@@ -2697,8 +2697,10 @@ impl PyDocument {
         ))
     }
 
-    // Return false when no style has the ID or name. The native call refuses
-    // a style that content, another style or a numbering level still uses.
+    // Return false when no style has the ID or name. The native call removes
+    // the linked style that links back too, releases a numbering level the
+    // style points at and that names it back, and refuses a style that
+    // content, another style or a numbering level still uses.
     fn remove_style(&mut self, py: Python<'_>, style: &str) -> PyResult<bool> {
         let Ok((_, style_id)) = defined_style(&self.inner, style) else {
             return Ok(false);
