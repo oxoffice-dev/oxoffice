@@ -211,27 +211,37 @@ impl Document {
 
         // Check: pictures of the body without alt text. A picture marked
         // decorative needs none, as in Word's accessibility checker.
-        let missing_alt = match self.pictures() {
-            Ok(pictures) => pictures
-                .into_iter()
-                .filter(|picture| {
-                    let story = picture.location.story();
-                    story.part_name() == self.doc_part_name
-                        && matches!(story.kind(), StoryKind::Body | StoryKind::TableCell)
-                        && !picture.decorative
-                        && picture.description.as_deref().is_none_or(str::is_empty)
-                })
-                .map(|picture| picture.name.unwrap_or(picture.relationship_id))
-                .collect::<Vec<_>>(),
-            // Without the picture inventory, the body images are read without
-            // their decorative flag.
-            Err(_) => self
-                .images()
-                .into_iter()
-                .filter(|image| image.description.as_deref().is_none_or(str::is_empty))
-                .map(|image| image.name.unwrap_or(image.embed_id))
-                .collect(),
-        };
+        let mut missing_alt = Vec::new();
+        visit_all_drawings(&self.document.body.content, &mut |drawing| {
+            let pictures = [
+                drawing.inline.as_ref().map(|inline| {
+                    (
+                        inline.chart_rel_id.is_none()
+                            && (!inline.embed_id.is_empty() || inline.link_id.is_some()),
+                        &inline.name,
+                        &inline.description,
+                        inline.decorative,
+                        &inline.embed_id,
+                    )
+                }),
+                drawing.anchor.as_ref().map(|anchor| {
+                    (
+                        anchor.chart_rel_id.is_none()
+                            && (!anchor.embed_id.is_empty() || anchor.link_id.is_some()),
+                        &anchor.name,
+                        &anchor.description,
+                        anchor.decorative,
+                        &anchor.embed_id,
+                    )
+                }),
+            ];
+            for (picture, name, description, decorative, embed_id) in pictures.into_iter().flatten()
+            {
+                if picture && !decorative && description.as_deref().is_none_or(str::is_empty) {
+                    missing_alt.push(name.clone().unwrap_or_else(|| embed_id.clone()));
+                }
+            }
+        });
         for name in missing_alt {
             issues.push(AccessibilityIssue {
                 severity: IssueSeverity::Error,

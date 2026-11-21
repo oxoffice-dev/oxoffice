@@ -1500,6 +1500,7 @@ impl Document {
                 .package
                 .get_part(&part_name)
                 .filter(|bytes| identifier_xml_is_well_formed(bytes))
+                .filter(|_| !glossary.skipped.contains(&part_name))
             else {
                 continue;
             };

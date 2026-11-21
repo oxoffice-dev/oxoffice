@@ -2051,11 +2051,34 @@ fn a_glossary_paragraph_is_checked_against_the_glossary_numbering() {
     );
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
+    let bytes = out.into_inner();
+    // The graph check resolves the glossary the same way: instance 5 is
+    // found in the glossary's numbering, instance 7 is the dangling one.
+    let error = Document::from_bytes(&bytes)
+        .unwrap()
+        .validate_numbering_graph()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("instance 7"), "{error}");
     assert_eq!(
-        numbering_warnings(&out.into_inner()),
+        numbering_warnings(&bytes),
         [
             "a paragraph in /word/glossary/document.xml is numbered by numbering instance 7, \
              which the document does not define: Word shows it without a number"
         ]
     );
+}
+
+#[test]
+fn a_full_page_background_picture_is_decorative_and_needs_no_alt_text() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_title("Title");
+    doc.set_author("Ada");
+    doc.add_background_image(PNG, "paper.png");
+    let doc = reopen(&mut doc);
+    let pictures = doc.pictures().unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert!(pictures[0].decorative);
+    assert_eq!(pictures[0].description, None);
+    assert_eq!(doc.audit_accessibility(), []);
 }

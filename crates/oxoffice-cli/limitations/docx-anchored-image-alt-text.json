@@ -1,9 +1,0 @@
-{
-  "id": "docx-anchored-image-alt-text",
-  "format": "docx",
-  "area": "pictures",
-  "title": "A floating picture added by add_anchored_image gets the alt text \"Background\"",
-  "symptom": "Rust add_anchored_image writes descr=\"Background\" on every picture it adds, which Word shows and screen readers read aloud",
-  "workaround": "Rust: add the picture with add_picture_with_options, anchor set and the description wanted; Python add_picture and the CLI do not take this path",
-  "issue": 185
-}

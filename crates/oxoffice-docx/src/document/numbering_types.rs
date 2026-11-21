@@ -1171,6 +1171,9 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
     let mut depth = 0_usize;
     let mut paragraphs = Vec::new();
     let mut result = Vec::new();
+    // Open `mc:AlternateContent` elements: their depth and whether a branch
+    // of each was read.
+    let mut alternates: Vec<(usize, bool)> = Vec::new();
     loop {
         let (namespace, event) = reader
             .read_resolved_event_into(&mut buffer)
@@ -1183,13 +1186,29 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
                         if value.as_ref() == WORD_NAMESPACE.as_bytes()
                 );
                 // Word writes each text box twice, in `mc:Choice` and in
-                // `mc:Fallback`: its paragraphs are read once.
-                if matches!(
+                // `mc:Fallback`: its paragraphs are read once, from the
+                // first branch of each `mc:AlternateContent`.
+                let markup = matches!(
                     namespace,
                     ResolveResult::Bound(value)
                         if value.as_ref() == oxoffice_docx_oxml::namespace::MC_NS.as_bytes()
-                ) && element.local_name().as_ref() == b"Fallback"
+                );
+                if markup && element.local_name().as_ref() == b"AlternateContent" {
+                    alternates.push((depth, false));
+                }
+                let branch =
+                    markup && matches!(element.local_name().as_ref(), b"Choice" | b"Fallback");
+                let read_before = branch
+                    && alternates
+                        .last()
+                        .is_some_and(|(at, read)| *at + 1 == depth && *read);
+                if branch
+                    && let Some((at, read)) = alternates.last_mut()
+                    && *at + 1 == depth
                 {
+                    *read = true;
+                }
+                if read_before {
                     let end = element.to_end().into_owned();
                     reader
                         .read_to_end_into(end.name(), &mut Vec::new())
@@ -1233,6 +1252,9 @@ pub(super) fn xml_paragraph_numbering_properties(xml: &[u8]) -> Result<Vec<CT_PP
             }
             Event::End(ref element) => {
                 depth = depth.saturating_sub(1);
+                if alternates.last().is_some_and(|(at, _)| *at == depth) {
+                    alternates.pop();
+                }
                 let is_word = matches!(
                     namespace,
                     ResolveResult::Bound(value)
@@ -1307,6 +1329,8 @@ pub(super) struct GlossaryNumbering {
     pub(super) part_names: Vec<String>,
     pub(super) numbering: Option<CT_Numbering>,
     pub(super) styles: CT_Styles,
+    /// Glossary documents whose numbering or styles could not be read.
+    pub(super) skipped: Vec<String>,
 }
 
 impl Document {
@@ -1317,6 +1341,7 @@ impl Document {
             part_names: Vec::new(),
             numbering: None,
             styles: CT_Styles::default(),
+            skipped: Vec::new(),
         };
         let Some(relationships) = self.package.get_part_rels(&self.doc_part_name) else {
             return Ok(glossary);
@@ -1337,10 +1362,20 @@ impl Document {
                     let Some(bytes) = self.package.get_part(&target) else {
                         continue;
                     };
+                    // A glossary part that cannot be read leaves the
+                    // glossary out of the checks, as before it had scopes.
                     if owned.rel_type == rel_types::NUMBERING {
-                        glossary.numbering = Some(CT_Numbering::from_xml(bytes)?);
+                        let Ok(numbering) = CT_Numbering::from_xml(bytes) else {
+                            glossary.skipped.push(part_name.clone());
+                            continue;
+                        };
+                        glossary.numbering = Some(numbering);
                     } else if owned.rel_type == rel_types::STYLES {
-                        glossary.styles = CT_Styles::from_xml(bytes)?;
+                        let Ok(styles) = CT_Styles::from_xml(bytes) else {
+                            glossary.skipped.push(part_name.clone());
+                            continue;
+                        };
+                        glossary.styles = styles;
                     }
                 }
             }

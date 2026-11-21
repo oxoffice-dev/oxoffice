@@ -1133,6 +1133,7 @@ fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
             .package
             .get_part(&part_name)
             .filter(|bytes| identifier_xml_is_well_formed(bytes))
+            .filter(|_| !glossary.skipped.contains(&part_name))
         else {
             continue;
         };
