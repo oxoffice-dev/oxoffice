@@ -17156,26 +17156,80 @@ fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Result<Vec<u8
             }
         };
         let mut reference_id = None;
+        let mut custom_mark_follows = false;
         for attribute in start.attributes() {
             let attribute = attribute.map_err(|error| {
                 Error::Other(format!("footnote reference attribute scan failed: {error}"))
             })?;
             let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-            if word_element(&namespace) && local.as_ref() == b"id" {
-                let value = attribute
-                    .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
-                    .map_err(|error| {
-                        Error::Other(format!("footnote reference ID is invalid: {error}"))
-                    })?;
-                reference_id = value.parse::<i32>().ok();
+            if !word_element(&namespace) {
+                continue;
+            }
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                .map_err(|error| {
+                    Error::Other(format!("footnote reference attribute is invalid: {error}"))
+                })?;
+            match local.as_ref() {
+                b"id" => reference_id = value.parse::<i32>().ok(),
+                b"customMarkFollows" => {
+                    custom_mark_follows = matches!(value.as_ref(), "1" | "true" | "on");
+                }
+                _ => {}
             }
         }
         if reference_id == Some(id) {
-            let end = if matches!(event, Event::Empty(_)) {
+            let mut end = if matches!(event, Event::Empty(_)) {
                 reader.buffer_position() as usize
             } else {
                 story_element_end(xml, before)?
             };
+            let event = event.into_owned();
+            if custom_mark_follows {
+                // The custom mark is the text or symbol that follows the
+                // reference in its run: it goes with the note.
+                if let Event::Start(reference) = &event {
+                    let name = reference.name().as_ref().to_vec();
+                    reader
+                        .read_to_end_into(quick_xml::name::QName(&name), &mut Vec::new())
+                        .map_err(|error| {
+                            Error::Other(format!("custom mark scan failed: {error}"))
+                        })?;
+                }
+                let mut next_buffer = Vec::new();
+                loop {
+                    let offset = reader.buffer_position() as usize;
+                    let (namespace, next) = reader
+                        .read_resolved_event_into(&mut next_buffer)
+                        .map_err(|error| {
+                            Error::Other(format!("custom mark scan failed: {error}"))
+                        })?;
+                    match next {
+                        Event::Text(text) if text.iter().all(u8::is_ascii_whitespace) => {}
+                        Event::Start(mark)
+                            if word_element(&namespace) && mark.local_name().as_ref() == b"t" =>
+                        {
+                            end = story_element_end(xml, offset)?;
+                            let name = mark.name().as_ref().to_vec();
+                            reader
+                                .read_to_end_into(quick_xml::name::QName(&name), &mut Vec::new())
+                                .map_err(|error| {
+                                    Error::Other(format!("custom mark scan failed: {error}"))
+                                })?;
+                            break;
+                        }
+                        Event::Empty(mark)
+                            if word_element(&namespace)
+                                && matches!(mark.local_name().as_ref(), b"t" | b"sym") =>
+                        {
+                            end = reader.buffer_position() as usize;
+                            break;
+                        }
+                        _ => break,
+                    }
+                    next_buffer.clear();
+                }
+            }
             ranges.push(before..end);
         }
         buffer.clear();

@@ -719,10 +719,7 @@ fn removing_the_last_footnote_keeps_the_separators_for_the_next_one() {
     assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (1, 1));
 }
 
-// Fails today: the custom mark text stays in the body after its note and
-// reference are removed. Issue: #30
 #[test]
-#[should_panic(expected = "the custom marks left the body with their notes")]
 fn removing_a_custom_marked_note_removes_its_mark_from_the_body() {
     let mut doc = doc_with(&["Marked"]);
     let dagger = doc
@@ -741,6 +738,19 @@ fn removing_a_custom_marked_note_removes_its_mark_from_the_body() {
         ["Marked"],
         "the custom marks left the body with their notes"
     );
+}
+
+#[test]
+fn removing_a_note_keeps_the_text_after_its_reference() {
+    // Only a custom mark follows its reference into removal: the text of a
+    // numbered note's paragraph stays.
+    let mut doc = doc_with(&["Claim"]);
+    let id = create_note(&mut doc, Footnote, 0, "Source");
+    doc.paragraph_mut(0).unwrap().add_run(" and more.");
+    doc.remove_footnote(id).unwrap();
+    let doc = reopen(&mut doc);
+    assert!(doc.footnotes().is_empty());
+    assert_eq!(texts(&doc), ["Claim and more."]);
 }
 
 // Fails today: removing a paragraph keeps the footnotes it referenced, which

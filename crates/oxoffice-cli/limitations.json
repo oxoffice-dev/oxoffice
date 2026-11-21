@@ -75,9 +75,9 @@
     "id": "docx-removed-notes",
     "format": "docx",
     "area": "notes",
-    "title": "Removing a paragraph leaves its notes behind, and removing a note leaves its custom mark",
-    "symptom": "remove_content keeps the paragraph's footnotes and endnotes as unreferenced notes; removing a note made with a custom mark (Rust create_footnote_with_mark) keeps the mark",
-    "workaround": "remove the paragraph's notes first (remove_footnote, remove_endnote, same names in Python); delete a leftover mark with replace_text",
+    "title": "Removing a paragraph leaves its notes behind",
+    "symptom": "remove_content keeps the paragraph's footnotes and endnotes as unreferenced notes",
+    "workaround": "remove the paragraph's notes first (remove_footnote, remove_endnote, same names in Python)",
     "issue": 30
   },
   {
