@@ -1,0 +1,9 @@
+{
+  "id": "docx-insert-content-foreign-links",
+  "format": "docx",
+  "area": "merge",
+  "title": "Content moved from another document with insert_content keeps its link ids",
+  "symptom": "Rust and Python insert_content accept a fragment taken from another document and keep its hyperlink relationship ids, so a link goes to the destination's own address when that id exists there",
+  "workaround": "move content between documents with import_fragment (Rust and Python), which brings the links' addresses",
+  "issue": 196
+}
