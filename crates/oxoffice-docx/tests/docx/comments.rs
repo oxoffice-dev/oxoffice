@@ -9,7 +9,8 @@ use std::path::Path;
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
     CommentDate, CommentRef, ContentLocation, Document, RunItemRef, RunPosition, RunRange,
-    StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType, TextCommentOptions,
+    StoryItemKind, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
+    TextCommentOptions,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -963,6 +964,76 @@ fn deleting_commented_content_takes_whole_threads_and_refuses_half_ones() {
         doc.comment_anchor_text(span).unwrap().as_deref(),
         Some("first\nsecond")
     );
+}
+
+#[test]
+fn removing_an_inline_control_takes_whole_threads_and_refuses_half_ones() {
+    // The control holds the whole thread, or only its start and its text.
+    for kind in [StoryKind::Body, StoryKind::Header] {
+        for whole in [true, false] {
+            let mut doc = doc_with(&["Body"]);
+            doc.set_header("Header words");
+            let paragraph = story_paragraph(&doc, kind, 0);
+            let part = doc
+                .stories()
+                .unwrap()
+                .into_iter()
+                .find(|story| story.kind() == kind)
+                .unwrap()
+                .part_name()
+                .trim_start_matches('/')
+                .to_owned();
+            doc.add_story_comment(story_range(&paragraph, 0, 1), "Ada", None, "Thread")
+                .unwrap();
+            let bytes = doc.to_bytes().unwrap();
+            let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+            let name = format!("/{part}");
+            let xml = String::from_utf8(package.get_part(&name).unwrap().to_vec()).unwrap();
+            let start = xml.find("<w:commentRangeStart").unwrap();
+            let end = if whole {
+                let reference = xml.find("<w:commentReference").unwrap();
+                reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len()
+            } else {
+                xml.find("<w:commentRangeEnd").unwrap()
+            };
+            let xml = format!(
+                "{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            );
+            package.set_part(&name, xml.into_bytes());
+            let mut out = Cursor::new(Vec::new());
+            package.write_to(&mut out).unwrap();
+            let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+            let story = story_paragraph(&doc, kind, 0).story().clone();
+            let control = doc
+                .story_items(&story)
+                .unwrap()
+                .into_iter()
+                .find(|item| item.kind() == StoryItemKind::ContentControl)
+                .expect("the control")
+                .location()
+                .clone();
+            let result = doc.remove_content_control(&control);
+            if whole {
+                result.unwrap();
+                let doc = reopen(&mut doc);
+                assert!(doc.comments().is_empty(), "{kind:?}");
+                assert!(
+                    !doc.part_xml(&part).unwrap().contains("w:comment"),
+                    "{kind:?}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("part of comment"),
+                    "{kind:?}: {error}"
+                );
+                assert_eq!(doc.comments().len(), 1, "{kind:?}");
+            }
+        }
+    }
 }
 
 #[test]
