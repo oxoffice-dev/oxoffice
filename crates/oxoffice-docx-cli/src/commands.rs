@@ -783,6 +783,7 @@ pub fn convert_input(
     revision_view: RevisionView,
     revision_style: RevisionStyle,
     image: ImageOptions<'_>,
+    fillable_forms: bool,
 ) -> Result<()> {
     let extension = file
         .extension()
@@ -804,6 +805,7 @@ pub fn convert_input(
             revision_view,
             revision_style,
             image,
+            fillable_forms,
         );
     }
     if to.unwrap_or("docx") != "docx" {
@@ -860,13 +862,18 @@ pub fn convert(
     revision_view: RevisionView,
     revision_style: RevisionStyle,
     image: ImageOptions<'_>,
+    fillable_forms: bool,
 ) -> Result<()> {
     check_revision_style(revision_view, revision_style)?;
+    if fillable_forms && to != "pdf" {
+        return Err("--fillable-forms applies only to --to pdf".into());
+    }
     let doc = Document::open(file)?;
     let render_options = oxoffice_docx::RenderOptions::default()
         .with_revision_view(revision_view)
         .with_revision_style(revision_style)
-        .with_system_fonts(system_fonts);
+        .with_system_fonts(system_fonts)
+        .with_fillable_forms(fillable_forms);
 
     let default_ext = match to {
         "pdf" => "pdf",

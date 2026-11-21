@@ -1177,6 +1177,7 @@ class Document:
         system_fonts: bool = False,
         revision_view: _RevisionView = "accepted",
         revision_style: _RevisionStyle = "plain",
+        fillable_forms: bool = False,
     ) -> tuple[bytes, tuple[str, ...]]: ...
     def to_pdf(
         self,
@@ -1187,6 +1188,7 @@ class Document:
         system_fonts: bool = False,
         revision_view: _RevisionView = "accepted",
         revision_style: _RevisionStyle = "plain",
+        fillable_forms: bool = False,
     ) -> bytes:
         """Render PDF with bundled fallback by default and ordered caller fonts first.
         Set system_fonts=True to opt into system fallback.
@@ -1198,9 +1200,18 @@ class Document:
         Tracked rendering accepts revision_style="legal" for blue double-underlined
         insertions, red struck deletions and green moves. Plain is the default.
         Unknown values or legal styling with accepted view raise ValueError.
+
+        fillable_forms=True exports the content controls of the body as
+        fillable PDF form fields: text, check boxes, lists and dates with
+        their values. A control tagged "signature" or "signature:<name>"
+        becomes an empty signature field. It needs the accepted view, and
+        raises ValueError with revision_view="tracked".
         """
     def to_pdfa_deterministic(
-        self, profile: _Literal["pdfa-2b", "pdfa-3b"] = "pdfa-2b"
+        self,
+        profile: _Literal["pdfa-2b", "pdfa-3b"] = "pdfa-2b",
+        *,
+        fillable_forms: bool = False,
     ) -> bytes: ...
     def render_page_to_png_with_diagnostics(self, page_index: int, dpi: float = 150.0, *, fonts: _Sequence[tuple[str, bytes]] | None = None, font_dir: _Path | None = None, font_dirs: _Sequence[_Path] | None = None, system_fonts: bool = False, revision_view: _RevisionView = "accepted", revision_style: _RevisionStyle = "plain") -> tuple[bytes | None, tuple[str, ...]]: ...
     def render_page_to_png(self, page_index: int, dpi: float = 150.0, *, fonts: _Sequence[tuple[str, bytes]] | None = None, font_dir: _Path | None = None, font_dirs: _Sequence[_Path] | None = None, system_fonts: bool = False, revision_view: _RevisionView = "accepted", revision_style: _RevisionStyle = "plain") -> bytes | None: ...
