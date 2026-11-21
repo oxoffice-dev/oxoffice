@@ -176,15 +176,16 @@ neither fails a flat call nor reads as a fix.
 
 ## Render tests
 
-The `render` module of the docx test binary renders every Word file of the
-corpus as `convert` and `render` do, with the bundled fonts, and checks two
-things (see [the spec](../specs/2026-11-21-render-fidelity.md)). The pieces
-that depend on no facade (the PDF reader, the hashes, the baseline files and
-the checks) live in the dev-only crate `oxoffice-render-test`.
+The `render` modules of the docx and pptx test binaries render every file
+of the corpus as `convert` and `render` do, with the bundled fonts, and
+check two things (see [the spec](../specs/2026-11-21-render-fidelity.md)).
+What they share (the PDF reader, the hashes, the baseline files and the
+checks) lives in the dev-only crate `oxoffice-render-test`.
 
 - **Invariants**, read from the PDF and the page images: page sizes in the
-  order of the sections, no page with only its header and footer, every
-  word drawn and inside its page, no empty-box glyph, no text over text,
+  order of the sections (one page of the slide size per slide), no page
+  with only its header and footer, every word drawn and inside its page (a
+  slide's words on its own page), no empty-box glyph, no text over text,
   every picture and table border drawn, no diagnostic but those known to
   change nothing drawn. What fails today is listed in
   `tests/render/known.toml` with its issue, and an entry fails the test once
@@ -199,6 +200,7 @@ the checks) live in the dev-only crate `oxoffice-render-test`.
 ```bash
 OXOFFICE_RENDER=subset cargo test --profile ci -p oxoffice-docx --test docx render   # check
 OXOFFICE_RENDER_UPDATE="<reason>" cargo test --profile ci -p oxoffice-docx --test docx render
+# the same with -p oxoffice-pptx --test pptx for the decks
 ```
 
 `OXOFFICE_RENDER` is `subset` (the corpus without its `long-*` files),

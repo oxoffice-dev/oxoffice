@@ -1337,6 +1337,7 @@ dependencies = [
  "oxoffice-pptx-layout",
  "oxoffice-pptx-oxml",
  "oxoffice-pptx-render",
+ "oxoffice-render-test",
  "oxoffice-sml",
  "quick-xml",
  "scraper",

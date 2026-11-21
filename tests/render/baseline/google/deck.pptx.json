@@ -1,0 +1,13 @@
+{
+  "file": "google/deck.pptx",
+  "reason": "first baseline: oxoffice's render of the pptx corpus on main 2cad840",
+  "resources": "7837d7dbb953910e30df3c670e00ea2125eecd11ce5874b1638cb608fc25dbc8",
+  "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
+  "pages": [
+    {"page": 1, "pixels": "e28addce8975a6591a08ed123d601637d449d9a20ba02a66fa4debb1f40a78d8", "content": "c7b57ad8fa71466b537ace33a3dc29b241f5ad43c19aa031a52450803e761ede", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "d84ad8a0bcee27a74837fc4667503c2de7b5ddec67e9a0b4002037c99b49d362"},
+    {"page": 2, "pixels": "6dba785976ccc7e88168650550f5390010bc6003038f5f7aba4ce20b440e1ba7", "content": "741d59a915b64269c5216b4f50072529baf35b73fe99a1cfaf42daf5319dad66", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "d84ad8a0bcee27a74837fc4667503c2de7b5ddec67e9a0b4002037c99b49d362"},
+    {"page": 3, "pixels": "57081056389567dee20d3a22cfbe5d00501be4dc1621826ffcb787cdf4965f00", "content": "8c1cebd585ffb1f499c103e27464762f965c4a1fa444a86a6d4a8e79fe4a62df", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "d84ad8a0bcee27a74837fc4667503c2de7b5ddec67e9a0b4002037c99b49d362"},
+    {"page": 4, "pixels": "72835cf631a4964d068fc59a436bd379b5c16476711efded4060edb6e73a1064", "content": "9e94594135dc891cc74c298867be4c3b9ba557ffd39c715d486f5262f2284e8a", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "d84ad8a0bcee27a74837fc4667503c2de7b5ddec67e9a0b4002037c99b49d362"}
+  ]
+}

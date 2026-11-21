@@ -179,3 +179,27 @@ check = "dropped"
 pages = [0]
 finding = "4 diagnostics"
 issue = 224
+
+[[known]]
+file = "authored/multilingual.pptx"
+check = "missing-glyph"
+pages = [4, 5, 6]
+issue = 157
+
+[[known]]
+file = "google/multilingual.pptx"
+check = "missing-glyph"
+pages = [4, 5, 6]
+issue = 157
+
+[[known]]
+file = "libreoffice/multilingual.pptx"
+check = "missing-glyph"
+pages = [4, 5, 6]
+issue = 157
+
+[[known]]
+file = "powerpoint/multilingual.pptx"
+check = "missing-glyph"
+pages = [4, 5, 6]
+issue = 157
