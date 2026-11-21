@@ -9178,8 +9178,8 @@ impl Presentation {
             invalid_shape_mutation("remove layout", "qualified master ownership is absent")
         })?;
         let mut candidate = self.clone();
-        let mut media = HashSet::new();
-        collect_media_targets(&candidate.package, &record.part_name, &mut media);
+        let mut candidates = HashSet::new();
+        collect_internal_targets(&candidate.package, &record.part_name, &mut candidates);
         let source_package = self.staged_package(true)?;
         let master_source = required_part(&source_package, &master_part)?;
         let edited_master = Arc::make_mut(&mut candidate.masters[master_index])
@@ -9210,7 +9210,7 @@ impl Presentation {
             .content_types
             .remove_override(&record.part_name);
         candidate.layouts.remove(index);
-        prune_unreachable_parts(&mut candidate.package, &media);
+        prune_unreachable_parts(&mut candidate.package, &candidates);
         candidate.media_store = candidate.media_store.rescan(&candidate.package);
         candidate.commit_owned_parts(None)?;
         *self = candidate;
@@ -10861,11 +10861,14 @@ impl Presentation {
                 message: error.to_string(),
             })?;
 
-        let mut media_candidates = HashSet::new();
-        self.release_slide_jumps_to(&record.part_name, &mut media_candidates)?;
-        collect_media_targets(&self.package, &record.part_name, &mut media_candidates);
+        // Every part the slide or its notes reach is a candidate: charts with
+        // their workbooks, legacy comments, embedded objects and media go
+        // unless another part still references them.
+        let mut candidates = HashSet::new();
+        self.release_slide_jumps_to(&record.part_name, &mut candidates)?;
+        collect_internal_targets(&self.package, &record.part_name, &mut candidates);
         if let Some(notes) = &record.notes {
-            collect_media_targets(&self.package, &notes.part_name, &mut media_candidates);
+            collect_internal_targets(&self.package, &notes.part_name, &mut candidates);
             self.package.remove_part(&notes.part_name);
             self.package.remove_part_rels(&notes.part_name);
             self.package.content_types.remove_override(&notes.part_name);
@@ -10889,7 +10892,7 @@ impl Presentation {
         }
         self.presentation.slide_ids.remove(index);
         self.slides.remove(index);
-        prune_unreachable_parts(&mut self.package, &media_candidates);
+        prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
         Ok(())
     }
@@ -20838,22 +20841,23 @@ fn related_internal_part(
     )))
 }
 
-fn collect_media_targets(package: &OpcPackage, source_part: &str, targets: &mut HashSet<String>) {
+/// Adds every internal target of `source_part` to `targets`, as candidates
+/// for [`prune_unreachable_parts`], which keeps those still referenced.
+fn collect_internal_targets(
+    package: &OpcPackage,
+    source_part: &str,
+    targets: &mut HashSet<String>,
+) {
     let Some(relationships) = package.get_part_rels(source_part) else {
         return;
     };
-    for relationship in &relationships.items {
-        if relationship_is_external(relationship) {
-            continue;
-        }
-        let target = OpcPackage::resolve_rel_target(source_part, &relationship.target);
-        if target
-            .get(.."/ppt/media/".len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("/ppt/media/"))
-        {
-            targets.insert(target);
-        }
-    }
+    targets.extend(
+        relationships
+            .items
+            .iter()
+            .filter(|relationship| !relationship_is_external(relationship))
+            .map(|relationship| OpcPackage::resolve_rel_target(source_part, &relationship.target)),
+    );
 }
 
 /// Removes candidate parts that no relationship reaches any longer.

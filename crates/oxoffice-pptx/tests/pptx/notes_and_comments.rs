@@ -1049,10 +1049,7 @@ fn legacy_comments_are_kept_through_edits_and_a_save() {
     );
 }
 
-// Fails today: remove_slide drops the slide's notes and modern comments but
-// leaves its legacy comment part, text included, in the saved file. Issue: #38
 #[test]
-#[should_panic(expected = "the legacy comments of the removed slide are still in the file")]
 fn removing_a_slide_removes_its_legacy_comments() {
     let mut prs = deck_with_legacy_comments(2);
 
@@ -1319,4 +1316,25 @@ fn a_duplicated_comment_keeps_its_author_among_namesakes() {
     assert_eq!(copy.author_id, SMITH_2);
     assert_eq!(copy.replies()[0].author_id, SMITH_2);
     assert_eq!(reopened.comment_authors().len(), 2);
+}
+
+#[test]
+fn legacy_comments_shared_with_a_duplicate_stay_until_their_last_slide_goes() {
+    let mut prs = deck_with_legacy_comments(2);
+    prs.duplicate_slide(0).unwrap();
+
+    prs.remove_slide(0).unwrap();
+    let reopened = reopen(&prs);
+    let package = package_of(&reopened);
+    let owner = package
+        .get_part_rels("/ppt/slides/slide3.xml")
+        .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
+        .expect("the copy still points at the legacy comments");
+    assert_eq!(owner.target, "../comments/comment1.xml");
+    assert!(part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"));
+    assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+
+    prs.remove_slide(0).unwrap();
+    assert!(parts_under(&reopen(&prs), "ppt/comments/").is_empty());
+    assert!(part_xml(&reopen(&prs), "/ppt/commentAuthors.xml").contains("Grace Hopper"));
 }

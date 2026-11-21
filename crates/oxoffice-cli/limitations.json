@@ -126,15 +126,6 @@
     "issue": 8
   },
   {
-    "id": "pptx-removed-slide-parts",
-    "format": "pptx",
-    "area": "slides",
-    "title": "Removing a slide leaves its charts, embedded workbooks and legacy comments in the file",
-    "symptom": "after removing a slide the saved deck still holds its chart parts, their workbooks with the data, and its legacy comment part with the reviewers' text",
-    "workaround": "remove each chart first (Rust remove_shape, Python shapes.remove), then the slide; none through the CLI, and none for legacy comments",
-    "issue": 38
-  },
-  {
     "id": "pptx-import-source-notes",
     "format": "pptx",
     "area": "slides",

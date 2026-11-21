@@ -930,9 +930,7 @@ fn removing_a_chart_drops_its_chart_part_and_workbook() {
     assert!(saved.validate().is_empty(), "{:?}", saved.validate());
 }
 
-// Fails today: remove_slide prunes only media, the chart and workbook stay. Issue: #38
 #[test]
-#[should_panic(expected = "the removed slide's chart parts are still in the file")]
 fn removing_the_slide_that_holds_a_chart_drops_its_chart_part_and_workbook() {
     let mut prs = blank_deck(2);
     chart_on(&mut prs, 1, ChartKind::Bar, &regions());
@@ -1020,6 +1018,53 @@ fn a_chart_title_and_cdata_chart_text_with_raw_line_ends_read_as_line_feeds() {
     package.write_to(&mut bytes).unwrap();
     let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
     assert_eq!(chart(&prs, 0, id).1.categories[0], "North\ncoast");
+}
+
+#[test]
+fn removing_a_chart_slide_from_every_editors_deck_drops_its_chart_and_keeps_the_rest() {
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+        "authored/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let before = chart_parts(&prs);
+        let mut texts = slide_texts(&prs);
+        chart_on(&mut prs, 1, ChartKind::Bar, &regions());
+        assert_eq!(chart_parts(&prs).len(), before.len() + 2, "{name}");
+
+        prs.remove_slide(1).unwrap();
+
+        let saved = reopen(&prs);
+        assert_eq!(chart_parts(&saved), before, "{name}");
+        texts.remove(1);
+        assert_eq!(slide_texts(&saved), texts, "{name}");
+        assert!(
+            saved.validate().is_empty(),
+            "{name}: {:?}",
+            saved.validate()
+        );
+    }
+}
+
+#[test]
+fn a_chart_shared_with_a_duplicate_stays_until_its_last_slide_goes() {
+    let mut prs = blank_deck(2);
+    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    prs.duplicate_slide(0).unwrap();
+    let copy = last_shape_id(&prs, 1);
+    let parts = chart_parts(&prs);
+
+    prs.remove_slide(0).unwrap();
+    let saved = reopen(&prs);
+    assert_eq!(chart(&saved, 0, copy), (ChartKind::Bar, regions()));
+    assert!(chart_parts(&saved).is_subset(&parts));
+    assert!(!chart_parts(&saved).is_empty());
+    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+
+    prs.remove_slide(0).unwrap();
+    assert!(chart_parts(&reopen(&prs)).is_empty());
 }
 
 // --- Copies, groups ----------------------------------------------------------
