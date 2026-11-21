@@ -1,0 +1,12 @@
+{
+  "file": "google/contract.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "45954bdc1477a7c2e391cc6b02f450be99984c583dcdf68d7e23f19b90163cd6",
+  "outline_and_tags": "36a8ac6beb92597bd0c1ceaeb62ac85929cc37442e1377ac53af839e781297cd",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "b2cb6ca098796bc7e5aa5d37959d123c12aaebbedcd384b2e2250ba69853d37b", "content": "f4bca5cb76b45e740ef9aa782c8818cb5cf084f8922b1cb81d4ef291d0d88e58", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
+    {"page": 2, "pixels": "f63804ca70e62671b98950339d96fe26adc9f3bb967423b859b3979694b2ed5b", "content": "83bd8d0821090c3ee35c4bc3fdea06557a796d6ef41c578c4e046b0e8a26dd28", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
+    {"page": 3, "pixels": "3ca90b837b7b09cab9621eb2b2f97fd3b45e0ea6de2f38b5795aed42299f8e10", "content": "5833075291505b5982df79af48bc39e6d0f8e74431b7247f6212381f6357aad8", "annotations": "df78de2ada9019615c76245592c1c20331603087d38ccae985452606d53e03f7", "dictionary": "1ef65fa789b8f45a1caeab080a9c6d44082d18c0f8dd0263eb7d061ae4e89a9d"}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "file": "google/paper.docx",
+  "reason": "first baseline: oxoffice's render of the corpus on main 8cbecdc",
+  "resources": "52aca34f740aff1950cbb870ff515eeee9b9e6d00b3d5c5e906697ad4e2264d0",
+  "outline_and_tags": "a7ee520b7baf90ae27d2ecb87a517da92214aed758fd8b4fb43544521a04a163",
+  "catalog": "0a623fb1aa01d3898a112af0e7b831be1712d283c2dbc8c980b529263a4cf543",
+  "pages": [
+    {"page": 1, "pixels": "cf8a1189191dd805764ea3aacda7e81dee923d1e71f95dc9e1a6b44caaec9c2d", "content": "0b583e52aabe118c95005e7db5107defc63828f2d3f362b96f8f4f1e449525a9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "3049bf9256ece119f9cd0e6083db55039ede4df9bb3a7c1428c766f79352383a", "content": "5b2f205cd89947322df5923a66c3652636033c827ce23591caaae81bcf3c3b43", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "7aa1bad008d72b2185c59be9927fe96bba7ae67fe0c6957e0a122c2eb904957d", "content": "14b4759adc86b224c95837112e1c2747c840559ee26294b75adfe6994da53eba", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
+    {"page": 4, "pixels": "f6b28d92f264fa8df5c1e50ea8dea4b09ece659a280014d20696280478b47913", "content": "8f6d58b7ea7d741342cf9ef4c3a0c3b27ca33a9c6867c101b2d01a13f35b595f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
+  ]
+}

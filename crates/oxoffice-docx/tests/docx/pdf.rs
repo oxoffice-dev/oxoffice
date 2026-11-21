@@ -22,18 +22,20 @@ use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, t
 /// ActualText: its text, where its first glyph starts and its last glyph
 /// ends, in default user space (points from the bottom left corner).
 #[derive(Debug, Clone)]
-struct Drawn {
-    text: String,
+pub(crate) struct Drawn {
+    pub(crate) text: String,
     /// What its glyphs map back to through the font's ToUnicode map: the
     /// text itself outside a shaped run, the drawn characters inside one.
-    glyphs: String,
-    x: f64,
-    y: f64,
-    end: f64,
+    pub(crate) glyphs: String,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) end: f64,
+    /// The largest font size it is drawn at, in points of user space.
+    pub(crate) size: f64,
     /// The marked content identifier the structure tree refers to it by.
-    mcid: Option<i64>,
+    pub(crate) mcid: Option<i64>,
     /// How many of its glyphs are the font's .notdef glyph, an empty box.
-    notdef: usize,
+    pub(crate) notdef: usize,
 }
 
 /// A font of a page: its map back to text and its glyph widths.
@@ -44,15 +46,15 @@ struct PageFont<'a> {
 
 /// A picture a page paints.
 #[derive(Debug)]
-struct Picture {
+pub(crate) struct Picture {
     /// Left, bottom, width and height, in points.
-    rect: [f64; 4],
+    pub(crate) rect: [f64; 4],
     /// Width and height in pixels.
     pixels: (i64, i64),
     /// The image's filter, such as `FlateDecode` or `DCTDecode`.
     filter: String,
     /// The decoded samples, or the JPEG bytes as stored.
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
 }
 
 /// A structure element: its type, its depth under the root, its alternate
@@ -60,12 +62,12 @@ struct Picture {
 type Element = (String, usize, Option<String>, Vec<(usize, i64)>);
 
 /// A PDF read back.
-struct Pdf {
-    doc: lopdf::Document,
+pub(crate) struct Pdf {
+    pub(crate) doc: lopdf::Document,
 }
 
 impl Pdf {
-    fn read(bytes: &[u8]) -> Self {
+    pub(crate) fn read(bytes: &[u8]) -> Self {
         assert!(bytes.starts_with(b"%PDF-"), "the output is not a PDF");
         Self {
             doc: lopdf::Document::load_mem(bytes).expect("the PDF parses"),
@@ -85,11 +87,11 @@ impl Pdf {
         self.resolve(object).as_dict().expect("a dictionary")
     }
 
-    fn page_ids(&self) -> Vec<ObjectId> {
+    pub(crate) fn page_ids(&self) -> Vec<ObjectId> {
         self.doc.get_pages().into_values().collect()
     }
 
-    fn page_count(&self) -> usize {
+    pub(crate) fn page_count(&self) -> usize {
         self.page_ids().len()
     }
 
@@ -100,7 +102,7 @@ impl Pdf {
     }
 
     /// Width and height of a page's media box, in points.
-    fn page_size(&self, page: usize) -> (f64, f64) {
+    pub(crate) fn page_size(&self, page: usize) -> (f64, f64) {
         let media_box = self.resolve(self.page(page).get(b"MediaBox").expect("MediaBox"));
         let [left, bottom, right, top] = numbers(media_box.as_array().expect("MediaBox array"))[..]
         else {
@@ -148,7 +150,7 @@ impl Pdf {
     /// Every text object a page draws, in content stream order. A shaped
     /// run (right-to-left and complex scripts) reads as its ActualText, its
     /// logical text, once.
-    fn drawn(&self, page: usize) -> Vec<Drawn> {
+    pub(crate) fn drawn(&self, page: usize) -> Vec<Drawn> {
         let fonts = self.fonts(page);
         let content = self.doc.get_page_content(self.page_ids()[page]);
         let operations = Content::decode(&content)
@@ -187,6 +189,7 @@ impl Pdf {
                 x: f64::NAN,
                 y: f64::NAN,
                 end: f64::NAN,
+                size: 0.0,
                 mcid,
                 notdef: 0,
             };
@@ -252,6 +255,7 @@ impl Pdf {
                     let (font, size) = font.expect("a font is set before text");
                     let scale = along * size / 1000.0;
                     let piece = current.as_mut().expect("text is shown inside BT and ET");
+                    piece.size = piece.size.max(along.abs() * size);
                     let items: Vec<&Object> = match &operands[0] {
                         Object::Array(items) => items.iter().collect(),
                         string => vec![string],
@@ -287,7 +291,7 @@ impl Pdf {
     }
 
     /// Every picture a page paints, in content stream order.
-    fn pictures(&self, page: usize) -> Vec<Picture> {
+    pub(crate) fn pictures(&self, page: usize) -> Vec<Picture> {
         let resources = self.dict(self.page(page).get(b"Resources").expect("Resources"));
         let xobjects = resources
             .get(b"XObject")

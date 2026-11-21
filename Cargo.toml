@@ -122,6 +122,7 @@ pdf-writer = "0.15"
 subsetter = "0.2"
 miniz_oxide = "0.9"
 tiny-skia = "0.12"
+png = { version = "0.18", default-features = false }
 gif = "0.14.2"
 zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
 jpeg-encoder = { version = "=0.6.0", default-features = false }
