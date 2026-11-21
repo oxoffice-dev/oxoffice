@@ -1639,9 +1639,12 @@ impl<'a> Paragraph<'a> {
         self
     }
 
-    /// Set first line indent in place.
+    /// Set first line indent in place. It replaces a hanging indent: Word
+    /// honours only one of the two.
     pub fn set_first_line_indent(&mut self, length: Length) {
-        self.ensure_ppr().ind_first_line = Some(length.as_twips());
+        let ppr = self.ensure_ppr();
+        ppr.ind_first_line = Some(length.as_twips());
+        ppr.ind_hanging = None;
     }
 
     /// Set or clear the signed first-line indentation.
@@ -1674,9 +1677,10 @@ impl<'a> Paragraph<'a> {
         self
     }
 
-    /// Set hanging indent in place.
+    /// Set hanging indent in place. It replaces a first-line indent: Word
+    /// honours only one of the two.
     pub fn set_hanging_indent(&mut self, length: Length) {
-        self.ensure_ppr().ind_hanging = Some(length.as_twips());
+        self.set_hanging_indent_value(Some(length));
     }
 
     /// Set keep with next paragraph.
@@ -2055,12 +2059,17 @@ impl<'a> Paragraph<'a> {
         self.ensure_ppr().ind_end = length.map(Length::as_twips);
     }
 
-    /// Set or clear the direct hanging indentation.
+    /// Set or clear the direct hanging indentation. Setting one replaces a
+    /// first-line indent: Word honours only one of the two.
     pub fn set_hanging_indent_value(&mut self, length: Option<Length>) {
         if length.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_ppr().ind_hanging = length.map(Length::as_twips);
+        let ppr = self.ensure_ppr();
+        ppr.ind_hanging = length.map(Length::as_twips);
+        if length.is_some() {
+            ppr.ind_first_line = None;
+        }
     }
 
     /// Swap inside and outside indentation on facing pages.
