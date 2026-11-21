@@ -70,7 +70,6 @@ impl TableLocation {
         &self,
         document: &oxoffice_docx::Document,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        crate::document::note_fx260_word(document.content_count().max(1));
         match self {
             Self::Related(location) => Self::refreshed(document, location),
             Self::Body(index) => {
@@ -93,7 +92,6 @@ impl TableLocation {
         document: &oxoffice_docx::Document,
         location: &oxoffice_docx::ContentLocation,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        crate::document::note_fx260_word(document.content_count().max(1));
         crate::document::note_word_story_walk();
         let owner = location.story();
         let story = document
@@ -118,7 +116,6 @@ impl TableLocation {
         document: &oxoffice_docx::Document,
         read: impl FnOnce(oxoffice_docx::TableRef<'_>) -> T,
     ) -> oxoffice_docx::Result<T> {
-        crate::document::note_fx260_word(document.content_count().max(1));
         match self {
             Self::Body(index) => document
                 .table(*index)
@@ -2228,8 +2225,7 @@ impl PyCell {
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
         let story = if current_related.is_none() {
-            // Preserve the direct-table lookup's current error and work ordering.
-            crate::document::note_fx260_word(document.inner.content_count().max(1));
+            // Preserve the direct-table lookup's current error ordering.
             let slot = document
                 .inner
                 .content_index_of_table(table)
