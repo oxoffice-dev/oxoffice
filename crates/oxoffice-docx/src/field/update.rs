@@ -964,7 +964,6 @@ impl Document {
         }
         for (item, range) in self.document.body.content.iter().zip(&roots) {
             let emitted = self.document.body_item_xml(item)?;
-            crate::document::note_transaction_buffer("field_cache_root_emission", emitted.len());
             if canonical.get(range.clone()) != Some(emitted.as_slice()) {
                 return Err(Error::Other(
                     "field-cache direct body emitter differs from current source".into(),
@@ -1044,10 +1043,6 @@ impl Document {
                 &BodyContent::Paragraph(Box::new(paragraph.clone())),
                 &ancestors,
             )?;
-            crate::document::note_transaction_buffer(
-                "field_cache_paragraph_emission",
-                emitted.len(),
-            );
             if canonical.get(first..last) != Some(emitted.as_slice()) {
                 return Err(Error::Other(
                     "field-cache paragraph emitter differs at its proved physical path".into(),
@@ -1140,7 +1135,6 @@ impl Document {
         }
         output.extend_from_slice(&source[cursor..]);
         debug_assert_eq!(output.len(), length);
-        crate::document::note_transaction_output("field_cache_source_patch", output.len());
         Ok(Some(output))
     }
 

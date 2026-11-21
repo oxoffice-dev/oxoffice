@@ -73,7 +73,6 @@ impl TableLocation {
         match self {
             Self::Related(location) => Self::refreshed(document, location),
             Self::Body(index) => {
-                crate::document::note_word_story_walk();
                 let slot = document.content_index_of_table(*index).ok_or_else(|| {
                     oxoffice_docx::Error::Other("table has no checked direct physical owner".into())
                 })?;
@@ -92,7 +91,6 @@ impl TableLocation {
         document: &oxoffice_docx::Document,
         location: &oxoffice_docx::ContentLocation,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
-        crate::document::note_word_story_walk();
         let owner = location.story();
         let story = document
             .stories()?
@@ -675,7 +673,6 @@ impl PyTable {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("table XML owner route is unsupported"))?;
         let current = || -> PyResult<Vec<u8>> {
-            crate::document::note_word_whole_source_read();
             let location = document.current_table_owner(owner)?;
             document
                 .inner
@@ -2148,7 +2145,6 @@ impl PyCell {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("cell XML owner route is unsupported"))?;
         let current = || -> PyResult<Vec<u8>> {
-            crate::document::note_word_whole_source_read();
             let (location, row, cell) = document.current_cell_owner(owner)?;
             document
                 .inner

@@ -66,14 +66,6 @@ pub use content_control::{
     ContentControlSpec, ContentControlTypePayload, FormFieldAssignment, FormFieldRule,
     FormFieldTarget, FormFieldValue, FormResetValue, FormValidationIssue,
 };
-#[cfg(debug_assertions)]
-pub use document::force_staged_properties;
-#[cfg(debug_assertions)]
-pub use document::take_reopen_work;
-#[cfg(debug_assertions)]
-pub use document::take_staging_clones;
-#[cfg(debug_assertions)]
-pub use document::take_staging_work;
 pub use document::{
     AccessibilityIssue, BodyContentRef, BodyItemContext, BodyItemOwners, BodyItemRef,
     ContentFragment, ContentLocation, ContentMeasurement, Document, DocumentFragment,
@@ -90,7 +82,7 @@ pub use document::{
     StoryTextItem, TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport,
     TextWatermarkOptions, UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef,
     ValidationFinding, ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass,
-    derive_font_key, take_direct_fragment_bytes, validate_document_bytes, validate_document_file,
+    derive_font_key, validate_document_bytes, validate_document_file,
 };
 pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,

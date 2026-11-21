@@ -2,324 +2,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 
-// Debug builds count the whole-body work that direct reads and body splices
-// avoid, outside the guards that check them against it, so that a test of
-// the extension module proves each call took its direct route.
-#[cfg(debug_assertions)]
-static WORD_INVENTORY_REBUILDS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-static WORD_WHOLE_SOURCE_READS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-thread_local! {
-    static WORD_GUARDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Count one owner inventory rebuild from the whole document.
-fn note_word_inventory_rebuild() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_INVENTORY_REBUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Count one element read from its whole story source.
-pub(crate) fn note_word_whole_source_read() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_WHOLE_SOURCE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Run a debug guard's own whole-body work without counting it.
-#[cfg(debug_assertions)]
-fn guarded<T>(work: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WORD_GUARDING.with(|cell| cell.set(self.0));
-            if !self.0 {
-                // The guard's own document clones are not the call's.
-                let _ = oxoffice_docx::take_staging_clones();
-            }
-        }
-    }
-    let outer = WORD_GUARDING.with(|cell| cell.replace(true));
-    if !outer {
-        WORD_DOCUMENT_CLONES.fetch_add(
-            oxoffice_docx::take_staging_clones(),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-    }
-    let _restore = Restore(outer);
-    work()
-}
-
-// Debug builds also count the whole-document passes a publication can
-// make besides the inventory rebuild: staging clones of the document, story
-// walks that resolve a route, save comparisons and full owner inventory
-// publications, outside the guards that check a direct route against them.
-// A test of the extension module then states which of them a call makes.
-#[cfg(debug_assertions)]
-static WORD_DOCUMENT_CLONES: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-static WORD_STORY_WALKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-static WORD_SAVE_COMPARES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-static WORD_FULL_PUBLICATIONS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-thread_local! {
-    static WORD_CHECKED_ROUTE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Count one walk of a whole story that resolves a route.
-pub(crate) fn note_word_story_walk() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_STORY_WALKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Count one comparison of two staged saves.
-fn note_word_save_compare() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_SAVE_COMPARES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Count one publication that matches the whole owner inventory again.
-fn note_word_full_publication() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_FULL_PUBLICATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Whether a test asked every publication for its checked whole-document
-/// route, in place of the routes that read the owner inventory or one
-/// block. Always false in a release build.
-fn checked_route_forced() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        WORD_CHECKED_ROUTE.with(std::cell::Cell::get)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        false
-    }
-}
-
-/// Document staging clones, story walks that resolve a route, save
-/// comparisons and full owner inventory publications since the last read.
-/// Debug builds only. Reading resets all four.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_publication_work")]
-pub(crate) fn word_publication_work() -> (usize, usize, usize, usize) {
-    use std::sync::atomic::Ordering::Relaxed;
-    (
-        WORD_DOCUMENT_CLONES.swap(0, Relaxed) + oxoffice_docx::take_staging_clones(),
-        WORD_STORY_WALKS.swap(0, Relaxed),
-        WORD_SAVE_COMPARES.swap(0, Relaxed),
-        WORD_FULL_PUBLICATIONS.swap(0, Relaxed),
-    )
-}
-
-/// Take the checked whole-document route for every publication and stage the
-/// document for every properties edit, the references the direct routes are
-/// compared with. Debug builds only. Returns the previous choice.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_force_checked_route")]
-pub(crate) fn word_force_checked_route(force: bool) -> bool {
-    oxoffice_docx::force_staged_properties(force);
-    WORD_CHECKED_ROUTE.with(|cell| cell.replace(force))
-}
-
-/// The whole-body work counted so far: owner inventory rebuilds and
-/// whole-source element reads. Debug builds only. Reading resets both.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_whole_body_work")]
-pub(crate) fn word_whole_body_work() -> (usize, usize) {
-    (
-        WORD_INVENTORY_REBUILDS.swap(0, std::sync::atomic::Ordering::Relaxed),
-        WORD_WHOLE_SOURCE_READS.swap(0, std::sync::atomic::Ordering::Relaxed),
-    )
-}
-
-#[cfg(debug_assertions)]
-static WORD_VISITED_OWNER_RECORDS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-/// Count one real owner-record visit in lookup, plan, prepare, commit or index.
-pub(crate) fn note_visited_owner_record() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_VISITED_OWNER_RECORDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-#[cfg(debug_assertions)]
-static WORD_PIECE_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-#[cfg(debug_assertions)]
-static WORD_PIECE_ALIGNMENTS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-/// Actual selected or prefix/suffix block comparisons, separate from owner reads.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_piece_alignments")]
-pub(crate) fn word_piece_alignments() -> usize {
-    WORD_PIECE_ALIGNMENTS.swap(0, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Count one body block or story part whose owners are read again.
-fn note_word_piece_read() {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_PIECE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-#[cfg(debug_assertions)]
-static WORD_PIECE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Count the standalone XML bytes of a body block whose owners the checked
-/// reader reads, so that a count of reads also tells how much was read.
-fn note_word_piece_bytes(bytes: usize) {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_PIECE_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = bytes;
-}
-
-/// Standalone XML bytes of the body blocks whose owners the checked reader
-/// read again. Debug builds only. Reading resets the count.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_piece_bytes")]
-pub(crate) fn word_piece_bytes() -> usize {
-    WORD_PIECE_BYTES.swap(0, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Parsed, namespace-scanned, canonicalized and ZIP bytes, then serialized
-/// children and children read. Debug builds only. Reading resets all six.
-/// Child staging is not implemented.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_staging_work")]
-pub(crate) fn staging_work() -> [usize; 6] {
-    oxoffice_docx::take_staging_work()
-}
-
-/// ZIP writes, main-part parses, and identifier-part bytes scanned.
-/// Debug builds only. Reading resets all three. Child staging stays on the
-/// six-slot counter.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_reopen_work")]
-pub(crate) fn reopen_work() -> [usize; 3] {
-    oxoffice_docx::take_reopen_work()
-}
-
-/// Body children actually scanned for story lookup. Debug builds only.
-/// The count is cumulative and is not reset on read. A whole-part walk
-/// counts every child in that part. The frame scan is not included.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_main_body_block_scans")]
-pub(crate) fn main_body_block_scans() -> usize {
-    oxoffice_docx::Document::main_body_block_scans()
-}
-
-/// Body blocks and story parts whose owners were read again. Debug builds
-/// only. Reading resets the count.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_piece_work")]
-pub(crate) fn word_piece_work() -> usize {
-    WORD_PIECE_READS.swap(0, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Visited owner records and serialized XML bytes since the last read.
-/// Debug builds only. Reading resets both.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_splice_work")]
-pub(crate) fn word_splice_work() -> (usize, usize) {
-    (
-        WORD_VISITED_OWNER_RECORDS.swap(0, std::sync::atomic::Ordering::Relaxed),
-        oxoffice_docx::take_direct_fragment_bytes(),
-    )
-}
-
-#[cfg(debug_assertions)]
-static SPLICE_PACKET_WORK: [std::sync::atomic::AtomicUsize; 8] =
-    [const { std::sync::atomic::AtomicUsize::new(0) }; 8];
-
-fn note_splice_packet_work(index: usize) {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        SPLICE_PACKET_WORK[index].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = index;
-}
-
-/// Native clones/read outputs, then actual slot inserts, repeated scope and
-/// extraction visits, canonical/slot classifications, packet prepare/consume,
-/// mandatory reindex visits and general-publication index visits. Debug only.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_transaction_work")]
-pub(crate) fn word_transaction_work() -> ([usize; 6], [usize; 8]) {
-    (
-        oxoffice_docx::Document::take_transaction_work(),
-        std::array::from_fn(|index| {
-            SPLICE_PACKET_WORK[index].swap(0, std::sync::atomic::Ordering::Relaxed)
-        }),
-    )
-}
-
-/// Actual current/restored/normalized/masked outputs and copies by read phase.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_word_transaction_outputs")]
-pub(crate) fn word_transaction_outputs() -> std::collections::BTreeMap<String, [usize; 2]> {
-    let mut outputs = oxoffice_docx::Document::take_transaction_outputs();
-    let [all, successors] = oxoffice_py_support::take_scope_generation_work();
-    let model_clones = WORD_PIECE_MODEL_CLONES.swap(0, std::sync::atomic::Ordering::Relaxed);
-    outputs.insert(
-        "allphase.word_piece_model_clones".into(),
-        [
-            model_clones,
-            model_clones * std::mem::size_of::<oxoffice_docx_oxml::BodyContent>(),
-        ],
-    );
-    outputs.insert("allphase.scope_generation_allocations".into(), all);
-    outputs.insert(
-        "allphase.scope_owner_successor_allocations".into(),
-        successors,
-    );
-    outputs
-}
-
-/// Actual checked child parser/writer attempts and bytes by normalization round.
-#[cfg(debug_assertions)]
-#[pyfunction]
-#[pyo3(name = "_scoped_normalization_work")]
-pub(crate) fn scoped_normalization_work() -> std::collections::BTreeMap<String, [usize; 2]> {
-    oxoffice_docx::Document::take_scoped_normalization_work()
-}
-
 use oxoffice_py_support::{
     ContentPath, PathSeg, PreparedRevision, RevisionCounter, RevisionPreparation, RevisionScope,
     RevisionState, StaleElementError, revision_to_pyerr,
@@ -2042,7 +1724,6 @@ impl PySectionHandle {
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_page_border(edge, style, width, space, color)
             .map_err(|error| docx_to_pyerr(py, error))?;
-        note_word_save_compare();
         candidate
             .saves_as(&candidate)
             .map_err(|error| docx_to_pyerr(py, error))?;
@@ -4791,7 +4472,7 @@ impl WordOwnerIndexes {
             .direct_body_paragraphs
             .try_reserve(owners.len())
             .map_err(fail)?;
-        let body_tables = indexes.index_owners(owners, 7);
+        let body_tables = indexes.index_owners(owners);
         indexes.body_tables = table_slots
             .into_iter()
             .map(|slot| slot.and_then(|slot| body_tables.get(&slot).cloned()))
@@ -4828,7 +4509,6 @@ impl WordOwnerIndexes {
             .map_err(fail)?;
         let mut tables = HashMap::new();
         for (index, address) in locations.iter().enumerate() {
-            note_visited_owner_record();
             indexes.index_location(
                 index,
                 &address.location,
@@ -4858,7 +4538,7 @@ impl WordOwnerIndexes {
         self.tables_by_parent.clear();
         self.cells_by_parent.clear();
         self.runs_by_parent.clear();
-        self.index_owners(owners, 6);
+        self.index_owners(owners);
         self.by_route.retain(|_, bucket| !bucket.is_empty());
     }
 
@@ -4867,13 +4547,10 @@ impl WordOwnerIndexes {
     fn index_owners(
         &mut self,
         owners: &[WordOwner],
-        counter: usize,
     ) -> HashMap<usize, oxoffice_docx::ContentLocation> {
         let indexes = self;
         let mut body_tables = HashMap::new();
         for (index, owner) in owners.iter().enumerate() {
-            note_splice_packet_work(counter);
-            note_visited_owner_record();
             indexes
                 .by_generation
                 .insert(owner.owner.generation(), index);
@@ -4945,10 +4622,7 @@ impl WordOwnerIndexes {
             .get(&location.route_hash())?
             .iter()
             .copied()
-            .find(|index| {
-                note_visited_owner_record();
-                owners[*index].location.same_route(location)
-            })
+            .find(|index| owners[*index].location.same_route(location))
     }
 }
 
@@ -4989,7 +4663,7 @@ pub(crate) fn assert_direct_read(
             &xml[root..]
         )
     };
-    let whole = guarded(whole).expect("a direct read has a whole-source read");
+    let whole = whole().expect("a direct read has a whole-source read");
     assert_eq!(
         without_w14(direct),
         without_w14(&whole),
@@ -5006,7 +4680,7 @@ pub(crate) fn assert_indexed_route(
     native: impl FnOnce() -> oxoffice_docx::Result<oxoffice_docx::ContentLocation>,
     owner: &str,
 ) {
-    let native = guarded(native).expect("an indexed route resolves in the document");
+    let native = native().expect("an indexed route resolves in the document");
     assert_eq!(
         unfingerprinted_location(indexed),
         unfingerprinted_location(&native),
@@ -5070,7 +4744,6 @@ fn word_owner_capture(
     furniture_scope: Option<&RevisionState>,
 ) -> PyResult<(ContentPath, RevisionState)> {
     let (document_scope, removal_scope) = document_scopes;
-    note_visited_owner_record();
     let target = &owners[index];
     // Every structural publisher retires unproved current-owner states. Actual
     // Run handles retain the conservative document epoch and its first cause.
@@ -5606,14 +5279,6 @@ fn word_block_owners(
     let body = |snapshot: &&oxoffice_docx::StoryItemSnapshot| {
         snapshot.location().story().kind() == oxoffice_docx::StoryKind::Body
     };
-    note_word_piece_bytes(
-        snapshots
-            .iter()
-            .filter(body)
-            .filter(|snapshot| snapshot.is_direct_child())
-            .map(|snapshot| snapshot.xml().len())
-            .sum(),
-    );
     let direct = snapshots
         .iter()
         .filter(body)
@@ -5762,10 +5427,6 @@ fn placed_story(
     placed
 }
 
-#[cfg(debug_assertions)]
-static WORD_PIECE_MODEL_CLONES: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
 struct WordBlockPiece {
     block: std::sync::Arc<oxoffice_docx_oxml::BodyContent>,
     owners: Option<WordBlockOwners>,
@@ -5787,10 +5448,6 @@ pub(crate) struct WordPieces {
 }
 
 fn aligned_block(piece: &WordBlockPiece, block: &oxoffice_docx_oxml::BodyContent) -> bool {
-    #[cfg(debug_assertions)]
-    if !WORD_GUARDING.with(std::cell::Cell::get) {
-        WORD_PIECE_ALIGNMENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
     piece.block.as_ref() == block
 }
 
@@ -5862,20 +5519,14 @@ impl WordPieces {
             if qualified_block(piece, block) {
                 pieces.blocks.push(std::sync::Arc::clone(piece));
             } else {
-                note_word_piece_read();
                 let owners = word_block_owners(document, block).ok().flatten();
                 pieces.blocks.push(std::sync::Arc::new(WordBlockPiece {
-                    block: std::sync::Arc::new({
-                        #[cfg(debug_assertions)]
-                        WORD_PIECE_MODEL_CLONES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        block.clone()
-                    }),
+                    block: std::sync::Arc::new(block.clone()),
                     owners,
                 }));
             }
         }
         for (offset, block) in blocks[prefix..blocks.len() - suffix].iter().enumerate() {
-            note_word_piece_read();
             let owners = opened_paragraphs
                 .as_ref()
                 .and_then(|facts| facts.get(prefix + offset))
@@ -5897,14 +5548,7 @@ impl WordPieces {
                     .as_ref()
                     .and_then(|facts| facts.get(prefix + offset))
                     .and_then(|(model, _, _)| model.clone())
-                    .unwrap_or_else(|| {
-                        std::sync::Arc::new({
-                            #[cfg(debug_assertions)]
-                            WORD_PIECE_MODEL_CLONES
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            block.clone()
-                        })
-                    }),
+                    .unwrap_or_else(|| std::sync::Arc::new(block.clone())),
                 owners,
             }));
         }
@@ -5915,14 +5559,9 @@ impl WordPieces {
             if qualified_block(piece, block) {
                 pieces.blocks.push(std::sync::Arc::clone(piece));
             } else {
-                note_word_piece_read();
                 let owners = word_block_owners(document, block).ok().flatten();
                 pieces.blocks.push(std::sync::Arc::new(WordBlockPiece {
-                    block: std::sync::Arc::new({
-                        #[cfg(debug_assertions)]
-                        WORD_PIECE_MODEL_CLONES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        block.clone()
-                    }),
+                    block: std::sync::Arc::new(block.clone()),
                     owners,
                 }));
             }
@@ -5942,7 +5581,6 @@ impl WordPieces {
                 pieces.parts.push(piece.clone());
                 continue;
             }
-            note_word_piece_read();
             let owners = document
                 .story_part_owner_snapshots(kind, &part_name, &xml)
                 .ok()
@@ -5989,11 +5627,7 @@ impl WordPieces {
         }
         let piece = inserted.map(|owners| {
             std::sync::Arc::new(WordBlockPiece {
-                block: std::sync::Arc::new({
-                    #[cfg(debug_assertions)]
-                    WORD_PIECE_MODEL_CLONES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    blocks[slot].clone()
-                }),
+                block: std::sync::Arc::new(blocks[slot].clone()),
                 owners: Some(owners),
             })
         });
@@ -6183,7 +5817,7 @@ fn body_unfingerprinted_address(address: &WordOwnerAddress) -> WordOwnerAddress 
     }
 }
 
-/// Debug proof that a piece inventory matches the guarded full inventory.
+/// Debug proof that a piece inventory matches the full inventory.
 /// Body story fingerprints are set aside. Other fields and projections compare
 /// as the full path publishes them.
 #[cfg(debug_assertions)]
@@ -6192,8 +5826,8 @@ fn assert_word_pieces_rebuild(
     locations: &[WordOwnerAddress],
     projections: &WordIndexProjections,
 ) {
-    let expected = guarded(|| word_owner_locations(document, None))
-        .expect("an inventory from pieces has a rebuild");
+    let expected =
+        word_owner_locations(document, None).expect("an inventory from pieces has a rebuild");
     assert_eq!(
         locations
             .iter()
@@ -6205,7 +5839,7 @@ fn assert_word_pieces_rebuild(
             .collect::<Vec<_>>(),
         "Word owner inventory from pieces"
     );
-    let expected = guarded(|| WordIndexProjections::of(document));
+    let expected = WordIndexProjections::of(document);
     let paragraphs = |projections: &WordIndexProjections| {
         projections.body_paragraphs.as_ref().map(|locations| {
             locations
@@ -6233,7 +5867,6 @@ fn word_owner_locations(
     document: &oxoffice_docx::Document,
     form_sources: Option<&mut FormSources>,
 ) -> oxoffice_docx::Result<Vec<WordOwnerAddress>> {
-    note_word_inventory_rebuild();
     let table_facts = word_table_read_facts(document);
     word_owner_addresses(
         document.story_owner_snapshots()?,
@@ -6534,7 +6167,6 @@ impl BodySplicePlan {
             next -= self.removed_owners.len();
         }
         for (at, block) in &self.blocks {
-            note_visited_owner_record();
             if index >= *at {
                 next += block.len();
             }
@@ -6548,17 +6180,10 @@ impl BodySplicePlan {
             self.blocks
                 .iter()
                 .filter(move |(at, _)| *at == index)
-                .flat_map(|(_, block)| {
-                    block.iter().map(|address| {
-                        note_visited_owner_record();
-                        NextWordOwner::Inserted(address)
-                    })
-                })
+                .flat_map(|(_, block)| block.iter().map(NextWordOwner::Inserted))
                 .chain(
-                    (index < current && !self.removed_owners.contains(&index)).then(|| {
-                        note_visited_owner_record();
-                        NextWordOwner::Kept(index)
-                    }),
+                    (index < current && !self.removed_owners.contains(&index))
+                        .then_some(NextWordOwner::Kept(index)),
                 )
         })
     }
@@ -6650,8 +6275,9 @@ fn move_word_owner_body_item(location: &mut WordOwnerLocation, item: usize) {
     }
 }
 
-/// Binary search that counts each probed projection record.
-fn counted_partition_point(
+/// Binary search over projection records: the index of the first one `pred`
+/// rejects, as `slice::partition_point` finds it.
+fn location_partition_point(
     items: &[Option<oxoffice_docx::ContentLocation>],
     mut pred: impl FnMut(&Option<oxoffice_docx::ContentLocation>) -> bool,
 ) -> usize {
@@ -6659,7 +6285,6 @@ fn counted_partition_point(
     let mut right = items.len();
     while left < right {
         let mid = left + (right - left) / 2;
-        note_visited_owner_record();
         if pred(&items[mid]) {
             left = mid + 1;
         } else {
@@ -6705,7 +6330,6 @@ impl PyDocument {
         let mut tables_indexed = true;
         if inserted_table {
             for location in &self.indexes.body_tables {
-                note_visited_owner_record();
                 if location.is_none() {
                     tables_indexed = false;
                     break;
@@ -6726,8 +6350,6 @@ impl PyDocument {
         let mut paragraph = None;
         let mut body_item = Some(0);
         for (index, owner) in self.owners.iter().enumerate() {
-            note_visited_owner_record();
-            note_splice_packet_work(3);
             kept_scopes += owner.location.scopes().len();
             let (next, parent) = match &owner.location {
                 WordOwnerLocation::Table(_) => {
@@ -6799,7 +6421,6 @@ impl PyDocument {
         };
         // Each removed slot is the direct paragraph owner at its own item.
         for offset in 0..splice.removed {
-            note_visited_owner_record();
             let Some(owner) = self
                 .indexes
                 .direct_body_paragraphs
@@ -6829,7 +6450,6 @@ impl PyDocument {
         let mut paragraph_ordinal = 0;
         let mut table_ordinal = 0;
         for (index, owner) in self.owners.iter().enumerate() {
-            note_visited_owner_record();
             let item = word_owner_body_item(&owner.location);
             let story = word_owner_story(&owner.location);
             let body = story.is_some_and(|story| story.kind() == oxoffice_docx::StoryKind::Body);
@@ -6906,7 +6526,6 @@ impl PyDocument {
             return Ok(None);
         };
         for (offset, location) in after.iter().enumerate() {
-            note_visited_owner_record();
             let fits = if offset < splice.removed {
                 location
                     .as_ref()
@@ -6919,17 +6538,16 @@ impl PyDocument {
                 return Ok(None);
             }
         }
-        if body_paragraphs[..paragraph].iter().any(|location| {
-            note_visited_owner_record();
-            location.is_some() && head(location) >= Some(first)
-        }) {
+        if body_paragraphs[..paragraph]
+            .iter()
+            .any(|location| location.is_some() && head(location) >= Some(first))
+        {
             return Ok(None);
         }
-        let table = counted_partition_point(&self.indexes.body_tables, |location| {
+        let table = location_partition_point(&self.indexes.body_tables, |location| {
             head(location) < Some(first)
         });
         for location in &self.indexes.body_tables {
-            note_visited_owner_record();
             if location.as_ref().is_some_and(|location| {
                 location.story().kind() == oxoffice_docx::StoryKind::Body
                     && removed_items.contains(&location.index_path()[0])
@@ -7009,7 +6627,6 @@ impl PyDocument {
         let mut cells = Vec::new();
         let mut referenced = std::collections::HashSet::new();
         for owner in &self.owners {
-            note_visited_owner_record();
             if let Some(story) = word_owner_story(&owner.location)
                 && story.part_name() == part
             {
@@ -7030,7 +6647,6 @@ impl PyDocument {
             // The body table that holds this cell, through nested tables.
             let mut table = owner.parent;
             let root = loop {
-                note_visited_owner_record();
                 let holder = self.owners.get(table?)?;
                 match &holder.location {
                     WordOwnerLocation::Table(location)
@@ -7040,7 +6656,6 @@ impl PyDocument {
                     }
                     WordOwnerLocation::Table(_) => {
                         let parent = holder.parent?;
-                        note_visited_owner_record();
                         table = self.owners.get(parent)?.parent;
                     }
                     _ => return None,
@@ -7051,7 +6666,6 @@ impl PyDocument {
         cells.sort_unstable();
         let mut dense = true;
         for (index, (owner_index, _)) in cells.iter().enumerate() {
-            note_visited_owner_record();
             if index != *owner_index {
                 dense = false;
                 break;
@@ -7059,7 +6673,6 @@ impl PyDocument {
         }
         let mut referenced_known = true;
         for owner_index in &referenced {
-            note_visited_owner_record();
             if *owner_index >= cells.len() {
                 referenced_known = false;
                 break;
@@ -7067,14 +6680,12 @@ impl PyDocument {
         }
         let mut before = 0;
         for (_, root) in &cells {
-            note_visited_owner_record();
             if *root < first {
                 before += 1;
             }
         }
         let mut ordered = true;
         for (owner_index, root) in &cells {
-            note_visited_owner_record();
             if (*root < first) != (*owner_index < before) {
                 ordered = false;
                 break;
@@ -7110,7 +6721,6 @@ impl PyDocument {
         let mut inserted_scopes = 0;
         for (_, block) in &plan.blocks {
             for address in block {
-                note_visited_owner_record();
                 inserted_scopes += address.location.scopes().len();
             }
         }
@@ -7124,7 +6734,6 @@ impl PyDocument {
             .map_err(fail)?;
         if !keep {
             for owner in &self.owners {
-                note_visited_owner_record();
                 retired.extend(owner.scope_states().cloned());
             }
         }
@@ -7171,7 +6780,6 @@ impl PyDocument {
             match next {
                 NextWordOwner::Kept(index) if keep => {
                     for state in self.owners[index].scope_states() {
-                        note_visited_owner_record();
                         states.push(state.clone());
                     }
                     continue;
@@ -7206,7 +6814,6 @@ impl PyDocument {
             paragraphs.try_reserve(1).map_err(fail)?;
         }
         self.indexes.body_tables.try_reserve(1).map_err(fail)?;
-        note_splice_packet_work(4);
         Ok(PreparedBodySplice {
             revision,
             plan,
@@ -7293,7 +6900,6 @@ impl PyDocument {
             .map_err(revision_to_pyerr)?;
         let mut part = String::new();
         for owner in &self.owners {
-            note_visited_owner_record();
             if let Some(story) = word_owner_story(&owner.location)
                 .filter(|story| story.kind() == oxoffice_docx::StoryKind::Body)
             {
@@ -7318,10 +6924,8 @@ impl PyDocument {
         // Kept owners take their next states, in inventory order, by move.
         let mut states = states.into_iter();
         for (index, owner) in self.owners.iter_mut().enumerate() {
-            note_visited_owner_record();
             let mut inserted_here = false;
             for span in &spans {
-                note_visited_owner_record();
                 if span.contains(&index) {
                     inserted_here = true;
                     break;
@@ -7385,7 +6989,6 @@ impl PyDocument {
         if let Some(paragraphs) = &mut self.indexes.body_paragraphs {
             paragraphs.drain(plan.paragraph..plan.paragraph + plan.removed);
             for location in paragraphs.iter_mut().flatten() {
-                note_visited_owner_record();
                 moved(location);
             }
             if plan.inserted_paragraph
@@ -7399,7 +7002,6 @@ impl PyDocument {
             }
         }
         for location in self.indexes.body_tables.iter_mut().flatten() {
-            note_visited_owner_record();
             moved(location);
         }
         if let Some((location, cells)) = &plan.table_entry {
@@ -7409,9 +7011,7 @@ impl PyDocument {
             let mut shifted =
                 HashMap::with_capacity(self.indexes.cell_paragraphs.len() + cells.len());
             for ((table, row, cell), mut locations) in self.indexes.cell_paragraphs.drain() {
-                note_visited_owner_record();
                 for location in &mut locations {
-                    note_visited_owner_record();
                     let mut route = WordOwnerLocation::Paragraph(location.clone());
                     plan.move_cell_stories(&mut route, &part);
                     if let WordOwnerLocation::Paragraph(route) = route {
@@ -7440,7 +7040,6 @@ impl PyDocument {
         );
         #[cfg(debug_assertions)]
         self.assert_word_inventory_rebuilds();
-        note_splice_packet_work(5);
         Ok(())
     }
 
@@ -7448,8 +7047,8 @@ impl PyDocument {
     /// the rebuild's matcher keeps. Runs after the native edit.
     #[cfg(debug_assertions)]
     fn assert_body_append_matches(&self, plan: &BodySplicePlan, publication: &WordPublication) {
-        let rebuilt = guarded(|| word_owner_locations(&self.inner, None))
-            .expect("a spliced inventory has a rebuild");
+        let rebuilt =
+            word_owner_locations(&self.inner, None).expect("a spliced inventory has a rebuild");
         let mut expected = vec![None; self.owners.len() + plan.added()];
         for index in 0..self.owners.len() {
             if let Some(next) = plan.next_index(index) {
@@ -7492,7 +7091,7 @@ impl PyDocument {
                 )
             })
             .collect::<Vec<_>>();
-        let expected = guarded(|| word_owner_locations(&self.inner, None))
+        let expected = word_owner_locations(&self.inner, None)
             .expect("a spliced inventory has a rebuild")
             .iter()
             .map(|owner| {
@@ -7506,10 +7105,9 @@ impl PyDocument {
             })
             .collect::<Vec<_>>();
         assert_eq!(actual, expected, "spliced Word owner inventory");
-        let indexes = guarded(|| {
+        let indexes =
             WordOwnerIndexes::prepare(&self.owners, WordIndexProjections::of(&self.inner))
-        })
-        .expect("a spliced inventory has rebuilt indexes");
+                .expect("a spliced inventory has rebuilt indexes");
         let locations = |locations: &[Option<oxoffice_docx::ContentLocation>]| {
             locations
                 .iter()
@@ -8546,7 +8144,6 @@ fn append_word_owners_with_states(
 ) {
     let mut offset = 0;
     result.extend(locations.into_iter().map(|address| {
-        note_visited_owner_record();
         let WordOwnerAddress {
             location,
             parent,
@@ -10653,7 +10250,6 @@ impl PyDocument {
     }
 
     fn indexed_owner(&self, state: &RevisionState) -> Option<(usize, &WordOwner)> {
-        note_visited_owner_record();
         let index = *self.indexes.by_generation.get(&state.generation())?;
         let owner = self.owners.get(index)?;
         owner.owner.same_state(state).then_some((index, owner))
@@ -10701,11 +10297,8 @@ impl PyDocument {
         prepared: Option<(&PreparedWordRevision, &oxoffice_docx::Document)>,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
         let document = prepared.map_or(&self.inner, |(_, candidate)| candidate);
-        let indexed = (!checked_route_forced())
-            .then(|| {
-                self.indexed_paragraph_location(location, prepared.map(|(prepared, _)| prepared))
-            })
-            .flatten();
+        let indexed =
+            self.indexed_paragraph_location(location, prepared.map(|(prepared, _)| prepared));
         match indexed {
             Some(indexed) => {
                 #[cfg(debug_assertions)]
@@ -10725,9 +10318,7 @@ impl PyDocument {
         related: &Option<oxoffice_docx::ContentLocation>,
     ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
         let native = || crate::table::TableLocation::new(index, related).native(&self.inner);
-        let indexed = (!checked_route_forced())
-            .then(|| self.indexed_table_location(index, related, None))
-            .flatten();
+        let indexed = self.indexed_table_location(index, related, None);
         match indexed {
             Some(indexed) => {
                 // The walk of a related table only reads its story again,
@@ -10751,22 +10342,21 @@ impl PyDocument {
         oxoffice_docx::ContentLocation,
         oxoffice_docx_oxml::text::AcceptedRunPath,
     )> {
-        if !checked_route_forced()
-            && let Some((_, owner)) = self.indexed_owner(state)
+        if let Some((_, owner)) = self.indexed_owner(state)
             && let WordOwnerLocation::Run(location, path) = &owner.location
         {
             // The story walk of a recorded route only reads its story again,
             // so the check is that the paragraph there holds this run path.
             #[cfg(debug_assertions)]
             assert!(
-                guarded(|| {
+                (|| {
                     let current =
                         ParagraphLocation::Related(location.clone()).native(&self.inner)?;
                     self.inner.read_story_paragraph(&current, |paragraph| {
                         (0..paragraph.run_count())
                             .any(|index| paragraph.run_path(index).as_ref() == Some(path))
                     })
-                })
+                })()
                 .expect("an indexed run route resolves in the document"),
                 "indexed run route holds its run path"
             );
@@ -11553,7 +11143,6 @@ impl PyDocument {
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<PreparedWordRevision> {
-        note_word_full_publication();
         self.ensure_word_authority(py)?;
         let forms = matches!(
             publication,
@@ -11893,7 +11482,6 @@ impl PyDocument {
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<()> {
-        note_word_save_compare();
         if self
             .inner
             .saves_as(&candidate)
@@ -11927,7 +11515,7 @@ impl PyDocument {
         // content outside this block cannot be saved. It checks the block
         // answer whenever it gives one.
         #[cfg(debug_assertions)]
-        if let Ok(saved) = guarded(|| self.inner.saves_as(&candidate)) {
+        if let Ok(saved) = self.inner.saves_as(&candidate) {
             assert_eq!(saved, same, "direct body paragraph save comparison");
         }
         if same {
@@ -11955,7 +11543,7 @@ impl PyDocument {
         candidate: &oxoffice_docx::Document,
         slot: usize,
     ) -> Option<bool> {
-        if checked_route_forced() || self.inner.unsavable_body_edit().is_some() {
+        if self.inner.unsavable_body_edit().is_some() {
             return None;
         }
         let (
@@ -11989,9 +11577,6 @@ impl PyDocument {
         &self,
         state: &RevisionState,
     ) -> Option<(usize, usize, usize, usize)> {
-        if checked_route_forced() {
-            return None;
-        }
         let (slot, row, cell) = self.direct_body_cell_slot(state)?;
         let (_, owner) = self.indexed_owner(state)?;
         let parent = self.owners.get(owner.parent?)?;
@@ -12200,7 +11785,6 @@ impl PyDocument {
         // The document's ordinal of the cell story, from the cell's own record.
         let stories = (cell_story.owner_index(), 0);
         let block = oxoffice_docx_oxml::BodyContent::Table(Box::new(candidate));
-        note_word_piece_read();
         let Some(after) =
             word_block_owners(&self.inner, &block).map_err(|error| docx_to_pyerr(py, error))?
         else {
@@ -12273,7 +11857,6 @@ impl PyDocument {
         let mut previous = Vec::new();
         let mut pending = vec![selected];
         while let Some(index) = pending.pop() {
-            note_visited_owner_record();
             previous.push(index);
             for children in [
                 self.indexes.cells_by_parent.get(&index),
@@ -12329,7 +11912,6 @@ impl PyDocument {
         let mut targets = Vec::with_capacity(addresses.len());
         let mut newborn = 0;
         for index in 0..addresses.len() {
-            note_visited_owner_record();
             let key = key(&addresses, index);
             let cursor = cursors.entry(key.clone()).or_default();
             let old = buckets
@@ -12639,166 +12221,162 @@ impl PyDocument {
         table_index: usize,
         table_ordinal: usize,
     ) {
-        guarded(|| {
-            let fresh = word_block_owners(&self.inner, &self.inner.body_children()[body_slot])
-                .expect("a published table reads")
-                .expect("a published table has owner facts");
-            let piece = self.pieces.as_ref().expect("active pieces").blocks[body_slot]
-                .owners
-                .as_ref()
-                .expect("piece owners");
-            let content = |location: &oxoffice_docx::ContentLocation| {
-                if location.story().kind() == oxoffice_docx::StoryKind::Body {
-                    unfingerprinted_location(location)
-                } else {
-                    location.clone()
-                }
-            };
-            let facts = |facts: &WordOwnerFacts| {
+        let fresh = word_block_owners(&self.inner, &self.inner.body_children()[body_slot])
+            .expect("a published table reads")
+            .expect("a published table has owner facts");
+        let piece = self.pieces.as_ref().expect("active pieces").blocks[body_slot]
+            .owners
+            .as_ref()
+            .expect("piece owners");
+        let content = |location: &oxoffice_docx::ContentLocation| {
+            if location.story().kind() == oxoffice_docx::StoryKind::Body {
+                unfingerprinted_location(location)
+            } else {
+                location.clone()
+            }
+        };
+        let facts = |facts: &WordOwnerFacts| {
+            (
+                facts
+                    .items
+                    .iter()
+                    .filter(|(location, _, _)| {
+                        location.story().kind() == oxoffice_docx::StoryKind::Body
+                            || location.item_kind() == oxoffice_docx::StoryItemKind::Table
+                    })
+                    .map(|(location, slot, read)| (content(location), *slot, read.clone()))
+                    .collect::<Vec<_>>(),
+                facts
+                    .cells
+                    .iter()
+                    .map(|(table, row, cell, story)| (content(table), *row, *cell, story.clone()))
+                    .collect::<Vec<_>>(),
+                facts.paragraphs.clone(),
+                facts.links.clone(),
+            )
+        };
+        assert_eq!(
+            facts(&piece.facts),
+            facts(&fresh.facts),
+            "local cell piece facts"
+        );
+        assert_eq!(
+            (
+                &piece.relationships,
+                piece.body_items,
+                piece.cell_stories,
+                piece.text_boxes,
+                &piece.paragraphs,
+                piece.tables,
+                piece.local_table_membership,
+                &piece.cell_paragraphs,
+            ),
+            (
+                &fresh.relationships,
+                fresh.body_items,
+                fresh.cell_stories,
+                fresh.text_boxes,
+                &fresh.paragraphs,
+                fresh.tables,
+                fresh.local_table_membership,
+                &fresh.cell_paragraphs,
+            ),
+            "local cell piece counts"
+        );
+        assert!(piece.holds_field || !fresh.holds_field);
+        let WordOwnerLocation::Table(location) = &self.owners[table_index].location else {
+            panic!("a local cell table owner")
+        };
+        let cells = &self.indexes.cells_by_parent[&table_index];
+        let base = cells
+            .iter()
+            .filter_map(|index| match &self.owners[*index].location {
+                WordOwnerLocation::Cell { story, .. } => Some(story.owner_index()),
+                _ => None,
+            })
+            .min()
+            .expect("table cells");
+        let stories = (base, 0);
+        let place = |route: &oxoffice_docx::ContentLocation| {
+            placed_route(route, location.story(), (location.index_path()[0], stories))
+        };
+        let mut placed = fresh.facts.clone();
+        for (route, slot, _) in &mut placed.items {
+            *route = place(route);
+            *slot = slot.map(|_| body_slot);
+        }
+        for (table, _, _, story) in &mut placed.cells {
+            *table = place(table);
+            *story = placed_story(story, stories);
+        }
+        for (route, _, _) in &mut placed.paragraphs {
+            *route = place(route);
+        }
+        let expected = word_piece_owner_addresses(placed, 0);
+        let record = |address: &WordOwnerAddress, parent: Option<&WordOwnerLocation>| {
+            format!(
+                "{:?}",
                 (
-                    facts
-                        .items
-                        .iter()
-                        .filter(|(location, _, _)| {
-                            location.story().kind() == oxoffice_docx::StoryKind::Body
-                                || location.item_kind() == oxoffice_docx::StoryItemKind::Table
-                        })
-                        .map(|(location, slot, read)| (content(location), *slot, read.clone()))
-                        .collect::<Vec<_>>(),
-                    facts
-                        .cells
-                        .iter()
-                        .map(|(table, row, cell, story)| {
-                            (content(table), *row, *cell, story.clone())
-                        })
-                        .collect::<Vec<_>>(),
-                    facts.paragraphs.clone(),
-                    facts.links.clone(),
+                    owner_location_without_body(&address.location),
+                    parent.map(owner_location_without_body),
+                    address.body_slot,
+                    address.projection_ordinal,
+                    &address.read_facts,
                 )
-            };
-            assert_eq!(
-                facts(&piece.facts),
-                facts(&fresh.facts),
-                "local cell piece facts"
-            );
-            assert_eq!(
-                (
-                    &piece.relationships,
-                    piece.body_items,
-                    piece.cell_stories,
-                    piece.text_boxes,
-                    &piece.paragraphs,
-                    piece.tables,
-                    piece.local_table_membership,
-                    &piece.cell_paragraphs,
-                ),
-                (
-                    &fresh.relationships,
-                    fresh.body_items,
-                    fresh.cell_stories,
-                    fresh.text_boxes,
-                    &fresh.paragraphs,
-                    fresh.tables,
-                    fresh.local_table_membership,
-                    &fresh.cell_paragraphs,
-                ),
-                "local cell piece counts"
-            );
-            assert!(piece.holds_field || !fresh.holds_field);
-            let WordOwnerLocation::Table(location) = &self.owners[table_index].location else {
-                panic!("a local cell table owner")
-            };
-            let cells = &self.indexes.cells_by_parent[&table_index];
-            let base = cells
-                .iter()
-                .filter_map(|index| match &self.owners[*index].location {
-                    WordOwnerLocation::Cell { story, .. } => Some(story.owner_index()),
-                    _ => None,
-                })
-                .min()
-                .expect("table cells");
-            let stories = (base, 0);
-            let place = |route: &oxoffice_docx::ContentLocation| {
-                placed_route(route, location.story(), (location.index_path()[0], stories))
-            };
-            let mut placed = fresh.facts.clone();
-            for (route, slot, _) in &mut placed.items {
-                *route = place(route);
-                *slot = slot.map(|_| body_slot);
-            }
-            for (table, _, _, story) in &mut placed.cells {
-                *table = place(table);
-                *story = placed_story(story, stories);
-            }
-            for (route, _, _) in &mut placed.paragraphs {
-                *route = place(route);
-            }
-            let expected = word_piece_owner_addresses(placed, 0);
-            let record = |address: &WordOwnerAddress, parent: Option<&WordOwnerLocation>| {
-                format!(
-                    "{:?}",
-                    (
-                        owner_location_without_body(&address.location),
-                        parent.map(owner_location_without_body),
-                        address.body_slot,
-                        address.projection_ordinal,
-                        &address.read_facts,
-                    )
+            )
+        };
+        let mut wanted = expected
+            .iter()
+            .map(|address| {
+                let mut address = body_unfingerprinted_address(address);
+                if address.parent.is_none() {
+                    address.projection_ordinal = Some(table_ordinal);
+                }
+                record(
+                    &address,
+                    address.parent.map(|parent| &expected[parent].location),
                 )
+            })
+            .collect::<Vec<_>>();
+        let mut actual = Vec::new();
+        let mut pending = vec![table_index];
+        while let Some(index) = pending.pop() {
+            let owner = &self.owners[index];
+            let address = WordOwnerAddress {
+                location: owner.location.clone(),
+                parent: owner.parent,
+                body_slot: owner.body_slot,
+                projection_ordinal: owner.projection_ordinal,
+                read_facts: owner.read_facts.clone(),
             };
-            let mut wanted = expected
-                .iter()
-                .map(|address| {
-                    let mut address = body_unfingerprinted_address(address);
-                    if address.parent.is_none() {
-                        address.projection_ordinal = Some(table_ordinal);
-                    }
-                    record(
-                        &address,
-                        address.parent.map(|parent| &expected[parent].location),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut actual = Vec::new();
-            let mut pending = vec![table_index];
-            while let Some(index) = pending.pop() {
-                let owner = &self.owners[index];
-                let address = WordOwnerAddress {
-                    location: owner.location.clone(),
-                    parent: owner.parent,
-                    body_slot: owner.body_slot,
-                    projection_ordinal: owner.projection_ordinal,
-                    read_facts: owner.read_facts.clone(),
-                };
-                let parent = owner.parent.map(|parent| &self.owners[parent].location);
-                actual.push(record(&address, parent));
-                for children in [
-                    self.indexes.cells_by_parent.get(&index),
-                    self.indexes.paragraphs_by_parent.get(&index),
-                    self.indexes.runs_by_parent.get(&index),
-                    self.indexes.tables_by_parent.get(&index),
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    pending.extend(children);
-                }
+            let parent = owner.parent.map(|parent| &self.owners[parent].location);
+            actual.push(record(&address, parent));
+            for children in [
+                self.indexes.cells_by_parent.get(&index),
+                self.indexes.paragraphs_by_parent.get(&index),
+                self.indexes.runs_by_parent.get(&index),
+                self.indexes.tables_by_parent.get(&index),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                pending.extend(children);
             }
-            wanted.sort();
-            actual.sort();
-            assert_eq!(actual, wanted, "local cell owner records");
-            if let Some((routes, _)) = &fresh.cell_paragraphs {
-                for ((_, row, cell), routes) in routes {
-                    assert_eq!(
-                        self.indexes
-                            .cell_paragraphs
-                            .get(&(table_ordinal, *row, *cell)),
-                        Some(&routes.iter().map(place).collect::<Vec<_>>()),
-                        "local cell paragraph routes"
-                    );
-                }
+        }
+        wanted.sort();
+        actual.sort();
+        assert_eq!(actual, wanted, "local cell owner records");
+        if let Some((routes, _)) = &fresh.cell_paragraphs {
+            for ((_, row, cell), routes) in routes {
+                assert_eq!(
+                    self.indexes
+                        .cell_paragraphs
+                        .get(&(table_ordinal, *row, *cell)),
+                    Some(&routes.iter().map(place).collect::<Vec<_>>()),
+                    "local cell paragraph routes"
+                );
             }
-        });
+        }
     }
 
     /// Keep live handles when a property edit only moves existing physical
@@ -12882,7 +12460,6 @@ impl PyDocument {
         candidate: oxoffice_docx::Document,
         operation: &'static str,
     ) -> PyResult<()> {
-        note_word_save_compare();
         if self
             .inner
             .saves_as(&candidate)
@@ -12907,7 +12484,6 @@ impl PyDocument {
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<()> {
-        note_word_save_compare();
         if self
             .inner
             .saves_as(&candidate)

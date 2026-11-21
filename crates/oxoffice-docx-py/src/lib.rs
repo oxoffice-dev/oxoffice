@@ -198,41 +198,9 @@ pub(crate) fn docx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyEr
 /// Register every class and function of the docx bindings on `module`.
 pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyDocument>()?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_whole_body_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_publication_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(
-        document::word_force_checked_route,
-        module
-    )?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_splice_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_transaction_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(
-        document::scoped_normalization_work,
-        module
-    )?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(
-        document::word_transaction_outputs,
-        module
-    )?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_piece_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_piece_alignments, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::word_piece_bytes, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::staging_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::reopen_work, module)?)?;
-    #[cfg(debug_assertions)]
-    module.add_function(wrap_pyfunction!(document::main_body_block_scans, module)?)?;
+    // Debug builds check every edit against the whole document, so the
+    // tests refuse to time them.
+    module.add("_debug_build", cfg!(debug_assertions))?;
     module.add_class::<document::PyFontEmbeddingLicense>()?;
     module.add_class::<document::PyEmbeddedFont>()?;
     module.add_class::<document::PyFontDefinition>()?;
