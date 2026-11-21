@@ -39,10 +39,14 @@ const INSERTED_DOCUMENTS_KEEP_DESTINATION_FORMATTING: bool = true;
 
 impl FragmentConflictPolicy {
     /// Reuse equivalent supported dependencies and rename non-equivalent ones.
-    /// A default style equal to the destination's default under another id
-    /// (Word's localized `Policepardfaut`) takes that default; a different one
-    /// keeps its look under its own id, as a different default under the
-    /// destination's id is renamed.
+    /// A default character, table or numbering style under an id the
+    /// destination lacks (Word's localized `Policepardfaut`) takes the
+    /// destination's default. A default paragraph style does when it is that
+    /// default under another id; a different one is imported under its own
+    /// id, no longer a default, as a different default under the
+    /// destination's id is renamed. The styles based on it and the text that
+    /// names it keep its look; text that names no style takes the
+    /// destination's default paragraph style.
     pub const fn reuse_equivalent() -> Self {
         Self {
             reuse_equivalent_styles: true,
@@ -54,9 +58,8 @@ impl FragmentConflictPolicy {
     }
 
     /// Allocate a fresh destination identity for every supported dependency,
-    /// except a default style: one equal to the destination's default, under
-    /// its id or another (Word's localized `Policepardfaut`), takes that
-    /// default, as a type has one default.
+    /// except a default style, which takes the destination's default as
+    /// [`Self::reuse_equivalent`] says (a type has one default).
     pub const fn rename_all() -> Self {
         Self {
             reuse_equivalent_styles: false,

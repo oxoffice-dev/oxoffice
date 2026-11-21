@@ -2009,6 +2009,22 @@ fn a_localized_default_style_takes_the_destination_s_default() {
             assert!(doc.style(id).is_none(), "{name}: {id} maps to the default");
         }
     }
+    // LibreOffice writes the same defaults a little differently (an empty
+    // run properties element, no table indent): they still map.
+    for policy in [
+        FragmentConflictPolicy::reuse_equivalent(),
+        FragmentConflictPolicy::rename_all(),
+    ] {
+        let mut doc = corpus_doc("libreoffice/report.docx");
+        import_at_end(&mut doc, &source, policy).unwrap();
+        let doc = reopen(&mut doc);
+        for id in ["Policepardfaut", "TableauNormal", "Aucuneliste"] {
+            assert!(
+                doc.style(id).is_none(),
+                "{policy:?}: {id} maps to the default"
+            );
+        }
+    }
 }
 
 /// A document whose default paragraph style has the id `default` (Word in
@@ -2103,6 +2119,78 @@ fn a_default_mapped_to_a_destination_style_is_not_renamed_with_the_source_style_
     assert_eq!(banner_color(&doc, "Standard"), None);
 }
 
+/// The style of the paragraph holding `text` in `part` of the saved `doc`.
+fn part_paragraph_style(doc: &mut Document, part: &str, text: &str) -> Option<String> {
+    let package = OpcPackage::from_reader(Cursor::new(saved(doc))).expect("package opens");
+    let xml =
+        String::from_utf8_lossy(package.get_part(part).expect("the part exists")).into_owned();
+    let at = xml
+        .find(text)
+        .unwrap_or_else(|| panic!("{part} holds {text:?}"));
+    let paragraph = xml[..at].rfind("<w:p>").max(xml[..at].rfind("<w:p "))?;
+    word_value(&xml[paragraph..at], "pStyle")
+}
+
+#[test]
+fn notes_and_comments_take_the_style_renames_in_one_pass_too() {
+    // As in the body: the source default Normal maps to the destination's
+    // Standard, and the source's own red Standard is renamed.
+    let mut source = with_notes_and_comments("src");
+    let mut package = OpcPackage::from_reader(Cursor::new(saved(&mut source))).unwrap();
+    for (part, from, to) in [
+        (
+            "/word/styles.xml",
+            "</w:styles>".to_owned(),
+            format!("{RED_STANDARD}</w:styles>"),
+        ),
+        (
+            "/word/footnotes.xml",
+            r#"<w:footnote w:id="2"><w:p>"#.to_owned(),
+            r#"<w:footnote w:id="2"><w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr>"#.to_owned(),
+        ),
+        (
+            "/word/comments.xml",
+            r#"<w:pStyle w:val="CommentText"/>"#.to_owned(),
+            r#"<w:pStyle w:val="Normal"/>"#.to_owned(),
+        ),
+    ] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        assert!(xml.contains(&from), "{part}");
+        let mut xml = xml.replacen(&from, &to, 1);
+        if part == "/word/comments.xml" {
+            // The answer uses the source's own Standard, so it is imported.
+            xml = xml.replacen(&from, r#"<w:pStyle w:val="Standard"/>"#, 1);
+        }
+        package.set_part(part, xml.into_bytes());
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let source = Document::from_bytes(&out.into_inner()).unwrap();
+    let mut doc =
+        with_paragraph_default("Standard", false, "", &styled_paragraph("Standard", "dest"));
+    import_at_end(
+        &mut doc,
+        &source,
+        FragmentConflictPolicy::reuse_equivalent(),
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    for (part, text) in [
+        ("/word/footnotes.xml", "src footnote"),
+        ("/word/comments.xml", "src question"),
+    ] {
+        assert_eq!(
+            part_paragraph_style(&mut doc, part, text).as_deref(),
+            Some("Standard"),
+            "{part}"
+        );
+    }
+    let red = part_paragraph_style(&mut doc, "/word/comments.xml", "src answer")
+        .expect("the answer has a style");
+    assert_ne!(red, "Standard");
+    assert_eq!(banner_color(&doc, &red).as_deref(), Some("C00000"));
+}
+
 #[test]
 fn a_style_based_on_a_localized_default_equals_the_same_style_based_on_the_destination_s() {
     let pair = |base: &str| {
@@ -2116,7 +2204,9 @@ fn a_style_based_on_a_localized_default_equals_the_same_style_based_on_the_desti
     );
     for policy in [
         FragmentConflictPolicy::reuse_equivalent(),
-        FragmentConflictPolicy::default(),
+        FragmentConflictPolicy::for_insert_document(Some(
+            FragmentConflictPolicy::reuse_equivalent(),
+        )),
     ] {
         let mut doc = doc_with_styles(
             &pair("DefaultParagraphFont"),
@@ -2147,7 +2237,10 @@ fn a_different_default_keeps_its_look_whatever_the_language_of_its_id() {
             source_default,
             true,
             "",
-            &styled_paragraph(source_default, "imported"),
+            &format!(
+                "{}<w:p><w:r><w:t>plain</w:t></w:r></w:p>",
+                styled_paragraph(source_default, "imported")
+            ),
         );
         assert!(
             banner_color(&source, source_default).is_some(),
@@ -2166,6 +2259,11 @@ fn a_different_default_keeps_its_look_whatever_the_language_of_its_id() {
             "{case}"
         );
         assert_eq!(paragraph_defaults(&doc), ["Normal"], "{case}");
+        assert_eq!(
+            style_of_text(&doc, "plain"),
+            None,
+            "{case}: text that names no style takes the destination's default"
+        );
         assert_eq!(banner_color(&doc, "Normal"), None, "{case}");
     }
 }

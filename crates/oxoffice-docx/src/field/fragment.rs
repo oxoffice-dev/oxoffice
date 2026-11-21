@@ -1694,11 +1694,14 @@ fn remap_fragment_style_collisions(
         .collect::<HashSet<_>>();
     // A default of its type under an id the destination lacks, such as
     // Word's localized Policepardfaut or a German Standard, takes the
-    // destination's default when it keeps the destination's look or is that
-    // default under another id, as a type has one default. A different one
-    // keeps its look under its own id, no longer a default, as a different
-    // default under the destination's id is renamed: the result does not
-    // depend on the language of the Word that wrote either file.
+    // destination's default, as a type has one default. The character,
+    // table and numbering defaults carry no look of their own (Word writes
+    // them empty), so they always do. A paragraph default carries the
+    // document's look: it does when it keeps the destination's look or is
+    // that default under another id, and a different one keeps its look
+    // under its own id, no longer a default, as a different default under
+    // the destination's id is renamed. The result does not depend on the
+    // language of the Word that wrote either file.
     let mut demoted = HashSet::new();
     for style in &fragment.styles.styles {
         if !style.is_default || destination.styles.get_by_id(&style.style_id).is_some() {
@@ -1709,7 +1712,10 @@ fn remap_fragment_style_collisions(
         };
         let mut under_destination_id = style.clone();
         under_destination_id.style_id = default.style_id.clone();
-        if keep_destination_styles || *default == under_destination_id {
+        if keep_destination_styles
+            || style.style_type != StyleType::Paragraph
+            || *default == under_destination_id
+        {
             replacements.insert(style.style_id.clone(), default.style_id.clone());
         } else {
             demoted.insert(style.style_id.clone());
