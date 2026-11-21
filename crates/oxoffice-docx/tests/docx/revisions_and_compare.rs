@@ -845,6 +845,9 @@ fn a_redline_in_one_name_on_a_reviewed_contract_edited_by_oxoffice_is_compared()
     )]));
     assert_eq!(replaced, 1);
     let mut edited = reopen(&mut edited);
+    // The held paragraph is written another way, not changed.
+    assert!(main_part_xml(&mut edited).contains("days&apos; written"));
+    assert!(main_part_xml(&mut corpus_doc("word/contract.docx")).contains("days' written"));
     let original = corpus_doc("word/contract.docx");
     let earlier = original
         .revisions()
@@ -915,12 +918,61 @@ fn a_reply_added_on_a_reviewed_contract_is_compared() {
     edited
         .reply_to(90, "Second reviewer", "Agreed, it's fine.")
         .unwrap();
-    let edited = reopen(&mut edited);
-    let original = contract_with_a_comment_on_its_first_run();
+    let mut edited = reopen(&mut edited);
+    // The replay saves the main part as this copy was saved: the held
+    // paragraph is written another way, not changed.
+    assert!(main_part_xml(&mut edited).contains("days&apos; written"));
+    let mut original = contract_with_a_comment_on_its_first_run();
+    assert!(main_part_xml(&mut original).contains("days' written"));
     let held = original.revisions().len();
     let doc = redline(original, &edited);
     assert_eq!(doc.revisions().len(), held, "the reply changes no revision");
     assert_eq!(doc.comments().len(), edited.comments().len());
+}
+
+#[test]
+fn a_reply_anchored_in_a_held_paragraph_keeps_the_refusal() {
+    // The reply's range goes in the paragraph that holds the reviewer's
+    // revision, which the comparison may not change.
+    let mut edited = corpus_doc("word/contract.docx");
+    let parent = edited.comments()[0].id();
+    edited
+        .reply_to(parent, "Second reviewer", "Agreed.")
+        .unwrap();
+    let edited = reopen(&mut edited);
+    let mut original = corpus_doc("word/contract.docx");
+    let error = original.compare(&edited, AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_held_paragraph_whose_blank_math_text_changed_keeps_the_refusal() {
+    // Blank text is content in a math run: the held paragraph changed, and
+    // the comparison may not replace it.
+    let body = |text: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:ins w:id="1" w:author="Earlier" w:date="2026-01-01T00:00:00Z">"#,
+                r#"<w:r><w:t>Area </w:t></w:r></w:ins>"#,
+                r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">"#,
+                r#"<m:r><m:t xml:space="preserve">{}</m:t></m:r></m:oMath></w:p>"#,
+            ),
+            text
+        ))
+    };
+    let mut original = body(" ");
+    let error = original.compare(&body("  "), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("holds an existing tracked revision"),
+        "{error}"
+    );
 }
 
 #[test]

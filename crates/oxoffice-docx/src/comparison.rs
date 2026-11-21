@@ -3440,9 +3440,10 @@ fn same_owner_tree(
 
 /// One owner's XML read so that two serializations of one tree compare
 /// equal, as [`canonical_owned_story`] reads a story, and further: character
-/// and entity references read as the characters they stand for, adjacent
-/// text reads as one token, and blank text counts only inside Word's text
-/// elements, where it is content.
+/// and entity references read as the characters they stand for, and
+/// adjacent text reads as one token. Blank text counts everywhere: it is
+/// content in Word's and math's text elements, and two writings that differ
+/// in it are not taken for one tree.
 fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
     let scan_error = |error: &dyn std::fmt::Display| {
         Error::Other(format!("comparison owner scan failed: {error}"))
@@ -3451,17 +3452,10 @@ fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
     reader.config_mut().trim_text(false);
     let mut tokens = Vec::new();
     let mut text = String::new();
-    // For each open element, whether its blank text is content.
-    let mut keeps_blank = Vec::<bool>::new();
-    let flush = |tokens: &mut Vec<String>, text: &mut String, keeps_blank: &[bool]| {
-        if keeps_blank.last().copied().unwrap_or(false)
-            || !text
-                .chars()
-                .all(|character| character.is_ascii_whitespace())
-        {
-            tokens.push(format!("text {text:?}"));
+    let flush = |tokens: &mut Vec<String>, text: &mut String| {
+        if !text.is_empty() {
+            tokens.push(format!("text {:?}", std::mem::take(text)));
         }
-        text.clear();
     };
     let mut buffer = Vec::new();
     loop {
@@ -3472,11 +3466,8 @@ fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
             Event::Start(element) => (element, false),
             Event::Empty(element) => (element, true),
             Event::End(_) => {
-                if !text.is_empty() {
-                    flush(&mut tokens, &mut text, &keeps_blank);
-                }
+                flush(&mut tokens, &mut text);
                 tokens.push("end".to_owned());
-                keeps_blank.pop();
                 buffer.clear();
                 continue;
             }
@@ -3515,9 +3506,7 @@ fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
                 continue;
             }
         };
-        if !text.is_empty() {
-            flush(&mut tokens, &mut text, &keeps_blank);
-        }
+        flush(&mut tokens, &mut text);
         let resolver = reader.resolver();
         let (namespace, local) = resolver.resolve_element(element.name());
         let mut attributes = Vec::new();
@@ -3549,20 +3538,10 @@ fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
         ));
         if empty {
             tokens.push("end".to_owned());
-        } else {
-            keeps_blank.push(
-                matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
-                    && matches!(
-                        local.as_ref(),
-                        b"t" | b"delText" | b"instrText" | b"delInstrText"
-                    ),
-            );
         }
         buffer.clear();
     }
-    if !text.is_empty() {
-        flush(&mut tokens, &mut text, &keeps_blank);
-    }
+    flush(&mut tokens, &mut text);
     Ok(tokens)
 }
 
