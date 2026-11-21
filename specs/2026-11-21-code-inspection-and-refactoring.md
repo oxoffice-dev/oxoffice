@@ -229,9 +229,10 @@ pull request rebases another session's work.
    `document/{section,source}.rs`, `scripts/check_pure_move.py`.
 5. `refactor(docx): word model infrastructure and runs in their own
    modules`: `text/{bindings,owner_check,work,emission,run}.rs`.
-6. `refactor(docx): word model fields in their own modules`: `text/field/`.
-7. `refactor(docx): word model paragraphs in their own modules`:
-   `text/paragraph/`.
+6. `refactor(docx): word model fields in their own modules`: flat
+   `text/field_*.rs` (#124; one level per range, not a `text/field/` folder).
+7. `refactor(docx): word model paragraphs in their own modules`: flat
+   `text/paragraph_*.rs`, as for fields.
 8. `refactor(layout): split the word layout engine`, in two pull requests:
    the leaves first (field formatting, SEQ, revisions, fonts, bidi,
    geometry, drawings), then caches, headers and footers, substitution,
