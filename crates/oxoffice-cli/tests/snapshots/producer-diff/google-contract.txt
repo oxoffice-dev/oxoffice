@@ -1,7 +1,3 @@
 added body: "-" -> ""
 changed footer: "Confidential - Page 1 of 1" -> "Confidential - Page  of "
-added comment: "-" -> "120 days is longer than our standard. Ca"
-added comment: "-" -> "We need the extra month for procurement "
-removed comment: "120 days is longer than our standard. Ca" -> "-"
-removed comment: "We need the extra month for procurement " -> "-"
 removed comment: "Check with French counsel whether a Fren" -> "-"

@@ -1024,10 +1024,15 @@ pub fn diff(file_a: &Path, file_b: &Path, json_output: bool, diff_status: &mut i
     }
     let mut changes = Vec::new();
     for name in names {
-        changes.extend(diff_items(
+        let (items_a, items_b) = (
             stream_items(&streams_a, name),
             stream_items(&streams_b, name),
-        ));
+        );
+        if name == "comments" {
+            changes.extend(diff_comments(&doc_a, items_a, &doc_b, items_b)?);
+        } else {
+            changes.extend(diff_items(items_a, items_b));
+        }
     }
     let count = |a: bool, b: bool| {
         changes
@@ -1129,6 +1134,8 @@ struct DiffItem {
     story: &'static str,
     location: String,
     text: String,
+    /// The comment this item belongs to, by its index in the comments part.
+    comment: Option<usize>,
 }
 
 /// The items that `diff` compares as one sequence, such as the body, the
@@ -1149,6 +1156,7 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
             story: "body",
             location: (index + 1).to_string(),
             text: paragraph.text(),
+            comment: None,
         })
         .collect();
     let mut streams = vec![DiffStream {
@@ -1171,6 +1179,7 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
                 story: "table_cell",
                 location: format!("table {table_number}, {}", json_path_label(paragraph)),
                 text: paragraph["text"].as_str().unwrap_or_default().to_owned(),
+                comment: None,
             }));
         }
     }
@@ -1352,6 +1361,7 @@ fn other_story_streams(doc: &Document) -> Result<(Vec<DiffStream>, Vec<String>)>
             story: story_name,
             location: location.join(", "),
             text: item.text().unwrap_or_default().to_owned(),
+            comment: (story.kind() == StoryKind::Comment).then(|| story.owner_index()),
         });
     }
     Ok((
@@ -1407,6 +1417,139 @@ fn diff_items(a: &[DiffItem], b: &[DiffItem]) -> Vec<ItemChange> {
         j = next_j + 1;
     }
     changes
+}
+
+/// What identifies a comment across a save: Word and Google Docs write the
+/// comments of a file in another order than the file they opened, Word may
+/// drop the reply links, and Google rewrites the dates and may drop an anchor.
+struct CommentIdentity {
+    author: String,
+    text: String,
+    anchor: String,
+    date: String,
+    /// The index of its parent in the comments part.
+    parent: Option<usize>,
+}
+
+/// The identity of each comment of `doc`, in the order of its comments part.
+fn comment_identities(doc: &Document) -> Result<Vec<CommentIdentity>> {
+    let comments = doc.comments();
+    let anchors = doc.comment_anchor_snapshot_results()?;
+    Ok(comments
+        .iter()
+        .map(|comment| CommentIdentity {
+            author: comment.author().unwrap_or_default().to_owned(),
+            text: comment.text(),
+            anchor: anchors
+                .get(&comment.id())
+                .and_then(|snapshot| snapshot.as_ref().ok())
+                .and_then(|(_, text)| text.clone())
+                .unwrap_or_default(),
+            date: comment.date().unwrap_or_default().to_owned(),
+            parent: comment
+                .parent_id()
+                .and_then(|parent| comments.iter().position(|other| other.id() == parent)),
+        })
+        .collect())
+}
+
+/// Pair the comments of two files by what identifies them rather than by
+/// part order, then compare the paragraphs of each pair. A comment matches
+/// one by the same author with the same text first, then one by the same
+/// author on the same anchor text, whose paragraphs show as changed. Among
+/// equal candidates the one with the same anchor, then the same date, then
+/// a matched parent wins. What is left is removed or added whole.
+fn diff_comments(
+    doc_a: &Document,
+    items_a: &[DiffItem],
+    doc_b: &Document,
+    items_b: &[DiffItem],
+) -> Result<Vec<ItemChange>> {
+    let (comments_a, comments_b) = (comment_identities(doc_a)?, comment_identities(doc_b)?);
+    let owners = |items: &[DiffItem]| {
+        let mut owners: Vec<usize> = Vec::new();
+        for owner in items.iter().filter_map(|item| item.comment) {
+            if !owners.contains(&owner) {
+                owners.push(owner);
+            }
+        }
+        owners
+    };
+    let (owners_a, owners_b) = (owners(items_a), owners(items_b));
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    for exact in [true, false] {
+        for &a in &owners_a {
+            if pairs.iter().any(|(left, _)| *left == a) {
+                continue;
+            }
+            let Some(left) = comments_a.get(a) else {
+                continue;
+            };
+            let candidates = owners_b.iter().copied().filter(|b| {
+                !pairs.iter().any(|(_, right)| right == b)
+                    && comments_b.get(*b).is_some_and(|right| {
+                        right.author == left.author
+                            && if exact {
+                                right.text == left.text
+                            } else {
+                                !left.anchor.is_empty() && right.anchor == left.anchor
+                            }
+                    })
+            });
+            let score = |b: usize| {
+                let right = &comments_b[b];
+                let parent_matched = match (left.parent, right.parent) {
+                    (Some(pa), Some(pb)) => pairs.contains(&(pa, pb)),
+                    (None, None) => true,
+                    _ => false,
+                };
+                (
+                    right.anchor == left.anchor,
+                    right.date == left.date,
+                    parent_matched,
+                )
+            };
+            // The first of the best candidates, in part order.
+            if let Some(b) = candidates.fold(None, |best: Option<usize>, b| match best {
+                Some(current) if score(current) >= score(b) => Some(current),
+                _ => Some(b),
+            }) {
+                pairs.push((a, b));
+            }
+        }
+    }
+
+    let items_of = |items: &[DiffItem], owner: usize| {
+        items
+            .iter()
+            .filter(|item| item.comment == Some(owner))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut changes = Vec::new();
+    // In the order of the first file, then the comments only the second has.
+    for &a in &owners_a {
+        match pairs.iter().find(|(left, _)| *left == a) {
+            Some(&(_, b)) => {
+                changes.extend(diff_items(&items_of(items_a, a), &items_of(items_b, b)))
+            }
+            None => changes.extend(
+                items_of(items_a, a)
+                    .into_iter()
+                    .map(|item| (Some(item), None)),
+            ),
+        }
+    }
+    for &b in &owners_b {
+        if !pairs.iter().any(|(_, right)| *right == b) {
+            changes.extend(
+                items_of(items_b, b)
+                    .into_iter()
+                    .map(|item| (None, Some(item))),
+            );
+        }
+    }
+    Ok(changes)
 }
 
 /// The forward and backward furthest-reaching `x` of each diagonal in
