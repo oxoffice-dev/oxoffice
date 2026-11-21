@@ -609,6 +609,195 @@ fn text_lands_inside_the_margins_and_aligns_on_them() {
     assert!((middle - (left + right) / 2.0).abs() < 0.5, "{centred:?}");
 }
 
+/// A paragraph holding one display equation, alone, under `ppr`.
+fn display_equation(ppr: &str, equation: &str) -> String {
+    format!(
+        r#"<w:p>{ppr}<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath>{equation}</m:oMath></m:oMathPara></w:p>"#
+    )
+}
+
+/// `S = Σ_{i=1}^{N} x_i`, a sum with limits over and under it.
+const SUM: &str = r#"<m:r><m:t>S=</m:t></m:r><m:nary><m:naryPr><m:chr m:val="∑"/><m:limLoc m:val="undOvr"/></m:naryPr><m:sub><m:r><m:t>i=1</m:t></m:r></m:sub><m:sup><m:r><m:t>N</m:t></m:r></m:sup><m:e><m:sSub><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sub><m:r><m:t>i</m:t></m:r></m:sub></m:sSub></m:e></m:nary>"#;
+
+/// Single line spacing and no space between paragraphs, so that baselines
+/// step by line heights alone.
+const TIGHT: &str =
+    r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>"#;
+
+fn tight(text: &str) -> String {
+    format!(r#"<w:p>{TIGHT}<w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#)
+}
+
+/// The distance between the baselines of the lines holding `from` and `to`
+/// on the first page.
+fn baseline_step(pdf: &Pdf, from: &str, to: &str) -> f64 {
+    line_of(pdf, 0, from).y - line_of(pdf, 0, to).y
+}
+
+/// The same body under math settings with this `m:mathPr` content.
+fn with_math_settings(body: &str, math_properties: &str) -> Document {
+    let bytes = doc_with_body(body).to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let part = "/word/settings.xml";
+    let xml = String::from_utf8(package.get_part(part).expect("settings part").to_vec())
+        .expect("settings are UTF-8");
+    let end = xml.rfind("</w:settings>").expect("settings end");
+    let xml = format!(
+        r#"{}<m:mathPr xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">{math_properties}</m:mathPr>{}"#,
+        &xml[..end],
+        &xml[end..]
+    );
+    package.set_part(part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document opens")
+}
+
+// Word 16.115 gives a display equation in a paragraph of its own one line,
+// as tall as the equation: "C=x" between two Cambria 11 paragraphs steps
+// 13.0 and 12.75 pt, where two text lines step 12.75.
+#[test]
+fn a_display_equation_alone_in_its_paragraph_takes_one_line() {
+    let body = [
+        tight("Before"),
+        display_equation(TIGHT, "<m:r><m:t>C=x</m:t></m:r>"),
+        tight("After"),
+        tight("Plain one"),
+        tight("Plain two"),
+        // A bookmark a PAGEREF targets leaves a marker after the equation,
+        // or before it with an empty run.
+        tight("Marked before"),
+        format!(
+            r#"<w:p>{TIGHT}<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>C=x</m:t></m:r></m:oMath></m:oMathPara><w:bookmarkStart w:id="7" w:name="equation"/><w:bookmarkEnd w:id="7"/></w:p>"#
+        ),
+        tight("Marked after"),
+        tight("Led before"),
+        format!(
+            r#"<w:p>{TIGHT}<w:bookmarkStart w:id="8" w:name="led"/><w:r><w:t></w:t></w:r><w:bookmarkEnd w:id="8"/><m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>C=x</m:t></m:r></m:oMath></m:oMathPara></w:p>"#
+        ),
+        tight("Led after"),
+        format!(
+            r#"<w:p>{TIGHT}<w:r><w:t xml:space="preserve">See page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF equation \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> and </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF led \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        ),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    let line = baseline_step(&pdf, "Plain one", "Plain two");
+    let step = baseline_step(&pdf, "Before", "After");
+    assert!(
+        (step - 2.0 * line).abs() < 1.0,
+        "the equation paragraph takes {:.2} pt, a text line {line:.2}",
+        step - line
+    );
+    let marked = baseline_step(&pdf, "Marked before", "Marked after");
+    assert!(
+        (marked - step).abs() < 0.01,
+        "with a marker after it, the equation paragraph takes {:.2} pt, {:.2} without",
+        marked - line,
+        step - line
+    );
+    let led = baseline_step(&pdf, "Led before", "Led after");
+    assert!(
+        (led - step).abs() < 0.01,
+        "with a marker before it, the equation paragraph takes {:.2} pt, {:.2} without",
+        led - line,
+        step - line
+    );
+    assert!(
+        pdf.page_text(0).contains("See page 1 and 1"),
+        "{}",
+        pdf.page_text(0)
+    );
+}
+
+// Text after a display equation in the same paragraph goes on a line of its
+// own, below the equation, and so does text before it.
+#[test]
+fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
+    let body = [
+        tight("Before"),
+        format!(
+            r#"<w:p>{TIGHT}<w:r><w:t>Lead</w:t></w:r><m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>C=x</m:t></m:r></m:oMath></m:oMathPara><w:r><w:t>Tail</w:t></w:r></w:p>"#
+        ),
+        tight("After"),
+        tight("Plain one"),
+        tight("Plain two"),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    let line = baseline_step(&pdf, "Plain one", "Plain two");
+    for (from, to, lines) in [
+        ("Before", "Lead", 1.0),
+        ("Lead", "Tail", 2.0),
+        ("Tail", "After", 1.0),
+    ] {
+        let step = baseline_step(&pdf, from, to);
+        assert!(
+            (step - lines * line).abs() < 1.0,
+            "{from} to {to}: {step:.2} pt, a text line {line:.2}"
+        );
+    }
+}
+
+// Word 16.115 scales the text of an equation line by proportional spacing,
+// not the equation: at 1.15 lines, "Before" to "After" around a display sum
+// grows by 7.75 and 8.22 pt (6 pt after, plus 15 % of a Cambria 11 line), as
+// it does around a one-line "C=x" (8.0 and 8.0).
+#[test]
+fn proportional_spacing_scales_the_text_of_an_equation_line_not_the_equation() {
+    let double =
+        r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="480" w:lineRule="auto"/></w:pPr>"#;
+    let body = [
+        tight("Single before"),
+        display_equation(TIGHT, SUM),
+        tight("Single after"),
+        tight("Double before"),
+        display_equation(double, SUM),
+        tight("Double after"),
+        tight("Plain one"),
+        tight("Plain two"),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    let line = baseline_step(&pdf, "Plain one", "Plain two");
+    let single = baseline_step(&pdf, "Single before", "Single after");
+    let double = baseline_step(&pdf, "Double before", "Double after");
+    assert!(
+        single > 2.0 * line + 10.0,
+        "the sum is taller than a line: {single:.2} pt"
+    );
+    assert!(
+        (double - single - line).abs() < 1.0,
+        "double spacing adds {:.2} pt to the sum's line, one text line is {line:.2}",
+        double - single
+    );
+}
+
+// Word 16.115 adds no space for m:preSp and m:postSp around a display
+// equation alone in its paragraph, with m:dispDef on or off.
+#[test]
+fn math_pre_and_post_spacing_add_nothing_around_a_display_equation() {
+    let body = [
+        tight("Before"),
+        display_equation(TIGHT, SUM),
+        tight("After"),
+    ]
+    .concat();
+    let plain = baseline_step(&pdf_of(&doc_with_body(&body)), "Before", "After");
+    for display_defaults in [r#"<m:dispDef/>"#, r#"<m:dispDef m:val="0"/>"#] {
+        let doc = with_math_settings(
+            &body,
+            &format!(r#"{display_defaults}<m:preSp m:val="240"/><m:postSp m:val="120"/>"#),
+        );
+        let spaced = baseline_step(&pdf_of(&doc), "Before", "After");
+        assert!(
+            (spaced - plain).abs() < 0.01,
+            "{display_defaults}: {spaced:.2} pt with the spacing, {plain:.2} without"
+        );
+    }
+}
+
 // Fails today: a right-to-left paragraph is drawn against the left margin;
 // Word and LibreOffice align it on the right margin, with no alignment set
 // and with the `jc="left"` (start) LibreOffice writes. Issue: #157

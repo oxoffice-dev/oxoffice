@@ -492,6 +492,7 @@ pub(super) fn push_empty_field_annotation(
         width: 0.0,
         height: 0.0,
         baseline: Some(0.0),
+        math: false,
         group: GroupElement {
             transform: Transform::IDENTITY,
             clip: None,
@@ -653,6 +654,7 @@ pub(super) fn push_east_asian_layout_text(
             width,
             height: group_ascent + group_descent,
             baseline: Some(group_ascent),
+            math: false,
             group: GroupElement {
                 transform: Transform::IDENTITY,
                 clip: None,
@@ -724,6 +726,7 @@ pub(super) fn push_east_asian_layout_text(
         width,
         height: shaped.width,
         baseline: None,
+        math: false,
         group: GroupElement {
             transform,
             clip: None,
@@ -943,6 +946,7 @@ pub(super) fn push_emphasis_marked_text(
             width: shaped.width,
             height: group_ascent + group_descent,
             baseline: Some(group_ascent),
+            math: false,
             group: GroupElement {
                 transform: Transform::IDENTITY,
                 clip: None,
@@ -1139,6 +1143,7 @@ pub(super) fn ruby_inline_item(
         width,
         height: group_ascent + group_descent,
         baseline: Some(group_ascent),
+        math: false,
         group: GroupElement {
             transform: Transform::IDENTITY,
             clip: None,
