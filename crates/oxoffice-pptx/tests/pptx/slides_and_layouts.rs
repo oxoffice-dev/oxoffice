@@ -1031,9 +1031,7 @@ fn a_section_naming_an_unknown_slide_or_a_slide_twice_is_refused() {
     assert!(prs.sections().is_empty());
 }
 
-// Fails today: added, duplicated and imported slides belong to no section. Issue: #41
 #[test]
-#[should_panic(expected = "a new slide joins no section")]
 fn a_slide_added_or_duplicated_inside_a_section_joins_it() {
     let source = deck_with_titles(&["Imported"]);
     let layout = layout_named(&new_deck(), "Title Only");
@@ -1070,9 +1068,7 @@ fn a_slide_added_or_duplicated_inside_a_section_joins_it() {
     );
 }
 
-// Fails today: move_slide leaves the moved slide listed in its old section. Issue: #41
 #[test]
-#[should_panic(expected = "the moved slide stays in its old section")]
 fn a_slide_moved_into_another_section_joins_it() {
     let mut prs = deck_in_two_sections();
     let ids = slide_ids(&prs);
@@ -1436,4 +1432,241 @@ fn hiding_a_slide_recounts_hidden_slides_only_and_a_no_op_changes_nothing() {
         app.contains("<Slides>0</Slides>") && app.contains("<Notes>0</Notes>"),
         "{app}"
     );
+}
+
+#[test]
+fn a_slide_put_first_joins_the_first_section_and_an_emptied_section_stays() {
+    let mut prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+
+    prs.move_slide(2, 0).unwrap();
+    assert_eq!(
+        sections(&prs),
+        [
+            ("A".to_owned(), vec![ids[2], ids[0], ids[1]]),
+            ("B".to_owned(), vec![ids[3]]),
+        ]
+    );
+    prs.move_slide(3, 0).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(titles(&prs), ["B2", "B1", "A1", "A2"]);
+    assert_eq!(
+        sections(&prs),
+        [
+            ("A".to_owned(), vec![ids[3], ids[2], ids[0], ids[1]]),
+            ("B".to_owned(), vec![]),
+        ]
+    );
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn slide_edits_on_a_powerpoint_deck_with_sections_keep_every_slide_in_its_section() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let ids = slide_ids(&prs);
+    prs.set_sections(vec![
+        Section::new(SECTION_A, "Intro", vec![ids[0]]).unwrap(),
+        Section::new(SECTION_B, "Body", ids[1..].to_vec()).unwrap(),
+    ])
+    .unwrap();
+    // The section list is read back from the saved file, as a deck saved
+    // with sections by PowerPoint would be.
+    let mut prs = reopen(&prs);
+    let title_only = layout_named(&prs, "Title Only");
+
+    let copy = prs.duplicate_slide(0).unwrap().id();
+    let added = prs.add_slide(title_only).unwrap().id();
+    prs.move_slide(1, 5).unwrap();
+
+    let prs = reopen(&prs);
+    let order = slide_ids(&prs);
+    assert_eq!(order, [ids[0], ids[1], ids[2], ids[3], added, copy]);
+    assert_eq!(
+        sections(&prs),
+        [
+            ("Intro".to_owned(), vec![ids[0]]),
+            ("Body".to_owned(), order[1..].to_vec()),
+        ]
+    );
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn slide_edits_on_decks_without_sections_add_none() {
+    for name in [
+        "powerpoint/deck.pptx",
+        "google/deck.pptx",
+        "libreoffice/deck.pptx",
+    ] {
+        let mut prs = corpus_deck(name);
+        let layout = prs.slide_layout_index(0).unwrap();
+        prs.duplicate_slide(1).unwrap();
+        prs.add_slide_at(layout, 0).unwrap();
+        prs.move_slide(0, 3).unwrap();
+
+        let prs = reopen(&prs);
+        assert!(prs.sections().is_empty(), "{name}");
+        let bytes = prs.to_bytes().unwrap();
+        let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+        let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
+        assert!(!xml.contains("sectionLst"), "{name}");
+    }
+}
+
+/// Every slide sits in exactly one section, and the sections, read in
+/// order, list the slides in deck order.
+fn assert_sections_follow_slides(prs: &Presentation) {
+    let listed: Vec<u32> = prs
+        .sections()
+        .iter()
+        .flat_map(|section| section.slide_ids.clone())
+        .collect();
+    assert_eq!(listed, slide_ids(prs), "{:?}", sections(prs));
+}
+
+#[test]
+fn slides_added_to_a_deck_whose_sections_are_empty_join_the_first_one() {
+    let mut prs = deck_in_two_sections();
+    for _ in 0..4 {
+        prs.remove_slide(0).unwrap();
+    }
+    assert_eq!(
+        sections(&prs),
+        [("A".to_owned(), vec![]), ("B".to_owned(), vec![])]
+    );
+    let layout = layout_named(&prs, "Title Only");
+
+    prs.add_slide(layout).unwrap();
+    prs.add_slide(layout).unwrap();
+
+    let prs = reopen(&prs);
+    let ids = slide_ids(&prs);
+    assert_eq!(
+        sections(&prs),
+        [("A".to_owned(), ids.clone()), ("B".to_owned(), vec![])]
+    );
+}
+
+#[test]
+fn a_slide_moved_within_its_section_can_lead_it_or_end_it() {
+    let mut prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+
+    prs.move_slide(3, 2).unwrap();
+    prs.move_slide(1, 0).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(titles(&prs), ["A2", "A1", "B2", "B1"]);
+    assert_eq!(
+        sections(&prs),
+        [
+            ("A".to_owned(), vec![ids[1], ids[0]]),
+            ("B".to_owned(), vec![ids[3], ids[2]]),
+        ]
+    );
+}
+
+#[test]
+fn slides_imported_with_their_sections_keep_every_slide_in_one_section() {
+    let source = deck_in_two_sections();
+    let mut prs = reopen(&deck_in_two_sections());
+
+    prs.import_slides(
+        &source,
+        &[1, 2],
+        &ImportSlideOptions {
+            insert_index: Some(1),
+            keep_sections: true,
+            ..ImportSlideOptions::default()
+        },
+        &[],
+    )
+    .unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(titles(&prs), ["A1", "A2", "B1", "A2", "B1", "B2"]);
+    assert_sections_follow_slides(&prs);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn a_slide_moved_to_another_section_keeps_its_section_entry_data() {
+    let prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/ppt/presentation.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            &format!(r#"<p14:sldId id="{}"/>"#, ids[0]),
+            &format!(
+                r#"<p14:sldId id="{}" xmlns:x="urn:example:extra" x:keep="1"/>"#,
+                ids[0]
+            ),
+            1,
+        );
+    assert!(xml.contains("x:keep"), "the section entry was edited");
+    package.set_part("/ppt/presentation.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    prs.move_slide(0, 3).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(sections(&prs)[1].1.last(), Some(&ids[0]));
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
+    assert!(xml.contains(r#"x:keep="1""#), "{xml}");
+}
+
+#[test]
+fn a_slide_added_at_a_section_boundary_joins_the_section_before_it() {
+    let mut prs = deck_in_two_sections();
+    let layout = layout_named(&prs, "Title Only");
+
+    let position = prs.add_slide_at(layout, 2).unwrap();
+
+    let prs = reopen(&prs);
+    let new = prs.slide(position).unwrap().id();
+    let ids = slide_ids(&prs);
+    assert_eq!(
+        sections(&prs),
+        [
+            ("A".to_owned(), vec![ids[0], ids[1], new]),
+            ("B".to_owned(), vec![ids[3], ids[4]]),
+        ]
+    );
+    assert_sections_follow_slides(&prs);
+}
+
+#[test]
+fn section_entry_data_that_leans_on_its_old_section_is_left_behind_on_a_move() {
+    let prs = deck_in_two_sections();
+    let ids = slide_ids(&prs);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/ppt/presentation.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(r#"name="A""#, r#"name="A" xmlns:x="urn:example:extra""#, 1)
+        .replacen(
+            &format!(r#"<p14:sldId id="{}"/>"#, ids[0]),
+            &format!(r#"<p14:sldId id="{}" x:keep="1"/>"#, ids[0]),
+            1,
+        );
+    assert!(xml.contains("x:keep"), "the section entry was edited");
+    package.set_part("/ppt/presentation.xml", xml.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    prs.move_slide(0, 3).unwrap();
+
+    // The saved part stays namespace-well-formed: it reopens.
+    let prs = reopen(&prs);
+    assert_eq!(sections(&prs)[1].1.last(), Some(&ids[0]));
+    let bytes = prs.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
+    assert!(!xml.contains("x:keep"), "{xml}");
 }

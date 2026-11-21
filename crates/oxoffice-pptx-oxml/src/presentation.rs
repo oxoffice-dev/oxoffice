@@ -113,6 +113,47 @@ struct SectionSlideIdSidecar {
     raw_children: Vec<u8>,
 }
 
+impl SectionSlideIdSidecar {
+    /// Whether every prefix its attributes and children use is declared in
+    /// them, `p14` aside, which the section list always declares.
+    fn declares_its_namespaces(&self) -> bool {
+        let mut xml = b"<sldId".to_vec();
+        if !self
+            .raw_attributes
+            .windows(10)
+            .any(|window| window == b"xmlns:p14=")
+        {
+            xml.extend_from_slice(format!(r#" xmlns:p14="{P14_NS}""#).as_bytes());
+        }
+        xml.extend_from_slice(&self.raw_attributes);
+        xml.push(b'>');
+        xml.extend_from_slice(&self.raw_children);
+        xml.extend_from_slice(b"</sldId>");
+        let mut reader = quick_xml::reader::NsReader::from_reader(xml.as_slice());
+        loop {
+            match reader.read_resolved_event() {
+                Ok((namespace, Event::Start(start) | Event::Empty(start))) => {
+                    if matches!(namespace, quick_xml::name::ResolveResult::Unknown(_)) {
+                        return false;
+                    }
+                    for attribute in start.attributes() {
+                        let Ok(attribute) = attribute else {
+                            return false;
+                        };
+                        let (namespace, _) = reader.resolver().resolve_attribute(attribute.key);
+                        if matches!(namespace, quick_xml::name::ResolveResult::Unknown(_)) {
+                            return false;
+                        }
+                    }
+                }
+                Ok((_, Event::Eof)) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+    }
+}
+
 impl Section {
     pub fn new(
         id: impl Into<String>,
@@ -1598,6 +1639,73 @@ impl CT_Presentation {
         self.sections = sections;
         self.sections_dirty = true;
         Ok(())
+    }
+
+    /// Puts a slide, already at its place in the slide list, in the section
+    /// it lands in. A slide that stays next to a slide of its own section
+    /// keeps it, so it can move to the start or end of its section; any
+    /// other slide joins the section of the slide before it, else of the
+    /// slide after it, else the first section when it comes first and the
+    /// last otherwise. Within a section the slides keep deck order, and a
+    /// moved slide takes its own `p14:sldId` data along. A deck without
+    /// sections is left as it is.
+    pub fn place_slide_in_sections(&mut self, slide_id: u32) {
+        if self.sections.is_empty() {
+            return;
+        }
+        let Some(position) = self.slide_ids.iter().position(|slide| slide.id == slide_id) else {
+            return;
+        };
+        let current = self
+            .sections
+            .iter()
+            .position(|section| section.slide_ids.contains(&slide_id));
+        let sidecar = current.and_then(|current| {
+            let sidecars = &mut self.sections[current].slide_id_sidecars;
+            let index = sidecars.iter().position(|sidecar| sidecar.id == slide_id)?;
+            Some((current, sidecars.remove(index)))
+        });
+        self.remove_slide_from_sections(slide_id);
+        let owner = |neighbour: Option<&CT_SlideId>| {
+            neighbour.and_then(|neighbour| {
+                self.sections
+                    .iter()
+                    .position(|section| section.slide_ids.contains(&neighbour.id))
+            })
+        };
+        let before = owner(
+            position
+                .checked_sub(1)
+                .and_then(|before| self.slide_ids.get(before)),
+        );
+        let after = owner(self.slide_ids.get(position + 1));
+        let target = match current {
+            Some(current) if before == Some(current) || after == Some(current) => current,
+            _ => before.or(after).unwrap_or(if position == 0 {
+                0
+            } else {
+                self.sections.len() - 1
+            }),
+        };
+        let order = self
+            .slide_ids
+            .iter()
+            .enumerate()
+            .map(|(index, slide)| (slide.id, index))
+            .collect::<std::collections::HashMap<_, _>>();
+        let section = &mut self.sections[target];
+        section.slide_ids.push(slide_id);
+        section
+            .slide_ids
+            .sort_by_key(|id| order.get(id).copied().unwrap_or(usize::MAX));
+        // Data that leans on namespaces declared by its old section cannot
+        // follow the slide without them; it is left behind, as a removal does.
+        if let Some((from, sidecar)) = sidecar
+            && (from == target || sidecar.declares_its_namespaces())
+        {
+            section.slide_id_sidecars.push(sidecar);
+        }
+        self.sections_dirty = true;
     }
 
     pub fn remove_slide_from_sections(&mut self, slide_id: u32) {
