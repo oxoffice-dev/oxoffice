@@ -17,8 +17,8 @@ pub struct RenderOptions {
     /// `true` is the explicit system opt-in, and a build without the
     /// `system-fonts` feature refuses it. Deterministic helpers ignore it.
     pub use_system_fonts: bool,
-    /// Export the content controls of the main body as fillable PDF form
-    /// fields. A control tagged `signature` or `signature:<name>` becomes an
+    /// Export the content controls and legacy form fields of the main body
+    /// as fillable PDF form fields. A control tagged `signature` or `signature:<name>` becomes an
     /// empty signature field. Image rendering draws the controls as usual,
     /// and the tracked view refuses this option.
     pub fillable_forms: bool,

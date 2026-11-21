@@ -500,8 +500,8 @@ Rust first, then the CLI and Python. Each pull request has its own check.
        tracked insertions in, deletions out, and a line feed inside a text
        node reads as the space Word shows. A control inside a tracked
        insertion or move is a field like any other, in document order
-       within its paragraph (inside a control, its own content comes
-       first). One inside a deletion has no field and never makes the
+       within its paragraph, inside a control too (its content and its
+       tracked changes by run boundary, as the page draws them). One inside a deletion has no field and never makes the
        control around it a container; it says a tracked change deletes it,
        unless a block field around it covers its paragraph.
      - **Multiline** when the widget spans several lines. An inline control

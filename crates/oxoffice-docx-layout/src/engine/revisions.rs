@@ -117,7 +117,9 @@ enum ProjectedParagraphOwner<'a> {
     },
 }
 
-fn paragraph_revision_raw_order(para: &CT_P, boundary: usize, slot: usize) -> RawOrder {
+/// Where a paragraph-level tracked change sits among the raw children at
+/// its run boundary: a change inside a hyperlink orders by the hyperlink.
+pub(crate) fn paragraph_revision_raw_order(para: &CT_P, boundary: usize, slot: usize) -> RawOrder {
     let Some(index) = hyperlink_revision_index(slot) else {
         return RawOrder::Raw(slot);
     };

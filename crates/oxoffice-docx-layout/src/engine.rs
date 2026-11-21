@@ -81,12 +81,12 @@ use multilingual::{
     needs_word_multilingual_layout, shape_word_multilingual_items, word_character_advance_pt,
     word_text_direction,
 };
-pub(crate) use revisions::accepted_runs;
 use revisions::{
     accepted_paragraph_is_blank, change_bar_color, draws_nothing, prepared_semantic_layout_input,
     project_paragraph_runs, projected_content_char_starts, projected_paragraph_text,
     push_equations_before_order, tracked_marks,
 };
+pub(crate) use revisions::{accepted_runs, paragraph_revision_raw_order};
 pub(crate) use section_geometry::sect_pr_to_geometry;
 use section_geometry::{
     parse_raw_attributes, prepare_word_line_numbers, raw_name_has_namespace, raw_root_start_tag,
@@ -191,7 +191,7 @@ struct ProjectedRun<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum RawOrder {
+pub(crate) enum RawOrder {
     BeforeRaw,
     Raw(usize),
     AfterRaw,
