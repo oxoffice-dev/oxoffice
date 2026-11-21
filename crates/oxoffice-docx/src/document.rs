@@ -22147,6 +22147,28 @@ fn story_text_preserves_space(value: &str) -> bool {
         .any(|segment| segment.starts_with(' ') || segment.ends_with(' '))
 }
 
+/// The heading level of a paragraph, from its style: the built-in name
+/// `heading N` in any case, which Word keeps whatever language it saves in
+/// (the id is localised, `Titre1` in French), else an id `HeadingN`.
+pub(crate) fn paragraph_heading_level(para: &CT_P, styles: &CT_Styles) -> Option<u32> {
+    let style_id = para.properties.as_ref()?.style_id.as_deref()?;
+    let level = |rest: &str| {
+        rest.trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=9).contains(n))
+    };
+    let by_name = styles
+        .get_by_id(style_id)
+        .and_then(|style| style.name.as_deref())
+        .and_then(|name| {
+            name.to_ascii_lowercase()
+                .strip_prefix("heading ")
+                .and_then(level)
+        });
+    by_name.or_else(|| style_id.strip_prefix("Heading").and_then(level))
+}
+
 fn hyperlink_has_visible_content(source: &[u8], range: Range<usize>) -> Result<bool> {
     let mut reader = NsReader::from_reader(source);
     reader.config_mut().trim_text(false);
@@ -48473,27 +48495,9 @@ impl Document {
         }
     }
 
-    /// The heading level of a paragraph, from its style: the built-in name
-    /// `heading N`, which Word keeps whatever language it saves in (the id is
-    /// localised, `Titre1` in French), else an id `HeadingN`.
+    /// The heading level of a paragraph, see [`paragraph_heading_level`].
     fn detect_heading_level_for_toc(&self, para: &CT_P) -> Option<u32> {
-        let ppr = para.properties.as_ref()?;
-        let style_id = ppr.style_id.as_deref()?;
-        let level = |rest: &str| {
-            rest.trim()
-                .parse::<u32>()
-                .ok()
-                .filter(|n| (1..=9).contains(n))
-        };
-        let by_name = self
-            .styles
-            .get_by_id(style_id)
-            .and_then(|style| style.name.as_deref())
-            .and_then(|name| {
-                let lowered = name.to_ascii_lowercase();
-                lowered.strip_prefix("heading ").and_then(level)
-            });
-        by_name.or_else(|| style_id.strip_prefix("Heading").and_then(level))
+        paragraph_heading_level(para, &self.styles)
     }
 
     // ---- Placeholder replacement ----

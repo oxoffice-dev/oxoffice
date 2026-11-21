@@ -550,6 +550,70 @@ fn headings_and_the_outline_are_found_in_every_corpus_report() {
 }
 
 #[test]
+fn a_heading_style_is_found_by_its_built_in_name_in_any_case_before_its_id() {
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Titre1", "Heading 1"))
+        .unwrap();
+    doc.set_style(StyleBuilder::paragraph("Heading8", "heading 3"))
+        .unwrap();
+    doc.add_paragraph("by a capitalised name").style("Titre1");
+    doc.add_paragraph("by the name over the id")
+        .style("Heading8");
+    doc.add_paragraph("by the id").style("Heading2");
+    assert_eq!(
+        doc.headings(),
+        [
+            (1, "by a capitalised name".to_owned()),
+            (3, "by the name over the id".to_owned()),
+            (2, "by the id".to_owned()),
+        ]
+    );
+}
+
+/// The bytes of one entry of a ZIP archive, by name, read through its
+/// central directory: stored or deflated.
+fn zip_entry(archive: &[u8], wanted: &str) -> Option<Vec<u8>> {
+    let u16_at = |at: usize| u16::from_le_bytes([archive[at], archive[at + 1]]) as usize;
+    let u32_at = |at: usize| u32::from_le_bytes(archive[at..at + 4].try_into().unwrap()) as usize;
+    let end = (0..archive.len().saturating_sub(21))
+        .rev()
+        .find(|&at| archive[at..at + 4] == [0x50, 0x4b, 0x05, 0x06])?;
+    let mut at = u32_at(end + 16);
+    for _ in 0..u16_at(end + 10) {
+        let (method, size) = (u16_at(at + 10), u32_at(at + 20));
+        let (name_len, extra_len, comment_len) =
+            (u16_at(at + 28), u16_at(at + 30), u16_at(at + 32));
+        let name = std::str::from_utf8(&archive[at + 46..at + 46 + name_len]).ok()?;
+        if name == wanted {
+            let local = u32_at(at + 42);
+            let data = local + 30 + u16_at(local + 26) + u16_at(local + 28);
+            let raw = &archive[data..data + size];
+            return match method {
+                0 => Some(raw.to_vec()),
+                8 => miniz_oxide::inflate::decompress_to_vec(raw).ok(),
+                _ => None,
+            };
+        }
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    None
+}
+
+#[test]
+fn epub_navigation_lists_the_headings_of_a_word_file_saved_in_french() {
+    let epub = corpus_doc("word/report.docx").to_epub_bytes().unwrap();
+    let nav =
+        zip_entry(&epub.bytes, "EPUB/nav.xhtml").expect("the EPUB holds a navigation document");
+    let nav = String::from_utf8(nav).unwrap();
+    for (_, heading) in report_headings() {
+        assert!(
+            nav.contains(&heading),
+            "the navigation lists {heading:?}:\n{nav}"
+        );
+    }
+}
+
+#[test]
 fn headings_are_found_in_the_word_and_google_reports_alike() {
     assert_eq!(
         corpus_doc("google/report.docx").headings(),

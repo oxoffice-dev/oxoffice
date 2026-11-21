@@ -1107,6 +1107,39 @@ fn inserting_a_toc_in_a_word_file_saved_in_french_lists_its_headings() {
         "1. Highlights\t",
         "insert_toc lists the headings of a Word file saved in French"
     );
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        texts(&doc)[1..7],
+        [
+            "1. Highlights\t",
+            "2. Financial overview\t",
+            "3. Operations\t",
+            "3.1 Support\t",
+            "3.2 Next steps\t",
+            "Appendix A. Regional detail\t"
+        ]
+    );
+    // insert_toc indents each level by a quarter inch.
+    let indents: Vec<_> = doc.paragraphs()[1..7]
+        .iter()
+        .map(|paragraph| paragraph.indent_left().map(|indent| indent.to_twips()))
+        .collect();
+    assert_eq!(
+        indents,
+        [None, None, None, Some(360), Some(360), None],
+        "levels"
+    );
+    let anchors: Vec<_> = link_anchors(&doc)
+        .into_iter()
+        .map(|(_, anchor)| anchor)
+        .collect();
+    assert_eq!(anchors.len(), 6, "one link per entry");
+    for anchor in &anchors {
+        assert!(
+            bookmark_list(&doc).iter().any(|(name, _)| name == anchor),
+            "the entry links to a bookmark of its heading: {anchor}"
+        );
+    }
 }
 
 #[test]

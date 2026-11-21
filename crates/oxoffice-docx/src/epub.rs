@@ -305,7 +305,9 @@ impl<'a> EpubWriter<'a> {
             let BodyContent::Paragraph(paragraph) = content else {
                 continue;
             };
-            let Some(level) = heading_level(paragraph) else {
+            let Some(level) =
+                crate::document::paragraph_heading_level(paragraph, &self.document.styles)
+            else {
                 continue;
             };
             let ordinal = headings.len() + 1;
@@ -888,7 +890,8 @@ impl<'a> EpubWriter<'a> {
                 .is_some_and(|level| level > 6)
             {
                 let lowered = properties.outline_lvl.is_some_and(|level| level >= 6)
-                    || heading_level(paragraph).is_some_and(|level| level > 6);
+                    || crate::document::paragraph_heading_level(paragraph, &self.document.styles)
+                        .is_some_and(|level| level > 6);
                 self.diagnose(
                     format!("{path}/properties/heading-level"),
                     if lowered {
@@ -1922,12 +1925,6 @@ fn referenced_hyperlink_ids(content: &[BodyContent]) -> Vec<String> {
     ids
 }
 
-fn heading_level(paragraph: &CT_P) -> Option<u32> {
-    let style = paragraph.properties.as_ref()?.style_id.as_deref()?;
-    let level = style.strip_prefix("Heading")?.parse::<u32>().ok()?;
-    (1..=9).contains(&level).then_some(level)
-}
-
 fn projected_heading_level(paragraph: &CT_P, styles: &CT_Styles) -> Option<u32> {
     let properties = paragraph.properties.as_ref()?;
     if let Some(level) = properties.outline_lvl {
@@ -2429,7 +2426,8 @@ fn render_source_block(
     let mut content = render_body_projection(content)
         .ok_or_else(|| epub_error("unsupported source block reached EPUB projection"))?;
     if let BodyContent::Paragraph(paragraph) = &mut content
-        && heading_level(paragraph).is_some_and(|level| level > 6)
+        && crate::document::paragraph_heading_level(paragraph, &input.styles)
+            .is_some_and(|level| level > 6)
     {
         paragraph.properties.get_or_insert_default().style_id = Some("Heading6".to_owned());
     }
