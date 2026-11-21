@@ -38444,6 +38444,24 @@ impl Document {
         Ok(first)
     }
 
+    /// The ids of the normal endnotes the endnotes part holds, read once;
+    /// empty without that part.
+    pub(crate) fn normal_endnote_ids(&self) -> Result<HashSet<i32>> {
+        let Some(part_name) = self.note_part_name(StoryKind::Endnote)? else {
+            return Ok(HashSet::new());
+        };
+        let xml = self
+            .package
+            .get_part(&part_name)
+            .ok_or_else(|| Error::Other(format!("endnotes part {part_name} is missing")))?;
+        Ok(oxoffice_docx_oxml::footnotes::CT_Footnotes::from_xml(xml)?
+            .footnotes
+            .iter()
+            .filter(|note| note.note_type == oxoffice_docx_oxml::footnotes::NoteType::Normal)
+            .map(|note| note.id)
+            .collect())
+    }
+
     fn note_story(&self, kind: StoryKind, id: i32) -> Result<Option<StoryId>> {
         let Some(part_name) = self.note_part_name(kind)? else {
             if kind == StoryKind::Footnote

@@ -6785,14 +6785,18 @@ fn refuse_shared_note_references(
 ) -> Result<()> {
     let left = note_reference_counts(original)?;
     let right = note_reference_counts(edited)?;
+    let held_endnotes = if endnotes_ignored {
+        original.normal_endnote_ids()?
+    } else {
+        HashSet::new()
+    };
     let mut pending = note_reference_counts(candidate)?
         .into_iter()
         .collect::<Vec<_>>();
     pending.sort();
     for ((element, id), count) in pending {
         let key = (element, id);
-        if endnotes_ignored && key.0 == "endnoteReference" && original.endnote_story(id)?.is_none()
-        {
+        if endnotes_ignored && key.0 == "endnoteReference" && !held_endnotes.contains(&id) {
             return Err(Error::Other(format!(
                 "ignored endnotes cannot supply the edited reference to endnote {id}"
             )));

@@ -2291,14 +2291,21 @@ fn an_endnote_the_original_holds_unreferenced_compares_while_endnotes_are_ignore
         .unwrap();
     let original = reopen(&mut original);
     assert_eq!(endnote_paragraphs(&original), Vec::<usize>::new());
+    let edited = doc_with_endnotes(&[0]);
+    let id = (1..10)
+        .find(|&id| edited.endnote_story(id).unwrap().is_some())
+        .expect("the edited endnote");
+    assert!(original.endnote_story(id).unwrap().is_some());
     let mut doc = original;
     let options = ComparisonOptions {
         ignored_stories: vec![ComparisonStoryKind::Endnote],
         ..Default::default()
     };
-    doc.compare_with_options(&doc_with_endnotes(&[0]), AUTHOR, DATE, &options)
+    doc.compare_with_options(&edited, AUTHOR, DATE, &options)
         .expect("the original supplies the endnote");
-    assert_eq!(endnote_paragraphs(&accepted(&mut doc)), [0]);
+    let copy = accepted(&mut doc);
+    assert_eq!(endnote_paragraphs(&copy), [0]);
+    assert!(copy.endnote_story(id).unwrap().is_some());
     assert_eq!(endnote_paragraphs(&rejected(&mut doc)), Vec::<usize>::new());
 }
 
