@@ -3031,3 +3031,530 @@ fn a_table_of_contents_removed_whole_is_compared_under_a_default_namespace() {
         );
     }
 }
+
+// ---- A whole paragraph's simple field ----
+//
+// Word never writes `w:fldSimple`, and a `w:fldSimple` cannot carry a
+// revision mark of its own: a paragraph inserted or deleted whole writes its
+// simple field as a complex field, all of it in one `w:ins` or `w:del`, as
+// Word's own deletion does. Resolving the paragraph then leaves no field.
+
+/// A paragraph that shows `Page 1` through a simple `PAGE` field.
+const PAGE_LINE: &str = r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#;
+
+fn plain(text: &str) -> String {
+    format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+/// The name, without its leading slash, of the saved part ending with `suffix`.
+fn part_name(package: &oxoffice_opc::OpcPackage, suffix: &str) -> String {
+    package
+        .zip_entries()
+        .unwrap()
+        .into_iter()
+        .map(|(name, _)| name)
+        .find(|name| name.ends_with(suffix))
+        .unwrap_or_else(|| panic!("no part ends with {suffix}"))
+}
+
+/// The XML of the saved part ending with `suffix`.
+fn part_xml(doc: &mut Document, suffix: &str) -> String {
+    let package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let name = part_name(&package, suffix);
+    String::from_utf8(package.get_part(&format!("/{name}")).unwrap().to_vec()).unwrap()
+}
+
+/// `doc` saved with the part ending with `suffix` rewritten by `edit`, as
+/// another producer would write it.
+fn with_part(doc: &mut Document, suffix: &str, edit: impl FnOnce(&str) -> String) -> Document {
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let name = format!("/{}", part_name(&package, suffix));
+    let xml = String::from_utf8(package.get_part(&name).unwrap().to_vec()).unwrap();
+    let edited = edit(&xml);
+    assert_ne!(edited, xml, "the edit changes {name}");
+    package.set_part(&name, edited.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// Whether this part XML holds a field of either form.
+fn holds_field(xml: &str) -> bool {
+    xml.contains("fldSimple") || xml.contains("fldChar")
+}
+
+/// The start of each `<w:r>` element (not `<w:rPr>`) in `xml`.
+fn run_starts(xml: &str) -> Vec<usize> {
+    xml.match_indices("<w:r")
+        .map(|(at, _)| at)
+        .filter(|at| matches!(xml.as_bytes().get(at + 4), Some(b'>' | b' ')))
+        .collect()
+}
+
+/// The `w:{kind}` wrapper holding the complex field of `xml`, checked to
+/// hold that field and nothing else: one wrapper, the begin `fldChar` in its
+/// first run, the end `fldChar` in its last. `xml` holds no `w:fldSimple`.
+fn field_wrapper<'x>(xml: &'x str, kind: &str) -> &'x str {
+    assert!(!xml.contains("fldSimple"), "{xml}");
+    assert_eq!(xml.matches(r#"w:fldCharType="begin""#).count(), 1, "{xml}");
+    let begin = xml.find(r#"w:fldCharType="begin""#).unwrap();
+    let open = xml[..begin]
+        .rfind(&format!("<w:{kind} "))
+        .unwrap_or_else(|| panic!("no w:{kind} before the field: {xml}"));
+    let closing = format!("</w:{kind}>");
+    let close = open + xml[open..].find(&closing).unwrap() + closing.len();
+    let wrapper = &xml[open..close];
+    let inner = &wrapper[wrapper.find('>').unwrap() + 1..wrapper.len() - closing.len()];
+    let runs = run_starts(inner);
+    assert_eq!(
+        runs.first(),
+        Some(&0),
+        "the wrapper starts with a run: {wrapper}"
+    );
+    let first = &inner[..inner.find("</w:r>").unwrap()];
+    assert!(first.contains(r#"w:fldCharType="begin""#), "{wrapper}");
+    let last = &inner[*runs.last().unwrap()..];
+    assert!(last.contains(r#"w:fldCharType="end""#), "{wrapper}");
+    assert!(
+        last.ends_with("</w:r>"),
+        "the wrapper ends with a run: {wrapper}"
+    );
+    assert!(inner.contains(r#"w:fldCharType="separate""#), "{wrapper}");
+    wrapper
+}
+
+#[test]
+fn a_paragraph_holding_a_simple_field_is_inserted_or_deleted_whole() {
+    let without = format!("{}{}", plain("Before."), plain("After."));
+    let with = format!("{}{PAGE_LINE}{}", plain("Before."), plain("After."));
+    // Inserted: rejecting it leaves no field merged into the next paragraph.
+    let mut doc = redline(doc_with_body(&without), &doc_with_body(&with));
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Before.", "Page 1", "After."]);
+    assert_eq!(field_instructions(&copy), ["PAGE"]);
+    let mut copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Before.", "After."]);
+    assert!(!holds_field(&part_xml(&mut copy, "document.xml")));
+    // Deleted: accepting it leaves no field either.
+    let mut doc = redline(doc_with_body(&with), &doc_with_body(&without));
+    let mut copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Before.", "After."]);
+    assert!(!holds_field(&part_xml(&mut copy, "document.xml")));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Before.", "Page 1", "After."]);
+    assert_eq!(field_instructions(&copy), ["PAGE"]);
+}
+
+#[test]
+fn a_whole_paragraph_simple_field_is_one_complex_field_in_one_wrapper() {
+    let without = plain("After.");
+    let with = format!("{PAGE_LINE}{}", plain("After."));
+    let mut doc = redline(doc_with_body(&without), &doc_with_body(&with));
+    let xml = part_xml(&mut doc, "document.xml");
+    let wrapper = field_wrapper(&xml, "ins");
+    assert!(wrapper.contains(r#"<w:instrText xml:space="preserve"> PAGE </w:instrText>"#));
+    assert!(wrapper.contains("<w:t>1</w:t>"), "{wrapper}");
+    // The text before the field is in a wrapper of its own.
+    assert!(!wrapper.contains("Page "), "{wrapper}");
+
+    let mut doc = redline(doc_with_body(&with), &doc_with_body(&without));
+    let xml = part_xml(&mut doc, "document.xml");
+    let wrapper = field_wrapper(&xml, "del");
+    assert!(wrapper.contains(r#"<w:delInstrText xml:space="preserve"> PAGE </w:delInstrText>"#));
+    assert!(wrapper.contains("<w:delText>1</w:delText>"), "{wrapper}");
+    assert!(!wrapper.contains("<w:instrText"), "{wrapper}");
+    assert!(!wrapper.contains("<w:t>"), "{wrapper}");
+}
+
+/// Compare `original` with `edited` both ways, and check that each redline
+/// resolves to the side it should, with a field in the part ending with
+/// `suffix` only on the side `field` says.
+fn check_both_ways(
+    original: impl Fn() -> Document,
+    edited: impl Fn() -> Document,
+    suffix: &str,
+    field: [bool; 2],
+) {
+    for (from, to, held) in [
+        (
+            &original as &dyn Fn() -> Document,
+            &edited as &dyn Fn() -> Document,
+            field,
+        ),
+        (&edited, &original, [field[1], field[0]]),
+    ] {
+        let mut doc = redline(from(), &to());
+        let mut copy = accepted(&mut doc);
+        assert_eq!(part_texts(&mut copy, suffix), part_texts(&mut to(), suffix));
+        assert_eq!(holds_field(&part_xml(&mut copy, suffix)), held[1]);
+        let mut copy = rejected(&mut doc);
+        assert_eq!(
+            part_texts(&mut copy, suffix),
+            part_texts(&mut from(), suffix)
+        );
+        assert_eq!(holds_field(&part_xml(&mut copy, suffix)), held[0]);
+    }
+}
+
+/// The text of each `w:p` of the saved part ending with `suffix`, read from
+/// its `w:t` and `w:delText` elements, with no pending deletion.
+fn part_texts(doc: &mut Document, suffix: &str) -> Vec<String> {
+    let xml = part_xml(doc, suffix);
+    assert!(!xml.contains("<w:del "), "resolved: {xml}");
+    xml.split("<w:p>")
+        .chain(xml.split("<w:p "))
+        .skip(1)
+        .map(|paragraph| {
+            let paragraph = paragraph.split("</w:p>").next().unwrap();
+            paragraph
+                .split("<w:t")
+                .skip(1)
+                .filter_map(|text| {
+                    let text = text.strip_prefix('>').or_else(|| {
+                        text.starts_with(' ')
+                            .then(|| &text[text.find('>').unwrap() + 1..])
+                    })?;
+                    Some(text.split("</w:t>").next().unwrap().to_owned())
+                })
+                .collect::<String>()
+        })
+        .collect()
+}
+
+#[test]
+fn a_simple_field_in_the_last_paragraph_of_a_body_or_a_footer_is_tracked_whole() {
+    check_both_ways(
+        || doc_with_body(&plain("Body.")),
+        || doc_with_body(&format!("{}{PAGE_LINE}", plain("Body."))),
+        "document.xml",
+        [false, true],
+    );
+    let footer = |page: bool| {
+        let mut doc = doc_with(&["Body."]);
+        doc.set_footer("Report");
+        if page {
+            with_part(&mut doc, "footer1.xml", |xml| {
+                xml.replacen("</w:ftr>", &format!("{PAGE_LINE}</w:ftr>"), 1)
+            })
+        } else {
+            reopen(&mut doc)
+        }
+    };
+    check_both_ways(
+        || footer(false),
+        || footer(true),
+        "footer1.xml",
+        [false, true],
+    );
+}
+
+#[test]
+fn a_simple_field_paragraph_in_a_footnote_a_comment_or_a_cell_is_tracked_whole() {
+    let note = |page: bool| {
+        let mut doc = doc_with_notes(&[("Claim.", Some("Source.")), ("After.", None)]);
+        if page {
+            with_part(&mut doc, "footnotes.xml", |xml| {
+                let at = xml.find("Source.").unwrap();
+                let end = at + xml[at..].find("</w:footnote>").unwrap();
+                format!("{}{PAGE_LINE}{}", &xml[..end], &xml[end..])
+            })
+        } else {
+            reopen(&mut doc)
+        }
+    };
+    check_both_ways(
+        || note(false),
+        || note(true),
+        "footnotes.xml",
+        [false, true],
+    );
+
+    let comment = |page: bool| {
+        let mut doc = doc_with(&["Claim.", "After."]);
+        let range = oxoffice_docx::RunRange {
+            start: oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index: 0,
+            },
+            end: oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index: 1,
+            },
+        };
+        doc.add_comment_with_date(
+            range,
+            "Ada",
+            None,
+            "Note.",
+            oxoffice_docx::CommentDate::Undated,
+        )
+        .unwrap();
+        if page {
+            with_part(&mut doc, "comments.xml", |xml| {
+                xml.replacen("</w:comment>", &format!("{PAGE_LINE}</w:comment>"), 1)
+            })
+        } else {
+            reopen(&mut doc)
+        }
+    };
+    check_both_ways(
+        || comment(false),
+        || comment(true),
+        "comments.xml",
+        [false, true],
+    );
+
+    // First and last paragraph of a kept cell.
+    let cell = |content: &str| {
+        doc_with_body(&format!(
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{content}</w:tc></w:tr></w:tbl>{}"#,
+            plain("After.")
+        ))
+    };
+    check_both_ways(
+        || cell(&plain("Cell.")),
+        || cell(&format!("{PAGE_LINE}{}", plain("Cell."))),
+        "document.xml",
+        [false, true],
+    );
+    check_both_ways(
+        || cell(&plain("Cell.")),
+        || cell(&format!("{}{PAGE_LINE}", plain("Cell."))),
+        "document.xml",
+        [false, true],
+    );
+}
+
+#[test]
+fn a_paired_paragraph_holding_a_simple_field_whose_boundaries_change_is_replaced() {
+    // A hyperlink added around the text before the field: the pair is
+    // written as a deleted and an inserted paragraph.
+    let linked = r#"<w:p><w:hyperlink w:anchor="_Top"><w:r><w:t xml:space="preserve">Page </w:t></w:r></w:hyperlink><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#;
+    for after in [plain("After."), String::new()] {
+        check_both_ways(
+            || doc_with_body(&format!("{PAGE_LINE}{after}")),
+            || doc_with_body(&format!("{linked}{after}")),
+            "document.xml",
+            [true, true],
+        );
+        let mut doc = redline(
+            doc_with_body(&format!("{PAGE_LINE}{after}")),
+            &doc_with_body(&format!("{linked}{after}")),
+        );
+        assert!(part_xml(&mut accepted(&mut doc), "document.xml").contains("w:hyperlink"));
+        assert!(!part_xml(&mut rejected(&mut doc), "document.xml").contains("w:hyperlink"));
+        assert_eq!(field_instructions(&accepted(&mut doc)), ["PAGE"]);
+        assert_eq!(field_instructions(&rejected(&mut doc)), ["PAGE"]);
+    }
+}
+
+#[test]
+fn a_moved_paragraph_holding_a_simple_field_is_deleted_and_inserted() {
+    let original = format!("{PAGE_LINE}{}{}", plain("a"), plain("b"));
+    let edited = format!("{}{}{PAGE_LINE}", plain("a"), plain("b"));
+    let mut doc = redline(doc_with_body(&original), &doc_with_body(&edited));
+    let kinds = kinds(&doc);
+    assert!(!kinds.contains(&RevisionKind::MoveFrom), "{kinds:?}");
+    assert!(!kinds.contains(&RevisionKind::MoveTo), "{kinds:?}");
+    assert_eq!(texts(&accepted(&mut doc)), ["a", "b", "Page 1"]);
+    assert_eq!(texts(&rejected(&mut doc)), ["Page 1", "a", "b"]);
+    assert_eq!(field_instructions(&accepted(&mut doc)), ["PAGE"]);
+    assert_eq!(field_instructions(&rejected(&mut doc)), ["PAGE"]);
+}
+
+/// Each body field's instruction, lock and update marker.
+fn field_flags(doc: &Document) -> Vec<(String, Option<bool>, Option<bool>)> {
+    let mut flags = Vec::new();
+    for paragraph in doc.paragraphs() {
+        for run in paragraph.runs() {
+            for item in run.items() {
+                if let RunItemRef::Field(field) = item {
+                    flags.push((
+                        field.instruction().trim().to_owned(),
+                        field.locked(),
+                        field.dirty(),
+                    ));
+                }
+            }
+        }
+    }
+    flags
+}
+
+#[test]
+fn a_locked_simple_field_and_an_empty_dirty_one_keep_their_flags_when_tracked_whole() {
+    let locked = r#"<w:p><w:fldSimple w:instr=" DATE " w:fldLock="1"><w:r><w:t>21/11/2026</w:t></w:r></w:fldSimple></w:p>"#;
+    let dirty = r#"<w:p><w:fldSimple w:instr=" PAGE " w:dirty="1"/></w:p>"#;
+    for (paragraph, flag, expected) in [
+        (
+            locked,
+            r#"w:fldLock="1""#,
+            ("DATE".to_owned(), Some(true), None),
+        ),
+        (
+            dirty,
+            r#"w:dirty="1""#,
+            ("PAGE".to_owned(), None, Some(true)),
+        ),
+    ] {
+        let without = plain("After.");
+        let with = format!("{paragraph}{}", plain("After."));
+        for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
+            let mut doc = redline(doc_with_body(from), &doc_with_body(to));
+            let xml = part_xml(&mut doc, "document.xml");
+            let wrapper = field_wrapper(&xml, kind);
+            let begin = &wrapper[..wrapper.find("</w:r>").unwrap()];
+            assert!(begin.contains(flag), "{wrapper}");
+            let inserted = kind == "ins";
+            let kept = if inserted {
+                accepted(&mut doc)
+            } else {
+                rejected(&mut doc)
+            };
+            assert_eq!(field_flags(&kept), [expected.clone()]);
+            assert_eq!(texts(&kept), texts(&doc_with_body(&with)));
+            let mut dropped = if inserted {
+                rejected(&mut doc)
+            } else {
+                accepted(&mut doc)
+            };
+            assert!(!holds_field(&part_xml(&mut dropped, "document.xml")));
+            assert_eq!(texts(&dropped), ["After."]);
+        }
+    }
+}
+
+#[test]
+fn a_simple_field_inside_a_hyperlink_keeps_the_whole_paragraph_refusal() {
+    let linked = r#"<w:p><w:hyperlink w:anchor="_Top"><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:hyperlink></w:p>"#;
+    let after = plain("After.");
+    let refused = |original: &str, edited: &str| {
+        let mut doc = doc_with_body(original);
+        let error = doc
+            .compare(&doc_with_body(edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot track a whole paragraph's simple field"),
+            "{error}"
+        );
+    };
+    // Inserted and deleted whole.
+    refused(&after, &format!("{linked}{after}"));
+    refused(&format!("{linked}{after}"), &after);
+    // Paired, its hyperlink pointing elsewhere: written as a deleted and an
+    // inserted paragraph, refused the same way.
+    let relinked = linked.replace("_Top", "_Bottom");
+    refused(&format!("{linked}{after}"), &format!("{relinked}{after}"));
+}
+
+#[test]
+fn a_bookmark_around_an_inserted_caption_number_stays_outside_its_field_wrapper() {
+    let caption = r#"<w:p><w:bookmarkStart w:id="7" w:name="_Ref1"/><w:r><w:t xml:space="preserve">Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \* ARABIC "><w:r><w:t>1</w:t></w:r></w:fldSimple><w:bookmarkEnd w:id="7"/></w:p>"#;
+    let without = plain("After.");
+    let with = format!("{caption}{}", plain("After."));
+    for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
+        let mut doc = redline(doc_with_body(from), &doc_with_body(to));
+        let xml = part_xml(&mut doc, "document.xml");
+        let wrapper = field_wrapper(&xml, kind);
+        assert!(!wrapper.contains("bookmark"), "{wrapper}");
+        let (kept, dropped) = if kind == "ins" {
+            (accepted(&mut doc), rejected(&mut doc))
+        } else {
+            (rejected(&mut doc), accepted(&mut doc))
+        };
+        assert_eq!(texts(&kept), ["Figure 1", "After."]);
+        assert_eq!(bookmark_names(&kept), ["_Ref1"]);
+        assert_eq!(field_instructions(&kept), [r"SEQ Figure \* ARABIC"]);
+        assert_eq!(texts(&dropped), ["After."]);
+        assert!(bookmark_names(&dropped).is_empty());
+        assert!(field_instructions(&dropped).is_empty());
+    }
+}
+
+/// A document of these Heading 1 paragraphs under a table of contents that
+/// `rebuild_toc` filled, so that its page numbers are simple `PAGEREF` fields.
+fn rebuilt_toc(headings: &[&str]) -> Document {
+    let mut doc = Document::new();
+    for heading in headings {
+        doc.add_paragraph(heading).style("Heading1");
+    }
+    doc.insert_toc(0, 1).unwrap();
+    doc.rebuild_toc().unwrap();
+    reopen(&mut doc)
+}
+
+#[test]
+fn a_rebuilt_table_of_contents_removed_whole_keeps_its_simple_page_fields() {
+    // The table of contents is carried: replaced whole inside its own field,
+    // its simple fields are written as before.
+    let with_toc = || rebuilt_toc(&["Scope", "Method"]);
+    let without = || {
+        let mut doc = Document::new();
+        for heading in ["Scope", "Method"] {
+            doc.add_paragraph(heading).style("Heading1");
+        }
+        reopen(&mut doc)
+    };
+    let mut doc = redline(with_toc(), &without());
+    assert!(part_xml(&mut doc, "document.xml").contains("PAGEREF"));
+    assert!(part_xml(&mut doc, "document.xml").contains("<w:fldSimple"));
+    assert_eq!(texts(&accepted(&mut doc)), texts(&without()));
+    assert_eq!(texts(&rejected(&mut doc)), texts(&with_toc()));
+}
+
+#[test]
+fn a_whole_paragraph_simple_field_compares_with_fields_ignored() {
+    let options = ComparisonOptions {
+        ignore_fields: true,
+        ..Default::default()
+    };
+    let without = plain("After.");
+    let with = format!("{PAGE_LINE}{}", plain("After."));
+    for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
+        let mut doc = doc_with_body(from);
+        let diagnostics = doc
+            .compare_with_options(&doc_with_body(to), AUTHOR, DATE, &options)
+            .expect("compares with fields ignored");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut doc = reopen(&mut doc);
+        field_wrapper(&part_xml(&mut doc, "document.xml"), kind);
+        assert_eq!(texts(&accepted(&mut doc)), texts(&doc_with_body(to)));
+        assert_eq!(texts(&rejected(&mut doc)), texts(&doc_with_body(from)));
+        let mut resolved = if kind == "ins" {
+            rejected(&mut doc)
+        } else {
+            accepted(&mut doc)
+        };
+        assert!(!holds_field(&part_xml(&mut resolved, "document.xml")));
+    }
+}
+
+#[test]
+fn a_heading_added_under_a_rebuilt_table_of_contents_is_compared() {
+    let original = || rebuilt_toc(&["Scope", "Method"]);
+    let edited = || rebuilt_toc(&["Scope", "Method", "Results"]);
+    for (from, to, headings) in [
+        (
+            &original as &dyn Fn() -> Document,
+            &edited as &dyn Fn() -> Document,
+            3,
+        ),
+        (&edited, &original, 2),
+    ] {
+        let mut doc = redline(from(), &to());
+        let mut copy = accepted(&mut doc);
+        assert_eq!(texts(&copy), texts(&to()));
+        assert_eq!(texts(&rejected(&mut doc)), texts(&from()));
+        // The accepted table of contents mixes simple and complex page
+        // fields; rebuilding it again finds every heading.
+        let report = copy.rebuild_toc().unwrap();
+        assert_eq!(report.entry_count, headings);
+        assert_eq!(texts(&reopen(&mut copy)), texts(&to()));
+    }
+}
