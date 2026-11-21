@@ -3,9 +3,10 @@
 
 use oxoffice_docx::{
     CaptionOptions, ContentLocation, CrossReferenceOptions, Document, Field, FieldDateTime,
-    FieldEvaluationContext, FieldKind, FieldOutcome, HdrFtrType, ParagraphItemRef, RunItemRef,
-    RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind, StoryKind, StoryRangeKind,
-    StoryRunPosition, StoryRunRange, TableOfFiguresOptions, TocRebuildReport,
+    FieldEvaluationContext, FieldKind, FieldOutcome, HdrFtrType, ParagraphItemRef, RenderOptions,
+    RevisionView, RunItemRef, RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind,
+    StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, TableOfFiguresOptions,
+    TocRebuildReport,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -1541,6 +1542,74 @@ fn a_legacy_checkbox_takes_its_opening_run_style() {
         .find(|(text, _, _)| text == "\u{2610}")
         .expect("empty box");
     assert_eq!(unchecked.1, 14.0, "the character style of the opening run");
+}
+
+#[test]
+fn a_legacy_checkbox_inside_another_fields_result_draws_its_box_at_its_size() {
+    // An IF field whose stored result holds checkboxes as Word saves them,
+    // with no result run of their own.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}{}{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        word_checkbox("<w:sizeAuto/>", true),
+        word_checkbox(r#"<w:size w:val="24"/>"#, false),
+        // A box that stores a result takes that result's formatting first.
+        r#"<w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check3"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    ));
+    let runs = drawn_runs(&doc);
+    let drawn: Vec<(&str, f64)> = runs
+        .iter()
+        .map(|(text, size, _)| (text.as_str(), *size))
+        .collect();
+    assert_eq!(
+        drawn,
+        [("\u{2612}", 10.0), ("\u{2610}", 12.0), ("\u{2610}", 20.0)],
+        "each nested box draws from its state, at the opening run's size or its own"
+    );
+}
+
+#[test]
+fn a_styleref_to_a_heading_holding_a_legacy_checkbox_reads_its_text_without_the_box() {
+    // The heading draws its box on the page; navigation text, which STYLEREF
+    // reads, keeps the checkbox's stored text, empty as Word saves it.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{}<w:r><w:t xml:space="preserve"> Approve</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> STYLEREF "Heading 1" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        word_checkbox("<w:sizeAuto/>", false)
+    ));
+    let texts: String = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(texts, "\u{2610} Approve Approve");
+}
+
+#[test]
+fn a_legacy_checkbox_in_a_tracked_deletion_draws_its_box_in_the_tracked_view() {
+    // The checkbox stores an X, which Word does not draw: it draws the box of
+    // the state. Its field code is in plain runs, so the model reads a field.
+    let deleted = r#"<w:del w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
+    ));
+    let options = RenderOptions::default().with_revision_view(RevisionView::Tracked);
+    let result = doc.layout_with_options(options).unwrap();
+    let mut texts = String::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                texts.push_str(&run.text);
+            }
+        });
+    }
+    assert!(
+        texts.contains('\u{2612}'),
+        "the deleted box draws: {texts:?}"
+    );
+    assert!(!texts.contains('X'), "not its stored X: {texts:?}");
+    let accepted: String = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(accepted, " kept", "the accepted view draws no box");
 }
 
 #[test]
