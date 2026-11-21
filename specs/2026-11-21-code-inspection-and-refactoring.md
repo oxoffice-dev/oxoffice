@@ -96,7 +96,9 @@ code is one dense job, size alone is not a reason.
     their `mod`/`use super::*` wiring. It checks the parent's re-export
     lines: no attribute, no rename, no glob, each name at its old visibility.
     A moved item still named in its parent or a sibling without an explicit
-    import fails, unless every item there that names it binds it locally.
+    import fails, unless every item there that names it binds it locally and
+    never calls it. One level per pull request: a file that is already a
+    child is split by hand-checked moves, or with the script extended then.
     Left to the compiler and the review: name resolution in unchanged files,
     code moved into an existing file or out of another module than the
     parent, a moved private method that shares a trait method's name, loose

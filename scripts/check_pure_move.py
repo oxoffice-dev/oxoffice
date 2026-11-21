@@ -20,10 +20,11 @@ BASE and HEAD must hold the same units, in any order and any file; within a unit
 The `use x::...` lines of a parent are checked, not set aside: no attribute, no rename, only names `x` defines, each
 at the visibility it had before. A public path no longer re-exported fails; a crate path is reported. A moved item
 still named in its parent or a new sibling without an explicit import fails, unless every item there that names it
-also binds it locally (a parameter, a local, a field), which is only reported.
+also binds it locally (a parameter, a local, a field) and never calls it, which is only reported.
 
 Added files may not hold a `macro_rules!` or a `super::`/`self::` path, whose meaning depends on where they sit.
-Not covered, and left to the compiler and the review: name resolution in files the range does not change; code moved
+One level per range: a split of a file that is already a child (whose items crossing the cut are `pub(super)`) is
+refused, and checked by hand or with this script extended then. Not covered, and left to the compiler and the review: name resolution in files the range does not change; code moved
 into a file that already existed, or out of a module other than the parent; a moved private method whose name a trait
 method shares; loose comments moving inside an item; and children gated by `#[cfg]`, which are refused and checked by
 hand. Exit 1 and print what differs otherwise.
@@ -287,13 +288,20 @@ class File:
                 parts = [(start, end)]
             for s_, e_ in parts:
                 part = [t for k, t in tokens[s_:e_] if k == "code"]
+                # a closure parameter follows the `|` that opens the closure, not the one that closes it
+                opens = ("(", ",", "=", "move", "{", ";", "=>", "return", "||")
                 binds = {part[n + 1] for n in range(len(part) - 1)
-                         if part[n] in ("let", "mut", "for", "|") and IDENT.fullmatch(part[n + 1])}
+                         if IDENT.fullmatch(part[n + 1])
+                         and (part[n] in ("let", "mut", "for")
+                              or (part[n] == "|" and (n == 0 or part[n - 1] in opens)))}
                 binds |= {part[n] for n in range(len(part) - 2)
                           if IDENT.fullmatch(part[n]) and part[n + 1] == ":" and part[n + 2] != ":"}
                 used = {t for n, t in enumerate(part)
                         if IDENT.fullmatch(t) and not (n > 0 and part[n - 1] == "." and (n < 2 or part[n - 2] != "."))}
-                self.unbound.update(used - binds)
+                # a name called like a function reaches an item, whatever the item also binds
+                calls = {t for n, t in enumerate(part[:-1])
+                         if IDENT.fullmatch(t) and part[n + 1] == "(" and not (n > 0 and part[n - 1] in (".", "fn"))}
+                self.unbound.update((used - binds) | calls)
         for start, body, kind, end in items(tokens, 0, len(tokens)):
             raw, loose = attached(tokens[start:end])
             for comment in normalise(loose, new_file):
