@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: draft
+status: accepted
 scope: tests
 ---
 
@@ -8,28 +8,23 @@ scope: tests
 
 ## Context
 
-oxoffice has its first downstream user: agent tools that maintain Word and
-PowerPoint files for one maintainer, through the Python package and the CLI
-only, on rdocx 0.17.0 and rpptx 0.15.0 today, the code oxoffice was imported
-from (85c3b85). They will switch as soon as oxoffice is ready, and the switch
-has to work the first time. Their files are edited in place in a synced
-folder, and people open the same files in Word, Google Docs and Google Slides
-between two sessions:
+oxoffice has a first downstream user: tools that edit Word and PowerPoint
+files through the Python package and the CLI, on rdocx 0.17.0 and rpptx 0.15.0
+today, the code oxoffice was imported from (85c3b85). They will switch as
+soon as oxoffice is ready, and the switch has to work the first time. Files
+are edited in place, and people open the same files in Word, Google Docs and
+Google Slides between two runs. The kinds of files the tests need:
 
-- **a long report and its companion documents**: versioned, rendered to PDF at
-  each version, redlined between versions; up to about 40 pages and 1.5 MB,
-  a TOC field in a content control, two footer parts, figures as PNG with an
-  SVG twin, often saved last by Google Docs;
-- **records co-edited in Word (French interface) and Google Docs**: up to
-  about 45 pages, 30 tables and 30 content controls, localised style ids,
-  comments and tracked changes by named people;
-- **decks** edited in Google Slides: text boxes only, one font, no autofit.
+- **a long versioned report**: a TOC field in a content control, several
+  footer parts, figures, rendered to PDF and redlined between versions,
+  often saved last by Google Docs;
+- **records co-edited in Word and Google Docs**: localised style ids, many
+  tables and content controls, comments and tracked changes by named people;
+- **text-only decks** edited in Google Slides.
 
-Their maintainer wrote down what the tools rely on: 13 workflows, 12
-invariants and 14 past breakages, each with a neutral reproduction. That list
-is private input; this spec restates it in its own words. Items keep the
-list's labels (W1 to W13, I1 to I12, R1 to R14) so that both sides can map
-them. A fourteenth workflow, on spreadsheets, waits for the spreadsheet facade (ROADMAP).
+This spec numbers what those tools rely on: workflows W1 to W13, invariants
+I1 to I12 and past breakages R1 to R14. Spreadsheets wait for the
+spreadsheet facade (ROADMAP).
 
 What the suite has, on `main` 83665a7:
 
@@ -224,7 +219,7 @@ independent review on the local commit before the push.
 | 11 | `test(corpus)`: the three families, authored and saved by LibreOffice; `produce.py` routes for Word then Google (`word-google/`) and for Word updating the TOC fields of the families that ask for it; manifest features for the new traits | `tests/corpus/generate/` | PR (round trip, render) | 10 s |
 | 12 | `test(corpus)`: their Word, PowerPoint, Google and Word-then-Google copies, from a run on the Mac | `tests/corpus/files/` | PR | 5 s |
 | 13 | `test`: the workflow walks on the families (W1 read walk, W2, W6 two versions, W13 Markdown, R2 TOC pages against Word's, the deck layout table) | the modules above | PR (one file each), `main` | 3 s |
-| 14 | `test(python)`: the budget table on `main` (I12, R11): open and page count of a 45-page, 30-table document built by `builders.py`, about 100 counted replacements on the Word long report through Python and the CLI, a read-only walk of the docx corpus, the deck checks; against a one-off measurement of rdocx 0.17.0 and rpptx 0.15.0 from PyPI on the same runner, committed with the table; reported in the job summary, not gating | `crates/oxoffice-py/tests/test_docx_scaling.py`, `test_pptx_scaling.py` | `main` | 0 s on PRs |
+| 14 | `test(python)`: the budget table on `main` (I12, R11): open and page count of a long document with many tables, built by `builders.py`, about 100 counted replacements on the Word long report through Python and the CLI, a read-only walk of the docx corpus, the deck checks; against a one-off measurement of rdocx 0.17.0 and rpptx 0.15.0 from PyPI on the same runner, committed with the table; reported in the job summary, not gating | `crates/oxoffice-py/tests/test_docx_scaling.py`, `test_pptx_scaling.py` | `main` | 0 s on PRs |
 
 Order: 2 and 3 first (the switch needs them), then 4 to 10 in any order
 (they touch different modules), 11 and 12 with the Mac session, 13 after 12,
