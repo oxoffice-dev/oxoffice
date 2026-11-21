@@ -347,6 +347,19 @@ class File:
             if name is not None:
                 self.names[name] = visibility(tokens[body:end])
                 self.kinds[name] = kind
+            macro = [t for k, t in tokens[body:end] if k == "code"]  # after the item's attributes
+            while macro[:1] == [":"] or macro[1:3] == [":", ":"]:  # `std::thread_local!`, `::std::thread_local!`
+                macro = macro[1:] if macro[0] == ":" else macro[3:]
+            if macro[:2] == ["thread_local", "!"]:  # its statics are items of this module too
+                for n in range(len(macro) - 2):
+                    if macro[n] == "static" and IDENT.fullmatch(macro[n + 1]) and macro[n + 2] == ":":
+                        start = n
+                        if start >= 1 and macro[start - 1] == ")":  # pub(crate), pub(super), pub(in path)
+                            start = max(i for i in range(start) if macro[i] == "(") - 1
+                        elif start >= 1 and macro[start - 1] == "pub":
+                            start -= 1
+                        self.names[macro[n + 1]] = "".join(macro[start:n]) if macro[start : start + 1] == ["pub"] else ""
+                        self.kinds[macro[n + 1]] = "static"
             self.units[(kind, tuple(normalise(raw, new_file)))] += 1
 
 
