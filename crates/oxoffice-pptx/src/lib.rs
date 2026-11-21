@@ -25250,7 +25250,8 @@ impl<'a> TableMut<'a> {
     }
 
     /// Removes one row, which must not be the only one, and shrinks the frame
-    /// height by its height.
+    /// height by its height (a frame shorter than its rows first comes up to
+    /// them).
     ///
     /// A merged cell across the row loses one row, and when the row holds the
     /// merge origin the row below takes it over with the origin's text.
@@ -25259,7 +25260,8 @@ impl<'a> TableMut<'a> {
     }
 
     /// Inserts a grid column before `index`, or appends one when `index`
-    /// equals the column count, and grows the frame width by its width.
+    /// equals the column count, and grows the frame width by its width (a
+    /// frame narrower than its grid first comes up to it).
     ///
     /// The new column copies the width of the column left of it, or of the
     /// first column when it becomes the first, and its cells copy that
@@ -25270,7 +25272,8 @@ impl<'a> TableMut<'a> {
     }
 
     /// Removes one grid column, which must not be the only one, and shrinks
-    /// the frame width by its width.
+    /// the frame width by its width (a frame narrower than its grid first
+    /// comes up to it).
     ///
     /// A merged cell across the column loses one column, and when the column
     /// holds the merge origin the column to its right takes it over with the
@@ -25284,7 +25287,8 @@ impl<'a> TableMut<'a> {
     /// Each frame edge moves by the change of its grid sum, so the frame grows
     /// or shrinks by the inserted or removed row or column. A frame that
     /// PowerPoint measured taller than its stored rows, because it grew rows
-    /// to fit their text, keeps that excess.
+    /// to fit their text, keeps that excess; a frame smaller than its grid
+    /// first comes up to it.
     fn restructure(
         &mut self,
         operation: &'static str,
@@ -25760,8 +25764,6 @@ fn table_extent(table: &CT_Table, operation: &'static str) -> Result<(Emu, Emu)>
     Ok((Emu(total_width), Emu(total_height)))
 }
 
-/// Moves one frame edge by the change of its grid sum and requires the edge
-/// to stay positive.
 /// Moves a table frame edge by the grid's change. A frame larger than its
 /// grid (rows grown by their text) keeps its margin; one smaller than its
 /// grid (Google writes 3,000,000 EMU whatever the grid) is first brought up

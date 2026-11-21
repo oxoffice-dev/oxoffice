@@ -1148,10 +1148,11 @@ fn a_row_and_a_column_added_to_the_key_figures_table_follow_its_formatting() {
     let (slide, shape) = KEY_FIGURES;
     for producer in PRODUCERS {
         let mut prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        // Google writes a frame unrelated to the grid: what it should become
-        // is #44's question, so only a frame that follows its grid is checked.
-        let frame_follows_grid =
-            frame_size(&prs, slide, shape) == grid_size(&table(&prs, slide, shape));
+        // A frame never ends below its grid and keeps any margin above it:
+        // Google's 3,000,000 EMU square frame is too narrow for its grid but
+        // taller than its rows.
+        let (frame_width, frame_height) = frame_size(&prs, slide, shape);
+        let (grid_width, grid_height) = grid_size(&table(&prs, slide, shape));
         let last_width = table(&prs, slide, shape).column_width(2).unwrap();
         let header_look = first_run_look(&table(&prs, slide, shape), 0, 2);
         {
@@ -1173,14 +1174,15 @@ fn a_row_and_a_column_added_to_the_key_figures_table_follow_its_formatting() {
         assert_eq!(cell_texts(&table), expected, "{producer}");
         assert_eq!(table.row_height(4), Some(Emu(685_800)), "{producer}");
         assert_eq!(table.column_width(3), Some(last_width), "{producer}");
-        assert_eq!(frame_follows_grid, producer != "google", "{producer}");
-        if frame_follows_grid {
-            assert_eq!(
-                frame_size(&prs, slide, shape),
-                grid_size(&table),
-                "{producer}"
-            );
-        }
+        let (new_width, new_height) = grid_size(&table);
+        assert_eq!(
+            frame_size(&prs, slide, shape),
+            (
+                Emu(new_width.0 + (frame_width.0 - grid_width.0).max(0)),
+                Emu(new_height.0 + (frame_height.0 - grid_height.0).max(0)),
+            ),
+            "{producer}"
+        );
         // New cells copy the cell above or to their left.
         for ((row, column), (source_row, source_column)) in [((4, 0), (3, 0)), ((1, 3), (1, 2))] {
             let cell = table.cell(row, column).unwrap();
@@ -1424,7 +1426,7 @@ fn columns_of_the_google_table_can_be_removed_down_to_one() {
 }
 
 #[test]
-fn removing_a_column_from_every_editors_table_takes_its_width_off_the_frame() {
+fn removing_a_column_from_every_editors_table_keeps_the_frame_on_its_grid() {
     let (slide, shape) = KEY_FIGURES;
     for name in [
         "powerpoint/deck.pptx",
@@ -1440,10 +1442,15 @@ fn removing_a_column_from_every_editors_table_takes_its_width_off_the_frame() {
         table_mut(&mut prs, slide, shape).remove_column(1).unwrap();
 
         let prs = reopen(&prs);
-        let expected = Emu(frame_width.0.max(grid_width.0) - removed.0);
+        // Every corpus frame is at least as wide as its grid but Google's,
+        // which is brought up to it: each one ends on the new grid.
+        let new_width = Emu(grid_width.0 - removed.0);
         assert_eq!(
             frame_size(&prs, slide, shape),
-            (expected, frame_height),
+            (
+                Emu(new_width.0 + (frame_width.0 - grid_width.0).max(0)),
+                frame_height
+            ),
             "{name}"
         );
         assert_eq!(
