@@ -679,6 +679,33 @@ fn a_style_linked_to_a_list_level_numbers_every_paragraph_of_that_style() {
 }
 
 #[test]
+fn a_level_that_names_a_style_not_numbered_by_it_is_refused() {
+    // The other way round from LibreOffice's one-way link: the level names
+    // Heading2, whose style no longer points at any list.
+    let (mut doc, _) = numbered_headings();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .expect("package opens");
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let style = xml
+        .find(r#"w:styleId="Heading2""#)
+        .expect("the Heading2 style");
+    let start = style + xml[style..].find("<w:numPr>").expect("its numbering");
+    let end = start + xml[start..].find("</w:numPr>").unwrap() + "</w:numPr>".len();
+    let xml = format!("{}{}", &xml[..start], &xml[end..]);
+    package.set_part("/word/styles.xml", xml.into_bytes());
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(
+        error.contains("and style 'Heading2' are not reciprocally linked"),
+        "{error}"
+    );
+}
+
+#[test]
 fn headings_linked_to_a_list_show_their_numbers_in_the_outline() {
     fn flatten(nodes: &[NumberedOutlineNode], out: &mut Vec<String>) {
         for node in nodes {
@@ -866,9 +893,7 @@ fn items_added_to_word_google_and_python_docx_reports_continue_their_lists() {
 
 // Known failures.
 
-// Fails today: LibreOffice keeps List Bullet's numbering but drops the level's style back-link, and every list edit is refused. Issue: #29
 #[test]
-#[should_panic(expected = "are not reciprocally linked")]
 fn items_can_be_added_to_a_libreoffice_report() {
     let mut doc = corpus_doc("libreoffice/report.docx");
     doc.try_add_bullet_list_item("New point", 0).unwrap();
@@ -881,6 +906,51 @@ fn items_can_be_added_to_a_libreoffice_report() {
         "4. New step".to_owned(),
     ]);
     assert_eq!(list_lines(&doc), expected);
+}
+
+#[test]
+fn every_list_edit_works_on_a_libreoffice_report() {
+    // LibreOffice keeps the numbering of its List Bullet style and drops the
+    // level's link back to the style: a one-way link, which Word reads.
+    let mut doc = corpus_doc("libreoffice/report.docx");
+    let point = doc
+        .paragraph(paragraph_starting(&doc, "Subscription revenue"))
+        .unwrap();
+    assert_eq!(point.style_id(), Some("ListBullet"));
+    let effective = doc.effective_paragraph_properties(&point);
+    let (id, level) = (effective.num_id.unwrap(), effective.num_ilvl.unwrap_or(0));
+    assert_eq!(
+        doc.numbering_level(id, level).unwrap().paragraph_style,
+        None
+    );
+    doc.validate_numbering_graph().unwrap();
+
+    doc.add_bullet_list_item("New point", 0);
+    let step = doc.paragraph_count();
+    doc.add_numbered_list_item("New step", 0);
+    doc.restart_numbering(step, 5).unwrap();
+    assert_ne!(doc.add_list_definition(&[ListLevel::decimal()]), 0);
+    doc.add_numbering_definition(&[ListLevel::bullet()])
+        .unwrap();
+    doc.link_style_to_numbering("ListBullet", id, level)
+        .unwrap();
+    assert_eq!(
+        doc.numbering_level(id, level).unwrap().paragraph_style,
+        Some("ListBullet"),
+        "linking completes the link"
+    );
+    doc.validate_numbering_graph().unwrap();
+
+    let doc = reopen(&mut doc);
+    let lines = list_lines(&doc);
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            format!("{SYMBOL_BULLET} New point"),
+            "5. New step".to_owned()
+        ]
+    );
+    doc.validate_numbering_graph().unwrap();
 }
 
 // Fails today: Word writes w16cid:durableId on every list instance, and a restart refuses an instance with attributes it does not model. Issue: #29

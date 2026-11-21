@@ -43403,15 +43403,14 @@ impl Document {
             };
             // A `w:ilvl` without a `w:numId` is schema-valid. The style takes
             // the instance of its `basedOn` chain, as layout and Word resolve
-            // it, and is not numbered when the chain has none. It owns no link
-            // of its own, so only a level that names it back records one.
-            let (num_id, inherited) = match properties.num_id {
-                Some(num_id) => (num_id, false),
+            // it, and is not numbered when the chain has none.
+            let num_id = match properties.num_id {
+                Some(num_id) => num_id,
                 None if properties.num_ilvl.is_some() => {
                     match style::resolve_paragraph_properties(Some(&style.style_id), &self.styles)
                         .num_id
                     {
-                        Some(num_id) => (num_id, true),
+                        Some(num_id) => num_id,
                         None => continue,
                     }
                 }
@@ -43452,16 +43451,13 @@ impl Document {
                 .find(|value| value.ilvl == level)
                 .and_then(|value| value.level.as_ref())
                 .unwrap_or(base);
-            if effective.p_style.as_deref() != Some(style.style_id.as_str()) {
-                if inherited {
-                    continue;
-                }
-                return Err(Error::Other(format!(
-                    "style '{}' and numbering instance {num_id} level {level} are not reciprocally linked",
-                    style.style_id
-                )));
+            // Only a level that names the style back links the two. Without
+            // that, the style is numbered by the level one way, which Word
+            // reads and LibreOffice writes: its List Bullet style keeps its
+            // `w:numPr` and the level loses its `w:pStyle`.
+            if effective.p_style.as_deref() == Some(style.style_id.as_str()) {
+                style_links.insert(style.style_id.as_str(), (num_id, level));
             }
-            style_links.insert(style.style_id.as_str(), (num_id, level));
         }
         for definition in &numbering.abstract_nums {
             for level in &definition.levels {
