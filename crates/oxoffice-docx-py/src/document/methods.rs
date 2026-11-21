@@ -1404,14 +1404,11 @@ impl PyDocument {
             .split_run(run_index, character_offset)
             .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate) != before {
-            let prepared = document.prepare_word_revision(
-                py,
-                &candidate,
-                "Document.split_run",
-                crate::document::WordPublication::Conservative,
-            )?;
-            document.commit_word_revision(prepared)?;
-            document.install_inner(candidate);
+            let publication = match document.inner.paragraph_story_location(paragraph_index) {
+                Ok(Some(location)) => WordPublication::ParagraphEdit(location),
+                _ => WordPublication::Conservative,
+            };
+            document.publish_block_edit(py, candidate, "Document.split_run", publication)?;
         }
         Ok(boundary)
     }

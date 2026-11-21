@@ -439,15 +439,12 @@ impl PyRun {
                 added
             })
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Run.add_field",
-            crate::document::WordPublication::Conservative,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        Ok(())
+        let publication = crate::document::WordPublication::ParagraphEdit(
+            document
+                .paragraph_route(&location, None)
+                .map_err(|error| crate::docx_to_pyerr(py, error))?,
+        );
+        document.publish_block_edit(py, candidate, "Run.add_field", publication)
     }
 
     fn add_legacy_form_field(&self, py: Python<'_>, definition: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -467,15 +464,12 @@ impl PyRun {
                 added
             })
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Run.add_legacy_form_field",
-            crate::document::WordPublication::Conservative,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        Ok(())
+        let publication = crate::document::WordPublication::ParagraphEdit(
+            document
+                .paragraph_route(&location, None)
+                .map_err(|error| crate::docx_to_pyerr(py, error))?,
+        );
+        document.publish_block_edit(py, candidate, "Run.add_legacy_form_field", publication)
     }
 
     /// Remove this run from its paragraph, keeping the markers around it.
@@ -486,15 +480,12 @@ impl PyRun {
         location
             .edit(&mut candidate, |paragraph| paragraph.remove_run(run_index))
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Run.remove",
-            crate::document::WordPublication::Conservative,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        Ok(())
+        let publication = crate::document::WordPublication::ParagraphEdit(
+            document
+                .paragraph_route(&location, None)
+                .map_err(|error| crate::docx_to_pyerr(py, error))?,
+        );
+        document.publish_block_edit(py, candidate, "Run.remove", publication)
     }
 
     #[getter]

@@ -125,7 +125,8 @@ use render_options::{
 };
 pub(crate) use story_types::GeneratedStoryOwner;
 pub use story_types::{
-    BodyItemOwners, BodyItemRef, HeaderFooterKind, StoryError, StoryItemKind, StoryKind,
+    BodyItemOwners, BodyItemRef, ElementExtent, HeaderFooterKind, OwnerElementXml, StoryError,
+    StoryItemKind, StoryKind,
 };
 use text_report::STORY_TEXT_RELATIONSHIPS;
 pub use text_report::{StoryText, StoryTextItem, TextDiagnostic, TextReport};
@@ -340,6 +341,7 @@ mod fragment_sources;
 mod main_source;
 mod open_save;
 mod owner_snapshots;
+pub use owner_snapshots::resolved_xml_events;
 mod relationships;
 mod staged_output;
 mod staging;

@@ -237,6 +237,52 @@ impl StoryItemSnapshot {
     }
 }
 
+/// Where one element of a story lies in its part, which tells what an edit
+/// of that element alone renumbers: [`Document::element_extent`].
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElementExtent {
+    /// The element's bytes in its part, closed over the namespaces it uses.
+    pub xml: Vec<u8>,
+    /// The index of the first story item inside the element and how many
+    /// there are, the element itself included when it is an item. With none,
+    /// the index the next item would take.
+    pub items: (usize, usize),
+    /// The hyperlinks of the element's story in document order: the index
+    /// path of the story item that holds each, its index among that item's
+    /// hyperlinks, and where it lies against the element (`Less` before,
+    /// `Equal` inside, `Greater` after).
+    pub links: Vec<(Vec<usize>, usize, std::cmp::Ordering)>,
+    /// The text box stories of the part that start before the element, and
+    /// how many lie inside it.
+    pub text_boxes: (usize, usize),
+    /// The table cell stories of the part, counted the same way. The story
+    /// an element is, when it is one, counts as neither.
+    pub cell_stories: (usize, usize),
+}
+
+/// The bytes of the story owners, story items, paragraphs and hyperlinks of
+/// every story, by route, each closed over the namespaces it uses:
+/// [`Document::owner_element_xml`].
+#[doc(hidden)]
+#[derive(Debug, Default)]
+#[allow(clippy::type_complexity)] // Each element family keyed by its story and route.
+pub struct OwnerElementXml {
+    /// Each story owner (a table cell, a text box, a header...) by its
+    /// kind, part and ordinal.
+    pub stories: HashMap<(StoryKind, String, usize), Vec<u8>>,
+    /// Each story item by its story's kind, part and ordinal and its index
+    /// path.
+    pub items: HashMap<(StoryKind, String, usize, Vec<usize>), Vec<u8>>,
+    /// Each paragraph of [`Document::story_owner_snapshots`], keyed the same
+    /// way.
+    pub paragraphs: HashMap<(StoryKind, String, usize, Vec<usize>), Vec<u8>>,
+    /// Each hyperlink by its story's kind, part and ordinal, the index path
+    /// of the story item that holds it and its index among that item's
+    /// hyperlinks.
+    pub links: HashMap<(StoryKind, String, usize, Vec<usize>, usize), Vec<u8>>,
+}
+
 /// The checked Word owners of one body item, which
 /// [`Document::body_item_owners`] reads from a main part whose body holds
 /// only that item.

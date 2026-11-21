@@ -520,6 +520,31 @@ impl PyDocument {
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<PreparedWordRevision> {
+        let shift = self.block_shift(py, candidate, &publication)?;
+        self.prepare_shifted_revision(py, candidate, operation, publication, shift)
+    }
+
+    /// [`Self::prepare_word_revision`] with the shift of a block
+    /// publication already read. A block publication without one retires
+    /// every handle, as `Conservative` does.
+    pub(crate) fn prepare_shifted_revision(
+        &mut self,
+        py: Python<'_>,
+        candidate: &oxoffice_docx::Document,
+        operation: &'static str,
+        publication: WordPublication,
+        shift: Option<BlockShift>,
+    ) -> PyResult<PreparedWordRevision> {
+        let block = matches!(
+            publication,
+            WordPublication::ParagraphEdit(_) | WordPublication::CellInsert(..)
+        );
+        let publication = if block && shift.is_none() {
+            WordPublication::Conservative
+        } else {
+            publication
+        };
+        let mut shift = shift.filter(|_| block);
         self.ensure_word_authority(py)?;
         let forms = matches!(
             publication,
@@ -565,7 +590,11 @@ impl PyDocument {
             WordPublication::TableGrid(location) => {
                 Some(WordOwnerLocation::Table(location.clone()))
             }
-            WordPublication::CellText(table, row, cell) => {
+            WordPublication::ParagraphEdit(location) => {
+                Some(WordOwnerLocation::Paragraph(location.clone()))
+            }
+            WordPublication::CellText(table, row, cell)
+            | WordPublication::CellInsert(table, row, cell) => {
                 self.owners.iter().find_map(|owner| match &owner.location {
                     WordOwnerLocation::Cell {
                         table: owned,
@@ -588,6 +617,15 @@ impl PyDocument {
                 .iter()
                 .position(|owner| owner.location.same_route(selected))
         });
+        // A block edit whose element has no owner retires every handle, as
+        // the run edits and cell insertions did before.
+        let publication = if shift.is_some() && selected_index.is_none() {
+            shift = None;
+            WordPublication::Conservative
+        } else {
+            publication
+        };
+        let block = shift.is_some();
         if !matches!(
             publication,
             WordPublication::Conservative
@@ -659,6 +697,15 @@ impl PyDocument {
                     == candidate
                         .story_item_snapshots()
                         .map_err(|error| docx_to_pyerr(py, error))?;
+        let block_keep = shift.as_ref().map(|shift| {
+            block_retention(
+                &self.owners,
+                &locations,
+                &matches,
+                selected_index.expect("a block publication has a selected owner"),
+                shift,
+            )
+        });
         let mut retained = Vec::new();
         let mut births = Vec::new();
         for (index, address) in locations.iter().enumerate() {
@@ -722,28 +769,31 @@ impl PyDocument {
                         }
                     }
                 });
-                let preserve = old
-                    .is_some_and(|(before, _)| form_certificates.contains(&(before, index)))
-                    || (route_proved
-                        && !matches!(
-                            publication,
-                            WordPublication::Conservative
-                                | WordPublication::FormValues
-                                | WordPublication::ModernFormValues
-                                | WordPublication::Signing
-                        )
-                        && !descendant
-                        && !(matches!(publication, WordPublication::HyperlinkRemove(_))
-                            && matches!(location, WordOwnerLocation::Paragraph(_))
-                            && slot == 1)
-                        && !(old.is_some_and(|(before, _)| Some(before) == selected_index)
-                            && slot != 0
-                            && !matches!(publication, WordPublication::RunText(_))
-                            && (!matches!(
+                let preserve = if let Some(keep) = &block_keep {
+                    old.is_some() && keep[index][slot]
+                } else {
+                    old.is_some_and(|(before, _)| form_certificates.contains(&(before, index)))
+                        || (route_proved
+                            && !matches!(
                                 publication,
-                                WordPublication::ParagraphText(_)
-                                    | WordPublication::ParagraphAppend(_)
-                            ) || slot == 1)));
+                                WordPublication::Conservative
+                                    | WordPublication::FormValues
+                                    | WordPublication::ModernFormValues
+                                    | WordPublication::Signing
+                            )
+                            && !descendant
+                            && !(matches!(publication, WordPublication::HyperlinkRemove(_))
+                                && matches!(location, WordOwnerLocation::Paragraph(_))
+                                && slot == 1)
+                            && !(old.is_some_and(|(before, _)| Some(before) == selected_index)
+                                && slot != 0
+                                && !matches!(publication, WordPublication::RunText(_))
+                                && (!matches!(
+                                    publication,
+                                    WordPublication::ParagraphText(_)
+                                        | WordPublication::ParagraphAppend(_)
+                                ) || slot == 1)))
+                };
                 let state = if preserve {
                     old.map(|(_, owner)| owner.states()[slot].clone())
                 } else {
@@ -787,13 +837,15 @@ impl PyDocument {
                 &births,
                 RevisionPreparation::Replacement,
             )
-        } else if matches!(
-            publication,
-            WordPublication::ElementXml(_)
-                | WordPublication::RunText(_)
-                | WordPublication::Signing
-                | WordPublication::ModernFormValues
-        ) {
+        } else if block
+            || matches!(
+                publication,
+                WordPublication::ElementXml(_)
+                    | WordPublication::RunText(_)
+                    | WordPublication::Signing
+                    | WordPublication::ModernFormValues
+            )
+        {
             self.revisions
                 .prepare_local_scopes(operation, &retired, &births)
         } else {
@@ -820,6 +872,15 @@ impl PyDocument {
             revision.born(born).expect("prepared snapshot birth")
         };
         let owners = word_owners_with_states(locations, &states);
+        #[cfg(debug_assertions)]
+        if let (Some(shift), Some(selected)) = (&shift, selected_index) {
+            assert_kept_owners_name_their_elements(
+                (&self.inner, &self.owners),
+                (candidate, &owners),
+                shift,
+                &self.owners[selected].owner,
+            );
+        }
         let projections = projections.unwrap_or_else(|| WordIndexProjections::of(candidate));
         let indexes = WordOwnerIndexes::prepare(&owners, projections)?;
         Ok(PreparedWordRevision {
@@ -1008,6 +1069,20 @@ impl PyDocument {
         else {
             return Ok(false);
         };
+        // Text the cell already holds changes nothing: no publication.
+        if let Some(oxoffice_docx_oxml::BodyContent::Table(current)) =
+            self.inner.body_children().get(slot)
+            && let (Some(before), Some(after)) = (
+                current
+                    .rows
+                    .get(row)
+                    .and_then(|current| current.cells.get(cell)),
+                candidate.rows.first().and_then(|row| row.cells.first()),
+            )
+            && before == after
+        {
+            return Ok(true);
+        }
         self.apply_local_cell_edit(
             py,
             slot,
@@ -1016,7 +1091,7 @@ impl PyDocument {
             cell,
             candidate,
             "Paragraph.text",
-            Some(WordPublication::ParagraphText(location.clone())),
+            Some(WordPublication::ParagraphEdit(location.clone())),
         )
     }
 
@@ -1127,7 +1202,12 @@ impl PyDocument {
             return Ok(false);
         }
         let retire = publication.is_some();
-        let paragraph_text = matches!(publication, Some(WordPublication::ParagraphText(_)));
+        let paragraph_text = matches!(
+            publication,
+            Some(WordPublication::ParagraphText(_) | WordPublication::ParagraphEdit(_))
+        );
+        // A paragraph edit keeps the document epoch: run handles elsewhere stay.
+        let keeps_epoch = matches!(publication, Some(WordPublication::ParagraphEdit(_)));
         let text_selected = match &publication {
             None => selected,
             Some(WordPublication::CellText(table, r, c))
@@ -1135,7 +1215,9 @@ impl PyDocument {
             {
                 selected
             }
-            Some(WordPublication::ParagraphText(location)) if location.index_path().len() == 1 => {
+            Some(
+                WordPublication::ParagraphText(location) | WordPublication::ParagraphEdit(location),
+            ) if location.index_path().len() == 1 => {
                 let Some(index) = self.indexes.find(
                     &self.owners,
                     &WordOwnerLocation::Paragraph(location.clone()),
@@ -1474,13 +1556,25 @@ impl PyDocument {
         }
         let revision = if retire {
             Some(
-                self.revisions
-                    .prepare_scopes(operation, &retired, &births)
-                    .map_err(revision_to_pyerr)?,
+                if keeps_epoch {
+                    self.revisions
+                        .prepare_local_scopes(operation, &retired, &births)
+                } else {
+                    self.revisions.prepare_scopes(operation, &retired, &births)
+                }
+                .map_err(revision_to_pyerr)?,
             )
         } else {
             None
         };
+        #[cfg(debug_assertions)]
+        let before = keeps_epoch.then(|| {
+            (
+                self.inner.clone_for_staging(),
+                self.owners.clone(),
+                self.owners[text_selected].owner.clone(),
+            )
+        });
         let mut born = 0;
         let states = retained
             .into_iter()
@@ -1584,6 +1678,28 @@ impl PyDocument {
         owners.holds_field |= holds_field;
         #[cfg(debug_assertions)]
         self.assert_local_cell_publication(body_slot, table_index, table_ordinal);
+        #[cfg(debug_assertions)]
+        if let (
+            Some((document, owners, selected)),
+            Some(WordPublication::ParagraphEdit(location)),
+        ) = (before, &publication)
+        {
+            self.assert_word_inventory_rebuilds(false);
+            let read = |document: &oxoffice_docx::Document| {
+                document
+                    .element_extent(location.story(), Some(location.index_path()))
+                    .expect("an edited cell paragraph reads")
+                    .expect("an edited cell paragraph has an extent")
+            };
+            let shift = BlockShift::of(location.story(), read(&document), read(&self.inner))
+                .expect("a local cell edit changes its paragraph alone");
+            assert_kept_owners_name_their_elements(
+                (&document, &owners),
+                (&self.inner, &self.owners),
+                &shift,
+                &selected,
+            );
+        }
         Ok(true)
     }
 
@@ -2059,14 +2175,12 @@ impl PyDocument {
             .split_run(body_index, run_index, character_offset)
             .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate) != before {
-            let prepared = self.prepare_word_revision(
-                py,
-                &candidate,
-                "Document.split_run",
-                crate::document::WordPublication::Conservative,
-            )?;
-            self.commit_word_revision(prepared)?;
-            self.install_inner(candidate);
+            let publication =
+                match paragraph_index.map(|index| self.inner.paragraph_story_location(index)) {
+                    Some(Ok(Some(location))) => WordPublication::ParagraphEdit(location),
+                    _ => WordPublication::Conservative,
+                };
+            self.publish_block_edit(py, candidate, "Document.split_run", publication)?;
         }
         Ok(boundary)
     }

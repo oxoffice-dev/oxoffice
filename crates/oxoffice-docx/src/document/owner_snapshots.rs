@@ -171,6 +171,242 @@ impl Document {
         }
     }
 
+    /// Where an element lies in its part: the paragraph at `paragraph` in
+    /// `story`, or the story owner `story` itself (a table cell) when
+    /// `paragraph` is `None`. The story is found by kind, part and ordinal,
+    /// whatever its fingerprint. `None` when the part holds no such element,
+    /// or when a hyperlink or a story item straddles its edge.
+    ///
+    /// The routes are those of [`Self::story_owner_snapshots`]: an edit of
+    /// the element alone renumbers the story items after it by the change in
+    /// its item count, the hyperlinks after it in an item that holds it (a
+    /// block content control) by the change in its hyperlink count, and the
+    /// text box and table cell stories after it by the change in theirs.
+    #[doc(hidden)]
+    pub fn element_extent(
+        &self,
+        story: &StoryId,
+        paragraph: Option<&[usize]>,
+    ) -> Result<Option<ElementExtent>> {
+        let (root_kind, xml) = if story.part_name == self.doc_part_name {
+            (
+                StoryKind::Body,
+                Cow::Owned(self.main_part_with_body_spans()?.0),
+            )
+        } else {
+            match self
+                .related_story_sources()?
+                .into_iter()
+                .find(|source| source.part_name == story.part_name)
+            {
+                Some(source) => (source.root_kind, source.xml),
+                None => return Ok(None),
+            }
+        };
+        let owners = scan_story_owners(&xml, root_kind)?;
+        let Some(owner) = owners
+            .iter()
+            .find(|owner| owner.kind == story.kind && owner.owner_index == story.owner_index)
+        else {
+            return Ok(None);
+        };
+        let owner_scopes = story_namespace_scopes_at(&xml, [owner.full.start])?;
+        let scope = owner_scopes.get(&owner.full.start).ok_or_else(|| {
+            Error::Other("story owner namespace scope was not inventoried".into())
+        })?;
+        let items = scan_story_items_with_scope(&xml, owner, scope, None)?;
+        let item_scopes = story_namespace_scopes_at(
+            &xml,
+            items
+                .iter()
+                .flat_map(|item| [item.scan.start, item.full.start]),
+        )?;
+        let id = StoryId {
+            kind: owner.kind,
+            part_name: story.part_name.clone(),
+            owner_index: owner.owner_index,
+            fingerprint: owner.fingerprint,
+        };
+        let span = match paragraph {
+            None => owner.full.clone(),
+            Some(path) => {
+                let spans = story_range_paragraph_spans_from_inventory(
+                    &xml,
+                    &[(id.clone(), owner.clone())],
+                    std::slice::from_ref(&items),
+                    &item_scopes,
+                )?;
+                match spans
+                    .into_iter()
+                    .flatten()
+                    .find(|(location, _)| location.index_path == path)
+                {
+                    Some((_, span)) => span,
+                    None => return Ok(None),
+                }
+            }
+        };
+        let placement = |range: &Range<usize>| {
+            if range.end <= span.start {
+                Some(std::cmp::Ordering::Less)
+            } else if span.end <= range.start {
+                Some(std::cmp::Ordering::Greater)
+            } else if span.start <= range.start && range.end <= span.end {
+                Some(std::cmp::Ordering::Equal)
+            } else {
+                None
+            }
+        };
+        let mut first = 0;
+        let mut count = 0;
+        for (index, item) in items.iter().enumerate() {
+            match placement(&item.full) {
+                Some(std::cmp::Ordering::Less) => first = index + 1,
+                Some(std::cmp::Ordering::Equal) if first + count == index => count += 1,
+                Some(std::cmp::Ordering::Greater) => {}
+                // A block content control holds the paragraph: it starts before.
+                None if item.full.start <= span.start && span.end <= item.full.end => {
+                    first = index + 1;
+                }
+                _ => return Ok(None),
+            }
+        }
+        let mut local = HashMap::<Vec<usize>, usize>::new();
+        let mut links = Vec::new();
+        for (location, link) in ordered_story_link_spans(&xml, &id, items, &item_scopes)? {
+            let Some(place) = placement(&link.full) else {
+                return Ok(None);
+            };
+            let index = local.entry(location.index_path.clone()).or_default();
+            links.push((location.index_path, *index, place));
+            *index += 1;
+        }
+        let stories = |kind: StoryKind| {
+            let mut before = 0;
+            let mut inside = 0;
+            for other in owners.iter().filter(|other| other.kind == kind) {
+                if std::ptr::eq(other, owner) {
+                    continue;
+                }
+                match placement(&other.full) {
+                    Some(std::cmp::Ordering::Equal) => inside += 1,
+                    _ if other.full.start < span.start => before += 1,
+                    _ => {}
+                }
+            }
+            (before, inside)
+        };
+        let element_scope = story_namespace_scopes_at(&xml, [span.start])?;
+        let element_scope = element_scope.get(&span.start).ok_or_else(|| {
+            Error::Other("story element namespace scope was not inventoried".into())
+        })?;
+        Ok(Some(ElementExtent {
+            xml: close_content_fragment_namespaces(&xml[span.clone()], element_scope)?,
+            items: (first, count),
+            links,
+            text_boxes: stories(StoryKind::TextBox),
+            cell_stories: stories(StoryKind::TableCell),
+        }))
+    }
+
+    /// The bytes of every story owner, story item, paragraph and hyperlink of
+    /// the document, by the routes of [`Self::story_owner_snapshots`], each
+    /// closed over the namespaces it uses. Debug checks compare them across
+    /// an edit with [`resolved_xml_events`].
+    #[doc(hidden)]
+    pub fn owner_element_xml(&self) -> Result<OwnerElementXml> {
+        type Key = (StoryKind, String, usize, Vec<usize>, usize);
+        let mut result = OwnerElementXml::default();
+        let mut seen = HashSet::new();
+        for source in self.story_sources()? {
+            let xml = &source.xml;
+            let owners = scan_story_owners(xml, source.root_kind)?;
+            let owner_scopes =
+                story_namespace_scopes_at(xml, owners.iter().map(|owner| owner.full.start))?;
+            // Each element by family (owner, item, paragraph, link), key and span.
+            let mut elements: Vec<(u8, Key, Range<usize>)> = Vec::new();
+            for owner in &owners {
+                if !seen.insert((owner.kind, source.part_name.clone(), owner.owner_index)) {
+                    continue;
+                }
+                let key = |path: Vec<usize>, index: usize| -> Key {
+                    (
+                        owner.kind,
+                        source.part_name.clone(),
+                        owner.owner_index,
+                        path,
+                        index,
+                    )
+                };
+                elements.push((0, key(Vec::new(), 0), owner.full.clone()));
+                let scope = owner_scopes.get(&owner.full.start).ok_or_else(|| {
+                    Error::Other("story owner namespace scope was not inventoried".into())
+                })?;
+                let items = scan_story_items_with_scope(xml, owner, scope, None)?;
+                let item_scopes = story_namespace_scopes_at(
+                    xml,
+                    items
+                        .iter()
+                        .flat_map(|item| [item.scan.start, item.full.start]),
+                )?;
+                let id = StoryId {
+                    kind: owner.kind,
+                    part_name: source.part_name.clone(),
+                    owner_index: owner.owner_index,
+                    fingerprint: owner.fingerprint,
+                };
+                for (index, item) in items.iter().enumerate() {
+                    elements.push((1, key(vec![index], 0), item.full.clone()));
+                }
+                for (location, span) in story_range_paragraph_spans_from_inventory(
+                    xml,
+                    &[(id.clone(), owner.clone())],
+                    std::slice::from_ref(&items),
+                    &item_scopes,
+                )?
+                .into_iter()
+                .flatten()
+                {
+                    elements.push((2, key(location.index_path, 0), span));
+                }
+                let mut local = HashMap::<Vec<usize>, usize>::new();
+                for (location, link) in ordered_story_link_spans(xml, &id, items, &item_scopes)? {
+                    let index = local.entry(location.index_path.clone()).or_default();
+                    elements.push((3, key(location.index_path, *index), link.full));
+                    *index += 1;
+                }
+            }
+            let scopes =
+                story_namespace_scopes_at(xml, elements.iter().map(|(_, _, span)| span.start))?;
+            for (family, key, span) in elements {
+                let scope = scopes.get(&span.start).ok_or_else(|| {
+                    Error::Other("story element namespace scope was not inventoried".into())
+                })?;
+                let closed = close_content_fragment_namespaces(&xml[span], scope)?;
+                let (kind, part, ordinal, path, index) = key;
+                match family {
+                    0 => {
+                        result.stories.insert((kind, part, ordinal), closed);
+                    }
+                    1 => {
+                        result.items.insert((kind, part, ordinal, path), closed);
+                    }
+                    2 => {
+                        result
+                            .paragraphs
+                            .insert((kind, part, ordinal, path), closed);
+                    }
+                    _ => {
+                        result
+                            .links
+                            .insert((kind, part, ordinal, path, index), closed);
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// The direct body children, as [`Self::body_item_owners`] takes them.
     #[doc(hidden)]
     pub fn body_children(&self) -> &[BodyContent] {
@@ -603,4 +839,68 @@ impl Document {
         self.story_range_paragraph_snapshot(&location)?;
         Ok(location)
     }
+}
+
+/// The events of the XML fragment `xml`, each element and attribute name
+/// resolved to its namespace and every namespace declaration left out: two
+/// fragments that hold the same elements give the same events wherever their
+/// declarations sit, and a prefix bound to another namespace gives other
+/// events. The fragment declares every prefix it uses, as the elements of
+/// [`Document::owner_element_xml`] do. Debug checks compare elements across
+/// an edit with them.
+#[doc(hidden)]
+pub fn resolved_xml_events(xml: &[u8]) -> Result<Vec<Vec<u8>>> {
+    use quick_xml::events::Event;
+    use quick_xml::name::ResolveResult;
+    let namespace = |result: ResolveResult<'_>| match result {
+        ResolveResult::Bound(namespace) => Ok(namespace.as_ref().to_vec()),
+        ResolveResult::Unbound => Ok(Vec::new()),
+        ResolveResult::Unknown(prefix) => Err(Error::Other(format!(
+            "XML fragment uses the undeclared prefix {}",
+            String::from_utf8_lossy(&prefix)
+        ))),
+    };
+    let mut reader = quick_xml::NsReader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut events = Vec::new();
+    loop {
+        let (resolved, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("malformed XML fragment: {error}")))?;
+        match &event {
+            Event::Start(element) | Event::Empty(element) => {
+                let mut record = b"<".to_vec();
+                record.extend(namespace(resolved)?);
+                record.push(b'}');
+                record.extend_from_slice(element.local_name().as_ref());
+                for attribute in element.attributes() {
+                    let attribute = attribute.map_err(|error| {
+                        Error::Other(format!("malformed XML attribute: {error}"))
+                    })?;
+                    let key = attribute.key.as_ref();
+                    if key == b"xmlns" || key.starts_with(b"xmlns:") {
+                        continue;
+                    }
+                    let (attribute_namespace, local) =
+                        reader.resolver().resolve_attribute(attribute.key);
+                    record.push(b' ');
+                    record.extend(namespace(attribute_namespace)?);
+                    record.push(b'}');
+                    record.extend_from_slice(local.as_ref());
+                    record.push(b'=');
+                    record.extend_from_slice(&attribute.value);
+                }
+                events.push(record);
+                if matches!(event, Event::Empty(_)) {
+                    events.push(b"</".to_vec());
+                }
+            }
+            Event::End(_) => events.push(b"</".to_vec()),
+            Event::Eof => break,
+            other => events.push(format!("{other:?}").into_bytes()),
+        }
+        buffer.clear();
+    }
+    Ok(events)
 }
