@@ -167,6 +167,84 @@ enum PropertySlot {
     Raw(Vec<u8>),
 }
 
+/// What a content control holds as a form field, read from its properties.
+/// Non-exhaustive, so more facts can join without breaking callers.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct SdtFormFacts {
+    pub lock: SdtLock,
+    /// `w:showingPlcHdr`: the content shows the placeholder, not a value.
+    pub showing_placeholder: bool,
+    pub payload: SdtFormPayload,
+}
+
+/// `w:lock`: what the control protects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SdtLock {
+    #[default]
+    Unlocked,
+    /// The control cannot be deleted; its content can be edited.
+    SdtLocked,
+    /// The content cannot be edited.
+    ContentLocked,
+    /// Neither the control nor its content can change.
+    SdtContentLocked,
+}
+
+impl SdtLock {
+    /// Whether the content cannot be edited.
+    pub fn content_locked(self) -> bool {
+        matches!(self, Self::ContentLocked | Self::SdtContentLocked)
+    }
+}
+
+/// The kind of a content control and the facts its kind carries.
+/// Non-exhaustive, so more kinds can join without breaking callers.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum SdtFormPayload {
+    /// `w:text`.
+    PlainText {
+        multiline: bool,
+    },
+    /// `w:richText`, or no type element at all, which Word reads the same.
+    RichText,
+    /// `w14:checkbox`, with the symbol and font of each state.
+    CheckBox {
+        checked: bool,
+        checked_symbol: (char, String),
+        unchecked_symbol: (char, String),
+    },
+    DropDownList {
+        items: Vec<SdtListItem>,
+    },
+    ComboBox {
+        items: Vec<SdtListItem>,
+    },
+    /// `w:date`, with its `w:dateFormat` picture.
+    Date {
+        format: Option<String>,
+    },
+    Picture,
+    /// Groups, repeating sections, galleries, citations, equations,
+    /// bibliographies.
+    Other,
+}
+
+/// The local part of a possibly prefixed XML name.
+fn local_part(name: &str) -> &str {
+    name.rsplit_once(':').map_or(name, |(_, local)| local)
+}
+
+/// One entry of a drop-down list or combo box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdtListItem {
+    /// What the list shows.
+    pub display: String,
+    /// What the control stores when the entry is chosen.
+    pub value: String,
+}
+
 /// Typed properties and ordered raw slots from `w:sdtPr`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CT_SdtPr {
@@ -568,6 +646,111 @@ impl CT_SdtPr {
                 depth += 1;
             }
         }
+    }
+
+    /// The control's form facts: lock, placeholder, kind and its payload.
+    pub fn form_facts(&self) -> Result<SdtFormFacts> {
+        let lock = match self.raw_property(b"lock")?.flatten().as_deref() {
+            Some("sdtLocked") => SdtLock::SdtLocked,
+            Some("contentLocked") => SdtLock::ContentLocked,
+            Some("sdtContentLocked") => SdtLock::SdtContentLocked,
+            _ => SdtLock::Unlocked,
+        };
+        let showing_placeholder = match self.raw_property(b"showingPlcHdr")? {
+            None => false,
+            Some(None) => true,
+            Some(Some(value)) => crate::settings::parse_on_off(&value).unwrap_or(false),
+        };
+        let payload = match self.control_type {
+            None | Some(SdtType::RichText) => SdtFormPayload::RichText,
+            Some(SdtType::PlainText) => SdtFormPayload::PlainText {
+                multiline: self
+                    .type_element
+                    .iter()
+                    .flat_map(|element| &element.attributes)
+                    .find(|(name, _)| local_part(name) == "multiLine")
+                    .and_then(|(_, value)| crate::settings::parse_on_off(value))
+                    .unwrap_or(false),
+            },
+            Some(SdtType::CheckBox) => SdtFormPayload::CheckBox {
+                checked: self.checkbox_checked()?,
+                checked_symbol: self.checkbox_state(true)?,
+                unchecked_symbol: self.checkbox_state(false)?,
+            },
+            Some(SdtType::DropDownList) => SdtFormPayload::DropDownList {
+                items: self.list_items()?,
+            },
+            Some(SdtType::ComboBox) => SdtFormPayload::ComboBox {
+                items: self.list_items()?,
+            },
+            Some(SdtType::Date) => SdtFormPayload::Date {
+                format: self
+                    .value_children()?
+                    .into_iter()
+                    .find(|child| child.name == b"dateFormat")
+                    .and_then(|child| child.value),
+            },
+            Some(SdtType::Picture) => SdtFormPayload::Picture,
+            Some(_) => SdtFormPayload::Other,
+        };
+        Ok(SdtFormFacts {
+            lock,
+            showing_placeholder,
+            payload,
+        })
+    }
+
+    /// A raw property element of the main namespace by local name: `Some`
+    /// with its `val` when present.
+    fn raw_property(&self, wanted: &[u8]) -> Result<Option<Option<String>>> {
+        for slot in &self.slots {
+            let PropertySlot::Raw(raw) = slot else {
+                continue;
+            };
+            let mut reader = Reader::from_reader(raw.as_slice());
+            let (Event::Start(start) | Event::Empty(start)) = reader.read_event()? else {
+                continue;
+            };
+            let prefixes = word_prefixes_at(&start, &self.source_prefixes)?;
+            if !is_word_element(start.name().as_ref(), wanted, &prefixes) {
+                continue;
+            }
+            return Ok(Some(word_attribute_value(&start, b"val", &prefixes)?));
+        }
+        Ok(None)
+    }
+
+    /// The `w:listItem` entries. A missing display shows the value, as the
+    /// schema says; a missing value is empty.
+    fn list_items(&self) -> Result<Vec<SdtListItem>> {
+        Ok(self
+            .value_children()?
+            .into_iter()
+            .filter(|child| child.name == b"listItem")
+            .map(|child| {
+                let value = child.value.unwrap_or_default();
+                let display = child.display.unwrap_or_else(|| value.clone());
+                SdtListItem { display, value }
+            })
+            .collect())
+    }
+
+    /// `w14:checked`: unchecked when absent, checked when present without
+    /// a value, as an on/off property reads.
+    fn checkbox_checked(&self) -> Result<bool> {
+        let Some(child) = self.checkbox_child(b"checked")? else {
+            return Ok(false);
+        };
+        let Some(range) = child.value else {
+            return Ok(true);
+        };
+        let element = self.type_element.as_ref().ok_or_else(|| {
+            OxmlError::InvalidValue("checkbox type payload is missing".to_owned())
+        })?;
+        let value = std::str::from_utf8(&element.children[range])?;
+        crate::settings::parse_on_off(value).ok_or_else(|| {
+            OxmlError::InvalidValue(format!("checkbox checked value {value:?} is not on or off"))
+        })
     }
 
     /// The selected checkbox glyph and its physical state font travel together.
@@ -4112,5 +4295,221 @@ pub(crate) fn source_modeled_attributes(
         // Type element attributes and payload are explicitly retained source state.
         _ if SdtType::from_element(local).is_some() => Some(&[]),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod form_facts_tests {
+    use super::*;
+
+    const NAMESPACES: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
+
+    /// The form facts of a block control with these properties and content.
+    fn facts(properties: &str) -> SdtFormFacts {
+        let xml = format!(
+            "<w:sdt {NAMESPACES}><w:sdtPr>{properties}</w:sdtPr><w:sdtContent><w:p><w:r><w:t>x</w:t></w:r></w:p></w:sdtContent></w:sdt>"
+        );
+        let mut reader = Reader::from_reader(xml.as_bytes());
+        let Event::Start(start) = reader.read_event().unwrap() else {
+            panic!("a start tag");
+        };
+        let start = start.into_owned();
+        CT_Sdt::from_xml(&mut reader, &start)
+            .unwrap()
+            .properties
+            .unwrap()
+            .form_facts()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_word_plain_text_control_reads_its_lock_placeholder_and_multiline() {
+        let facts = facts(
+            r#"<w:alias w:val="Address"/><w:tag w:val="address"/><w:id w:val="1"/><w:lock w:val="contentLocked"/><w:placeholder><w:docPart w:val="DefaultPlaceholder_1081868574"/></w:placeholder><w:showingPlcHdr/><w:text w:multiLine="1"/>"#,
+        );
+        assert_eq!(facts.lock, SdtLock::ContentLocked);
+        assert!(facts.lock.content_locked());
+        assert!(facts.showing_placeholder);
+        assert_eq!(facts.payload, SdtFormPayload::PlainText { multiline: true });
+    }
+
+    #[test]
+    fn a_control_without_lock_placeholder_or_type_is_unlocked_rich_text() {
+        let plain = facts(r#"<w:id w:val="7"/>"#);
+        assert_eq!(plain.lock, SdtLock::Unlocked);
+        assert!(!plain.showing_placeholder);
+        assert_eq!(plain.payload, SdtFormPayload::RichText);
+        assert_eq!(facts(r#"<w:richText/>"#).payload, SdtFormPayload::RichText);
+        assert_eq!(
+            facts(r#"<w:showingPlcHdr w:val="0"/><w:lock w:val="sdtLocked"/>"#),
+            SdtFormFacts {
+                lock: SdtLock::SdtLocked,
+                showing_placeholder: false,
+                payload: SdtFormPayload::RichText,
+            }
+        );
+    }
+
+    #[test]
+    fn a_word_checkbox_reads_its_state_and_both_symbols() {
+        let facts = facts(
+            r#"<w:id w:val="2"/><w14:checkbox><w14:checked w14:val="1"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox>"#,
+        );
+        assert_eq!(
+            facts.payload,
+            SdtFormPayload::CheckBox {
+                checked: true,
+                checked_symbol: ('\u{2612}', "MS Gothic".to_owned()),
+                unchecked_symbol: ('\u{2610}', "MS Gothic".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_checkbox_reads_an_explicit_unchecked_value_and_a_bare_checked_element() {
+        let checked =
+            |element: &str| match facts(&format!("<w14:checkbox>{element}</w14:checkbox>")).payload
+            {
+                SdtFormPayload::CheckBox { checked, .. } => checked,
+                other => panic!("a check box, not {other:?}"),
+            };
+        assert!(
+            !checked(r#"<w14:checked w14:val="0"/>"#),
+            "Word writes this on every unchecked box"
+        );
+        assert!(!checked(r#"<w14:checked w14:val="false"/>"#));
+        assert!(checked(r#"<w14:checked w14:val="1"/>"#));
+        assert!(
+            checked(r#"<w14:checked/>"#),
+            "an on/off property without a value is on"
+        );
+    }
+
+    #[test]
+    fn a_plain_text_control_is_single_line_and_every_lock_reads() {
+        assert_eq!(
+            facts(r#"<w:text/>"#).payload,
+            SdtFormPayload::PlainText { multiline: false }
+        );
+        assert_eq!(
+            facts(r#"<w:text w:multiLine="0"/>"#).payload,
+            SdtFormPayload::PlainText { multiline: false }
+        );
+        for (value, lock) in [
+            ("sdtLocked", SdtLock::SdtLocked),
+            ("contentLocked", SdtLock::ContentLocked),
+            ("sdtContentLocked", SdtLock::SdtContentLocked),
+            ("unlocked", SdtLock::Unlocked),
+        ] {
+            let read = facts(&format!(r#"<w:lock w:val="{value}"/>"#)).lock;
+            assert_eq!(read, lock, "{value}");
+        }
+        assert!(SdtLock::SdtContentLocked.content_locked());
+        assert!(!SdtLock::SdtLocked.content_locked());
+    }
+
+    #[test]
+    fn a_lock_and_placeholder_read_under_any_prefix_of_the_main_namespace() {
+        let main = facts(
+            r#"<ns0:lock xmlns:ns0="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ns0:val="contentLocked"/><ns0:showingPlcHdr xmlns:ns0="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#,
+        );
+        assert_eq!(main.lock, SdtLock::ContentLocked);
+        assert!(main.showing_placeholder);
+        // A value from another namespace is not Word's.
+        let foreign =
+            facts(r#"<w:lock xmlns:x="urn:example" x:val="contentLocked" w:val="unlocked"/>"#);
+        assert_eq!(foreign.lock, SdtLock::Unlocked);
+    }
+
+    #[test]
+    fn a_lock_or_placeholder_from_another_namespace_is_not_word_s() {
+        let facts = facts(
+            r#"<x:lock xmlns:x="urn:example" x:val="contentLocked"/><x:showingPlcHdr xmlns:x="urn:example"/>"#,
+        );
+        assert_eq!(facts.lock, SdtLock::Unlocked);
+        assert!(!facts.showing_placeholder);
+    }
+
+    #[test]
+    fn a_checkbox_with_custom_symbols_and_no_checked_element_is_unchecked() {
+        let facts = facts(
+            r#"<w14:checkbox><w14:checkedState w14:val="0052" w14:font="Wingdings 2"/><w14:uncheckedState w14:val="00A3" w14:font="Wingdings 2"/></w14:checkbox>"#,
+        );
+        assert_eq!(
+            facts.payload,
+            SdtFormPayload::CheckBox {
+                checked: false,
+                checked_symbol: ('R', "Wingdings 2".to_owned()),
+                unchecked_symbol: ('\u{a3}', "Wingdings 2".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn list_controls_read_their_entries_as_word_and_libreoffice_write_them() {
+        let word = facts(
+            r#"<w:dropDownList><w:listItem w:displayText="Choose an item." w:value=""/><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="Spain" w:value="Spain"/></w:dropDownList>"#,
+        );
+        assert_eq!(
+            word.payload,
+            SdtFormPayload::DropDownList {
+                items: vec![
+                    SdtListItem {
+                        display: "Choose an item.".to_owned(),
+                        value: String::new(),
+                    },
+                    SdtListItem {
+                        display: "France".to_owned(),
+                        value: "fr".to_owned(),
+                    },
+                    SdtListItem {
+                        display: "Spain".to_owned(),
+                        value: "Spain".to_owned(),
+                    },
+                ],
+            }
+        );
+        // A missing display shows the value, a missing value is empty.
+        let partial = facts(
+            r#"<w:comboBox><w:listItem w:value="Lyon"/><w:listItem w:displayText="Paris"/></w:comboBox>"#,
+        );
+        assert_eq!(
+            partial.payload,
+            SdtFormPayload::ComboBox {
+                items: vec![
+                    SdtListItem {
+                        display: "Lyon".to_owned(),
+                        value: "Lyon".to_owned(),
+                    },
+                    SdtListItem {
+                        display: "Paris".to_owned(),
+                        value: String::new(),
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn a_date_control_reads_its_format() {
+        let word = facts(
+            r#"<w:date w:fullDate="2026-11-21T00:00:00Z"><w:dateFormat w:val="dd/MM/yyyy"/><w:lid w:val="fr-FR"/><w:storeMappedDataAs w:val="dateTime"/><w:calendar w:val="gregorian"/></w:date>"#,
+        );
+        assert_eq!(
+            word.payload,
+            SdtFormPayload::Date {
+                format: Some("dd/MM/yyyy".to_owned()),
+            }
+        );
+        assert_eq!(
+            facts(r#"<w:date/>"#).payload,
+            SdtFormPayload::Date { format: None }
+        );
+    }
+
+    #[test]
+    fn containers_and_pictures_have_no_form_payload() {
+        assert_eq!(facts(r#"<w:group/>"#).payload, SdtFormPayload::Other);
+        assert_eq!(facts(r#"<w:picture/>"#).payload, SdtFormPayload::Picture);
     }
 }

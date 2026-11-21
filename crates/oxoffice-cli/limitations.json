@@ -66,8 +66,8 @@
     "id": "docx-inherited-headers",
     "format": "docx",
     "area": "headers",
-    "title": "Document header and footer calls ignore the headers a section inherits",
-    "symptom": "the Rust header_text() and footer_text() return None when the last section inherits its header, and set_header() changes the last section only",
+    "title": "Setting the document header or footer changes the last section only",
+    "symptom": "set_header() and set_footer() give the last section its own header or footer, so the earlier sections it inherited from keep the old one",
     "workaround": "read and edit each section's header: Rust section_story(section, kind, variant), Python document.section(i).header",
     "issue": 28
   },
@@ -88,6 +88,33 @@
     "symptom": "restart_numbering fails with \"paragraph has no explicit numbering level\" on the List Number paragraphs of Word and python-docx files, whose numbering comes from the style",
     "workaround": "Rust: give the paragraph its own numbering first (set_numbering with the num_id and level of effective_paragraph_properties), then restart; Python: start a new list (add_numbering_definition, add_numbering_instance, Paragraph.numbering)",
     "issue": 82
+  },
+  {
+    "id": "docx-content-control-values",
+    "format": "docx",
+    "area": "forms",
+    "title": "Content control values keep the prompt's style, and text() glues a block control's paragraphs",
+    "symptom": "a value set on a control showing its prompt stays greyed out in Word, a line feed shows as a space, extra paragraphs stay empty, a combo box refuses free text, and text() runs paragraphs together",
+    "workaround": "read a block control's paragraphs one by one with story_paragraphs: they are the entries whose location path is [i, 0], [i, 1]..., i being the control's index in story_items (index_path in Python)",
+    "issue": 147
+  },
+  {
+    "id": "docx-header-content-controls",
+    "format": "docx",
+    "area": "forms",
+    "title": "The tag setters do not reach content controls in headers",
+    "symptom": "set_content_control_value_by_tag returns 0 for a control in a header and content_controls() lists body controls only; `oxoffice docx fill` fails with \"no content control has tag\" (--tag) or \"requires exactly one target\" (--values)",
+    "workaround": "fill_form with a rule naming the tag (a content control tag target), which reaches every story (same name in Python); none through the CLI",
+    "issue": 148
+  },
+  {
+    "id": "docx-long-date-controls",
+    "format": "docx",
+    "area": "forms",
+    "title": "A date content control in Word's long date format cannot be set",
+    "symptom": "setting a control formatted d MMMM yyyy fails with \"unsupported or missing date format\", and protect_form refuses rules naming it",
+    "workaround": "give the control a yyyy-MM-dd or dd/MM/yyyy date format first (set_content_control_type, same name in Python), then set the value; none through the CLI",
+    "issue": 149
   },
   {
     "id": "docx-compare-endnotes",
@@ -115,15 +142,6 @@
     "symptom": "after removing a slide the saved deck still holds its chart parts, their workbooks with the data, and its legacy comment part with the reviewers' text",
     "workaround": "remove each chart first (Rust remove_shape, Python shapes.remove), then the slide; none through the CLI, and none for legacy comments",
     "issue": 38
-  },
-  {
-    "id": "pptx-duplicate-commented-slide",
-    "format": "pptx",
-    "area": "comments",
-    "title": "A slide with comments cannot be duplicated",
-    "symptom": "duplicating fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
-    "workaround": "import the slide into its own deck right after itself: Rust prs.import_slide(&prs.clone(), i, layout, Some(i + 1)), Python slides.import_slide(slide, index=i + 1), CLI oxoffice pptx slide import deck.pptx deck.pptx --slides N --at N+1 -o out.pptx",
-    "issue": 39
   },
   {
     "id": "pptx-import-source-notes",

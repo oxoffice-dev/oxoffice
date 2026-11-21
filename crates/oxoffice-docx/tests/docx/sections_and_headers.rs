@@ -814,14 +814,13 @@ fn every_corpus_report_shows_its_header_and_footer_on_both_sections() {
     }
 }
 
-// Fails today: header_text and footer_text read None when the last section inherits. Issue: #28
 #[test]
-#[should_panic(expected = "header_text and footer_text miss the inherited")]
 fn header_text_reads_the_header_the_last_section_inherits() {
     // Word, Google Docs and python-docx put the header on the first section
-    // and let the landscape section inherit it.
+    // and let the landscape section inherit it; LibreOffice gives the second
+    // section its own copy.
     let mut missed = Vec::new();
-    for producer in ["word", "google", "authored"] {
+    for producer in ["word", "google", "authored", "libreoffice"] {
         let doc = report(producer);
         if doc.header_text().as_deref() != Some(REPORT_HEADER)
             || doc.footer_text().as_deref() != Some(REPORT_FOOTER)
@@ -836,6 +835,43 @@ fn header_text_reads_the_header_the_last_section_inherits() {
     assert!(
         missed.is_empty(),
         "header_text and footer_text miss the inherited header and footer: {missed:?}"
+    );
+}
+
+#[test]
+fn header_text_follows_a_new_section_that_inherits_and_one_that_has_its_own() {
+    let mut doc = Document::new();
+    doc.add_paragraph("body");
+    doc.set_header("h");
+    doc.set_footer("f");
+    doc.insert_section(1).unwrap();
+    assert_eq!(doc.section_count(), 2);
+    assert_eq!(
+        doc.header_text().as_deref(),
+        Some("h"),
+        "inherited by the new last section"
+    );
+    assert_eq!(doc.footer_text().as_deref(), Some("f"));
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.header_text().as_deref(), Some("h"), "after a reopen");
+    assert_eq!(Document::new().header_text(), None, "no header anywhere");
+
+    // A last section with a header of its own shows that one.
+    let own = doc
+        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    rewrite_first_paragraph(&mut doc, &own, "h2");
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.header_text().as_deref(), Some("h2"), "its own header");
+    assert_eq!(
+        header(&doc, 0).as_deref(),
+        Some("h"),
+        "the first keeps its own"
+    );
+    assert_eq!(
+        doc.footer_text().as_deref(),
+        Some("f"),
+        "the footer is still inherited"
     );
 }
 
@@ -895,4 +931,219 @@ fn changing_the_landscape_margins_of_a_google_report_survives_a_save() {
         Some((twips(1440), twips(1247), twips(1440), twips(1247)))
     );
     assert_eq!(header(&doc, 1).as_deref(), Some(REPORT_HEADER));
+}
+
+/// The main part of a saved package.
+fn main_part(bytes: &[u8]) -> Vec<u8> {
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes.to_vec()))
+        .expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    package.get_part(&part).expect("main part").to_vec()
+}
+
+/// A document with a default, a first-page and an even-page header, whose
+/// final section lists the header references in `order`, as other
+/// producers write them.
+fn headers_listed(order: &[&str]) -> Vec<u8> {
+    let mut doc = Document::new();
+    doc.add_paragraph("Body.");
+    doc.set_header("Default header");
+    doc.set_first_page_header("First header");
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let main = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&main).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    // An even-page header: a copy of the default one, under its own part.
+    let reference = |kind: &str| {
+        let start = xml
+            .find(&format!(r#"<w:headerReference w:type="{kind}""#))
+            .unwrap_or_else(|| panic!("{kind} header reference"));
+        let end = start + xml[start..].find("/>").expect("reference end") + 2;
+        (start..end, xml[start..end].to_owned())
+    };
+    let (_, default) = reference("default");
+    let default_id = default
+        .split(r#"r:id=""#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("default header relationship")
+        .to_owned();
+    let rels = package
+        .get_part_rels(&main)
+        .expect("main part relationships");
+    let target = rels
+        .items
+        .iter()
+        .find(|relationship| relationship.id == default_id)
+        .expect("default header relationship")
+        .target
+        .clone();
+    let default_part = format!("/word/{target}");
+    let header_type = rels
+        .items
+        .iter()
+        .find(|relationship| relationship.id == default_id)
+        .expect("default header relationship")
+        .rel_type
+        .clone();
+    let header = package
+        .get_part(&default_part)
+        .expect("default header part")
+        .to_vec();
+    package.set_part("/word/headerEven.xml", header);
+    package.content_types.add_override(
+        "/word/headerEven.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+    );
+    package
+        .get_or_create_part_rels(&main)
+        .add_with_id("rIdEven", &header_type, "headerEven.xml");
+    let even = r#"<w:headerReference w:type="even" r:id="rIdEven"/>"#.to_owned();
+    let (first_range, first) = reference("first");
+    let (default_range, _) = reference("default");
+    let mut listed = String::new();
+    for kind in order {
+        listed.push_str(match *kind {
+            "default" => &default,
+            "first" => &first,
+            "even" => &even,
+            other => panic!("unknown header type {other}"),
+        });
+    }
+    let (from, to) = (
+        first_range.start.min(default_range.start),
+        first_range.end.max(default_range.end),
+    );
+    let xml = format!("{}{listed}{}", &xml[..from], &xml[to..]);
+    package.set_part(&main, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    out.into_inner()
+}
+
+#[test]
+fn an_untouched_document_keeps_the_header_order_libreoffice_writes() {
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(main_part(&doc.to_bytes().unwrap()), main_part(&bytes));
+}
+
+#[test]
+fn an_untouched_document_keeps_the_header_order_python_docx_writes() {
+    let bytes = headers_listed(&["first", "default"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(main_part(&doc.to_bytes().unwrap()), main_part(&bytes));
+}
+
+#[test]
+fn an_edited_document_keeps_the_header_order_it_was_read_in() {
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    doc.add_paragraph("Added.");
+    let xml = String::from_utf8(main_part(&doc.to_bytes().unwrap())).unwrap();
+    let order = ["even", "default", "first"].map(|kind| {
+        xml.find(&format!(r#"w:type="{kind}""#))
+            .expect("reference kept")
+    });
+    assert!(order[0] < order[1] && order[1] < order[2], "{xml}");
+}
+
+/// The `kind` (header or footer) reference types of the final section, in
+/// the order written.
+fn reference_order(bytes: &[u8], kind: &str) -> Vec<String> {
+    let xml = String::from_utf8(main_part(bytes)).unwrap();
+    xml.split(&format!("<w:{kind}Reference w:type=\""))
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().to_owned())
+        .collect()
+}
+
+fn header_order(bytes: &[u8]) -> Vec<String> {
+    reference_order(bytes, "header")
+}
+
+#[test]
+fn replacing_a_header_keeps_its_place_among_the_references() {
+    for order in [&["default", "first"][..], &["even", "default", "first"]] {
+        let bytes = headers_listed(order);
+        let original = Document::from_bytes(&bytes).unwrap();
+        let mut edited = Document::from_bytes(&bytes).unwrap();
+        edited.set_header("New header");
+        let saved = edited.to_bytes().unwrap();
+        assert_eq!(header_order(&saved), order);
+        let mut redline = original;
+        redline
+            .compare(
+                &Document::from_bytes(&saved).unwrap(),
+                "Reviewer",
+                "2026-01-01T00:00:00Z",
+            )
+            .expect("a replaced header compares");
+        let mut copy = reopen(&mut redline);
+        copy.accept_all().unwrap();
+        assert_eq!(header(&reopen(&mut copy), 0).as_deref(), Some("New header"));
+        let mut copy = reopen(&mut redline);
+        copy.reject_all().unwrap();
+        assert_eq!(
+            header(&reopen(&mut copy), 0).as_deref(),
+            Some("Default header")
+        );
+    }
+}
+
+#[test]
+fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
+    // Neither pushing the reference at the end nor placing it by type keeps
+    // this order.
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    let first = doc
+        .section_story(0, HeaderFooterKind::Header, HdrFtrType::First)
+        .unwrap()
+        .expect("first-page header")
+        .story()
+        .clone();
+    doc.link_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default, &first)
+        .unwrap();
+    assert_eq!(
+        header_order(&doc.to_bytes().unwrap()),
+        ["even", "default", "first"]
+    );
+}
+
+#[test]
+fn a_story_inherited_from_a_removed_section_takes_its_place_in_the_order() {
+    let mut doc = two_sections();
+    for kind in [HeaderFooterKind::Header, HeaderFooterKind::Footer] {
+        doc.create_section_story(0, kind, HdrFtrType::Default)
+            .unwrap();
+        doc.create_section_story(1, kind, HdrFtrType::First)
+            .unwrap();
+    }
+    doc.remove_section(0).unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    assert_eq!(reference_order(&bytes, "header"), ["default", "first"]);
+    assert_eq!(reference_order(&bytes, "footer"), ["default", "first"]);
+}
+
+#[test]
+fn a_watermark_header_takes_its_place_in_the_order() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Body.");
+    doc.set_first_page_header("First header");
+    doc.set_text_watermark("DRAFT").unwrap();
+    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
+}
+
+#[test]
+fn a_new_footer_leaves_the_header_order_it_read() {
+    let bytes = headers_listed(&["even", "default", "first"]);
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    doc.set_footer("New footer");
+    assert_eq!(
+        header_order(&doc.to_bytes().unwrap()),
+        ["even", "default", "first"]
+    );
 }

@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -564,7 +564,7 @@ impl CT_LineProperties {
         if let Some(cap) = self.cap {
             start.push_attribute(("cap", cap.as_str()));
         }
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         if self.fill.is_none()
             && self.dash.is_none()
             && self.join.is_none()
@@ -915,12 +915,6 @@ fn capture_raw_attributes(
     Ok(raw)
 }
 
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
 fn invalid(start: &BytesStart<'_>, attribute: &[u8], value: String) -> LineError {
     LineError::InvalidAttribute {
         element: String::from_utf8_lossy(local_name(start.name().as_ref())).into_owned(),
@@ -935,16 +929,6 @@ fn unexpected(start: &BytesStart<'_>) -> LineError {
 
 fn missing_end(name: &str) -> LineError {
     LineError::Xml(OxmlError::MissingElement(format!("closing a:{name}")))
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn write_start<W: Write>(writer: &mut Writer<W>, start: BytesStart<'_>) -> Result<()> {

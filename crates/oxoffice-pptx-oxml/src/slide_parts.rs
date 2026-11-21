@@ -1,7 +1,9 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{
+    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+};
 use oxoffice_core::xml::push_escaped_attribute;
 use oxoffice_drawing::color::{ColorChoice, ColorMap, ColorMapSlot, ThemeColorSlot};
 use oxoffice_drawing::fill::Fill;
@@ -2615,28 +2617,6 @@ fn write_mapping_shell<W: Write>(
         writer.write_event(Event::Start(start))?;
         emit_raw(writer, children.at(0))?;
         writer.write_event(Event::End(BytesEnd::new(tag)))?;
-    }
-    Ok(())
-}
-
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &RawAttributes) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
-fn capture_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(event.into_owned())?;
-    Ok(writer.into_inner())
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child)?;
     }
     Ok(())
 }

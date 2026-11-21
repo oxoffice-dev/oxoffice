@@ -10,12 +10,12 @@ use oxoffice_cli_support::{
     ensure_output_paths_available, json_envelope, parse_range,
 };
 use oxoffice_docx::{
-    BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind, ContentLocation,
-    CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
+    BodyItemRef, CommentDate, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
+    ContentLocation, CoreProperties, CustomProperty, CustomPropertyValue, Document, FieldDateTime,
     FieldEvaluationContext, HdrFtrType, HeaderFooterKind, PictureOccurrence, RasterFormat,
     RasterOptions, RasterOutput, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal,
     RevisionKind, RevisionStyle, RevisionView, RunRange, StoryId, StoryItemKind, StoryKind,
-    StoryRevision,
+    StoryRevision, TextCommentOptions,
 };
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
@@ -1708,8 +1708,13 @@ pub fn comment_list(file: &Path, json_output: bool) -> Result<()> {
 pub enum CommentAnchor<'a> {
     /// A zero-based half-open body run range.
     Range(RunRange),
-    /// The zero-based occurrence of a literal text in the main story.
-    Text { text: &'a str, occurrence: usize },
+    /// The zero-based occurrence of a literal text in the main story, or in
+    /// its table cells only.
+    Text {
+        text: &'a str,
+        occurrence: usize,
+        tables_only: bool,
+    },
 }
 
 /// Add one Word comment and publish the complete mutated document atomically.
@@ -1720,7 +1725,7 @@ pub fn comment_add(
     author: &str,
     initials: Option<&str>,
     text: &str,
-    date: Option<&str>,
+    date: CommentDate<'_>,
     output: &Path,
     json_output: bool,
 ) -> Result<()> {
@@ -1732,7 +1737,18 @@ pub fn comment_add(
         CommentAnchor::Text {
             text: anchor,
             occurrence,
-        } => doc.add_comment_on_text(anchor, occurrence, author, initials, text, date)?,
+            tables_only,
+        } => doc.add_comment_on_text(
+            anchor,
+            author,
+            text,
+            TextCommentOptions {
+                occurrence,
+                tables_only,
+                initials,
+                date,
+            },
+        )?,
     };
     publish_document(&mut doc, output)?;
     mutation_record(
@@ -1773,7 +1789,7 @@ pub fn comment_reply(
     author: &str,
     initials: Option<&str>,
     text: &str,
-    date: Option<&str>,
+    date: CommentDate<'_>,
     output: &Path,
     json_output: bool,
 ) -> Result<()> {

@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::xml::{local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
@@ -309,7 +309,7 @@ impl CT_TextListStyle {
             .to_owned();
         let tag = owned_tag.as_str();
         if self.source_root.is_empty() {
-            push_raw_attributes(&mut start, &self.raw_attributes);
+            push_attributes(&mut start, &self.raw_attributes);
         }
         let has_modelled = self.default_paragraph_properties.is_some()
             || (1..=9).any(|level| self.level(level).is_some());
@@ -475,22 +475,6 @@ fn capture_raw_attributes(start: &BytesStart<'_>) -> Result<Vec<(String, String)
         raw.push((name, value));
     }
     Ok(raw)
-}
-
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn write_start<W: Write>(writer: &mut Writer<W>, start: BytesStart<'_>) -> Result<()> {

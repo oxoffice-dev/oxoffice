@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
 use oxoffice_core::units::{Angle, Percent1000};
 use oxoffice_core::xml::{R_NS, get_attr, local_name, matches_local_name};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
@@ -712,7 +712,7 @@ impl Blip {
             let amount = amount.0.to_string();
             let mut effect = BytesStart::new("a:alphaModFix");
             effect.push_attribute(("amt", amount.as_str()));
-            push_raw_attributes(&mut effect, &self.alpha_modulation_fix_raw_attributes);
+            push_attributes(&mut effect, &self.alpha_modulation_fix_raw_attributes);
             write_empty(writer, effect)?;
         }
         emit_raw(writer, self.raw_children.at(1))?;
@@ -982,7 +982,7 @@ impl BlipFill {
         if let Some(rotate) = self.rotate_with_shape.map(bool_text) {
             start.push_attribute(("rotWithShape", rotate));
         }
-        push_raw_attributes(&mut start, &self.raw_attributes);
+        push_attributes(&mut start, &self.raw_attributes);
         if self.blip.is_none()
             && self.source_rect.is_none()
             && self.mode.is_none()
@@ -1033,12 +1033,6 @@ fn capture_unmodelled_attributes(
         raw.push((name, value));
     }
     Ok(raw)
-}
-
-fn push_raw_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
 }
 
 fn parse_linear(start: &BytesStart<'_>) -> Result<LinearGradient> {
@@ -1471,16 +1465,6 @@ fn missing_end(name: &str) -> FillError {
 
 const fn bool_text(value: bool) -> &'static str {
     if value { "1" } else { "0" }
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
-    Ok(())
 }
 
 fn write_start<W: Write>(writer: &mut Writer<W>, start: BytesStart<'_>) -> Result<()> {

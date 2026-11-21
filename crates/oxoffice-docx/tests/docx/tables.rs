@@ -5,9 +5,9 @@
 use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx::{
-    Alignment, BorderStyle, CellBorderEdge, CellItemRef, CellTextDirection, Document, Length,
-    RowHeight, StyleType, TableBorderEdge, TableCellMargins, TableConditionalFormatting,
-    TableLayout, TableLook, TableWidth, VMerge, VerticalAlignment,
+    Alignment, BorderStyle, CellBorderEdge, CellItemRef, CellTextDirection, CommentDate, Document,
+    Length, RowHeight, StyleType, TableBorderEdge, TableCellMargins, TableConditionalFormatting,
+    TableLayout, TableLook, TableWidth, TextCommentOptions, VMerge, VerticalAlignment,
 };
 
 use crate::support::{corpus_doc, doc_with, reopen, texts};
@@ -22,7 +22,7 @@ const REPORTS: [&str; 4] = [
 /// The merged last row of the styled table of every corpus report.
 const NOTE: &str = "Operating margin excludes one-off costs of the Lyon opening (212).";
 
-const DATE: Option<&str> = Some("2026-11-20T00:00:00Z");
+const DATE: CommentDate = CommentDate::At("2026-11-20T00:00:00Z");
 
 /// A new document holding one table with these cell texts, row by row.
 fn table_doc(rows: &[&[&str]]) -> Document {
@@ -377,10 +377,26 @@ fn removing_the_first_row_of_a_vertical_merge_moves_its_start_down() {
 #[test]
 fn removing_a_row_or_a_column_drops_the_comments_anchored_in_it() {
     let mut doc = table_doc(&[&["keep", "column note"], &["row note", ""]]);
-    doc.add_comment_on_text("row note", 0, "Ann", None, "about the row", DATE)
-        .unwrap();
-    doc.add_comment_on_text("column note", 0, "Ann", None, "about the column", DATE)
-        .unwrap();
+    doc.add_comment_on_text(
+        "row note",
+        "Ann",
+        "about the row",
+        TextCommentOptions {
+            date: DATE,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    doc.add_comment_on_text(
+        "column note",
+        "Ann",
+        "about the column",
+        TextCommentOptions {
+            date: DATE,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(doc.comments().len(), 2);
 
     doc.remove_table_row(0, 1).unwrap();

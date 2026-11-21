@@ -55,8 +55,8 @@ pub use bibliography::{
 };
 pub use building_block::{BuildingBlock, BuildingBlockInfo, BuildingBlockKind};
 pub use comments::{
-    BookmarkRef, CommentRef, RunPosition, RunRange, StoryRangeKind, StoryRangeRef,
-    StoryRunPosition, StoryRunRange,
+    BookmarkRef, CommentDate, CommentRef, RunPosition, RunRange, StoryRangeKind, StoryRangeRef,
+    StoryRunPosition, StoryRunRange, TextCommentOptions,
 };
 pub use comparison::{
     ComparisonDiagnostic, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
