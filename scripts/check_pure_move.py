@@ -23,8 +23,11 @@ still named in its parent or a new sibling without an explicit import fails, unl
 also binds it locally (a parameter, a local, a field) and never calls it, which is only reported.
 
 Added files may not hold a `macro_rules!` or a `super::`/`self::` path, whose meaning depends on where they sit.
-One level per range: a split of a file that is already a child (whose items crossing the cut are `pub(super)`) is
-refused, and checked by hand or with this script extended then. Not covered, and left to the compiler and the review: name resolution in files the range does not change; code moved
+When a file that is already a child is split again, an item or field that is already `pub(super)` and crosses the
+cut fails the check (it shows as a changed unit); such splits are checked by hand, or with this script extended then.
+Without such items, they are checked like a first split.
+
+Not covered, and left to the compiler and the review: name resolution in files the range does not change; code moved
 into a file that already existed, or out of a module other than the parent; a moved private method whose name a trait
 method shares; loose comments moving inside an item; and children gated by `#[cfg]`, which are refused and checked by
 hand. Exit 1 and print what differs otherwise.
@@ -300,7 +303,8 @@ class File:
                         if IDENT.fullmatch(t) and not (n > 0 and part[n - 1] == "." and (n < 2 or part[n - 2] != "."))}
                 # a name called like a function reaches an item, whatever the item also binds
                 calls = {t for n, t in enumerate(part[:-1])
-                         if IDENT.fullmatch(t) and part[n + 1] == "(" and not (n > 0 and part[n - 1] in (".", "fn"))}
+                         if IDENT.fullmatch(t) and not (n > 0 and part[n - 1] in (".", "fn"))
+                         and (part[n + 1] == "(" or part[n + 1 : n + 4] == [":", ":", "<"])}  # `f(` or `f::<T>(`
                 self.unbound.update((used - binds) | calls)
         for start, body, kind, end in items(tokens, 0, len(tokens)):
             raw, loose = attached(tokens[start:end])
