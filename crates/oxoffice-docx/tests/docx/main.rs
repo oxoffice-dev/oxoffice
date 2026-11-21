@@ -3,6 +3,7 @@
 
 mod checked_replacement;
 mod comment_dates;
+mod comment_on_text;
 mod comments;
 mod content_controls;
 mod corpus;

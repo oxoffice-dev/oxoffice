@@ -110,11 +110,12 @@ fn the_source_is_still_refused_after_edits() {
     assert_refused(&mut doc, &path);
     doc.add_comment_on_text(
         &word,
-        0,
         "Reviewer",
-        None,
         "A comment",
-        oxoffice_docx::CommentDate::At("2026-11-20T00:00:00Z"),
+        oxoffice_docx::TextCommentOptions {
+            date: oxoffice_docx::CommentDate::At("2026-11-20T00:00:00Z"),
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_refused(&mut doc, &path);

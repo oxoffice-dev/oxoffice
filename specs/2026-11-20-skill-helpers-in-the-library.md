@@ -29,7 +29,7 @@ their first release, and then drop both scripts.
 | `save_atomic(doc, out, src)` (docx, pptx) | `save` writes atomically (temporary file, sync, rename, mode kept) and refuses to overwrite the file the document was opened from unless asked. Rust, Python. |
 | `replace_batch(src, out, edits)` (docx) | `Document::replace_all(edits)` with an expected count per pair, all or nothing, and a check that no replaced text is left. Rust, Python. The CLI's `replace --map` uses it. |
 | `replace_batch` (pptx) | Same call on `Presentation`, the CLI already has `replace --map --expect`. |
-| `comment_on_text`, `commented` (docx) | `add_comment_on_text` gains `occurrence`, `in_tables` and a default date of now, and checks the anchor before it commits. CLI `docx comment add --text`. |
+| `comment_on_text`, `commented` (docx) | `add_comment_on_text` gains `occurrence`, `tables_only` and a default date of now, and checks the anchor before it commits. CLI `docx comment add --anchor TEXT`. |
 | `story_paragraphs`, `all_text` (docx) | `Document::story_paragraphs()` returns story kind, part name, style and text for every paragraph of every story. CLI `docx text --json` gains part and style. |
 | `count(source, text)` (docx) | `Document::count_text(text)`, per story kind. CLI `docx count`. |
 | `locate`, `isolate` (docx) | `Paragraph::find_text(text, occurrence)` returns a span, and `Document::isolate_span(span)` splits the runs so the span is whole runs that can be formatted. |
@@ -227,6 +227,22 @@ One pull request per row group, each with tests on the corpus:
   edited reply with its own date, or none when it had none, never now. The
   facade reads the clock in one place, `revision::rfc3339_now`; tests pass
   explicit dates where they compare bytes.
+- **3b. Comments on a text**: `add_comment_on_text(anchor, author, text,
+  TextCommentOptions { occurrence, tables_only, initials, date })`, with
+  `Default`, on the model of `SaveOptions` and `ReplaceOptions` (a breaking
+  change of a function released in 0.1.0, decided for the night by the
+  orchestration session over a twin function). `tables_only` counts only
+  the matches in the paragraphs of table cells, nested tables and controls
+  around rows included; without it every paragraph of the main story counts,
+  tables included, as before. The name is not the helper's `in_tables`,
+  whose `False` meant "outside tables" (a limit the library does not have):
+  the same name with another meaning would trap code ported from the skills.
+  The anchor was already read back on a staged copy before anything is
+  published; a missing occurrence names where it counted ("in the table
+  cells of the main story"). Python `add_comment_on_text(...,
+  tables_only=False)`, CLI `comment add --anchor TEXT --tables-only` (with
+  `--anchor` only). The CLI already had `--anchor` and `--occurrence`; the
+  plan's `--text` is the comment's own text.
 
 ## Links
 

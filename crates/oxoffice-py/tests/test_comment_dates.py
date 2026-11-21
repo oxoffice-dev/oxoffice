@@ -82,3 +82,16 @@ def test_a_comment_in_a_header_is_dated_like_one_in_the_body(producer):
                                       end=oxdocx.StoryRunPosition(item=header, run_index=1))
     undated = doc.add_comment(header_run, author="Reviewer", text="c", undated=True)
     assert date_of(doc, undated) is None
+
+
+@pytest.mark.parametrize("producer", PRODUCERS)
+def test_tables_only_anchors_on_a_match_in_a_table_cell(producer):
+    doc = report(producer)
+    anywhere = doc.add_comment_on_text("Churn", author="R", text="c", date=STAMP)
+    in_cell = doc.add_comment_on_text("Churn", author="R", text="c", date=STAMP, tables_only=True)
+    by_id = {comment.id: comment for comment in doc.comments}
+    assert by_id[anywhere].anchor.start.item.story.kind == "body"
+    assert by_id[in_cell].anchor.start.item.story.kind == "table_cell"
+    assert by_id[in_cell].anchor_text == "Churn"
+    with pytest.raises(oxdocx.DocxError, match="table cells"):
+        doc.add_comment_on_text("Churn", author="R", text="c", occurrence=1, tables_only=True)
