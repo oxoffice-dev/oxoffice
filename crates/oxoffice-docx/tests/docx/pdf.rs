@@ -985,16 +985,24 @@ fn assert_contiguous(drawn: &[Drawn], context: &str) {
     }
 }
 
-// A STYLEREF and a PAGE field on one right-aligned line move it together:
-// the chapter title is longer and the page number wider than their stored
-// results, and the line still ends at the margin, its pieces side by side.
+// A STYLEREF and a PAGE field on one right-aligned line: the chapter title
+// is longer and the page number wider than their stored results, and the
+// line still ends at the margin, its pieces side by side. (This checks the
+// result; that the text moves once for both kinds of field holds by
+// construction, as no document reached here makes STYLEREF change width
+// after PAGE moved the line.)
 #[test]
 fn a_right_aligned_header_with_a_styleref_and_a_page_field_ends_at_the_margin() {
+    // Pages 3 to 12 hold no heading: their STYLEREF reads the chapter title
+    // of page 2, which it takes after layout, with PAGE (as the thesis'
+    // header on the second page of a chapter).
     let mut doc = Document::new();
     doc.add_paragraph("Intro").style("Heading1");
-    for _ in 0..11 {
-        doc.add_paragraph("A chapter title much longer than the stored one")
-            .style("Heading1")
+    doc.add_paragraph("A chapter title much longer than the stored one")
+        .style("Heading1")
+        .page_break_before(true);
+    for page in 3..=12 {
+        doc.add_paragraph(&format!("Body {page}"))
             .page_break_before(true);
     }
     doc.set_header("placeholder");
@@ -1013,8 +1021,7 @@ fn a_right_aligned_header_with_a_styleref_and_a_page_field_ends_at_the_margin() 
             .expect("a header paragraph");
         let end = tag + xml[tag..].find('>').unwrap() + 1;
         let close = xml.rfind("</w:p>").expect("the paragraph end");
-        // Complex fields, as Word writes them (the thesis header): STYLEREF
-        // and PAGE take their values in two passes.
+        // Complex fields, as Word writes them (the thesis header).
         let field = |instruction: &str, result: &str| {
             format!(
                 r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
