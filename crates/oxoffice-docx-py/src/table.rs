@@ -1380,11 +1380,33 @@ impl PyTable {
             None => candidate.remove_table_row(table_index, row_index),
         }
         .map_err(|error| docx_to_pyerr(py, error))?;
-        let publication = crate::document::WordPublication::TableGrid(
-            document
-                .table_route(table_index, &current_related)
-                .map_err(|error| docx_to_pyerr(py, error))?,
-        );
+        // A removed row takes the notes only it referenced. The table-grid
+        // route keeps note handles by position, so once a note goes every
+        // handle is checked again.
+        let note_count = |doc: &oxoffice_docx::Document| {
+            doc.stories().map(|stories| {
+                stories
+                    .iter()
+                    .filter(|story| {
+                        matches!(
+                            story.kind(),
+                            oxoffice_docx::StoryKind::Footnote | oxoffice_docx::StoryKind::Endnote
+                        )
+                    })
+                    .count()
+            })
+        };
+        let notes_kept = note_count(&document.inner).map_err(|error| docx_to_pyerr(py, error))?
+            == note_count(&candidate).map_err(|error| docx_to_pyerr(py, error))?;
+        let publication = if notes_kept {
+            crate::document::WordPublication::TableGrid(
+                document
+                    .table_route(table_index, &current_related)
+                    .map_err(|error| docx_to_pyerr(py, error))?,
+            )
+        } else {
+            crate::document::WordPublication::Conservative
+        };
         let prepared =
             document.prepare_word_revision(py, &candidate, "Table.remove_row", publication)?;
         document.commit_word_revision(prepared)?;
