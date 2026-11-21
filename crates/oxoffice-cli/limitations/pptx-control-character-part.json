@@ -1,9 +1,0 @@
-{
-  "id": "pptx-control-character-part",
-  "format": "pptx",
-  "area": "open",
-  "title": "A presentation part with a control character is refused at open",
-  "symptom": "open fails with \"PackageError ... holds U+0001\" and `oxoffice pptx validate` exits 1, while PowerPoint opens the file",
-  "workaround": "remove the character from that part's bytes, then open the file",
-  "issue": 8
-}

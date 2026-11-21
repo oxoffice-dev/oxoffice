@@ -31,10 +31,12 @@ pub enum OpcError {
     #[error("invalid relationship XML")]
     InvalidRelationship,
 
-    /// A part to be written holds a character XML 1.0 cannot carry, not even
-    /// escaped, so writing it would produce a part no reader accepts.
+    /// A part read or to be written holds a character XML 1.0 cannot carry,
+    /// not even escaped. No XML reader accepts such a part, so the message
+    /// says where the character is and what to remove: the character in a
+    /// part read, or in the text an edit wrote into a part to be saved.
     #[error(
-        "{part} holds U+{code_point:04X} at line {line}, column {column}, a character XML 1.0 cannot carry"
+        "{part} holds U+{code_point:04X} at line {line}, column {column}, a character XML 1.0 cannot carry, so no XML reader accepts that part: remove the character from the part, or from the text written into it"
     )]
     InvalidXmlCharacter {
         part: String,

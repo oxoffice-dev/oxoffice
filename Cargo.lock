@@ -1130,6 +1130,7 @@ dependencies = [
  "oxoffice-pptx",
  "oxoffice-pptx-cli",
  "serde_json",
+ "zip",
 ]
 
 [[package]]
