@@ -901,9 +901,7 @@ fn a_new_numbered_list_can_be_started_in_a_word_report() {
     );
 }
 
-// Fails today: Markdown (and HTML) find list items in direct numbering only, so Word's List Bullet and List Number paragraphs come out as plain paragraphs. Issue: #29
 #[test]
-#[should_panic(expected = "left: \"Subscription revenue reached")]
 fn markdown_shows_word_list_paragraphs_as_list_items() {
     let markdown = corpus_doc("word/report.docx").to_markdown();
     let line = |prefix: &str| {
@@ -920,6 +918,92 @@ fn markdown_shows_word_list_paragraphs_as_list_items() {
     assert_eq!(
         line("Hire two"),
         "1. Hire two support engineers for the evening shift."
+    );
+}
+
+/// The list element (`<ul>` or `<ol>`) that holds the HTML item showing
+/// `text`: the last list tag opened before it.
+fn html_list_of<'a>(html: &'a str, text: &str) -> &'a str {
+    let at = html
+        .find(text)
+        .unwrap_or_else(|| panic!("no HTML holds {text:?}"));
+    let before = &html[..at];
+    let ul = before.rfind("<ul>");
+    let ol = before.rfind("<ol>");
+    let closed = before.rfind("</ul>").max(before.rfind("</ol>"));
+    match ul.max(ol) {
+        Some(open) if Some(open) > closed => {
+            if ul == Some(open) {
+                "ul"
+            } else {
+                "ol"
+            }
+        }
+        _ => "none",
+    }
+}
+
+#[test]
+fn exports_show_the_report_lists_of_every_producer() {
+    // Word, LibreOffice and python-docx number these paragraphs through
+    // their List Bullet and List Number styles, Google Docs on the paragraphs.
+    for name in [
+        "word/report.docx",
+        "google/report.docx",
+        "libreoffice/report.docx",
+        "authored/report.docx",
+    ] {
+        let doc = corpus_doc(name);
+        let markdown = doc.to_markdown();
+        for item in [
+            "- Subscription revenue reached 4.2 million euros, up from 3.7 million.",
+            "- The Lyon warehouse opened on schedule and serves the southern region.",
+            "1. Hire two support engineers for the evening shift.",
+        ] {
+            assert!(
+                markdown.lines().any(|line| line == item),
+                "{name}: Markdown shows {item:?}:\n{markdown}"
+            );
+        }
+        let html = doc.to_html_fragment();
+        assert_eq!(
+            html_list_of(&html, "Subscription revenue reached"),
+            "ul",
+            "{name}"
+        );
+        assert_eq!(
+            html_list_of(&html, "Hire two support engineers"),
+            "ol",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn exports_show_the_level_an_instance_swaps_in() {
+    let (mut doc, numbered) = single_list(&[ListLevel::decimal()]);
+    let dashed = doc
+        .add_numbering_instance(
+            definition_of(&doc, numbered),
+            &[NumberingLevelOverride::new(0).replacement(ListLevel::bullet().level_text("–"))],
+        )
+        .unwrap();
+    add_items(&mut doc, dashed, &[0]);
+    assert_eq!(markers(&doc), ["–"]);
+
+    assert!(doc.to_markdown().lines().any(|line| line == "- item 1"));
+    assert_eq!(html_list_of(&doc.to_html_fragment(), "item 1"), "ul");
+    let odt = doc.to_odt_bytes().unwrap();
+    let reread = Document::from_odt_bytes(&odt.bytes).unwrap().document;
+    let (id, _) = reread
+        .paragraph(0)
+        .unwrap()
+        .numbering()
+        .expect("a list item");
+    assert_eq!(
+        reread.numbering_is_bullet(id),
+        Some(true),
+        "the ODT list is a bullet list"
     );
 }
 

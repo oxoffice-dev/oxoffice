@@ -167,27 +167,14 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
     None
 }
 
-/// Detect if a paragraph is a list item. Returns (is_ordered, ilvl).
-fn detect_list(para: &CT_P, numbering: Option<&CT_Numbering>) -> Option<(bool, u32, u32, u32)> {
-    let ppr = para.properties.as_ref()?;
-    let num_id = ppr.num_id?;
-    let ilvl = ppr.num_ilvl.unwrap_or(0);
-
-    if num_id == 0 {
-        return None;
-    }
-
-    let numbering = numbering?;
-
-    let instance = numbering.nums.iter().find(|n| n.num_id == num_id)?;
-    let abstract_id = instance.abstract_num_id;
-
-    let abstract_num = numbering
-        .abstract_nums
-        .iter()
-        .find(|a| a.abstract_num_id == abstract_id)?;
-
-    let level = abstract_num.levels.iter().find(|l| l.ilvl == ilvl)?;
+/// Detect if a paragraph is a list item, through its style too. Returns
+/// (is_ordered, ilvl, num_id, start).
+fn detect_list(
+    para: &CT_P,
+    styles: &CT_Styles,
+    numbering: Option<&CT_Numbering>,
+) -> Option<(bool, u32, u32, u32)> {
+    let (num_id, ilvl, level, start_override) = crate::list_level(para, styles, numbering?)?;
 
     use oxoffice_docx_oxml::numbering::ST_NumberFormat;
     let is_ordered = match level.num_fmt.as_ref() {
@@ -205,13 +192,7 @@ fn detect_list(para: &CT_P, numbering: Option<&CT_Numbering>) -> Option<(bool, u
         Some(_) => return None,
     };
 
-    let start = instance
-        .level_overrides
-        .iter()
-        .find(|item| item.ilvl == ilvl)
-        .and_then(|item| item.start_override)
-        .or(level.start)
-        .unwrap_or(1);
+    let start = start_override.or(level.start).unwrap_or(1);
     Some((is_ordered, ilvl, num_id, start))
 }
 
@@ -228,7 +209,7 @@ fn emit_paragraph(
     let hyperlink_urls = &input.hyperlink_urls;
     let images = &input.images;
     let mut heading_level = detect_heading_level(para.properties.as_ref(), styles);
-    let list_info = detect_list(para, numbering);
+    let list_info = detect_list(para, styles, numbering);
 
     // Collect inline text for the paragraph
     let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries);

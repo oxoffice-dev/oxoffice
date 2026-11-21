@@ -1689,13 +1689,22 @@ impl<'a> OdtWriter<'a> {
     }
 
     fn list_level_is_bullet(&mut self, num_id: u32, level: u32, path: &str) -> Result<bool> {
-        let abstract_num = self
-            .document
-            .numbering
-            .as_ref()
-            .and_then(|numbering| numbering.get_abstract_num_for(num_id));
+        let numbering = self.document.numbering.as_ref();
+        let abstract_num = numbering.and_then(|numbering| numbering.get_abstract_num_for(num_id));
+        // The level the instance swaps in replaces the definition's, as
+        // layout draws it.
+        let replacement = numbering
+            .and_then(|numbering| numbering.nums.iter().find(|item| item.num_id == num_id))
+            .and_then(|instance| {
+                instance
+                    .level_overrides
+                    .iter()
+                    .find(|item| item.ilvl == level)
+            })
+            .and_then(|item| item.level.as_ref());
         let level_definition = abstract_num
-            .and_then(|abstract_num| abstract_num.levels.iter().find(|item| item.ilvl == level));
+            .and_then(|abstract_num| abstract_num.levels.iter().find(|item| item.ilvl == level))
+            .map(|definition| replacement.unwrap_or(definition));
         let (
             is_bullet,
             is_decimal,

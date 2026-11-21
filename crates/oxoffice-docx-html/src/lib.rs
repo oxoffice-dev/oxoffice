@@ -6,12 +6,12 @@ mod markdown;
 mod sanitize;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document};
-use oxoffice_docx_oxml::numbering::CT_Numbering;
-use oxoffice_docx_oxml::styles::CT_Styles;
+use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering};
+use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Tbl, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::CT_P;
 
@@ -130,6 +130,71 @@ pub fn to_markdown(input: &HtmlInput) -> String {
 /// Convert body content with current chart tables to Markdown.
 pub fn to_markdown_with_charts(input: &HtmlInput, charts: &HashMap<String, ChartTable>) -> String {
     markdown::emit_markdown(input, charts)
+}
+
+/// The list level a paragraph shows, as layout resolves it. The numbering id
+/// and the level each come from the paragraph, else from its style and that
+/// style's `basedOn` chain (the default paragraph style when it names none),
+/// else from the document defaults; a numbering id of 0 means no list. The
+/// level is the one the instance swaps in, else its definition's. Returns
+/// the instance id, the level index, the level and the instance's start
+/// override for it.
+fn list_level<'a>(
+    paragraph: &CT_P,
+    styles: &CT_Styles,
+    numbering: &'a CT_Numbering,
+) -> Option<(u32, u32, &'a CT_Lvl, Option<u32>)> {
+    let direct = paragraph.properties.as_ref();
+    let mut num_id = direct.and_then(|properties| properties.num_id);
+    let mut ilvl = direct.and_then(|properties| properties.num_ilvl);
+    let mut style_id = direct
+        .and_then(|properties| properties.style_id.as_deref())
+        .or_else(|| {
+            styles
+                .get_default(StyleType::Paragraph)
+                .map(|style| style.style_id.as_str())
+        });
+    let mut seen = HashSet::new();
+    while (num_id.is_none() || ilvl.is_none())
+        && let Some(id) = style_id
+        && seen.insert(id)
+        && let Some(style) = styles.get_by_id(id)
+    {
+        if let Some(properties) = &style.ppr {
+            num_id = num_id.or(properties.num_id);
+            ilvl = ilvl.or(properties.num_ilvl);
+        }
+        style_id = style.based_on.as_deref();
+    }
+    if let Some(properties) = styles
+        .doc_defaults
+        .as_ref()
+        .and_then(|defaults| defaults.ppr.as_ref())
+    {
+        num_id = num_id.or(properties.num_id);
+        ilvl = ilvl.or(properties.num_ilvl);
+    }
+    let num_id = num_id.filter(|id| *id != 0)?;
+    let ilvl = ilvl.unwrap_or(0);
+    let instance = numbering.nums.iter().find(|item| item.num_id == num_id)?;
+    let definition = numbering
+        .abstract_nums
+        .iter()
+        .find(|item| item.abstract_num_id == instance.abstract_num_id)?;
+    let base = definition.levels.iter().find(|item| item.ilvl == ilvl)?;
+    let level_override = instance
+        .level_overrides
+        .iter()
+        .find(|item| item.ilvl == ilvl);
+    let level = level_override
+        .and_then(|item| item.level.as_ref())
+        .unwrap_or(base);
+    Some((
+        num_id,
+        ilvl,
+        level,
+        level_override.and_then(|item| item.start_override),
+    ))
 }
 
 fn paragraph_chart_ids(paragraph: &CT_P) -> Vec<String> {
