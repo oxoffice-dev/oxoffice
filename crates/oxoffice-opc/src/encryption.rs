@@ -393,9 +393,6 @@ pub(crate) fn write_encrypted_package(
             )))
         })
     };
-    #[cfg(test)]
-    let staged = encrypted_package_bytes_with_random(plaintext_zip, password, fill_random, None)?;
-    #[cfg(not(test))]
     let staged = encrypted_package_bytes_with_random(plaintext_zip, password, fill_random)?;
     append_staged_with_reserve(output, &staged, |output, additional| {
         output.try_reserve(additional).map_err(|error| {
@@ -424,19 +421,10 @@ fn append_staged_with_reserve(
     Ok(())
 }
 
-#[cfg(test)]
-#[derive(Default)]
-struct GeneratedSecrets {
-    package_key: Vec<u8>,
-    verifier: Vec<u8>,
-    hmac_key: Vec<u8>,
-}
-
 fn encrypted_package_bytes_with_random(
     plaintext_zip: &[u8],
     password: &str,
     mut fill_random: impl FnMut(&mut [u8]) -> Result<()>,
-    #[cfg(test)] capture: Option<&mut GeneratedSecrets>,
 ) -> Result<Vec<u8>> {
     if password.is_empty() || password.chars().count() > 255 {
         return Err(OpcError::InvalidPassword);
@@ -458,12 +446,6 @@ fn encrypted_package_bytes_with_random(
     fill_random(&mut package_key)?;
     fill_random(&mut verifier)?;
     fill_random(&mut hmac_key)?;
-    #[cfg(test)]
-    if let Some(capture) = capture {
-        capture.package_key = package_key.to_vec();
-        capture.verifier = verifier.to_vec();
-        capture.hmac_key = hmac_key.to_vec();
-    }
 
     let key_data = CipherParameters {
         salt: key_data_salt.to_vec(),
