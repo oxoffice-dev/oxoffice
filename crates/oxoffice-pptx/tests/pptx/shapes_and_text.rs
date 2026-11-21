@@ -2026,3 +2026,36 @@ fn a_text_layout_needs_a_finite_positive_width_factor() {
         );
     }
 }
+
+// The connectors of the training deck's process slide end in an arrowhead,
+// in every producer's copy; Google writes the bare start as an explicit
+// `none`, the others leave it out.
+#[test]
+fn the_connectors_of_the_training_deck_read_their_arrowheads_from_every_producer() {
+    for producer in ["authored", "powerpoint", "google", "libreoffice"] {
+        let prs = corpus_deck(&format!("{producer}/training.pptx"));
+        let slide = prs.slide(4).unwrap();
+        let ends = slide
+            .shapes()
+            .filter(|shape| shape.kind() == ShapeKind::Connector)
+            .map(|shape| {
+                let line = shape.line().expect("a connector has its line");
+                let kind =
+                    |end: &Option<oxoffice_pptx::LineEnd>| end.as_ref().and_then(|end| end.kind);
+                (kind(&line.head_end), kind(&line.tail_end))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ends.len(), 6, "{producer}: {ends:?}");
+        for (head, tail) in ends {
+            assert_eq!(
+                tail,
+                Some(oxoffice_pptx::LineEndType::Triangle),
+                "{producer}"
+            );
+            assert!(
+                matches!(head, None | Some(oxoffice_pptx::LineEndType::None)),
+                "{producer}: {head:?}"
+            );
+        }
+    }
+}

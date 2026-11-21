@@ -2270,21 +2270,29 @@ fn transition_kinds(
 #[test]
 fn the_transitions_of_the_pitch_deck_are_read_from_every_producer() {
     let authored = transition_kinds(&corpus_deck("authored/pitch.pptx"));
-    assert!(
-        authored.iter().all(Option::is_some),
-        "every slide of the pitch has a transition: {authored:?}"
-    );
+    use TransitionDirection as D;
+    use TransitionKind as K;
     assert_eq!(
-        authored[..2],
+        authored,
         [
-            Some((Some(TransitionKind::Fade), None)),
-            Some((Some(TransitionKind::Push), Some(TransitionDirection::Up)))
+            Some((Some(K::Fade), None)),
+            Some((Some(K::Push), Some(D::Up))),
+            Some((Some(K::Push), Some(D::Up))),
+            Some((Some(K::Wipe), Some(D::Right))),
+            Some((Some(K::Wipe), Some(D::Right))),
+            Some((Some(K::Split), Some(D::VerticalOut))),
+            Some((Some(K::Cover), Some(D::Left))),
+            Some((Some(K::Other("randomBar".to_owned())), None)),
+            Some((Some(K::Zoom), Some(D::In))),
+            Some((Some(K::Fade), None)),
         ]
     );
     // Every producer's copy reads a transition, with its effect, on each
     // slide whose file has one. PowerPoint keeps the authored effects and
-    // directions, but leaves out a kind's default (a cover from the left,
-    // read as `None`); Google and LibreOffice write their own effects.
+    // directions but leaves out a kind's default: a cover from the left reads
+    // as `None` (split's default is filled in, randomBar's direction is not
+    // modelled). LibreOffice keeps the effects but turns that cover to the
+    // right and drops the zoom; Google writes its own effects.
     for producer in ["powerpoint", "libreoffice", "google"] {
         let path = format!("{producer}/pitch.pptx");
         let read = transition_kinds(&corpus_deck(&path));
@@ -2373,7 +2381,7 @@ fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
         })
         .collect::<Vec<_>>();
     assert_eq!(ids.len(), 3, "the tree and two text boxes: {ids:?}");
-    // The second text box takes the first one's id, as some producers write.
+    // The second text box takes the first one's id.
     let duplicated = xml.replacen(
         &format!("<p:cNvPr id=\"{}\"", ids[2]),
         &format!("<p:cNvPr id=\"{}\"", ids[1]),

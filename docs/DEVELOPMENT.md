@@ -233,9 +233,9 @@ of it. Every frame of the training and pitch decks is pinned in
 `crates/oxoffice-pptx/tests/snapshots/text-layout/` (lines, text height,
 overflow, at both widths). A change that moves them rewrites those files
 (`OXOFFICE_SNAPSHOTS_UPDATE=1 cargo test --profile ci -p oxoffice-pptx
---test pptx text_layout`) and says so in one line of its squash commit
-body, `Deck text layout moves: <why>`, so that the changelog tells the
-tools whose fit checks may change.
+--test pptx text_layout`) and its title says so, ending in `, deck text
+layout moves`: the changelog prints the squash titles only, and it tells
+the tools whose fit checks may change.
 
 ## Known limitations
 
