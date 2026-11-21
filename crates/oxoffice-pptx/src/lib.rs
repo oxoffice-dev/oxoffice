@@ -341,6 +341,8 @@ struct AutofitOwner {
 }
 
 const DEFAULT_POWERPOINT_AUTHORS_PART: &str = "/ppt/authors.xml";
+const EXTENDED_PROPERTIES_NS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
 const CLASSIC_COMMENT_AUTHORS_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
 const MAX_SMARTART_TRANSFER_DIAGRAM_PARTS: usize = 128;
@@ -9982,6 +9984,10 @@ impl Presentation {
     }
 
     /// Removes one slide and its owned package graph by zero-based index.
+    ///
+    /// The package metadata stops naming it: `docProps/app.xml` counts the
+    /// slides left and drops its title lists, and a removed first slide
+    /// takes the package thumbnail with it.
     pub fn remove_slide(&mut self, index: usize) -> Result<()> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10894,6 +10900,77 @@ impl Presentation {
         self.slides.remove(index);
         prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
+        self.forget_removed_slide_in_metadata(index == 0)
+    }
+
+    /// Keeps the package metadata from carrying a removed slide.
+    ///
+    /// `docProps/app.xml` gets the slide, notes and hidden-slide counts of
+    /// the deck, where it has them, and loses its title lists
+    /// (`HeadingPairs`, `TitlesOfParts`), which may name the removed slide:
+    /// their group names are localised, so the removed title cannot be told
+    /// apart, and PowerPoint writes them again on its next save. The package
+    /// thumbnail, a picture of the first slide, goes with a removed first
+    /// slide.
+    fn forget_removed_slide_in_metadata(&mut self, first_slide: bool) -> Result<()> {
+        if first_slide {
+            let thumbnails = self
+                .package
+                .package_rels
+                .items
+                .iter()
+                .filter(|relationship| {
+                    relationship.rel_type == rel_types::THUMBNAIL
+                        && !relationship_is_external(relationship)
+                })
+                .map(|relationship| OpcPackage::resolve_rel_target("/", &relationship.target))
+                .collect::<Vec<_>>();
+            for part in &thumbnails {
+                self.package.remove_part(part);
+                self.package.content_types.remove_override(part);
+            }
+            self.package.package_rels.items.retain(|relationship| {
+                relationship.rel_type != rel_types::THUMBNAIL
+                    || relationship_is_external(relationship)
+            });
+        }
+        let (Some(old), Some(part)) = (
+            self.application_properties.clone(),
+            property_part(
+                &self.package,
+                rel_types::EXTENDED_PROPERTIES,
+                content_types::EXTENDED_PROPERTIES,
+            )?,
+        ) else {
+            return Ok(());
+        };
+        let count = |keep: fn(&SlideRecord) -> bool| {
+            i32::try_from(self.slides.iter().filter(|record| keep(record)).count())
+                .unwrap_or(i32::MAX)
+        };
+        let mut new = old.clone();
+        new.slides = old.slides.map(|_| count(|_| true));
+        new.notes = old.notes.map(|_| count(|record| record.notes.is_some()));
+        new.hidden_slides = old
+            .hidden_slides
+            .map(|_| count(|record| record.slide.hidden()));
+        let patched =
+            patch_application_properties(required_part(&self.package, &part)?, &old, &new)?;
+        let (children, _) = property_child_ranges(&patched, EXTENDED_PROPERTIES_NS, "Properties")?;
+        let mut xml = Vec::with_capacity(patched.len());
+        let mut cursor = 0;
+        for (_, _, start, end) in children.iter().filter(|(uri, local, _, _)| {
+            uri.as_deref() == Some(EXTENDED_PROPERTIES_NS)
+                && matches!(local.as_str(), "HeadingPairs" | "TitlesOfParts")
+        }) {
+            xml.extend_from_slice(&patched[cursor..*start]);
+            cursor = *end;
+        }
+        xml.extend_from_slice(&patched[cursor..]);
+        let properties = AppProperties::from_xml(&xml)
+            .map_err(|error| footer_malformed(&part, error.to_string()))?;
+        self.package.set_part(&part, xml);
+        self.application_properties = Some(properties);
         Ok(())
     }
 
@@ -21037,7 +21114,7 @@ fn patch_application_properties(
     old: &AppProperties,
     new: &AppProperties,
 ) -> Result<Vec<u8>> {
-    const NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+    const NS: &str = EXTENDED_PROPERTIES_NS;
     let fields = [
         ("Template", old.template.clone(), new.template.clone()),
         ("Manager", old.manager.clone(), new.manager.clone()),

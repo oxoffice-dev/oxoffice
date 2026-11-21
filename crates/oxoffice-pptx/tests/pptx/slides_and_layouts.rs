@@ -1135,3 +1135,93 @@ fn removing_a_slide_drops_a_tags_part_only_it_used() {
     assert_eq!(titles(&prs), ["Kept"]);
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
+
+/// The text of one saved part, if the saved package has it.
+fn saved_part_text(prs: &Presentation, part_name: &str) -> Option<String> {
+    let bytes = prs.to_bytes().expect("deck saves");
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    package
+        .get_part(part_name)
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+}
+
+#[test]
+fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    prs.slide_mut(3).unwrap().set_hidden(true);
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(
+        before.contains("<vt:lpstr>Highlights</vt:lpstr>"),
+        "{before}"
+    );
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(!app.contains("Highlights"), "{app}");
+    assert!(
+        !app.contains("TitlesOfParts") && !app.contains("HeadingPairs"),
+        "{app}"
+    );
+    // Three slides left, the notes went with Highlights, the last is hidden.
+    assert!(app.contains("<Slides>3</Slides>"), "{app}");
+    assert!(app.contains("<Notes>0</Notes>"), "{app}");
+    assert!(app.contains("<HiddenSlides>1</HiddenSlides>"), "{app}");
+    let application = |xml: &str| {
+        let start = xml.find("<Application>").expect("an application name");
+        xml[start..xml[start..].find("</Application>").unwrap() + start].to_owned()
+    };
+    assert_eq!(application(&app), application(&before));
+    assert!(saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some());
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn removing_the_first_slide_drops_the_thumbnail_that_pictures_it() {
+    for name in ["powerpoint/deck.pptx", "authored/deck.pptx"] {
+        let mut prs = corpus_deck(name);
+        assert!(
+            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
+            "{name}"
+        );
+
+        prs.remove_slide(0).unwrap();
+
+        let prs = reopen(&prs);
+        assert!(
+            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_none(),
+            "{name}"
+        );
+        let package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+        assert!(
+            package
+                .package_rels
+                .items
+                .iter()
+                .all(|relationship| !relationship.rel_type.ends_with("/metadata/thumbnail")),
+            "{name}: the package still points at a thumbnail"
+        );
+        assert_eq!(prs.len(), 3, "{name}");
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
+}
+
+#[test]
+fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
+    // The authored deck says it has no slide; its counts follow the deck.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    prs.remove_slide(3).unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Slides>3</Slides>"), "{app}");
+
+    // Google writes no app.xml, LibreOffice one without counts or titles.
+    for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
+        let mut prs = corpus_deck(name);
+        let before = saved_part_text(&prs, "/docProps/app.xml");
+        prs.remove_slide(1).unwrap();
+        let prs = reopen(&prs);
+        assert_eq!(saved_part_text(&prs, "/docProps/app.xml"), before, "{name}");
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
+}
