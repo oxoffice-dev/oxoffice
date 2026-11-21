@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use oxoffice_opc::OpcPackage;
+use oxoffice_opc::relationship::rel_types;
 use oxoffice_pptx::{
     ChartData, ChartKind, Emu, LegendPosition, LegendSettings, Presentation, RgbColor, ShapeType,
 };
@@ -1029,15 +1030,59 @@ fn removing_a_chart_slide_from_every_editors_deck_drops_its_chart_and_keeps_the_
         "authored/deck.pptx",
     ] {
         let mut prs = corpus_deck(name);
-        let before = chart_parts(&prs);
+        let charts_before = chart_parts(&prs);
         let mut texts = slide_texts(&prs);
         chart_on(&mut prs, 1, ChartKind::Bar, &regions());
-        assert_eq!(chart_parts(&prs).len(), before.len() + 2, "{name}");
+        let package = saved_package(&prs);
+        let before: BTreeSet<String> = package.parts.keys().cloned().collect();
+        // The slide that holds the chart, and every part it reaches without
+        // going through its layout, the notes master or another slide.
+        let slide = package
+            .part_rels
+            .iter()
+            .find(|(_, relationships)| {
+                relationships
+                    .items
+                    .iter()
+                    .any(|relationship| relationship.rel_type == rel_types::CHART)
+            })
+            .map(|(part, _)| part.clone())
+            .expect("a part relates to the chart");
+        let mut graph = BTreeSet::new();
+        let mut pending = vec![slide.clone()];
+        while let Some(part) = pending.pop() {
+            if !graph.insert(part.clone()) {
+                continue;
+            }
+            for relationship in package
+                .get_part_rels(&part)
+                .map(|relationships| relationships.items.clone())
+                .unwrap_or_default()
+            {
+                let shared = [
+                    rel_types::SLIDE_LAYOUT,
+                    rel_types::NOTES_MASTER,
+                    rel_types::SLIDE,
+                ]
+                .contains(&relationship.rel_type.as_str());
+                if relationship.target_mode.as_deref() != Some("External") && !shared {
+                    pending.push(OpcPackage::resolve_rel_target(&part, &relationship.target));
+                }
+            }
+        }
 
         prs.remove_slide(1).unwrap();
 
         let saved = reopen(&prs);
-        assert_eq!(chart_parts(&saved), before, "{name}");
+        let after: BTreeSet<String> = saved_package(&saved).parts.into_keys().collect();
+        let removed: BTreeSet<String> = before.difference(&after).cloned().collect();
+        assert!(removed.contains(&slide), "{name}: {removed:?}");
+        assert!(
+            removed.is_subset(&graph),
+            "{name}: parts outside the slide's graph went: {:?}",
+            removed.difference(&graph).collect::<Vec<_>>()
+        );
+        assert_eq!(chart_parts(&saved), charts_before, "{name}");
         texts.remove(1);
         assert_eq!(slide_texts(&saved), texts, "{name}");
         assert!(
