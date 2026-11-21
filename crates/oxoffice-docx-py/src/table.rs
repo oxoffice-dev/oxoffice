@@ -645,7 +645,7 @@ impl PyTable {
                 .map_err(|error| docx_to_pyerr(py, error))?
         {
             #[cfg(debug_assertions)]
-            document.assert_word_inventory_rebuilds();
+            document.assert_word_inventory_rebuilds(false);
             return Ok(result);
         }
         let mut candidate = document.inner.clone_for_staging();
@@ -1705,7 +1705,7 @@ impl PyRow {
                 .is_some()
         {
             #[cfg(debug_assertions)]
-            document.assert_word_inventory_rebuilds();
+            document.assert_word_inventory_rebuilds(false);
             return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();
@@ -2158,7 +2158,7 @@ impl PyCell {
                 .is_some()
         {
             #[cfg(debug_assertions)]
-            document.assert_word_inventory_rebuilds();
+            document.assert_word_inventory_rebuilds(false);
             return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();

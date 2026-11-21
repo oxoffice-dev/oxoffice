@@ -141,3 +141,33 @@ def test_a_table_in_a_cell_or_a_header_takes_property_edits(producer, owner):
     saved = inner(oxdocx.Document.from_bytes(doc.to_bytes()))
     assert properties(saved, saved.rows[1], saved.cell(1, 0)) == EXPECTED
     assert saved.cell(1, 0).text == "inner"
+
+
+def built_table(producer):
+    """A table of 4 rows and 3 columns: a new document's own, or the first table of a report."""
+    if producer == "new":
+        doc = oxdocx.Document()
+        doc.add_paragraph("before")
+        return doc, doc.add_table(4, 3)
+    doc = report(producer)
+    return doc, doc.tables[0]
+
+
+@pytest.mark.parametrize("producer", ["new", *PRODUCERS])
+def test_row_and_cell_edits_made_in_turn_keep_every_handle(producer):
+    """A table filled row by row, a property edit then cell text, as a generator writes one."""
+    doc, table = built_table(producer)
+    cells = [table.cell(index, 1) for index in range(1, 4)]
+    for index, cell in enumerate(cells, start=1):
+        table.rows[index].height = Pt(20 + index)
+        cell.text = f"value {index}"
+        table.cell(index, 2).shading = "EEEEEE"
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    saved = oxdocx.Document.from_bytes(doc.to_bytes())
+    for current in (table, saved.tables[0]):
+        for index in range(1, 4):
+            assert current.rows[index].height == Pt(20 + index)
+            assert current.cell(index, 1).text == f"value {index}"
+            assert current.cell(index, 1).vertical_alignment == WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            assert current.cell(index, 2).shading == RGBColor(0xEE, 0xEE, 0xEE)
+    assert [cell.text for cell in cells] == ["value 1", "value 2", "value 3"]

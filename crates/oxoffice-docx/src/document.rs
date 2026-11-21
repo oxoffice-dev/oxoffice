@@ -37321,38 +37321,29 @@ impl Document {
     }
 
     /// Apply `edit`, an edit of the properties of the body table at `index`
-    /// (among tables only), of its rows or of its cells, in place, without a
-    /// copy of the document. A failure or a panic puts the table back as it
-    /// was. So does an edit that changed anything besides properties (rows,
-    /// cells, their content, unmodelled children) or gave a cell its first
-    /// property or took its last, which returns `Ok(None)`: such an edit moves
-    /// content and belongs to a route that publishes content changes.
+    /// (among tables only), of its rows or of its cells, without a copy of
+    /// the document: `edit` runs on a copy of that table, which replaces it
+    /// when the edit succeeds and changed properties only. An edit that fails
+    /// or panics leaves the document untouched. So does one that changed
+    /// anything besides properties (rows, cells, their content, unmodelled
+    /// children) or gave a cell its first property or took its last, which
+    /// returns `Ok(None)`: such an edit moves content and belongs to a route
+    /// that publishes content changes.
     #[doc(hidden)]
     pub fn edit_table_properties_in_place<T>(
         &mut self,
         index: usize,
         edit: impl FnOnce(&mut Table<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
-        let mut table = self
-            .table_mut(index)
+        let current = nth_table_in_body_ref(&self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
-        let before = table.inner.clone();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(&mut table)));
-        match outcome {
-            Ok(Ok(value)) if same_table_content(&before, table.inner) => Ok(Some(value)),
-            Ok(Ok(_)) => {
-                *table.inner = before;
-                Ok(None)
-            }
-            Ok(Err(error)) => {
-                *table.inner = before;
-                Err(error)
-            }
-            Err(panic) => {
-                *table.inner = before;
-                std::panic::resume_unwind(panic)
-            }
+        let mut edited = current.clone();
+        let value = edit(&mut Table { inner: &mut edited })?;
+        if !same_table_content(current, &edited) {
+            return Ok(None);
         }
+        *self.table_mut(index).expect("the table read above").inner = edited;
+        Ok(Some(value))
     }
 
     /// Append a formatted empty row through one checked package transaction.
@@ -54404,6 +54395,39 @@ mod tests {
     use super::*;
 
     const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+
+    #[test]
+    fn a_table_edit_that_is_refused_declined_or_panics_keeps_the_cached_answers() {
+        let mut doc = read_with_body(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr>\
+             </w:tbl><w:p/>",
+        );
+        assert_eq!(doc.unsavable_body_edit(), None);
+        let refused = doc.edit_table_properties_in_place(0, |table| {
+            table.set_alignment(crate::paragraph::Alignment::Right);
+            Err::<(), _>(Error::Other("refused".to_owned()))
+        });
+        assert!(refused.is_err());
+        let declined = doc.edit_table_properties_in_place(0, |table| table.add_row().map(|_| ()));
+        assert!(matches!(declined, Ok(None)));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            doc.edit_table_properties_in_place(0, |_| -> Result<()> { panic!("half way") })
+        }));
+        assert!(panicked.is_err());
+        assert!(
+            doc.unsavable_body_edit_cache.get().is_some(),
+            "the answer is kept"
+        );
+        let applied = doc.edit_table_properties_in_place(0, |table| {
+            table.set_alignment(crate::paragraph::Alignment::Right);
+            Ok(())
+        });
+        assert!(matches!(applied, Ok(Some(()))));
+        assert!(
+            doc.unsavable_body_edit_cache.get().is_none(),
+            "an applied edit drops it"
+        );
+    }
 
     #[test]
     fn a_cell_that_gains_its_first_property_has_other_table_content() {
