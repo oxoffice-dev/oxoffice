@@ -153,6 +153,25 @@ fn a_run_with_a_character_no_bundled_font_has_takes_the_system_font_covering_it_
 }
 
 #[test]
+fn a_character_no_system_font_has_is_searched_for_once() {
+    let mut fonts = manager();
+    // 猫 and 犬 are in the test fonts; 한 is in no font at all.
+    let first = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "猫한")
+        .unwrap();
+    assert!(fonts.is_system_fallback_font(first));
+    assert_eq!(fonts.system_fallback_scans(), 1);
+
+    // The next run holding it takes the font that drew the first, without
+    // reading every system font again.
+    let second = fonts
+        .resolve_font_for_text(Some("Calibri"), false, false, "犬한")
+        .unwrap();
+    assert_eq!(second, first);
+    assert_eq!(fonts.system_fallback_scans(), 1);
+}
+
+#[test]
 fn the_system_tier_survives_a_change_of_caller_fonts() {
     let mut fonts = manager();
     fonts

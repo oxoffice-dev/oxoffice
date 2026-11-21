@@ -914,6 +914,11 @@ pub struct FontManager {
     word_substitution_diagnostics: Vec<Diagnostic>,
     /// The system tier the glyph-coverage fallback may open, if any.
     system_fallback: SystemFallback,
+    /// Characters a full scan of the system tier found in no face, so that
+    /// a run holding one does not read every system font again.
+    system_misses: HashSet<char>,
+    /// Full scans of the system tier's families so far.
+    system_scans: usize,
 }
 
 /// How a font manager reaches the host's fonts.
@@ -1082,6 +1087,8 @@ impl FontManager {
             layout_font_diagnostics: Vec::new(),
             word_substitution_diagnostics: Vec::new(),
             system_fallback: SystemFallback::None,
+            system_misses: HashSet::new(),
+            system_scans: 0,
         }
     }
 
@@ -1191,6 +1198,13 @@ impl FontManager {
     #[doc(hidden)]
     pub fn system_fallback_opened(&self) -> bool {
         matches!(self.system_fallback, SystemFallback::Open(_))
+    }
+
+    /// How many times every family of the system tier has been read for
+    /// coverage.
+    #[doc(hidden)]
+    pub fn system_fallback_scans(&self) -> usize {
+        self.system_scans
     }
 
     /// Whether `font_id` is a system font the glyph-coverage fallback chose
@@ -2530,7 +2544,8 @@ impl FontManager {
     ///
     /// A family's coverage is read from its first face's bytes through the
     /// bounded file cache; only the family that wins is loaded, so a scan
-    /// never keeps every system font in memory.
+    /// never keeps every system font in memory. Characters a full scan found
+    /// in no family are left out of later searches.
     fn system_coverage_pass(
         &mut self,
         missing: &[char],
@@ -2538,6 +2553,15 @@ impl FontManager {
         italic: bool,
         best: &mut Option<(usize, usize)>,
     ) -> Option<FontId> {
+        let wanted: Vec<char> = missing
+            .iter()
+            .copied()
+            .filter(|ch| !self.system_misses.contains(ch))
+            .collect();
+        if wanted.is_empty() {
+            return None;
+        }
+        let missing = wanted.as_slice();
         if let Some(id) = self.coverage_pass(missing, bold, italic, true, best, &mut HashSet::new())
         {
             return Some(id);
@@ -2563,6 +2587,8 @@ impl FontManager {
         // Stable: equal ranks keep the database's order.
         families.sort_by_key(|(name, _)| broad_rank(name));
 
+        self.system_scans += 1;
+        let mut found = HashSet::new();
         let mut best_family: Option<(usize, String)> = None;
         for (name, db_id) in families {
             let mut scratch = HashMap::new();
@@ -2572,16 +2598,30 @@ impl FontManager {
             let Ok(face) = ttf_parser::Face::parse(&data, face_index) else {
                 continue;
             };
-            let covered = missing
-                .iter()
-                .filter(|&&ch| face.glyph_index(ch).is_some())
-                .count();
+            let mut covered = 0;
+            for &ch in missing {
+                if face.glyph_index(ch).is_some() {
+                    covered += 1;
+                    found.insert(ch);
+                }
+            }
             if covered == missing.len() {
                 best_family = Some((covered, name));
                 break;
             }
             if covered > 0 && best_family.as_ref().is_none_or(|(n, _)| covered > *n) {
                 best_family = Some((covered, name));
+            }
+        }
+
+        if best_family
+            .as_ref()
+            .is_none_or(|(covered, _)| *covered < missing.len())
+        {
+            for &ch in missing {
+                if !found.contains(&ch) && self.system_misses.len() < COVERAGE_MISS_MAX_ENTRIES {
+                    self.system_misses.insert(ch);
+                }
             }
         }
 
