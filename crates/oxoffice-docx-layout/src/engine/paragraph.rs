@@ -112,12 +112,7 @@ fn computed_layout_field(
                         ),
                     });
                     (None, None)
-                } else if field.cached_result.contains('\t') {
-                    // LibreOffice writes a whole table of contents entry
-                    // (its number, a tab, its title, a tab, its page) as the
-                    // result of the entry's PAGEREF. Word draws that stored
-                    // result as it is until its fields are updated, and a
-                    // page number alone never holds a tab, so it stays.
+                } else if page_reference_keeps_stored_display(&field.cached_result) {
                     (None, None)
                 } else if let Some(target) = page_ref_id(input, bookmark) {
                     (Some("99".to_owned()), Some(FieldKind::TargetPage(target)))
@@ -1478,9 +1473,15 @@ fn layout_paragraph_with_source_and_table(
                                 "NUMPAGES" => Some(FieldKind::NumPages),
                                 "SECTION" => Some(FieldKind::Section),
                                 "SECTIONPAGES" => Some(FieldKind::SectionPages),
-                                "PAGEREF" => field_text_argument(&display_owner.instruction, 0)
-                                    .and_then(|name| page_ref_id(input, name))
-                                    .map(FieldKind::TargetPage),
+                                "PAGEREF"
+                                    if !page_reference_keeps_stored_display(
+                                        &display_owner.cached_result,
+                                    ) =>
+                                {
+                                    field_text_argument(&display_owner.instruction, 0)
+                                        .and_then(|name| page_ref_id(input, name))
+                                        .map(FieldKind::TargetPage)
+                                }
                                 _ => None,
                             }
                         };

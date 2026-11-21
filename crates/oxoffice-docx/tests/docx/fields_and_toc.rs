@@ -572,6 +572,34 @@ fn page_fields_take_their_numbers_from_the_layout_except_in_a_footer() {
 }
 
 #[test]
+fn updating_page_fields_keeps_a_table_of_contents_entry_saved_by_libreoffice() {
+    // LibreOffice writes the whole entry as the result of its PAGEREF; Word
+    // writes the page number alone.
+    let entry = |result: &str| {
+        format!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">PAGEREF _Toc1 \h</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r>{result}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        r#"{}{}<w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Motivation</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        entry("<w:t>1.1</w:t><w:tab/><w:t>Motivation</w:t><w:tab/><w:t>7</w:t>"),
+        entry("<w:t>7</w:t>"),
+    ));
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert_eq!(report.page_reference_fields, 1, "{:?}", report.diagnostics);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("retained cache: the result holds more than a page number")),
+        "{:?}",
+        report.diagnostics
+    );
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["1.1\tMotivation\t7", "1", "Motivation"]);
+}
+
+#[test]
 fn update_fields_on_open_is_set_cleared_and_removed() {
     let mut doc = Document::new();
     assert_eq!(doc.update_fields_on_open(), None);

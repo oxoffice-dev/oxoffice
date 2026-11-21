@@ -1393,6 +1393,15 @@ fn push_page_field_updates(
                 updates.push(None);
                 continue;
             }
+            if name == "PAGEREF"
+                && oxoffice_docx_layout::engine::page_reference_keeps_stored_display(
+                    &field.cached_result,
+                )
+            {
+                retained(report, "the result holds more than a page number");
+                updates.push(None);
+                continue;
+            }
             if let Some(switch) = unsupported_switch(&instruction) {
                 retained(report, &format!("unsupported switch \\{switch}"));
                 updates.push(None);

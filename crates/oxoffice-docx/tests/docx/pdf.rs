@@ -850,15 +850,19 @@ fn a_table_of_contents_entry_saved_by_libreoffice_keeps_its_title() {
     let heading = r#"<w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Motivation</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#;
     let libreoffice = entry("<w:t>1.1</w:t><w:tab/><w:t>Motivation</w:t><w:tab/><w:t>7</w:t>");
     let word = entry("<w:t>7</w:t>");
-    let pdf = pdf_of(&doc_with_body(&format!("{libreoffice}{word}{heading}")));
+    // A level whose entry has no tab stop separates its parts with spaces.
+    let spaced = entry("<w:t xml:space=\"preserve\">1.2 Research questions 9</w:t>");
+    let pdf = pdf_of(&doc_with_body(&format!(
+        "{libreoffice}{word}{spaced}{heading}"
+    )));
     let lines: Vec<String> = lines(&pdf.drawn(0))
         .into_iter()
         .map(|line| squeeze(&line.text))
         .collect();
     assert_eq!(
-        lines[..2],
-        ["1.1Motivation7", "1"],
-        "the LibreOffice entry keeps its stored text, the Word one gets the page"
+        lines[..3],
+        ["1.1Motivation7", "1", "1.2Researchquestions9"],
+        "the LibreOffice entries keep their stored text, the Word one gets the page"
     );
 }
 

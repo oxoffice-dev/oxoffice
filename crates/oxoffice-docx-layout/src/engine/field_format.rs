@@ -85,6 +85,17 @@ pub(super) fn validate_page_field_instruction(
     Ok(())
 }
 
+/// Whether a PAGEREF result holds more than a page number, and so keeps its
+/// stored display in the layout and on update. LibreOffice writes a whole
+/// table of contents entry (its number, its title and its page, between
+/// tabs or spaces) as the result of the entry's PAGEREF. Word draws that
+/// stored result as it is until its fields are updated, and a page number
+/// alone holds no space or tab.
+#[doc(hidden)]
+pub fn page_reference_keeps_stored_display(cached_result: &str) -> bool {
+    cached_result.contains(char::is_whitespace)
+}
+
 /// Shared bounded page-family policy for layout and saved-cache consumers.
 #[doc(hidden)]
 pub fn format_page_field_result(
