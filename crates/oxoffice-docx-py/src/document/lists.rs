@@ -40,10 +40,20 @@ impl PyListLevel {
         format: &str,
         text: Option<String>,
         start: Option<u32>,
-        left_indent: Option<i64>,
-        hanging_indent: Option<i64>,
+        left_indent: Option<&Bound<'_, PyAny>>,
+        hanging_indent: Option<&Bound<'_, PyAny>>,
         font: Option<String>,
     ) -> PyResult<Self> {
+        let left_indent = crate::length_argument(
+            left_indent,
+            "ListLevel(left_indent)",
+            crate::LengthUnit::Twips,
+        )?;
+        let hanging_indent = crate::length_argument(
+            hanging_indent,
+            "ListLevel(hanging_indent)",
+            crate::LengthUnit::Twips,
+        )?;
         if let oxoffice_docx::ListNumberFormat::Other(_) =
             oxoffice_docx::ListNumberFormat::from_name(format)
         {

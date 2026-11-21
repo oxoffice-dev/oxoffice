@@ -29,10 +29,18 @@ impl PyPictureOptions {
         distances: Option<&Bound<'_, PyAny>>,
         relative_height: u32,
     ) -> PyResult<Self> {
-        let horizontal =
-            checked_section_length(horizontal_offset, "picture horizontal offset")?.unwrap_or(0);
-        let vertical =
-            checked_section_length(vertical_offset, "picture vertical offset")?.unwrap_or(0);
+        let horizontal = crate::length_argument(
+            horizontal_offset,
+            "PictureOptions(horizontal_offset)",
+            crate::LengthUnit::Emu,
+        )?
+        .unwrap_or(0);
+        let vertical = crate::length_argument(
+            vertical_offset,
+            "PictureOptions(vertical_offset)",
+            crate::LengthUnit::Emu,
+        )?
+        .unwrap_or(0);
         let crop = crop
             .map(|crop| {
                 let values = crop.cast::<PyTuple>().map_err(|_| {
@@ -80,8 +88,11 @@ impl PyPictureOptions {
                 ));
             }
             for (index, value) in values.iter().enumerate() {
-                distance[index] =
-                    checked_section_length(Some(&value), "picture wrap distance")?.unwrap();
+                distance[index] = crate::required_length(
+                    &value,
+                    "PictureOptions(distances)",
+                    crate::LengthUnit::Emu,
+                )?;
                 if distance[index] < 0 {
                     return Err(PyValueError::new_err(
                         "picture wrap distances cannot be negative",

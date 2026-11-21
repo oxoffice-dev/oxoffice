@@ -9,7 +9,7 @@ use std::path::Path;
 use oxoffice_docx::paragraph::ParagraphRef;
 use oxoffice_docx::{
     ContentFragment, ContentLocation, Document, NoteFamily, NoteNumberFormat, NotePlacement,
-    NotePolicy, NoteRestart, NoteSpecialRecord, RunItemRef, SectionBreak, StoryKind,
+    NotePolicy, NoteRestart, NoteSpecialRecord, RunItemRef, SectionBreak, StoryItemKind, StoryKind,
     StoryRunPosition,
 };
 use oxoffice_docx_oxml::document::CT_NoteProperties;
@@ -824,7 +824,10 @@ fn removing_a_custom_marked_note_in_a_deletion_removes_its_deleted_mark() {
             .contains("<w:delText")
     );
     let before = doc.part_xml("word/document.xml").unwrap();
-    assert!(before.contains("<w:lastRenderedPageBreak"), "{before}");
+    assert!(
+        before.contains("<w:lastRenderedPageBreak></w:lastRenderedPageBreak>"),
+        "{before}"
+    );
     doc.remove_footnote(dagger).unwrap();
     let main = doc.part_xml("word/document.xml").unwrap();
     assert!(!main.contains('\u{2020}'), "{main}");
@@ -989,10 +992,7 @@ fn a_long_form_page_break_between_a_reference_and_its_mark_is_passed_over() {
     assert_eq!(marked_text(&doc, 0), "Marked");
 }
 
-// Fails today: removing a paragraph keeps the footnotes it referenced, which
-// `footnotes()` then lists although nothing references them. Issue: #30
 #[test]
-#[should_panic(expected = "the note went with its paragraph")]
 fn removing_a_paragraph_removes_the_notes_it_references() {
     let mut doc = doc_with(&["Kept", "Removed"]);
     let kept = create_note(&mut doc, Footnote, 0, "Kept note");
@@ -1005,6 +1005,519 @@ fn removing_a_paragraph_removes_the_notes_it_references() {
         [(kept, " Kept note".to_owned())],
         "the note went with its paragraph"
     );
+}
+
+#[test]
+fn removing_a_paragraph_removes_its_endnotes() {
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    create_note(&mut doc, Endnote, 1, "Removed endnote");
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert!(endnote_texts(&doc).is_empty(), "{:?}", endnote_texts(&doc));
+}
+
+#[test]
+fn removing_a_range_removes_the_notes_of_every_paragraph_in_it() {
+    let mut doc = doc_with(&["One", "Two", "Three", "Four"]);
+    let kept = create_note(&mut doc, Footnote, 0, "One note");
+    create_note(&mut doc, Footnote, 1, "Two note");
+    create_note(&mut doc, Footnote, 2, "Three note");
+    assert_eq!(doc.remove_content_range(1, 3).unwrap(), 2);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["One", "Four"]);
+    assert_eq!(doc.footnotes(), [(kept, " One note".to_owned())]);
+}
+
+#[test]
+fn a_note_another_paragraph_still_references_stays() {
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let id = create_note(&mut doc, Footnote, 1, "Shared note");
+    doc.paragraph_mut(0).unwrap().add_footnote_ref(id);
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert_eq!(doc.footnotes(), [(id, " Shared note".to_owned())]);
+    assert_eq!(references(&doc, 0), [(Footnote, id)]);
+}
+
+/// `doc` saved, its part `name` rewritten by `edit`, and opened again.
+fn with_part(doc: &mut Document, name: &str, edit: impl FnOnce(&str) -> String) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part(name).unwrap().to_vec()).unwrap();
+    package.set_part(name, edit(&xml).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// `xml` with the run holding the footnote reference to `id` wrapped in
+/// `open` and `close`.
+fn wrapped_reference(xml: &str, id: i32, open: &str, close: &str) -> String {
+    let reference = xml
+        .find(&format!(r#"<w:footnoteReference w:id="{id}""#))
+        .expect("reference to the note");
+    let start = xml[..reference]
+        .rfind("<w:r>")
+        .max(xml[..reference].rfind("<w:r "))
+        .expect("run of the reference");
+    let end = reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len();
+    format!(
+        "{}{open}{}{close}{}",
+        &xml[..start],
+        &xml[start..end],
+        &xml[end..]
+    )
+}
+
+const TRACKED: &str = r#"w:author="Reviewer" w:date="2026-01-01T00:00:00Z""#;
+
+#[test]
+fn a_note_a_tracked_deletion_still_references_stays() {
+    // Paragraph 0 holds a deleted reference to the note; rejecting that
+    // deletion needs the note, so removing paragraph 1 keeps it.
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let id = create_note(&mut doc, Footnote, 1, "Shared note");
+    let mut doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let first = xml.find("</w:p>").expect("first paragraph");
+        format!(
+            r#"{}<w:del w:id="91" {TRACKED}><w:r><w:footnoteReference w:id="{id}"/></w:r></w:del>{}"#,
+            &xml[..first],
+            &xml[first..]
+        )
+    });
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert_eq!(doc.footnotes().len(), 1);
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        main.contains(&format!(r#"w:footnoteReference w:id="{id}""#)),
+        "{main}"
+    );
+}
+
+#[test]
+fn removing_a_paragraph_removes_the_note_of_a_tracked_insertion() {
+    // Word wraps a reference inserted with track changes on in `w:ins`.
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let id = create_note(&mut doc, Footnote, 1, "Inserted note");
+    let mut doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        wrapped_reference(
+            xml,
+            id,
+            &format!(r#"<w:ins w:id="92" {TRACKED}>"#),
+            "</w:ins>",
+        )
+    });
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert!(doc.footnotes().is_empty(), "{:?}", doc.footnotes());
+}
+
+/// A table of `rows` x `columns` cells holding text, with a footnote in each
+/// cell `notes` names (row, column, note text); returns the note ids.
+fn table_with_cell_notes(
+    doc: &mut Document,
+    rows: usize,
+    columns: usize,
+    notes: &[(usize, usize, &str)],
+) -> Vec<i32> {
+    {
+        let mut table = doc.add_table(rows, columns);
+        for row in 0..rows {
+            for column in 0..columns {
+                table
+                    .cell(row, column)
+                    .unwrap()
+                    .set_text(&format!("cell {row}{column}"));
+            }
+        }
+    }
+    notes
+        .iter()
+        .map(|(row, column, text)| {
+            let cell = doc
+                .stories()
+                .unwrap()
+                .into_iter()
+                .filter(|story| story.kind() == StoryKind::TableCell)
+                .nth(row * columns + column)
+                .expect("the cell story");
+            let location = doc.story_items(&cell).unwrap()[0].location().clone();
+            doc.create_footnote_at(
+                &StoryRunPosition {
+                    location,
+                    run_index: 1,
+                },
+                text,
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn removing_a_table_row_removes_the_notes_of_its_cells() {
+    let mut doc = doc_with(&["Before"]);
+    let ids = table_with_cell_notes(&mut doc, 2, 2, &[(0, 0, "Kept"), (1, 1, "Removed")]);
+    let mut doc = reopen(&mut doc);
+    assert!(doc.remove_table_row(0, 1).unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes(), [(ids[0], " Kept".to_owned())]);
+}
+
+#[test]
+fn removing_a_row_of_a_nested_table_removes_the_notes_of_its_cells() {
+    // A table inside a body cell is edited through its story location.
+    let mut doc = doc_with(&["Before"]);
+    {
+        let mut outer = doc.add_table(1, 1);
+        let mut cell = outer.cell(0, 0).unwrap();
+        cell.set_text("outer");
+        let mut nested = cell.add_table(2, 1);
+        nested.cell(0, 0).unwrap().set_text("kept row");
+        nested.cell(1, 0).unwrap().set_text("removed row");
+    }
+    let cells = |doc: &Document| {
+        doc.stories()
+            .unwrap()
+            .into_iter()
+            .filter(|story| story.kind() == StoryKind::TableCell)
+            .collect::<Vec<_>>()
+    };
+    let note_in = |doc: &mut Document, text: &str, note: &str| {
+        let cell = cells(doc)
+            .into_iter()
+            .find(|cell| {
+                doc.story_items(cell).unwrap().iter().any(|item| {
+                    item.kind() == StoryItemKind::Paragraph
+                        && item.text().unwrap().as_deref() == Some(text)
+                })
+            })
+            .expect("the cell");
+        let location = doc.story_items(&cell).unwrap()[0].location().clone();
+        doc.create_footnote_at(
+            &StoryRunPosition {
+                location,
+                run_index: 1,
+            },
+            note,
+        )
+        .unwrap()
+    };
+    let kept = note_in(&mut doc, "kept row", "Kept");
+    let removed = note_in(&mut doc, "removed row", "Removed");
+    comment_on_note(&mut doc, removed);
+    let outer_cell = cells(&doc)[0].clone();
+    let nested = doc
+        .story_items(&outer_cell)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::Table)
+        .expect("the nested table")
+        .location()
+        .clone();
+    assert!(doc.remove_story_table_row(&nested, 1).unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes(), [(kept, " Kept".to_owned())]);
+    assert!(doc.comments().is_empty(), "the thread went with its note");
+}
+
+#[test]
+fn deleting_a_table_column_removes_the_notes_of_its_cells() {
+    let mut doc = doc_with(&["Before"]);
+    let ids = table_with_cell_notes(&mut doc, 1, 2, &[(0, 0, "Kept"), (0, 1, "Removed")]);
+    let mut doc = reopen(&mut doc);
+    doc.delete_table_column(0, 1).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes(), [(ids[0], " Kept".to_owned())]);
+}
+
+/// A comment on the text of note `id`.
+fn comment_on_note(doc: &mut Document, id: i32) {
+    let paragraph = note_paragraph(doc, Footnote, id);
+    doc.add_story_comment(
+        oxoffice_docx::StoryRunRange {
+            start: StoryRunPosition {
+                location: paragraph.clone(),
+                run_index: 1,
+            },
+            end: StoryRunPosition {
+                location: paragraph,
+                run_index: 2,
+            },
+        },
+        "Reviewer",
+        None,
+        "On the note",
+    )
+    .unwrap();
+}
+
+/// `xml` with a control around the reference to note `id`: around its
+/// paragraph (a block control) or around its run (an inline control).
+fn control_around_reference(xml: &str, id: i32, inline: bool) -> String {
+    if inline {
+        return wrapped_reference(xml, id, "<w:sdt><w:sdtContent>", "</w:sdtContent></w:sdt>");
+    }
+    let run = reference_run(xml, id);
+    let start = xml[..run.start]
+        .rfind("<w:p>")
+        .max(xml[..run.start].rfind("<w:p "))
+        .unwrap();
+    let end = run.end + xml[run.end..].find("</w:p>").unwrap() + "</w:p>".len();
+    format!(
+        "{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+        &xml[..start],
+        &xml[start..end],
+        &xml[end..]
+    )
+}
+
+/// The first content control of the body.
+fn body_control(doc: &Document) -> ContentLocation {
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap();
+    doc.story_items(&body)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind() == StoryItemKind::ContentControl)
+        .expect("the control")
+        .location()
+        .clone()
+}
+
+#[test]
+fn removing_a_content_control_removes_the_comments_inside_its_notes() {
+    for inline in [false, true] {
+        let mut doc = doc_with(&["Kept", "Removed"]);
+        let removed = create_note(&mut doc, Footnote, 1, "Removed note");
+        comment_on_note(&mut doc, removed);
+        assert_eq!(doc.comments().len(), 1);
+        let mut doc = with_main_part(&mut doc, |xml| {
+            control_around_reference(xml, removed, inline)
+        });
+        doc.remove_content_control(&body_control(&doc)).unwrap();
+        let doc = reopen(&mut doc);
+        assert!(doc.footnotes().is_empty(), "inline: {inline}");
+        assert!(doc.comments().is_empty(), "inline: {inline}");
+    }
+}
+
+#[test]
+fn removing_a_content_control_removes_the_notes_inside_it() {
+    // A block control around a paragraph, and an inline control around the
+    // reference run: the two ways a control is removed.
+    for inline in [false, true] {
+        let mut doc = doc_with(&["Kept", "Removed"]);
+        let kept = create_note(&mut doc, Footnote, 0, "Kept note");
+        let removed = create_note(&mut doc, Footnote, 1, "Removed note");
+        let mut doc = with_main_part(&mut doc, |xml| {
+            control_around_reference(xml, removed, inline)
+        });
+        doc.remove_content_control(&body_control(&doc)).unwrap();
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.footnotes(),
+            [(kept, " Kept note".to_owned())],
+            "inline: {inline}"
+        );
+    }
+}
+
+#[test]
+fn removing_a_table_removes_the_notes_of_its_cells() {
+    let mut doc = doc_with(&["In a cell", "After"]);
+    create_note(&mut doc, Footnote, 0, "Cell note");
+    let mut doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let body = xml.find("<w:body>").unwrap() + "<w:body>".len();
+        let start = body
+            + [xml[body..].find("<w:p>"), xml[body..].find("<w:p ")]
+                .into_iter()
+                .flatten()
+                .min()
+                .unwrap();
+        let end = start + xml[start..].find("</w:p>").unwrap() + "</w:p>".len();
+        format!(
+            concat!(
+                "{}<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid>",
+                "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>",
+                "{}</w:tc></w:tr></w:tbl>{}"
+            ),
+            &xml[..start],
+            &xml[start..end],
+            &xml[end..]
+        )
+    });
+    assert_eq!(doc.tables().len(), 1);
+    assert!(doc.remove_content(0));
+    let doc = reopen(&mut doc);
+    assert!(doc.tables().is_empty());
+    assert!(doc.footnotes().is_empty(), "{:?}", doc.footnotes());
+}
+
+#[test]
+fn an_endnote_another_paragraph_still_references_stays() {
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    create_note(&mut doc, Endnote, 1, "Shared endnote");
+    let mut doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        let reference = xml.find("<w:endnoteReference ").unwrap();
+        let tag = &xml[reference..reference + xml[reference..].find("/>").unwrap() + 2];
+        let first = xml.find("</w:p>").expect("first paragraph");
+        format!("{}<w:r>{tag}</w:r>{}", &xml[..first], &xml[first..])
+    });
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert_eq!(endnote_texts(&doc).len(), 1);
+}
+
+#[test]
+fn a_note_a_header_references_stays() {
+    let mut doc = doc_with(&["Removed"]);
+    let id = create_note(&mut doc, Footnote, 0, "Header note");
+    doc.set_header("Head");
+    let mut doc = with_part(&mut doc, "/word/header1.xml", |xml| {
+        let end = xml.rfind("</w:p>").expect("header paragraph");
+        format!(
+            r#"{}<w:r><w:footnoteReference w:id="{id}"/></w:r>{}"#,
+            &xml[..end],
+            &xml[end..]
+        )
+    });
+    assert!(doc.remove_content(0));
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes().len(), 1);
+}
+
+#[test]
+fn removing_a_paragraph_removes_the_note_of_an_inline_content_control() {
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let id = create_note(&mut doc, Footnote, 1, "Control note");
+    let mut doc = with_part(&mut doc, "/word/document.xml", |xml| {
+        wrapped_reference(
+            xml,
+            id,
+            "<w:sdt><w:sdtPr/><w:sdtContent>",
+            "</w:sdtContent></w:sdt>",
+        )
+    });
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert!(doc.footnotes().is_empty(), "{:?}", doc.footnotes());
+}
+
+#[test]
+fn removing_a_paragraph_of_a_libreoffice_file_removes_its_note() {
+    let mut doc = corpus_doc("libreoffice/thesis.docx");
+    let before = doc.footnotes();
+    let (paragraph, id) = (0..doc.paragraph_count())
+        .find_map(|index| {
+            references(&doc, index)
+                .into_iter()
+                .find(|(family, _)| *family == Footnote)
+                .map(|(_, id)| (index, id))
+        })
+        .expect("a paragraph with a footnote");
+    let content = doc.content_index_of_paragraph(paragraph).unwrap();
+    assert!(doc.remove_content(content));
+    let doc = reopen(&mut doc);
+    let after = doc.footnotes();
+    assert_eq!(after.len(), before.len() - 1);
+    assert!(after.iter().all(|(note, _)| *note != id));
+}
+
+#[test]
+fn a_note_whose_id_its_part_holds_twice_stays() {
+    // The removal still succeeds; only that ambiguous note is left alone.
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let id = create_note(&mut doc, Footnote, 1, "Twice");
+    let mut doc = with_part(&mut doc, "/word/footnotes.xml", |xml| {
+        let start = xml
+            .find(&format!(r#"<w:footnote w:id="{id}""#))
+            .expect("the note");
+        let end = start + xml[start..].find("</w:footnote>").unwrap() + "</w:footnote>".len();
+        format!("{}{}{}", &xml[..end], &xml[start..end], &xml[end..])
+    });
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    let notes = doc.part_xml("word/footnotes.xml").unwrap();
+    assert_eq!(
+        notes.matches(&format!(r#"w:id="{id}""#)).count(),
+        2,
+        "{notes}"
+    );
+}
+
+/// A one-pixel PNG.
+const PIXEL: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+
+/// A document whose paragraphs `Kept` and `Removed` each hold a footnote
+/// showing a picture, saved and opened again so the pictures come from the
+/// file; the ids of the kept and the removed note.
+fn notes_with_pictures() -> (Document, i32, i32) {
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let kept = create_note(&mut doc, Footnote, 0, "Kept picture");
+    let removed = create_note(&mut doc, Footnote, 1, "Removed picture");
+    for id in [kept, removed] {
+        let story = doc.footnote_story(id).unwrap().expect("the note story");
+        doc.add_picture_to_story(
+            &story,
+            PIXEL,
+            "pixel.png",
+            oxoffice_docx::Length::emu(9525),
+            oxoffice_docx::Length::emu(9525),
+        )
+        .unwrap();
+    }
+    (reopen(&mut doc), kept, removed)
+}
+
+fn media_parts(doc: &Document) -> Vec<String> {
+    doc.part_names()
+        .unwrap()
+        .into_iter()
+        .filter(|name| name.contains("media/"))
+        .collect()
+}
+
+#[test]
+fn removing_a_paragraph_removes_the_picture_of_its_note_only() {
+    let (mut doc, kept, _) = notes_with_pictures();
+    assert_eq!(media_parts(&doc).len(), 2);
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.footnotes().len(), 1);
+    assert_eq!(doc.footnotes()[0].0, kept);
+    assert_eq!(media_parts(&doc).len(), 1, "{:?}", media_parts(&doc));
+}
+
+#[test]
+fn a_reference_to_a_note_the_part_lacks_does_not_block_the_removal() {
+    // The removed paragraph names a missing note and a real one: the real
+    // one still goes, the missing one is passed over.
+    let mut doc = doc_with(&["Kept", "Removed"]);
+    let kept = create_note(&mut doc, Footnote, 0, "Kept note");
+    create_note(&mut doc, Footnote, 1, "Removed note");
+    doc.paragraph_mut(1).unwrap().add_footnote_ref(kept + 40);
+    assert!(doc.remove_content(1));
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Kept"]);
+    assert_eq!(doc.footnotes(), [(kept, " Kept note".to_owned())]);
 }
 
 // ---- Note policies ----

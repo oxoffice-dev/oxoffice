@@ -1806,7 +1806,9 @@ fn a_picture_cut_saved_and_pasted_in_its_document_keeps_its_image() {
     doc.add_picture(&image, "p.png", Length::inches(1.0), Length::inches(1.0));
     let mut doc = reopen(&mut doc);
     let cut = doc.remove_content_at(&item_at(&doc, 1)).unwrap();
-    let mut doc = reopen(&mut doc);
+    // A save of the live document in between (reopening the saved bytes would
+    // be another document, without the cut picture).
+    doc.to_bytes().unwrap();
     doc.insert_content(&ContentLocation::end(body(&doc)), cut)
         .unwrap();
     let doc = reopen(&mut doc);

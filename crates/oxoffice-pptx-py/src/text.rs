@@ -92,13 +92,7 @@ fn points_spacing(emu: i64) -> PyResult<TextSpacing> {
             "spacing must be from 0 to 1584 points",
         ));
     }
-    let centipoints = emu / EMU_PER_CENTIPOINT;
-    if emu != 0 && centipoints == 0 {
-        return Err(PyValueError::new_err(
-            "spacing bare int is EMU; storage is 0.01 point; use oxoffice.pptx.util.Pt(6) or an explicit float line multiple",
-        ));
-    }
-    Ok(TextSpacing::Points(centipoints as i32))
+    Ok(TextSpacing::Points((emu / EMU_PER_CENTIPOINT) as i32))
 }
 
 fn lines_spacing(lines: f64) -> PyResult<TextSpacing> {
@@ -680,7 +674,8 @@ impl PyTextFrame {
     }
 
     #[setter]
-    fn set_margin_left(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_left(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "TextFrame.margin_left", crate::LengthUnit::Emu)?;
         self.set_margin(py, |insets| &mut insets.0, value)
     }
 
@@ -690,7 +685,9 @@ impl PyTextFrame {
     }
 
     #[setter]
-    fn set_margin_right(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_right(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value =
+            crate::length_argument(value, "TextFrame.margin_right", crate::LengthUnit::Emu)?;
         self.set_margin(py, |insets| &mut insets.1, value)
     }
 
@@ -700,7 +697,8 @@ impl PyTextFrame {
     }
 
     #[setter]
-    fn set_margin_top(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_top(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "TextFrame.margin_top", crate::LengthUnit::Emu)?;
         self.set_margin(py, |insets| &mut insets.2, value)
     }
 
@@ -710,7 +708,9 @@ impl PyTextFrame {
     }
 
     #[setter]
-    fn set_margin_bottom(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_margin_bottom(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value =
+            crate::length_argument(value, "TextFrame.margin_bottom", crate::LengthUnit::Emu)?;
         self.set_margin(py, |insets| &mut insets.3, value)
     }
 
@@ -828,19 +828,19 @@ impl PyParagraph {
     }
 }
 
-/// Reads a space-before or space-after value: a `Length` is exact points,
-/// and a float is a number of lines.
-fn paragraph_spacing(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<TextSpacing>> {
+/// Reads a space-before or space-after value: a float is a number of lines,
+/// and anything else is a length, read by the shared rule, in exact points.
+fn paragraph_spacing(
+    value: Option<&Bound<'_, PyAny>>,
+    name: &str,
+) -> PyResult<Option<TextSpacing>> {
     match value {
-        None => Ok(None),
-        Some(value) if value.is_none() => Ok(None),
-        Some(value) if value.is_instance_of::<PyBool>() => Err(PyTypeError::new_err(
-            "spacing rejects bool as EMU; use oxoffice.pptx.util.Pt(6) or an explicit float line multiple",
-        )),
         Some(value) if value.is_instance_of::<PyFloat>() => {
             lines_spacing(value.extract()?).map(Some)
         }
-        Some(value) => points_spacing(value.extract()?).map(Some),
+        _ => crate::length_argument(value, name, crate::LengthUnit::Centipoints)?
+            .map(points_spacing)
+            .transpose(),
     }
 }
 
@@ -1137,7 +1137,7 @@ impl PyParagraph {
 
     #[setter]
     fn set_space_before(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        let spacing = paragraph_spacing(value)?;
+        let spacing = paragraph_spacing(value, "Paragraph.space_before")?;
         self.update(py, |properties| properties.space_before = spacing)
     }
 
@@ -1148,7 +1148,7 @@ impl PyParagraph {
 
     #[setter]
     fn set_space_after(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        let spacing = paragraph_spacing(value)?;
+        let spacing = paragraph_spacing(value, "Paragraph.space_after")?;
         self.update(py, |properties| properties.space_after = spacing)
     }
 
@@ -1158,7 +1158,8 @@ impl PyParagraph {
     }
 
     #[setter]
-    fn set_left_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_left_indent(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "Paragraph.left_indent", crate::LengthUnit::Emu)?;
         let margin = margin_value(value, 0, "left indent")?;
         self.update(py, |properties| properties.left_margin = margin)
     }
@@ -1169,7 +1170,9 @@ impl PyParagraph {
     }
 
     #[setter]
-    fn set_right_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_right_indent(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value =
+            crate::length_argument(value, "Paragraph.right_indent", crate::LengthUnit::Emu)?;
         let margin = margin_value(value, 0, "right indent")?;
         self.update(py, |properties| properties.right_margin = margin)
     }
@@ -1180,7 +1183,13 @@ impl PyParagraph {
     }
 
     #[setter]
-    fn set_first_line_indent(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_first_line_indent(
+        &self,
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let value =
+            crate::length_argument(value, "Paragraph.first_line_indent", crate::LengthUnit::Emu)?;
         let indent = margin_value(value, -MAX_TEXT_MARGIN, "first line indent")?;
         self.update(py, |properties| properties.indent = indent)
     }
@@ -2440,25 +2449,19 @@ impl PyFont {
 
     #[setter]
     fn set_spacing(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        let spacing = value
-            .map(|value| -> PyResult<TextPointValue> {
-                if value.is_instance_of::<PyBool>() {
-                    return Err(PyTypeError::new_err("character spacing rejects bool as EMU; use oxoffice.pptx.util.Pt(2)"));
-                }
-                let emu = value.extract::<i64>()?;
-                let centipoints = emu / EMU_PER_CENTIPOINT;
-                if emu != 0 && centipoints == 0 {
-                    return Err(PyValueError::new_err("character spacing bare int is EMU; storage is 0.01 point; use oxoffice.pptx.util.Pt(2), with signed Length values supported"));
-                }
-                if (-MAX_FONT_SIZE..=MAX_FONT_SIZE).contains(&centipoints) {
-                    Ok(TextPointValue::Centipoints(centipoints as i32))
-                } else {
-                    Err(PyValueError::new_err(
-                        "character spacing must be from -4000 to 4000 points",
-                    ))
-                }
-            })
-            .transpose()?;
+        let spacing =
+            crate::length_argument(value, "Font.spacing", crate::LengthUnit::Centipoints)?
+                .map(|emu| -> PyResult<TextPointValue> {
+                    let centipoints = emu / EMU_PER_CENTIPOINT;
+                    if (-MAX_FONT_SIZE..=MAX_FONT_SIZE).contains(&centipoints) {
+                        Ok(TextPointValue::Centipoints(centipoints as i32))
+                    } else {
+                        Err(PyValueError::new_err(
+                            "character spacing must be from -4000 to 4000 points",
+                        ))
+                    }
+                })
+                .transpose()?;
         self.update(py, |properties| properties.spacing = spacing)
     }
 
@@ -2555,7 +2558,8 @@ impl PyFont {
     }
 
     #[setter]
-    fn set_size(&self, py: Python<'_>, value: Option<i64>) -> PyResult<()> {
+    fn set_size(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let value = crate::length_argument(value, "Font.size", crate::LengthUnit::Centipoints)?;
         let centipoints = value
             .map(|emu| {
                 let centipoints = emu.div_euclid(EMU_PER_CENTIPOINT);

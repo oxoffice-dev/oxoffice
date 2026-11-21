@@ -20,6 +20,32 @@ use presentation::{
 
 pub(crate) use oxoffice_py_support::normalize_index;
 
+pub(crate) use oxoffice_py_support::LengthUnit;
+
+const LENGTHS: oxoffice_py_support::LengthClasses = oxoffice_py_support::LengthClasses {
+    module: "oxoffice.pptx",
+    hint: "Pt",
+};
+
+/// Read one optional length argument by the rule every length argument
+/// follows: see [`oxoffice_py_support::length_argument`].
+pub(crate) fn length_argument(
+    value: Option<&Bound<'_, PyAny>>,
+    name: &str,
+    unit: LengthUnit,
+) -> PyResult<Option<i64>> {
+    oxoffice_py_support::length_argument(value, LENGTHS, name, unit)
+}
+
+/// Read one length argument that takes no `None`, by the same rule.
+pub(crate) fn required_length(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    unit: LengthUnit,
+) -> PyResult<i64> {
+    oxoffice_py_support::required_length(value, LENGTHS, name, unit)
+}
+
 fn public_exception_type<'py>(py: Python<'py>, class_name: &str) -> PyResult<Bound<'py, PyType>> {
     oxoffice_py_support::public_exception_type(py, "oxoffice.pptx", class_name)
 }

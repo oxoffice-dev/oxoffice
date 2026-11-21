@@ -1826,7 +1826,9 @@ impl PyPresentation {
     }
 
     #[setter(slide_width)]
-    fn set_slide_width(&mut self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_slide_width(&mut self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value =
+            crate::required_length(value, "Presentation.slide_width", crate::LengthUnit::Emu)?;
         self.set_slide_size(py, Some(value), None)
     }
 
@@ -1836,7 +1838,9 @@ impl PyPresentation {
     }
 
     #[setter(slide_height)]
-    fn set_slide_height(&mut self, py: Python<'_>, value: i64) -> PyResult<()> {
+    fn set_slide_height(&mut self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value =
+            crate::required_length(value, "Presentation.slide_height", crate::LengthUnit::Emu)?;
         self.set_slide_size(py, None, Some(value))
     }
 
