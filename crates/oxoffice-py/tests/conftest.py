@@ -1,10 +1,10 @@
 """Shared pytest wiring of the Python tests.
 
-The scaling tests (test_*_scaling.py) time every public mutating call at N and 4N. They need a build without debug
-assertions (`maturin build --profile scaling` or `--release`): debug builds check every edit against a copy of the
-whole document, so every call grows with it. OXOFFICE_SCALING picks what runs:
+The scaling tests (test_*_scaling.py) time every public mutating call at N and 16N (docx) or 4N (pptx). They need a
+build without debug assertions (`maturin build --profile scaling` or `--release`): debug builds check every edit
+against a copy of the whole document, so every call grows with it. OXOFFICE_SCALING picks what runs:
 
-- unset: only the checks that every mutating call is timed
+- unset: only the checks that every mutating call is timed, and each timed docx call made once, untimed
 - quick: also the calls of each module's QUICK set, for pull requests
 - full: every call, for main
 """

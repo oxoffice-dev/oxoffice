@@ -1,14 +1,17 @@
 """docx: every public mutating call of oxoffice.docx should cost about the same in a document of N paragraphs and in
-one of 4N: an edit touches its element and, for a picture or a note, its own part. The calls of GROWING do not yet
+one of 16N: an edit touches its element and, for a picture or a note, its own part. The calls of GROWING do not yet
 (oxoffice-dev/oxoffice#6): each is a strict xfail, so a fix shows as an XPASS to remove from the set, and one that
 grows faster than the body still fails. `test_every_mutating_call_is_timed` keeps the list complete as the API grows;
 two reads whose cost grows with the body are timed the same way (READS_TIMED).
 
 Each paragraph of the two documents holds 6 runs with the run properties Google Docs writes on every run; every 10th
 paragraph also holds a picture and is followed by a 2x2 table, and the documents have two sections, the first with a
-header: the body's XML, its tables and the bytes of the package grow fourfold. Making a target costs about as much as
-a timed call, so the documents end with targets made in advance (builders.edit_cost_docx), and each timed call opens
-its documents again, so that no call sees the targets another one changed."""
+header: the body's XML, its tables and the bytes of the package grow sixteenfold. Every paragraph, run and table row
+carries the identifiers Word writes when it saves, so that each call takes the route a saved document takes. Making a
+target costs about as much as a timed call, so the documents end with targets made in advance
+(builders.edit_cost_docx), and each timed call opens its documents again, so that no call sees the targets another one
+changed. `test_every_timed_call_runs_once` makes every timed call once on a small document, untimed: on a debug build
+each edit then also runs the whole-document cross-checks."""
 import ast
 import datetime
 import io
@@ -27,14 +30,17 @@ from oxoffice.docx import (WD_ALIGN_PARAGRAPH, WD_CELL_VERTICAL_ALIGNMENT, WD_RO
 from builders import edit_cost_docx, noise_png
 
 N = 25
+# The large document has LARGE times the paragraphs of the small one, so that a cost linear in the body rises well over
+# FLOOR_MS even when a fixed part dominates it at N.
+LARGE = 16
 CALLS = 3  # fresh targets a call is timed on in each document, the fastest counting; over 50 ms, two are enough
-# A cost independent of the document measures about 1 time, one that grows with it 2 to 4 times. Between the two
+# A cost independent of the document measures about 1 time, one that grows with it 2 to 16 times. Between the two
 # bounds, the result stays: a call of GROWING counts as fixed under FIXED times, any other one as grown over RATIO
 # times, so that the noise of a loaded machine does not turn a call near 2 times into an XPASS or a failure.
 RATIO, FIXED, FLOOR_MS = 2.5, 1.5, 5
-# A call of GROWING may cost a time linear in the body, about 4 times at most from N to 4N; it fails over LINEAR
-# times, which a cost that grows faster, about 16 times for a quadratic one, exceeds.
-LINEAR = 6
+# A call of GROWING may cost a time linear in the body, about 16 times at most from N to 16N; it fails over LINEAR
+# times, which a cost that grows faster, about 256 times for a quadratic one, exceeds.
+LINEAR = 24
 # A call outside the band it is expected in is measured again, up to REMEASURE times, the fastest of every measure
 # counting at each size: a load spike on a shared CI runner rarely comes back, a cost that grows with the document does
 # every time. Any call is expected under RATIO times, a call of GROWING between FIXED and LINEAR times, so that a spike
@@ -737,7 +743,7 @@ def costs_ms(paths, setup):
 
 
 def measured(documents, name, expected):
-    """The costs of `name` at N and 4N, measured again up to REMEASURE times while expected(small, large) is false,
+    """The costs of `name` at N and LARGE * N, measured again up to REMEASURE times while expected(small, large) is false,
     the fastest of every measure counting at each size."""
     small, large = costs_ms(documents, (TIMED | READS_TIMED)[name])
     for _ in range(REMEASURE):
@@ -752,38 +758,54 @@ def measured(documents, name, expected):
 def documents(tmp_path_factory):
     folder = tmp_path_factory.mktemp("scaling")
     return (edit_cost_docx(folder / "n.docx", N, picture_side=100),
-            edit_cost_docx(folder / "4n.docx", 4 * N, picture_side=100))
+            edit_cost_docx(folder / "large.docx", LARGE * N, picture_side=100))
 
 
 # Calls whose cost grows with the body (oxoffice-dev/oxoffice#6), measured on a build without debug assertions
-# (2026-11-20, Linux): over FIXED with a margin of a quarter on two runs, 2.0 to 4.0 times from N to 4N, none over
-# LINEAR. A call leaves the set when a fix makes it flat, which the strict xfail reports as an XPASS.
+# (2026-11-21, Linux): over FIXED on two runs, none over LINEAR. A call leaves the set when a fix makes it flat, which the strict xfail reports as an XPASS.
 GROWING = {
-    "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text", "Cell.replace_xml", "Cell.split",
-    "Cell.text", "Document.accept_revision_id", "Document.add_bullet_list_item", "Document.add_chart",
-    "Document.add_custom_xml_store", "Document.add_endnote", "Document.add_footnote",
+    "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text", "Cell.replace_xml", "Cell.set_border",
+    "Cell.set_margins", "Cell.shading", "Cell.split", "Cell.text", "Cell.vertical_alignment", "Cell.width",
+    "Document.accept_revision_id", "Document.add_bullet_list_item", "Document.add_chart", "Document.add_comment",
+    "Document.add_custom_xml_store", "Document.add_endnote", "Document.add_footnote", "Document.add_heading",
     "Document.add_heading_hyperlink", "Document.add_hyperlink_to_story", "Document.add_numbered_list_item",
-    "Document.add_picture", "Document.add_story_permission_range", "Document.clone_content",
-    "Document.clone_content_control", "Document.create_section_story", "Document.insert_content",
-    "Document.insert_content_control", "Document.insert_html", "Document.insert_legacy_form_field",
-    "Document.insert_section", "Document.link_section_story", "Document.move_comment", "Document.move_content",
+    "Document.add_numbering_definition", "Document.add_numbering_instance", "Document.add_page_break",
+    "Document.add_paragraph", "Document.add_picture", "Document.add_story_permission_range", "Document.add_table",
+    "Document.clone_content", "Document.clone_content_control", "Document.create_section_story",
+    "Document.embed_font", "Document.embed_system_fonts", "Document.embed_true_type_fonts",
+    "Document.import_fragment", "Document.insert_content", "Document.insert_content_control",
+    "Document.insert_document", "Document.insert_html", "Document.insert_legacy_form_field",
+    "Document.insert_paragraph", "Document.insert_section", "Document.insert_table", "Document.link_section_story",
+    "Document.link_style_to_numbering", "Document.move_comment", "Document.move_content",
     "Document.move_content_control", "Document.pop_content", "Document.reject_revision_id",
-    "Document.remove_comment", "Document.remove_content_control", "Document.remove_document_protection",
-    "Document.remove_endnote", "Document.remove_footnote", "Document.remove_hyperlink",
-    "Document.remove_mail_merge_package", "Document.remove_section", "Document.repeat_content_control",
-    "Document.replace_text_at", "Document.reply_to", "Document.restart_numbering", "Document.set_chart_legend",
-    "Document.set_content_control_alias", "Document.set_content_control_appearance",
-    "Document.set_content_control_binding", "Document.set_content_control_lock",
-    "Document.set_content_control_placeholder", "Document.set_content_control_tag",
-    "Document.set_content_control_type", "Document.set_document_protection", "Document.set_footer",
-    "Document.set_header", "Document.set_hyperlink_url", "Document.set_mail_merge_package",
+    "Document.remove_comment", "Document.remove_content", "Document.remove_content_control",
+    "Document.remove_content_range", "Document.remove_document_protection", "Document.remove_embedded_font",
+    "Document.remove_endnote", "Document.remove_font", "Document.remove_footnote", "Document.remove_hyperlink",
+    "Document.remove_mail_merge_package", "Document.remove_section", "Document.remove_style",
+    "Document.repeat_content_control", "Document.replace_image", "Document.replace_image_for_story",
+    "Document.replace_text_at", "Document.reply_to", "Document.resolve_comment", "Document.restart_numbering",
+    "Document.save_subset_fonts", "Document.set_chart_legend", "Document.set_content_control_alias",
+    "Document.set_content_control_appearance", "Document.set_content_control_binding",
+    "Document.set_content_control_lock", "Document.set_content_control_placeholder",
+    "Document.set_content_control_tag", "Document.set_content_control_type", "Document.set_document_protection",
+    "Document.set_font", "Document.set_footer", "Document.set_header", "Document.set_hyperlink_url",
+    "Document.set_image_watermark", "Document.set_mail_merge_package", "Document.set_note_policy",
     "Document.set_page_color", "Document.set_picture_size", "Document.set_picture_sizes_for_relationship",
-    "Document.set_story_text", "Document.unlink_section_story", "Document.unwrap_content_control",
-    "FootnoteEndnote.add_paragraph", "FootnoteEndnote.add_table", "FootnoteEndnote.delete",
-    "HeaderFooter.is_linked_to_previous", "Paragraph.add_internal_hyperlink", "Paragraph.replace_text",
-    "Paragraph.replace_xml", "Run.add_picture", "Run.replace_xml", "SectionHandle.replace_xml",
-    "SectionHandle.set_note_policy", "SectionHandle.set_page_border", "Table.add_row", "Table.clone_row",
-    "Table.delete_column", "Table.insert_column", "Table.remove_row", "Table.replace_xml",
+    "Document.set_story_text", "Document.set_text_watermark", "Document.split_run", "Document.unlink_section_story",
+    "Document.unwrap_content_control", "FootnoteEndnote.add_paragraph", "FootnoteEndnote.add_table",
+    "FootnoteEndnote.delete", "HeaderFooter.add_paragraph", "HeaderFooter.add_table",
+    "HeaderFooter.is_linked_to_previous", "Paragraph.add_equation", "Paragraph.add_hyperlink",
+    "Paragraph.add_internal_hyperlink", "Paragraph.add_run", "Paragraph.insert_paragraph_before",
+    "Paragraph.replace_text", "Paragraph.replace_xml", "Paragraph.text", "Row.cant_split", "Row.height",
+    "Row.height_rule", "Row.is_header", "Run.add_field", "Run.add_legacy_form_field", "Run.add_picture",
+    "Run.remove", "Run.replace_xml", "Run.text", "SectionHandle.remove_watermark", "SectionHandle.replace_xml",
+    "SectionHandle.set_image_watermark", "SectionHandle.set_note_policy", "SectionHandle.set_page_border",
+    "SectionHandle.set_text_watermark", "Settings.odd_and_even_pages_header_footer", "Table.add_row",
+    "Table.alignment", "Table.autofit", "Table.banded_columns", "Table.banded_rows", "Table.clone_row",
+    "Table.delete_column", "Table.first_column", "Table.first_row", "Table.grid_widths", "Table.indent",
+    "Table.insert_column", "Table.last_column", "Table.last_row", "Table.remove_row", "Table.replace_xml",
+    "Table.set_border", "Table.set_borders", "Table.set_cell_margins", "Table.set_cell_vertical_merge",
+    "Table.set_column_width", "Table.width",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
@@ -802,13 +824,13 @@ QUICK = {
 def test_call_cost_does_not_grow_with_the_document(documents, name):
     if name in GROWING:
         small, large = measured(documents, name, lambda s, l: FIXED * s + FLOOR_MS <= l < LINEAR * s + FLOOR_MS)
-        message = f"{name}: {large:.1f} ms at {4 * N} paragraphs, {small:.1f} ms at {N}"
+        message = f"{name}: {large:.1f} ms at {LARGE * N} paragraphs, {small:.1f} ms at {N}"
         if large >= LINEAR * small + FLOOR_MS:
             pytest.fail(f"grows faster than the body: {message}")
         assert large < FIXED * small + FLOOR_MS, message
         return
     small, large = measured(documents, name, lambda s, l: l < RATIO * s + FLOOR_MS)
-    assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {4 * N} paragraphs, {small:.1f} ms at {N}"
+    assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {LARGE * N} paragraphs, {small:.1f} ms at {N}"
 
 
 def test_every_mutating_call_is_timed():
@@ -817,3 +839,13 @@ def test_every_mutating_call_is_timed():
     timed = {name.split(" (")[0] for name in TIMED}
     assert sorted(mutating_surface() - timed - set(WHOLE_DOCUMENT)) == []
     assert sorted((timed | set(WHOLE_DOCUMENT)) - mutating_surface()) == []
+
+
+@pytest.fixture(scope="module")
+def saved_document(tmp_path_factory):
+    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 3, picture_side=8)
+
+
+@pytest.mark.parametrize("name", sorted(TIMED))
+def test_every_timed_call_runs_once(saved_document, name):
+    TIMED[name](oxdocx.Document.open(saved_document))(0)()
