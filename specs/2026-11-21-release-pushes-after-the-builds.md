@@ -76,6 +76,20 @@ on the built tree), `main` moved with conflicts in `Cargo.toml` and
 (retried), a re-run after the push (goes on), a tag on another commit
 (stops).
 
+## Learnings
+
+- The first real run (44950236376, 0.2.0) failed before its push: nothing
+  reached `main`, the tags or the releases (only an orphan provenance
+  attestation remains, as after any failure past that step). The release
+  notes ran `--latest` after the local tag, and cliff.toml's GitHub remote
+  asks the API for the commit the range ends at, here the unpushed version
+  commit (404). The notes now come from the
+  dispatched commit before the version commit (`--unreleased --tag`), or
+  from the pushed tag on a re-run (`--latest`); both checked with git-cliff
+  2.14.2 and the GitHub remote against the real repository. The scratch
+  tests had run git-cliff offline, which hid it: a step that talks to
+  GitHub must be tried against GitHub.
+
 ## Links
 
 - #175 (one commit in every build job), specs/2026-11-20-ci-and-release.md
