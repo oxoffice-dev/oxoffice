@@ -132,20 +132,10 @@ impl StyleFormatting {
             } else {
                 value.extract::<i32>()?
             };
-            use oxoffice_docx_oxml::shared::ST_Underline;
-            properties.underline = Some(match code {
-                0 => ST_Underline::None,
-                1 => ST_Underline::Single,
-                2 => ST_Underline::Words,
-                3 => ST_Underline::Double,
-                4 => ST_Underline::Dotted,
-                6 => ST_Underline::Thick,
-                7 => ST_Underline::Dash,
-                9 => ST_Underline::DotDash,
-                10 => ST_Underline::DotDotDash,
-                11 => ST_Underline::Wave,
-                _ => return Err(PyValueError::new_err("unsupported underline style")),
-            });
+            properties.underline = Some(
+                oxoffice_docx::underline_from_code(code)
+                    .ok_or_else(|| PyValueError::new_err("unsupported underline style"))?,
+            );
         }
         Ok(Some(properties))
     }

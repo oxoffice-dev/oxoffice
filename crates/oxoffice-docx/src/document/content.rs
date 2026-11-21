@@ -161,7 +161,7 @@ impl Document {
         )
     }
 
-    fn refuse_unsavable_body_edit(&self) -> Result<()> {
+    pub(super) fn refuse_unsavable_body_edit(&self) -> Result<()> {
         match self.unsavable_body_edit() {
             Some(reason) => Err(Error::Other(reason.to_owned())),
             None => Ok(()),

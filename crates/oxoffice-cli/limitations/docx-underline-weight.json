@@ -1,0 +1,9 @@
+{
+  "id": "docx-underline-weight",
+  "format": "docx",
+  "area": "pdf",
+  "title": "PDF and images: heavy, long and double-wave underlines are drawn with a plain stroke",
+  "symptom": "dottedHeavy, dashedHeavy, dashLongHeavy, dashDotHeavy, dashDotDotHeavy and wavyHeavy underlines are drawn at normal weight, dashLong as a short dash and wavyDouble as a single wave; the file keeps the exact style",
+  "workaround": "none; the style is kept in the saved document and shown by Word and LibreOffice",
+  "issue": 323
+}

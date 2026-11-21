@@ -8,9 +8,9 @@ use std::path::Path;
 
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
-    CommentDate, CommentRef, ContentLocation, Document, RunItemRef, RunPosition, RunRange,
-    StoryItemKind, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
-    TextCommentOptions,
+    CommentDate, CommentRef, ContentLocation, Document, HalfPoint, RunItemRef, RunPosition,
+    RunRange, StoryItemKind, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
+    TextCommentOptions, Twips,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -1503,26 +1503,46 @@ fn a_comment_reuses_comment_styles_found_by_id_and_refuses_one_of_the_wrong_type
     let mut doc = doc_with(&["review this"]);
     doc.add_style(StyleBuilder::paragraph("CommentText", "CommentText"))
         .unwrap();
-    doc.add_comment_on_text(
-        "review",
-        "Ada",
-        "Please review",
-        TextCommentOptions {
-            date: CommentDate::Undated,
-            ..Default::default()
-        },
-    )
+    doc.add_style(StyleBuilder::character(
+        "CommentReference",
+        "CommentReference",
+    ))
     .unwrap();
+    let style_count = doc.styles().len();
+    let id = doc
+        .add_comment_on_text(
+            "review",
+            "Ada",
+            "Please review",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let doc = reopen(&mut doc);
-    assert_eq!(
-        doc.style("CommentText")
-            .and_then(|style| style.name().map(str::to_owned))
-            .as_deref(),
-        Some("CommentText"),
-        "the existing style is reused, not renamed"
-    );
+    assert_eq!(doc.styles().len(), style_count, "no style is created");
+    for id in ["CommentText", "CommentReference"] {
+        assert_eq!(
+            doc.style(id)
+                .and_then(|style| style.name().map(str::to_owned))
+                .as_deref(),
+            Some(id),
+            "the existing style {id} is reused, not renamed"
+        );
+    }
     let xml = doc.part_xml("word/comments.xml").unwrap();
     assert!(xml.contains(r#"<w:pStyle w:val="CommentText"/>"#), "{xml}");
+    assert!(
+        xml.contains(r#"<w:rStyle w:val="CommentReference"/>"#),
+        "{xml}"
+    );
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(
+        comment_reference_style(&body, id).as_deref(),
+        Some("CommentReference"),
+        "the body mark:\n{body}"
+    );
 
     let mut doc = doc_with(&["review this"]);
     doc.add_style(StyleBuilder::character("CommentText", "CommentText"))
@@ -1540,6 +1560,159 @@ fn a_comment_reuses_comment_styles_found_by_id_and_refuses_one_of_the_wrong_type
         .unwrap_err()
         .to_string();
     assert!(error.contains("wrong type"), "{error}");
+}
+
+#[test]
+fn a_comment_mark_style_of_the_wrong_type_leaves_no_comment_text_style_behind() {
+    // The comment text style is created before the mark's style is found
+    // to be a paragraph style: the refused add takes it back.
+    type Add = fn(&mut Document) -> oxoffice_docx::Result<i32>;
+    let routes: [(&str, Add); 3] = [
+        ("on text", |doc| {
+            doc.add_comment_on_text(
+                "review",
+                "Ada",
+                "Please review",
+                TextCommentOptions {
+                    date: CommentDate::Undated,
+                    ..Default::default()
+                },
+            )
+        }),
+        ("on runs", |doc| {
+            doc.add_comment_with_date(
+                run_range(0, 0, 0, 1),
+                "Ada",
+                None,
+                "Please review",
+                CommentDate::Undated,
+            )
+        }),
+        ("on a story range", |doc| {
+            let first = story_paragraph(doc, StoryKind::Body, 0);
+            let second = doc.story_items(first.story()).unwrap()[1]
+                .location()
+                .clone();
+            let mut range = story_range(&first, 0, 1);
+            range.end = StoryRunPosition {
+                location: second,
+                run_index: 1,
+            };
+            doc.add_story_comment_with_date(
+                range,
+                "Ada",
+                None,
+                "Please review",
+                CommentDate::Undated,
+            )
+        }),
+    ];
+    for (route, add) in routes {
+        let mut doc = doc_with(&["review this", "and this"]);
+        doc.add_style(StyleBuilder::paragraph(
+            "CommentReference",
+            "CommentReference",
+        ))
+        .unwrap();
+        let before = doc.to_bytes().unwrap();
+        let error = add(&mut doc).unwrap_err().to_string();
+        assert!(
+            error.contains("comment style CommentReference has the wrong type"),
+            "{route}: {error}"
+        );
+        assert!(
+            doc.style("CommentText").is_none(),
+            "{route}: no comment text style is left behind"
+        );
+        assert_eq!(doc.to_bytes().unwrap(), before, "{route}: nothing changed");
+    }
+}
+
+/// `doc` saved, its `word/styles.xml` rewritten by `edit`, and reopened:
+/// styles as another producer wrote them, which the facade would not write.
+fn with_styles_xml(doc: &mut Document, edit: impl FnOnce(String) -> String) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(
+        package
+            .get_part("/word/styles.xml")
+            .expect("styles part")
+            .to_vec(),
+    )
+    .expect("styles are UTF-8");
+    package.set_part("/word/styles.xml", edit(xml).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("document with these styles opens")
+}
+
+/// The styles the comment text and comment reference styles that a new
+/// comment on "review" creates are based on, after a save.
+fn comment_style_bases(doc: &mut Document) -> [Option<String>; 2] {
+    doc.add_comment_on_text(
+        "review",
+        "Ada",
+        "Please review",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let doc = reopen(doc);
+    ["CommentText", "CommentReference"].map(|id| {
+        doc.style(id)
+            .unwrap_or_else(|| panic!("{id} is created"))
+            .based_on()
+            .map(str::to_owned)
+    })
+}
+
+#[test]
+fn new_comment_styles_fall_back_to_normal_and_default_paragraph_font_by_id() {
+    // A file that marks no style default: the created comment styles stand
+    // on Word's usual base styles, found by their ids.
+    let mut doc = doc_with(&["review this"]);
+    doc.add_style(StyleBuilder::character(
+        "DefaultParagraphFont",
+        "Default Paragraph Font",
+    ))
+    .unwrap();
+    let mut doc = with_styles_xml(&mut doc, |xml| xml.replace(r#" w:default="1""#, ""));
+    assert!(
+        doc.styles().iter().all(|style| !style.is_default()),
+        "no style is marked default"
+    );
+    assert_eq!(
+        comment_style_bases(&mut doc),
+        [
+            Some("Normal".to_owned()),
+            Some("DefaultParagraphFont".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_base_id_naming_a_style_of_the_other_type_is_no_comment_style_base() {
+    // No style is marked default, and Word's usual base ids name styles of
+    // the other type: the created comment styles are based on nothing.
+    let mut doc = doc_with(&["review this"]);
+    doc.add_style(StyleBuilder::paragraph(
+        "DefaultParagraphFont",
+        "Default Paragraph Font",
+    ))
+    .unwrap();
+    let mut doc = with_styles_xml(&mut doc, |xml| {
+        xml.replace(r#" w:default="1""#, "").replace(
+            r#"w:type="paragraph" w:styleId="Normal""#,
+            r#"w:type="character" w:styleId="Normal""#,
+        )
+    });
+    assert_eq!(
+        doc.style("Normal").map(|style| style.style_type()),
+        Some(StyleType::Character)
+    );
+    assert_eq!(comment_style_bases(&mut doc), [None, None]);
 }
 
 #[test]
@@ -1570,4 +1743,237 @@ fn the_comment_styles_a_new_document_gets_are_words_built_in_ones() {
             "{id} is Word's built-in {built_in:?}"
         );
     }
+}
+
+/// The character style of the run that holds the reference of comment `id`
+/// in `xml`, a story part as saved.
+fn comment_reference_style(xml: &str, id: i32) -> Option<String> {
+    let at = xml.find(&format!("<w:commentReference w:id=\"{id}\""))?;
+    let before = &xml[..at];
+    let run = before.rfind("<w:r>").max(before.rfind("<w:r "))?;
+    let tag = "<w:rStyle w:val=\"";
+    let style = before[run..].find(tag)? + run + tag.len();
+    Some(xml[style..style + xml[style..].find('"')?].to_owned())
+}
+
+#[test]
+fn new_comment_styles_have_words_sizes_and_every_new_comment_mark_takes_the_reference_style() {
+    let mut doc = doc_with(&["review this", "and this run", "and this story range"]);
+    doc.set_header("Header words");
+    // The first comment, in a header, comes with the comment parts.
+    let header = story_paragraph(&doc, StoryKind::Header, 0);
+    let in_header = doc
+        .add_story_comment_with_date(
+            story_range(&header, 0, 1),
+            "Ada",
+            None,
+            "On the header",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let on_text = doc
+        .add_comment_on_text(
+            "review",
+            "Ada",
+            "Please review",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let on_runs = doc
+        .add_comment_with_date(
+            run_range(1, 0, 1, 1),
+            "Ada",
+            None,
+            "On the run",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let reply = doc
+        .reply_to_with_date(on_text, "Ben", "Agreed", CommentDate::Undated)
+        .unwrap();
+    let body = story_paragraph(&doc, StoryKind::Body, 0).story().clone();
+    let third = doc.story_items(&body).unwrap()[2].location().clone();
+    let on_story_range = doc
+        .add_story_comment_with_date(
+            story_range(&third, 0, 1),
+            "Ada",
+            None,
+            "On the story range",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let doc = reopen(&mut doc);
+
+    // Word's built-in "annotation text" is 10 pt on single lines, its
+    // "annotation reference" 8 pt.
+    let text = doc.style("CommentText").expect("comment text style");
+    let run = text.run_properties().expect("comment text run properties");
+    assert_eq!(
+        (run.sz, run.sz_cs),
+        (Some(HalfPoint(20)), Some(HalfPoint(20)))
+    );
+    let paragraph = text
+        .paragraph_properties()
+        .expect("comment text paragraph properties");
+    assert_eq!(
+        (paragraph.line_spacing, paragraph.line_rule.as_deref()),
+        (Some(Twips(240)), Some("auto"))
+    );
+    let reference = doc
+        .style("CommentReference")
+        .expect("comment reference style");
+    let mark = reference
+        .run_properties()
+        .expect("comment reference run properties");
+    assert_eq!(
+        (mark.sz, mark.sz_cs),
+        (Some(HalfPoint(16)), Some(HalfPoint(16)))
+    );
+    // Both are kept out of the style gallery until used, as Word's are.
+    for style in [&text, &reference] {
+        assert_eq!(
+            (
+                style.priority(),
+                style.semi_hidden(),
+                style.unhide_when_used()
+            ),
+            (Some(99), Some(true), Some(true)),
+            "{}",
+            style.style_id()
+        );
+    }
+
+    let body = doc.part_xml("word/document.xml").unwrap();
+    for id in [on_text, on_runs, reply, on_story_range] {
+        assert_eq!(
+            comment_reference_style(&body, id).as_deref(),
+            Some("CommentReference"),
+            "the body mark of comment {id}:\n{body}"
+        );
+    }
+    let header = doc.part_xml("word/header1.xml").unwrap();
+    assert_eq!(
+        comment_reference_style(&header, in_header).as_deref(),
+        Some("CommentReference"),
+        "the header mark:\n{header}"
+    );
+}
+
+#[test]
+fn a_comment_mark_takes_the_reference_style_in_every_story_owner_a_range_can_name() {
+    let mut doc = doc_with_body(concat!(
+        "<w:p><w:r><w:t>first of two</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>second of two</w:t></w:r></w:p>",
+        "<w:sdt><w:sdtPr/><w:sdtContent>",
+        "<w:p><w:r><w:t>in a control</w:t></w:r></w:p>",
+        "</w:sdtContent></w:sdt>",
+    ));
+    let mut table = doc.add_table(1, 1);
+    table.cell(0, 0).expect("cell").set_text("in a cell");
+    let first = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_footnote(&first, "in a note").unwrap();
+    let add = |doc: &mut Document, range: StoryRunRange| {
+        doc.add_story_comment_with_date(range, "Ada", None, "Here", CommentDate::Undated)
+            .unwrap()
+    };
+
+    // Taken again: the note's reference rewrote the first paragraph.
+    let first = doc.paragraph_story_location(0).unwrap().unwrap();
+    let second = doc.paragraph_story_location(1).unwrap().unwrap();
+    let mut over_two = story_range(&first, 0, 1);
+    over_two.end = StoryRunPosition {
+        location: second,
+        run_index: 1,
+    };
+    let over_two = add(&mut doc, over_two);
+    let control = doc.paragraph_story_location(2).unwrap().unwrap();
+    assert_eq!(control.index_path().len(), 2, "a paragraph in a control");
+    let in_control = add(&mut doc, story_range(&control, 0, 1));
+    let cell = story_paragraph(&doc, StoryKind::TableCell, 0);
+    let in_cell = add(&mut doc, story_range(&cell, 0, 1));
+    let note = story_paragraph(&doc, StoryKind::Footnote, 0);
+    // The note's text run, after the run of its own reference mark.
+    let in_note = add(&mut doc, story_range(&note, 1, 2));
+    let doc = reopen(&mut doc);
+
+    let body = doc.part_xml("word/document.xml").unwrap();
+    for (owner, id) in [
+        ("a range over two paragraphs", over_two),
+        ("a content control", in_control),
+        ("a table cell", in_cell),
+    ] {
+        assert_eq!(
+            comment_reference_style(&body, id).as_deref(),
+            Some("CommentReference"),
+            "the mark in {owner}:\n{body}"
+        );
+    }
+    let notes = doc.part_xml("word/footnotes.xml").unwrap();
+    assert_eq!(
+        comment_reference_style(&notes, in_note).as_deref(),
+        Some("CommentReference"),
+        "the mark in a note:\n{notes}"
+    );
+}
+
+#[test]
+fn the_body_mark_of_a_comment_added_to_a_localized_word_file_takes_its_comment_reference_style() {
+    // Word for Mac in French names the comment reference style
+    // "Marquedecommentaire".
+    let mut doc = corpus_doc("word/report.docx");
+    let root = doc
+        .add_comment_on_text(
+            "January",
+            "Ada",
+            "Check the date",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let reply = doc
+        .reply_to_with_date(root, "Ben", "Checked", CommentDate::Undated)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    let body = doc.part_xml("word/document.xml").unwrap();
+    for id in [root, reply] {
+        assert_eq!(
+            comment_reference_style(&body, id).as_deref(),
+            Some("Marquedecommentaire"),
+            "the body mark of comment {id}"
+        );
+    }
+}
+
+#[test]
+fn removing_a_comment_takes_its_styled_reference_run_with_it() {
+    // Word and oxoffice give the comment mark a character style: its run
+    // holds nothing but the reference, and goes with the comment.
+    let mut doc = doc_with(&["review this"]);
+    let id = doc
+        .add_comment_on_text(
+            "review",
+            "Ada",
+            "Please review",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(doc.remove_comment(id).unwrap());
+    let doc = reopen(&mut doc);
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert!(!body.contains("CommentReference"), "{body}");
+
+    let mut doc = corpus_doc("word/report.docx");
+    let id = doc.comments()[0].id();
+    assert!(doc.remove_comment(id).unwrap());
+    let doc = reopen(&mut doc);
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert!(!body.contains("Marquedecommentaire"), "{body}");
 }
