@@ -595,9 +595,11 @@ fn emit_table(
         .into_iter()
         .filter(|row| !row.accepted_view_removes())
         .collect::<Vec<_>>();
+    let limit = grid_limit(tbl);
     for (row_idx, row) in rows.iter().enumerate() {
         out.push_str("<tr>\n");
-        for (col_idx, cell) in row.cells().into_iter().enumerate() {
+        let ranges = grid_ranges(row, limit);
+        for (cell, &range) in row.cells().into_iter().zip(&ranges) {
             // Skip vmerge continue cells
             if let Some(props) = &cell.properties
                 && matches!(props.v_merge, Some(VMerge::Continue))
@@ -618,7 +620,7 @@ fn emit_table(
 
                 // Row span (count consecutive vmerge continue cells below)
                 if matches!(props.v_merge, Some(VMerge::Restart)) {
-                    let rowspan = count_vmerge_span(&rows[row_idx + 1..], col_idx);
+                    let rowspan = count_vmerge_span(&rows[row_idx + 1..], range, limit);
                     if rowspan > 1 {
                         td_attrs.push_str(&format!(" rowspan=\"{rowspan}\""));
                     }
@@ -685,13 +687,54 @@ fn emit_table(
     out.push_str("</table>\n");
 }
 
-/// Count the rowspan for a vmerge restart cell in column `col_idx`, from the
-/// rows below it.
-fn count_vmerge_span(rows_below: &[&CT_Row], col_idx: usize) -> u32 {
+/// The grid columns each cell of `row` covers, as `(start, end)`: the
+/// columns the row omits before its first cell, then each cell's
+/// `gridSpan`. Both are clamped to `limit`, the table's width, since the
+/// counts come from the file unchecked.
+pub(crate) fn grid_ranges(row: &CT_Row, limit: usize) -> Vec<(usize, usize)> {
+    let mut column = (row
+        .properties
+        .as_ref()
+        .and_then(|properties| properties.grid_before)
+        .unwrap_or(0) as usize)
+        .min(limit);
+    row.cells()
+        .into_iter()
+        .map(|cell| {
+            let start = column;
+            let span = cell
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.grid_span)
+                .unwrap_or(1)
+                .max(1) as usize;
+            column = column.saturating_add(span).min(limit);
+            (start, column)
+        })
+        .collect()
+}
+
+/// The width of `table` in grid columns: its grid, or more if a row holds
+/// more cells.
+pub(crate) fn grid_limit(table: &CT_Tbl) -> usize {
+    let grid = table.grid.as_ref().map_or(0, |grid| grid.columns.len());
+    table
+        .rows()
+        .into_iter()
+        .map(|row| row.cells().len())
+        .fold(grid, usize::max)
+}
+
+/// How many rows a cell merged down over the grid columns `range` spans: the
+/// rows below whose cell over the same columns continues the merge.
+fn count_vmerge_span(rows_below: &[&CT_Row], range: (usize, usize), limit: usize) -> u32 {
     let mut span = 1;
     for row in rows_below {
-        if let Some(next_cell) = row.cells().get(col_idx)
-            && let Some(props) = &next_cell.properties
+        let cells = row.cells();
+        if let Some(index) = grid_ranges(row, limit)
+            .iter()
+            .position(|&other| other == range)
+            && let Some(props) = &cells[index].properties
             && matches!(props.v_merge, Some(VMerge::Continue))
         {
             span += 1;

@@ -1088,10 +1088,7 @@ fn merged_cells_become_spans_in_html_and_keep_their_text_in_markdown() {
     );
 }
 
-// Fails today: the row span is counted by cell index, not by grid column, so
-// a cell merged down beside a horizontal merge gets no rowspan. Issue: #258
 #[test]
-#[should_panic(expected = "a cell merged down beside a horizontal merge loses its row span")]
 fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
     let mut doc = Document::new();
     {
@@ -1122,10 +1119,81 @@ fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
     );
 }
 
-// Fails today: GFM cannot span, and the cells after a merged one are written
-// in the next free column instead of their own. Issue: #258
+/// A table of three grid columns whose rows are `rows`, each a row's XML
+/// inside `w:tr`.
+fn three_column_table(rows: &[&str]) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}</w:tbl><w:p/>"#,
+        rows.iter()
+            .map(|row| format!("<w:tr>{row}</w:tr>"))
+            .collect::<String>()
+    )
+}
+
+/// A cell holding `text`, with `properties` inside its `w:tcPr`.
+fn table_cell(properties: &str, text: &str) -> String {
+    format!(r#"<w:tc><w:tcPr>{properties}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#)
+}
+
 #[test]
-#[should_panic(expected = "a cell after a horizontal merge moves to another column in Markdown")]
+fn markdown_places_cells_by_grid_column_and_aligns_columns_by_their_header() {
+    let header = format!(
+        "{}{}",
+        table_cell(r#"<w:gridSpan w:val="2"/>"#, "A")
+            .replace("<w:p>", r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr>"#),
+        table_cell("", "B").replace("<w:p>", r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr>"#)
+    );
+    let omitted = format!(
+        r#"<w:trPr><w:gridBefore w:val="1"/></w:trPr>{}{}"#,
+        table_cell("", "x"),
+        table_cell("", "y")
+    );
+    let doc = reopen(&mut doc_with_body(&three_column_table(&[
+        &header, &omitted,
+    ])));
+    let markdown = doc.to_markdown();
+    let read = read_markdown(&markdown);
+    let Read::Table(rows) = &read[0] else {
+        panic!("{read:?}")
+    };
+    assert_eq!(rows[0], ["A", "", "B"]);
+    assert_eq!(rows[1], ["", "x", "y"]);
+    assert_eq!(
+        markdown.lines().nth(1),
+        Some("| :---: | --- | ---: |"),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn a_huge_grid_span_from_the_file_stays_within_the_table_in_both_exports() {
+    // Two cells past the table's width, as a generator that sets gridSpan
+    // without removing the cells it covers writes them: both keep their text.
+    let row = format!(
+        "{}{}{}",
+        table_cell(r#"<w:gridSpan w:val="4000000000"/>"#, "wide"),
+        table_cell("", "after"),
+        table_cell("", "then")
+    );
+    let before = format!(
+        r#"<w:trPr><w:gridBefore w:val="4000000000"/></w:trPr>{}{}"#,
+        table_cell("", "late"),
+        table_cell("", "later")
+    );
+    let doc = reopen(&mut doc_with_body(&three_column_table(&[&row, &before])));
+    let markdown = doc.to_markdown();
+    assert!(markdown.len() < 1000, "{} bytes", markdown.len());
+    assert!(
+        ["wide", "after", "then", "late", "later"]
+            .iter()
+            .all(|text| markdown.contains(text)),
+        "{markdown}"
+    );
+    let html = doc.to_html_fragment();
+    assert!(html.contains("after") && html.contains("late"), "{html}");
+}
+
+#[test]
 fn markdown_keeps_the_cells_after_a_horizontal_merge_in_their_columns() {
     let mut doc = Document::new();
     three_by_three(&mut doc)
