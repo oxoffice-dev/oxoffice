@@ -15,9 +15,11 @@ struct LegacyFormProjection {
     entry_macro_seen: bool,
     exit_macro_seen: bool,
     help_text_seen: bool,
+    help_text: Option<LegacyFormInfoText>,
     status_text_seen: bool,
     kind: Option<LegacyFormFieldKind>,
     text_type_seen: bool,
+    text_input_type: Option<LegacyTextInputType>,
     text_format_seen: bool,
     checkbox_size_seen: bool,
     checkbox_size: Option<LegacyCheckBoxSize>,
@@ -318,6 +320,8 @@ pub(super) fn parse_legacy_form_data(
             choices: projection.choices,
             max_length: projection.max_length,
             checkbox_size: projection.checkbox_size,
+            help_text: projection.help_text,
+            text_input_type: projection.text_input_type,
         },
         reset_default,
         text_default,
@@ -453,7 +457,8 @@ fn project_legacy_form_element(
             }
             Some("helpText") => {
                 mark_legacy_form_singleton(&mut projection.help_text_seen, "w:helpText")?;
-                validate_legacy_info_text(element, word_prefixes, "w:helpText", 255)?;
+                projection.help_text =
+                    validate_legacy_info_text(element, word_prefixes, "w:helpText", 255)?;
             }
             Some("statusText") => {
                 mark_legacy_form_singleton(&mut projection.status_text_seen, "w:statusText")?;
@@ -495,14 +500,19 @@ fn project_legacy_form_element(
                 mark_legacy_form_singleton(&mut projection.text_type_seen, "w:textInput/w:type")?;
                 let value =
                     required_legacy_form_value(element, word_prefixes, "w:textInput/w:type")?;
-                if !matches!(
-                    value.as_str(),
-                    "regular" | "number" | "date" | "currentTime" | "currentDate" | "calculated"
-                ) {
-                    return Err(OxmlError::InvalidValue(
-                        "invalid w:textInput/w:type token".to_owned(),
-                    ));
-                }
+                projection.text_input_type = match value.as_str() {
+                    "regular" => None,
+                    "number" => Some(LegacyTextInputType::Number),
+                    "date" => Some(LegacyTextInputType::Date),
+                    "currentTime" => Some(LegacyTextInputType::CurrentTime),
+                    "currentDate" => Some(LegacyTextInputType::CurrentDate),
+                    "calculated" => Some(LegacyTextInputType::Calculated),
+                    _ => {
+                        return Err(OxmlError::InvalidValue(
+                            "invalid w:textInput/w:type token".to_owned(),
+                        ));
+                    }
+                };
             }
             (Some(LegacyFormFieldKind::TextInput), Some("default")) => {
                 mark_legacy_form_singleton(
@@ -793,27 +803,39 @@ fn legacy_form_word_attribute(
     Ok(value)
 }
 
+/// A help or status text, `None` when it has no `w:val`.
 fn validate_legacy_info_text(
     element: &BytesStart<'_>,
     word_prefixes: &[String],
     name: &str,
     max_characters: usize,
-) -> Result<()> {
-    if legacy_form_word_attribute(element, word_prefixes, b"type", "w:type")?
-        .is_some_and(|value| !matches!(value.as_str(), "text" | "autoText"))
-    {
-        return Err(OxmlError::InvalidValue(format!(
-            "invalid {name} w:type token"
-        )));
-    }
-    if legacy_form_word_attribute(element, word_prefixes, b"val", "w:val")?
+) -> Result<Option<LegacyFormInfoText>> {
+    let auto_text =
+        match legacy_form_word_attribute(element, word_prefixes, b"type", "w:type")?.as_deref() {
+            None | Some("text") => false,
+            Some("autoText") => true,
+            Some(_) => {
+                return Err(OxmlError::InvalidValue(format!(
+                    "invalid {name} w:type token"
+                )));
+            }
+        };
+    let value = legacy_form_word_attribute(element, word_prefixes, b"val", "w:val")?;
+    if value
+        .as_ref()
         .is_some_and(|value| value.chars().count() > max_characters)
     {
         return Err(OxmlError::InvalidValue(format!(
             "{name} w:val exceeds {max_characters} characters"
         )));
     }
-    Ok(())
+    Ok(value.map(|value| {
+        if auto_text {
+            LegacyFormInfoText::AutoText(value)
+        } else {
+            LegacyFormInfoText::Text(value)
+        }
+    }))
 }
 
 fn legacy_form_usize_value(
@@ -1384,6 +1406,10 @@ pub(super) fn legacy_form_author_parts(
         choices,
         max_length,
         checkbox_size: author.checkbox_size,
+        help_text: author.help_text.clone(),
+        text_input_type: author
+            .text_type
+            .filter(|input_type| *input_type != LegacyTextInputType::Regular),
     };
     Ok((name, display, data, author, reset_default, text_default))
 }
@@ -1718,5 +1744,114 @@ mod legacy_checkbox_size_tests {
             checkbox_size("<w:sizeAuto/>"),
             Some(LegacyCheckBoxSize::Auto)
         );
+    }
+}
+
+#[cfg(test)]
+mod legacy_form_read_tests {
+    use super::*;
+
+    /// The legacy form data of the one field of a Word-shaped paragraph.
+    fn legacy_form(ff_data: &str, instruction: &str) -> LegacyFormFieldData {
+        let xml = format!(
+            r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:fldChar w:fldCharType="begin"><w:ffData>{ff_data}</w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>value</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        );
+        let paragraph = CT_P::from_xml_fragment(xml.as_bytes()).unwrap();
+        paragraph
+            .runs
+            .iter()
+            .flat_map(|run| &run.content)
+            .find_map(|content| match content {
+                RunContent::Field(field) => field.legacy_form.clone(),
+                _ => None,
+            })
+            .expect("a legacy form field")
+    }
+
+    #[test]
+    fn a_legacy_text_field_keeps_its_help_text_and_input_type() {
+        let data = legacy_form(
+            r#"<w:name w:val="Today"/><w:enabled/><w:calcOnExit w:val="0"/><w:helpText w:type="text" w:val="The signing date"/><w:textInput><w:type w:val="currentDate"/><w:format w:val="dd/MM/yyyy"/></w:textInput>"#,
+            "FORMTEXT",
+        );
+        assert_eq!(
+            data.help_text,
+            Some(LegacyFormInfoText::Text("The signing date".to_owned()))
+        );
+        assert_eq!(data.text_input_type, Some(LegacyTextInputType::CurrentDate));
+        assert_eq!(data.checkbox_size, None);
+    }
+
+    #[test]
+    fn help_text_from_autotext_and_an_unstated_type_are_kept_as_written() {
+        let data = legacy_form(
+            r#"<w:name w:val="Name"/><w:enabled/><w:calcOnExit w:val="0"/><w:helpText w:type="autoText" w:val="NameHelp"/><w:textInput><w:maxLength w:val="40"/></w:textInput>"#,
+            "FORMTEXT",
+        );
+        assert_eq!(
+            data.help_text,
+            Some(LegacyFormInfoText::AutoText("NameHelp".to_owned()))
+        );
+        assert_eq!(data.text_input_type, None, "unstated means regular");
+        assert_eq!(data.max_length, Some(40));
+    }
+
+    #[test]
+    fn an_authored_legacy_text_field_keeps_its_help_text_and_input_type() {
+        let options = LegacyFormFieldOptions {
+            name: Some("Today".to_owned()),
+            enabled: true,
+            calculate_on_exit: false,
+            help_text: Some(LegacyFormInfoText::Text("The signing date".to_owned())),
+            status_text: None,
+        };
+        let definition = LegacyFormFieldDefinition::TextInput {
+            input_type: LegacyTextInputType::CurrentDate,
+            default: None,
+            value: String::new(),
+            max_length: None,
+            format: None,
+        };
+        let field = Field::from_legacy_form(options, definition).unwrap();
+        let data = field.legacy_form.as_ref().unwrap();
+        assert_eq!(
+            data.help_text,
+            Some(LegacyFormInfoText::Text("The signing date".to_owned()))
+        );
+        assert_eq!(data.text_input_type, Some(LegacyTextInputType::CurrentDate));
+    }
+
+    #[test]
+    fn authored_regular_text_reads_none_like_parsed_regular_text() {
+        let options = LegacyFormFieldOptions {
+            name: Some("Name".to_owned()),
+            enabled: true,
+            calculate_on_exit: false,
+            help_text: None,
+            status_text: None,
+        };
+        let definition = LegacyFormFieldDefinition::TextInput {
+            input_type: LegacyTextInputType::Regular,
+            default: None,
+            value: String::new(),
+            max_length: None,
+            format: None,
+        };
+        let field = Field::from_legacy_form(options, definition).unwrap();
+        assert_eq!(field.legacy_form.as_ref().unwrap().text_input_type, None);
+    }
+
+    #[test]
+    fn regular_text_reads_the_same_stated_or_not() {
+        let stated = legacy_form(
+            r#"<w:name w:val="A"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput><w:type w:val="regular"/></w:textInput>"#,
+            "FORMTEXT",
+        );
+        let unstated = legacy_form(
+            r#"<w:name w:val="A"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+            "FORMTEXT",
+        );
+        assert_eq!(stated.text_input_type, None);
+        assert_eq!(unstated.text_input_type, None);
     }
 }
