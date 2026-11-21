@@ -333,7 +333,9 @@ file only once it is complete, so a failed run leaves no truncated output.
 `validate` exits unsuccessfully on a structural error: a relationship to a
 missing part, a part without a content type, or a prefix that `mc:Ignorable`
 or `mc:MustUnderstand` lists without a namespace declaration. Empty
-paragraphs, heading level gaps, and missing metadata are warnings only.
+paragraphs, heading level gaps, missing metadata, and a paragraph numbered by a
+numbering instance or a level the document does not define (Word shows it
+without a number; one warning per paragraph) are warnings only.
 
 The documented WordprocessingML subset also checks well-formed XML 1.0 in
 XML parts, style ids, direct body/p/r children and order, text placement,

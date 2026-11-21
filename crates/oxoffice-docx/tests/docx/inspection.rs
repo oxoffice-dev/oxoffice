@@ -1608,3 +1608,90 @@ fn every_report_text_holds_its_header_footer_and_comment_after_the_body() {
         }
     }
 }
+
+/// A document whose numbering part defines numbering instance 1 with level 0
+/// only, and whose body holds `body`.
+fn doc_with_one_level_numbering(body: &str) -> Vec<u8> {
+    let bytes = doc_with_body(body).to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+    if !package.contains_part("/word/numbering.xml") {
+        package.get_or_create_part_rels("/word/document.xml").add(
+            oxoffice_opc::relationship::rel_types::NUMBERING,
+            "numbering.xml",
+        );
+        package.content_types.add_override(
+            "/word/numbering.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        );
+    }
+    package.set_part("/word/numbering.xml", numbering.as_bytes().to_vec());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    out.into_inner()
+}
+
+fn numbered(text: &str, num_id: u32, level: u32) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{num_id}"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+    )
+}
+
+#[test]
+fn validation_warns_once_per_paragraph_numbered_by_a_missing_instance_or_level() {
+    let body = [
+        numbered("missing instance", 42, 0),
+        numbered("missing level", 1, 3),
+        numbered("fine", 1, 0),
+        numbered("missing instance again", 42, 0),
+    ]
+    .concat();
+    let bytes = doc_with_one_level_numbering(&body);
+    let messages = |report: ValidationReport| {
+        report
+            .findings
+            .into_iter()
+            .filter(|finding| finding.message.contains("numbering"))
+            .map(|finding| (finding.severity, finding.message))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        (
+            ValidationSeverity::Warning,
+            "a paragraph in /word/document.xml is numbered by numbering instance 42, which the \
+             document does not define: Word shows it without a number"
+                .to_owned(),
+        ),
+        (
+            ValidationSeverity::Warning,
+            "a paragraph in /word/document.xml is numbered at level 3 of numbering instance 1, \
+             a level its definition does not have: Word shows it without a number"
+                .to_owned(),
+        ),
+        (
+            ValidationSeverity::Warning,
+            "a paragraph in /word/document.xml is numbered by numbering instance 42, which the \
+             document does not define: Word shows it without a number"
+                .to_owned(),
+        ),
+    ];
+    assert_eq!(messages(validate_document_bytes(&bytes).unwrap()), expected);
+    let doc = Document::from_bytes(&bytes).unwrap();
+    let report = doc.validate().unwrap();
+    assert!(report.is_valid(), "warnings only: Word opens the file");
+    assert_eq!(messages(report), expected);
+}
+
+#[test]
+fn numbered_contracts_of_every_producer_have_no_dangling_numbering_reference() {
+    for producer in ["word", "google", "libreoffice", "authored"] {
+        let name = format!("{producer}/contract.docx");
+        let report = validate_document_bytes(&corpus_bytes(&name)).unwrap();
+        let dangling = report
+            .findings
+            .iter()
+            .filter(|finding| finding.message.contains("Word shows it without a number"))
+            .collect::<Vec<_>>();
+        assert!(dangling.is_empty(), "{name}: {dangling:?}");
+    }
+}

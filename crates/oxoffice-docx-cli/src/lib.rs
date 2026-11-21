@@ -267,8 +267,10 @@ enum Command {
     /// Checks package relationships, well-formed XML 1.0, style ids, body/p/r
     /// children and order, text placement, jc and color, tracked-change id and
     /// author, extents, m:rad required children, relationship ids, note references
-    /// and deleted text. Repeated bookmark ids are warnings. This is not a full
-    /// schema validator.
+    /// and deleted text. Repeated bookmark ids are warnings, and so is each
+    /// paragraph numbered by a numbering instance or level the document does
+    /// not define, which Word shows without a number. This is not a full schema
+    /// validator.
     Validate {
         /// Path to the DOCX file
         file: PathBuf,

@@ -1103,5 +1103,73 @@ fn validate_document_package(package: OpcPackage) -> Result<ValidationReport> {
             ValidationSeverity::Warning => warnings.push(finding.message),
         }
     }
+
+    warnings.extend(dangling_numbering_warnings(&doc)?);
     Ok(document_validation_report(errors, warnings))
+}
+
+/// One warning for each paragraph numbered by a numbering instance the
+/// document does not define, or at a level its definition does not have.
+/// Word opens such a file and shows the paragraph without a number. The
+/// reference is resolved as `Document::validate_numbering_graph` resolves it:
+/// direct numbering, then the paragraph style's.
+fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
+    let mut candidate = doc.clone_for_staging();
+    candidate.flush_to_package()?;
+    let numbering = candidate.numbering.as_ref();
+    let mut warnings = Vec::new();
+    for part_name in candidate.word_story_part_names() {
+        let Some(xml) = candidate
+            .package
+            .get_part(&part_name)
+            .filter(|bytes| identifier_xml_is_well_formed(bytes))
+        else {
+            continue;
+        };
+        for direct in xml_paragraph_numbering_properties(xml)? {
+            let style_id = direct.style_id.as_deref().or_else(|| {
+                candidate
+                    .styles
+                    .get_default(StyleType::Paragraph)
+                    .map(|style| style.style_id.as_str())
+            });
+            let mut effective = style::resolve_paragraph_properties(style_id, &candidate.styles);
+            candidate.apply_effective_numbering(&mut effective, Some(&direct), style_id);
+            let Some(num_id) = effective.num_id.filter(|num_id| *num_id != 0) else {
+                continue;
+            };
+            let level = effective.num_ilvl.unwrap_or(0);
+            let Some((numbering, instance)) = numbering.and_then(|numbering| {
+                numbering
+                    .nums
+                    .iter()
+                    .find(|instance| instance.num_id == num_id)
+                    .map(|instance| (numbering, instance))
+            }) else {
+                warnings.push(format!(
+                    "a paragraph in {part_name} is numbered by numbering instance {num_id}, \
+                     which the document does not define: Word shows it without a number"
+                ));
+                continue;
+            };
+            let has_level = numbering
+                .abstract_nums
+                .iter()
+                .find(|definition| definition.abstract_num_id == instance.abstract_num_id)
+                .is_some_and(|definition| {
+                    definition
+                        .levels
+                        .iter()
+                        .any(|candidate| candidate.ilvl == level)
+                });
+            if !has_level {
+                warnings.push(format!(
+                    "a paragraph in {part_name} is numbered at level {level} of numbering \
+                     instance {num_id}, a level its definition does not have: Word shows it \
+                     without a number"
+                ));
+            }
+        }
+    }
+    Ok(warnings)
 }
