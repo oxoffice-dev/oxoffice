@@ -229,6 +229,7 @@ impl Document {
             rel_types::ENDNOTES,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
         )?;
+        let part_exists = candidate.package.get_part(&part_name).is_some();
         let source = match candidate.package.get_part(&part_name) {
             Some(xml) => xml.to_vec(),
             None => oxoffice_docx_oxml::footnotes::CT_Footnotes::new().to_xml_endnotes()?,
@@ -262,11 +263,15 @@ impl Document {
             note_type: oxoffice_docx_oxml::footnotes::NoteType::Normal,
             paragraphs: vec![paragraph],
         };
-        let mut fragments =
-            missing_note_specials(&existing, Some(&source), StoryKind::Endnote, Some(id))?
-                .iter()
-                .map(|note| serialized_note_fragment(note, StoryKind::Endnote))
-                .collect::<Result<Vec<_>>>()?;
+        let mut fragments = missing_note_specials(
+            &existing,
+            part_exists.then_some(source.as_slice()),
+            StoryKind::Endnote,
+            Some(id),
+        )?
+        .iter()
+        .map(|note| serialized_note_fragment(note, StoryKind::Endnote))
+        .collect::<Result<Vec<_>>>()?;
         fragments.push(serialized_note_fragment(&note, StoryKind::Endnote)?);
         let updated = append_story_fragments_to_root(&source, b"endnotes", b"endnote", &fragments)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;

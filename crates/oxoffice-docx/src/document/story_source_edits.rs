@@ -179,6 +179,8 @@ pub(super) fn set_story_source_xml_in(
 
 // Source-qualified types, rather than the legacy typed unknown-type fallback,
 // decide whether an imported part already owns an authored special record.
+// `source` is the part as the package holds it, `None` for a part this edit
+// creates.
 pub(super) fn missing_note_specials(
     existing: &oxoffice_docx_oxml::footnotes::CT_Footnotes,
     source: Option<&[u8]>,
@@ -189,10 +191,6 @@ pub(super) fn missing_note_specials(
     use oxoffice_docx_oxml::footnotes::{CT_Footnote, NoteType};
     let mut separator = false;
     let mut continuation = false;
-    let mut notes = existing
-        .footnotes
-        .iter()
-        .any(|note| note.note_type == NoteType::Normal);
     let mut occupied = existing
         .footnotes
         .iter()
@@ -230,16 +228,16 @@ pub(super) fn missing_note_specials(
             match raw_note_type_in_scope(xml, &bindings)? {
                 RawNoteType::Separator => separator = true,
                 RawNoteType::ContinuationSeparator => continuation = true,
-                RawNoteType::Omitted | RawNoteType::ExplicitNormal => notes = true,
                 _ => {}
             }
         }
     }
-    // A part that already holds notes and no separator comes from a producer
-    // that writes none (Google Docs numbers its notes from 0): Word draws its
-    // own separators there, and adding ours would change the file's form for
-    // nothing, and every comparison with the file it came from.
-    if notes && !separator && !continuation {
+    // A part already in the package with no separator entry comes from a
+    // producer that writes none (Google Docs numbers its notes from 0), and
+    // stays so once its notes are all removed: Word draws its own separators
+    // there, and adding ours would change the file's form for nothing, and
+    // every comparison with the file it came from.
+    if source.is_some() && !separator && !continuation {
         return Ok(Vec::new());
     }
     let mut additions = Vec::new();

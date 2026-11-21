@@ -1815,14 +1815,22 @@ fn notes_added_to_the_google_report_create_their_parts() {
     let content_types = doc.part_xml("[Content_Types].xml").unwrap();
     assert!(content_types.contains("footnotes+xml"));
     assert!(content_types.contains("endnotes+xml"));
+    // A part the edit creates takes Word's separator entries.
+    assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (1, 1));
+    assert_eq!(separator_counts(&doc, "word/endnotes.xml"), (1, 1));
 }
 
 // Google Docs writes its notes without separator entries and numbers them
 // from 0: a note added there, either way, keeps that form.
 #[test]
-fn a_footnote_added_to_a_google_paper_keeps_its_notes_without_separators() {
-    for create in [true, false] {
-        let mut doc = corpus_doc("google/paper.docx");
+fn a_footnote_added_to_a_google_saved_document_keeps_its_notes_without_separators() {
+    for (file, create) in [
+        ("google/paper.docx", true),
+        ("google/paper.docx", false),
+        ("google/thesis.docx", true),
+        ("google/thesis.docx", false),
+    ] {
+        let mut doc = corpus_doc(file);
         assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (0, 0));
         let before = doc.footnotes().len();
         let id = if create {
@@ -1839,10 +1847,68 @@ fn a_footnote_added_to_a_google_paper_keeps_its_notes_without_separators() {
             doc.footnotes()
                 .iter()
                 .any(|(note, text)| *note == id && text == " Added note"),
-            "{:?}",
+            "{file}: {:?}",
             doc.footnotes()
         );
     }
+}
+
+// The part stays in the package once its notes are removed, and keeps the form
+// its producer gave it for the next note.
+#[test]
+fn a_google_notes_part_emptied_of_its_notes_gets_no_separators_for_the_next_one() {
+    for create in [true, false] {
+        let mut doc = corpus_doc("google/contract.docx");
+        let ids: Vec<i32> = doc.footnotes().iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [0, 1]);
+        for id in ids {
+            doc.remove_footnote(id).unwrap();
+        }
+        let mut doc = reopen(&mut doc);
+        assert!(doc.footnotes().is_empty());
+        assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (0, 0));
+        let id = if create {
+            create_note(&mut doc, Footnote, 26, "Replacing note")
+        } else {
+            let id = doc.add_footnote("Replacing note");
+            doc.paragraph_mut(26).unwrap().add_footnote_ref(id);
+            id
+        };
+        let doc = reopen(&mut doc);
+        assert_eq!(separator_counts(&doc, "word/footnotes.xml"), (0, 0));
+        assert_eq!(doc.footnotes(), [(id, " Replacing note".to_owned())]);
+        assert_eq!(references(&doc, 26), [(Footnote, id)]);
+    }
+}
+
+#[test]
+fn an_endnote_added_to_a_part_without_separators_keeps_it_without_them() {
+    let mut doc = doc_with(&["one", "two"]);
+    let first = create_note(&mut doc, Endnote, 0, "First");
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let mut xml =
+        String::from_utf8(package.get_part("/word/endnotes.xml").unwrap().to_vec()).unwrap();
+    for kind in ["separator", "continuationSeparator"] {
+        let start = xml
+            .find(&format!(r#"w:type="{kind}""#))
+            .and_then(|at| xml[..at].rfind("<w:endnote "))
+            .expect("a separator entry");
+        let end = start + xml[start..].find("</w:endnote>").unwrap() + "</w:endnote>".len();
+        xml.replace_range(start..end, "");
+    }
+    package.set_part("/word/endnotes.xml", xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    assert_eq!(separator_counts(&doc, "word/endnotes.xml"), (0, 0));
+
+    let second = create_note(&mut doc, Endnote, 1, "Second");
+    let doc = reopen(&mut doc);
+    assert_eq!(separator_counts(&doc, "word/endnotes.xml"), (0, 0));
+    assert_eq!(note_text(&doc, Endnote, first).as_deref(), Some(" First"));
+    assert_eq!(note_text(&doc, Endnote, second).as_deref(), Some(" Second"));
+    assert_eq!(references(&doc, 1), [(Endnote, second)]);
 }
 
 #[test]

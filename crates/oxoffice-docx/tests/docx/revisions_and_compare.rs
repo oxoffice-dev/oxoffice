@@ -2020,29 +2020,46 @@ fn empty_table_properties_written_by_libreoffice_are_no_format_change() {
 
 // ---- Bookmarks, tables of contents and notes ----
 
-// A notes part as Google Docs writes it: notes and no separator entries.
+// A notes part as Google Docs writes it: notes numbered from 0 and no
+// separator entries.
 fn doc_with_notes_and_no_separators(paragraphs: &[(&str, Option<&str>)]) -> Document {
     let bytes = doc_with_notes(paragraphs)
         .to_bytes()
         .expect("document saves");
     let mut package =
         oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
-    let mut xml = String::from_utf8(
-        package
-            .get_part("/word/footnotes.xml")
-            .expect("footnotes part")
-            .to_vec(),
-    )
-    .expect("UTF-8");
+    let part = |package: &oxoffice_opc::OpcPackage, name: &str| {
+        String::from_utf8(package.get_part(name).expect("part").to_vec()).expect("UTF-8")
+    };
+    let mut notes = part(&package, "/word/footnotes.xml");
+    let mut body = part(&package, "/word/document.xml");
     for kind in ["separator", "continuationSeparator"] {
-        let start = xml
+        let start = notes
             .find(&format!(r#"w:type="{kind}""#))
-            .and_then(|at| xml[..at].rfind("<w:footnote "))
+            .and_then(|at| notes[..at].rfind("<w:footnote "))
             .expect("a separator entry");
-        let end = start + xml[start..].find("</w:footnote>").expect("entry end") + 13;
-        xml.replace_range(start..end, "");
+        let end = start + notes[start..].find("</w:footnote>").expect("entry end") + 13;
+        notes.replace_range(start..end, "");
     }
-    package.set_part("/word/footnotes.xml", xml.into_bytes());
+    let ids: Vec<String> = notes
+        .match_indices(r#"<w:footnote w:id=""#)
+        .map(|(at, tag)| {
+            let rest = &notes[at + tag.len()..];
+            rest[..rest.find('"').expect("id end")].to_owned()
+        })
+        .collect();
+    for (new, old) in ids.iter().enumerate() {
+        for (xml, tag) in [
+            (&mut notes, "w:footnote"),
+            (&mut body, "w:footnoteReference"),
+        ] {
+            let from = format!(r#"<{tag} w:id="{old}""#);
+            assert_eq!(xml.matches(&from).count(), 1, "{from}");
+            *xml = xml.replace(&from, &format!(r#"<{tag} w:id="{new}""#));
+        }
+    }
+    package.set_part("/word/footnotes.xml", notes.into_bytes());
+    package.set_part("/word/document.xml", body.into_bytes());
     let mut out = std::io::Cursor::new(Vec::new());
     package.write_to(&mut out).expect("package writes");
     Document::from_bytes(&out.into_inner()).expect("document opens")
@@ -2053,6 +2070,7 @@ fn a_footnote_added_where_notes_have_no_separators_is_compared() {
     let paragraphs = [("One", Some("First note.")), ("Two", None)];
     let original = doc_with_notes_and_no_separators(&paragraphs);
     let notes = original.footnotes();
+    assert_eq!(notes, [(0, " First note.".to_owned())]);
     let mut edited = doc_with_notes_and_no_separators(&paragraphs);
     let id = edited.add_footnote("A note.");
     edited.paragraph_mut(1).unwrap().add_footnote_ref(id);
@@ -2065,6 +2083,56 @@ fn a_footnote_added_where_notes_have_no_separators_is_compared() {
     );
     assert_eq!(accepted(&mut doc).footnotes(), edited.footnotes());
     assert_eq!(rejected(&mut doc).footnotes(), notes);
+}
+
+// Google Docs numbers its notes from 0 and writes no separator entries; a
+// note added to such a file, or put in place of all its notes, is a tracked
+// change like any other. The contract holds other reviewers' revisions, so
+// only this reviewer's are resolved.
+#[test]
+fn a_footnote_added_to_a_google_saved_document_with_notes_is_compared() {
+    for replace in [false, true] {
+        let original = corpus_doc("google/contract.docx");
+        let notes = original.footnotes();
+        assert_eq!(notes.len(), 2);
+        let text = texts(&original);
+        let earlier = original.revisions().len();
+        let mut edited = corpus_doc("google/contract.docx");
+        if replace {
+            for (id, _) in &notes {
+                edited.remove_footnote(*id).unwrap();
+            }
+        }
+        let last = edited.paragraphs().len() - 1;
+        let id = edited.add_footnote("A note.");
+        edited.paragraph_mut(last).unwrap().add_footnote_ref(id);
+        let edited = reopen(&mut edited);
+        let mut doc = redline(original, &edited);
+        let ours: Vec<RevisionKind> = doc
+            .revisions()
+            .iter()
+            .filter(|revision| revision.author() == AUTHOR)
+            .map(|revision| revision.kind())
+            .collect();
+        assert!(ours.contains(&RevisionKind::Insertion), "{ours:?}");
+        assert_eq!(ours.contains(&RevisionKind::Deletion), replace, "{ours:?}");
+        assert_eq!(doc.revisions().len(), earlier + ours.len());
+        let mut copy = reopen(&mut doc);
+        copy.accept_revisions_by_author(AUTHOR).unwrap();
+        let accepted = reopen(&mut copy);
+        assert_eq!(accepted.footnotes(), edited.footnotes());
+        assert_eq!(texts(&accepted), texts(&edited));
+        let mut copy = reopen(&mut doc);
+        copy.reject_revisions_by_author(AUTHOR).unwrap();
+        let rejected = reopen(&mut copy);
+        assert_eq!(rejected.footnotes(), notes);
+        assert_eq!(texts(&rejected), text);
+        // Neither version gains the separator entries Google does not write.
+        for version in [&doc, &accepted, &rejected] {
+            let xml = version.part_xml("word/footnotes.xml").unwrap();
+            assert!(!xml.contains("w:type=\"separator\""), "{xml}");
+        }
+    }
 }
 
 #[test]
