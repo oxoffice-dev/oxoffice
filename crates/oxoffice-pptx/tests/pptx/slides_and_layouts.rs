@@ -1899,7 +1899,15 @@ fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
     let mut prs = new_deck();
     let mut app = prs.application_properties().cloned().unwrap_or_default();
     app.company = Some("Contoso\rFils".to_owned());
+    // Not in the template's app.xml: appended.
+    app.template = Some("t\re".to_owned());
     prs.set_application_properties(app).unwrap();
+    // The template has an empty <dc:title/> and no description: the empty-tag
+    // and append branches of the core patcher.
+    let mut core = prs.core_properties().cloned().unwrap_or_default();
+    core.title = Some("a\rb".to_owned());
+    core.description = Some("c\rd".to_owned());
+    prs.set_core_properties(core).unwrap();
     prs.set_custom_property(custom("First", 2, "plain"))
         .unwrap();
     let mut prs = reopen(&prs);
@@ -1934,6 +1942,9 @@ fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
     // own line ends may hold CRs elsewhere in the part).
     for (part, written) in [
         ("/docProps/app.xml", "Contoso&#13;Fils"),
+        ("/docProps/app.xml", "t&#13;e"),
+        ("/docProps/core.xml", "a&#13;b"),
+        ("/docProps/core.xml", "c&#13;d"),
         ("/docProps/custom.xml", "a&#13;\nb"),
         ("/docProps/custom.xml", "x&#13;y"),
         ("/docProps/custom.xml", "Tab&#9;name"),
