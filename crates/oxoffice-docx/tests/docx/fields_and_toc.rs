@@ -3,9 +3,10 @@
 
 use oxoffice_docx::{
     CaptionOptions, ContentLocation, CrossReferenceOptions, Document, Field, FieldDateTime,
-    FieldEvaluationContext, FieldKind, FieldOutcome, HdrFtrType, ParagraphItemRef, RunItemRef,
-    RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind, StoryKind, StoryRangeKind,
-    StoryRunPosition, StoryRunRange, TableOfFiguresOptions, TocRebuildReport,
+    FieldEvaluationContext, FieldKind, FieldOutcome, HdrFtrType, ParagraphItemRef, RenderOptions,
+    RevisionView, RunItemRef, RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind,
+    StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, TableOfFiguresOptions,
+    TocRebuildReport,
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
@@ -1541,6 +1542,46 @@ fn a_legacy_checkbox_takes_its_opening_run_style() {
         .find(|(text, _, _)| text == "\u{2610}")
         .expect("empty box");
     assert_eq!(unchecked.1, 14.0, "the character style of the opening run");
+}
+
+#[test]
+fn a_legacy_checkbox_inside_another_fields_result_draws_its_box() {
+    // An IF field whose stored result holds a checkbox as Word saves it,
+    // with no result run of its own.
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "yes" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        word_checkbox("<w:sizeAuto/>", true)
+    ));
+    let texts: String = drawn_runs(&doc)
+        .into_iter()
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(texts, "\u{2612}", "the nested box draws from its state");
+}
+
+#[test]
+fn a_legacy_checkbox_in_a_tracked_deletion_draws_its_box_in_the_tracked_view() {
+    // The checkbox stores an X, which Word does not draw: it draws the box of
+    // the state. Its field code is in plain runs, so the model reads a field.
+    let deleted = r#"<w:del w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="Check1"/><w:enabled/><w:calcOnExit w:val="0"/><w:checkBox><w:sizeAuto/><w:default w:val="0"/><w:checked/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>X</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{deleted}<w:r><w:t xml:space="preserve"> kept</w:t></w:r></w:p>"#
+    ));
+    let options = RenderOptions::default().with_revision_view(RevisionView::Tracked);
+    let result = doc.layout_with_options(options).unwrap();
+    let mut texts = String::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                texts.push_str(&run.text);
+            }
+        });
+    }
+    assert!(
+        texts.contains('\u{2612}'),
+        "the deleted box draws: {texts:?}"
+    );
+    assert!(!texts.contains('X'), "not its stored X: {texts:?}");
 }
 
 #[test]

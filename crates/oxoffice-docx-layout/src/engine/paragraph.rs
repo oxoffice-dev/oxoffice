@@ -136,7 +136,9 @@ fn computed_layout_field(
 
 /// The box a legacy checkbox draws from its state, as Word does whatever
 /// result it stores: ☒ when checked, ☐ when not.
-fn drawn_legacy_checkbox(field: &oxoffice_docx_oxml::text::Field) -> Option<&'static str> {
+pub(super) fn drawn_legacy_checkbox(
+    field: &oxoffice_docx_oxml::text::Field,
+) -> Option<&'static str> {
     let data = field.legacy_form.as_ref()?;
     let oxoffice_docx_oxml::text::LegacyFormFieldValue::Checked(checked) = data.value else {
         return None;
@@ -769,7 +771,9 @@ fn layout_paragraph_with_source_and_table(
                     projected.revision,
                     Some(RevisionKind::Deletion | RevisionKind::MoveFrom)
                 ) {
-                    (None, None)
+                    // A deleted legacy checkbox still draws the box of its
+                    // state, struck through with its run, as Word does.
+                    (drawn_legacy_checkbox(field).map(str::to_owned), None)
                 } else {
                     computed_layout_field(field, source, source_node, input, num_state, diagnostics)
                 };
