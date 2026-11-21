@@ -3292,14 +3292,27 @@ impl<'a> ParagraphRef<'a> {
         self.inner.rubies.get(index)
     }
 
-    /// Check if paragraph has borders.
+    /// Whether one of the paragraph's direct edges draws a border. An edge
+    /// set to `nil` or `none`, as Google Docs writes on every list item,
+    /// draws none; [`Self::border`] still reads it.
     pub fn has_borders(&self) -> bool {
         self.inner
             .properties
             .as_ref()
             .and_then(|ppr| ppr.borders.as_ref())
-            .map(|b| !b.is_empty())
-            .unwrap_or(false)
+            .is_some_and(|borders| {
+                [
+                    &borders.top,
+                    &borders.bottom,
+                    &borders.left,
+                    &borders.right,
+                    &borders.between,
+                    &borders.bar,
+                ]
+                .into_iter()
+                .flatten()
+                .any(|edge| !edge.val.is_none())
+            })
     }
 
     /// Get the direct bottom border, if present.

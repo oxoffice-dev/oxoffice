@@ -1311,9 +1311,19 @@ fn direct_formatting_google_writes_on_list_items_wins_over_the_defaults() {
     assert_eq!(item.alignment(), Some(Alignment::Left));
 }
 
-// Fails today: has_borders() counts the nil edges Google Docs writes on every list item as borders. Issue: #33
 #[test]
-#[should_panic(expected = "a nil edge draws no border")]
+fn a_paragraph_with_one_drawn_edge_among_nil_ones_has_borders() {
+    let doc = crate::support::doc_with_body(
+        r#"<w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:left w:val="none"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/></w:pBdr></w:pPr><w:r><w:t>underlined</w:t></w:r></w:p><w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>plain</w:t></w:r></w:p>"#,
+    );
+    assert!(doc.paragraph(0).unwrap().has_borders(), "one drawn edge");
+    assert!(
+        !doc.paragraph(1).unwrap().has_borders(),
+        "nil and none only"
+    );
+}
+
+#[test]
 fn a_google_list_item_whose_edges_are_all_nil_has_no_borders() {
     let doc = corpus_doc("google/report.docx");
     let index = paragraph_index(
