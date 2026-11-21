@@ -981,14 +981,77 @@ impl Document {
             if still_referenced {
                 continue;
             }
+            let released = self
+                .package
+                .get_part_rels(&target)
+                .map(|relationships| relationships.items.clone())
+                .unwrap_or_default();
             self.clear_authored_story_relationships(&target);
             self.package.remove_part(&target);
             self.package.remove_part_rels(&target);
             self.package.content_types.remove_override(&target);
             self.identifiers.authored_story_parts.remove(&target);
             self.identifiers.retire_authored_part(&target);
+            self.remove_unreachable_targets(&target, released);
         }
         Ok(())
+    }
+
+    /// Remove what a dropped part pointed at once no relationship reaches it,
+    /// imported or not: a picture, and in turn what only it pointed at. The
+    /// proof is the dropped part's: no internal relationship from any owner,
+    /// the package included, still names the target.
+    fn remove_unreachable_targets(
+        &mut self,
+        owner: &str,
+        relationships: Vec<oxoffice_opc::relationship::Relationship>,
+    ) {
+        let mut pending = relationships
+            .into_iter()
+            .map(|relationship| (owner.to_owned(), relationship))
+            .collect::<Vec<_>>();
+        while let Some((owner, relationship)) = pending.pop() {
+            if !relationship_is_internal(&relationship) {
+                continue;
+            }
+            let target = OpcPackage::resolve_rel_target(&owner, &relationship.target);
+            if self.package.get_part(&target).is_none() {
+                continue;
+            }
+            let identity = part_name_identity(&target);
+            let reached = std::iter::once(("/", &self.package.package_rels))
+                .chain(
+                    self.package
+                        .part_rels
+                        .iter()
+                        .map(|(source, relationships)| (source.as_str(), relationships)),
+                )
+                .any(|(source, relationships)| {
+                    relationships.items.iter().any(|candidate| {
+                        relationship_is_internal(candidate)
+                            && part_name_identity(&OpcPackage::resolve_rel_target(
+                                source,
+                                &candidate.target,
+                            )) == identity
+                    })
+                });
+            if reached {
+                continue;
+            }
+            if let Some(relationships) = self.package.get_part_rels(&target) {
+                pending.extend(
+                    relationships
+                        .items
+                        .iter()
+                        .cloned()
+                        .map(|relationship| (target.clone(), relationship)),
+                );
+            }
+            self.package.remove_part(&target);
+            self.package.remove_part_rels(&target);
+            self.package.content_types.remove_override(&target);
+            self.identifiers.retire_authored_part(&target);
+        }
     }
 
     /// Get the section properties (page size, margins).
