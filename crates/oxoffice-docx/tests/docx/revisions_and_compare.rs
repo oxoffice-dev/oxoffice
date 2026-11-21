@@ -1778,3 +1778,61 @@ fn a_paragraph_moved_with_its_footnote_is_deleted_and_inserted_with_the_note() {
     assert_eq!(noted_texts(&copy), ["Claim.[Source]", "Other."]);
     assert_eq!(copy.footnotes().len(), 1);
 }
+
+#[test]
+fn swapped_footnote_references_numbered_by_position_are_compared() {
+    // As Word saves them: each version numbers its notes in reading order.
+    let original = doc_with_notes_in_order(&[("A.", Some("First")), ("B.", Some("Second"))]);
+    let edited = doc_with_notes_in_order(&[("A.", Some("Second")), ("B.", Some("First"))]);
+    let mut doc = redline(original, &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[Second]", "B.[First]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+    let copy = rejected(&mut doc);
+    assert_eq!(noted_texts(&copy), ["A.[First]", "B.[Second]"]);
+    assert_eq!(copy.footnotes().len(), 2);
+}
+
+#[test]
+fn a_note_added_above_and_a_reference_moved_down_are_compared() {
+    let original =
+        doc_with_notes_in_order(&[("One.", Some("A")), ("Two.", None), ("Three.", Some("B"))]);
+    let edited = doc_with_notes_in_order(&[
+        ("Zero.", Some("N")),
+        ("One.", None),
+        ("Two.", Some("A")),
+        ("Three.", Some("B")),
+    ]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["Zero.[N]", "One.", "Two.[A]", "Three.[B]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["One.[A]", "Two.", "Three.[B]"]
+    );
+}
+
+#[test]
+fn a_moved_note_under_a_new_id_is_compared() {
+    // The edited version deleted the note and wrote a new one, under a new
+    // id, at the next paragraph; the other note keeps its id.
+    let original = doc_with_notes(&[("One.", Some("A")), ("Two.", None), ("Three.", Some("B"))]);
+    let mut edited = doc_with_notes(&[("One.", Some("A")), ("Two.", None), ("Three.", Some("B"))]);
+    let first = edited.footnotes()[0].0;
+    edited.remove_footnote(first).unwrap();
+    let id = edited.add_footnote("A, p. 4");
+    edited.paragraph_mut(1).unwrap().add_footnote_ref(id);
+    let edited = reopen(&mut edited);
+    assert_eq!(noted_texts(&edited), ["One.", "Two.[A, p. 4]", "Three.[B]"]);
+    let mut doc = redline(original, &edited);
+    assert_eq!(
+        noted_texts(&accepted(&mut doc)),
+        ["One.", "Two.[A, p. 4]", "Three.[B]"]
+    );
+    assert_eq!(
+        noted_texts(&rejected(&mut doc)),
+        ["One.[A]", "Two.", "Three.[B]"]
+    );
+}
