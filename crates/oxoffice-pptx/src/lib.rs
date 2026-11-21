@@ -10283,6 +10283,9 @@ impl Presentation {
     }
 
     /// Duplicates one slide immediately after its source.
+    ///
+    /// The copy has its own notes and its own modern comments, whose comment
+    /// and reply ids are fresh and whose anchors follow the copy.
     pub fn duplicate_slide(&mut self, index: usize) -> Result<SlideRef<'_>> {
         if index >= self.slides.len() {
             return Err(Error::UnknownSlideIndex {
@@ -10968,12 +10971,14 @@ impl Presentation {
         )
     }
 
-    /// Copies one slide record, with its notes, into this presentation.
+    /// Copies one slide record, with its notes and modern comments, into this
+    /// presentation.
     ///
     /// `import` is `None` for a copy whose relationship targets already live
     /// in this package or are bounded by the caller's preflight. An import
-    /// also copies charts, embedded objects and comments, and maps or drops
-    /// slide jumps.
+    /// also copies charts and embedded objects, and maps or drops slide
+    /// jumps. Copied comments and replies take fresh ids wherever this
+    /// presentation already uses theirs.
     fn copy_slide_from_in_place(
         &mut self,
         source_package: &OpcPackage,
@@ -10983,13 +10988,6 @@ impl Presentation {
         layout_target: Option<&str>,
         mut import: Option<SlideImportContext<'_>>,
     ) -> Result<usize> {
-        if source.comments.is_some() && import.is_none() {
-            return Err(Error::InvalidPresentationMutation {
-                operation,
-                message: "slides with modern comments require caller-supplied fresh comment ids"
-                    .to_owned(),
-            });
-        }
         let slide_part = match &import {
             Some(import) => import.slide_part.to_owned(),
             None => MediaNamer::scan(
@@ -11125,18 +11123,14 @@ impl Presentation {
             None
         };
 
-        let comments_part = source
-            .comments
-            .as_ref()
-            .filter(|_| import.is_some())
-            .map(|_| {
-                MediaNamer::scan(
-                    "/ppt/comments",
-                    "comment",
-                    self.package.parts.keys().map(String::as_str),
-                )
-                .next_part_name("xml")
-            });
+        let comments_part = source.comments.as_ref().map(|_| {
+            MediaNamer::scan(
+                "/ppt/comments",
+                "comment",
+                self.package.parts.keys().map(String::as_str),
+            )
+            .next_part_name("xml")
+        });
         let slide_xml = if import.is_some() {
             required_part(source_package, &source.part_name)?.to_vec()
         } else {
@@ -11197,11 +11191,17 @@ impl Presentation {
             part_name: slide_part.clone(),
             message: error.to_string(),
         })?;
-        let comments = match (&import, &source.comments, comments_part) {
-            (Some(import), Some(source_comments), Some(part_name)) => {
+        let comments = match (&source.comments, comments_part) {
+            (Some(source_comments), Some(part_name)) => {
                 let mut comments = source_comments.comments.clone();
+                // Without an import the copy is a duplicate inside this
+                // presentation, so its authors are already this one's.
+                let source_authors = match &import {
+                    Some(import) => import.source.comment_authors.authors.clone(),
+                    None => self.comment_authors.authors.clone(),
+                };
                 let (ids, author_ids) =
-                    self.merge_imported_comment_identities(import.source, &comments)?;
+                    self.merge_imported_comment_identities(operation, &source_authors, &comments)?;
                 let malformed = |error: OxmlError| Error::MalformedPart {
                     part_name: source_comments.part_name.clone(),
                     message: error.to_string(),
@@ -12419,7 +12419,8 @@ impl Presentation {
     /// Merges modern authors and returns comment/reply and author ID maps.
     fn merge_imported_comment_identities(
         &mut self,
-        source: &Presentation,
+        operation: &'static str,
+        source_authors: &[CommentAuthor],
         comments: &CommentList,
     ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
         let mut used = self
@@ -12455,19 +12456,14 @@ impl Presentation {
         let mut author_ids = HashMap::new();
         let referenced = comments
             .referenced_author_ids()
-            .map_err(|error| invalid_presentation_mutation("import slide", error.to_string()))?;
+            .map_err(|error| invalid_presentation_mutation(operation, error.to_string()))?;
         for author_id in referenced {
             if author_ids.contains_key(&author_id) {
                 continue;
             }
-            let Some(author) = source
-                .comment_authors
-                .authors
-                .iter()
-                .find(|author| author.id == author_id)
-            else {
+            let Some(author) = source_authors.iter().find(|author| author.id == author_id) else {
                 return Err(invalid_presentation_mutation(
-                    "import slide",
+                    operation,
                     format!("modern comment author {author_id} is absent"),
                 ));
             };

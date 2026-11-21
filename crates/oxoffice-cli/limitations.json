@@ -108,15 +108,6 @@
     "issue": 38
   },
   {
-    "id": "pptx-duplicate-commented-slide",
-    "format": "pptx",
-    "area": "comments",
-    "title": "A slide with comments cannot be duplicated",
-    "symptom": "duplicating fails with \"slides with modern comments require caller-supplied fresh comment ids\"",
-    "workaround": "import the slide into its own deck right after itself: Rust prs.import_slide(&prs.clone(), i, layout, Some(i + 1)), Python slides.import_slide(slide, index=i + 1), CLI oxoffice pptx slide import deck.pptx deck.pptx --slides N --at N+1 -o out.pptx",
-    "issue": 39
-  },
-  {
     "id": "pptx-import-source-notes",
     "format": "pptx",
     "area": "slides",
