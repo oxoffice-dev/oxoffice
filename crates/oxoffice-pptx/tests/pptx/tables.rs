@@ -1147,11 +1147,24 @@ fn a_slide_imported_from_google_slides_brings_its_table_style() {
 }
 
 /// The table element of the one slide holding a table, as a list of events
-/// in a canonical form: attributes sorted, `<x></x>` the same as `<x/>`,
-/// namespace declarations left out. A lost child, attribute or text changes it;
-/// the order the writer puts attributes in does not.
+/// in a canonical form: element and attribute names resolved to their
+/// namespace, attributes sorted, `<x></x>` the same as `<x/>`. A lost child,
+/// attribute, text or namespace declaration changes it (an unbound prefix
+/// reads as unknown); the order the writer puts attributes in, and where it
+/// declares a namespace, do not.
 fn canonical_table(bytes: &[u8]) -> Vec<String> {
     use quick_xml::events::Event;
+    use quick_xml::name::ResolveResult;
+    fn name(resolved: ResolveResult<'_>, local: &[u8]) -> String {
+        let namespace = match resolved {
+            ResolveResult::Bound(ns) => String::from_utf8_lossy(ns.as_ref()).into_owned(),
+            ResolveResult::Unbound => String::new(),
+            ResolveResult::Unknown(prefix) => {
+                format!("unbound {}", String::from_utf8_lossy(&prefix))
+            }
+        };
+        format!("{{{namespace}}}{}", String::from_utf8_lossy(local))
+    }
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
     let mut tables = Vec::new();
     for index in 0..zip.len() {
@@ -1161,47 +1174,59 @@ fn canonical_table(bytes: &[u8]) -> Vec<String> {
         }
         let mut xml = String::new();
         std::io::Read::read_to_string(&mut entry, &mut xml).unwrap();
-        let (Some(start), Some(end)) = (xml.find("<a:tbl"), xml.find("</a:tbl>")) else {
-            continue;
-        };
-        let mut reader = quick_xml::Reader::from_str(&xml[start..end + "</a:tbl>".len()]);
-        let mut events = Vec::new();
+        let mut reader = quick_xml::NsReader::from_str(&xml);
+        let (mut events, mut depth) = (Vec::new(), 0usize);
         loop {
-            let tag = |e: &quick_xml::events::BytesStart<'_>| {
+            let (resolved, event) = reader.read_resolved_event().unwrap();
+            // The element's resolved name, taken before the resolver is asked
+            // about the attributes.
+            let element = match &event {
+                Event::Start(e) | Event::Empty(e) => Some((
+                    name(resolved, e.local_name().as_ref()),
+                    e.local_name().as_ref() == b"tbl",
+                )),
+                _ => None,
+            };
+            let tag = |e: &quick_xml::events::BytesStart<'_>, element: &str| {
                 let mut attributes: Vec<String> = e
                     .attributes()
                     .map(|a| a.unwrap())
                     .filter(|a| !a.key.as_ref().starts_with(b"xmlns"))
                     .map(|a| {
+                        let (ns, local) = reader.resolver().resolve_attribute(a.key);
                         format!(
                             "{}={}",
-                            String::from_utf8_lossy(a.key.as_ref()),
+                            name(ns, local.as_ref()),
                             String::from_utf8_lossy(&a.value)
                         )
                     })
                     .collect();
                 attributes.sort();
-                format!(
-                    "<{} {}>",
-                    String::from_utf8_lossy(e.name().as_ref()),
-                    attributes.join(" ")
-                )
+                format!("<{element} {}>", attributes.join(" "))
             };
-            match reader.read_event().unwrap() {
-                Event::Start(e) => events.push(tag(&e)),
-                Event::Empty(e) => {
-                    events.push(tag(&e));
-                    events.push(format!("</{}>", String::from_utf8_lossy(e.name().as_ref())));
+            match (&event, element) {
+                (Event::Start(e), Some((element, is_table))) if depth > 0 || is_table => {
+                    events.push(tag(e, &element));
+                    depth += 1;
                 }
-                Event::End(e) => {
-                    events.push(format!("</{}>", String::from_utf8_lossy(e.name().as_ref())))
+                (Event::Empty(e), Some((element, _))) if depth > 0 => {
+                    events.push(tag(e, &element));
+                    events.push("</>".to_owned());
                 }
-                Event::Text(t) => events.push(String::from_utf8_lossy(&t).into_owned()),
-                Event::Eof => break,
+                (Event::End(_), _) if depth > 0 => {
+                    events.push("</>".to_owned());
+                    depth -= 1;
+                }
+                (Event::Text(t), _) if depth > 0 => {
+                    events.push(String::from_utf8_lossy(t).into_owned())
+                }
+                (Event::Eof, _) => break,
                 _ => {}
             }
         }
-        tables.push(events);
+        if !events.is_empty() {
+            tables.push(events);
+        }
     }
     assert_eq!(tables.len(), 1, "one table in the deck");
     tables.remove(0)
