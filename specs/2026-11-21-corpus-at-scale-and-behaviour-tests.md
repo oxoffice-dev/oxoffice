@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: tests
 ---
 
@@ -105,7 +105,68 @@ save refusal (#10), each in a binary of its own.
 5. `test(pptx)`: the pptx binary, one module per area.
 6. Outcome in [the test suite spec](2026-11-20-test-suite-from-scratch.md).
 
+## Outcome
+
+### What shipped
+
+- #17: one integration binary per facade crate (`--test docx`, `--test pptx`).
+- #34: 9 docx modules, 322 tests read back after a save and a reopen, on
+  synthetic documents and the four corpus reports; 31 strict known failures
+  pointing at #26 to #33 and #53, plus the compare limitations #3 and #4.
+- #46: 6 pptx modules, 208 tests, 16 strict known failures pointing at #38 to
+  #44.
+- #59: 16 families (11 docx, 5 pptx) authored and saved by LibreOffice, 36
+  files and 2 MB with the pilot's Word, PowerPoint and Google copies. The
+  round trip checks every part byte for byte, on parallel threads; 8 files
+  are known failures that rewrite `word/document.xml` (#57).
+- 13 entries in `limitations.json` for the bugs users can work around.
+- By the next morning, the fixes made overnight by other sessions had turned
+  22 of the 47 known failures into passing tests (18 docx, 4 pptx): each fix
+  removed its `should_panic`, and its limitation entry, when it had one, went
+  or was narrowed to the cases left.
+- Follow-up, open when this was written: #140 (from #59's last review) adds
+  manifest features for the form's signature and locked controls, and reads
+  16:9 by its ratio, before the Mac run.
+- Not done here: Word, PowerPoint and Google copies of the new families. The
+  machine that built them has neither Office nor an rclone remote; the scripts
+  are ready and #62 holds the commands.
+
+### Learnings
+
+- **The independent reviews of #34, #46 and #59 found tests that passed
+  whatever the facade did**: header parts counted from the stories still referenced, a
+  replacement whose result was never read, a stale frame pinned as correct, a
+  table compared with the parser's own output, a known failure built on counts
+  nobody had checked against the file. Fixing them turned up four more bugs
+  (#26, #28, #53, and the LibreOffice compare case of #32). A test reads what
+  it checks from where it can fail: the saved package or the stored bytes,
+  not the model that wrote them.
+- **Byte-for-byte is cheap and strong on untouched files**: it found #57,
+  which the "every part is still there" check missed. After an edit, modelled
+  parts are written again, so the comparison there is canonical (attribute
+  order, empty elements, where a namespace is declared).
+- **Real producer files find what synthetic ones miss**: a Word saved in
+  French breaks every lookup of a built-in style by its id (#27); LibreOffice's
+  empty run properties block comparison (#32); Google's table frame ignores
+  its grid (#44).
+- **A strict known failure needs a message only its own assertion makes**, so
+  that a fix flips it and an unrelated panic does not; and a known failure of
+  the corpus names the parts it may rewrite, nothing more.
+- Debug-build cost, measured locally: the docx binary runs in about 15 s, the
+  pptx one in 7 s, the corpus round trip in 12 s on parallel threads (one long
+  report alone takes 12 s). On CI (#59's run) the docx binary takes about 57 s
+  on Linux and 82 s on Windows, the pptx one 28 s and 39 s, and the corpus
+  round trip about 22 s and 30 s: under the minute the decision set for a
+  corpus subset, so none yet.
+- **The pilot files are frozen**: the behaviour tests pin facts of every
+  producer's copy of the report and the deck, so their sources match the
+  pilot's part for part (its chart PNG is a committed file: PNG compression
+  differs between machines) and `produce.py` saves them again only when named.
+- No OOXML validator could be installed here; Word and PowerPoint on the Mac
+  stay the judges of the authored XML (#62).
+
 ## Links
 
 - [A test suite from scratch](2026-11-20-test-suite-from-scratch.md)
 - #1 corpus pilot, #10 save refusal, #11 scaling
+- #17, #34, #46, #59, #140; issues #26 to #33, #38 to #44, #53, #57, #62

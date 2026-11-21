@@ -138,3 +138,22 @@ a manifest: producer and version, features it carries, licence, size.
   every paragraph, run and row, and the docx test compares N and 16N
   paragraphs, so that a linear cost shows over the floor: 150 docx calls grow.
   See [the edit cost spec](2026-11-21-edit-cost-at-the-root.md).
+
+### Corpus at scale (plan step 3, #59)
+
+- 16 families authored and saved by LibreOffice: 36 files in 2 MB with the
+  pilot's Word, PowerPoint and Google copies; those of the new families wait
+  for a Mac and an rclone remote (#62).
+- The round trip checks every part byte for byte. Details and learnings in
+  [2026-11-21-corpus-at-scale-and-behaviour-tests.md](2026-11-21-corpus-at-scale-and-behaviour-tests.md).
+
+### Behaviour tests (plan step 4, #34 and #46)
+
+- docx: text and runs, paragraphs and styles, tables, lists, sections and
+  headers, notes, comments, revisions and compare, fields and TOC. pptx:
+  slides and layouts, shapes and text, tables, charts, pictures, notes and
+  comments. 530 behaviour tests added to the two binaries, 47 strict known
+  failures, each tied to its issue; by the next morning the fixes of the night
+  had turned 22 of them into passing tests.
+- Pictures, charts, content controls and conversions on the docx side, and
+  rendering on the pptx side, are the next round.
