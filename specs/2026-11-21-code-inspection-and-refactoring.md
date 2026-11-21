@@ -305,7 +305,7 @@ inventory. The moves of those files (4 to 7, then 13, 15, 16, 17) go first,
 then the performance code, so that neither rebases over the other. Item 3's
 spec and measurements go on in parallel.
 
-## Amendment, 2026-11-21: files over about 6,000 lines are split
+## Amendment 2026-11-21: files over about 6,000 lines are split
 
 User decision of 2026-11-21: every source file over about 6,000 lines is
 split, by pure moves, as wave 3 did for docx `document.rs`. Size now is a
