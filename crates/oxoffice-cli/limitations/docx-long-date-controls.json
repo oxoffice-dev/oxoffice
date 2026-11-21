@@ -1,9 +1,0 @@
-{
-  "id": "docx-long-date-controls",
-  "format": "docx",
-  "area": "forms",
-  "title": "A date content control in Word's long date format cannot be set",
-  "symptom": "setting a control formatted d MMMM yyyy fails with \"unsupported or missing date format\", and protect_form refuses rules naming it",
-  "workaround": "give the control a yyyy-MM-dd or dd/MM/yyyy date format first (set_content_control_type, same name in Python), then set the value; none through the CLI",
-  "issue": 149
-}

@@ -7,6 +7,7 @@ pub mod borders;
 pub mod comments;
 pub mod comments_extended;
 pub mod content_control;
+pub mod date_format;
 pub mod document;
 pub mod drawing;
 pub mod font_table;
