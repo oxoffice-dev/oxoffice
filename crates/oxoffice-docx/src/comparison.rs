@@ -12320,14 +12320,13 @@ fn restore_resolved_leaf_occurrences(
     let mut replacements = Vec::new();
     for group in groups.values() {
         let first = group[0].0;
-        let Some(RunContent::Text(source_text) | RunContent::DeletedText(source_text)) =
+        let Some(RunContent::Text(_) | RunContent::DeletedText(_)) =
             source_content_model(&first.source, &first.context)?
         else {
             return Err(Error::Other(
                 "fragment restoration has no source text".into(),
             ));
         };
-        let _ = &source_text;
         validate_projection_actions(&first.domains, &first.actions)?;
         let mut value = String::new();
         let mut runs = Vec::<Range<usize>>::new();
