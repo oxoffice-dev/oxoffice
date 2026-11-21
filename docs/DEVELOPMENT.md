@@ -86,7 +86,10 @@ Finish what you start.
 - **A pull request closes its issue.** It says `Closes #N` when it fixes
   all of it. What a fix still leaves stays in the same issue: the pull
   request says `Refs #N`, the issue is updated with what remains, and
-  closed when all of it is done. A minor review finding is fixed in the
+  closed when all of it is done. An issue kept open for leftovers carries
+  the leftover's severity: change its label (often to S3 or S4) and put the
+  remaining list at the top of its body, so the count of open S2 issues
+  says what is really open. A minor review finding is fixed in the
   pull request when the fix is cheap, answered when it is not a defect, and
   becomes a new issue only when it is a different defect the pull request
   cannot carry: at most one per pull request. A major is fixed unless the
