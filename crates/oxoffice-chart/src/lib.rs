@@ -5,7 +5,9 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{
+    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+};
 use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
 use oxoffice_core::xml_text::resolve_entity;
 use oxoffice_drawing::color::{
@@ -1736,7 +1738,7 @@ fn write_wrapper_start(
     writer
         .write_event(Event::Start(start))
         .map_err(OxmlError::from)?;
-    emit_raw(writer, markup.raw_children.at(0))
+    Ok(emit_raw(writer, markup.raw_children.at(0))?)
 }
 
 fn write_wrapper_end(
@@ -7660,12 +7662,6 @@ fn capture_attributes_excluding(
     Ok(attributes)
 }
 
-fn push_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
-    for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
-    }
-}
-
 fn write_scalar<W: Write>(
     writer: &mut Writer<W>,
     name: &str,
@@ -7695,24 +7691,6 @@ fn write_scalar<W: Write>(
     writer
         .write_event(Event::End(BytesEnd::new(name)))
         .map_err(OxmlError::from)?;
-    Ok(())
-}
-
-fn capture_event(event: Event<'_>) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer
-        .write_event(event.into_owned())
-        .map_err(OxmlError::from)?;
-    Ok(writer.into_inner())
-}
-
-fn emit_raw<'a, W: Write>(
-    writer: &mut Writer<W>,
-    children: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    for child in children {
-        writer.get_mut().write_all(child).map_err(OxmlError::from)?;
-    }
     Ok(())
 }
 
