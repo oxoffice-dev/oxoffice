@@ -13,6 +13,7 @@ mod fonts;
 mod fragment_import;
 mod inspection;
 mod lists;
+mod mail_merge_and_templates;
 mod notes;
 mod paragraphs_and_styles;
 mod pdf;
