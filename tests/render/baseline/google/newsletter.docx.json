@@ -1,12 +1,12 @@
 {
   "file": "google/newsletter.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
-  "resources": "1736d7dcf1ac4896c57a9680152bdedcda04b8e372ce041429395f2bedf68a8e",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "resources": "61ac0c237a7194b5bd80ebe67acf90cb125e20687d12a401ce681336480fc3f9",
   "outline_and_tags": "f8487f591c7e1e6edfd6f436c3e961652cdd61e64731d6703fe68e082a3def6d",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "2a0e4d4afac42caa3ad29d787c7150488c95f3c76486f513ed28cb1b492c646e", "content": "712fb8a5275334c04f98b92d6b562b8a327aa8d3be6c06e2bb1f2fd8f3149a02", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "394157e658039f677de0fef51f2d2313e024d807411f86ef4387e7c18f32af73", "content": "552e2600c4fd068d6cbbfb80aa0edee48e03f10749f6fb4ac26e005e86abaed8", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 2, "pixels": "394157e658039f677de0fef51f2d2313e024d807411f86ef4387e7c18f32af73", "content": "cd1f9e5b43445ef86fa2c95e32faa02d85a00b4696e0e32bf188088e699a24a5", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "91b6a39931abcd4ee7e7d8d63b1fc94043fe494b75895d31f60ee52f1d5f28e8", "content": "8b99a70b7f50c37987ec7b6987368a53a350ba9d5006096161cde14d2c7b82de", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }

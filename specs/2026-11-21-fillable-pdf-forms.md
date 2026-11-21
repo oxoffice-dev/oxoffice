@@ -235,6 +235,9 @@ the static output of Word-saved legacy checkboxes on purpose, switch or not.
 - PDF/A: the appearance dictionary holds `/N` only, no actions, and the
   `/DR` font is embedded. The PDF/A preflight accepts form fields.
 - Not fixed here: link annotations are not tagged under `/Link` today.
+  (Since fixed, #159: each link gets a `/Link` element the same way, a child
+  of its paragraph's element, and `/Contents` with its target; pages with
+  links get `/Tabs /S` too. The link's text is not yet inside `/Link`.)
 
 ### Format-neutral layout output
 

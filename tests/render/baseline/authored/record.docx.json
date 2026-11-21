@@ -1,11 +1,11 @@
 {
   "file": "authored/record.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
   "resources": "5eb1f32f9b57988c96ec972dbf3046d34adac5392139027048eab9ce3ce725e4",
-  "outline_and_tags": "5adb15dd4c2134ec95b8f1963f52857b4a7bebe7f515ae7e73051aad8c682953",
+  "outline_and_tags": "ea5a994532af7b6cf9d6f9716a382795b76f546a51d33ec22b2883b2ff966168",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "11912776c520ae0f0d62b085eb3c07967cab0ff66a55dde26fd49e895a5dab26", "content": "508652b822238f965dd0ecf1e80cd8cdb9caa6cd061986a718263603f7892ee4", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 1, "pixels": "11912776c520ae0f0d62b085eb3c07967cab0ff66a55dde26fd49e895a5dab26", "content": "508652b822238f965dd0ecf1e80cd8cdb9caa6cd061986a718263603f7892ee4", "annotations": "1d7fc938e46e7cb53ea468e54826e0b8b87f8a27d1daa30a6b89757a828558c2", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "b8b40a051556d3d2e25cf616e5b1c8a9379eb01abc995e07b60a87af1395bb13", "content": "add4710d7b16fe0e6131ed7b81b1c634ffab6a397c4f8b8954557faaf89bbd2c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "0452caced7be15def1fe2d71b38e6ba5ac99f67cb4d1ed34a2792328f44083a9", "content": "57acc38b5226859e978336eeef2ee7853b2f5ea629793453afd95fdee45b1e1c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]

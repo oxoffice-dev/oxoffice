@@ -333,8 +333,51 @@ impl Pdf {
     }
 
     /// The URI and rectangle (left, bottom, right, top) of each link
-    /// annotation of a page.
+    /// annotation of a page that opens a URI.
     pub fn links(&self, page: usize) -> Vec<(String, [f64; 4])> {
+        self.link_actions(page)
+            .into_iter()
+            .filter_map(|(action, rect)| {
+                let kind = action
+                    .get(b"S")
+                    .and_then(Object::as_name)
+                    .expect("action kind");
+                if kind != b"URI" {
+                    assert_eq!(kind, b"GoTo", "a link opens a URI or goes to a page");
+                    return None;
+                }
+                let uri = action.get(b"URI").and_then(Object::as_str).expect("URI");
+                let uri = String::from_utf8(uri.to_vec()).expect("URI is UTF-8");
+                Some((uri, rect))
+            })
+            .collect()
+    }
+
+    /// The page index and height from the page's bottom it goes to, and the
+    /// rectangle (left, bottom, right, top), of each internal link of a page.
+    pub fn internal_links(&self, page: usize) -> Vec<(usize, f64, [f64; 4])> {
+        let pages = self.page_ids();
+        self.link_actions(page)
+            .into_iter()
+            .filter(|(action, _)| action.get(b"S").and_then(Object::as_name).ok() == Some(b"GoTo"))
+            .map(|(action, rect)| {
+                let destination = self.resolve(action.get(b"D").expect("GoTo destination"));
+                let destination = destination.as_array().expect("explicit destination");
+                let target = destination[0].as_reference().expect("destination page");
+                let index = pages.iter().position(|id| *id == target);
+                assert_eq!(
+                    destination[1].as_name().ok(),
+                    Some(&b"XYZ"[..]),
+                    "a destination at a height"
+                );
+                let top = numbers(&destination[3..4])[0];
+                (index.expect("the destination is a page"), top, rect)
+            })
+            .collect()
+    }
+
+    /// The action and rectangle of each link annotation of a page.
+    fn link_actions(&self, page: usize) -> Vec<(&Dictionary, [f64; 4])> {
         let annotations = self
             .doc
             .get_page_annotations(self.page_ids()[page])
@@ -344,16 +387,9 @@ impl Pdf {
             .filter(|annot| annot.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Link"))
             .map(|annot| {
                 let action = self.dict(annot.get(b"A").expect("link action"));
-                let kind = action
-                    .get(b"S")
-                    .and_then(Object::as_name)
-                    .expect("action kind");
-                assert_eq!(kind, b"URI", "a link opens a URI");
-                let uri = action.get(b"URI").and_then(Object::as_str).expect("URI");
                 let rect = self.resolve(annot.get(b"Rect").expect("Rect"));
                 let rect = numbers(rect.as_array().expect("Rect array"));
-                let uri = String::from_utf8(uri.to_vec()).expect("URI is UTF-8");
-                (uri, [rect[0], rect[1], rect[2], rect[3]])
+                (action, [rect[0], rect[1], rect[2], rect[3]])
             })
             .collect()
     }

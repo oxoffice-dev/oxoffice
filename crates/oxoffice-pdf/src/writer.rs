@@ -18,7 +18,7 @@ use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use crate::font::{self, PreparedFont};
 use crate::forms;
 use crate::image;
-use crate::structure::{PreparedStructure, has_content_stream_output};
+use crate::structure::{PreparedStructure, TaggedLink, has_content_stream_output};
 use crate::{PdfConformance, conformance};
 
 struct AlphaEntry {
@@ -558,13 +558,19 @@ pub(crate) fn write_pdf_impl(
     }
 
     // ── Annotation refs ──────────────────────────────────────────────
+    // An internal link whose destination no page draws gets no annotation.
+    let destinations = link_destinations(layout);
     let mut annotation_refs: HashMap<(usize, usize), Ref> = HashMap::new();
     for (page_idx, page) in layout.pages.iter().enumerate() {
         let mut elem_idx = 0;
         walk(&page.elements, &mut |element, _| {
             let current_idx = elem_idx;
             elem_idx += 1;
-            if let PositionedElement::LinkAnnotation { .. } = element {
+            if let PositionedElement::LinkAnnotation { url, .. } = element
+                && url
+                    .strip_prefix('#')
+                    .is_none_or(|name| destinations.contains_key(name))
+            {
                 annotation_refs.insert((page_idx, current_idx), alloc());
             }
         });
@@ -588,6 +594,36 @@ pub(crate) fn write_pdf_impl(
         tagged.is_some(),
         &mut alloc,
     );
+    // Tagged links take the parent tree keys after the pages' and widgets'.
+    let mut tagged_links = Vec::new();
+    let mut link_keys: HashMap<(usize, usize), i32> = HashMap::new();
+    if tagged.is_some() {
+        let widget_count = forms
+            .as_ref()
+            .map_or(0, |forms| forms.tagged_widgets().len());
+        let mut next_key = (layout.pages.len() + widget_count) as i32;
+        for (page_idx, page) in layout.pages.iter().enumerate() {
+            let (mut elem_idx, mut ordinal) = (0, 0);
+            walk(&page.elements, &mut |element, _| {
+                let current_idx = elem_idx;
+                elem_idx += 1;
+                if let PositionedElement::LinkAnnotation { .. } = element {
+                    if let Some(&annotation) = annotation_refs.get(&(page_idx, current_idx)) {
+                        tagged_links.push(TaggedLink {
+                            page_index: page_idx,
+                            ordinal,
+                            annotation,
+                            element: alloc(),
+                            key: next_key,
+                        });
+                        link_keys.insert((page_idx, current_idx), next_key);
+                        next_key += 1;
+                    }
+                    ordinal += 1;
+                }
+            });
+        }
+    }
 
     let language = layout
         .metadata
@@ -919,12 +955,11 @@ pub(crate) fn write_pdf_impl(
         });
 
         if let Some(forms) = forms.as_ref() {
-            let before = page_annotations.len();
             page_annotations.extend(forms.widgets_on(page_idx));
-            // Tagged pages tab through their fields in structure order.
-            if tagged.is_some() && page_annotations.len() > before {
-                page_dict.tab_order(TabOrder::StructureOrder);
-            }
+        }
+        // Tagged pages tab through their links and fields in structure order.
+        if tagged.is_some() && !page_annotations.is_empty() {
+            page_dict.tab_order(TabOrder::StructureOrder);
         }
         if !page_annotations.is_empty() {
             page_dict.annotations(page_annotations.iter().copied());
@@ -956,10 +991,31 @@ pub(crate) fn write_pdf_impl(
                 if profile.is_some() {
                     annot.flags(AnnotationFlags::PRINT);
                 }
-                annot
-                    .action()
-                    .action_type(ActionType::Uri)
-                    .uri(Str(url.as_bytes()));
+                // A tagged link is described for assistive technology.
+                if let Some(&key) = link_keys.get(&(page_idx, current_idx)) {
+                    annot.struct_parent(key);
+                    annot.contents(TextStr(url));
+                }
+                match url
+                    .strip_prefix('#')
+                    .and_then(|name| destinations.get(name))
+                {
+                    Some(&(target_page, y)) => {
+                        let top = layout.pages[target_page].height - y;
+                        annot
+                            .action()
+                            .action_type(ActionType::GoTo)
+                            .destination()
+                            .page(page_ids[target_page])
+                            .xyz(0.0, top as f32, None);
+                    }
+                    None => {
+                        annot
+                            .action()
+                            .action_type(ActionType::Uri)
+                            .uri(Str(url.as_bytes()));
+                    }
+                }
                 annot.finish();
             }
         });
@@ -995,7 +1051,7 @@ pub(crate) fn write_pdf_impl(
             .as_ref()
             .map(forms::FormPlan::tagged_widgets)
             .unwrap_or_default();
-        tagged.write(&mut pdf, &page_ids, &widgets);
+        tagged.write(&mut pdf, &page_ids, &widgets, &tagged_links);
     }
 
     // The file identifier is a digest of everything written so far, so two
@@ -1018,6 +1074,22 @@ pub(crate) fn write_pdf_impl(
     }
     pdf.set_file_id((file_id.to_vec(), file_id.to_vec()));
     pdf.finish()
+}
+
+/// Where each named destination lands: the first page that draws it, and
+/// its height from the page's top. The first of the same name wins.
+fn link_destinations(layout: &LayoutResult) -> HashMap<String, (usize, f64)> {
+    let mut destinations = HashMap::new();
+    for (page_idx, page) in layout.pages.iter().enumerate() {
+        walk(&page.elements, &mut |element, transform| {
+            if let PositionedElement::Destination { name, point } = element {
+                destinations
+                    .entry(name.clone())
+                    .or_insert((page_idx, transform.apply(*point).y));
+            }
+        });
+    }
+    destinations
 }
 
 /// The first 16 bytes of the SHA-256 digest of `bytes` and of the PDF/A

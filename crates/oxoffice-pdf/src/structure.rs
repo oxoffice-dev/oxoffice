@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use oxoffice_layout::{
-    DocumentStructure, FormFieldId, PageFrame, PositionedElement, StructureId, StructureRole,
+    DocumentStructure, FormFieldId, PageFrame, PositionedElement, StructureId, StructureRole, walk,
 };
 use pdf_writer::types::{StructRole, TableHeaderScope};
 use pdf_writer::{Finish, Name, Pdf, Ref, TextStr};
@@ -34,6 +34,17 @@ struct FragmentMark {
     parent: Option<StructureId>,
 }
 
+/// Where a link annotation sits among a page's marked content.
+#[derive(Debug, Clone, Copy)]
+struct LinkMark {
+    /// Marked content sequences the page opens before the link.
+    mcid_before: i32,
+    /// The link's rank among the page's fragments and links.
+    sequence: u32,
+    /// The structure element of the marked content around the link.
+    parent: Option<StructureId>,
+}
+
 /// A form field widget to tag: its `/Form` element and its parent tree key.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TaggedWidget {
@@ -44,11 +55,22 @@ pub(crate) struct TaggedWidget {
     pub(crate) key: i32,
 }
 
-/// Where each widget's `/Form` element goes: the kids of each parent, and
-/// each widget's parent by its parent tree key.
+/// A link annotation to tag: its `/Link` element and its parent tree key.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TaggedLink {
+    pub(crate) page_index: usize,
+    /// The link's rank among the page's link annotations, in drawing order.
+    pub(crate) ordinal: usize,
+    pub(crate) annotation: Ref,
+    pub(crate) element: Ref,
+    pub(crate) key: i32,
+}
+
+/// Where each annotation's element goes: the kids of each parent, and each
+/// annotation's parent by its parent tree key.
 #[derive(Default)]
-struct FormPlacement {
-    kids: BTreeMap<StructureId, Vec<FormKid>>,
+struct AnnotationPlacement {
+    kids: BTreeMap<StructureId, Vec<AnnotationKid>>,
     parent: BTreeMap<i32, StructureId>,
 }
 
@@ -57,9 +79,10 @@ struct FormPlacement {
 /// their rank. Marked content ranks after the fragments that precede it.
 type ReadingOrder = (usize, i32, u32);
 
-/// A widget's `/Form` element placed under its parent element.
+/// A widget's `/Form` or a link's `/Link` element placed under its parent
+/// element.
 #[derive(Debug, Clone, Copy)]
-struct FormKid {
+struct AnnotationKid {
     order: ReadingOrder,
     element: Ref,
 }
@@ -72,6 +95,8 @@ pub(crate) struct PreparedStructure<'a> {
     page_parent_refs: Vec<Ref>,
     occurrences: BTreeMap<StructureId, Vec<MarkOccurrence>>,
     fragments: Vec<FragmentMark>,
+    /// Each link annotation by its page and its rank on the page.
+    links: HashMap<(usize, usize), LinkMark>,
 }
 
 impl<'a> PreparedStructure<'a> {
@@ -98,13 +123,16 @@ impl<'a> PreparedStructure<'a> {
         let page_parent_refs = pages.iter().map(|_| alloc()).collect();
         let mut occurrences = BTreeMap::new();
         let mut fragments = Vec::new();
+        let mut links = HashMap::new();
         for (page_index, page) in pages.iter().enumerate() {
             let mut marks = Marks {
                 page_index,
                 next_mcid: 0,
                 next_fragment: 0,
+                next_link: 0,
                 occurrences: &mut occurrences,
                 fragments: &mut fragments,
+                links: &mut links,
             };
             marks.collect(&page.elements, None);
         }
@@ -116,6 +144,7 @@ impl<'a> PreparedStructure<'a> {
             page_parent_refs,
             occurrences,
             fragments,
+            links,
         })
     }
 
@@ -128,14 +157,20 @@ impl<'a> PreparedStructure<'a> {
     }
 
     /// Each widget's `/Form` element goes under the element of the marked
-    /// content around its field's first fragment on the widget's page, else
-    /// under the document element, ordered by where the fragment sits.
-    fn form_kids(&self, widgets: &[TaggedWidget]) -> FormPlacement {
+    /// content around its field's first fragment on the widget's page, and
+    /// each link's `/Link` element under the element of the marked content
+    /// around the link, else under the document element, ordered by where
+    /// the fragment or the link sits.
+    fn annotation_kids(
+        &self,
+        widgets: &[TaggedWidget],
+        links: &[TaggedLink],
+    ) -> AnnotationPlacement {
         let mut first: HashMap<(FormFieldId, usize), &FragmentMark> = HashMap::new();
         for mark in &self.fragments {
             first.entry((mark.field, mark.page_index)).or_insert(mark);
         }
-        let mut placement = FormPlacement::default();
+        let mut placement = AnnotationPlacement::default();
         for widget in widgets {
             let mark = first.get(&(widget.field, widget.page_index)).copied();
             let parent = mark
@@ -145,20 +180,49 @@ impl<'a> PreparedStructure<'a> {
             let order = mark.map_or((widget.page_index, i32::MAX, u32::MAX), |mark| {
                 (mark.page_index, mark.mcid_before, mark.sequence)
             });
-            placement.kids.entry(parent).or_default().push(FormKid {
-                order,
-                element: widget.element,
-            });
+            placement
+                .kids
+                .entry(parent)
+                .or_default()
+                .push(AnnotationKid {
+                    order,
+                    element: widget.element,
+                });
             placement.parent.insert(widget.key, parent);
+        }
+        for link in links {
+            let mark = self.links.get(&(link.page_index, link.ordinal));
+            let parent = mark
+                .and_then(|mark| mark.parent)
+                .filter(|parent| self.node_refs.contains_key(parent))
+                .unwrap_or(self.structure.root);
+            let order = mark.map_or((link.page_index, i32::MAX, u32::MAX), |mark| {
+                (link.page_index, mark.mcid_before, mark.sequence)
+            });
+            placement
+                .kids
+                .entry(parent)
+                .or_default()
+                .push(AnnotationKid {
+                    order,
+                    element: link.element,
+                });
+            placement.parent.insert(link.key, parent);
         }
         placement
     }
 
-    pub(crate) fn write(&self, pdf: &mut Pdf, page_ids: &[Ref], widgets: &[TaggedWidget]) {
+    pub(crate) fn write(
+        &self,
+        pdf: &mut Pdf,
+        page_ids: &[Ref],
+        widgets: &[TaggedWidget],
+        links: &[TaggedLink],
+    ) {
         let Some(document_ref) = self.node_ref(self.structure.root) else {
             return;
         };
-        let placement = self.form_kids(widgets);
+        let placement = self.annotation_kids(widgets, links);
         let form_kids = &placement.kids;
 
         {
@@ -167,7 +231,7 @@ impl<'a> PreparedStructure<'a> {
             root.pair(Name(b"K"), document_ref);
             root.pair(
                 Name(b"ParentTreeNextKey"),
-                (self.page_parent_refs.len() + widgets.len()) as i32,
+                (self.page_parent_refs.len() + widgets.len() + links.len()) as i32,
             );
             let mut parent_tree = root.insert(Name(b"ParentTree")).dict();
             let mut nums = parent_tree.insert(Name(b"Nums")).array();
@@ -178,6 +242,10 @@ impl<'a> PreparedStructure<'a> {
             for widget in widgets {
                 nums.item(widget.key);
                 nums.item(widget.element);
+            }
+            for link in links {
+                nums.item(link.key);
+                nums.item(link.element);
             }
             nums.finish();
             parent_tree.finish();
@@ -271,10 +339,30 @@ impl<'a> PreparedStructure<'a> {
             }
         }
 
-        for widget in widgets {
+        let annotations = widgets
+            .iter()
+            .map(|widget| {
+                (
+                    StructRole::Form,
+                    widget.key,
+                    widget.element,
+                    widget.widget,
+                    widget.page_index,
+                )
+            })
+            .chain(links.iter().map(|link| {
+                (
+                    StructRole::Link,
+                    link.key,
+                    link.element,
+                    link.annotation,
+                    link.page_index,
+                )
+            }));
+        for (role, key, element_ref, annotation, page_index) in annotations {
             let parent = placement
                 .parent
-                .get(&widget.key)
+                .get(&key)
                 .copied()
                 .unwrap_or(self.structure.root);
             let parent_ref = self
@@ -283,14 +371,14 @@ impl<'a> PreparedStructure<'a> {
                 .copied()
                 .or_else(|| self.node_ref(parent))
                 .unwrap_or(document_ref);
-            let mut element = pdf.struct_element(widget.element);
-            element.kind(StructRole::Form);
+            let mut element = pdf.struct_element(element_ref);
+            element.kind(role);
             element.parent(parent_ref);
-            if let Some(page_ref) = page_ids.get(widget.page_index).copied() {
+            if let Some(page_ref) = page_ids.get(page_index).copied() {
                 element
                     .children()
                     .object_ref()
-                    .object(widget.widget)
+                    .object(annotation)
                     .page(page_ref);
             }
             element.finish();
@@ -317,7 +405,7 @@ impl<'a> PreparedStructure<'a> {
     fn ordered_kids(
         &self,
         id: StructureId,
-        form_kids: &BTreeMap<StructureId, Vec<FormKid>>,
+        form_kids: &BTreeMap<StructureId, Vec<AnnotationKid>>,
     ) -> Vec<StructureKid> {
         let Some(node) = self.structure.node(id) else {
             return Vec::new();
@@ -378,7 +466,7 @@ impl<'a> PreparedStructure<'a> {
     fn first_occurrence(
         &self,
         id: StructureId,
-        form_kids: &BTreeMap<StructureId, Vec<FormKid>>,
+        form_kids: &BTreeMap<StructureId, Vec<AnnotationKid>>,
     ) -> Option<ReadingOrder> {
         let own = self
             .occurrences
@@ -473,8 +561,10 @@ struct Marks<'m> {
     page_index: usize,
     next_mcid: i32,
     next_fragment: u32,
+    next_link: usize,
     occurrences: &'m mut BTreeMap<StructureId, Vec<MarkOccurrence>>,
     fragments: &'m mut Vec<FragmentMark>,
+    links: &'m mut HashMap<(usize, usize), LinkMark>,
 }
 
 impl Marks<'_> {
@@ -502,7 +592,8 @@ impl Marks<'_> {
                 PositionedElement::Group(oxoffice_layout::GroupElement { children, .. }) => {
                     self.collect(children, parent);
                 }
-                // Its children are drawn without marks, so they number nothing.
+                // Its children are drawn without marks, so they number nothing
+                // but the links among them.
                 PositionedElement::FormField(fragment) => {
                     self.fragments.push(FragmentMark {
                         field: fragment.field,
@@ -512,10 +603,30 @@ impl Marks<'_> {
                         parent,
                     });
                     self.next_fragment += 1;
+                    walk(&fragment.children, &mut |element, _| {
+                        if matches!(element, PositionedElement::LinkAnnotation { .. }) {
+                            self.link(parent);
+                        }
+                    });
                 }
+                PositionedElement::LinkAnnotation { .. } => self.link(parent),
                 _ => {}
             }
         }
+    }
+
+    /// The next link annotation of the page, in the order `walk` meets it.
+    fn link(&mut self, parent: Option<StructureId>) {
+        self.links.insert(
+            (self.page_index, self.next_link),
+            LinkMark {
+                mcid_before: self.next_mcid,
+                sequence: self.next_fragment,
+                parent,
+            },
+        );
+        self.next_link += 1;
+        self.next_fragment += 1;
     }
 }
 
@@ -525,7 +636,7 @@ pub(crate) fn has_content_stream_output(elements: &[PositionedElement]) -> bool 
         PositionedElement::MultilingualText(run) => {
             !(run.logical_text.is_empty() && run.glyph_ids.is_empty())
         }
-        PositionedElement::LinkAnnotation { .. } => false,
+        PositionedElement::LinkAnnotation { .. } | PositionedElement::Destination { .. } => false,
         // Drawn in its field's appearance, or without marks on a later page.
         PositionedElement::FormField(_) => false,
         PositionedElement::Group(group) => has_content_stream_output(&group.children),

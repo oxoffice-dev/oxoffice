@@ -1395,9 +1395,16 @@ fn gather(
         for (index, element) in elements.iter().enumerate() {
             let tagged_figure =
                 matches!(element, E::MarkedContent { structure: Some(id), .. } if figure(*id));
+            // A link stays on the page, bare or in its paragraph's marked
+            // content, and so does a destination.
+            let link = |element: &E| matches!(element, E::LinkAnnotation { .. });
+            let annotation = link(element)
+                || matches!(element, E::MarkedContent { children, .. }
+                    if !children.is_empty() && children.iter().all(link));
             let free = owner[index].is_none()
                 && !tagged_figure
-                && !matches!(element, E::FormField(_) | E::LinkAnnotation { .. });
+                && !annotation
+                && !matches!(element, E::FormField(_) | E::Destination { .. });
             if free && gathers(*rect, *node, element) {
                 owner[index] = Some(marker_index);
             }

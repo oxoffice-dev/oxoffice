@@ -9,7 +9,7 @@ use oxoffice_pdf::{PdfConformance, PdfOptions, render_to_pdf_checked, render_to_
 
 use crate::support::{PAGE_HEIGHT, Pdf, contains, layout, rect, run, text, text_origins};
 
-fn field(name: &str, kind: FormFieldKind) -> FormField {
+pub(crate) fn field(name: &str, kind: FormFieldKind) -> FormField {
     FormField {
         name: name.to_owned(),
         tooltip: None,
@@ -22,7 +22,7 @@ fn field(name: &str, kind: FormFieldKind) -> FormField {
     }
 }
 
-fn text_kind(value: &str) -> FormFieldKind {
+pub(crate) fn text_kind(value: &str) -> FormFieldKind {
     FormFieldKind::Text {
         value: value.to_owned(),
         multiline: false,
@@ -32,7 +32,7 @@ fn text_kind(value: &str) -> FormFieldKind {
 
 /// One line's fragment: the value drawn on a baseline 12 points under the
 /// top of `rect`.
-fn fragment(field: u32, rect: Rect, value: &str) -> PositionedElement {
+pub(crate) fn fragment(field: u32, rect: Rect, value: &str) -> PositionedElement {
     PositionedElement::FormField(FormFieldFragment {
         field: FormFieldId(field),
         rect,
@@ -49,7 +49,7 @@ fn fragment(field: u32, rect: Rect, value: &str) -> PositionedElement {
     })
 }
 
-fn line(x: f64, y: f64, width: f64) -> Rect {
+pub(crate) fn line(x: f64, y: f64, width: f64) -> Rect {
     Rect {
         x,
         y,
@@ -58,11 +58,11 @@ fn line(x: f64, y: f64, width: f64) -> Rect {
     }
 }
 
-fn label() -> PositionedElement {
+pub(crate) fn label() -> PositionedElement {
     run("Name:", Point { x: 72.0, y: 112.0 }, 11.0)
 }
 
-fn with_fields(mut layout: LayoutResult, fields: Vec<FormField>) -> LayoutResult {
+pub(crate) fn with_fields(mut layout: LayoutResult, fields: Vec<FormField>) -> LayoutResult {
     layout.form_fields = fields;
     layout
 }
@@ -82,7 +82,7 @@ fn flattened(elements: &[PositionedElement]) -> Vec<PositionedElement> {
         .collect()
 }
 
-fn pdf(layout: &LayoutResult) -> Pdf {
+pub(crate) fn pdf(layout: &LayoutResult) -> Pdf {
     Pdf::read(&render_to_pdf_checked(layout).unwrap())
 }
 
@@ -683,12 +683,12 @@ fn a_fragment_drawn_inside_a_tagged_paragraph_is_that_paragraph_content() {
     );
 }
 
-fn structure_id(value: u32) -> StructureId {
+pub(crate) fn structure_id(value: u32) -> StructureId {
     StructureId::new(value).unwrap()
 }
 
 /// A document element holding one paragraph element.
-fn tagged(mut layout: LayoutResult) -> LayoutResult {
+pub(crate) fn tagged(mut layout: LayoutResult) -> LayoutResult {
     layout.structure = Some(DocumentStructure {
         root: structure_id(1),
         nodes: vec![
@@ -709,7 +709,7 @@ fn tagged(mut layout: LayoutResult) -> LayoutResult {
     layout
 }
 
-fn paragraph(children: Vec<PositionedElement>) -> PositionedElement {
+pub(crate) fn paragraph(children: Vec<PositionedElement>) -> PositionedElement {
     PositionedElement::MarkedContent {
         structure: Some(structure_id(2)),
         children,
@@ -717,7 +717,7 @@ fn paragraph(children: Vec<PositionedElement>) -> PositionedElement {
 }
 
 /// The structure element `element` refers to, by its `/S` role.
-fn role(read: &Pdf, element: &lopdf::Object) -> Vec<u8> {
+pub(crate) fn role(read: &Pdf, element: &lopdf::Object) -> Vec<u8> {
     read.resolve(element)
         .as_dict()
         .unwrap()
@@ -729,7 +729,7 @@ fn role(read: &Pdf, element: &lopdf::Object) -> Vec<u8> {
 }
 
 /// The paragraph element's kids: `MCR` for marked content, else the role.
-fn paragraph_kids(read: &Pdf) -> Vec<String> {
+pub(crate) fn paragraph_kids(read: &Pdf) -> Vec<String> {
     let root = read.dict(read.catalog(), b"StructTreeRoot");
     let document = read.resolve(root.get(b"K").unwrap()).as_dict().unwrap();
     let paragraph = read

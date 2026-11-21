@@ -373,8 +373,12 @@ pub enum PositionedElement {
         content_type: String,
         media_id: MediaId,
     },
-    /// A link annotation (hyperlink).
+    /// A link annotation (hyperlink). A `url` that starts with `#` is an
+    /// internal link to the [`PositionedElement::Destination`] of that name.
     LinkAnnotation { rect: Rect, url: String },
+    /// Where an internal link of this name lands: a point on the page that
+    /// draws nothing.
+    Destination { name: String, point: Point },
     /// A backend-neutral filled or stroked path.
     Path(PathElement),
     /// A nested group with one child-local transform.

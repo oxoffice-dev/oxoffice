@@ -1959,6 +1959,9 @@ pub struct ParagraphBlock {
     pub heading_level: Option<u32>,
     /// Heading text for outline generation.
     pub heading_text: Option<String>,
+    /// Names of the bookmarks that start in this paragraph, where internal
+    /// links land.
+    pub bookmarks: Vec<String>,
     /// Numbering instance and zero-based nesting level for semantic lists.
     pub list: Option<(u32, u8)>,
     /// Logical paragraph node allocated before pagination.
@@ -2148,6 +2151,7 @@ pub fn build_paragraph_block(
         widow_control,
         heading_level: None,
         heading_text: None,
+        bookmarks: Vec::new(),
         list: None,
         structure_id: None,
         reflow: None,
