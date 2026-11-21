@@ -2189,7 +2189,48 @@ fn a_text_count_set_after_a_pending_slide_edit_is_kept() {
     let saved = reopen(&prs);
     assert_eq!(saved.application_properties().unwrap().words, Some(120));
     let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
-    assert!(!app.contains("<TitlesOfParts>"), "{app}");
+    // The stale counts of the copy do not come back.
+    assert!(
+        !app.contains("<TitlesOfParts>") && !app.contains("Paragraphs>"),
+        "{app}"
+    );
+}
+
+#[test]
+fn a_property_set_after_pending_notes_edits_keeps_the_refreshed_notes_count() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let with_notes = (0..prs.len())
+        .find(|index| {
+            prs.slide(*index)
+                .unwrap()
+                .notes_text()
+                .is_some_and(|text| !text.trim().is_empty())
+        })
+        .unwrap();
+    prs.slide_mut(with_notes)
+        .unwrap()
+        .set_notes_text("")
+        .unwrap();
+    let mut app = prs.application_properties().unwrap().clone();
+    app.company = Some("Acme".to_owned());
+    prs.set_application_properties(app).unwrap();
+    let saved = reopen(&prs);
+    let app = saved.application_properties().unwrap();
+    assert_eq!(
+        (app.company.as_deref(), app.notes, app.words),
+        (Some("Acme"), Some(0), Some(61))
+    );
+}
+
+#[test]
+fn notes_created_on_a_slide_without_them_are_counted() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let without = (0..prs.len())
+        .find(|index| prs.slide(*index).unwrap().notes_text().is_none())
+        .unwrap();
+    prs.set_notes_text(without, "New notes").unwrap();
+    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
+    assert!(app.contains("<Notes>2</Notes>"), "{app}");
 }
 
 #[test]

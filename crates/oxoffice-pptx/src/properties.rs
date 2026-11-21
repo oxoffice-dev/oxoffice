@@ -152,6 +152,11 @@ impl Presentation {
     }
 
     /// Publishes application properties after staged validation and source preservation.
+    ///
+    /// A field equal to what [`Self::application_properties`] gave is left
+    /// as the part has it: after a slide edit not yet committed, the refresh
+    /// of the counts wins over a stale copy, and a field set to a new value
+    /// wins over the refresh.
     pub fn set_application_properties(&mut self, properties: AppProperties) -> Result<()> {
         if let Some(version) = &properties.application_version {
             let bytes = version.as_bytes();
@@ -169,12 +174,16 @@ impl Presentation {
             .to_xml()
             .map_err(|e| invalid_shape_mutation("application properties", e.to_string()))?;
         // A slide edit still pending refreshes app.xml when it is committed:
-        // commit it first, so that this write lands after that refresh.
+        // commit it first, then apply only the fields the caller changed, so
+        // that neither the refresh nor a stale copy undoes the other.
+        let before = self.application_properties.clone();
         let pending = self.clone();
         self.commit_candidate(pending)?;
-        let properties = match &self.application_properties {
-            Some(current) => properties.with_retained_xml_of(current),
-            None => properties,
+        let properties = match (&before, &self.application_properties) {
+            (Some(before), Some(current)) if before != current => {
+                changed_application_properties(before, &properties, current)
+            }
+            _ => properties,
         };
         if self.application_properties.as_ref() == Some(&properties) {
             return Ok(());
@@ -751,6 +760,47 @@ fn patch_application_properties(
         ));
     }
     Ok(result)
+}
+
+/// `current` with the fields `wanted` changes from `before`: a field the
+/// caller left as it read it follows the part as it is now.
+fn changed_application_properties(
+    before: &AppProperties,
+    wanted: &AppProperties,
+    current: &AppProperties,
+) -> AppProperties {
+    let mut merged = current.clone();
+    macro_rules! changed {
+        ($($field:ident),* $(,)?) => {
+            $(if wanted.$field != before.$field {
+                merged.$field = wanted.$field.clone();
+            })*
+        };
+    }
+    changed!(
+        template,
+        manager,
+        company,
+        pages,
+        words,
+        characters,
+        presentation_format,
+        lines,
+        paragraphs,
+        slides,
+        notes,
+        total_time,
+        hidden_slides,
+        multimedia_clips,
+        scale_crop,
+        links_up_to_date,
+        characters_with_spaces,
+        shared_document,
+        hyperlinks_changed,
+        application,
+        application_version,
+    );
+    merged
 }
 
 fn custom_value_xml(value: &CustomPropertyValue) -> Result<String> {
