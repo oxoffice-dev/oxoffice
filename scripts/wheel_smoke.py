@@ -1,11 +1,13 @@
-"""Open, edit, save and render every Word and PowerPoint file of the corpus with the installed oxoffice package, on
+"""Open, edit, save and render the Word and PowerPoint files of the corpus with the installed oxoffice package, on
 the main thread, then measure the stack the same work needs.
 
-The release workflow runs it on each wheel it built, before the GitHub release, PyPI and prefix.dev. It stays off
-pytest on purpose: the Python tests run each test on an 8 MiB thread (crates/oxoffice-py/tests/conftest.py), while a
-user's script runs on the main thread. A stack overflow ends the process without a traceback.
+The release workflow runs it on each wheel it built, on a few files (--files), before the GitHub release, PyPI and
+prefix.dev; the nightly run (nightly.yml) runs it on the whole corpus of a release-profile Linux wheel, with
+--measure. It stays off pytest on purpose: the Python tests run each test on an 8 MiB thread
+(crates/oxoffice-py/tests/conftest.py), while a user's script runs on the main thread. A stack overflow ends the
+process without a traceback.
 
-    python -I scripts/wheel_smoke.py tests/corpus/files [--version X.Y.Z] [--measure]
+    python -I scripts/wheel_smoke.py tests/corpus/files [--files word/paper.docx ...] [--version X.Y.Z] [--measure]
 
 With --measure, it then finds the smallest thread stack on which the same work completes, by running it in new
 processes on threads of decreasing stack sizes, and fails above STACK_BUDGET_KIB.
@@ -66,9 +68,14 @@ def presentation(source, out):
     assert saved.to_pdf().startswith(b"%PDF"), "not a PDF"
 
 
+# The files of --files, relative to the corpus folder; every file of the corpus when empty.
+ONLY = []
+
+
 def corpus_files(corpus):
-    files = sorted(corpus.glob("*/*.docx")) + sorted(corpus.glob("*/*.pptx"))
-    assert files, f"no corpus file in {corpus}"
+    files = ([corpus / name for name in ONLY] if ONLY
+             else sorted(corpus.glob("*/*.docx")) + sorted(corpus.glob("*/*.pptx")))
+    assert files and all(f.is_file() for f in files), f"missing corpus files in {corpus}: {files}"
     return files
 
 
@@ -135,7 +142,8 @@ def fits(corpus, kib):
     """Whether the work completes on a `kib` KiB thread stack, in a new process. A stack overflow kills that process;
     an exit status of 1 is a Python error, which stops the measure with its traceback."""
     # -X utf8 makes the probe write UTF-8 even on Windows; -I ignores PYTHONIOENCODING.
-    command = [sys.executable, "-I", "-X", "utf8", __file__, str(corpus), "--thread-stack", str(kib)]
+    command = [sys.executable, "-I", "-X", "utf8", __file__, str(corpus), "--thread-stack", str(kib),
+               *(["--files", *ONLY] if ONLY else [])]
     probe = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace")
     if probe.returncode == 1:
         raise SystemExit(f"the probe on a {kib} KiB stack failed with an error, not an overflow:\n{probe.stderr}")
@@ -164,10 +172,12 @@ def stack_needed(corpus, low=128, high=8192):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("corpus", type=Path)
+    parser.add_argument("--files", nargs="+", default=[], metavar="NAME", help="only these files of the corpus")
     parser.add_argument("--version", help="the version the installed package must report")
     parser.add_argument("--measure", action="store_true", help="also report the smallest thread stack the work needs")
     parser.add_argument("--thread-stack", type=int, metavar="KIB", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    ONLY[:] = args.files
     if args.thread_stack:
         return on_thread(args.corpus, args.thread_stack)
     assert threading.current_thread() is threading.main_thread()

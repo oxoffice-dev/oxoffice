@@ -74,3 +74,4 @@ dependency bumps and documentation.
 | 2026-11-21 | [One rule for every Python length argument](2026-11-21-one-rule-for-python-length-arguments.md) | accepted |
 | 2026-11-21 | [The release pushes main and the tag after every build is green](2026-11-21-release-pushes-after-the-builds.md) | shipped |
 | 2026-11-22 | [One CI for pull requests and main, the full sets at night](2026-11-22-one-ci-for-pull-requests-and-main.md) | accepted |
+| 2026-11-22 | [A short release: build, check each package, publish](2026-11-22-a-short-release.md) | accepted |
