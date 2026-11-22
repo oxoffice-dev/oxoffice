@@ -351,7 +351,7 @@ fn modeled_word_child(parent: &[u8], child: &[u8]) -> bool {
         }
         b"ins" | b"del" | b"moveFrom" | b"moveTo" => matches!(
             child,
-            b"r" | b"sdt" | b"hyperlink" | b"ins" | b"del" | b"moveFrom" | b"moveTo"
+            b"r" | b"fldSimple" | b"sdt" | b"hyperlink" | b"ins" | b"del" | b"moveFrom" | b"moveTo"
         ),
         b"fldSimple" => child == b"r",
         _ => false,

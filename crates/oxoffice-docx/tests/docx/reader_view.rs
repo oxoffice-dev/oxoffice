@@ -67,3 +67,44 @@ fn an_epub_navigation_label_shows_a_heading_simple_field_result() {
     }
     assert!(navigation.contains("Chapter 1"), "{navigation}");
 }
+
+/// An insertion holding a simple field, as Word writes a field typed with
+/// tracked changes on.
+const INSERTED_FIELD: &str = concat!(
+    r#"<w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+    r#"<w:fldSimple w:instr=" QUOTE a "><w:r><w:t>12</w:t></w:r></w:fldSimple>"#,
+    r#"<w:r><w:t>C</w:t></w:r></w:ins>"#,
+);
+
+#[test]
+fn a_link_holding_an_inserted_simple_field_reads_its_result_in_both_link_lists() {
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:hyperlink w:anchor="x"><w:r><w:t xml:space="preserve">See </w:t></w:r>{INSERTED_FIELD}</w:hyperlink></w:p>"#
+    ));
+    assert_eq!(doc.links()[0].text, "See 12C");
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == oxoffice_docx::StoryKind::Body)
+        .unwrap();
+    let links = doc.story_links(&body).unwrap();
+    assert_eq!(links[0].1.text, "See 12C");
+}
+
+#[test]
+fn an_inline_content_control_and_a_field_hyperlink_read_a_simple_field_result() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>"#,
+        r#"<w:r><w:t xml:space="preserve">No. </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" SEQ Item "><w:r><w:t>7</w:t></w:r></w:fldSimple>"#,
+        r#"</w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK "https://example.com/" </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t xml:space="preserve">our site, page </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>3</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    assert_eq!(doc.content_controls()[0].text(), "No. 7");
+    assert_eq!(doc.links()[0].text, "our site, page 3");
+}

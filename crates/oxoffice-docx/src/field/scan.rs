@@ -1014,9 +1014,16 @@ fn dynamic_toc_run_position(
         && modeled_simple_field
         && accepted_simple_field_parent(elements, paragraph)
     {
-        if elements.last().is_some_and(|parent| {
-            parent.is_typed_inline_owner
-                && matches!(parent.local_name.as_slice(), b"ins" | b"moveTo")
+        // Nested whenever a revision or a control sits between it and the
+        // paragraph, a hyperlink in a tracked insertion included, as for a run.
+        let nested = elements.iter().rev().take_while(|element| {
+            !element.is_typed_paragraph || element.paragraph != Some(paragraph)
+        });
+        if nested.into_iter().any(|element| {
+            matches!(
+                element.local_name.as_slice(),
+                b"sdt" | b"sdtContent" | b"ins" | b"moveTo"
+            )
         }) {
             let outer = inherited.unwrap_or(TocRunPosition {
                 run_boundary: *next,

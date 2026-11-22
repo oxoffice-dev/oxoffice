@@ -2057,20 +2057,23 @@ fn append_tracked_cell_runs<'a>(cell: &'a CT_Tc, output: &mut Vec<&'a CT_R>) {
 
 // Markdown's accepted projection carries physical scope boundaries separately
 // from the typed runs. Default accepted-view readers keep their existing walk.
+// Returns the view's equations, placed on the same runs.
 fn append_accepted_inline_paragraph(
     paragraph: &CT_P,
     runs: &mut Vec<CT_R>,
     boundaries: &mut Vec<usize>,
-) {
+) -> Vec<(usize, usize, OfficeMath)> {
     let (view, inner) = paragraph.accepted_view_projection(true);
     let offset = runs.len();
     let view = view.into_owned();
+    let equations = shifted_equations(&view, offset).collect();
     if !view.runs.is_empty() {
         boundaries.push(offset);
         boundaries.extend(inner.into_iter().map(|at| offset + at));
         boundaries.push(offset + view.runs.len());
         runs.extend(view.runs);
     }
+    equations
 }
 
 fn append_accepted_inline_revision(
@@ -2104,7 +2107,7 @@ fn append_accepted_inline_control(
                 append_accepted_inline_control(nested, runs, boundaries)
             }
             SdtContent::Paragraph(paragraph) => {
-                append_accepted_inline_paragraph(paragraph, runs, boundaries)
+                append_accepted_inline_paragraph(paragraph, runs, boundaries);
             }
             // Block carriers are emitted separately by Markdown. Retain the
             // accepted typed projection if encountered in a synthetic inline model.
@@ -2175,31 +2178,6 @@ fn wrapper_scope() -> [String; 2] {
         "w".to_owned(),
         crate::numbering::namespace_binding("m", crate::namespace::M_NS),
     ]
-}
-
-/// The equations a tracked insertion or move in holds, placed among the
-/// `count` runs it added at `offset` of the accepted view (with field
-/// owners preserved, as Markdown reads it).
-fn push_inserted_equations(
-    revision: &CT_Revision,
-    offset: usize,
-    count: usize,
-    equations: &mut Vec<(usize, usize, OfficeMath)>,
-) {
-    if !matches!(
-        revision.kind(),
-        RevisionKind::Insertion | RevisionKind::MoveTo
-    ) {
-        return;
-    }
-    if let Some(paragraph) = revision.content_paragraph() {
-        let (view, _) = paragraph.accepted_view_projection(false);
-        equations.extend(
-            view.equations
-                .iter()
-                .map(|(at, slot, equation)| (offset + (*at).min(count), *slot, equation.clone())),
-        );
-    }
 }
 
 #[allow(non_snake_case)]
@@ -2551,21 +2529,18 @@ impl CT_P {
                         let (_, slot, revision) = &self.revisions[index];
                         let offset = runs.len();
                         if preserve_field_owners {
-                            append_accepted_inline_revision(
-                                revision,
-                                &mut runs,
-                                &mut inline_boundaries,
-                            );
+                            // Its equations sit on the runs of the same view.
+                            if let Some(content) = accepted_revision_content(revision) {
+                                equations.extend(append_accepted_inline_paragraph(
+                                    &content,
+                                    &mut runs,
+                                    &mut inline_boundaries,
+                                ));
+                            }
                             links.extend(std::iter::repeat_n(
                                 hyperlink_revision_index(*slot),
                                 runs.len() - offset,
                             ));
-                            push_inserted_equations(
-                                revision,
-                                offset,
-                                runs.len() - offset,
-                                &mut equations,
-                            );
                             continue;
                         }
                         // The runs and equations of an insertion's own accepted
