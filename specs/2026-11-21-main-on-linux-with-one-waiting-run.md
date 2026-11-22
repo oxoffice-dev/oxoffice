@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: shipped
+status: superseded
 scope: ci
 ---
 
@@ -107,3 +107,4 @@ repository; the organization's plan allows well above that.
 - [Nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md)
 - [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md)
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#ci)
+- Superseded by [one CI for pull requests and main](2026-11-22-one-ci-for-pull-requests-and-main.md).
