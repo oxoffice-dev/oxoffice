@@ -1015,6 +1015,7 @@ fn a_new_joined_operand_needs_a_nested_field_and_no_adjacent_text() {
         vec![nested()],
         vec![text("a"), text("b")],
         vec![text("a"), text("b"), nested()],
+        vec![text(""), nested()],
     ] {
         let joined = FieldArgument::Joined(pieces);
         assert!(

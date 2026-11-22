@@ -2264,10 +2264,13 @@ fn validate_authored_instruction_parts(
                         .any(|piece| matches!(piece, FieldArgument::Nested(_)))
                     || pieces.windows(2).any(|pair| {
                         matches!(pair, [FieldArgument::Text(_), FieldArgument::Text(_)])
-                    }))
+                    })
+                    || pieces
+                        .iter()
+                        .any(|piece| matches!(piece, FieldArgument::Text(text) if text.is_empty())))
             {
                 return Err(OxmlError::InvalidValue(
-                    "a joined field operand needs a nested field and no adjacent text pieces"
+                    "a joined field operand needs a nested field and no empty or adjacent text pieces"
                         .into(),
                 ));
             }

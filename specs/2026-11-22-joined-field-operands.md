@@ -38,6 +38,9 @@ pieces' values joined, the way Word reads it.
   least one `Nested` piece and at least two pieces; adjacent text is one piece.
   A token with a single piece keeps today's `Text` or `Nested`, so every
   instruction that reads today reads the same.
+- **A name written against a nested field**: `{ ={ MERGEFIELD Qty }*2 }`, as
+  Word's Ctrl+F9 leaves it, reads the leading text as the field's name (`=`)
+  and the rest of the token as its first operand, as today's split did.
 - **Where a nested field sits**: `NestedFieldPosition::Argument(i)` and
   `Switch(i)` keep their meaning, "in operand `i`". A `Joined` operand with
   two nested pieces is listed twice in the nested order, the n-th listing being
