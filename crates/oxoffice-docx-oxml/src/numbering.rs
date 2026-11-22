@@ -780,7 +780,7 @@ fn typed_on_off_value(element: &BytesStart<'_>, word_prefixes: &[String]) -> Res
     }
     match (count, value.as_deref()) {
         (0, _) => Ok(Some(true)),
-        (1, Some(value)) => Ok(parse_on_off_token(value)),
+        (1, Some(value)) => Ok(crate::shared::ST_OnOff::parse(value)),
         _ => Ok(None),
     }
 }
@@ -1000,14 +1000,6 @@ fn level_raw_boundary(name: &[u8], current: usize, word_prefixes: &[String]) -> 
     }
 }
 
-pub(crate) fn parse_on_off_token(value: &str) -> Option<bool> {
-    match value {
-        "true" | "1" | "on" => Some(true),
-        "false" | "0" | "off" => Some(false),
-        _ => None,
-    }
-}
-
 fn namespaced_attribute_value<'a>(
     attributes: &'a [(String, String)],
     root_attributes: &'a [(String, String)],
@@ -1042,7 +1034,7 @@ fn capture_level_attributes(
         .filter(|value| value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_hexdigit()));
     let tentative = word_attribute_value(element, b"tentative", word_prefixes)?
         .as_deref()
-        .and_then(parse_on_off_token);
+        .and_then(crate::shared::ST_OnOff::parse);
     let mut modelled: Vec<&[u8]> = vec![b"ilvl"];
     if template_code.is_some() {
         modelled.push(b"tplc");
@@ -4929,7 +4921,7 @@ impl CT_Numbering {
                     "restartNumberingAfterBreak",
                 )
             })
-            .and_then(parse_on_off_token)
+            .and_then(crate::shared::ST_OnOff::parse)
             .unwrap_or(false)
     }
 }

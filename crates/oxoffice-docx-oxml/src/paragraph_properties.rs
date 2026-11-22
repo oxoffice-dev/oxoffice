@@ -951,10 +951,10 @@ impl CT_PPr {
                                     ppr.line_rule = Some(val_str.to_string());
                                 } else if is_word_attribute(key, b"beforeAutospacing", &prefixes) {
                                     ppr.before_autospacing =
-                                        Some(val_str == "1" || val_str == "true");
+                                        Some(ST_OnOff::parse(val_str) == Some(true));
                                 } else if is_word_attribute(key, b"afterAutospacing", &prefixes) {
                                     ppr.after_autospacing =
-                                        Some(val_str == "1" || val_str == "true");
+                                        Some(ST_OnOff::parse(val_str) == Some(true));
                                 }
                             }
                         }
@@ -2435,7 +2435,7 @@ pub(crate) fn validate_checked_property_child(
     ) {
         if value
             .as_deref()
-            .is_some_and(|value| !matches!(value, "true" | "false" | "on" | "off" | "1" | "0"))
+            .is_some_and(|value| crate::shared::ST_OnOff::parse(value).is_none())
         {
             return Err(crate::error::OxmlError::InvalidValue(
                 "element XML paragraph toggle has an invalid Word boolean".into(),
@@ -2498,14 +2498,7 @@ pub(crate) fn validate_checked_property_child(
             } else if is_word_attribute(key, b"beforeAutospacing", prefixes)
                 || is_word_attribute(key, b"afterAutospacing", prefixes)
             {
-                // The owning reader models only true/1 as enabled. Do not
-                // promise the valid on token while that reader treats it as false.
-                if value == "on" {
-                    return Err(crate::error::OxmlError::InvalidValue(
-                        "element XML spacing on boolean token is unsupported".into(),
-                    ));
-                }
-                matches!(value.as_ref(), "true" | "false" | "1" | "0" | "off")
+                ST_OnOff::parse(&value).is_some()
             } else {
                 true
             };
@@ -2729,12 +2722,11 @@ pub(crate) fn source_value_is_modeled(
                     | b"suppressAutoHyphens"
             )
         {
-            return crate::numbering::parse_on_off_token(value).is_some();
+            return crate::shared::ST_OnOff::parse(value).is_some();
         }
     }
     if local == b"spacing" && matches!(key, b"beforeAutospacing" | b"afterAutospacing") {
-        return crate::numbering::parse_on_off_token(value)
-            .is_some_and(|parsed| parsed == matches!(value, "1" | "true"));
+        return crate::shared::ST_OnOff::parse(value).is_some();
     }
     true
 }

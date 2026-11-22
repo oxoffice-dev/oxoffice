@@ -534,6 +534,84 @@ fn an_if_field_whose_quoted_operand_joins_text_and_a_nested_field_is_updated() {
     );
 }
 
+/// An IF field whose bookmark starts among its instruction runs, as
+/// LibreOffice writes a form field's bookmark, with LibreOffice's empty runs.
+const FIELD_WITH_INSTRUCTION_BOOKMARK: &str = r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "new" "no" </w:instrText></w:r><w:bookmarkStart w:id="0" w:name="Mark"/><w:r></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r></w:r><w:bookmarkEnd w:id="0"/><w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#;
+
+/// The main part's body, from `<w:body>` to the section properties.
+fn saved_body(doc: &mut Document) -> String {
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(
+        doc.to_bytes().expect("document saves"),
+    ))
+    .expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())
+        .expect("main part is UTF-8");
+    let start = xml.find("<w:body>").expect("body start");
+    let end = xml.find("<w:sectPr").expect("section properties");
+    xml[start..end].to_owned()
+}
+
+#[test]
+fn a_complex_field_with_a_bookmark_before_its_result_is_read_and_updated() {
+    for body in [
+        FIELD_WITH_INSTRUCTION_BOOKMARK.to_owned(),
+        // At the start of the result, as LibreOffice writes a drop-down's.
+        FIELD_WITH_INSTRUCTION_BOOKMARK
+            .replace(r#"<w:bookmarkStart w:id="0" w:name="Mark"/>"#, "")
+            .replace(
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:bookmarkStart w:id="0" w:name="Mark"/>"#,
+            ),
+    ] {
+        let mut doc = doc_with_body(&body);
+        assert_eq!(
+            field_list(&doc),
+            [(FieldKind::Complex, r#"IF 1 = 1 "new" "no""#.into(), "old".into())]
+        );
+        let bookmark_text = |doc: &Document| {
+            doc.bookmarks()
+                .iter()
+                .map(|bookmark| (bookmark.name().map(str::to_owned), bookmark.text().to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bookmark_text(&doc), [(Some("Mark".into()), "old".into())]);
+        assert_eq!(saved_body(&mut doc), format!("<w:body>{body}"), "saved unchanged");
+
+        assert_eq!(
+            doc.update_fields(&FieldEvaluationContext::default())
+                .unwrap(),
+            1
+        );
+        assert_eq!(texts(&doc), ["Before new after"]);
+        assert_eq!(bookmark_text(&doc), [(Some("Mark".into()), "new".into())]);
+        let saved = saved_body(&mut doc);
+        assert_eq!(
+            saved,
+            format!("<w:body>{body}")
+                .replace(r#"w:fldCharType="begin"/>"#, r#"w:fldCharType="begin" w:dirty="0"/>"#)
+                .replace("<w:t>old</w:t>", "<w:t>new</w:t>"),
+            "the bookmark keeps its place"
+        );
+        let reopened = reopen(&mut doc);
+        assert_eq!(bookmark_text(&reopened), [(Some("Mark".into()), "new".into())]);
+    }
+}
+
+#[test]
+fn a_bookmark_after_a_picture_a_field_shows_keeps_its_place() {
+    // The picture in the result is displayed: a bookmark after it does not
+    // read at the field's start.
+    let body = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE "x.png" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="width:10pt;height:10pt"/></w:pict></w:r><w:bookmarkStart w:id="0" w:name="After"/><w:r></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t>tail</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
+    let doc = doc_with_body(body);
+    let starts = doc
+        .bookmarks()
+        .iter()
+        .map(|bookmark| bookmark.range().expect("a whole bookmark").start.run_index)
+        .collect::<Vec<_>>();
+    assert_ne!(starts, [0], "the bookmark does not start before the field");
+}
+
 // ---- Sequences and captions ----
 
 #[test]

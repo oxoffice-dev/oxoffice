@@ -5220,10 +5220,9 @@ fn attributes_of(xml: &[u8], start: usize) -> Result<Vec<QualAttr>> {
 }
 
 fn parse_on_off(value: Option<&str>) -> Option<bool> {
-    match value.map(|item| item.to_ascii_lowercase()).as_deref() {
-        None | Some("true" | "1" | "on") => Some(true),
-        Some("false" | "0" | "off") => Some(false),
-        _ => None,
+    match value {
+        None => Some(true),
+        Some(value) => oxoffice_docx_oxml::shared::ST_OnOff::parse(value),
     }
 }
 

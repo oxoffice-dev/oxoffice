@@ -607,6 +607,125 @@ fn a_custom_number_property_may_be_nan() {
     }
 }
 
+// ---- On/off values ----
+
+/// A document whose first paragraph, its section and one style carry the
+/// on/off attribute `spelling` (`None` leaves it out) on each reader that
+/// takes one: paragraph auto spacing, section columns, title page and the
+/// default style flag.
+fn on_off_document(spelling: Option<&str>) -> Document {
+    let attribute =
+        |name: &str| spelling.map_or(String::new(), |value| format!(" w:{name}=\"{value}\""));
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\"{}{}/><w:sectPr><w:cols w:num=\"2\"{}{}/>\
+         <w:titlePg{}/></w:sectPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>b</w:t></w:r></w:p>",
+        attribute("beforeAutospacing"),
+        attribute("afterAutospacing"),
+        attribute("equalWidth"),
+        attribute("sep"),
+        attribute("val"),
+    );
+    let bytes = crate::support::doc_with_body(&body).to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    let probe = format!(
+        "<w:style w:type=\"character\" w:styleId=\"Probe\"{}><w:name w:val=\"Probe\"/></w:style></w:styles>",
+        attribute("default")
+    );
+    package.set_part(
+        "/word/styles.xml",
+        styles.replace("</w:styles>", &probe).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The value of attribute `name` on the first element `element` of the main part.
+fn first_attribute(doc: &mut Document, element: &str, name: &str) -> Option<String> {
+    let bytes = doc.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let start = xml.find(&format!("<w:{element}"))?;
+    let tag = &xml[start..start + xml[start..].find('>')?];
+    let key = format!(" w:{name}=\"");
+    let value = tag.find(&key)? + key.len();
+    Some(tag[value..value + tag[value..].find('"')?].to_owned())
+}
+
+#[test]
+fn every_on_off_spelling_reads_the_same_and_survives_an_edit() {
+    for spelling in [
+        Some("on"),
+        Some("true"),
+        Some("1"),
+        Some("off"),
+        Some("false"),
+        Some("0"),
+        None,
+    ] {
+        let on = spelling.map(|value| matches!(value, "on" | "true" | "1"));
+        let mut doc = on_off_document(spelling);
+        let check = |doc: &Document, when: &str| {
+            let section = doc.section(0).unwrap();
+            assert_eq!(
+                section.column_separator().unwrap_or(false),
+                on == Some(true),
+                "{spelling:?} sep {when}"
+            );
+            assert_eq!(
+                section.columns().is_some(),
+                on != Some(false),
+                "{spelling:?} equalWidth {when}"
+            );
+            assert_eq!(
+                section.different_first_page(),
+                Some(on != Some(false)),
+                "{spelling:?} titlePg {when}"
+            );
+            assert_eq!(
+                doc.style("Probe").unwrap().is_default(),
+                on == Some(true),
+                "{spelling:?} default {when}"
+            );
+        };
+        check(&doc, "when read");
+        // An edit elsewhere rewrites the main part: each value is written
+        // back as what was read.
+        doc.paragraph_mut(1).unwrap().set_text("edited").unwrap();
+        for name in ["beforeAutospacing", "afterAutospacing"] {
+            let written = first_attribute(&mut doc, "spacing", name);
+            assert_eq!(
+                written.as_deref().map(|value| value == "1"),
+                on,
+                "{spelling:?} {name} is written back as {written:?}"
+            );
+        }
+        check(&reopen(&mut doc), "after an edit");
+    }
+}
+
+#[test]
+fn the_checked_paragraph_route_takes_every_on_off_spelling() {
+    for (spelling, written) in [("on", "1"), ("off", "0"), ("true", "1"), ("0", "0")] {
+        let mut doc = doc_with(&["Old"]);
+        let location = doc.paragraph_story_location(0).unwrap().unwrap();
+        doc.replace_paragraph_xml(
+            &location,
+            &format!(
+                r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:spacing w:beforeAutospacing="{spelling}"/></w:pPr><w:r><w:t>New</w:t></w:r></w:p>"#
+            ),
+        )
+        .unwrap_or_else(|error| panic!("{spelling}: {error}"));
+        assert_eq!(
+            first_attribute(&mut doc, "spacing", "beforeAutospacing").as_deref(),
+            Some(written),
+            "{spelling}"
+        );
+    }
+}
+
 // ---- Settings: on-off settings ----
 
 /// An on-off setting: its element in the settings or web settings part and

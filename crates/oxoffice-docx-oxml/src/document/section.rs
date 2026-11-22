@@ -855,10 +855,7 @@ impl CT_SectPr {
                         }
                         raw_position = (1, footer_count);
                     } else if is_word_element(name.as_ref(), b"titlePg", &prefixes) {
-                        sect.title_pg = Some(
-                            get_word_val_attr(e, &prefixes)?
-                                .is_none_or(|value| value != "0" && value != "false"),
-                        );
+                        sect.title_pg = Some(parse_word_toggle(e, &prefixes)?);
                         raw_position = (8, 0);
                     } else if is_word_element(name.as_ref(), b"sectPrChange", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
@@ -1719,9 +1716,9 @@ impl CT_SectPr {
             } else if is_word_attribute(key, b"space", word_prefixes) {
                 cols.space = Some(Twips(parse_twips_measure(e.name().as_ref(), key, val_str)?));
             } else if is_word_attribute(key, b"equalWidth", word_prefixes) {
-                cols.equal_width = Some(val_str == "1" || val_str == "true");
+                cols.equal_width = Some(ST_OnOff::parse(val_str) == Some(true));
             } else if is_word_attribute(key, b"sep", word_prefixes) {
-                cols.sep = Some(val_str == "1" || val_str == "true");
+                cols.sep = Some(ST_OnOff::parse(val_str) == Some(true));
             }
         }
         Ok(cols)
@@ -2907,7 +2904,7 @@ pub(crate) fn validate_checked_section_child(
                 ST_PageOrientation::from_str(&value).is_err()
             }
             b"titlePg" if is_word_attribute(key, b"val", prefixes) => {
-                !matches!(value.as_ref(), "true" | "false" | "on" | "off" | "1" | "0")
+                crate::shared::ST_OnOff::parse(&value).is_none()
             }
             b"vAlign" if is_word_attribute(key, b"val", prefixes) => {
                 !matches!(value.as_ref(), "top" | "center" | "bottom" | "both")
