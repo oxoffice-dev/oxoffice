@@ -5222,7 +5222,7 @@ fn attributes_of(xml: &[u8], start: usize) -> Result<Vec<QualAttr>> {
 fn parse_on_off(value: Option<&str>) -> Option<bool> {
     match value {
         None => Some(true),
-        Some(value) => oxoffice_docx_oxml::shared::ST_OnOff::parse(&value.to_ascii_lowercase()),
+        Some(value) => oxoffice_docx_oxml::shared::ST_OnOff::parse(value),
     }
 }
 

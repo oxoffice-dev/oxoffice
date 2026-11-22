@@ -46,7 +46,7 @@ impl ST_Jc {
     }
 }
 
-/// `ST_OnOff` — Boolean toggle, can be represented as "true"/"false", "1"/"0", or attribute absence.
+/// `ST_OnOff` — Boolean toggle: "true"/"false", "1"/"0", "on"/"off", or attribute absence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ST_OnOff {
     On,

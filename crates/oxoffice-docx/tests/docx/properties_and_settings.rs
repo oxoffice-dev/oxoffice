@@ -706,6 +706,26 @@ fn every_on_off_spelling_reads_the_same_and_survives_an_edit() {
     }
 }
 
+#[test]
+fn the_checked_paragraph_route_takes_every_on_off_spelling() {
+    for (spelling, written) in [("on", "1"), ("off", "0"), ("true", "1"), ("0", "0")] {
+        let mut doc = doc_with(&["Old"]);
+        let location = doc.paragraph_story_location(0).unwrap().unwrap();
+        doc.replace_paragraph_xml(
+            &location,
+            &format!(
+                r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:spacing w:beforeAutospacing="{spelling}"/></w:pPr><w:r><w:t>New</w:t></w:r></w:p>"#
+            ),
+        )
+        .unwrap_or_else(|error| panic!("{spelling}: {error}"));
+        assert_eq!(
+            first_attribute(&mut doc, "spacing", "beforeAutospacing").as_deref(),
+            Some(written),
+            "{spelling}"
+        );
+    }
+}
+
 // ---- Settings: on-off settings ----
 
 /// An on-off setting: its element in the settings or web settings part and
