@@ -2278,15 +2278,15 @@ fn pageref(name: &str) -> String {
 
 #[test]
 fn a_bookmark_between_blocks_of_a_paragraph_that_receives_an_accepted_join_has_its_page() {
-    // The deleted mark of `Joined` joins it to the next paragraph in the
-    // accepted view; the bookmark that starts before that paragraph is still
-    // on page 2.
+    // The deleted mark of `Joined` joins it to `Target` in the accepted
+    // view. The bookmark written after `Target`, at the end of the body,
+    // belongs to it, and is on page 2.
     let mut doc = doc_with_body(&format!(
-        r#"{PAGE_ONE}<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="target"/><w:p><w:r><w:t>Target</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+        r#"{}{PAGE_ONE}<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:p><w:r><w:t>Target</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="target"/><w:bookmarkEnd w:id="1"/>"#,
         pageref("target")
     ));
     doc.update_layout_backed_fields().unwrap();
-    assert_eq!(texts(&reopen(&mut doc)).last().unwrap(), "2");
+    assert_eq!(texts(&reopen(&mut doc))[0], "2");
 }
 
 #[test]
