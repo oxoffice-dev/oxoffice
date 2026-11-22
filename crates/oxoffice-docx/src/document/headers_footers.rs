@@ -15,8 +15,11 @@ impl Document {
     /// and every later section inherits it. The other document-level header
     /// and footer setters, text, image or raw XML, choose the same way, except
     /// that a new first-page or even header goes on the last section.
+    ///
+    /// A character XML 1.0 cannot carry is dropped. [`Self::try_set_header`]
+    /// refuses it instead.
     pub fn set_header(&mut self, text: &str) {
-        self.try_set_header(text)
+        self.try_set_header(&oxoffice_core::xml::strip_non_xml_characters(text))
             .expect("an in-memory document can install a header");
     }
 
@@ -32,8 +35,11 @@ impl Document {
     }
 
     /// Set the default footer text, as [`Self::set_header`] sets the header.
+    ///
+    /// A character XML 1.0 cannot carry is dropped. [`Self::try_set_footer`]
+    /// refuses it instead.
     pub fn set_footer(&mut self, text: &str) {
-        self.try_set_footer(text)
+        self.try_set_footer(&oxoffice_core::xml::strip_non_xml_characters(text))
             .expect("an in-memory document can install a footer");
     }
 
@@ -55,8 +61,11 @@ impl Document {
     /// header the last section inherits is shared only when the last section
     /// already showed it, with a different first page; otherwise the last
     /// section gets one of its own.
+    ///
+    /// A character XML 1.0 cannot carry is dropped. [`Self::try_set_first_page_header`]
+    /// refuses it instead.
     pub fn set_first_page_header(&mut self, text: &str) {
-        self.try_set_first_page_header(text)
+        self.try_set_first_page_header(&oxoffice_core::xml::strip_non_xml_characters(text))
             .expect("an in-memory document can install a first page header");
     }
 
@@ -73,8 +82,11 @@ impl Document {
     }
 
     /// Set the first-page footer text.
+    ///
+    /// A character XML 1.0 cannot carry is dropped. [`Self::try_set_first_page_footer`]
+    /// refuses it instead.
     pub fn set_first_page_footer(&mut self, text: &str) {
-        self.try_set_first_page_footer(text)
+        self.try_set_first_page_footer(&oxoffice_core::xml::strip_non_xml_characters(text))
             .expect("an in-memory document can install a first page footer");
     }
 
@@ -145,7 +157,9 @@ impl Document {
     }
 
     /// Set a Word-compatible text watermark in every active header variant.
+    /// Text holding a character XML 1.0 cannot carry is refused.
     pub fn set_text_watermark(&mut self, text: &str) -> Result<()> {
+        oxoffice_core::xml::reject_non_xml_characters("watermark text", text)?;
         let mut candidate = self.clone_for_staging();
         candidate.apply_watermark(|_, _, _| {
             Ok((
@@ -956,7 +970,8 @@ impl Document {
     ///
     /// Creates a header part where the paragraph has shading fill set to
     /// `bg_color` (hex string, e.g. "000000" for black) and contains the
-    /// inline image.
+    /// inline image. A character XML 1.0 cannot carry is dropped from
+    /// `bg_color`.
     pub fn set_header_image_with_background(
         &mut self,
         image_data: &[u8],
@@ -973,7 +988,7 @@ impl Document {
                 image_filename,
                 width,
                 height,
-                Some(bg_color),
+                Some(&oxoffice_core::xml::strip_non_xml_characters(bg_color)),
                 true,
                 HdrFtrType::Default,
             )

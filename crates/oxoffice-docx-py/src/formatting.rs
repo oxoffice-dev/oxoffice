@@ -326,7 +326,32 @@ pub(crate) enum FontUpdate<'a> {
 }
 
 impl FontUpdate<'_> {
+    /// The text this update writes, named, for the refusal of a character
+    /// XML 1.0 cannot carry: the Rust setters drop one, Python refuses it.
+    fn text(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Self::Name(value) => value.map(|value| ("font name", value)),
+            Self::Color(value) => value.as_deref().map(|value| ("font color", value)),
+            Self::ColorTheme(value, _, _) => {
+                value.as_deref().map(|value| ("font theme color", value))
+            }
+            Self::Highlight(value) => value.map(|value| ("highlight color", value)),
+            Self::Shading(value) => value.map(|value| ("shading color", value)),
+            Self::Language(value) | Self::LanguageEastAsia(value) | Self::LanguageBidi(value) => {
+                value.map(|value| ("language", value))
+            }
+            Self::NameEastAsia(value) | Self::NameComplexScript(value) => {
+                value.map(|value| ("font name", value))
+            }
+            Self::Style(value) => value.map(|value| ("character style", value)),
+            _ => None,
+        }
+    }
+
     fn apply(self, run: &mut oxoffice_docx::Run<'_>) -> oxoffice_docx::Result<()> {
+        if let Some((what, value)) = self.text() {
+            oxoffice_core::xml::reject_non_xml_characters(what, value)?;
+        }
         match self {
             Self::Name(value) => run.set_font_value(value),
             Self::Size(value) => run.set_size_value(value),
@@ -998,6 +1023,17 @@ pub(crate) enum ParagraphUpdate {
 
 impl ParagraphUpdate {
     fn apply(self, paragraph: &mut oxoffice_docx::Paragraph<'_>) -> oxoffice_docx::Result<()> {
+        // The Rust setters drop a character XML 1.0 cannot carry; Python
+        // refuses it.
+        let text = match &self {
+            Self::Style(Some(value)) => Some(("paragraph style", value.as_str())),
+            Self::Border(_, Some((_, _, color))) => Some(("border color", color.as_str())),
+            Self::Shading(Some(value)) => Some(("shading color", value.as_str())),
+            _ => None,
+        };
+        if let Some((what, value)) = text {
+            oxoffice_core::xml::reject_non_xml_characters(what, value)?;
+        }
         match self {
             Self::Style(value) => paragraph.set_style_value(value.as_deref()),
             Self::Numbering(value) => {

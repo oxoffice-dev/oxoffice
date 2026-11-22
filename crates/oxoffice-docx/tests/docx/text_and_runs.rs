@@ -491,11 +491,9 @@ fn text_xml_cannot_carry_is_refused_with_its_code_point() {
     assert_eq!(doc.try_replace_text("value", "good").unwrap(), 1);
     assert_eq!(texts(&doc), ["good"]);
 
-    // A run accepts such text, and the save refuses it rather than writing
-    // a file Word cannot open.
+    // A run cannot refuse: it drops the character, and the document saves.
     doc.paragraph_mut(0).unwrap().add_run("vertical\u{b}tab");
-    let error = doc.to_bytes().unwrap_err();
-    assert!(error.to_string().contains("U+000B"), "{error}");
+    assert_eq!(texts(&reopen(&mut doc)), ["goodverticaltab"]);
 }
 
 #[test]
@@ -969,4 +967,168 @@ fn a_raw_carriage_return_in_saved_text_reads_as_a_line_feed_everywhere() {
         }
     }
     assert_eq!(instruction.as_deref().map(str::trim), Some("REF a\nb"));
+}
+
+#[test]
+fn an_infallible_setter_drops_a_character_xml_cannot_carry_and_the_document_saves() {
+    let bad = "a\u{7}b\u{FFFE}";
+    let mut doc = doc_with(&["first"]);
+    doc.add_paragraph(bad);
+    doc.insert_paragraph(0, bad);
+    doc.add_bullet_list_item(bad, 0);
+    doc.add_numbered_list_item(bad, 0);
+    doc.set_header(bad);
+    doc.set_footer(bad);
+    doc.set_first_page_header(bad);
+    doc.set_first_page_footer(bad);
+    doc.append_hyperlink(bad, "https://example.org/\u{7}");
+    let relationship = doc.add_hyperlink_relationship("https://example.com/\u{7}");
+    let footnote = doc.add_footnote(bad);
+    doc.set_title(bad);
+    doc.set_author(bad);
+    doc.set_subject(bad);
+    doc.set_keywords(bad);
+    {
+        let mut paragraph = doc.paragraph_mut(1).unwrap();
+        paragraph.add_ruby(bad, bad);
+        paragraph.add_run_inheriting_mark(bad);
+        paragraph.add_hyperlink(bad, &relationship);
+        paragraph.add_internal_hyperlink(bad, bad, Some(bad));
+        paragraph.set_style(bad);
+        paragraph.set_shading_pattern(bad, bad, bad);
+        paragraph.set_border_all(oxoffice_docx::BorderStyle::Single, 4, bad);
+        paragraph.set_border_bottom_with_space(oxoffice_docx::BorderStyle::Single, 4, 2, bad);
+        paragraph.set_border_value(
+            oxoffice_docx::ParagraphBorderEdge::Left,
+            Some((oxoffice_docx::BorderStyle::Single, 4, bad)),
+        );
+        paragraph.mark().set_font_value(Some(bad));
+        paragraph.mark().set_color_value(Some(bad));
+        let mut run = paragraph.add_run(bad);
+        run.add_text(bad);
+        run.add_symbol('\u{7}');
+        run.add_symbol_char(bad, 0xF020);
+        run.set_font(bad);
+        run.set_slot_font(RunFontSlot::ComplexScript, Some(bad));
+        run.set_shading_value(Some(bad));
+        run.add_picture(
+            bad,
+            oxoffice_docx::Length::pt(10.0),
+            oxoffice_docx::Length::pt(10.0),
+        );
+        run.set_slot_theme_font(RunFontSlot::EastAsia, Some(bad));
+        run.set_font_hint(Some(bad));
+        run.set_language(bad);
+        run.set_language_east_asia_value(Some(bad));
+        run.set_language_bidi_value(Some(bad));
+        run.set_color(bad);
+        run.set_color_theme(Some(bad), None, None);
+        run.set_highlight(bad);
+        run.set_style(bad);
+    }
+    doc.paragraph_mut(2)
+        .unwrap()
+        .run_mut(0)
+        .unwrap()
+        .set_text(bad);
+    {
+        let mut table = doc.add_table(1, 1);
+        table.set_style(bad);
+        table.set_borders(oxoffice_docx::BorderStyle::Single, 4, bad);
+        let mut cell = table.cell(0, 0).unwrap();
+        cell.set_text(bad);
+        cell.add_paragraph(bad);
+        cell.set_shading(bad);
+        cell.add_picture(
+            bad,
+            oxoffice_docx::Length::pt(10.0),
+            oxoffice_docx::Length::pt(10.0),
+        );
+    }
+    {
+        let mut paragraph = doc.paragraph_mut(3).unwrap();
+        paragraph.set_shading(bad);
+        paragraph.set_shading_fill_value(Some(bad));
+    }
+    doc.section_mut(0).unwrap().set_text_direction(bad);
+    assert_eq!(doc.replace_text("first", bad), 1);
+    assert!(doc.replace_all(&HashMap::from([("ab", bad)])) > 0);
+
+    let saved = doc.to_bytes().expect("the document saves");
+    let doc = Document::from_bytes(&saved).unwrap();
+    assert_eq!(texts(&doc)[0], "ab");
+    assert_eq!(doc.paragraph(2).unwrap().run(0).unwrap().text(), "ab");
+    assert_eq!(doc.header_text().as_deref(), Some("ab"));
+    assert!(
+        doc.footnotes()
+            .iter()
+            .any(|(id, text)| *id == footnote && text.trim() == "ab")
+    );
+    assert_eq!(doc.title(), Some("ab"));
+    assert_eq!(doc.tables()[0].cell(0, 0).unwrap().text(), "ab\nab\n");
+}
+
+#[test]
+fn a_checked_setter_refuses_a_character_xml_cannot_carry_and_changes_nothing() {
+    let bad = "a\u{7}b";
+    let mut doc = doc_with(&["first"]);
+    doc.add_table(1, 1);
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap();
+    let before = doc.to_bytes().unwrap();
+    let refusals = [
+        doc.paragraph_mut(0).unwrap().set_text(bad).err(),
+        doc.paragraph_mut(0)
+            .unwrap()
+            .add_hyperlink_with_tooltip(bad, "rId1", None)
+            .err(),
+        doc.table_mut(0).unwrap().set_caption(Some(bad)).err(),
+        doc.table_mut(0).unwrap().set_description(Some(bad)).err(),
+        doc.set_text_watermark(bad).err(),
+        doc.add_style(oxoffice_docx::StyleBuilder::paragraph("Bad", bad))
+            .err(),
+        doc.add_style(oxoffice_docx::StyleBuilder::paragraph(bad, "Bad"))
+            .err(),
+        doc.add_style(oxoffice_docx::StyleBuilder::paragraph("Font", "Font").font(bad))
+            .err(),
+        doc.set_style(oxoffice_docx::StyleBuilder::paragraph("Normal", "Normal").font(bad))
+            .err(),
+        doc.add_hyperlink_to_story(&body, bad, "https://example.org/")
+            .err(),
+        doc.add_hyperlink_to_story(&body, "link", "https://example.org/\u{7}")
+            .err(),
+        doc.add_numbering_definition(&[oxoffice_docx::ListLevel::decimal().level_text(bad)])
+            .err(),
+    ];
+    for (index, refusal) in refusals.into_iter().enumerate() {
+        let message = refusal
+            .unwrap_or_else(|| panic!("setter {index} accepts U+0007"))
+            .to_string();
+        assert!(message.contains("U+0007"), "setter {index}: {message}");
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
+#[test]
+fn a_header_image_background_drops_a_character_xml_cannot_carry() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let mut doc = doc_with(&["body"]);
+    doc.set_header_image_with_background(
+        PNG,
+        "logo.png",
+        oxoffice_docx::Length::pt(10.0),
+        oxoffice_docx::Length::pt(10.0),
+        "00\u{7}0000",
+    );
+    doc.to_bytes().expect("the document saves");
 }

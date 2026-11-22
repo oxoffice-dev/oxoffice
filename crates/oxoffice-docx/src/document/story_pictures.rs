@@ -812,8 +812,10 @@ impl Document {
         Ok(())
     }
 
-    /// Append one external hyperlink paragraph to a checked story owner.
+    /// Append one external hyperlink paragraph to a checked story owner. Text
+    /// or an address holding a character XML 1.0 cannot carry is refused.
     pub fn add_hyperlink_to_story(&mut self, story: &StoryId, text: &str, url: &str) -> Result<()> {
+        oxoffice_core::xml::reject_non_xml_characters("hyperlink text", text)?;
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         candidate.story_source_and_owner(story)?;

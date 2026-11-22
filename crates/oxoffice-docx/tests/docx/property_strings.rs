@@ -68,18 +68,14 @@ fn a_property_xml_cannot_carry_is_refused_and_the_document_still_saves() {
 }
 
 #[test]
-fn a_one_field_setter_takes_the_value_and_the_save_names_the_part_and_the_character() {
-    // The one-field setters cannot refuse: the save does, through the package
-    // writer, and set_core_properties refuses the value at once.
+fn a_one_field_setter_drops_a_character_xml_cannot_carry_and_the_document_saves() {
+    // The one-field setters cannot refuse: they drop the character, and
+    // set_core_properties refuses the value at once.
     let mut doc = Document::new();
     doc.set_title("Q3\u{7}");
-    let message = doc.to_bytes().expect_err("the save fails").to_string();
-    assert!(
-        message.contains("/docProps/core.xml") && message.contains("U+0007"),
-        "{message}"
-    );
-    doc.set_title("Q3");
-    assert!(doc.to_bytes().is_ok(), "a clean value saves again");
+    assert_eq!(doc.title(), Some("Q3"));
+    let doc = Document::from_bytes(&doc.to_bytes().expect("the document saves")).unwrap();
+    assert_eq!(doc.title(), Some("Q3"));
 }
 
 #[test]
@@ -232,4 +228,20 @@ fn setting_core_properties_drops_a_bad_character_the_file_already_held() {
         doc.core_properties().unwrap().last_modified_by.as_deref(),
         Some("JDoe")
     );
+}
+
+#[test]
+fn every_refusal_of_a_character_xml_cannot_carry_holds_the_shared_words() {
+    // The Python bindings tell such a refusal apart by these words, wherever
+    // it was wrapped; the package crate spells them out on its own.
+    let words = oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL;
+    let package = oxoffice_opc::OpcError::InvalidXmlCharacter {
+        part: "/word/document.xml".to_owned(),
+        code_point: 7,
+        line: 1,
+        column: 1,
+    };
+    assert!(package.to_string().contains(words), "{package}");
+    let value = oxoffice_core::xml::reject_non_xml_characters("value", "\u{7}").unwrap_err();
+    assert!(value.to_string().contains(words), "{value}");
 }

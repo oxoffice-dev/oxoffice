@@ -331,7 +331,9 @@ impl Document {
 
     /// Insert a paragraph at the given body index.
     ///
-    /// Returns a mutable `Paragraph` for further configuration.
+    /// Returns a mutable `Paragraph` for further configuration. A character
+    /// XML 1.0 cannot carry is dropped; [`Self::try_insert_paragraph`]
+    /// refuses it instead.
     ///
     /// A bookmark start written between blocks belongs to the block after
     /// it (Google Docs writes a heading's bookmark so): an insertion before

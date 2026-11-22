@@ -538,13 +538,15 @@ impl Document {
 impl Document {
     /// Append an external hyperlink to the last paragraph (creating one if
     /// the document is empty): adds the External relationship and wraps the
-    /// new run in a hyperlink span.
+    /// new run in a hyperlink span. A character XML 1.0 cannot carry is
+    /// dropped from the text and the address.
     pub fn append_hyperlink(&mut self, text: &str, url: &str) {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
         let owner = candidate.doc_part_name.clone();
+        let url = oxoffice_core::xml::strip_non_xml_characters(url);
         let rel_id = candidate
-            .add_external_relationship_checked(&owner, rel_types::HYPERLINK, url)
+            .add_external_relationship_checked(&owner, rel_types::HYPERLINK, &url)
             .expect("an in-memory document can install a hyperlink relationship");
 
         if !matches!(
@@ -568,13 +570,15 @@ impl Document {
     ///
     /// Use this with [`crate::Paragraph::add_hyperlink`] when the target
     /// paragraph is not the last body paragraph, such as a paragraph inside a
-    /// table cell.
+    /// table cell. A character XML 1.0 cannot carry is dropped from the
+    /// address.
     pub fn add_hyperlink_relationship(&mut self, url: &str) -> String {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
         let owner = candidate.doc_part_name.clone();
+        let url = oxoffice_core::xml::strip_non_xml_characters(url);
         let id = candidate
-            .add_external_relationship_checked(&owner, rel_types::HYPERLINK, url)
+            .add_external_relationship_checked(&owner, rel_types::HYPERLINK, &url)
             .expect("an in-memory document can install a hyperlink relationship");
         self.commit_staged_mutation(candidate);
         id

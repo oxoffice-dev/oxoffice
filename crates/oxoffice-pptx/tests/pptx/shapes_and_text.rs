@@ -2090,3 +2090,10 @@ fn a_kept_click_attribute_holding_a_double_quote_stays_well_formed_when_the_addr
     let xml = saved_part(&saved, "/ppt/slides/slide1.xml");
     assert!(xml.contains(r#"x:note="say &quot;hi&quot;""#), "{xml}");
 }
+
+#[test]
+fn a_bullet_character_xml_cannot_carry_is_refused() {
+    assert!(TextBulletCharacter::new("\u{7}").is_err());
+    assert!(TextBulletCharacter::new("\u{FFFE}").is_err());
+    assert!(TextBulletCharacter::new("•").is_ok());
+}

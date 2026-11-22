@@ -831,6 +831,9 @@ pub(super) fn numbering_override_has_unmodeled(value: &CT_NumLvl) -> bool {
 }
 
 pub(super) fn validate_list_level(level: u32, value: &ListLevel) -> Result<()> {
+    if let Some(text) = &value.level_text {
+        oxoffice_core::xml::reject_non_xml_characters("numbering level text", text)?;
+    }
     if level > 8 {
         return Err(Error::Other(format!(
             "numbering level {level} is outside the supported range 0 through 8"

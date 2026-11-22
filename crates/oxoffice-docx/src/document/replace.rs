@@ -60,13 +60,13 @@ impl Document {
     /// A `replacement` that contains `placeholder` is substituted once, not
     /// repeatedly.
     ///
-    /// A `replacement` holding a character XML 1.0 cannot carry is accepted
-    /// here and refused when the document is saved. [`Self::try_replace_text`]
-    /// refuses it at once.
+    /// A character XML 1.0 cannot carry is dropped from `replacement`;
+    /// [`Self::try_replace_text`] refuses it instead.
     pub fn replace_text(&mut self, placeholder: &str, replacement: &str) -> usize {
+        let replacement = oxoffice_core::xml::strip_non_xml_characters(replacement);
         let mut candidate = self.clone_for_staging();
         let count = candidate
-            .replace_batch(&[(placeholder, replacement)])
+            .replace_batch(&[(placeholder, &replacement)])
             .expect("text replacement package preflight failed");
         self.commit_staged_mutation(candidate);
         count
@@ -668,9 +668,14 @@ impl Document {
     ///
     /// Cheaper than calling [`Self::replace_text`] per entry: the document is
     /// serialised and re-parsed once per pass for the whole batch rather than
-    /// once per placeholder.
+    /// once per placeholder. A character XML 1.0 cannot carry is dropped from
+    /// each value.
     pub fn replace_all(&mut self, replacements: &std::collections::HashMap<&str, &str>) -> usize {
-        let mut pairs: Vec<(&str, &str)> = replacements.iter().map(|(k, v)| (*k, *v)).collect();
+        let values: Vec<(&str, std::borrow::Cow<'_, str>)> = replacements
+            .iter()
+            .map(|(k, v)| (*k, oxoffice_core::xml::strip_non_xml_characters(v)))
+            .collect();
+        let mut pairs: Vec<(&str, &str)> = values.iter().map(|(k, v)| (*k, v.as_ref())).collect();
         pairs.sort_by(|(left, _), (right, _)| {
             (right.chars().count().cmp(&left.chars().count())).then(left.cmp(right))
         });

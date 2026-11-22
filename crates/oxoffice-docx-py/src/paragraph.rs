@@ -589,6 +589,10 @@ impl PyParagraph {
         tooltip: Option<&str>,
     ) -> PyResult<Py<PyRun>> {
         let location = self.validate(py)?;
+        crate::refuse_non_xml_characters(py, "run text", text)?;
+        if let Some(url) = url {
+            crate::refuse_non_xml_characters(py, "hyperlink address", url)?;
+        }
         let result = {
             let mut document = self.document.borrow_mut(py);
             let mut candidate = document.inner.clone_for_staging();

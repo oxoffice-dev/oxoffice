@@ -184,7 +184,21 @@ pub(crate) fn stale_to_pyerr(py: Python<'_>, error: StaleElementError) -> PyErr 
     public_error(py, "StaleElementError", error.to_string())
 }
 
+/// Refuses `value` when it holds a character XML 1.0 cannot carry, naming it
+/// `what`. The infallible Rust setters drop such a character; Python refuses
+/// it, before the edit.
+pub(crate) fn refuse_non_xml_characters(py: Python<'_>, what: &str, value: &str) -> PyResult<()> {
+    oxoffice_core::xml::reject_non_xml_characters(what, value)
+        .map_err(|error| docx_to_pyerr(py, oxoffice_docx::Error::Oxml(error)))
+}
+
 pub(crate) fn docx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyErr {
+    let message = error.to_string();
+    // A refused character XML 1.0 cannot carry is an `XmlError`, also a
+    // `ValueError`, wherever the refusal was wrapped.
+    if message.contains(oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL) {
+        return public_error(py, "XmlError", message);
+    }
     let class_name = match &error {
         oxoffice_docx::Error::Opc(_)
         | oxoffice_docx::Error::Io(_)
@@ -203,7 +217,7 @@ pub(crate) fn docx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyEr
         | oxoffice_docx::Error::Story(_)
         | oxoffice_docx::Error::Other(_) => "DocxError",
     };
-    public_error(py, class_name, error.to_string())
+    public_error(py, class_name, message)
 }
 
 /// Register every class and function of the docx bindings on `module`.

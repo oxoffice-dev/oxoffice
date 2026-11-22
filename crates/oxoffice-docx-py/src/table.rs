@@ -2736,6 +2736,7 @@ impl PyCell {
     }
     fn add_paragraph(&self, py: Python<'_>, text: &str) -> PyResult<Py<PyParagraph>> {
         let (table, row, cell) = self.validate(py)?;
+        crate::refuse_non_xml_characters(py, "paragraph text", text)?;
         let result = {
             let current_related = self.current_related(py)?;
             let mut document = self.document.borrow_mut(py);

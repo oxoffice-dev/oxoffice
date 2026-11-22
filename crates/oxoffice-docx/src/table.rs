@@ -12,6 +12,8 @@ use oxoffice_docx_oxml::table::{
 };
 use oxoffice_docx_oxml::text::CT_P;
 
+use oxoffice_core::xml::{strip_non_xml_characters, without_non_xml_characters};
+
 use crate::content_control::ContentControlRef;
 use crate::document::{DrawingHorizontalAlignment, DrawingVerticalAlignment};
 use crate::paragraph::{Paragraph, ParagraphRef};
@@ -451,6 +453,7 @@ fn checked_table_text(name: &str, value: &str) -> Result<String> {
     if value.trim().is_empty() {
         return Err(Error::Other(format!("table {name} cannot be empty")));
     }
+    oxoffice_core::xml::reject_non_xml_characters(&format!("table {name}"), value)?;
     Ok(value.to_owned())
 }
 
@@ -1764,8 +1767,9 @@ impl<'a> Table<'a> {
     }
 
     /// Set the table style by ID in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_style(&mut self, style_id: &str) {
-        self.ensure_tbl_pr().style_id = Some(style_id.to_string());
+        self.ensure_tbl_pr().style_id = Some(without_non_xml_characters(style_id));
     }
 
     /// Set the table width in twips (dxa).
@@ -1817,7 +1821,8 @@ impl<'a> Table<'a> {
         Ok(())
     }
 
-    /// Set or remove the accessible table caption.
+    /// Set or remove the accessible table caption. An empty caption, or one
+    /// holding a character XML 1.0 cannot carry, is refused.
     pub fn set_caption(&mut self, caption: Option<&str>) -> Result<()> {
         let resolved = caption
             .map(|value| checked_table_text("caption", value))
@@ -1826,7 +1831,8 @@ impl<'a> Table<'a> {
         Ok(())
     }
 
-    /// Set or remove the accessible table description.
+    /// Set or remove the accessible table description. An empty description,
+    /// or one holding a character XML 1.0 cannot carry, is refused.
     pub fn set_description(&mut self, description: Option<&str>) -> Result<()> {
         let resolved = description
             .map(|value| checked_table_text("description", value))
@@ -1900,12 +1906,13 @@ impl<'a> Table<'a> {
     }
 
     /// Set borders on all edges and internal gridlines in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_borders(&mut self, style: crate::BorderStyle, size_eighths_pt: u32, color: &str) {
         let edge = CT_BorderEdge {
             val: style.to_st(),
             sz: Some(size_eighths_pt),
             space: Some(0),
-            color: Some(color.to_string()),
+            color: Some(without_non_xml_characters(color)),
             extra_attributes: Vec::new(),
             source_xml: None,
         };
@@ -2691,9 +2698,10 @@ impl<'a> Cell<'a> {
 
     /// Set the first paragraph's text while preserving its range anchors.
     /// A refused unsafe paragraph edit leaves the cell unchanged. Use
-    /// [`Self::try_set_text`] to receive the refusal.
+    /// [`Self::try_set_text`] to receive the refusal. A character XML 1.0
+    /// cannot carry is dropped.
     pub fn set_text(&mut self, text: &str) {
-        let _ = self.try_set_text(text);
+        let _ = self.try_set_text(&strip_non_xml_characters(text));
     }
 
     /// Set first-paragraph text through the checked, anchor-preserving edit.
@@ -2721,11 +2729,13 @@ impl<'a> Cell<'a> {
     }
 
     /// Add a paragraph to the cell and return a mutable reference.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn add_paragraph(&mut self, text: &str) -> Paragraph<'_> {
         use oxoffice_docx_oxml::table::CellContent;
+        let text = strip_non_xml_characters(text);
         let mut p = CT_P::new();
         if !text.is_empty() {
-            p.add_run(text);
+            p.add_run(&text);
         }
         self.inner.content.push(CellContent::Paragraph(p));
         let para = self.inner.content.last_mut().unwrap();
@@ -2743,13 +2753,15 @@ impl<'a> Cell<'a> {
     /// the python-docx `run.add_picture()` pattern. A cell cannot reach the
     /// document's identifiers: the saved file gives the picture its drawing
     /// id (`wp:docPr/@id`), the document keeps a placeholder, and an insert
-    /// between two saves can change that id.
+    /// between two saves can change that id. A character XML 1.0 cannot carry
+    /// is dropped from `rel_id`.
     pub fn add_picture(&mut self, rel_id: &str, width: Length, height: Length) {
         use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
         use oxoffice_docx_oxml::table::CellContent;
         use oxoffice_docx_oxml::text::{CT_R, RunContent};
 
-        let mut inline = CT_Inline::new(rel_id, width.to_emu(), height.to_emu());
+        let rel_id = strip_non_xml_characters(rel_id);
+        let mut inline = CT_Inline::new(&rel_id, width.to_emu(), height.to_emu());
         inline.doc_pr_id_unallocated = true;
         let drawing = CT_Drawing::inline(inline);
         let run = CT_R {
@@ -2842,11 +2854,12 @@ impl<'a> Cell<'a> {
     }
 
     /// Set cell background shading color in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_shading(&mut self, fill_color: &str) {
         self.ensure_tc_pr().shading = Some(CT_Shd {
             val: "clear".to_string(),
             color: Some("auto".to_string()),
-            fill: Some(fill_color.to_string()),
+            fill: Some(without_non_xml_characters(fill_color)),
             ..Default::default()
         });
     }

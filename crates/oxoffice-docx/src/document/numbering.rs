@@ -485,9 +485,11 @@ impl Document {
     /// Add a bullet list item at the given indentation level (0-based).
     ///
     /// If no bullet list definition exists yet, one is created automatically.
-    /// Returns a mutable `Paragraph` for further configuration.
+    /// Returns a mutable `Paragraph` for further configuration. A character
+    /// XML 1.0 cannot carry is dropped; [`Self::try_add_bullet_list_item`]
+    /// refuses it instead.
     pub fn add_bullet_list_item(&mut self, text: &str, level: u32) -> Paragraph<'_> {
-        self.try_add_bullet_list_item(text, level)
+        self.try_add_bullet_list_item(&oxoffice_core::xml::strip_non_xml_characters(text), level)
             .expect("the historical infallible list helper requires a valid document and level")
     }
 
@@ -502,9 +504,11 @@ impl Document {
     /// Add a numbered list item at the given indentation level (0-based).
     ///
     /// If no numbered list definition exists yet, one is created automatically.
-    /// Returns a mutable `Paragraph` for further configuration.
+    /// Returns a mutable `Paragraph` for further configuration. A character
+    /// XML 1.0 cannot carry is dropped; [`Self::try_add_numbered_list_item`]
+    /// refuses it instead.
     pub fn add_numbered_list_item(&mut self, text: &str, level: u32) -> Paragraph<'_> {
-        self.try_add_numbered_list_item(text, level)
+        self.try_add_numbered_list_item(&oxoffice_core::xml::strip_non_xml_characters(text), level)
             .expect("the historical infallible list helper requires a valid document and level")
     }
 

@@ -18,8 +18,13 @@ class PackageError(DocxError):
     """An OPC package, file, or document-part operation failed."""
 
 
-class XmlError(DocxError):
-    """WordprocessingML could not be parsed or serialized."""
+class XmlError(DocxError, ValueError):
+    """WordprocessingML could not be parsed or serialized.
+
+    Also a ``ValueError``: a value holding a character XML 1.0 cannot carry is
+    refused with this error, where python-docx and python-pptx raise
+    ``ValueError``.
+    """
 
 
 class StaleElementError(DocxError):

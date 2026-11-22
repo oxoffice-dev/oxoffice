@@ -527,9 +527,10 @@ impl Section<'_> {
     /// Set this section's `w:textDirection`.
     ///
     /// Authors and preserves the value. Layout projects it onto the rendered
-    /// page, so nothing here changes what is drawn.
+    /// page, so nothing here changes what is drawn. A character XML 1.0
+    /// cannot carry is dropped.
     pub fn set_text_direction(&mut self, direction: &str) {
-        self.inner.text_direction = Some(direction.to_owned());
+        self.inner.text_direction = Some(oxoffice_core::xml::without_non_xml_characters(direction));
     }
 
     /// Return this section's `w:docGrid` character grid.

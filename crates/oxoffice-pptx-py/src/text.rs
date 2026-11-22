@@ -1232,8 +1232,9 @@ impl PyParagraph {
             }
             Some(value) => {
                 let character = value.extract::<String>()?;
-                let character = TextBulletCharacter::new(character)
-                    .map_err(|_| PyValueError::new_err("bullet character must not be empty"))?;
+                let character = TextBulletCharacter::new(character).map_err(|error| {
+                    crate::refused_value_to_pyerr(py, error, "bullet character must not be empty")
+                })?;
                 Some(TextBulletChoice::Character(character))
             }
         };
@@ -1446,7 +1447,7 @@ impl PyParagraph {
 
     #[setter]
     fn set_bullet_font(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        let font = typeface(value)?;
+        let font = typeface(py, value)?;
         self.edit_bullet(py, |bullet| set_typeface(&mut bullet.font, font))
     }
 }
@@ -1936,11 +1937,11 @@ impl PyRunIterator {
     }
 }
 
-fn typeface(value: Option<String>) -> PyResult<Option<TextFont>> {
+fn typeface(py: Python<'_>, value: Option<String>) -> PyResult<Option<TextFont>> {
     value
         .map(TextFont::new)
         .transpose()
-        .map_err(|_| PyValueError::new_err("font name must not be empty"))
+        .map_err(|error| crate::refused_value_to_pyerr(py, error, "font name must not be empty"))
 }
 
 /// Replaces or removes one typeface. An existing font element keeps its
@@ -2270,10 +2271,7 @@ impl PyFont {
 
     #[setter]
     fn set_name(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        let font = value
-            .map(TextFont::new)
-            .transpose()
-            .map_err(|_| PyValueError::new_err("font name must not be empty"))?;
+        let font = typeface(py, value)?;
         self.update(py, |properties| match (properties.latin.as_mut(), font) {
             (_, None) => properties.latin = None,
             // An existing Latin font keeps its panose and charset attributes.
@@ -2523,7 +2521,7 @@ impl PyFont {
 
     #[setter]
     fn set_east_asian_name(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        let font = typeface(value)?;
+        let font = typeface(py, value)?;
         self.update(py, |properties| {
             set_typeface(&mut properties.east_asian, font);
         })
@@ -2542,7 +2540,7 @@ impl PyFont {
 
     #[setter]
     fn set_complex_script_name(&self, py: Python<'_>, value: Option<String>) -> PyResult<()> {
-        let font = typeface(value)?;
+        let font = typeface(py, value)?;
         self.update(py, |properties| {
             set_typeface(&mut properties.complex_script, font);
         })

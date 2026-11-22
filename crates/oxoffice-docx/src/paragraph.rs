@@ -14,6 +14,8 @@ use oxoffice_docx_oxml::text::{
 };
 use oxoffice_docx_oxml::units::{HalfPoint, Twips};
 
+use oxoffice_core::xml::{strip_non_xml_characters, without_non_xml_characters};
+
 use crate::run::{Run, RunRef};
 use crate::table::TableConditionalFormatting;
 use crate::{ContentControlRef, Length, RevisionRef};
@@ -783,16 +785,19 @@ impl ParagraphMark<'_> {
     }
 
     /// Set the paragraph mark font name in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_font(&mut self, name: &str) {
         self.set_font_value(Some(name));
     }
 
     /// Set or clear the direct paragraph mark font name.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_font_value(&mut self, name: Option<&str>) {
-        self.inner.font_ascii = name.map(str::to_owned);
-        self.inner.font_hansi = name.map(str::to_owned);
-        self.inner.font_east_asia = name.map(str::to_owned);
-        self.inner.font_cs = name.map(str::to_owned);
+        let name = name.map(without_non_xml_characters);
+        self.inner.font_ascii = name.clone();
+        self.inner.font_hansi = name.clone();
+        self.inner.font_east_asia = name.clone();
+        self.inner.font_cs = name;
     }
 
     /// Set the paragraph mark color as a hex string, e.g. "FF0000".
@@ -802,13 +807,15 @@ impl ParagraphMark<'_> {
     }
 
     /// Set the paragraph mark color in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_color(&mut self, hex: &str) {
         self.set_color_value(Some(hex));
     }
 
     /// Set or clear the direct paragraph mark color.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_color_value(&mut self, hex: Option<&str>) {
-        self.inner.color = hex.map(str::to_owned);
+        self.inner.color = hex.map(without_non_xml_characters);
     }
 }
 
@@ -1036,8 +1043,10 @@ impl<'a> Paragraph<'a> {
     /// paragraph of a table of contents. The last is a paragraph holding only
     /// one end of a tracked move range or of a custom XML revision range. When
     /// both ends of such a range are in the paragraph, both go with the
-    /// tracked change they mark. On error the paragraph is unchanged.
+    /// tracked change they mark. Text holding a character XML 1.0 cannot
+    /// carry is refused too. On error the paragraph is unchanged.
     pub fn set_text(&mut self, text: &str) -> crate::Result<()> {
+        oxoffice_core::xml::reject_non_xml_characters("paragraph text", text)?;
         let anchors = RangeAnchors::scan(self.inner)?;
         let mut paragraph = CT_P::new();
         paragraph.properties = self.inner.properties.clone();
@@ -1274,8 +1283,11 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Add a run with the given text and return a mutable reference for chaining.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn add_run(&mut self, text: &str) -> Run<'_> {
-        self.inner.runs.push(CT_R::new(text));
+        self.inner
+            .runs
+            .push(CT_R::new(&strip_non_xml_characters(text)));
         Run {
             inner: self.inner.runs.last_mut().unwrap(),
         }
@@ -1286,13 +1298,15 @@ impl<'a> Paragraph<'a> {
     /// The base text becomes an ordinary paragraph run, so [`Self::text`]
     /// returns it. The phonetic text stays inside the annotation and no text
     /// extraction returns it. Use [`Self::ruby_mut`] to set the geometry in
-    /// `w:rubyPr`.
+    /// `w:rubyPr`. A character XML 1.0 cannot carry is dropped from either.
     pub fn add_ruby(&mut self, base: &str, phonetic: &str) -> usize {
         let base_start = self.inner.runs.len();
-        self.inner.runs.push(CT_R::new(base));
+        self.inner
+            .runs
+            .push(CT_R::new(&strip_non_xml_characters(base)));
         self.inner.rubies.push(CT_Ruby {
             properties: None,
-            ruby_text: vec![CT_R::new(phonetic)],
+            ruby_text: vec![CT_R::new(&strip_non_xml_characters(phonetic))],
             base_start,
             base_end: base_start + 1,
             raw_xml: Vec::new(),
@@ -1316,13 +1330,14 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Add a run that clones the paragraph mark's direct run properties.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn add_run_inheriting_mark(&mut self, text: &str) -> Run<'_> {
         let properties = self
             .inner
             .properties
             .as_ref()
             .and_then(|properties| properties.rpr.clone());
-        let mut run = CT_R::new(text);
+        let mut run = CT_R::new(&strip_non_xml_characters(text));
         run.properties = properties;
         self.inner.runs.push(run);
         Run {
@@ -1365,19 +1380,30 @@ impl<'a> Paragraph<'a> {
     /// Obtain `relationship_id` from
     /// [`crate::Document::add_hyperlink_relationship`]. Returning the run
     /// allows the hyperlink text to receive the same direct formatting as any
-    /// other run.
+    /// other run. A character XML 1.0 cannot carry is dropped from either.
     pub fn add_hyperlink(&mut self, text: &str, relationship_id: &str) -> Run<'_> {
-        self.add_hyperlink_with_tooltip(text, relationship_id, None)
-            .expect("an absent tooltip contains no invalid XML characters")
+        self.add_hyperlink_with_tooltip(
+            &strip_non_xml_characters(text),
+            &strip_non_xml_characters(relationship_id),
+            None,
+        )
+        .expect("text and relationship id hold only XML characters")
     }
 
     /// Add a hyperlink run and optionally set its user-facing hover tooltip.
+    /// Text, relationship id or tooltip holding a character XML 1.0 cannot
+    /// carry is refused.
     pub fn add_hyperlink_with_tooltip(
         &mut self,
         text: &str,
         relationship_id: &str,
         tooltip: Option<&str>,
     ) -> crate::Result<Run<'_>> {
+        oxoffice_core::xml::reject_non_xml_characters("hyperlink text", text)?;
+        oxoffice_core::xml::reject_non_xml_characters(
+            "hyperlink relationship id",
+            relationship_id,
+        )?;
         if let Some(tooltip) = tooltip {
             oxoffice_core::xml::reject_non_xml_characters("hyperlink tooltip", tooltip)?;
         }
@@ -1408,7 +1434,8 @@ impl<'a> Paragraph<'a> {
     /// document (`w:hyperlink w:anchor`), with an optional hover tooltip.
     ///
     /// No relationship is written, so the link stays inside the document.
-    /// Checked document authoring validates the destination bookmark.
+    /// Checked document authoring validates the destination bookmark. A
+    /// character XML 1.0 cannot carry is dropped from each value.
     pub fn add_internal_hyperlink(
         &mut self,
         text: &str,
@@ -1416,7 +1443,7 @@ impl<'a> Paragraph<'a> {
         tooltip: Option<&str>,
     ) -> Run<'_> {
         let run_start = self.inner.runs.len();
-        let mut run = CT_R::new(text);
+        let mut run = CT_R::new(&strip_non_xml_characters(text));
         run.properties = Some(oxoffice_docx_oxml::properties::CT_RPr {
             style_id: Some("Hyperlink".into()),
             ..Default::default()
@@ -1424,8 +1451,8 @@ impl<'a> Paragraph<'a> {
         self.inner.runs.push(run);
         self.inner.hyperlinks.push(HyperlinkSpan {
             rel_id: None,
-            anchor: Some(anchor.to_owned()),
-            tooltip: tooltip.map(str::to_owned),
+            anchor: Some(without_non_xml_characters(anchor)),
+            tooltip: tooltip.map(without_non_xml_characters),
             doc_location: None,
             run_start,
             run_end: run_start + 1,
@@ -1604,16 +1631,18 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Set the paragraph style by ID in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_style(&mut self, style_id: &str) {
-        self.ensure_ppr().style_id = Some(style_id.to_string());
+        self.ensure_ppr().style_id = Some(without_non_xml_characters(style_id));
     }
 
     /// Set or clear the paragraph style ID in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_style_value(&mut self, style_id: Option<&str>) {
         if style_id.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_ppr().style_id = style_id.map(str::to_owned);
+        self.ensure_ppr().style_id = style_id.map(without_non_xml_characters);
     }
 
     /// Attach this paragraph to a list definition as a list item.
@@ -1906,11 +1935,12 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Set a background/shading fill color in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_shading(&mut self, fill_color: &str) {
         self.ensure_ppr().shading = Some(Box::new(CT_Shd {
             val: "clear".to_string(),
             color: Some("auto".to_string()),
-            fill: Some(fill_color.to_string()),
+            fill: Some(without_non_xml_characters(fill_color)),
             ..Default::default()
         }));
     }
@@ -1922,12 +1952,13 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Add a border to all sides in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_border_all(&mut self, style: BorderStyle, size_eighths_pt: u32, color: &str) {
         let edge = CT_BorderEdge {
             val: style.to_st(),
             sz: Some(size_eighths_pt),
             space: Some(1),
-            color: Some(color.to_string()),
+            color: Some(without_non_xml_characters(color)),
             extra_attributes: Vec::new(),
             source_xml: None,
         };
@@ -1965,6 +1996,7 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Add a bottom border with an explicit content gap in points in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_border_bottom_with_space(
         &mut self,
         style: BorderStyle,
@@ -1976,7 +2008,7 @@ impl<'a> Paragraph<'a> {
             val: style.to_st(),
             sz: Some(size_eighths_pt),
             space: Some(space_points),
-            color: Some(color.to_string()),
+            color: Some(without_non_xml_characters(color)),
             extra_attributes: Vec::new(),
             source_xml: None,
         };
@@ -2356,6 +2388,7 @@ impl<'a> Paragraph<'a> {
     ///
     /// Removing the last edge removes the `w:pBdr` element with it. An edge
     /// that already exists keeps the attributes this crate does not model.
+    /// A character XML 1.0 cannot carry is dropped from the color.
     pub fn set_border_value(
         &mut self,
         edge: ParagraphBorderEdge,
@@ -2388,7 +2421,7 @@ impl<'a> Paragraph<'a> {
                 });
                 existing.val = style.to_st();
                 existing.sz = Some(size_eighths_pt);
-                existing.color = Some(color.to_owned());
+                existing.color = Some(without_non_xml_characters(color));
             }
             None => *slot = None,
         }
@@ -2411,11 +2444,13 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Set a shading pattern in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_shading_pattern(&mut self, pattern: &str, fill_color: &str, color: &str) {
         self.set_shading_value(Some((pattern, fill_color, color)));
     }
 
     /// Set or remove the direct paragraph shading.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_shading_value(&mut self, shading: Option<(&str, &str, &str)>) {
         if shading.is_none() && self.inner.properties.is_none() {
             return;
@@ -2426,9 +2461,9 @@ impl<'a> Paragraph<'a> {
                     .ensure_ppr()
                     .shading
                     .get_or_insert_with(Default::default);
-                existing.val = pattern.to_owned();
-                existing.fill = Some(fill_color.to_owned());
-                existing.color = Some(color.to_owned());
+                existing.val = without_non_xml_characters(pattern);
+                existing.fill = Some(without_non_xml_characters(fill_color));
+                existing.color = Some(without_non_xml_characters(color));
                 existing.theme_color = None;
                 existing.theme_tint = None;
                 existing.theme_shade = None;
@@ -2441,6 +2476,7 @@ impl<'a> Paragraph<'a> {
     }
 
     /// Set or clear only the direct shading fill, retaining imported pattern and foreground.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_shading_fill_value(&mut self, fill: Option<&str>) {
         if fill.is_none() && self.inner.properties.is_none() {
             return;
@@ -2451,7 +2487,7 @@ impl<'a> Paragraph<'a> {
                     .ensure_ppr()
                     .shading
                     .get_or_insert_with(Default::default);
-                shading.fill = Some(fill.to_owned());
+                shading.fill = Some(without_non_xml_characters(fill));
                 shading.theme_fill = None;
                 shading.theme_fill_tint = None;
                 shading.theme_fill_shade = None;

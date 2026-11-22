@@ -35,6 +35,13 @@ pub enum XmlLexicalError {
     InvalidComment(String),
 }
 
+/// The words every refusal of a character XML 1.0 cannot carry holds, from
+/// [`reject_non_xml_characters`], the package reader and writer and the
+/// format crates, so that a binding can tell such a refusal apart wherever
+/// it was wrapped. `oxoffice-opc` cannot depend on this crate: its message
+/// spells the words out, and a docx unit test keeps the two the same.
+pub const NON_XML_CHARACTER_REFUSAL: &str = "a character XML 1.0 cannot carry";
+
 /// Refuses `value` when it holds a character XML 1.0 cannot carry, not even
 /// escaped, naming the character and its one-based position, as python-docx
 /// and python-pptx refuse such a string. `what` names the value in the message.
@@ -45,7 +52,7 @@ pub fn reject_non_xml_characters(what: &str, value: &str) -> Result<()> {
         .find(|(_, character)| !is_xml_1_0_character(*character))
     {
         Some((index, character)) => Err(crate::OxmlError::InvalidValue(format!(
-            "{what} holds U+{:04X} at character {}, a character XML 1.0 cannot carry",
+            "{what} holds U+{:04X} at character {}, {NON_XML_CHARACTER_REFUSAL}",
             u32::from(character),
             index + 1
         ))),
@@ -62,6 +69,13 @@ pub fn strip_non_xml_characters(value: &str) -> Cow<'_, str> {
     } else {
         Cow::Owned(value.chars().filter(|c| is_xml_1_0_character(*c)).collect())
     }
+}
+
+/// `value` as an owned string without the characters XML 1.0 cannot carry,
+/// for an infallible setter: a setter that returns `Result` refuses such a
+/// value with [`reject_non_xml_characters`] instead.
+pub fn without_non_xml_characters(value: &str) -> String {
+    strip_non_xml_characters(value).into_owned()
 }
 
 /// Escapes `value` for an attribute so that every XML reader reads it back as

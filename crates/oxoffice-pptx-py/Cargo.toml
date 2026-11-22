@@ -12,6 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+oxoffice-core = { workspace = true }
 oxoffice-drawing = { workspace = true }
 oxoffice-layout = { workspace = true }
 oxoffice-py-support = { workspace = true }

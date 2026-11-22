@@ -322,8 +322,11 @@ pub struct TextBulletCharacter {
 }
 
 impl TextBulletCharacter {
+    /// A bullet character. An empty one, or one holding a character XML 1.0
+    /// cannot carry, is refused.
     pub fn new(character: impl Into<String>) -> Result<Self> {
         let character = character.into();
+        oxoffice_core::xml::reject_non_xml_characters("bullet character", &character)?;
         if character.is_empty() {
             return Err(invalid("buChar", "char", ""));
         }

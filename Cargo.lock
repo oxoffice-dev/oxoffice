@@ -1391,6 +1391,7 @@ dependencies = [
 name = "oxoffice-pptx-py"
 version = "0.2.0"
 dependencies = [
+ "oxoffice-core",
  "oxoffice-drawing",
  "oxoffice-layout",
  "oxoffice-pptx",
