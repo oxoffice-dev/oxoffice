@@ -212,13 +212,14 @@ pub(super) fn reconcile_body_bookmarks(
                 slot => {
                     let mut tokens = HashSet::new();
                     for (document, name) in &parts {
+                        // Word compares bookmark names without regard to case.
                         for token in name_tokens(part_xml(document, name)?) {
-                            tokens.insert(token.to_owned());
+                            tokens.insert(token.to_lowercase());
                         }
                     }
                     let suffix = tokens
                         .iter()
-                        .filter_map(|token| token.strip_prefix("_Toc")?.parse::<u64>().ok())
+                        .filter_map(|token| token.strip_prefix("_toc")?.parse::<u64>().ok())
                         .max()
                         .unwrap_or(0);
                     slot.insert((tokens, suffix))
@@ -229,7 +230,7 @@ pub(super) fn reconcile_body_bookmarks(
                     Error::Other("comparison bookmark names are exhausted".into())
                 })?;
                 let candidate = format!("_Toc{suffix}");
-                if !taken.contains(&candidate) {
+                if !taken.contains(&candidate.to_lowercase()) {
                     break candidate;
                 }
             };
@@ -338,10 +339,12 @@ pub(super) fn reconcile_body_bookmarks(
         if names.is_empty() && ids.is_empty() {
             return Ok(None);
         }
+        let folded = folded_names(names);
         for (document, name) in &parts {
             if std::ptr::eq(*document, &*edited)
                 && *name != edited.doc_part_name
-                && name_tokens(part_xml(document, name)?).any(|token| names.contains_key(token))
+                && name_tokens(part_xml(document, name)?)
+                    .any(|token| folded.contains_key(&token.to_lowercase()))
             {
                 return Ok(None);
             }
@@ -514,6 +517,15 @@ fn name_tokens(text: &[u8]) -> impl Iterator<Item = &str> {
     name_token_ranges(text).map(|range| std::str::from_utf8(&text[range]).expect("ASCII token"))
 }
 
+/// The renames keyed by the old name in lower case: Word compares bookmark
+/// names without regard to case, so `PAGEREF _TOC12` names `_Toc12`.
+fn folded_names(names: &HashMap<String, String>) -> HashMap<String, &String> {
+    names
+        .iter()
+        .map(|(old, new)| (old.to_lowercase(), new))
+        .collect()
+}
+
 /// The main story with these bookmark names and ids, with its links and field
 /// instructions naming a renamed bookmark. None when a field instruction
 /// splits a renamed name across runs.
@@ -523,12 +535,13 @@ fn rewrite_body_bookmarks(
     ids: &HashMap<i32, i32>,
 ) -> Result<Option<Vec<u8>>> {
     let tree = crate::revision::XmlTree::parse(xml)?;
+    let names = folded_names(names);
     let renamed = |value: &[u8]| -> Option<Vec<u8>> {
         let mut output = Vec::new();
         let mut at = 0;
         for range in name_token_ranges(value) {
             let token = std::str::from_utf8(&value[range.clone()]).expect("ASCII token");
-            if let Some(name) = names.get(token) {
+            if let Some(name) = names.get(&token.to_lowercase()) {
                 output.extend_from_slice(&value[at..range.start]);
                 output.extend_from_slice(name.as_bytes());
                 at = range.end;
@@ -563,7 +576,7 @@ fn rewrite_body_bookmarks(
         }
         for range in name_token_ranges(&text) {
             let token = std::str::from_utf8(&text[range.clone()]).expect("ASCII token");
-            let Some(name) = names.get(token) else {
+            let Some(name) = names.get(&token.to_lowercase()) else {
                 continue;
             };
             let at = segments.partition_point(|(start, _)| *start <= range.start) - 1;
@@ -573,7 +586,7 @@ fn rewrite_body_bookmarks(
             }
             let (start, source) = segments[at];
             let from = source + range.start - start;
-            edits.push((from..from + range.len(), name.clone().into_bytes()));
+            edits.push((from..from + range.len(), name.as_bytes().to_vec()));
         }
         true
     };
@@ -677,16 +690,13 @@ fn relationship_link(
     }))
 }
 
-/// Whether a field instruction is a `HYPERLINK` to another file, whose `\l`
-/// names a bookmark of that file.
+/// Whether a field instruction, as XML text, is a `HYPERLINK` to another
+/// file, whose `\l` names a bookmark of that file.
 fn links_another_file(instruction: &[u8]) -> bool {
-    let mut words = instruction
-        .split(u8::is_ascii_whitespace)
-        .filter(|word| !word.is_empty());
-    words
-        .next()
-        .is_some_and(|word| word.eq_ignore_ascii_case(b"HYPERLINK"))
-        && words.next().is_some_and(|word| !word.starts_with(b"\\"))
+    std::str::from_utf8(instruction)
+        .ok()
+        .and_then(|text| quick_xml::escape::unescape(text).ok())
+        .is_some_and(|text| oxoffice_docx_oxml::text::hyperlink_has_address(&text))
 }
 
 /// The opening tag of an element with some Word attribute values replaced,

@@ -304,6 +304,11 @@ fn a_link_written_as_a_hyperlink_field_reads_its_url() {
         r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK "https://example.com/a?b=1&amp;c=2" </w:instrText></w:r>"#,
         r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>our site</w:t></w:r>"#,
         r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t>.</w:t></w:r></w:p>"#,
+        // A place in this document, its name unquoted: not a URL.
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK \l Results </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Results</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
     ));
     let doc = reopen(&mut doc);
     assert_eq!(
@@ -315,7 +320,7 @@ fn a_link_written_as_a_hyperlink_field_reads_its_url() {
             rel_id: None,
         }]
     );
-    assert_eq!(doc.text(), "Visit our site.\n");
+    assert_eq!(doc.text(), "Visit our site.\nResults\n");
 }
 
 #[test]
