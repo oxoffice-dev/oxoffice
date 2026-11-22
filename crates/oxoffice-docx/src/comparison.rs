@@ -444,8 +444,8 @@ impl IdAllocator {
     }
 
     fn revision_with_id(kind: &str, author: &str, timestamp: &str, inner: &str, id: i32) -> String {
-        let author = quick_xml::escape::escape(author);
-        let timestamp = quick_xml::escape::escape(timestamp);
+        let author = oxoffice_core::xml::escape_attribute_value(author);
+        let timestamp = oxoffice_core::xml::escape_attribute_value(timestamp);
         format!(
             r#"<w:{kind} w:id="{id}" w:author="{author}" w:date="{timestamp}">{inner}</w:{kind}>"#
         )
@@ -457,8 +457,8 @@ impl IdAllocator {
     }
 
     fn marker_with_id(kind: &str, author: &str, timestamp: &str, id: i32) -> String {
-        let author = quick_xml::escape::escape(author);
-        let timestamp = quick_xml::escape::escape(timestamp);
+        let author = oxoffice_core::xml::escape_attribute_value(author);
+        let timestamp = oxoffice_core::xml::escape_attribute_value(timestamp);
         format!(r#"<w:{kind} w:id="{id}" w:author="{author}" w:date="{timestamp}"/>"#)
     }
 }

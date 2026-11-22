@@ -98,7 +98,7 @@ pub(super) fn accepted_paragraph_is_blank(para: &CT_P) -> bool {
                         RunContent::Text(text) => text.text.is_empty(),
                         RunContent::DeletedText(_) | RunContent::CommentReference { .. } => true,
                         RunContent::Tab
-                        | RunContent::Break(_)
+                        | RunContent::Break(..)
                         | RunContent::Drawing(_)
                         | RunContent::Field(_)
                         | RunContent::FootnoteRef { .. }
@@ -426,10 +426,10 @@ pub(super) fn push_equations_before_order(
             && inline_items
                 .iter()
                 .rev()
-                .take_while(|item| !matches!(item, InlineItem::LineBreak))
+                .take_while(|item| !matches!(item, InlineItem::LineBreak(_)))
                 .any(|item| !draws_nothing(item))
         {
-            inline_items.push(InlineItem::LineBreak);
+            inline_items.push(InlineItem::LineBreak(LineClear::None));
         }
         inline_items.push(InlineItem::Group {
             width: measured.width,
@@ -440,7 +440,7 @@ pub(super) fn push_equations_before_order(
         });
         if display {
             *display_break = Some(inline_items.len());
-            inline_items.push(InlineItem::LineBreak);
+            inline_items.push(InlineItem::LineBreak(LineClear::None));
         }
         *cursor += 1;
     }
@@ -480,7 +480,7 @@ pub(super) fn projected_content_char_starts(run: &CT_R) -> Vec<usize> {
         starts.push(char_offset);
         char_offset += match content {
             RunContent::Text(text) | RunContent::DeletedText(text) => text.text.chars().count(),
-            RunContent::Tab | RunContent::Break(_) => 1,
+            RunContent::Tab | RunContent::Break(..) => 1,
             RunContent::Field(field) => field
                 .effective_projected_text()
                 .map_or(0, |text| text.chars().count()),
@@ -605,7 +605,7 @@ fn run_has_visible_content(run: &CT_R) -> bool {
         RunContent::Text(text) | RunContent::DeletedText(text) => !text.text.is_empty(),
         RunContent::CommentReference { .. } => false,
         RunContent::Tab
-        | RunContent::Break(_)
+        | RunContent::Break(..)
         | RunContent::Drawing(_)
         | RunContent::Field(_)
         | RunContent::FootnoteRef { .. }

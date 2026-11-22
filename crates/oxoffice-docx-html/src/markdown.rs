@@ -966,7 +966,7 @@ fn collect_run_pieces(
                 }
             }
             RunContent::Tab => raw.push('\t'),
-            RunContent::Break(bt) => match bt {
+            RunContent::Break(bt, _) => match bt {
                 BreakType::Line | BreakType::Column => {
                     push_piece(pieces, &std::mem::take(&mut raw), marks);
                     pieces.push((String::new(), Marks::default()));

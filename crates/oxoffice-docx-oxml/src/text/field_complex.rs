@@ -1584,8 +1584,8 @@ pub(super) fn project_complex_fields(projection: ComplexFieldProjection<'_>) -> 
                         // The old field scanner does not publish unwrapped
                         // deletion text as a stored field display.
                         RunContent::DeletedText(_) => "",
-                        RunContent::Break(BreakType::Page) => "\u{000c}",
-                        RunContent::Break(BreakType::Column) => "\u{000b}",
+                        RunContent::Break(BreakType::Page, _) => "\u{000c}",
+                        RunContent::Break(BreakType::Column, _) => "\u{000b}",
                         _ => CT_R::content_text(content),
                     };
                     for field in &mut stack {
@@ -2389,7 +2389,7 @@ fn legacy_ordinary_bookmarked_child(field: &Field) -> bool {
                 runs.iter()
                     .flat_map(|run| &run.content)
                     .all(|content| match content {
-                        RunContent::Text(_) | RunContent::Tab | RunContent::Break(_) => true,
+                        RunContent::Text(_) | RunContent::Tab | RunContent::Break(..) => true,
                         RunContent::Field(nested) => std::ptr::eq(nested, child),
                         _ => false,
                     })
@@ -2439,7 +2439,7 @@ fn legacy_form_own_bookmark_start(
                 || run.content.iter().any(|content| {
                     !matches!(
                         content,
-                        RunContent::Text(_) | RunContent::Tab | RunContent::Break(_)
+                        RunContent::Text(_) | RunContent::Tab | RunContent::Break(..)
                     )
                 })
             {

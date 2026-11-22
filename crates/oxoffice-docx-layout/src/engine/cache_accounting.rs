@@ -57,7 +57,7 @@ fn paragraph_source_is_cache_safe(
             && run.content.iter().all(|content| match content {
                 RunContent::Text(_)
                 | RunContent::Tab
-                | RunContent::Break(_)
+                | RunContent::Break(..)
                 | RunContent::FootnoteRef { .. }
                 | RunContent::EndnoteRef { .. } => true,
                 RunContent::Field(_) => allow_fields,
@@ -672,7 +672,7 @@ fn paragraph_key_retained_bytes(paragraph: &CT_P) -> usize {
                                     }
                                     RunContent::Symbol { font, .. } => font.capacity(),
                                     RunContent::Tab
-                                    | RunContent::Break(_)
+                                    | RunContent::Break(..)
                                     | RunContent::Drawing(_)
                                     | RunContent::Field(_)
                                     | RunContent::FootnoteRef { .. }
@@ -2250,12 +2250,18 @@ pub(super) fn paragraph_fingerprint(paragraph: &CT_P) -> u64 {
                     fingerprint.write_tag(u8::from(text.preserve_space));
                 }
                 RunContent::Tab => fingerprint.write_tag(2),
-                RunContent::Break(kind) => {
+                RunContent::Break(kind, clear) => {
                     fingerprint.write_tag(3);
                     fingerprint.write_tag(match kind {
                         BreakType::Line => 0,
                         BreakType::Page => 1,
                         BreakType::Column => 2,
+                    });
+                    fingerprint.write_tag(match clear {
+                        BreakClear::None => 0,
+                        BreakClear::Left => 1,
+                        BreakClear::Right => 2,
+                        BreakClear::All => 3,
                     });
                 }
                 RunContent::Symbol { font, char_code } => {

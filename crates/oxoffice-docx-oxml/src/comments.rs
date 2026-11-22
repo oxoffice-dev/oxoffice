@@ -490,13 +490,13 @@ fn write_comment<W: Write>(
 ) -> Result<()> {
     let mut start = BytesStart::new("w:comment");
     if let Some(author) = &comment.author {
-        start.push_attribute(("w:author", author.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(&mut start, "w:author", author);
     }
     if let Some(date) = &comment.date {
         start.push_attribute(("w:date", date.as_str()));
     }
     if let Some(initials) = &comment.initials {
-        start.push_attribute(("w:initials", initials.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(&mut start, "w:initials", initials);
     }
     let mut id = itoa::Buffer::new();
     start.push_attribute(("w:id", id.format(comment.id)));
@@ -543,7 +543,7 @@ fn validate_writer_bindings(attributes: &[(String, String)], location: &str) -> 
 
 fn push_preserved_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
     for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(start, name, value);
     }
 }
 

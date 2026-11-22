@@ -9,10 +9,24 @@
 //! [`Event::GeneralRef`]: quick_xml::events::Event::GeneralRef
 //! [`Event::Text`]: quick_xml::events::Event::Text
 
+use std::borrow::Cow;
+
 use quick_xml::Reader;
 use quick_xml::escape::unescape;
 use quick_xml::events::{BytesRef, BytesText, Event};
 use quick_xml::name::QName;
+
+/// `text` after XML end-of-line handling, as every XML reader reads it: a
+/// literal carriage return, alone or before a line feed, reads as a line
+/// feed. A carriage return written as `&#13;` is not literal and stays one,
+/// so apply this before resolving references.
+pub fn normalize_line_ends(text: &str) -> Cow<'_, str> {
+    if text.contains('\r') {
+        Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(text)
+    }
+}
 
 /// Decode a [`BytesText`] and resolve any XML entities it still contains.
 ///
@@ -22,6 +36,7 @@ pub fn decode_escaped(text: &BytesText<'_>) -> String {
     let Ok(raw) = text.decode() else {
         return String::new();
     };
+    let raw = normalize_line_ends(&raw);
     match unescape(&raw) {
         Ok(unescaped) => unescaped.into_owned(),
         // Malformed or unknown entity: keep the raw text rather than losing it.
@@ -35,7 +50,9 @@ pub fn decode_escaped(text: &BytesText<'_>) -> String {
 /// [`Event::GeneralRef`]: quick_xml::events::Event::GeneralRef
 /// [`Event::Text`]: quick_xml::events::Event::Text
 pub fn decode_plain(text: &BytesText<'_>) -> String {
-    text.decode().map(|c| c.into_owned()).unwrap_or_default()
+    text.decode()
+        .map(|c| normalize_line_ends(&c).into_owned())
+        .unwrap_or_default()
 }
 
 /// Resolve a single entity reference event to the text it stands for.
@@ -98,7 +115,7 @@ pub fn read_element_text(reader: &mut Reader<&[u8]>, start_name: QName<'_>) -> S
             Ok(Event::Text(ref e)) => out.push_str(&decode_plain(e)),
             Ok(Event::CData(ref e)) => {
                 if let Ok(decoded) = e.decode() {
-                    out.push_str(&decoded);
+                    out.push_str(&normalize_line_ends(&decoded));
                 }
             }
             Ok(Event::GeneralRef(ref e)) => out.push_str(&resolve_entity(e)),

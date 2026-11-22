@@ -976,3 +976,49 @@ fn setting_the_text_of_a_note_paragraph_with_a_deleted_number_is_refused() {
         "{error}"
     );
 }
+
+#[test]
+fn a_raw_carriage_return_in_note_text_reads_as_a_line_feed() {
+    // A notes part written with Windows line ends holds a raw CR LF inside
+    // w:t, which every XML reader reads as one line feed; a CR written as a
+    // reference stays one.
+    let mut doc = doc_with(&["Marked"]);
+    let id = create_note(&mut doc, Footnote, 0, "MARK");
+    let doc = with_part(&mut doc, "/word/footnotes.xml", |xml| {
+        xml.replace("MARK", "one\r\ntwo\rthree&#13;four")
+    });
+    // The note text starts with the space written after the note mark.
+    let expected = " one\ntwo\nthree\rfour";
+    assert_eq!(note_text(&doc, Footnote, id).as_deref(), Some(expected));
+    let story: Vec<_> = doc
+        .story_paragraphs()
+        .unwrap()
+        .into_iter()
+        .filter(|paragraph| paragraph.kind == StoryKind::Footnote)
+        .map(|paragraph| paragraph.text)
+        .collect();
+    assert_eq!(story, [expected]);
+}
+
+#[test]
+fn a_raw_carriage_return_in_deleted_note_text_reads_as_a_line_feed_in_the_revision() {
+    // Text written as CDATA follows the same end-of-line handling as text.
+    let mut doc = doc_with(&["Marked"]);
+    create_note(&mut doc, Footnote, 0, "MARK");
+    let doc = with_part(&mut doc, "/word/footnotes.xml", |xml| {
+        xml.replace(
+            "MARK</w:t></w:r>",
+            concat!(
+                "MARK</w:t></w:r><w:del w:id=\"90\" w:author=\"A\">",
+                "<w:r><w:delText><![CDATA[x\r\ny]]></w:delText></w:r></w:del>"
+            ),
+        )
+    });
+    let texts: Vec<String> = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| revision.text().to_owned())
+        .collect();
+    assert_eq!(texts, ["x\ny"]);
+}

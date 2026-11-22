@@ -6,7 +6,9 @@ use oxoffice_docx_oxml::properties::{
     CT_EastAsianLayout, CT_FitText, CT_RPr, CT_Shd, ST_Em, ST_TextEffect,
 };
 use oxoffice_docx_oxml::shared::{ST_HighlightColor, ST_Underline};
-use oxoffice_docx_oxml::text::{BreakType, CT_R, CT_Text, Field, RunContent, SpecialCharacter};
+use oxoffice_docx_oxml::text::{
+    BreakClear, BreakType, CT_R, CT_Text, Field, RunContent, SpecialCharacter,
+};
 use oxoffice_docx_oxml::units::{HalfPoint, Twips};
 
 use crate::{Error, Length, Result};
@@ -572,7 +574,8 @@ impl<'a> Run<'a> {
             BreakKind::Page => BreakType::Page,
             BreakKind::Column => BreakType::Column,
         };
-        self.inner.append_content(RunContent::Break(kind));
+        self.inner
+            .append_content(RunContent::Break(kind, BreakClear::None));
     }
 
     /// Append an inline picture using a relationship already embedded in the document.
@@ -1368,7 +1371,7 @@ impl<'a> RunRef<'a> {
                     RunContent::Text(text) => RunItemRef::Text(&text.text),
                     RunContent::DeletedText(text) => RunItemRef::DeletedText(&text.text),
                     RunContent::Tab => RunItemRef::Tab,
-                    RunContent::Break(kind) => RunItemRef::Break(match kind {
+                    RunContent::Break(kind, _) => RunItemRef::Break(match kind {
                         BreakType::Line => BreakKind::Line,
                         BreakType::Page => BreakKind::Page,
                         BreakType::Column => BreakKind::Column,

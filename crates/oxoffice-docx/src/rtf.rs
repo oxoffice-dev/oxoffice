@@ -12,7 +12,7 @@ use oxoffice_docx_oxml::shared::ST_Jc;
 use oxoffice_docx_oxml::table::{
     CT_Row, CT_Tbl, CT_TblPr, CT_TblWidth, CT_TcPr, CT_TrPr, CellContent,
 };
-use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
+use oxoffice_docx_oxml::text::{BreakClear, BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
 use crate::document::{ExportItem, body_export_items};
 use crate::revision::{raw_is_typed_revision, revision_removes_text};
@@ -1225,11 +1225,19 @@ impl<'a> RtfWriter<'a> {
                 self.diagnose(location, "symbol character was dropped during RTF export");
                 Ok(())
             }
-            RunContent::Break(BreakType::Line) => {
+            RunContent::Break(BreakType::Line, clear) => {
+                // `\lbrN` before the break says where the text restarts
+                // beside floating objects, as LibreOffice writes it.
+                match clear {
+                    BreakClear::None => {}
+                    BreakClear::Left => write!(output, "\\lbr1")?,
+                    BreakClear::Right => write!(output, "\\lbr2")?,
+                    BreakClear::All => write!(output, "\\lbr3")?,
+                }
                 write!(output, "\\line ")?;
                 Ok(())
             }
-            RunContent::Break(_) => {
+            RunContent::Break(..) => {
                 self.diagnose(
                     location,
                     "unsupported break type was dropped during RTF export",

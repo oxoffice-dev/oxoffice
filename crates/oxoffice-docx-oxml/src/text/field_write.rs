@@ -1357,7 +1357,7 @@ impl FieldResultPart<'_> {
                 preserve_space: needs_space_preservation(value),
             }),
             Self::Tab => RunContent::Tab,
-            Self::Break(kind) => RunContent::Break(kind),
+            Self::Break(kind) => RunContent::Break(kind, BreakClear::None),
         }
     }
 }

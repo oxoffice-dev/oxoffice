@@ -76,7 +76,7 @@ fn coalescible_plain_run(run: &CT_R) -> bool {
         && run.content.iter().all(|content| {
             matches!(
                 content,
-                RunContent::Text(_) | RunContent::Tab | RunContent::Break(_)
+                RunContent::Text(_) | RunContent::Tab | RunContent::Break(..)
             )
         })
 }

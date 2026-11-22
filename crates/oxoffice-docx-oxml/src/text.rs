@@ -53,8 +53,9 @@ pub use bindings::{declare_w14_on_part_root, is_root_attribute_record};
 use emission::{FieldXmlRecord, field_source_prefix};
 pub(crate) use owner_check::{discard_checked_paragraph, validate_word_owner_fragment};
 pub use run::{
-    BreakType, CT_R, CommentRangeMarker, ComplexFieldHyperlink, HyperlinkSpan, RunContent,
-    ST_PTabAlignment, ST_PTabLeader, ST_PTabRelativeTo, SpecialCharacter, hyperlink_revision_index,
+    BreakClear, BreakType, CT_R, CommentRangeMarker, ComplexFieldHyperlink, HyperlinkSpan,
+    RunContent, ST_PTabAlignment, ST_PTabLeader, ST_PTabRelativeTo, SpecialCharacter,
+    hyperlink_revision_index,
 };
 use run::{
     ParsedHyperlinkAttributes, RAW_COMMENT_REFERENCE_FLAG, run_xml_root, write_run_raw_source,
@@ -75,7 +76,7 @@ use work::{
 pub(crate) use work::{
     FinalWordBlock, ParsedWordRunTexts, ParsedWordText, TemplateParagraphCloneLease,
     TemplateWordEvent, TemplateWordOrigin, WordParagraphReadFacts, WordParagraphTextFacts,
-    final_word_source, ordered_normalization_children, write_final_word_block,
+    escaped_source, final_word_source, ordered_normalization_children, write_final_word_block,
     write_prepared_validation_xml,
 };
 
@@ -5725,11 +5726,13 @@ pub(crate) fn optional_word_attribute(
                 .iter()
                 .any(|prefix| prefix.as_bytes() == &key[..separator])
         {
-            let value = std::str::from_utf8(&attribute.value).ok()?;
+            let value = oxoffice_core::xml::normalize_attribute_white_space(
+                std::str::from_utf8(&attribute.value).ok()?,
+            );
             return Some(
-                quick_xml::escape::unescape(value)
+                quick_xml::escape::unescape(&value)
                     .map(|value| value.into_owned())
-                    .unwrap_or_else(|_| value.to_owned()),
+                    .unwrap_or_else(|_| value.into_owned()),
             );
         }
     }
@@ -5778,7 +5781,7 @@ pub(crate) fn source_modeled_attributes(
             | b"softHyphen"
             | b"lastRenderedPageBreak",
         ) => &[],
-        (b"r", b"br") => &[b"type"],
+        (b"r", b"br") => &[b"type", b"clear"],
         (b"r", b"footnoteReference" | b"endnoteReference") => &[b"id", b"customMarkFollows"],
         (b"r", b"commentReference") => &[b"id"],
         (b"r", b"fldChar") => &[b"fldCharType", b"fldLock", b"dirty"],
@@ -5804,6 +5807,9 @@ pub(crate) fn source_value_is_modeled(
 ) -> bool {
     if parent == b"r" && local == b"br" && key == b"type" {
         return matches!(value, "textWrapping" | "page" | "column");
+    }
+    if parent == b"r" && local == b"br" && key == b"clear" {
+        return matches!(value, "none" | "left" | "right" | "all");
     }
     if parent == b"r" && matches!(local, b"footnoteReference" | b"endnoteReference") {
         if key == b"id" {
