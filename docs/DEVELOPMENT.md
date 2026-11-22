@@ -297,9 +297,12 @@ merge variant).
   on its current base.
 - The examples of
   [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) are
-  tested by that repository, against the released package
-  ([tests/skills/README.md](../tests/skills/README.md) until they move
-  there). A change that breaks one updates the skills too.
+  tested by that repository's CI, against the release the skills pin and
+  every way they document to install it. To try a change here before it
+  ships, run the example steps of its `tests/README.md` (not
+  `check_install.py`, which checks the released packages) with a wheel
+  built here installed in place of the pinned release. A change that breaks one says so in its pull
+  request, and the skills follow at the next release.
 - **Rust caches are saved by runs on `main` only** (pushes, a dispatch on
   `main`), even when a test fails after the compile; pull requests and the
   nightly run restore them and save nothing. A new pull request used to save
