@@ -832,7 +832,7 @@ fn word_value(local: &str, value: &str) -> oxoffice_docx_oxml::error::Result<Vec
     let mut writer = quick_xml::Writer::new(Vec::new());
     let mut element = quick_xml::events::BytesStart::new(format!("w:{local}"));
     element.push_attribute(("xmlns:w", oxoffice_docx_oxml::namespace::W_NS));
-    element.push_attribute(("w:val", value));
+    oxoffice_core::xml::push_escaped_attribute(&mut element, "w:val", value);
     writer.write_event(quick_xml::events::Event::Empty(element))?;
     Ok(writer.into_inner())
 }
@@ -865,7 +865,7 @@ fn updated_word_value(parent: &[u8], local: &str, value: &str) -> Result<Vec<u8>
             }
             let key = std::str::from_utf8(attribute.key.as_ref())
                 .map_err(|error| Error::Other(error.to_string()))?;
-            replacement.push_attribute((key, value));
+            oxoffice_core::xml::push_escaped_attribute(&mut replacement, key, value);
             seen = true;
         } else {
             oxoffice_core::xml::push_raw_attribute(&mut replacement, attribute);

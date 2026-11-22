@@ -1475,6 +1475,11 @@ fn push_diagnostic(diagnostics: &mut Vec<OdpDiagnostic>, path: &str, message: &s
     Ok(())
 }
 
+/// Escapes `value` for a text node or an attribute value. The tab, line feed
+/// and carriage return are written as references, which every XML reader
+/// reads back as written: raw, end-of-line handling reads a carriage return
+/// as a line feed and attribute-value normalisation reads all three as
+/// spaces.
 fn escape_xml(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for character in value.chars() {
@@ -1484,9 +1489,9 @@ fn escape_xml(value: &str) -> String {
             '>' => output.push_str("&gt;"),
             '"' => output.push_str("&quot;"),
             '\'' => output.push_str("&apos;"),
-            character if character == '\t' || character == '\n' || character == '\r' => {
-                output.push(character)
-            }
+            '\t' => output.push_str("&#9;"),
+            '\n' => output.push_str("&#10;"),
+            '\r' => output.push_str("&#13;"),
             character if character >= '\u{20}' && character != '\u{7f}' => output.push(character),
             _ => output.push('\u{fffd}'),
         }

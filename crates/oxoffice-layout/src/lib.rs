@@ -17,7 +17,7 @@ pub use font::{
 };
 pub use glyph_coverage::{glyph_coverage_diagnostics, missing_glyph_diagnostics};
 pub use line::{
-    Align, ForcedBreakKind, FormMark, InlineItem, LayoutLine, LineBreakParams, LineItem,
+    Align, ForcedBreakKind, FormMark, InlineItem, LayoutLine, LineBreakParams, LineClear, LineItem,
     LineSpacing, NoteRef, NoteStream, TabAlign, TabLeader, TabStop, TextSegment, Underline,
     break_into_lines, break_multilingual_into_lines,
 };

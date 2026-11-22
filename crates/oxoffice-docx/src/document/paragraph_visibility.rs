@@ -142,7 +142,7 @@ fn paragraph_has_typed_visible_content(paragraph: &CT_P) -> bool {
             match content {
                 RunContent::Text(text) if !text.text.trim().is_empty() => return true,
                 RunContent::Tab
-                | RunContent::Break(_)
+                | RunContent::Break(..)
                 | RunContent::Symbol { .. }
                 | RunContent::Drawing(_)
                 | RunContent::FootnoteRef { .. }

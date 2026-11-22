@@ -2631,6 +2631,14 @@ impl ResolveCtx<'_> {
             .or(builtin_style.as_ref())
             .or(default_style)
             .or(builtin_default.as_ref());
+        let style_with_theme_lines = style.map(|style| {
+            let (style, unresolved) = self.table_style_with_theme_lines(style);
+            if unresolved {
+                push_table_diagnostic(diagnostics, "theme line reference");
+            }
+            style
+        });
+        let style = style_with_theme_lines.as_ref();
         let row_count = table.rows.len();
         let column_count = table.grid.columns.len();
         let table_properties = table.properties.as_ref();

@@ -429,7 +429,9 @@ fn canonical_owner_tokens(xml: &str) -> Result<Vec<String>> {
                 continue;
             }
             Event::CData(content) => {
-                text.push_str(&content.decode().map_err(|error| scan_error(&error))?);
+                text.push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                    &content.decode().map_err(|error| scan_error(&error))?,
+                ));
                 buffer.clear();
                 continue;
             }

@@ -1677,6 +1677,7 @@ pub(super) fn scan_story_items(
                 let decoded = value.decode().map_err(|error| {
                     Error::Other(format!("field instruction decode failed: {error}"))
                 })?;
+                let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                 let value = quick_xml::escape::unescape(&decoded).map_err(|error| {
                     Error::Other(format!("field instruction unescape failed: {error}"))
                 })?;
@@ -1686,6 +1687,7 @@ pub(super) fn scan_story_items(
                 let value = value.decode().map_err(|error| {
                     Error::Other(format!("field instruction CDATA decode failed: {error}"))
                 })?;
+                let value = oxoffice_core::xml_text::normalize_line_ends(&value);
                 push_complex_field_instruction(&mut complex_fields, &stack, &value);
             }
             Event::GeneralRef(value) => push_complex_field_instruction(

@@ -1777,6 +1777,7 @@ fn collect_raw_merge_field_names(xml: &[u8], names: &mut HashSet<String>) -> Res
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     let unescaped = quick_xml::escape::unescape(&decoded).map_err(|error| {
                         Error::Other(format!("invalid field instruction entity: {error}"))
                     })?;
@@ -1787,9 +1788,13 @@ fn collect_raw_merge_field_names(xml: &[u8], names: &mut HashSet<String>) -> Res
                 if let Some(instruction) = complex.last_mut()
                     && instruction.collecting
                 {
-                    instruction.text.push_str(&text.decode().map_err(|error| {
-                        Error::Other(format!("invalid field instruction text: {error}"))
-                    })?);
+                    instruction
+                        .text
+                        .push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                            &text.decode().map_err(|error| {
+                                Error::Other(format!("invalid field instruction text: {error}"))
+                            })?,
+                        ));
                 }
             }
             Event::End(element)

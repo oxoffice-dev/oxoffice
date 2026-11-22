@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use oxoffice_layout::{
-    Align, Color, FontManager, ForcedBreakKind, GlyphRun, GroupElement, LayoutLine, LineItem,
-    MediaId, MultilingualGlyphRun, NoteRef, NoteStream, OutlineEntry, PageFrame, Path, Point,
-    PositionedElement, Rect, TabAlign, TabAlignedField, Transform,
+    Align, Color, FontManager, ForcedBreakKind, GlyphRun, GroupElement, LayoutLine, LineClear,
+    LineItem, MediaId, MultilingualGlyphRun, NoteRef, NoteStream, OutlineEntry, PageFrame, Path,
+    Point, PositionedElement, Rect, TabAlign, TabAlignedField, Transform,
 };
 
 use oxoffice_docx_oxml::borders::{CT_BorderEdge, CT_PBdr};
@@ -5097,6 +5097,18 @@ struct LineReservations {
     before_lines: Vec<f64>,
 }
 
+/// Which side of the text a wrapping float stands on (`true` for the left)
+/// and the width it keeps text out of there, or `None` when it reserves none.
+fn wrap_side(wrap: &PlacedWrap, text_left: f64, text_right: f64) -> Option<(bool, f64)> {
+    let on_the_left = wrap.rect.x + wrap.rect.width / 2.0 < (text_left + text_right) / 2.0;
+    let reserve = if on_the_left {
+        (wrap.rect.x + wrap.rect.width + wrap.dist_right - text_left).max(0.0)
+    } else {
+        (text_right - (wrap.rect.x - wrap.dist_left)).max(0.0)
+    };
+    (reserve > 0.0).then_some((on_the_left, reserve))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn line_reservations(
     para: &ParagraphBlock,
@@ -5129,17 +5141,38 @@ fn line_reservations(
     // synthetic gaps. Earlier lines stay above a later object. Only a content
     // band that intersects it advances to the next clear line position.
     for (index, line) in lines.iter().enumerate() {
-        if policy == WrapReflowPolicy::Furniture {
+        // The line after a clearing break starts below the floats on the
+        // break's side that share its band.
+        let clear =
+            index
+                .checked_sub(1)
+                .and_then(|previous| match lines[previous].forced_break_after {
+                    Some(ForcedBreakKind::Line(clear)) if clear != LineClear::None => Some(clear),
+                    _ => None,
+                });
+        if policy == WrapReflowPolicy::Furniture || clear.is_some() {
             let before = line_top;
             // Every sweep moves below at least one newly reached obstacle.
             // Reversed order and touching chains need at most this many sweeps.
             for _ in 0..wraps.len() {
                 let previous = line_top;
-                for wrap in wraps
-                    .iter()
-                    .filter(|wrap| wrap.wrap == WrapType::TopAndBottom)
-                {
-                    if wrap.keep_out_top() < line_top + line.height
+                for wrap in wraps {
+                    let moves_below = match wrap.wrap {
+                        WrapType::TopAndBottom => policy == WrapReflowPolicy::Furniture,
+                        WrapType::Square | WrapType::Tight | WrapType::Through => clear
+                            .is_some_and(|clear| {
+                                wrap_side(wrap, text_left, text_right).is_some_and(|(left, _)| {
+                                    match clear {
+                                        LineClear::Left => left,
+                                        LineClear::Right => !left,
+                                        LineClear::All | LineClear::None => true,
+                                    }
+                                })
+                            }),
+                        WrapType::None => false,
+                    };
+                    if moves_below
+                        && wrap.keep_out_top() < line_top + line.height
                         && wrap.keep_out_bottom() > line_top
                     {
                         line_top = line_top.max(wrap.keep_out_bottom());
@@ -5164,15 +5197,9 @@ fn line_reservations(
             if line_top + line.height <= wrap.keep_out_top() || line_top >= wrap.keep_out_bottom() {
                 continue;
             }
-            let on_the_left = wrap.rect.x + wrap.rect.width / 2.0 < (text_left + text_right) / 2.0;
-            let reserve = if on_the_left {
-                (wrap.rect.x + wrap.rect.width + wrap.dist_right - text_left).max(0.0)
-            } else {
-                (text_right - (wrap.rect.x - wrap.dist_left)).max(0.0)
-            };
-            if reserve <= 0.0 {
+            let Some((on_the_left, reserve)) = wrap_side(wrap, text_left, text_right) else {
                 continue;
-            }
+            };
             let target = if on_the_left {
                 &mut prefix
             } else {
@@ -5349,6 +5376,23 @@ fn reflow_around_wraps(
     }
     if !consistent {
         return Err("furniture line reservations did not stabilize within32 rebreaks".into());
+    }
+    if policy == WrapReflowPolicy::Body
+        && lines.iter().any(|line| {
+            matches!(
+                line.forced_break_after,
+                Some(ForcedBreakKind::Line(clear)) if clear != LineClear::None
+            )
+        })
+    {
+        // Body pagination measures lines and no gaps between them, so the
+        // gap a clearing break opens goes above the text of the line it
+        // moves down. It is measured on the final lines.
+        let gaps = line_reservations(para, &lines, wraps, top, top_band, geometry, policy);
+        for (line, gap) in lines.iter_mut().zip(gaps.before_lines) {
+            line.height += gap;
+            line.ascent += gap;
+        }
     }
 
     let mut adjusted = para.clone();

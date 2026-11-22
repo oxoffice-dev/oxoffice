@@ -2419,3 +2419,27 @@ fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
         }]
     );
 }
+
+#[test]
+fn a_slide_name_holding_a_tab_and_line_ends_survives_an_odp_round_trip() {
+    let name = "Plan\tQ1\nend\rnote";
+    let deck = deck_with_titles(&["Plan"]);
+    let mut package = OpcPackage::from_reader(Cursor::new(deck.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            "<p:cSld>",
+            r#"<p:cSld name="Plan&#9;Q1&#10;end&#13;note">"#,
+            1,
+        );
+    assert!(slide.contains("&#9;Q1"), "the slide has a p:cSld to name");
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let deck = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(deck.slide(0).unwrap().name(), Some(name));
+
+    let odp = deck.to_odp_bytes().unwrap().bytes;
+    let read = Presentation::from_odp_bytes(&odp).unwrap().presentation;
+    assert_eq!(read.slide(0).unwrap().name(), Some(name));
+}

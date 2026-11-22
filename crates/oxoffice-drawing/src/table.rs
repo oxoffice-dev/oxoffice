@@ -14,7 +14,7 @@ use crate::fill::Fill;
 use crate::line::CT_LineProperties;
 use crate::namespace::{A_NS, reject_conflicting_a_prefix};
 use crate::order::OrderedRawChildren;
-use crate::style_ref::StyleReference;
+use crate::style_ref::{StyleMatrixReference, StyleReference};
 use crate::text::{CT_TextBody, TextAnchor};
 
 pub type Result<T> = std::result::Result<T, OxmlError>;
@@ -198,9 +198,24 @@ pub struct CT_TableBorders {
     pub bottom: Option<CT_LineProperties>,
     pub inside_horizontal: Option<CT_LineProperties>,
     pub inside_vertical: Option<CT_LineProperties>,
+    /// The edges given as a theme line (`a:lnRef`) rather than a line. Their
+    /// XML is kept as read; a renderer resolves them against the theme.
+    pub line_references: TableBorderReferences,
     pub unsupported: Vec<String>,
     raw_attributes: RawAttributes,
     raw_children: OrderedRawChildren,
+}
+
+/// The theme line references (`a:lnRef`) of a style region's borders, edge
+/// by edge.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TableBorderReferences {
+    pub left: Option<StyleMatrixReference>,
+    pub right: Option<StyleMatrixReference>,
+    pub top: Option<StyleMatrixReference>,
+    pub bottom: Option<StyleMatrixReference>,
+    pub inside_horizontal: Option<StyleMatrixReference>,
+    pub inside_vertical: Option<StyleMatrixReference>,
 }
 
 /// Bold, italic, colour, and theme-font formatting for one table region.
@@ -2742,7 +2757,27 @@ impl CT_TableBorders {
             parse_border_wrapper(raw)?
         };
         let Some(line) = line else {
-            self.unsupported.push("border form".to_owned());
+            // A theme line is kept as read and resolved when drawn.
+            match border_line_reference(raw)? {
+                Some(reference) => {
+                    let references = &mut self.line_references;
+                    let target = match name {
+                        "left" => &mut references.left,
+                        "right" => &mut references.right,
+                        "top" => &mut references.top,
+                        "bottom" => &mut references.bottom,
+                        "insideH" => &mut references.inside_horizontal,
+                        "insideV" => &mut references.inside_vertical,
+                        _ => {
+                            self.unsupported.push("border form".to_owned());
+                            self.raw_children.push(slot.unwrap_or(0), raw.to_vec());
+                            return Ok(());
+                        }
+                    };
+                    *target = Some(reference);
+                }
+                None => self.unsupported.push("border form".to_owned()),
+            }
             self.raw_children.push(slot.unwrap_or(0), raw.to_vec());
             return Ok(());
         };
@@ -3597,6 +3632,45 @@ fn parse_border_wrapper(xml: &[u8]) -> Result<Option<CT_LineProperties>> {
                 return Ok(None);
             }
             _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+/// The theme line reference of a style border wrapper whose only child is
+/// one `a:lnRef`.
+fn border_line_reference(xml: &[u8]) -> Result<Option<StyleMatrixReference>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut root_seen = false;
+    let mut reference = None;
+    loop {
+        let raw = match reader.read_event_into(&mut buffer)? {
+            Event::Start(_) if !root_seen => {
+                root_seen = true;
+                None
+            }
+            Event::Start(child) if root_seen => Some((
+                matches_local_name(child.name().as_ref(), b"lnRef"),
+                capture_element(&mut reader, &child)?,
+            )),
+            Event::Empty(child) if root_seen => Some((
+                matches_local_name(child.name().as_ref(), b"lnRef"),
+                capture_empty_element(&child)?,
+            )),
+            Event::End(_) if root_seen => return Ok(reference),
+            Event::Text(text) if !xml_text_is_whitespace(&text) => return Ok(None),
+            Event::Eof => return Ok(None),
+            _ => None,
+        };
+        if let Some((is_line_reference, raw)) = raw {
+            if !is_line_reference || reference.is_some() {
+                return Ok(None);
+            }
+            match StyleReference::from_xml(&raw) {
+                Ok(StyleReference::Line(line)) => reference = Some(line),
+                _ => return Ok(None),
+            }
         }
         buffer.clear();
     }

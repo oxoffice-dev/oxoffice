@@ -501,7 +501,7 @@ impl<'a> OdtWriter<'a> {
                         &mut trailing_text_style,
                     ),
                     RunContent::Tab
-                    | RunContent::Break(BreakType::Line)
+                    | RunContent::Break(BreakType::Line, _)
                     | RunContent::SpecialCharacter(_) => {
                         trailing_text_style = None;
                         1
@@ -520,7 +520,7 @@ impl<'a> OdtWriter<'a> {
                             0
                         }
                     }
-                    RunContent::Break(_)
+                    RunContent::Break(..)
                     | RunContent::FootnoteRef { .. }
                     | RunContent::EndnoteRef { .. }
                     | RunContent::CommentReference { .. } => 0,
@@ -903,7 +903,7 @@ impl<'a> OdtWriter<'a> {
                         )?;
                     }
                 }
-                RunContent::Break(BreakType::Page | BreakType::Column) => self.diagnose(
+                RunContent::Break(BreakType::Page | BreakType::Column, _) => self.diagnose(
                     &content_path,
                     "unsupported break type was dropped during ODT export",
                 )?,
@@ -933,7 +933,7 @@ impl<'a> OdtWriter<'a> {
                     "symbol character was dropped during ODT export",
                 )?,
                 RunContent::Tab
-                | RunContent::Break(BreakType::Line)
+                | RunContent::Break(BreakType::Line, _)
                 | RunContent::Drawing(_)
                 | RunContent::SpecialCharacter(_) => {}
             }
@@ -1695,8 +1695,8 @@ impl<'a> OdtWriter<'a> {
                         write_odf_text(output, &text.text)
                     }
                     RunContent::Tab => output.push_str("<text:tab/>"),
-                    RunContent::Break(BreakType::Line) => output.push_str("<text:line-break/>"),
-                    RunContent::Break(_) => {}
+                    RunContent::Break(BreakType::Line, _) => output.push_str("<text:line-break/>"),
+                    RunContent::Break(..) => {}
                     RunContent::SpecialCharacter(character) => match character {
                         SpecialCharacter::CarriageReturn => output.push_str("<text:line-break/>"),
                         SpecialCharacter::NoBreakHyphen => write_odf_text(output, "\u{2011}"),

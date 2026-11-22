@@ -2521,8 +2521,13 @@ pub(super) fn escaped_source_len(value: &str) -> Result<usize> {
         .ok_or_else(|| OxmlError::InvalidValue("escaped source length overflow".into()))
 }
 
-// Pinned quick-xml 0.41 full escaping. Both measurement and emission consume
-// this selector. CR is preserved by that dependency version.
+// quick-xml 0.41 full escaping, plus the tab, line feed and carriage return
+// that XML readers change: end-of-line handling reads a literal carriage
+// return as a line feed, and attribute-value normalisation reads all three as
+// spaces. Written as references they read back as written, in text and in
+// attribute values alike. Both measurement and emission consume this
+// selector, so an emitter writes [`escaped_source`], never quick-xml's own
+// escaping.
 pub(super) fn escaped_source_piece(byte: u8) -> Option<&'static [u8]> {
     match byte {
         b'&' => Some(b"&amp;"),
@@ -2530,8 +2535,25 @@ pub(super) fn escaped_source_piece(byte: u8) -> Option<&'static [u8]> {
         b'>' => Some(b"&gt;"),
         b'\'' => Some(b"&apos;"),
         b'"' => Some(b"&quot;"),
+        b'\t' => Some(b"&#9;"),
+        b'\n' => Some(b"&#10;"),
+        b'\r' => Some(b"&#13;"),
         _ => None,
     }
+}
+
+/// `value` escaped by [`escaped_source_piece`], as measured by
+/// [`escaped_source_len`].
+pub(crate) fn escaped_source(value: &str) -> std::borrow::Cow<'_, str> {
+    if value
+        .bytes()
+        .all(|byte| escaped_source_piece(byte).is_none())
+    {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let mut output = Vec::with_capacity(value.len());
+    append_escaped_source(&mut output, value);
+    std::borrow::Cow::Owned(String::from_utf8(output).expect("escaping preserves UTF-8"))
 }
 
 pub(super) fn append_escaped_source(output: &mut Vec<u8>, value: &str) {
