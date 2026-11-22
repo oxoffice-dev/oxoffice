@@ -102,7 +102,8 @@ use field_instruction::{
     parse_field_instruction, parse_instruction_syntax, switch_is_known_flag, switch_takes_argument,
 };
 pub use field_instruction::{
-    bibliography_option_switch_edits, bookmark_reference_span, story_field_instruction_has_name,
+    bibliography_option_switch_edits, bookmark_reference_span, hyperlink_has_address,
+    story_field_instruction_has_name,
 };
 use field_legacy_form::{
     InlineFieldParagraph, NestedEffectiveSegment, PhysicalRunSources, complex_outer_result_present,

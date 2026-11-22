@@ -161,15 +161,7 @@ pub(super) fn classify_instruction_tokens(
             index += 1;
             continue;
         };
-        let takes_argument = switch_takes_argument(&name, switch_name)
-            || !switch_is_known_flag(&name, switch_name)
-                && remaining.get(index + 1).is_some_and(|token| {
-                    token.quoted || matches!(token.argument, InstructionOperand::Nested(_))
-                });
-        let argument = if takes_argument && remaining.get(index + 1).is_some_and(|next| {
-            next.quoted
-                || !matches!(&next.argument, InstructionOperand::Text(text) if text.starts_with('\\'))
-        }) {
+        let argument = if switch_argument_follows(&name, switch_name, remaining.get(index + 1)) {
             index += 1;
             Some(remaining[index].argument.clone())
         } else {
@@ -204,9 +196,31 @@ pub(super) fn classify_instruction_tokens(
     }
 }
 
+/// Whether the token after a switch is that switch's argument: a switch
+/// known to take one, or an unknown switch followed by a quoted or nested
+/// operand, and never another switch.
+fn switch_argument_follows(
+    field_name: &str,
+    switch_name: &str,
+    next: Option<&InstructionToken>,
+) -> bool {
+    let Some(next) = next else {
+        return false;
+    };
+    let takes_argument = switch_takes_argument(field_name, switch_name)
+        || !switch_is_known_flag(field_name, switch_name)
+            && (next.quoted || matches!(next.argument, InstructionOperand::Nested(_)));
+    takes_argument
+        && (next.quoted
+            || !matches!(&next.argument, InstructionOperand::Text(text) if text.starts_with('\\')))
+}
+
 pub(super) fn switch_is_known_flag(field_name: &str, switch_name: &str) -> bool {
     let flags: &[&str] = match field_name {
-        "REF" => &["h", "n", "t", "w", "p"],
+        "REF" => &["f", "h", "n", "p", "r", "t", "w"],
+        "NOTEREF" => &["f", "h", "p"],
+        "HYPERLINK" => &["m", "n"],
+        "ASK" => &["o"],
         "PAGEREF" => &["h", "p"],
         "SEQ" => &["n", "c", "h"],
         "STYLEREF" => &["l", "n", "t", "w", "p"],
@@ -226,13 +240,17 @@ pub(super) fn switch_is_known_flag(field_name: &str, switch_name: &str) -> bool 
 
 pub(super) fn switch_takes_argument(field_name: &str, switch_name: &str) -> bool {
     let switch_name = switch_name.to_ascii_lowercase();
-    if field_name == "INDEX" && switch_name == "r" {
+    if matches!(
+        (field_name, switch_name.as_str()),
+        ("INDEX", "r") | ("REF", "f" | "r") | ("NOTEREF", "f")
+    ) {
         return false;
     }
     matches!(
         switch_name.as_str(),
         "*" | "#" | "@" | "r" | "s" | "d" | "b" | "f"
     ) || field_name == "INCLUDETEXT" && switch_name == "c"
+        || field_name == "HYPERLINK" && matches!(switch_name.as_str(), "l" | "o" | "t")
         || field_name == "TOC" && matches!(switch_name.as_str(), "o" | "n" | "t" | "p")
         || field_name == "TC" && switch_name == "l"
         || field_name == "CITATION"
@@ -402,53 +420,108 @@ impl FieldLexer {
 /// operand of `REF`, `PAGEREF`, `NOTEREF`, `GOTOBUTTON`, `SET` and `ASK`, the
 /// `\l` operand of a `HYPERLINK` with no address (with an address it names a
 /// place in that address), the `\b` operand of `TOC`, `INDEX` and `TOA`, the
-/// `\r` operand of `XE` and `TA`. The span is the name's own bytes in `raw`,
-/// never the keyword; `None` when the name is not a plain, single-source
-/// token (a nested field, an escape) whose bytes spell it.
+/// `\r` operand of `XE` and `TA`. Switches and their arguments before the
+/// name are skipped. The span is the name's own bytes in `raw`, never the
+/// keyword; `None` when the name is not a plain, single-source token (a
+/// nested field, an escape) whose bytes spell it.
 #[doc(hidden)]
 pub fn bookmark_reference_span(raw: &str) -> Option<(std::ops::Range<usize>, String)> {
     let tokens = lex_field_text(raw);
-    let text = |token: &InstructionToken| match &token.argument {
-        InstructionOperand::Text(value) => Some(value.clone()),
+    name_span(raw, &tokens[named_reference(&tokens)?])
+}
+
+/// Whether a `HYPERLINK` instruction has an address, so that its `\l` names
+/// a place in that address, not a bookmark of this document.
+#[doc(hidden)]
+pub fn hyperlink_has_address(raw: &str) -> bool {
+    let tokens = lex_field_text(raw);
+    tokens
+        .first()
+        .and_then(operand_text)
+        .is_some_and(|name| name.eq_ignore_ascii_case("HYPERLINK"))
+        && !positional_operands("HYPERLINK", &tokens).is_empty()
+}
+
+/// The text of a plain operand; a nested field has none.
+fn operand_text(token: &InstructionToken) -> Option<&str> {
+    match &token.argument {
+        InstructionOperand::Text(value) => Some(value),
         InstructionOperand::Nested(_) => None,
-    };
-    let is_switch = |token: &InstructionToken| {
-        !token.quoted && text(token).is_some_and(|value| value.starts_with('\\'))
-    };
-    let name = text(tokens.first()?)?.to_ascii_uppercase();
-    let switch = match name.as_str() {
+    }
+}
+
+/// The name of a switch token, without its backslash.
+fn token_switch_name(token: &InstructionToken) -> Option<&str> {
+    (!token.quoted)
+        .then(|| operand_text(token)?.strip_prefix('\\'))
+        .flatten()
+        .filter(|name| !name.is_empty())
+}
+
+/// The index of the token that names a bookmark in the fields whose operand
+/// is one (see [`bookmark_reference_span`]).
+fn named_reference(tokens: &[InstructionToken]) -> Option<usize> {
+    let name = operand_text(tokens.first()?)?.to_ascii_uppercase();
+    let wanted = match name.as_str() {
         "REF" | "PAGEREF" | "NOTEREF" | "GOTOBUTTON" | "SET" | "ASK" => None,
         "HYPERLINK" => Some("l"),
         "TOC" | "INDEX" | "TOA" => Some("b"),
         "XE" | "TA" => Some("r"),
         _ => return None,
     };
-    let index = match switch {
-        None => (1..tokens.len()).find(|&index| !is_switch(&tokens[index]))?,
-        Some(switch) => {
-            let at = (1..tokens.len()).find(|&index| {
-                is_switch(&tokens[index])
-                    && text(&tokens[index])
-                        .is_some_and(|value| value[1..].eq_ignore_ascii_case(switch))
-            })?;
-            // A HYPERLINK with an address: `\l` is a place in that address.
-            if name == "HYPERLINK" && (1..at).any(|index| !is_switch(&tokens[index])) {
-                return None;
+    let mut positional = false;
+    let mut index = 1;
+    while index < tokens.len() {
+        let next = tokens.get(index + 1);
+        match token_switch_name(&tokens[index]) {
+            Some(switch) if switch_argument_follows(&name, switch, next) => {
+                if wanted.is_some_and(|wanted| switch.eq_ignore_ascii_case(wanted)) {
+                    // A HYPERLINK with an address: `\l` is a place in it.
+                    return (!(name == "HYPERLINK" && positional)).then_some(index + 1);
+                }
+                index += 1;
             }
-            at + 1
+            Some(_) => {}
+            None if wanted.is_none() => return Some(index),
+            None => positional = true,
         }
-    };
-    let token = tokens.get(index)?;
-    if !token.well_formed || is_switch(token) {
+        index += 1;
+    }
+    None
+}
+
+/// The indexes of the positional operands, past the field name, switches
+/// and switch arguments skipped.
+fn positional_operands(name: &str, tokens: &[InstructionToken]) -> Vec<usize> {
+    let mut operands = Vec::new();
+    let mut index = 1;
+    while index < tokens.len() {
+        match token_switch_name(&tokens[index]) {
+            Some(switch) => {
+                if switch_argument_follows(name, switch, tokens.get(index + 1)) {
+                    index += 1;
+                }
+            }
+            None => operands.push(index),
+        }
+        index += 1;
+    }
+    operands
+}
+
+/// The name a token spells and its bytes in `raw`, quotes excluded; `None`
+/// for a switch, a nested field, an ill-formed token or one with escapes.
+fn name_span(raw: &str, token: &InstructionToken) -> Option<(std::ops::Range<usize>, String)> {
+    if !token.well_formed || token_switch_name(token).is_some() {
         return None;
     }
-    let value = text(token)?;
+    let value = operand_text(token)?;
     let mut span = token.source_span.clone()?;
     let bytes = raw.as_bytes();
     if token.quoted && span.len() >= 2 && bytes[span.start] == b'"' && bytes[span.end - 1] == b'"' {
         span = span.start + 1..span.end - 1;
     }
-    (raw.get(span.clone())? == value).then_some((span, value))
+    (raw.get(span.clone())? == value).then(|| (span, value.to_owned()))
 }
 
 /// Replace only bibliography l, f and m token spans, retaining other raw spelling.
@@ -542,4 +615,57 @@ pub fn bibliography_option_switch_edits(
         edits.push((raw.len()..raw.len(), appended.to_owned()));
     }
     Ok(edits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bookmark_operand_is_found_past_switches_and_their_arguments() {
+        for (raw, expected) in [
+            (r#" REF Mark \h "#, Some("Mark")),
+            (r#" REF \* MERGEFORMAT Mark "#, Some("Mark")),
+            (r#" REF \f \h Mark "#, Some("Mark")),
+            (r#" REF \d "-" Mark "#, Some("Mark")),
+            (r#" NOTEREF \f Mark \h "#, Some("Mark")),
+            (r#" PAGEREF \# "0" Mark "#, Some("Mark")),
+            (r#" HYPERLINK \l "Mark" "#, Some("Mark")),
+            (r#" HYPERLINK \l Mark \o "tip" "#, Some("Mark")),
+            (r#" HYPERLINK \o "tip" \l "Mark" "#, Some("Mark")),
+            (r#" HYPERLINK \t "_blank" \l "Mark" "#, Some("Mark")),
+            (r#" HYPERLINK "http://example.com" \l "Mark" "#, None),
+            (
+                r#" HYPERLINK \o "tip" "http://example.com" \l "Mark" "#,
+                None,
+            ),
+            (r#" TOC \o "1-3" \b Part \h "#, Some("Part")),
+            (r#" XE "Entry" \r Range "#, Some("Range")),
+            (r#" REF \h "#, None),
+            (r#" HYPERLINK \l "#, None),
+        ] {
+            let found = bookmark_reference_span(raw);
+            assert_eq!(
+                found.as_ref().map(|(_, name)| name.as_str()),
+                expected,
+                "{raw:?}"
+            );
+            if let Some((span, name)) = found {
+                assert_eq!(&raw[span], name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_hyperlink_has_an_address_when_an_operand_is_not_a_switch_argument() {
+        for (raw, expected) in [
+            (r#" HYPERLINK "http://example.com" \l "Mark" "#, true),
+            (r#" HYPERLINK \o "tip" "http://example.com" "#, true),
+            (r#" HYPERLINK \o "tip" \l "Mark" "#, false),
+            (r#" HYPERLINK \l Mark \t "_blank" "#, false),
+            (r#" REF "Mark" "#, false),
+        ] {
+            assert_eq!(hyperlink_has_address(raw), expected, "{raw:?}");
+        }
+    }
 }
