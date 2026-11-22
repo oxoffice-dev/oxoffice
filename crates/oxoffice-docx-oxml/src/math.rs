@@ -2303,7 +2303,7 @@ fn write_math_text<W: Write>(
     if let Some(emission) = emission {
         emission.write_text(writer, text_value, None)?;
     } else {
-        let text = BytesText::new(text_value);
+        let text = BytesText::from_escaped(crate::text::escaped_source(text_value));
         writer.write_event(Event::Text(text))?;
     }
     writer.write_event(Event::End(BytesEnd::new("m:t")))?;
@@ -2953,7 +2953,9 @@ fn canonical_element(raw: &[u8]) -> Result<Vec<u8>> {
                 continue;
             }
             Event::CData(content) => {
-                text.push_str(&content.decode().map_err(|error| scan_error(&error))?);
+                text.push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                    &content.decode().map_err(|error| scan_error(&error))?,
+                ));
                 buffer.clear();
                 continue;
             }
@@ -3437,8 +3439,12 @@ fn element_text(raw: &[u8]) -> Result<String> {
                     "nested element in OfficeMath text".to_owned(),
                 ));
             }
-            Event::Text(value) if inside => text.push_str(std::str::from_utf8(value.as_ref())?),
-            Event::CData(value) if inside => text.push_str(std::str::from_utf8(value.as_ref())?),
+            Event::Text(value) if inside => text.push_str(&crate::xml_text::normalize_line_ends(
+                std::str::from_utf8(value.as_ref())?,
+            )),
+            Event::CData(value) if inside => text.push_str(&crate::xml_text::normalize_line_ends(
+                std::str::from_utf8(value.as_ref())?,
+            )),
             Event::GeneralRef(value) if inside => {
                 let name = std::str::from_utf8(value.as_ref())?;
                 let entity = format!("&{name};");

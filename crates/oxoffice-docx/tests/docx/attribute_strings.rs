@@ -4,7 +4,7 @@
 
 use std::io::Cursor;
 
-use oxoffice_docx::{Alignment, Document};
+use oxoffice_docx::{Alignment, Document, RunPosition, RunRange, StyleBuilder};
 use oxoffice_opc::OpcPackage;
 use quick_xml::Reader;
 use quick_xml::escape::unescape;
@@ -13,7 +13,8 @@ use quick_xml::events::Event;
 use crate::support::{doc_with, doc_with_body, reopen};
 
 /// The value of each attribute named `attribute` on an element named
-/// `element` in `part` of the saved document, as an XML reader reads it.
+/// `element` in `part` of the saved document, as a conforming XML reader
+/// reads it.
 fn read_attribute(doc: &mut Document, part: &str, element: &str, attribute: &str) -> Vec<String> {
     let bytes = doc.to_bytes().expect("document saves");
     let package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
@@ -28,8 +29,13 @@ fn read_attribute(doc: &mut Document, part: &str, element: &str, attribute: &str
                 for found in start.attributes() {
                     let found = found.expect("saved attribute is well-formed");
                     if found.key.as_ref() == attribute.as_bytes() {
-                        let raw = std::str::from_utf8(&found.value).expect("UTF-8 value");
-                        values.push(unescape(raw).expect("value resolves").into_owned());
+                        // End-of-line handling and attribute-value
+                        // normalisation, then the references.
+                        let raw = std::str::from_utf8(&found.value)
+                            .expect("UTF-8 value")
+                            .replace("\r\n", " ")
+                            .replace(['\t', '\n', '\r'], " ");
+                        values.push(unescape(&raw).expect("value resolves").into_owned());
                     }
                 }
             }
@@ -215,4 +221,72 @@ fn a_bookmark_between_blocks_written_with_a_reference_reads_its_name_resolved() 
         .map(|bookmark| bookmark.name().map(str::to_owned))
         .collect();
     assert_eq!(names, [Some("_Toc1".to_owned())]);
+}
+
+#[test]
+fn free_text_with_a_tab_a_line_feed_and_a_carriage_return_reads_back_as_set_in_attributes() {
+    let value = "a\tb\nc\rd";
+    let mut doc = doc_with(&["commented"]);
+    doc.paragraph_mut(0)
+        .unwrap()
+        .add_hyperlink_with_tooltip("link", "rId99", Some(value))
+        .unwrap();
+    let mut table = doc.add_table(1, 1);
+    table.set_caption(Some(value)).unwrap();
+    table.set_description(Some(value)).unwrap();
+    doc.add_style(StyleBuilder::paragraph("Spaced", value))
+        .unwrap();
+    let start = RunPosition {
+        body_index: 0,
+        run_index: 0,
+    };
+    let end = RunPosition {
+        body_index: 0,
+        run_index: 1,
+    };
+    doc.add_comment(RunRange { start, end }, value, Some(value), "note")
+        .unwrap();
+    let mut doc = reopen(&mut reopen(&mut doc));
+    let table = &doc.tables()[0];
+    assert_eq!(table.caption(), Some(value));
+    assert_eq!(table.description(), Some(value));
+    assert_eq!(
+        doc.style("Spaced")
+            .and_then(|style| style.name().map(str::to_owned))
+            .as_deref(),
+        Some(value)
+    );
+    let comment = &doc.comments()[0];
+    assert_eq!(
+        (comment.author(), comment.initials()),
+        (Some(value), Some(value))
+    );
+    let expected = [
+        ("/word/document.xml", "w:hyperlink", "w:tooltip"),
+        ("/word/document.xml", "w:tblCaption", "w:val"),
+        ("/word/document.xml", "w:tblDescription", "w:val"),
+        ("/word/comments.xml", "w:comment", "w:author"),
+        ("/word/comments.xml", "w:comment", "w:initials"),
+    ];
+    let wrong: Vec<_> = expected
+        .into_iter()
+        .filter_map(|(part, element, attribute)| {
+            let read = read_attribute(&mut doc, part, element, attribute);
+            (read != [value]).then(|| format!("{element}/@{attribute}: {read:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(
+        read_attribute(&mut doc, "/word/styles.xml", "w:name", "w:val").contains(&value.to_owned())
+    );
+}
+
+#[test]
+fn a_literal_tab_in_an_attribute_reads_as_a_space_and_a_reference_as_a_tab() {
+    let doc = doc_with_body(concat!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/>",
+        "<w:tblCaption w:val=\"a\tb&#9;c\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/>",
+        "</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    ));
+    assert_eq!(doc.tables()[0].caption(), Some("a b\tc"));
 }

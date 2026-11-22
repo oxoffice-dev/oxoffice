@@ -969,7 +969,7 @@ fn root_raw_boundary(name: &[u8], modelled_count: usize, word_prefixes: &[String
 
 fn push_extra_attributes(start: &mut BytesStart<'_>, attributes: &[(String, String)]) {
     for (name, value) in attributes {
-        start.push_attribute((name.as_str(), value.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(start, name, value);
     }
 }
 

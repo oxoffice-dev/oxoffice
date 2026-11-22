@@ -819,3 +819,42 @@ fn run_measures_with_a_unit_pass_the_checked_paragraph_route() {
         .unwrap();
     assert_eq!(doc.paragraph(0).unwrap().run(0).unwrap().size(), Some(12.0));
 }
+
+#[test]
+fn a_carriage_return_in_run_text_reads_back_as_set_after_a_save() {
+    let mut doc = doc_with(&["first"]);
+    doc.add_paragraph("line\rend");
+    doc.paragraph_mut(0).unwrap().add_run("a\rb");
+    let saved = doc.to_bytes().unwrap();
+    let doc = reopen(&mut Document::from_bytes(&saved).unwrap());
+    assert_eq!(texts(&doc), ["firsta\rb", "line\rend"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("line&#13;end") && !xml.contains('\r'), "{xml}");
+}
+
+#[test]
+fn a_raw_carriage_return_in_saved_text_reads_as_a_line_feed_everywhere() {
+    // A part written with Windows line ends holds a raw CR LF inside w:t,
+    // which every XML reader reads as one line feed; a CR written as a
+    // reference stays one.
+    let doc = doc_with_body(concat!(
+        "<w:p><w:r><w:t>one\r\ntwo\rthree&#13;four</w:t></w:r></w:p>",
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        "<w:r><w:instrText xml:space=\"preserve\"> REF a\r\nb </w:instrText></w:r>",
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>r</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    let expected = "one\ntwo\nthree\rfour";
+    assert_eq!(texts(&doc)[0], expected);
+    let story = doc.story_paragraphs().unwrap();
+    assert_eq!(story[0].text, expected);
+    let mut instruction = None;
+    for run in doc.paragraphs()[1].runs() {
+        for item in run.items() {
+            if let RunItemRef::Field(field) = item {
+                instruction = Some(field.instruction().to_owned());
+            }
+        }
+    }
+    assert_eq!(instruction.as_deref().map(str::trim), Some("REF a\nb"));
+}

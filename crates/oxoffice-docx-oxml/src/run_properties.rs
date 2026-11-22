@@ -845,10 +845,13 @@ impl CT_RPr {
                             .find(|(local, _)| is_word_attribute(key, local, &prefixes));
                             if let Some((_, field)) = field {
                                 // A modelled value is written escaped, so it
-                                // is read unescaped: `A&amp;B` names A&B. It
-                                // is not normalized: the writer keeps a tab.
-                                let raw = std::str::from_utf8(&attr.value)?;
-                                let value = quick_xml::escape::unescape(raw).map_err(|error| {
+                                // is read as an XML reader reads it:
+                                // `A&amp;B` names A&B, a literal tab is a
+                                // space and `&#9;` a tab.
+                                let raw = oxoffice_core::xml::normalize_attribute_white_space(
+                                    std::str::from_utf8(&attr.value)?,
+                                );
+                                let value = quick_xml::escape::unescape(&raw).map_err(|error| {
                                     OxmlError::InvalidValue(format!(
                                         "w:rFonts attribute {raw:?}: {error}"
                                     ))

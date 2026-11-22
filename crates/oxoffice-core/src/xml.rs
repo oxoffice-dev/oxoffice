@@ -86,16 +86,34 @@ pub fn push_escaped_attribute(start: &mut BytesStart<'_>, key: &str, value: &str
     start.push_attribute((key.as_bytes(), escape_attribute_value(value).as_bytes()));
 }
 
-/// The value of `attribute` with its entity and character references
-/// resolved. Read every value a model holds as a string this way, so that
-/// the writer, which escapes it, gives back what was read. Literal white
-/// space is kept as written, without the attribute-value normalisation an
-/// XML reader applies (a literal tab or line feed reads as a space there),
-/// see #100. A value with a malformed reference, which no well-formed part
-/// holds, is kept as written.
+/// The value of `attribute` as an XML reader reads it: a literal tab, line
+/// feed or carriage return (a CR LF pair counting as one) reads as a space,
+/// as attribute-value normalisation has it, then the entity and character
+/// references resolve, so `&#9;` reads as a tab. Read every value a model
+/// holds as a string this way, so that the writer, which escapes it (tab,
+/// line feed and carriage return as references, see
+/// [`escape_attribute_value`]), gives back what was read. A value with a
+/// malformed reference, which no well-formed part holds, is kept as
+/// written, normalised.
 pub fn attribute_text<'a>(attribute: &'a Attribute<'_>) -> Result<Cow<'a, str>> {
-    let raw = std::str::from_utf8(&attribute.value)?;
-    Ok(quick_xml::escape::unescape(raw).unwrap_or(Cow::Borrowed(raw)))
+    let raw = normalize_attribute_white_space(std::str::from_utf8(&attribute.value)?);
+    Ok(match quick_xml::escape::unescape(&raw) {
+        Ok(Cow::Borrowed(_)) => raw,
+        Ok(Cow::Owned(unescaped)) => Cow::Owned(unescaped),
+        Err(_) => raw,
+    })
+}
+
+/// `raw`, an attribute value as written, after the end-of-line handling and
+/// attribute-value normalisation of an XML reader: a literal tab, line feed
+/// or carriage return, a CR LF pair counting as one, reads as a space. Apply
+/// it before resolving references, which may stand for those characters.
+pub fn normalize_attribute_white_space(raw: &str) -> Cow<'_, str> {
+    if raw.contains(['\t', '\n', '\r']) {
+        Cow::Owned(raw.replace("\r\n", " ").replace(['\t', '\n', '\r'], " "))
+    } else {
+        Cow::Borrowed(raw)
+    }
 }
 
 /// `raw`, an attribute value kept as read, its references unresolved, ready
@@ -594,6 +612,9 @@ mod tests {
             .map(|attribute| attribute_text(&attribute.unwrap()).unwrap().into_owned())
             .collect();
         assert_eq!(values, ["Q&A <x>", "say \"hi\"", "&nope;"]);
+        let spaced = first_attribute("<a v='a\tb\r\nc&#9;d&#10;e'/>");
+        let value = spaced.attributes().next().unwrap().unwrap();
+        assert_eq!(attribute_text(&value).unwrap(), "a b c\td\ne");
         assert_eq!(get_attr(&start, b"v").as_deref(), Some("Q&A <x>"));
     }
 

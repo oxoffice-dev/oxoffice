@@ -2134,3 +2134,98 @@ fn a_checkbox_state_spelled_in_another_case_is_an_invalid_form_value() {
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert_eq!(issues[0].message, "current form value is invalid");
 }
+
+#[test]
+fn a_raw_carriage_return_in_a_bound_value_or_its_control_reads_as_a_line_feed() {
+    // A part written with Windows line ends holds a raw CR LF in text, which
+    // every XML reader reads as one line feed: a control and its bound value
+    // showing the same lines agree, whichever part holds the raw line ends.
+    let mut doc = doc_with_header_control();
+    let store = doc
+        .add_custom_xml_store(b"<report><title>Draft</title></report>", &[])
+        .unwrap();
+    let location = control_at(&doc, &story(&doc, StoryKind::Header), "title");
+    doc.set_content_control_binding(&location, &store, "/report/title", None)
+        .unwrap();
+    let values = HashMap::from([("title".to_owned(), "one\ntwo\nthree".to_owned())]);
+    assert_eq!(doc.bind_content_controls(&values).unwrap(), 1);
+    let saved = doc.to_bytes().unwrap();
+    let rewritten = |part: &str, from: &str, to: &str| {
+        let mut package = OpcPackage::from_reader(Cursor::new(saved.clone())).unwrap();
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        assert!(xml.contains(from), "{xml}");
+        package.set_part(part, xml.replace(from, to).into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        Document::from_bytes(&out.into_inner()).unwrap()
+    };
+    let raw_store = rewritten(
+        "/customXml/item1.xml",
+        "<title>one\ntwo\nthree</title>",
+        "<title>one\r\ntwo\rthree</title>",
+    );
+    let raw_control = rewritten(
+        "/word/header1.xml",
+        "<w:t>one</w:t><w:br/><w:t>two</w:t><w:br/><w:t>three</w:t>",
+        "<w:t>one\r\ntwo\rthree</w:t>",
+    );
+    let rule = prompt(target("title"), true, "Document title");
+    for doc in [raw_store, raw_control] {
+        assert_eq!(doc.validate_form(std::slice::from_ref(&rule)).unwrap(), []);
+    }
+}
+
+#[test]
+fn a_placeholder_entry_named_with_a_tab_is_bound_as_named() {
+    let mut paragraph = CT_P::new();
+    paragraph.add_run("Enter the client name");
+    let mut body_content = CT_Body::new();
+    body_content.sect_pr = None;
+    body_content
+        .content
+        .push(BodyContent::Paragraph(Box::new(paragraph)));
+    let mut doc = doc_with_control("client");
+    let prompt = doc
+        .create_building_block(BuildingBlock {
+            name: "Client\tPrompt".to_owned(),
+            kind: BuildingBlockKind::BuildingBlock,
+            category: Some("General".to_owned()),
+            description: None,
+            guid: None,
+            gallery: Some("placeholder".to_owned()),
+            behaviors: Vec::new(),
+            body: body_content,
+        })
+        .unwrap();
+    let location = control_at(&doc, &body(&doc), "client");
+    doc.bind_building_block_placeholder(&location, &prompt)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    // Raw, the tab would read as a space: it is written as a reference.
+    let properties = saved_properties(&doc, "word/document.xml", 1);
+    assert_eq!(
+        val(&properties, "w:docPart").as_deref(),
+        Some("Client&#9;Prompt"),
+        "{properties}"
+    );
+}
+
+#[test]
+fn a_control_alias_and_tag_with_a_tab_and_line_ends_read_back_as_set() {
+    let value = "a\tb\nc\rd";
+    let mut doc = doc_with_control("client");
+    let location = control_at(&doc, &body(&doc), "client");
+    doc.set_content_control_alias(&location, Some(value))
+        .unwrap();
+    let location = control_at(&doc, &body(&doc), "client");
+    doc.set_content_control_tag(&location, Some(value)).unwrap();
+    let doc = reopen(&mut doc);
+    let controls = doc.content_controls();
+    assert_eq!(
+        controls
+            .iter()
+            .map(|control| (control.alias(), control.tag()))
+            .collect::<Vec<_>>(),
+        [(Some(value), Some(value))]
+    );
+}

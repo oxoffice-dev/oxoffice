@@ -596,6 +596,7 @@ pub(super) fn scan_dynamic_table_spans(
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid table of contents instruction: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     let unescaped = quick_xml::escape::unescape(&decoded).map_err(|error| {
                         Error::Other(format!("invalid table of contents instruction: {error}"))
                     })?;
@@ -625,9 +626,15 @@ pub(super) fn scan_dynamic_table_spans(
                 if let Some(field) = fields.last_mut()
                     && field.separator_paragraph.is_none()
                 {
-                    field.instruction.push_str(&text.decode().map_err(|error| {
-                        Error::Other(format!("invalid table of contents instruction: {error}"))
-                    })?);
+                    field
+                        .instruction
+                        .push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                            &text.decode().map_err(|error| {
+                                Error::Other(format!(
+                                    "invalid table of contents instruction: {error}"
+                                ))
+                            })?,
+                        ));
                 }
             }
             Event::Comment(_) | Event::PI(_) => {

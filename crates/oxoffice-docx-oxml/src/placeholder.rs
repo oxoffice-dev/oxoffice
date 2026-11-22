@@ -4401,7 +4401,9 @@ pub fn replace_many_in_chart_xml(
                         text = text.replace(placeholder, replacement);
                     }
                 }
-                writer.write_event(Event::Text(BytesText::new(&text)))?;
+                writer.write_event(Event::Text(BytesText::from_escaped(
+                    crate::text::escaped_source(&text),
+                )))?;
 
                 writer.write_event(Event::End(BytesEnd::new(
                     std::str::from_utf8(name.as_ref()).unwrap_or_default(),

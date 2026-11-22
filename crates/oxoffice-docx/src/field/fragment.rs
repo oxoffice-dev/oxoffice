@@ -3447,9 +3447,9 @@ pub(super) fn body_identity_values(xml: &[u8]) -> Result<BodyIdentityValues> {
             }
             Event::Text(text) if body_depth.is_some() && in_instruction_text => {
                 append_complex_instruction_text(
-                    &text.decode().map_err(|error| {
-                        Error::Other(format!("invalid field instruction text: {error}"))
-                    })?,
+                    &oxoffice_core::xml_text::normalize_line_ends(&text.decode().map_err(
+                        |error| Error::Other(format!("invalid field instruction text: {error}")),
+                    )?),
                     &mut complex,
                 )?;
             }
@@ -3457,9 +3457,13 @@ pub(super) fn body_identity_values(xml: &[u8]) -> Result<BodyIdentityValues> {
                 if let Some(instruction) = complex.last_mut()
                     && instruction.collecting
                 {
-                    instruction.text.push_str(&text.decode().map_err(|error| {
-                        Error::Other(format!("invalid field instruction text: {error}"))
-                    })?);
+                    instruction
+                        .text
+                        .push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                            &text.decode().map_err(|error| {
+                                Error::Other(format!("invalid field instruction text: {error}"))
+                            })?,
+                        ));
                 }
             }
             Event::End(element) => {
@@ -3798,6 +3802,7 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     let decoded = quick_xml::escape::unescape(&decoded).map_err(|error| {
                         Error::Other(format!("invalid field instruction entity: {error}"))
                     })?;
@@ -3814,6 +3819,7 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     instruction.text.push_str(&decoded);
                     instruction.spans.push((before, after, None));
                 }
@@ -4200,7 +4206,7 @@ fn collect_body_reference_edits(
                             edits.push(FieldSourceEdit {
                                 start: *start,
                                 end: *end,
-                                replacement: quick_xml::escape::escape(&updated)
+                                replacement: oxoffice_core::xml::escape_text(&updated)
                                     .into_owned()
                                     .into_bytes(),
                             });
@@ -4235,7 +4241,7 @@ fn add_attribute_value_edit(
         ));
     };
     let replacement = if escape {
-        quick_xml::escape::escape(replacement)
+        oxoffice_core::xml::escape_attribute_value(replacement)
             .into_owned()
             .into_bytes()
     } else {

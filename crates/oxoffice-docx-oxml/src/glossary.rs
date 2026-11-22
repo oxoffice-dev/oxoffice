@@ -351,7 +351,7 @@ fn write_value<W: std::io::Write>(
 ) -> Result<()> {
     let qname = format!("{prefix}:{name}");
     let mut element = BytesStart::new(qname);
-    element.push_attribute((format!("{prefix}:val").as_str(), value));
+    oxoffice_core::xml::push_escaped_attribute(&mut element, &format!("{prefix}:val"), value);
     writer.write_event(Event::Empty(element))?;
     Ok(())
 }
@@ -1337,7 +1337,7 @@ fn patch_root_word_value(
                 match (attribute_key, value) {
                     (Some(key), Some(value)) => {
                         if let Some(range) = lexical_attribute_value_range(&tag, &key) {
-                            let escaped = quick_xml::escape::escape(value);
+                            let escaped = oxoffice_core::xml::escape_attribute_value(value);
                             tag.splice(range, escaped.as_bytes().iter().copied());
                         }
                     }
@@ -1352,7 +1352,7 @@ fn patch_root_word_value(
                         } else {
                             tag.len() - 1
                         };
-                        let escaped = quick_xml::escape::escape(value);
+                        let escaped = oxoffice_core::xml::escape_attribute_value(value);
                         tag.splice(
                             insert_at..insert_at,
                             format!(" {prefix}:val=\"{escaped}\"").bytes(),
@@ -1610,7 +1610,7 @@ fn declare_word_prefix(tag: &mut Vec<u8>, prefix: &str) -> Result<()> {
 }
 
 fn write_value_bytes(output: &mut Vec<u8>, name: &str, value: &str, prefix: &str) {
-    let value = quick_xml::escape::escape(value);
+    let value = oxoffice_core::xml::escape_attribute_value(value);
     output.extend_from_slice(format!("<{prefix}:{name} {prefix}:val=\"{value}\"/>").as_bytes());
 }
 
@@ -1975,9 +1975,11 @@ fn word_value(element: &BytesStart<'_>, prefixes: &[String]) -> Result<Option<St
                     "duplicate modeled glossary w:val attribute".to_owned(),
                 ));
             }
-            let raw = std::str::from_utf8(&attribute.value)?;
+            let raw = oxoffice_core::xml::normalize_attribute_white_space(std::str::from_utf8(
+                &attribute.value,
+            )?);
             value = Some(
-                quick_xml::escape::unescape(raw)
+                quick_xml::escape::unescape(&raw)
                     .map_err(|error| {
                         OxmlError::InvalidValue(format!(
                             "invalid modeled glossary w:val attribute: {error}"
