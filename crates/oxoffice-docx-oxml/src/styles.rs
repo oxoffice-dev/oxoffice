@@ -263,7 +263,7 @@ impl CT_Style {
             let attr = attr?;
             let key = attr.key.as_ref();
             if is_word_attribute(key, b"styleId", word_prefixes) {
-                style_id = std::str::from_utf8(&attr.value)?.to_string();
+                style_id = oxoffice_core::xml::attribute_text(&attr)?.into_owned();
             } else if is_word_attribute(key, b"type", word_prefixes) {
                 style_type = StyleType::from_str(std::str::from_utf8(&attr.value)?)?;
             } else if is_word_attribute(key, b"default", word_prefixes) {
@@ -2404,7 +2404,9 @@ fn get_word_attr(e: &BytesStart, local: &[u8], word_prefixes: &[String]) -> Resu
     for attr in e.attributes() {
         let attr = attr?;
         if is_word_attribute(attr.key.as_ref(), local, word_prefixes) {
-            return Ok(Some(std::str::from_utf8(&attr.value)?.to_string()));
+            return Ok(Some(
+                oxoffice_core::xml::attribute_text(&attr)?.into_owned(),
+            ));
         }
     }
     Ok(None)

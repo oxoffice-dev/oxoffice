@@ -858,7 +858,7 @@ fn rewrite_shape_hyperlink(
                     action_written = true;
                 }
             } else {
-                replacement.push_attribute(attribute);
+                oxoffice_core::xml::push_raw_attribute(&mut replacement, attribute);
             }
         }
         if !replaced {

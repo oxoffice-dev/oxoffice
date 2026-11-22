@@ -701,21 +701,6 @@ pub struct CT_TblGridCol {
     pub width: Twips,
 }
 
-/// Read a `w:val` attribute that carries free text rather than a token.
-///
-/// `get_word_val_attr` returns the attribute exactly as written, which is
-/// right for an enumeration or an identifier and wrong for prose. A caption
-/// or a description can contain `&` or `<`, so the writer escapes it and the
-/// reader has to put it back. A malformed entity is kept verbatim rather than
-/// failing the parse.
-fn unescaped_word_val_attr(e: &BytesStart, word_prefixes: &[String]) -> Result<Option<String>> {
-    Ok(get_word_val_attr(e, word_prefixes)?.map(|value| {
-        quick_xml::escape::unescape(&value)
-            .map(|unescaped| unescaped.into_owned())
-            .unwrap_or(value)
-    }))
-}
-
 // ---- Floating table position ----
 
 /// `ST_TblAnchor` — what a floating table's offset is measured from.
@@ -1076,7 +1061,7 @@ impl CT_TblLook {
             let value = std::str::from_utf8(&attr.value)?;
             let key = attr.key.as_ref();
             if matches_local_name(key, b"val") {
-                look.val = Some(value.to_string());
+                look.val = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
             } else if matches_local_name(key, b"firstRow") {
                 look.first_row = parse_ooxml_bool(value);
             } else if matches_local_name(key, b"lastRow") {
@@ -1100,7 +1085,7 @@ impl CT_TblLook {
             let value = std::str::from_utf8(&attr.value)?;
             let key = attr.key.as_ref();
             if is_word_attribute(key, b"val", word_prefixes) {
-                look.val = Some(value.to_string());
+                look.val = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
             } else if is_word_attribute(key, b"firstRow", word_prefixes) {
                 look.first_row = parse_ooxml_bool(value);
             } else if is_word_attribute(key, b"lastRow", word_prefixes) {
@@ -1193,9 +1178,9 @@ impl CT_TblPr {
                         pr.cell_spacing =
                             Some(CT_TblWidth::from_xml_attrs_with_prefixes(e, &prefixes)?);
                     } else if is_word_element(name.as_ref(), b"tblCaption", &prefixes) {
-                        pr.caption = unescaped_word_val_attr(e, &prefixes)?;
+                        pr.caption = get_word_val_attr(e, &prefixes)?;
                     } else if is_word_element(name.as_ref(), b"tblDescription", &prefixes) {
-                        pr.description = unescaped_word_val_attr(e, &prefixes)?;
+                        pr.description = get_word_val_attr(e, &prefixes)?;
                     } else if is_word_element(name.as_ref(), b"tblStyleRowBandSize", &prefixes) {
                         if let Some(val) = get_word_val_attr(e, &prefixes)? {
                             pr.row_band_size = Some(TableScalar::Unsigned.unsigned(&val)?);
@@ -1214,8 +1199,9 @@ impl CT_TblPr {
                         for attribute in e.attributes() {
                             let attribute = attribute?;
                             if is_word_attribute(attribute.key.as_ref(), b"type", &prefixes) {
-                                pr.layout =
-                                    Some(std::str::from_utf8(&attribute.value)?.to_string());
+                                pr.layout = Some(
+                                    oxoffice_core::xml::attribute_text(&attribute)?.into_owned(),
+                                );
                                 break;
                             }
                         }

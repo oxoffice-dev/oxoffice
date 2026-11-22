@@ -934,9 +934,11 @@ impl CT_RPr {
                             let key = attr.key.as_ref();
                             let v = std::str::from_utf8(&attr.value)?.to_string();
                             if is_word_attribute(key, b"val", &prefixes) {
-                                rpr.color = Some(v);
+                                rpr.color =
+                                    Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
                             } else if is_word_attribute(key, b"themeColor", &prefixes) {
-                                rpr.color_theme = Some(v);
+                                rpr.color_theme =
+                                    Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
                             } else if is_word_attribute(key, b"themeTint", &prefixes) {
                                 match parse_uchar_hex(&v) {
                                     Some(tint) => rpr.color_theme_tint = Some(tint),
@@ -1792,8 +1794,10 @@ impl CT_RPr {
             } else {
                 let mut e = crate::text::FieldXmlStart::word(&word_prefix, "lang", emission)?;
                 if role == crate::text::XmlWriteRole::Source {
+                    // Read decoded (`parse_language_attributes`), so written
+                    // escaped.
                     for (name, value) in &self.language_extra_attributes {
-                        e.push_raw(name, value)?;
+                        e.push(name, value)?;
                     }
                 }
                 let word_prefix = if role == crate::text::XmlWriteRole::Source {
@@ -2731,4 +2735,36 @@ pub(crate) fn source_value_is_modeled(
         return crate::numbering::parse_on_off_token(value).is_some();
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_language_attribute_kept_as_read_is_written_escaped_in_the_source_role() {
+        let xml = concat!(
+            r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            r#"<w:lang xmlns:x="urn:example" w:val="en-US" x:note="a&amp;b &lt;c"/></w:rPr>"#,
+        );
+        let mut reader = Reader::from_str(xml);
+        let mut buf = Vec::new();
+        assert!(matches!(
+            reader.read_event_into(&mut buf).unwrap(),
+            Event::Start(_)
+        ));
+        let rpr = CT_RPr::from_xml(&mut reader).unwrap();
+        let context = [("w", crate::namespace::W_NS)];
+        let mut writer = Writer::new(Vec::new());
+        rpr.write_xml_role(
+            &mut writer,
+            None,
+            crate::text::XmlWriteRole::Source,
+            Some(&context),
+            None,
+        )
+        .unwrap();
+        let written = String::from_utf8(writer.into_inner()).unwrap();
+        assert!(written.contains(r#"x:note="a&amp;b &lt;c""#), "{written}");
+    }
 }

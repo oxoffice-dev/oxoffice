@@ -2057,3 +2057,36 @@ fn the_connectors_of_the_training_deck_read_their_arrowheads_from_every_producer
         }
     }
 }
+
+#[test]
+fn a_kept_click_attribute_holding_a_double_quote_stays_well_formed_when_the_address_changes() {
+    // Another producer may write an attribute between single quotes, with a
+    // double quote inside; the shape's a:hlinkClick keeps it as read.
+    let mut prs = text_box_deck("Link");
+    let id = shape_at(&prs, 0, 0).non_visual_id().unwrap();
+    prs.set_shape_hyperlink(0, id, Some("https://example.com/a"))
+        .unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            "<a:hlinkClick",
+            r#"<a:hlinkClick xmlns:x="urn:example" x:note='say "hi"'"#,
+            1,
+        );
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+
+    prs.set_shape_hyperlink(0, id, Some("https://example.com/b"))
+        .unwrap();
+
+    let saved = reopen(&prs);
+    assert_eq!(
+        saved.shape_hyperlink_address(0, id).unwrap(),
+        Some("https://example.com/b")
+    );
+    let xml = saved_part(&saved, "/ppt/slides/slide1.xml");
+    assert!(xml.contains(r#"x:note="say &quot;hi&quot;""#), "{xml}");
+}

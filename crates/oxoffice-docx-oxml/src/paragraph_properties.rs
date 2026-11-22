@@ -3,6 +3,7 @@
 use quick_xml::escape::escape;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
+use std::borrow::Cow;
 
 use crate::borders::{CT_PBdr, CT_Tabs};
 use crate::document::CT_SectPr;
@@ -193,6 +194,7 @@ impl CT_FramePr {
             let key = attribute.key.as_ref();
             let value = std::str::from_utf8(&attribute.value)?;
             let local = attribute.key.local_name();
+            let text = || oxoffice_core::xml::attribute_text(&attribute).map(Cow::into_owned);
             if is_word_attribute(key, local.as_ref(), word_prefixes)
                 && let Some(measurement) =
                     ParagraphMeasurement::for_names(b"framePr", local.as_ref())
@@ -201,19 +203,19 @@ impl CT_FramePr {
                     .decode(e.name().as_ref(), key, Some(value))?
                     .apply_frame(&mut frame);
             } else if is_word_attribute(key, b"dropCap", word_prefixes) {
-                frame.drop_cap = Some(value.to_owned());
+                frame.drop_cap = Some(text()?);
             } else if is_word_attribute(key, b"wrap", word_prefixes) {
-                frame.wrap = Some(value.to_owned());
+                frame.wrap = Some(text()?);
             } else if is_word_attribute(key, b"hAnchor", word_prefixes) {
-                frame.h_anchor = Some(value.to_owned());
+                frame.h_anchor = Some(text()?);
             } else if is_word_attribute(key, b"vAnchor", word_prefixes) {
-                frame.v_anchor = Some(value.to_owned());
+                frame.v_anchor = Some(text()?);
             } else if is_word_attribute(key, b"xAlign", word_prefixes) {
-                frame.x_align = Some(value.to_owned());
+                frame.x_align = Some(text()?);
             } else if is_word_attribute(key, b"yAlign", word_prefixes) {
-                frame.y_align = Some(value.to_owned());
+                frame.y_align = Some(text()?);
             } else if is_word_attribute(key, b"hRule", word_prefixes) {
-                frame.h_rule = Some(value.to_owned());
+                frame.h_rule = Some(text()?);
             } else if is_word_attribute(key, b"anchorLock", word_prefixes) {
                 frame.anchor_lock = Some(ST_OnOff::from_str_or_default(Some(value)).is_on());
             } else {
@@ -948,7 +950,9 @@ impl CT_PPr {
                                     .apply(&mut ppr);
                             } else if is_word_element(name.as_ref(), b"spacing", &prefixes) {
                                 if is_word_attribute(key, b"lineRule", &prefixes) {
-                                    ppr.line_rule = Some(val_str.to_string());
+                                    ppr.line_rule = Some(
+                                        oxoffice_core::xml::attribute_text(&attr)?.into_owned(),
+                                    );
                                 } else if is_word_attribute(key, b"beforeAutospacing", &prefixes) {
                                     ppr.before_autospacing =
                                         Some(val_str == "1" || val_str == "true");

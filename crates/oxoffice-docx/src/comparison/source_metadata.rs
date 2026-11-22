@@ -52,7 +52,7 @@ fn ordinary_identity_filtered_source(xml: &str, inherited: &NamespaceBindings) -
             _ => false,
         };
         if !identity {
-            filtered.push_attribute(attribute);
+            oxoffice_core::xml::push_raw_attribute(&mut filtered, attribute);
         }
     }
     let tail = reader.buffer_position() as usize;
