@@ -8,6 +8,7 @@ use oxoffice_drawing::fill::{Fill, GradientGeometry};
 use oxoffice_drawing::line::CT_LineProperties;
 use oxoffice_drawing::shape_props::CT_ShapeProperties;
 use oxoffice_drawing::style_ref::FontCollectionIndex;
+use oxoffice_drawing::table::CT_TableStyle;
 use oxoffice_drawing::theme::CT_EffectStyle;
 use oxoffice_pptx_oxml::connector::CT_ConnectionShape;
 use oxoffice_pptx_oxml::shape_tree::{CT_Shape, CT_ShapeStyle};
@@ -138,6 +139,75 @@ impl ResolveCtx<'_> {
             substitute_fill(fill, line_reference, "line")?;
         }
         Ok((effective, referenced_effect_style))
+    }
+
+    /// A table style whose borders given as a theme line (`a:lnRef`) take
+    /// that line, its colour replaced by the reference's, as a shape's
+    /// `a:lnRef` resolves; index 0 is no line. A border that gives a line
+    /// keeps it. A reference the theme cannot resolve leaves its border
+    /// unset, and the second value says one did.
+    pub(crate) fn table_style_with_theme_lines(
+        &self,
+        style: &CT_TableStyle,
+    ) -> (CT_TableStyle, bool) {
+        let mut unresolved = false;
+        let lines = &self.theme.theme_elements.format_scheme.line_styles;
+        let mut style = style.clone();
+        let regions = [
+            &mut style.whole_table,
+            &mut style.band1_horizontal,
+            &mut style.band2_horizontal,
+            &mut style.band1_vertical,
+            &mut style.band2_vertical,
+            &mut style.first_column,
+            &mut style.last_column,
+            &mut style.first_row,
+            &mut style.last_row,
+            &mut style.north_west_cell,
+            &mut style.north_east_cell,
+            &mut style.south_west_cell,
+            &mut style.south_east_cell,
+        ];
+        for region in regions {
+            let Some(borders) = region
+                .as_deref_mut()
+                .and_then(|region| region.cell_style.as_mut())
+                .and_then(|cell| cell.borders.as_mut())
+            else {
+                continue;
+            };
+            let references = borders.line_references.clone();
+            let edges = [
+                (&mut borders.left, references.left),
+                (&mut borders.right, references.right),
+                (&mut borders.top, references.top),
+                (&mut borders.bottom, references.bottom),
+                (&mut borders.inside_horizontal, references.inside_horizontal),
+                (&mut borders.inside_vertical, references.inside_vertical),
+            ];
+            for (edge, reference) in edges {
+                let Some(reference) = reference.filter(|_| edge.is_none()) else {
+                    continue;
+                };
+                if reference.index == 0 {
+                    let mut none = CT_LineProperties::default();
+                    none.fill = Some(Fill::NoFill(Default::default()));
+                    *edge = Some(none);
+                    continue;
+                }
+                let line = matrix_entry("line", reference.index, lines).and_then(|mut line| {
+                    if let Some(fill) = line.as_mut().and_then(|line| line.fill.as_mut()) {
+                        substitute_fill(fill, reference.color.as_ref(), "line")?;
+                    }
+                    Ok(line)
+                });
+                match line {
+                    Ok(line) => *edge = line,
+                    Err(_) => unresolved = true,
+                }
+            }
+        }
+        (style, unresolved)
     }
 
     /// Resolves the effects of an ordinary shape or a connector: the theme
