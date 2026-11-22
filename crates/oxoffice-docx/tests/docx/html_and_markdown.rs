@@ -502,6 +502,37 @@ fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
 }
 
 #[test]
+fn a_break_that_clears_floats_is_a_plain_break_in_epub() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>a</w:t><w:br w:type="textWrapping" w:clear="left"/>"#,
+        r#"<w:t>b</w:t><w:br w:clear="all"/><w:t>c</w:t></w:r></w:p>"#,
+    ));
+    let epub = doc.to_epub_bytes().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
+    let mut breaks = 0;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+        let mut xhtml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xhtml).unwrap();
+        // Every chapter stays well-formed XML, as EPUB readers parse it.
+        let mut reader = quick_xml::Reader::from_str(&xhtml);
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Ok(_) => {}
+                Err(error) => panic!("{name} is not well-formed: {error}: {xhtml}"),
+            }
+        }
+        breaks += xhtml.matches("a<br/>b<br/>c").count();
+    }
+    assert_eq!(breaks, 1);
+}
+
+#[test]
 fn a_described_picture_has_one_alt_attribute_in_epub() {
     let mut doc = Document::new();
     let body = body_story(&doc);

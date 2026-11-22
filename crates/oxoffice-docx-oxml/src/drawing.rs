@@ -1282,21 +1282,12 @@ impl CT_Anchor {
         anchor.push("behindDoc", if self.behind_doc { "1" } else { "0" })?;
         anchor.push("simplePos", "0")?;
         anchor.push("relativeHeight", buf.format(self.relative_height))?;
-        // A zero distance is the default, and an absent attribute means the
-        // same thing. Emitting zeros would change the bytes of every anchor
-        // that never asked for a wrap distance, for no difference in meaning.
-        if self.dist_t.0 != 0 {
-            anchor.push("distT", buf.format(self.dist_t.0))?;
-        }
-        if self.dist_b.0 != 0 {
-            anchor.push("distB", buf.format(self.dist_b.0))?;
-        }
-        if self.dist_l.0 != 0 {
-            anchor.push("distL", buf.format(self.dist_l.0))?;
-        }
-        if self.dist_r.0 != 0 {
-            anchor.push("distR", buf.format(self.dist_r.0))?;
-        }
+        // Every distance is written, as Word does: an absent `distL` or
+        // `distR` is an eighth of an inch to Word, not zero.
+        anchor.push("distT", buf.format(self.dist_t.0))?;
+        anchor.push("distB", buf.format(self.dist_b.0))?;
+        anchor.push("distL", buf.format(self.dist_l.0))?;
+        anchor.push("distR", buf.format(self.dist_r.0))?;
         anchor.push("locked", "0")?;
         anchor.push("layoutInCell", "1")?;
         anchor.push("allowOverlap", "1")?;
@@ -2178,6 +2169,10 @@ pub(crate) struct AnchorAttributes {
     dist_r: Emu,
 }
 
+/// Word's side distance of a floating object whose anchor has no `distL` or
+/// `distR`: 114,300 EMU, an eighth of an inch.
+const DEFAULT_ANCHOR_SIDE_DISTANCE: i64 = 114_300;
+
 impl AnchorAttributes {
     pub(crate) fn read(start: &BytesStart<'_>) -> Result<Self> {
         let mut result = Self {
@@ -2185,8 +2180,10 @@ impl AnchorAttributes {
             relative_height: 0,
             dist_t: Emu(0),
             dist_b: Emu(0),
-            dist_l: Emu(0),
-            dist_r: Emu(0),
+            // Word keeps text an eighth of an inch from the sides of a
+            // floating object whose anchor gives no side distance.
+            dist_l: Emu(DEFAULT_ANCHOR_SIDE_DISTANCE),
+            dist_r: Emu(DEFAULT_ANCHOR_SIDE_DISTANCE),
         };
         for attribute in start.attributes() {
             let attribute = attribute?;

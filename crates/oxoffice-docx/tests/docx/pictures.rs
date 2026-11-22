@@ -650,6 +650,48 @@ fn a_clearing_break_restarts_the_text_below_the_floats_on_its_side() {
 }
 
 #[test]
+fn an_anchor_without_side_distances_keeps_text_an_eighth_of_an_inch_away() {
+    // Word reads an absent `distL` or `distR` as 114,300 EMU, 9 points, so
+    // oxoffice writes every distance, zero included.
+    let mut doc = Document::new();
+    let story = body(&doc);
+    let options = PictureOptions {
+        anchor: Some(PictureAnchor {
+            wrap: DrawingWrap::Square,
+            ..floating()
+        }),
+        ..sized(Length::pt(72.0), Length::pt(72.0))
+    };
+    doc.add_picture_with_options(&story, &png(4, 4, 30), "float.png", options)
+        .unwrap();
+    doc.add_paragraph("beside");
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    assert!(
+        xml.contains(r#"distT="0" distB="0" distL="0" distR="0""#),
+        "{xml}"
+    );
+    let zero = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
+    assert!((text_origins(&zero)["beside"].0 - 144.0).abs() < 0.01);
+
+    // The same anchor without its distances, as another producer may write it.
+    let xml = xml.replace(r#" distT="0" distB="0" distL="0" distR="0""#, "");
+    package.set_part(&part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    assert!((text_origins(&doc)["beside"].0 - 153.0).abs() < 0.01);
+    // An edit elsewhere keeps the anchor as it was, so Word reads the same.
+    assert_eq!(doc.replace_text("beside", "Beside"), 1);
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("distL="), "{xml}");
+    assert!((text_origins(&doc)["Beside"].0 - 153.0).abs() < 0.01);
+}
+
+#[test]
 fn a_floating_picture_can_be_aligned_and_sent_behind_the_text() {
     let (aligned, front, back) = (png(2, 2, 1), png(2, 2, 2), png(2, 2, 3));
     let mut doc = doc_with(&["Text"]);

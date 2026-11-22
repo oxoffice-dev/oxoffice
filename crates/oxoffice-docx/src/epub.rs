@@ -16,7 +16,7 @@ use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::revision::CT_Revision;
 use oxoffice_docx_oxml::styles::{CT_Style, CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{CT_P, CT_R, Field, HyperlinkSpan, RunContent};
+use oxoffice_docx_oxml::text::{BreakClear, CT_P, CT_R, Field, HyperlinkSpan, RunContent};
 use oxoffice_opc::relationship::rel_types;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
@@ -2657,7 +2657,8 @@ fn render_run_content(content: &RunContent) -> RunContent {
         RunContent::Text(text) => RunContent::Text(text.clone()),
         RunContent::DeletedText(text) => RunContent::DeletedText(text.clone()),
         RunContent::Tab => RunContent::Tab,
-        RunContent::Break(kind, clear) => RunContent::Break(*kind, *clear),
+        // XHTML gets a plain break: EPUB readers have no floats to clear.
+        RunContent::Break(kind, _) => RunContent::Break(*kind, BreakClear::None),
         RunContent::Drawing(drawing) => RunContent::Drawing(render_drawing_projection(drawing)),
         RunContent::Field(field) => {
             let mut projected = Field::new("", &field.cached_result);

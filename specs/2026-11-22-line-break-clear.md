@@ -50,8 +50,14 @@ floats on that side.**
 - **Facade**: no new call. The clear reaches the facade through the model; text, Markdown and the CLI read a
   clearing break as a line break, as today.
 
-**What we do not do**: a clearing break in a table cell or a text box still moves below the floats of the page's
-body only (the floats the paginator places); floats inside a cell are not wrap obstacles today.
+**What we do not do**:
+
+- A clearing break in a table cell or a text box still moves below the floats of the page's body only (the floats
+  the paginator places); floats inside a cell are not wrap obstacles today.
+- A body paragraph is re-broken once, where it starts. When the paginator then moves it to the next page or splits
+  it, the gap a clearing break opened travels with its line, as the widths reserved beside the floats already do.
+- A field result is drawn from its result text, where a break is a plain line break: the clear a field result keeps
+  is written back, not rendered.
 
 ## Plan
 

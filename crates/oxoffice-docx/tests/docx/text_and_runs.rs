@@ -575,7 +575,7 @@ fn a_break_keeps_where_its_text_restarts_through_an_edit_and_a_reopen() {
         (r#"w:type="column" w:clear="left""#, "column", "left"),
     ] {
         // An edit of another paragraph, and an edit of the text around the
-        // breaks the search reaches, rewrite the runs from the model.
+        // breaks the search reaches.
         let mut doc = doc_with_breaks(attributes);
         doc.paragraph_mut(0).unwrap().add_run(", edited");
         for (from, to) in [("before", "Before"), ("simple", "Simple")] {
@@ -588,13 +588,16 @@ fn a_break_keeps_where_its_text_restarts_through_an_edit_and_a_reopen() {
             vec![(kind.to_owned(), clear.to_owned()); 3],
             "{attributes}: the run and both field results keep the break: {xml}"
         );
-        // The run is written from the model, in Word's spelling.
-        let written = if kind == "textWrapping" {
-            format!(r#"<w:t>Before</w:t><w:br w:type="textWrapping" w:clear="{clear}"/>"#)
-        } else {
-            format!(r#"<w:t>Before</w:t><w:br w:type="{kind}" w:clear="{clear}"/>"#)
-        };
-        assert!(xml.contains(&written), "{attributes}: {written}: {xml}");
+        // The edited run and simple field result are written from the
+        // model, in Word's spelling; the complex field result the search
+        // does not reach keeps its source bytes.
+        let written = format!(r#"<w:br w:type="{kind}" w:clear="{clear}"/>"#);
+        for text in ["Before", "Simple"] {
+            let expected = format!("<w:t>{text}</w:t>{written}");
+            assert!(xml.contains(&expected), "{attributes}: {expected}: {xml}");
+        }
+        let source = format!("<w:t>complex</w:t><w:br {attributes}/>");
+        assert!(xml.contains(&source), "{attributes}: {source}: {xml}");
     }
 }
 
