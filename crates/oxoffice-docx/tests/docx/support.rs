@@ -162,6 +162,29 @@ pub fn doc_with_body(body: &str) -> Document {
     Document::from_bytes(&out.into_inner()).expect("document with this body opens")
 }
 
+/// A floating text box holding `content`, as Word writes it: DrawingML in
+/// `mc:Choice` and a VML copy in `mc:Fallback`.
+pub fn text_box_run(id: u32, content: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
+            r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
+            r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
+            r#"xmlns:v="urn:schemas-microsoft-com:vml"><mc:Choice Requires="wps"><w:drawing>"#,
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/>"#,
+            r#"<wp:docPr id="{id}" name="Text Box {id}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>"#,
+            r#"<wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}"#,
+            r#"</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline>"#,
+            r#"</w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="tb{id}"><v:textbox><w:txbxContent>"#,
+            r#"{content}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>"#,
+        ),
+        id = id,
+        content = content,
+    )
+}
+
 /// Whether the workflow tests read every producer's copy (`main` and the
 /// nightly run, `OXOFFICE_WORKFLOWS=full`) or one copy each (pull requests).
 /// Read at run time, so that a build without the variable still compiles.

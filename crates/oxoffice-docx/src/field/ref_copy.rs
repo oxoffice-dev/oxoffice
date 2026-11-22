@@ -1494,6 +1494,10 @@ pub(super) fn ref_bookmark_runs(
         }
         let paragraph = CT_P::from_xml_fragment(&xml)?;
         let runs = paragraph.accepted_bookmark_runs();
+        // A marker the story range places on this paragraph but the
+        // paragraph does not hold sits between blocks: it leads the
+        // paragraph (run 0) or closes it.
+        let between_blocks = |run_index: usize| if run_index == 0 { 0 } else { runs.len() };
         let first = if location == range.range().start.location {
             paragraph
                 .bookmark_markers
@@ -1505,12 +1509,10 @@ pub(super) fn ref_bookmark_runs(
                             .name()
                             .is_some_and(|name| same_bookmark_name(name, target))
                 })
-                .ok_or_else(|| {
-                    Error::Other(
-                        "REF f target start marker is absent from its physical projection".into(),
-                    )
-                })?
-                .projected_run_index()
+                .map_or_else(
+                    || between_blocks(range.range().start.run_index),
+                    oxoffice_docx_oxml::text::BookmarkMarker::projected_run_index,
+                )
         } else {
             0
         };
@@ -1519,12 +1521,10 @@ pub(super) fn ref_bookmark_runs(
                 .bookmark_markers
                 .iter()
                 .find(|marker| !marker.is_start() && marker.id() == Some(*id))
-                .ok_or_else(|| {
-                    Error::Other(
-                        "REF f target end marker is absent from its physical projection".into(),
-                    )
-                })?
-                .projected_run_index()
+                .map_or_else(
+                    || between_blocks(range.range().end.run_index),
+                    oxoffice_docx_oxml::text::BookmarkMarker::projected_run_index,
+                )
         } else {
             runs.len()
         };

@@ -634,13 +634,6 @@ impl Document {
         move_comment_reference: bool,
     ) -> Result<(String, Vec<u8>, Vec<Range<usize>>)> {
         use crate::comments::StoryRangeKind;
-        // A marker between blocks has no paragraph ordinal (#340).
-        if entry.start_ordinal == usize::MAX || entry.end_ordinal == usize::MAX {
-            return Err(Error::Other(
-                "a range whose marker sits between paragraphs cannot be moved or removed yet"
-                    .into(),
-            ));
-        }
         let (source, owner) = self.story_source_and_owner(entry.range().start.location.story())?;
         let part_name = source.part_name.clone();
         let xml = source.xml.as_ref();
@@ -712,6 +705,19 @@ impl Document {
             }
             false
         };
+        // The bookmark markers between blocks read as this story's
+        // paragraphs count too, as the story marker scan places them there.
+        let block_markers = {
+            let owned = paragraphs
+                .iter()
+                .map(|span| span.start)
+                .collect::<HashSet<_>>();
+            source_block_bookmarks(xml)?
+                .into_iter()
+                .filter(|marker| owned.contains(&marker.paragraph))
+                .map(|marker| marker.offset)
+                .collect::<HashSet<_>>()
+        };
         let mut reader = NsReader::from_reader(xml);
         reader.config_mut().trim_text(false);
         let mut ranges = Vec::new();
@@ -753,8 +759,7 @@ impl Document {
             }
             let element = match &event {
                 Event::Start(element) | Event::Empty(element)
-                    if !hidden
-                        && is_word
+                    if is_word
                         && matches!(
                             element.local_name().as_ref(),
                             b"bookmarkStart"
@@ -766,7 +771,8 @@ impl Document {
                                 | b"proofErr"
                                 | b"commentReference"
                         )
-                        && paragraph_contains(before) =>
+                        && (!hidden && paragraph_contains(before)
+                            || block_markers.contains(&before)) =>
                 {
                     element
                 }
@@ -854,17 +860,37 @@ impl Document {
         Ok((part_name, xml.to_vec(), ranges))
     }
 
+    /// Remove a pair's marker elements; returns their part and the spans
+    /// they took there.
     pub(crate) fn remove_story_range_markers(
         &mut self,
         entry: &crate::comments::StoryRangeRef,
         move_comment_reference: bool,
-    ) -> Result<()> {
+    ) -> Result<(String, Vec<Range<usize>>)> {
         let (part_name, mut updated, ranges) =
             self.story_range_marker_spans(entry, move_comment_reference)?;
-        for range in ranges.into_iter().rev() {
-            updated.splice(range, []);
+        for range in ranges.iter().rev() {
+            updated.splice(range.clone(), []);
         }
-        set_story_source_xml(self, &part_name, updated)
+        set_story_source_xml(self, &part_name, updated)?;
+        Ok((part_name, ranges))
+    }
+
+    /// How many of the direct items of `story` before item `index` are
+    /// among `removed`, spans of the story's part: a marker between blocks
+    /// is an item of its story, so removing it moves the items after it up.
+    pub(crate) fn story_items_among(
+        &self,
+        story: &StoryId,
+        removed: &[Range<usize>],
+        index: usize,
+    ) -> Result<usize> {
+        let (source, owner) = self.story_source_and_owner(story)?;
+        Ok(scan_story_items(&source.xml, &owner, None)?
+            .iter()
+            .take(index)
+            .filter(|item| removed.contains(&item.full))
+            .count())
     }
 }
 
