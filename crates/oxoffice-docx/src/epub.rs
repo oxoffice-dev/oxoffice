@@ -47,6 +47,16 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </container>
 "#;
 
+/// What dropping a block kept as raw XML loses: a bookmark marker between
+/// blocks, or `unmodelled`.
+fn raw_dropped(raw: &[u8], unmodelled: &str) -> String {
+    if crate::document::is_block_bookmark_marker(raw) {
+        "bookmark marker was dropped during EPUB export".to_owned()
+    } else {
+        unmodelled.to_owned()
+    }
+}
+
 const STYLESHEET: &str = r#"body{font-family:serif;line-height:1.4;margin:5%;}img{height:auto;max-width:100%;}table{border-collapse:collapse;}td,th{padding:.25em;}nav ol{list-style:none;padding-left:1.25em;}ul.no-marker{list-style:none;}"#;
 
 /// One stable report of source content that EPUB cannot preserve exactly.
@@ -551,9 +561,9 @@ impl<'a> EpubWriter<'a> {
                 )?;
                 self.scan_control(control, path, depth + 1, false)
             }
-            BodyContent::RawXml(_) => self.diagnose(
+            BodyContent::RawXml(raw) => self.diagnose(
                 path.to_owned(),
-                "unmodelled body XML was dropped during EPUB export".to_owned(),
+                raw_dropped(raw, "unmodelled body XML was dropped during EPUB export"),
             ),
         }
     }
@@ -571,10 +581,10 @@ impl<'a> EpubWriter<'a> {
         if let Some(properties) = &table.properties {
             self.scan_table_properties(properties, path)?;
         }
-        for (raw_index, _) in table.extra_xml.iter().enumerate() {
+        for (raw_index, (_, raw)) in table.extra_xml.iter().enumerate() {
             self.diagnose(
                 format!("{path}/xml[{raw_index}]"),
-                "unmodelled table XML was dropped during EPUB export".to_owned(),
+                raw_dropped(raw, "unmodelled table XML was dropped during EPUB export"),
             )?;
         }
         // Rows that content controls wrap are scanned in document order.
@@ -609,7 +619,10 @@ impl<'a> EpubWriter<'a> {
             }
             self.diagnose(
                 format!("{row_path}/xml[{raw_index}]"),
-                "unmodelled table-row XML was dropped during EPUB export".to_owned(),
+                raw_dropped(
+                    raw,
+                    "unmodelled table-row XML was dropped during EPUB export",
+                ),
             )?;
         }
         // Cells that content controls wrap are scanned in document order.
@@ -638,10 +651,13 @@ impl<'a> EpubWriter<'a> {
         if let Some(properties) = &cell.properties {
             self.scan_cell_properties(properties, cell_path)?;
         }
-        for (raw_index, _) in cell.extra_xml.iter().enumerate() {
+        for (raw_index, (_, raw)) in cell.extra_xml.iter().enumerate() {
             self.diagnose(
                 format!("{cell_path}/xml[{raw_index}]"),
-                "unmodelled table-cell XML was dropped during EPUB export".to_owned(),
+                raw_dropped(
+                    raw,
+                    "unmodelled table-cell XML was dropped during EPUB export",
+                ),
             )?;
         }
         for (content_index, content) in cell.content.iter().enumerate() {
@@ -712,9 +728,12 @@ impl<'a> EpubWriter<'a> {
                     )?;
                     self.scan_control(nested, &child_path, depth + 1, in_cell)?;
                 }
-                SdtContent::RawXml(_) => self.diagnose(
+                SdtContent::RawXml(raw) => self.diagnose(
                     child_path,
-                    "unmodelled content control XML was dropped during EPUB export".to_owned(),
+                    raw_dropped(
+                        raw,
+                        "unmodelled content control XML was dropped during EPUB export",
+                    ),
                 )?,
             }
         }

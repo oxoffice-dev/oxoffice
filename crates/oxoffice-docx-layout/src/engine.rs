@@ -20,8 +20,8 @@ use oxoffice_docx_oxml::shared::ST_HighlightColor;
 use oxoffice_docx_oxml::styles::CT_Styles;
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent, ST_VerticalJc};
 use oxoffice_docx_oxml::text::{
-    BookmarkMarker, BreakClear, BreakType, CT_P, CT_R, FieldArgument, FieldInstruction, RunContent,
-    SpecialCharacter, hyperlink_revision_index,
+    BlockBookmarks, BookmarkMarker, BreakClear, BreakType, CT_P, CT_R, FieldArgument,
+    FieldInstruction, RunContent, SpecialCharacter, hyperlink_revision_index,
 };
 
 use crate::block::{
@@ -115,7 +115,7 @@ use cache_accounting::{
     rebind_header_footer_sources, rebind_paragraph_source, remap_text_box_sources,
     restart_block_is_safe, restart_cache_bytes, restart_cache_entries,
     restart_record_block_is_safe, table_cache_entry_bytes, table_fingerprint, table_is_cache_safe,
-    table_semantics,
+    table_semantics, table_takes_block_markers,
 };
 use field_substitution::{
     apply_page_background, mark_remaining_artifacts, placed_styleref_values,
@@ -245,8 +245,24 @@ pub fn document_sections(document: &oxoffice_docx_oxml::document::CT_Document) -
         .collect()
 }
 
-fn join_accepted_layout_paragraphs(prefix: CT_P, paragraph: &CT_P) -> Result<CT_P> {
+fn join_accepted_layout_paragraphs(
+    prefix: CT_P,
+    paragraph: &CT_P,
+    block_bookmarks: &BlockBookmarks,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<CT_P> {
     let mut result = paragraph.clone();
+    // The copy has another address: the block markers the paragraph takes
+    // go into it, at its start (after the prefix once it is inserted) and
+    // its end.
+    // A marker that cannot be written is left out, as before, with a
+    // diagnostic: the layout goes on.
+    let (before, after) = block_bookmarks.markers(paragraph);
+    if !(before.is_empty() && after.is_empty()) && !result.take_block_markers(before, after) {
+        diagnostics.push(Diagnostic {
+            message: "a joined paragraph's block bookmarks could not be carried".to_owned(),
+        });
+    }
     for (index, run) in prefix.runs.into_iter().enumerate() {
         if !result.insert_unwrapped_run(index, run) {
             return Err(LayoutError::Layout(

@@ -66,6 +66,15 @@ fn word_id(
     Ok(None)
 }
 
+/// Whether a block kept as raw XML is a Word bookmark start or end, a
+/// marker between blocks that belongs to the paragraph it wraps.
+pub(crate) fn is_block_bookmark_marker(raw: &[u8]) -> bool {
+    matches!(
+        word_root(raw, true),
+        Ok(Some((local, _))) if local == b"bookmarkStart" || local == b"bookmarkEnd"
+    )
+}
+
 /// The `w:id` of a Word bookmark start that is the whole element.
 fn bookmark_start_id(xml: &[u8], inherited: bool) -> Result<Option<String>> {
     Ok(match word_root(xml, inherited)? {

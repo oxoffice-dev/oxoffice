@@ -80,6 +80,96 @@ impl BlockBookmarks {
         markers
     }
 
+    /// Write the block markers the paragraphs of `source` take into the
+    /// same paragraphs of `copy`, a clone of it, whose addresses the markers
+    /// were not read for ([`CT_P::take_block_markers`]).
+    pub fn carry_into_table_copy(&self, source: &CT_Tbl, copy: &mut CT_Tbl) -> bool {
+        self.is_empty() || self.carry_table(source, copy)
+    }
+
+    fn carry_paragraph(&self, source: &CT_P, copy: &mut CT_P) -> bool {
+        let (before, after) = self.markers(source);
+        (before.is_empty() && after.is_empty()) || copy.take_block_markers(before, after)
+    }
+
+    fn carry_table(&self, source: &CT_Tbl, copy: &mut CT_Tbl) -> bool {
+        source.rows.len() == copy.rows.len()
+            && source.content_controls.len() == copy.content_controls.len()
+            && source
+                .rows
+                .iter()
+                .zip(&mut copy.rows)
+                .all(|(source, copy)| self.carry_row(source, copy))
+            && source
+                .content_controls
+                .iter()
+                .zip(&mut copy.content_controls)
+                .all(|((_, _, source), (_, _, copy))| self.carry_control(source, copy))
+    }
+
+    fn carry_row(&self, source: &CT_Row, copy: &mut CT_Row) -> bool {
+        source.cells.len() == copy.cells.len()
+            && source.content_controls.len() == copy.content_controls.len()
+            && source
+                .cells
+                .iter()
+                .zip(&mut copy.cells)
+                .all(|(source, copy)| self.carry_cell(source, copy))
+            && source
+                .content_controls
+                .iter()
+                .zip(&mut copy.content_controls)
+                .all(|((_, _, source), (_, _, copy))| self.carry_control(source, copy))
+    }
+
+    fn carry_cell(&self, source: &CT_Tc, copy: &mut CT_Tc) -> bool {
+        source.content.len() == copy.content.len()
+            && source
+                .content
+                .iter()
+                .zip(&mut copy.content)
+                .all(|pair| match pair {
+                    (CellContent::Paragraph(source), CellContent::Paragraph(copy)) => {
+                        self.carry_paragraph(source, copy)
+                    }
+                    (CellContent::Table(source), CellContent::Table(copy)) => {
+                        self.carry_table(source, copy)
+                    }
+                    (CellContent::ContentControl(source), CellContent::ContentControl(copy)) => {
+                        self.carry_control(source, copy)
+                    }
+                    _ => false,
+                })
+    }
+
+    fn carry_control(&self, source: &CT_Sdt, copy: &mut CT_Sdt) -> bool {
+        source.content.len() == copy.content.len()
+            && source
+                .content
+                .iter()
+                .zip(&mut copy.content)
+                .all(|pair| match pair {
+                    (SdtContent::Paragraph(source), SdtContent::Paragraph(copy)) => {
+                        self.carry_paragraph(source, copy)
+                    }
+                    (SdtContent::Table(source), SdtContent::Table(copy)) => {
+                        self.carry_table(source, copy)
+                    }
+                    (SdtContent::Cell(source), SdtContent::Cell(copy)) => {
+                        self.carry_cell(source, copy)
+                    }
+                    (SdtContent::Row(source), SdtContent::Row(copy)) => {
+                        self.carry_row(source, copy)
+                    }
+                    (SdtContent::ContentControl(source), SdtContent::ContentControl(copy)) => {
+                        self.carry_control(source, copy)
+                    }
+                    (SdtContent::RawXml(_), SdtContent::RawXml(_))
+                    | (SdtContent::Run(_), SdtContent::Run(_)) => true,
+                    _ => false,
+                })
+    }
+
     fn attribute(items: Vec<BlockItem<'_>>) -> Self {
         let paragraphs = items
             .iter()
@@ -134,6 +224,67 @@ impl BlockBookmarks {
     }
 }
 
+impl CT_P {
+    /// Write the block markers this paragraph takes ([`BlockBookmarks::markers`])
+    /// into the paragraph itself: those before at its first run boundary,
+    /// after the raw children already there (a tracked insertion that opens
+    /// the paragraph comes first), those after at its last. For a copy whose address the markers
+    /// were not read for, such as the paragraph the accepted view joins.
+    #[doc(hidden)]
+    pub fn take_block_markers(
+        &mut self,
+        before: &[BookmarkMarker],
+        after: &[BookmarkMarker],
+    ) -> bool {
+        let saved = self.extra_xml.clone();
+        let end = self.runs.len();
+        let leading = before
+            .iter()
+            .map(|marker| canonical_block_marker(marker).map(|raw| (0, raw)))
+            .collect::<Option<Vec<_>>>();
+        let trailing = after
+            .iter()
+            .map(|marker| canonical_block_marker(marker).map(|raw| (end, raw)))
+            .collect::<Option<Vec<_>>>();
+        let (Some(leading), Some(trailing)) = (leading, trailing) else {
+            return false;
+        };
+        // Appended, as `insert_bookmark_start` does: the owners placed by a
+        // count of the raw children before them (revisions, equations,
+        // controls, comment ranges) keep their slots.
+        self.extra_xml.extend(leading);
+        self.extra_xml.extend(trailing);
+        if self.refresh_bookmark_projection() {
+            true
+        } else {
+            self.extra_xml = saved;
+            let _ = self.refresh_bookmark_projection();
+            false
+        }
+    }
+}
+
+/// A block marker as a canonical `w:bookmarkStart` or `w:bookmarkEnd`.
+fn canonical_block_marker(marker: &BookmarkMarker) -> Option<Vec<u8>> {
+    let mut value = itoa::Buffer::new();
+    let mut element = BytesStart::new(if marker.start {
+        "w:bookmarkStart"
+    } else {
+        "w:bookmarkEnd"
+    });
+    if let Some(id) = marker.id {
+        element.push_attribute(("w:id", value.format(id)));
+    }
+    if let Some(name) = marker.name.as_deref().filter(|_| marker.start) {
+        element.push_attribute(("w:name", name));
+    }
+    let mut raw = Vec::new();
+    Writer::new(&mut raw)
+        .write_event(Event::Empty(element))
+        .ok()?;
+    Some(raw)
+}
+
 impl BookmarkMarker {
     fn between_blocks(
         start: bool,
@@ -161,12 +312,18 @@ fn push_table<'a>(table: &'a CT_Tbl, items: &mut Vec<BlockItem<'a>>) {
     for boundary in 0..=table.rows.len() {
         push_slot(&table.extra_xml, &table.content_controls, boundary, items);
         if let Some(row) = table.rows.get(boundary) {
-            for cell_boundary in 0..=row.cells.len() {
-                push_slot(&row.extra_xml, &row.content_controls, cell_boundary, items);
-                if let Some(cell) = row.cells.get(cell_boundary) {
-                    push_cell(cell, items);
-                }
-            }
+            push_row(row, items);
+        }
+    }
+}
+
+/// A row's cells with the raw children and controls between them, in a
+/// table or in a row-level content control alike.
+fn push_row<'a>(row: &'a CT_Row, items: &mut Vec<BlockItem<'a>>) {
+    for cell_boundary in 0..=row.cells.len() {
+        push_slot(&row.extra_xml, &row.content_controls, cell_boundary, items);
+        if let Some(cell) = row.cells.get(cell_boundary) {
+            push_cell(cell, items);
         }
     }
 }
@@ -225,11 +382,7 @@ fn push_control<'a>(control: &'a CT_Sdt, items: &mut Vec<BlockItem<'a>>) {
             SdtContent::Paragraph(paragraph) => items.push(BlockItem::Paragraph(paragraph)),
             SdtContent::Table(table) => push_table(table, items),
             SdtContent::Cell(cell) => push_cell(cell, items),
-            SdtContent::Row(row) => {
-                for cell in &row.cells {
-                    push_cell(cell, items);
-                }
-            }
+            SdtContent::Row(row) => push_row(row, items),
             SdtContent::ContentControl(control) => push_control(control, items),
             SdtContent::RawXml(raw) => push_raw(raw, items),
             SdtContent::Run(_) => {}
