@@ -71,8 +71,156 @@ fn apply_fragment_xml_edits(
     Ok(())
 }
 
-/// Materialize only document-default font components on the imported body.
+/// Materialize only document-default font components on the imported body,
+/// and on the header and footer parts it may bring, which are copied whole.
 fn prepare_fragment_body_effective_defaults(fragment: &mut Document) -> Result<()> {
+    let styles = Arc::clone(&fragment.styles);
+    prepare_effective_defaults(&mut fragment.document.body.content, &styles);
+    let header_footer_parts = fragment
+        .package
+        .get_part_rels(&fragment.doc_part_name)
+        .map(|relationships| {
+            relationships
+                .items
+                .iter()
+                .filter(|relationship| {
+                    (relationship.rel_type == rel_types::HEADER
+                        || relationship.rel_type == rel_types::FOOTER)
+                        && crate::document::relationship_is_internal(relationship)
+                })
+                .map(|relationship| {
+                    OpcPackage::resolve_rel_target(&fragment.doc_part_name, &relationship.target)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for part in header_footer_parts {
+        let Some(original) = fragment.package.get_part(&part) else {
+            continue;
+        };
+        let prepared = with_story_body_content(original, |content| {
+            prepare_effective_defaults(content, &styles);
+        })?;
+        if prepared != original {
+            fragment.package.set_part(&part, prepared);
+        }
+    }
+    // Every prepared paragraph now names its source default explicitly. It
+    // must not become a second destination default or restyle existing text.
+    for style in &mut Arc::make_mut(&mut fragment.styles).styles {
+        if style.style_type == StyleType::Paragraph {
+            style.is_default = false;
+        }
+    }
+    Ok(())
+}
+
+/// The header or footer part `xml` after `edit` changed its content, read
+/// and written as a body is: the root keeps its name, and takes the
+/// namespaces the written content needs.
+fn with_story_body_content(
+    xml: &[u8],
+    edit: impl FnOnce(&mut Vec<BodyContent>),
+) -> Result<Vec<u8>> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut depth = 0usize;
+    let mut root = None;
+    let mut content_end = None;
+    loop {
+        let before = usize::try_from(reader.buffer_position())
+            .map_err(|_| Error::Other("story part is too large".to_owned()))?;
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("story part XML is invalid: {error}")))?
+        {
+            Event::Start(start) => {
+                if depth == 0 {
+                    let after = usize::try_from(reader.buffer_position())
+                        .map_err(|_| Error::Other("story part is too large".to_owned()))?;
+                    root = Some((before, after, start.name().as_ref().to_vec()));
+                }
+                depth += 1;
+            }
+            Event::End(_) => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    content_end = Some(before);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let (Some((root_start, content_start, name)), Some(content_end)) = (root, content_end) else {
+        return Ok(xml.to_vec());
+    };
+    let (prefix, local) = match name.iter().position(|byte| *byte == b':') {
+        Some(colon) => (&name[..=colon], &name[colon + 1..]),
+        None => (&name[..0], &name[..]),
+    };
+    // The root's attributes and namespaces go on a document root of the
+    // same namespace, so the content reads as it would in a body.
+    let attributes = &xml[root_start + 1 + name.len()..content_start - 1];
+    let mut wrapped = Vec::new();
+    for (open, close) in [(b"<".as_slice(), b"document".as_slice()), (b"<", b"body")] {
+        wrapped.extend_from_slice(open);
+        wrapped.extend_from_slice(prefix);
+        wrapped.extend_from_slice(close);
+        if close == b"document" {
+            wrapped.extend_from_slice(attributes.strip_suffix(b"/").unwrap_or(attributes));
+        }
+        wrapped.push(b'>');
+    }
+    wrapped.extend_from_slice(&xml[content_start..content_end]);
+    for close in [b"body".as_slice(), b"document"] {
+        wrapped.extend_from_slice(b"</");
+        wrapped.extend_from_slice(prefix);
+        wrapped.extend_from_slice(close);
+        wrapped.push(b'>');
+    }
+    let mut document = CT_Document::from_xml(&wrapped)?;
+    document.body.sect_pr = None;
+    edit(&mut document.body.content);
+    let written = document.to_xml()?;
+    // The writer names the root `<prefix:document` with its namespaces.
+    let open = find_bytes(&written, b":document ")
+        .ok_or_else(|| Error::Other("written story has no document root".to_owned()))?;
+    let root_open = written[..open]
+        .iter()
+        .rposition(|byte| *byte == b'<')
+        .ok_or_else(|| Error::Other("written story has no document root".to_owned()))?;
+    let written_prefix = &written[root_open + 1..=open];
+    let root_attributes_start = open + b":document".len();
+    let root_attributes_end = root_attributes_start
+        + find_bytes(&written[root_attributes_start..], b">")
+            .ok_or_else(|| Error::Other("written story root is not closed".to_owned()))?;
+    let body_open = [b"<".as_slice(), written_prefix, b"body>"].concat();
+    let body_start = find_bytes(&written, &body_open)
+        .ok_or_else(|| Error::Other("written story has no body".to_owned()))?
+        + body_open.len();
+    let body_close = [b"</".as_slice(), written_prefix, b"body>"].concat();
+    let body_end =
+        find_bytes(&written[body_start..], &body_close).map_or(body_start, |at| body_start + at);
+    let mut updated = xml[..root_start].to_vec();
+    updated.push(b'<');
+    updated.extend_from_slice(written_prefix);
+    updated.extend_from_slice(local);
+    updated.extend_from_slice(&written[root_attributes_start..root_attributes_end]);
+    updated.push(b'>');
+    updated.extend_from_slice(&written[body_start..body_end]);
+    updated.extend_from_slice(b"</");
+    updated.extend_from_slice(written_prefix);
+    updated.extend_from_slice(local);
+    updated.push(b'>');
+    Ok(updated)
+}
+
+/// Write the document-default font components the runs of `content` take
+/// from the defaults, and its default paragraph style, explicitly.
+fn prepare_effective_defaults(content: &mut [BodyContent], styles: &CT_Styles) {
     fn paragraph(
         paragraph: &mut CT_P,
         styles: &CT_Styles,
@@ -188,10 +336,9 @@ fn prepare_fragment_body_effective_defaults(fragment: &mut Document) -> Result<(
             }
         }
     }
-    let styles = &fragment.styles;
     let mut style_only = CT_Styles::clone(styles);
     style_only.doc_defaults = None;
-    for item in &mut fragment.document.body.content {
+    for item in content {
         match item {
             BodyContent::Paragraph(p) => paragraph(p, styles, &style_only, None),
             BodyContent::Table(t) => prepare_table(t, styles, &style_only),
@@ -201,14 +348,6 @@ fn prepare_fragment_body_effective_defaults(fragment: &mut Document) -> Result<(
             BodyContent::RawXml(_) => {}
         }
     }
-    // Every prepared paragraph now names its source default explicitly. It
-    // must not become a second destination default or restyle existing text.
-    for style in &mut Arc::make_mut(&mut fragment.styles).styles {
-        if style.style_type == StyleType::Paragraph {
-            style.is_default = false;
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn import_fragment_content_with_state(
@@ -432,7 +571,22 @@ pub(super) fn import_fragment_content_with_state(
         ));
     }
     let mut binding_stores = Vec::new();
-    for store_item_id in fragment_store_item_ids(&dependency_xml)? {
+    // The header and footer parts copied whole bind stores as the body does.
+    let header_footer_parts = fragment_header_footer_parts(&fragment, &dependency_xml)?;
+    let mut bound_header_footers = HashSet::new();
+    let mut store_item_ids = fragment_store_item_ids(&dependency_xml)?;
+    for part in &header_footer_parts {
+        let xml = fragment
+            .package
+            .get_part(part)
+            .ok_or_else(|| Error::Other(format!("document fragment part {part} is missing")))?;
+        let ids = fragment_store_item_ids(xml)?;
+        if !ids.is_empty() {
+            bound_header_footers.insert(part.clone());
+        }
+        store_item_ids.extend(ids);
+    }
+    for store_item_id in store_item_ids {
         let source_part = crate::content_control::resolve_custom_xml_part(
             &fragment.package,
             &fragment.doc_part_name,
@@ -864,6 +1018,7 @@ pub(super) fn import_fragment_content_with_state(
         let destination_part = if policy.reuse_related_parts()
             && !remapped_store_properties.contains(&source_part)
             && !numbered_header_footers.contains(&source_part)
+            && !bound_header_footers.contains(&source_part)
         {
             equivalent_fragment_leaf_part(&fragment.package, document, &source_part).map_or_else(
                 || {
@@ -921,6 +1076,13 @@ pub(super) fn import_fragment_content_with_state(
             }
         }
     }
+    // A part the destination already has (an equal leaf part) is shared,
+    // not copied: its identities are the destination's.
+    let reused_parts = part_map
+        .values()
+        .filter(|part| document.package.get_part(part).is_some())
+        .cloned()
+        .collect::<HashSet<_>>();
     let mut copied = HashSet::new();
     for (selected_owner, destination_owner, relationship_id, relationship, source_part) in imports {
         let destination_part = copy_fragment_part(
@@ -1004,6 +1166,25 @@ pub(super) fn import_fragment_content_with_state(
                 "document fragment custom XML properties {source_props} were not copied"
             ))
         })?;
+        for source_part in &bound_header_footers {
+            let copied = part_map.get(source_part).ok_or_else(|| {
+                Error::Other(format!("fragment part {source_part} was not reserved"))
+            })?;
+            let xml = document
+                .package
+                .get_part(copied)
+                .ok_or_else(|| Error::Other(format!("copied fragment part {copied} is missing")))?;
+            if fragment_store_item_ids(xml)?.contains(&store_item_id) {
+                let patched = replace_fragment_store_id(
+                    xml,
+                    &store_item_id,
+                    &new_id,
+                    b"dataBinding",
+                    b"storeItemID",
+                )?;
+                document.package.set_part(copied, patched);
+            }
+        }
         if fragment_store_item_ids(&fragment_xml)?.contains(&store_item_id) {
             let edits = fragment_store_id_edits(
                 &fragment_xml,
@@ -1113,6 +1294,44 @@ pub(super) fn import_fragment_content_with_state(
         false,
         keep_free_names,
     )?;
+    // The header and footer parts copied whole take fresh identities too,
+    // part by part, as producers number drawings per part. Their references
+    // follow the body's renamed bookmarks, and the body's follow theirs.
+    for source_part in &header_footer_parts {
+        let Some(copied) = part_map.get(source_part) else {
+            continue;
+        };
+        if reused_parts.contains(copied) {
+            continue;
+        }
+        // The whole part goes in a companion body, as the destination's
+        // parts are read for the identities they hold.
+        let xml =
+            wrap_fragment_companion(document.package.get_part(copied).ok_or_else(|| {
+                Error::Other(format!("copied fragment part {copied} is missing"))
+            })?);
+        let (xml, mut remap) = fragment_identity_remap(
+            &xml,
+            &mut document.identifiers,
+            identity_state,
+            true,
+            keep_free_names,
+        )?;
+        let own_names = remap.bookmark_names.clone();
+        for (old, new) in &identity_remap.bookmark_names {
+            remap
+                .bookmark_names
+                .entry(old.clone())
+                .or_insert_with(|| new.clone());
+        }
+        let patched = patch_body_identity_attributes(&xml, &remap)?;
+        document
+            .package
+            .set_part(copied, unwrap_fragment_companion(&patched));
+        for (old, new) in own_names {
+            identity_remap.bookmark_names.entry(old).or_insert(new);
+        }
+    }
     let patched_comments = Document::fragment_comment_dependency_xml(
         fragment.comments.as_ref(),
         fragment.comments_extended.as_ref(),
@@ -3062,6 +3281,26 @@ fn remap_fragment_xml_identities(
     drop_paragraph_identities: bool,
     keep_free_names: bool,
 ) -> Result<(Vec<u8>, BodyIdentityRemap)> {
+    let (xml, remap) = fragment_identity_remap(
+        source,
+        identifiers,
+        state,
+        drop_paragraph_identities,
+        keep_free_names,
+    )?;
+    let updated = patch_body_identity_attributes(&xml, &remap)?;
+    Ok((updated, remap))
+}
+
+/// The fresh identities `source` takes, and `source` with its repeated
+/// drawing ids made unique, which the remap is keyed on.
+fn fragment_identity_remap(
+    source: &[u8],
+    identifiers: &mut DocumentIdentifiers,
+    state: &mut BodyIdentityState,
+    drop_paragraph_identities: bool,
+    keep_free_names: bool,
+) -> Result<(Vec<u8>, BodyIdentityRemap)> {
     // The drawing remap is keyed by value, so a source that repeats a
     // `wp:docPr/@id` is first made unique and every copy gets its own id.
     let xml = uniquify_drawing_ids_in_xml(source)?;
@@ -3111,8 +3350,7 @@ fn remap_fragment_xml_identities(
         let name = state.allocate_name(&value)?;
         remap.bookmark_names.insert(value, name);
     }
-    let updated = patch_body_identity_attributes(&xml, &remap)?;
-    Ok((updated, remap))
+    Ok((xml, remap))
 }
 
 pub(super) fn body_identity_values(xml: &[u8]) -> Result<BodyIdentityValues> {

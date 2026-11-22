@@ -551,6 +551,296 @@ fn an_imported_header_follows_a_renamed_style_and_a_renumbered_list() {
     }
 }
 
+/// A saved two-section document whose first section holds the raw body XML
+/// `cover` and has this raw header (or footer) with these images, and whose
+/// final section holds "body".
+fn with_raw_story(
+    cover: &str,
+    story: &str,
+    images: &[(&str, &[u8], &str)],
+    footer: bool,
+) -> Document {
+    let mut doc = doc_with_body(cover);
+    let root = if footer { "ftr" } else { "hdr" };
+    let xml = format!(
+        concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+            r#" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+            r#" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#,
+            r#" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#,
+            r#" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">{story}</w:{root}>"#
+        ),
+        root = root,
+        story = story
+    );
+    if footer {
+        doc.set_raw_footer_with_images(xml.into_bytes(), images, HdrFtrType::Default);
+    } else {
+        doc.set_raw_header_with_images(xml.into_bytes(), images, HdrFtrType::Default);
+    }
+    doc.insert_section(1).expect("a section appends");
+    doc.add_paragraph("body");
+    reopen(&mut doc)
+}
+
+/// The values of `attribute` on every `element` of every saved Word part
+/// of `doc`, as (part, value).
+fn saved_values(doc: &mut Document, element: &str, attribute: &str) -> Vec<(String, String)> {
+    let mut values = Vec::new();
+    for (part, bytes) in crate::support::package_parts(&saved(doc)) {
+        if !part.starts_with("word/") || !part.ends_with(".xml") {
+            continue;
+        }
+        let xml = String::from_utf8_lossy(&bytes).into_owned();
+        for (at, _) in xml.match_indices(&format!("<{element} ")) {
+            let tag = &xml[at..at + xml[at..].find('>').expect("a closed tag")];
+            if let Some(start) = tag.find(&format!(" {attribute}=\"")) {
+                let value = &tag[start + attribute.len() + 3..];
+                values.push((part.clone(), value[..value.find('"').unwrap()].to_owned()));
+            }
+        }
+    }
+    values
+}
+
+/// Whether every value of `values` is different.
+fn all_different(values: &[(String, String)]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    values.iter().all(|(_, value)| seen.insert(value.clone()))
+}
+
+#[test]
+fn an_imported_header_takes_fresh_drawing_bookmark_and_control_ids() {
+    // The header holds what the destination's body also has: drawing id 1,
+    // bookmark id 0 named Mark, control id 5. Its REF fields name its own
+    // Mark and the source body's BodyMark, which the destination has too,
+    // and the source body names the header's Mark.
+    let header = concat!(
+        r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="91440" cy="91440"/><wp:docPr id="1" name="logo"/>"#,
+        r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+        r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+        r#"<pic:blipFill><a:blip r:embed="rIdLogo"/></pic:blipFill><pic:spPr/></pic:pic>"#,
+        r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>Header mark</w:t></w:r><w:bookmarkEnd w:id="0"/>"#,
+        r#"<w:fldSimple w:instr=" REF Mark \h "><w:r><w:t>Header mark</w:t></w:r></w:fldSimple>"#,
+        r#"<w:fldSimple w:instr=" REF BodyMark "><w:r><w:t>Body mark</w:t></w:r></w:fldSimple></w:p>"#,
+        r#"<w:sdt><w:sdtPr><w:id w:val="5"/><w:tag w:val="head"/></w:sdtPr>"#,
+        r#"<w:sdtContent><w:p><w:r><w:t>Header control</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+    );
+    let cover = concat!(
+        r#"<w:p><w:bookmarkStart w:id="3" w:name="BodyMark"/><w:r><w:t>Body mark</w:t></w:r><w:bookmarkEnd w:id="3"/>"#,
+        r#"<w:fldSimple w:instr=" REF Mark "><w:r><w:t>Header mark</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    let source = with_raw_story(cover, header, &[("rIdLogo", PNG, "logo.png")], false);
+    for entry in ["append", "insert_document", "import_fragment"] {
+        let mut doc = doc_with_body(concat!(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>dst mark</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+            r#"<w:p><w:bookmarkStart w:id="1" w:name="BodyMark"/><w:r><w:t>dst body mark</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:id w:val="5"/><w:tag w:val="dst"/></w:sdtPr>"#,
+            r#"<w:sdtContent><w:p><w:r><w:t>dst control</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+        ));
+        doc.add_picture(PNG, "dot.png", Length::inches(1.0), Length::inches(1.0));
+        let mut doc = reopen(&mut doc);
+        match entry {
+            "append" => doc.append(&source),
+            "insert_document" => doc.insert_document(1, &source),
+            _ => {
+                let start = item_at(&source, 0);
+                let end = ContentLocation::end(body(&source));
+                let fragment = DocumentFragment::from_range(&source, &start, &end, true)
+                    .expect("the whole body is a fragment");
+                doc.import_fragment(
+                    &ContentLocation::end(body(&doc)),
+                    &fragment,
+                    FragmentConflictPolicy::default(),
+                )
+                .unwrap_or_else(|error| panic!("{entry}: {error}"));
+            }
+        }
+        let mut doc = reopen(&mut doc);
+        let drawings = saved_values(&mut doc, "wp:docPr", "id");
+        assert_eq!(drawings.len(), 2, "{entry}: {drawings:?}");
+        assert!(all_different(&drawings), "{entry}: {drawings:?}");
+        let bookmarks = saved_values(&mut doc, "w:bookmarkStart", "w:id");
+        assert!(all_different(&bookmarks), "{entry}: {bookmarks:?}");
+        let controls = saved_values(&mut doc, "w:id", "w:val");
+        assert!(all_different(&controls), "{entry}: {controls:?}");
+        // Both imported bookmarks are renamed, and every REF follows the
+        // bookmark it named in the source, across the parts.
+        let names = saved_values(&mut doc, "w:bookmarkStart", "w:name");
+        assert!(all_different(&names), "{entry}: {names:?}");
+        let renamed = |in_header: bool| {
+            names
+                .iter()
+                .find(|(part, name)| {
+                    part.contains("header") == in_header && name != "Mark" && name != "BodyMark"
+                })
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| panic!("{entry}: {names:?}"))
+        };
+        let (header_mark, body_mark) = (renamed(true), renamed(false));
+        let mut references = saved_values(&mut doc, "w:fldSimple", "w:instr")
+            .into_iter()
+            .map(|(part, instruction)| {
+                let name = instruction.split_whitespace().nth(1).unwrap().to_owned();
+                (part.contains("header"), name)
+            })
+            .collect::<Vec<_>>();
+        references.sort();
+        let mut expected = vec![
+            (false, header_mark.clone()),
+            (true, header_mark),
+            (true, body_mark),
+        ];
+        expected.sort();
+        assert_eq!(references, expected, "{entry}");
+    }
+}
+
+/// A two-section document whose first section's footer holds a control
+/// bound to a custom XML store reading `value`; gives the store id too.
+fn with_bound_footer(value: &str) -> (Document, String) {
+    let mut doc = doc_with(&["cover"]);
+    let store = doc
+        .add_custom_xml_store(
+            format!(r#"<c:customer xmlns:c="urn:crm"><c:name>{value}</c:name></c:customer>"#)
+                .as_bytes(),
+            &["urn:crm"],
+        )
+        .expect("the store is added");
+    let footer = format!(
+        concat!(
+            r#"<w:sdt><w:sdtPr><w:id w:val="9"/><w:tag w:val="name"/>"#,
+            r#"<w:dataBinding w:prefixMappings="xmlns:c='urn:crm'" w:xpath="/c:customer/c:name" w:storeItemID="{store}"/>"#,
+            r#"</w:sdtPr><w:sdtContent><w:p><w:r><w:t>{value}</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+        ),
+        store = store,
+        value = value
+    );
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut doc = Document::from_bytes(&bytes).expect("document reopens");
+    let xml = format!(
+        r#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{footer}</w:ftr>"#
+    );
+    doc.set_raw_footer_with_images(xml.into_bytes(), &[], HdrFtrType::Default);
+    doc.insert_section(1).expect("a section appends");
+    doc.add_paragraph("body");
+    (reopen(&mut doc), store)
+}
+
+/// The text of the custom XML store `store` of the saved `doc`.
+fn store_text(doc: &mut Document, store: &str) -> Option<String> {
+    let parts = crate::support::package_parts(&saved(doc));
+    let (properties, _) = parts.iter().find(|(part, bytes)| {
+        part.starts_with("customXml/itemProps")
+            && String::from_utf8_lossy(bytes).contains(&format!("itemID=\"{store}\""))
+    })?;
+    let item = properties.replace("itemProps", "item");
+    Some(String::from_utf8_lossy(parts.get(&item)?).into_owned())
+}
+
+#[test]
+fn an_imported_footer_control_stays_bound_to_the_data_it_showed() {
+    for destination_has_the_store in [false, true] {
+        let (source, _) = with_bound_footer("Source Ada");
+        let mut doc = if destination_has_the_store {
+            // The same store id with other data, as two copies of one
+            // template filled for two customers have.
+            let (mut doc, _) = with_bound_footer("Source Ada");
+            assert_eq!(
+                doc.set_content_control_value_by_tag("name", "Dest Bo")
+                    .unwrap(),
+                1
+            );
+            reopen(&mut doc)
+        } else {
+            doc_with(&["dest"])
+        };
+        doc.insert_document(1, &source);
+        let mut doc = reopen(&mut doc);
+        let bindings = saved_values(&mut doc, "w:dataBinding", "w:storeItemID");
+        let footers: Vec<_> = bindings
+            .iter()
+            .filter(|(part, _)| part.contains("footer"))
+            .collect();
+        let expected = if destination_has_the_store { 2 } else { 1 };
+        assert_eq!(footers.len(), expected, "{bindings:?}");
+        // The copied footer shows the source's data; the destination's own
+        // footer keeps its store.
+        let mut texts: Vec<String> = footers
+            .iter()
+            .map(|(_, id)| {
+                store_text(&mut doc, id)
+                    .unwrap_or_else(|| panic!("{destination_has_the_store}: store {id} exists"))
+            })
+            .collect();
+        texts.sort();
+        let names: Vec<_> = texts
+            .iter()
+            .map(|text| &text[text.find("<c:name>").unwrap() + 8..text.find("</c:name>").unwrap()])
+            .collect();
+        if destination_has_the_store {
+            assert_eq!(names, ["Dest Bo", "Source Ada"], "{bindings:?}");
+        } else {
+            assert_eq!(names, ["Source Ada"], "{bindings:?}");
+        }
+    }
+}
+
+#[test]
+fn an_imported_header_keeps_the_source_fonts_when_the_policy_keeps_them() {
+    let mut source = with_raw_story(
+        r#"<w:p><w:r><w:t>cover</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Plain header</w:t></w:r></w:p>"#,
+        &[],
+        false,
+    );
+    source
+        .set_default_font_name_value(Some("Source Serif"))
+        .unwrap();
+    let source = reopen(&mut source);
+    let mut doc = doc_with(&["dest"]);
+    doc.set_default_font_name_value(Some("Dest Sans")).unwrap();
+    let mut doc = reopen(&mut doc);
+    let start = item_at(&source, 0);
+    let end = ContentLocation::end(body(&source));
+    let fragment = DocumentFragment::from_range(&source, &start, &end, true).unwrap();
+    doc.import_fragment(
+        &ContentLocation::end(body(&doc)),
+        &fragment,
+        FragmentConflictPolicy::for_insert_document(Some(
+            FragmentConflictPolicy::reuse_equivalent(),
+        )),
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    let fonts = saved_values(&mut doc, "w:rFonts", "w:ascii");
+    for story in ["document", "header"] {
+        assert!(
+            fonts
+                .iter()
+                .any(|(part, font)| part.contains(story) && font == "Source Serif"),
+            "{story}: {fonts:?}"
+        );
+    }
+    let stories = source_stories_with(&mut doc, "Plain header");
+    let [header] = stories.as_slice() else {
+        panic!("{stories:?}");
+    };
+    assert!(word_value(header, "pStyle").is_some(), "{header}");
+}
+
+/// The header and footer parts of the saved `doc` holding `text`.
+fn source_stories_with(doc: &mut Document, text: &str) -> Vec<String> {
+    crate::support::package_parts(&saved(doc))
+        .into_iter()
+        .filter(|(name, _)| name.contains("header") || name.contains("footer"))
+        .map(|(_, bytes)| String::from_utf8_lossy(&bytes).into_owned())
+        .filter(|xml| xml.contains(text))
+        .collect()
+}
+
 // ---- import_fragment ----
 
 #[test]
