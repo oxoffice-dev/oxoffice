@@ -362,8 +362,9 @@ jobs:
             echo "v$VERSION is already pushed, going on"
           else
             # On the dispatched commit: the tag holds exactly the tree every
-            # job built, plus the version and the changelog. Empty only if
-            # that commit already held both; still the commit to tag.
+            # job built, plus the version, the changelog and the release's
+            # highlights file. Empty only if that commit already held them all;
+            # still the commit to tag.
             git add Cargo.toml Cargo.lock CHANGELOG.md changelog/highlights
             git commit --allow-empty -m "chore(release): v$VERSION"
             git tag -a "v$VERSION" -m "oxoffice v$VERSION"
@@ -418,9 +419,10 @@ jobs:
             if [ "$main" != "$GITHUB_SHA" ]; then
               git checkout -q --detach "$main"
               if ! git merge -q --no-ff --no-commit "$release"; then
-                # The release commit only changes these three files. Only
-                # the release writes CHANGELOG.md; the version files are
-                # main's, with the version set again below.
+                # The release commit changes the version files, CHANGELOG.md
+                # and its new changelog/highlights file. Only the release
+                # writes CHANGELOG.md; the version files are main's, with the
+                # version set again below.
                 for f in $(git diff --name-only --diff-filter=U); do
                   case "$f" in
                     CHANGELOG.md) git checkout --theirs -- "$f" ;;

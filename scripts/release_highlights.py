@@ -56,12 +56,17 @@ def stored(directory: str) -> dict:
     return found
 
 
-def apply(document: str, highlights: dict) -> str:
+def apply(document: str, highlights: dict, required: str = "") -> str:
     """The document with every stored release's highlights under its own heading.
 
-    A release the document has no section for is left out: the release notes
-    hold only the new version, the changelog every one.
+    A past release the document has no section for is left out: the release
+    notes hold only the new version, the changelog every one. The release being
+    made (`required`) must have its section, or its highlights would vanish.
     """
+    if required in highlights and not re.search(
+        rf"^## \[v?{re.escape(required)}\]", document, re.MULTILINE
+    ):
+        raise ValueError(f"no '## [{required}]' heading for the highlights of this release")
     for version, text in highlights.items():
         if re.search(rf"^## \[v?{re.escape(version)}\]", document, re.MULTILINE):
             document = insert(document, version, text)
@@ -103,7 +108,9 @@ def check() -> None:
         lambda: insert(changelog, "0.5.0", "- x"),
         lambda: insert(out, "0.4.0", "- again"),
         lambda: store(tempfile.gettempdir(), "0.4", "- x"),
+        lambda: apply("## [0.3.0] - 2026-11-22\n", {"0.4.0": "- four"}, required="0.4.0"),
     )
+    assert apply("## [0.3.0] - 2026-11-22\n", {"0.4.0": "- four"}) == "## [0.3.0] - 2026-11-22\n"
     for call in refused:
         try:
             call()
@@ -121,7 +128,7 @@ def main(args: list) -> int:
         elif len(args) == 3 and args[0] == "apply":
             with open(args[2], encoding="utf-8") as handle:
                 document = handle.read()
-            document = apply(document, stored(args[1]))
+            document = apply(document, stored(args[1]), required=os.environ.get("VERSION", ""))
             with open(args[2], "w", encoding="utf-8") as handle:
                 handle.write(document)
         else:
