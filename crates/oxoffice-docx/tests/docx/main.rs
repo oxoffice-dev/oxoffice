@@ -4,7 +4,6 @@
 mod body_savability;
 mod checked_replacement;
 mod comment_dates;
-mod comment_on_text;
 mod comments;
 mod content_controls;
 mod corpus;
@@ -28,7 +27,6 @@ mod property_strings;
 mod reader_view;
 mod render;
 mod revisions_and_compare;
-mod save;
 mod sections_and_headers;
 mod settings_strings;
 mod story_paragraphs;

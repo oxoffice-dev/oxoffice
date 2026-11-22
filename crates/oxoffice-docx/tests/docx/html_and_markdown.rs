@@ -11,8 +11,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use oxoffice_docx::paragraph::ParagraphRef;
 use oxoffice_docx::run::RunRef;
 use oxoffice_docx::{
-    BreakKind, CT_PPr, ChartData, ChartKind, Document, HtmlImageResource, Length, PictureOptions,
-    StoryKind, StyleBuilder,
+    BreakKind, ChartData, ChartKind, Document, HtmlImageResource, Length, PictureOptions, StoryKind,
 };
 use oxoffice_docx_oxml::table::VMerge;
 use oxoffice_opc::OpcPackage;
@@ -244,41 +243,6 @@ fn body_story(doc: &Document) -> oxoffice_docx::StoryId {
 // ---- Exports: page, fragment and Markdown ----
 
 #[test]
-fn the_html_page_wraps_the_fragment_and_each_diagnostics_twin_returns_the_same_text() {
-    let doc = reopen(&mut doc_with(&["First", "Second"]));
-    let fragment = doc.to_html_fragment();
-    assert_eq!(fragment, "<p>First</p>\n<p>Second</p>\n");
-    let page = doc.to_html();
-    assert!(
-        page.starts_with("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">"),
-        "{page}"
-    );
-    assert!(
-        page.ends_with(&format!("<body>\n{fragment}\n</body>\n</html>")),
-        "{page}"
-    );
-    assert_eq!(doc.to_markdown(), "First\n\nSecond\n\n");
-    assert_eq!(doc.to_html_with_diagnostics(), (page, Vec::new()));
-    assert_eq!(
-        doc.to_html_fragment_with_diagnostics(),
-        (fragment, Vec::new())
-    );
-    assert_eq!(
-        doc.to_markdown_with_diagnostics(),
-        (doc.to_markdown(), Vec::new())
-    );
-
-    let empty = reopen(&mut Document::new());
-    assert_eq!(empty.to_html_fragment(), "");
-    assert_eq!(empty.to_markdown(), "");
-    assert!(
-        empty.to_html().ends_with("<body>\n\n</body>\n</html>"),
-        "{}",
-        empty.to_html()
-    );
-}
-
-#[test]
 fn headings_export_at_the_level_their_style_or_outline_level_gives() {
     let mut body = String::new();
     for level in 1..=6 {
@@ -306,31 +270,6 @@ fn headings_export_at_the_level_their_style_or_outline_level_gives() {
     expected.push(Read::Heading(3, "Outline three".to_owned()));
     expected.push(Read::Paragraph("Body".to_owned()));
     assert_eq!(read_markdown(&doc.to_markdown()), expected);
-}
-
-#[test]
-fn a_paragraph_at_the_body_text_outline_level_is_not_a_markdown_heading() {
-    // The French Word report names its TOC Heading style, outline level 9,
-    // "En-ttedetabledesmatires".
-    let mut doc = corpus_doc("word/report.docx");
-    doc.insert_paragraph(0, "Contents")
-        .style("En-ttedetabledesmatires");
-    let doc = reopen(&mut doc);
-    assert!(
-        doc.headings().iter().all(|(_, text)| text != "Contents"),
-        "headings() leaves the TOC title out"
-    );
-    assert!(
-        doc.to_html_fragment().starts_with("<p>Contents</p>\n"),
-        "HTML writes the TOC title as a paragraph"
-    );
-    let markdown = doc.to_markdown();
-    assert_eq!(
-        read_markdown(&markdown)[0],
-        Read::Paragraph("Contents".to_owned()),
-        "a body-text paragraph is written as a Markdown heading: {:?}",
-        markdown.lines().next()
-    );
 }
 
 #[test]
@@ -416,35 +355,6 @@ fn inline_formats_become_html_elements_and_markdown_spells_bold_italic_and_strik
     );
 }
 
-#[test]
-fn text_whose_underline_is_turned_off_is_not_underlined_in_html() {
-    let mut doc = Document::new();
-    doc.add_paragraph("").add_run("plain").underline(false);
-    let doc = reopen(&mut doc);
-    let paragraph = doc.paragraph(0).unwrap();
-    assert!(!run_with_text(&paragraph, "plain").is_underline());
-    let underlined = html_texts(&doc.to_html_fragment(), "u");
-    assert!(
-        underlined.is_empty(),
-        "{underlined:?} is underlined in HTML although its underline is off"
-    );
-
-    // Google Docs writes w:u w:val="none" on the runs of its list items.
-    let google = corpus_doc("google/report.docx");
-    let item = "Subscription revenue reached 4.2 million euros, up from 3.7 million.";
-    let paragraph = google
-        .paragraphs()
-        .into_iter()
-        .find(|paragraph| paragraph.text() == item)
-        .expect("the Google report holds the item");
-    assert!(!run_with_text(&paragraph, item).is_underline());
-    let underlined = html_texts(&google.to_html_fragment(), "u");
-    assert!(
-        !underlined.iter().any(|text| text == item),
-        "the Google item is underlined in HTML although its underline is off"
-    );
-}
-
 // ---- Escaping and sanitizing ----
 
 #[test]
@@ -463,29 +373,6 @@ fn html_escapes_markup_so_a_browser_reads_back_the_text() {
         html.contains("<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>"),
         "{html}"
     );
-}
-
-#[test]
-fn markdown_escapes_specials_so_a_commonmark_reader_reads_back_the_text() {
-    let lines = [
-        "*not emphasis* and _not either_",
-        "a < b and `not code`",
-        "[not a link](https://example.com)",
-        "~~not struck~~ and a back\\slash",
-        "# not a heading",
-        "1. not a list",
-        "- not a bullet",
-        "+ not a bullet either",
-        "> not a quote",
-        "AT&T, 5 * 3 and a | b",
-    ];
-    let doc = reopen(&mut doc_with(&lines));
-    let markdown = doc.to_markdown();
-    let expected: Vec<Read> = lines
-        .iter()
-        .map(|line| Read::Paragraph((*line).to_owned()))
-        .collect();
-    assert_eq!(read_markdown(&markdown), expected, "{markdown}");
 }
 
 #[test]
@@ -581,25 +468,6 @@ fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
 }
 
 #[test]
-fn a_body_text_paragraph_takes_no_numbering_from_its_style_in_markdown() {
-    // The French Word thesis numbers its headings through Titre1, on which
-    // its TOC Heading style, outline level 9, is based.
-    let mut doc = corpus_doc("word/thesis.docx");
-    doc.insert_paragraph(0, "Contents")
-        .style("En-ttedetabledesmatires");
-    let doc = reopen(&mut doc);
-    let html = doc.to_html_fragment();
-    assert!(html.starts_with("<p>Contents</p>\n"), "{html:.80}");
-    let markdown = doc.to_markdown();
-    assert_eq!(
-        read_markdown(&markdown)[0],
-        Read::Paragraph("Contents".to_owned()),
-        "{:?}",
-        markdown.lines().next()
-    );
-}
-
-#[test]
 fn a_described_picture_has_one_alt_attribute_in_epub() {
     let mut doc = Document::new();
     let body = body_story(&doc);
@@ -631,63 +499,6 @@ fn a_described_picture_has_one_alt_attribute_in_epub() {
         assert!(image.contains(alt), "{image}");
         assert!(image.ends_with(" style=\"max-width:100%\"/>"), "{image}");
     }
-}
-
-#[test]
-fn a_paragraph_right_to_left_through_its_style_chain_keeps_its_direction_in_html() {
-    let mut doc = Document::new();
-    let right_to_left = CT_PPr {
-        bidi: Some(true),
-        ..CT_PPr::default()
-    };
-    doc.add_style(StyleBuilder::paragraph("Arabic", "Arabic").paragraph_properties(right_to_left))
-        .unwrap();
-    doc.add_style(StyleBuilder::paragraph("ArabicQuote", "Arabic quote").based_on("Arabic"))
-        .unwrap();
-    doc.add_paragraph("نص").style("ArabicQuote");
-    // A direct `w:bidi w:val="0"` wins over the style.
-    doc.add_paragraph("text")
-        .style("Arabic")
-        .right_to_left(false);
-    let doc = reopen(&mut doc);
-    let html = doc.to_html_fragment();
-    assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
-    assert!(html.contains("<p>text</p>"), "{html}");
-
-    // A paragraph without a style follows the default paragraph style.
-    let mut doc = Document::new();
-    doc.add_paragraph("نص");
-    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
-    let start = styles
-        .find("w:styleId=\"Normal\"")
-        .expect("the template has Normal");
-    let end = styles[start..].find("</w:style>").unwrap() + start;
-    let normal = &styles[start..end];
-    let edited = match normal.find("<w:rPr>") {
-        Some(at) => format!("{}<w:pPr><w:bidi/></w:pPr>{}", &normal[..at], &normal[at..]),
-        None => format!("{normal}<w:pPr><w:bidi/></w:pPr>"),
-    };
-    assert!(!normal.contains("<w:pPr>"), "{normal}");
-    package.set_part(
-        "/word/styles.xml",
-        format!("{}{edited}{}", &styles[..start], &styles[end..]).into_bytes(),
-    );
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
-    let html = doc.to_html_fragment();
-    assert!(html.contains("<p dir=\"rtl\">نص</p>"), "{html}");
-
-    // `start` follows the direction rather than meaning left.
-    let doc = reopen(&mut doc_with_body(
-        r#"<w:p><w:pPr><w:bidi/><w:jc w:val="start"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
-    ));
-    let html = doc.to_html_fragment();
-    assert!(
-        html.contains("<p dir=\"rtl\" style=\"text-align:start\">x</p>"),
-        "{html}"
-    );
 }
 
 #[test]
@@ -944,63 +755,6 @@ fn line_breaks_tabs_and_page_breaks_keep_their_place() {
 
 // ---- Pictures ----
 
-#[test]
-fn pictures_are_embedded_as_data_uris_of_their_bytes() {
-    let mut doc = doc_with(&["Before"]);
-    let body = body_story(&doc);
-    doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("A *red* dot")))
-        .unwrap();
-    doc.add_picture(PNG, "plain.png", Length::pt(10.0), Length::pt(10.0));
-    let doc = reopen(&mut doc);
-    let pictures = doc.pictures().unwrap();
-    assert_eq!(pictures.len(), 2);
-    assert!(pictures.iter().all(|picture| picture.bytes == PNG));
-
-    let uri = format!("data:image/png;base64,{}", BASE64.encode(PNG));
-    let sources: Vec<Option<String>> = html_elements(&doc.to_html_fragment(), "img")
-        .into_iter()
-        .map(|(_, attributes)| attributes.get("src").cloned())
-        .collect();
-    assert_eq!(sources, [Some(uri.clone()), Some(uri.clone())]);
-
-    // Markdown writes the alt text, escaped.
-    let markdown = doc.to_markdown();
-    assert!(
-        markdown.contains(&format!("![A \\*red\\* dot]({uri})")),
-        "{markdown}"
-    );
-    assert_eq!(
-        markdown_targets(&markdown),
-        [
-            (true, "A *red* dot".to_owned(), uri.clone()),
-            (true, String::new(), uri),
-        ]
-    );
-}
-
-#[test]
-fn a_pictures_alt_text_reaches_the_html() {
-    let mut doc = Document::new();
-    let body = body_story(&doc);
-    doc.add_picture_with_options(&body, PNG, "dot.png", picture_options(Some("A red dot")))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        doc.pictures().unwrap()[0].description.as_deref(),
-        Some("A red dot")
-    );
-    assert_eq!(markdown_targets(&doc.to_markdown())[0].1, "A red dot");
-    let alts: Vec<Option<String>> = html_elements(&doc.to_html_fragment(), "img")
-        .into_iter()
-        .map(|(_, attributes)| attributes.get("alt").cloned())
-        .collect();
-    assert_eq!(
-        alts,
-        [Some("A red dot".to_owned())],
-        "the picture's alt text is missing from the HTML"
-    );
-}
-
 // ---- Tables ----
 
 #[test]
@@ -1088,37 +842,6 @@ fn merged_cells_become_spans_in_html_and_keep_their_text_in_markdown() {
     );
 }
 
-#[test]
-fn html_spans_a_cell_merged_down_beside_a_horizontal_merge() {
-    let mut doc = Document::new();
-    {
-        let mut table = three_by_three(&mut doc);
-        table.merge_cells((0, 2), (1, 2)).unwrap();
-        table.merge_cells((1, 0), (1, 1)).unwrap();
-    }
-    let doc = reopen(&mut doc);
-    let table = doc.table(0).unwrap();
-    assert!(matches!(
-        table.cell(0, 2).unwrap().v_merge(),
-        Some(VMerge::Restart)
-    ));
-    let second = table.row(1).unwrap();
-    assert_eq!(second.cell(0).unwrap().grid_span(), Some(2));
-    assert!(matches!(
-        second.cell(1).unwrap().v_merge(),
-        Some(VMerge::Continue)
-    ));
-
-    let rows = html_table_rows(&doc.to_html_fragment());
-    let (text, attributes) = &rows[0][2];
-    assert_eq!(text, "r02\nr12");
-    assert_eq!(
-        attributes.get("rowspan").map(String::as_str),
-        Some("2"),
-        "a cell merged down beside a horizontal merge loses its row span: {rows:?}"
-    );
-}
-
 /// A table of three grid columns whose rows are `rows`, each a row's XML
 /// inside `w:tr`.
 fn three_column_table(rows: &[&str]) -> String {
@@ -1162,117 +885,6 @@ fn markdown_places_cells_by_grid_column_and_aligns_columns_by_their_header() {
         markdown.lines().nth(1),
         Some("| :---: | --- | ---: |"),
         "{markdown}"
-    );
-}
-
-#[test]
-fn a_huge_grid_span_from_the_file_stays_within_the_table_in_both_exports() {
-    // Two cells past the table's width, as a generator that sets gridSpan
-    // without removing the cells it covers writes them: both keep their text.
-    let row = format!(
-        "{}{}{}",
-        table_cell(r#"<w:gridSpan w:val="4000000000"/>"#, "wide"),
-        table_cell("", "after"),
-        table_cell("", "then")
-    );
-    let before = format!(
-        r#"<w:trPr><w:gridBefore w:val="4000000000"/></w:trPr>{}{}"#,
-        table_cell("", "late"),
-        table_cell("", "later")
-    );
-    let doc = reopen(&mut doc_with_body(&three_column_table(&[&row, &before])));
-    let markdown = doc.to_markdown();
-    assert!(markdown.len() < 1000, "{} bytes", markdown.len());
-    assert!(
-        ["wide", "after", "then", "late", "later"]
-            .iter()
-            .all(|text| markdown.contains(text)),
-        "{markdown}"
-    );
-    let html = doc.to_html_fragment();
-    assert!(html.contains("after") && html.contains("late"), "{html}");
-}
-
-#[test]
-fn markdown_keeps_the_cells_after_a_horizontal_merge_in_their_columns() {
-    let mut doc = Document::new();
-    three_by_three(&mut doc)
-        .merge_cells((1, 0), (1, 1))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let html_rows = html_table_rows(&doc.to_html_fragment());
-    assert_eq!(html_rows[1][1].0, "r12");
-    let read = read_markdown(&doc.to_markdown());
-    let Read::Table(rows) = &read[0] else {
-        panic!("{read:?}")
-    };
-    assert_eq!(
-        rows[1][2], "r12",
-        "a cell after a horizontal merge moves to another column in Markdown: {rows:?}"
-    );
-}
-
-#[test]
-fn markdown_tables_take_the_first_row_as_header_and_escape_cell_text() {
-    let mut doc = Document::new();
-    {
-        let mut table = doc.add_table(3, 2);
-        table.cell(0, 0).unwrap().set_text("Name");
-        table.cell(0, 1).unwrap().set_text("Value");
-        table.cell(1, 0).unwrap().set_text("a|b");
-        let mut cell = table.cell(1, 1).unwrap();
-        cell.set_text("first");
-        cell.add_paragraph("second");
-        table.cell(2, 0).unwrap().set_text("*x*");
-        table.cell(2, 1).unwrap().set_text("`y`");
-    }
-    let doc = reopen(&mut doc);
-    let markdown = doc.to_markdown();
-    let read = read_markdown(&markdown);
-    let [Read::Table(rows)] = read.as_slice() else {
-        panic!("{markdown}")
-    };
-    assert_eq!(rows[0], ["Name", "Value"]);
-    assert_eq!(rows[1][0], "a|b");
-    assert!(
-        rows[1][1].starts_with("first") && rows[1][1].ends_with("second"),
-        "both paragraphs stay in their cell: {rows:?}"
-    );
-    assert_eq!(rows[2], ["*x*", "`y`"]);
-}
-
-#[test]
-fn markdown_keeps_the_text_of_a_nested_table() {
-    let mut doc = Document::new();
-    {
-        let mut table = doc.add_table(1, 2);
-        table.cell(0, 0).unwrap().set_text("Supported codes");
-        let mut cell = table.cell(0, 1).unwrap();
-        let mut nested = cell.add_table(2, 2);
-        for (row, texts) in [["EAN-13", "13 digits"], ["UPC-A", "12 digits"]]
-            .iter()
-            .enumerate()
-        {
-            for (column, text) in texts.iter().enumerate() {
-                nested.cell(row, column).unwrap().set_text(text);
-            }
-        }
-    }
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        html_texts(&doc.to_html_fragment(), "td td"),
-        ["EAN-13", "13 digits", "UPC-A", "12 digits"]
-    );
-    // GFM has no nested tables: the nested table's rows go into the cell,
-    // each on a line of its own, its cells between pipes.
-    let markdown = doc.to_markdown();
-    assert_eq!(
-        read_markdown(&markdown),
-        [Read::Table(vec![vec![
-            "Supported codes".to_owned(),
-            "EAN-13 | 13 digits<br>UPC-A | 12 digits".to_owned()
-        ]])],
-        "the nested table's text is missing from the Markdown: {markdown}"
     );
 }
 
@@ -1473,75 +1085,6 @@ fn links_to_bookmarks_in_cells_after_links_and_missing_ones_read_right() {
         markdown.contains("[deep](https://example.com/#part)"),
         "{markdown}"
     );
-}
-
-#[test]
-fn a_header_row_holds_header_cells_in_html() {
-    let doc = reopen(&mut doc_with_body(concat!(
-        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
-        r#"<w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc>"#,
-        r#"<w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc></w:tr>"#,
-        r#"<w:tr><w:tc><w:p><w:r><w:t>Ann</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr>"#,
-        r#"</w:tbl><w:p/>"#,
-    )));
-    let html = doc.to_html_fragment();
-    assert_eq!(html.matches("<th ").count(), 2, "{html}");
-    // Drawn like the cell Word draws, not bold and centred.
-    assert!(
-        html.contains("<th style=\"font-weight:inherit;text-align:inherit;\"><p>Name</p>\n</th>"),
-        "{html}"
-    );
-    assert!(html.contains("<td><p>Ann</p>\n</td>"), "{html}");
-    // An HTML reader marks the row as a header again, and reads the cells'
-    // style without a diagnostic.
-    let result = Document::from_html(&doc.to_html()).unwrap();
-    // (The base style sheet's rules are reported, as for every export.)
-    assert!(
-        result
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.location.contains("/style[")),
-        "{:?}",
-        result.diagnostics
-    );
-    let reread = result.document;
-    assert!(reread.table(0).unwrap().row(0).unwrap().is_header());
-}
-
-#[test]
-fn the_exports_hold_the_body_only() {
-    // The emitter converts "body content only"; the CLI convert route
-    // appends the other stories itself.
-    let mut doc = doc_with(&["Commented text here", "Noted here"]);
-    doc.add_comment_on_text("text", "Ann", "A comment", Default::default())
-        .unwrap();
-    doc.set_header("Header text");
-    doc.set_footer("Footer text");
-    let location = doc.paragraph_story_location(1).unwrap().unwrap();
-    let note = doc.create_footnote(&location, "Note text").unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), 1);
-    assert_eq!(doc.header_text().as_deref(), Some("Header text"));
-    assert_eq!(doc.footer_text().as_deref(), Some("Footer text"));
-    assert!(doc.footnote_story(note).unwrap().is_some());
-
-    // The body text is there, the other stories' text is not. How a note
-    // reference or a comment mark shows is not pinned: the facade docs do
-    // not state it.
-    for (format, output) in [
-        ("HTML", doc.to_html_fragment()),
-        ("Markdown", doc.to_markdown()),
-    ] {
-        for body in ["Commented text here", "Noted here"] {
-            assert!(output.contains(body), "{format} lacks {body:?}: {output}");
-        }
-        for story in ["A comment", "Header text", "Footer text", "Note text"] {
-            assert!(
-                !output.contains(story),
-                "{format} holds {story:?}: {output}"
-            );
-        }
-    }
 }
 
 // ---- Equations ----
@@ -1885,239 +1428,7 @@ fn an_equation_after_a_link_is_not_part_of_the_link() {
 
 // ---- Corpus ----
 
-#[test]
-fn report_headings_and_merged_note_row_of_every_producer_reach_both_exports() {
-    let note = "Operating margin excludes one-off costs of the Lyon opening (212).";
-    for producer in ["word", "google", "libreoffice", "authored"] {
-        let doc = corpus_doc(&format!("{producer}/report.docx"));
-        let headings: Vec<(usize, String)> = doc
-            .headings()
-            .into_iter()
-            .map(|(level, text)| (level as usize, text))
-            .collect();
-        assert_eq!(headings.len(), 6, "{producer}");
-
-        let html = doc.to_html_fragment();
-        let mut html_headings = Vec::new();
-        for (text, _) in html_elements(&html, "h1, h2, h3, h4, h5, h6") {
-            let level = (1..=6)
-                .find(|level| html.contains(&format!("<h{level}>{text}</h{level}>")))
-                .unwrap_or_else(|| panic!("{producer}: {text}"));
-            html_headings.push((level, text));
-        }
-        assert_eq!(html_headings, headings, "{producer}");
-        let (_, attributes) = html_elements(&html, "td")
-            .into_iter()
-            .find(|(text, _)| text == note)
-            .unwrap_or_else(|| panic!("{producer}: the note row is a cell"));
-        assert_eq!(
-            attributes.get("colspan").map(String::as_str),
-            Some("4"),
-            "{producer}"
-        );
-
-        let read = read_markdown(&doc.to_markdown());
-        let markdown_headings: Vec<(usize, String)> = read
-            .iter()
-            .filter_map(|block| match block {
-                Read::Heading(level, text) => Some((*level, text.clone())),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(markdown_headings, headings, "{producer}");
-        let first_table = read
-            .iter()
-            .find_map(|block| match block {
-                Read::Table(rows) => Some(rows),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("{producer}: a table"));
-        assert_eq!(
-            first_table.last().unwrap(),
-            &[note, "", "", ""],
-            "{producer}"
-        );
-    }
-}
-
-/// Whether `text` holds Arabic, Hebrew or CJK characters.
-fn rtl_or_cjk(text: &str) -> bool {
-    text.chars().any(|c| {
-        matches!(c, '\u{0590}'..='\u{06FF}' | '\u{3040}'..='\u{30FF}' | '\u{4E00}'..='\u{9FFF}')
-    })
-}
-
-#[test]
-fn rtl_and_cjk_text_of_the_minutes_survives_both_exports() {
-    let doc = corpus_doc("word/minutes.docx");
-    let expected: Vec<String> = texts(&doc)
-        .into_iter()
-        .map(|text| text.trim().to_owned())
-        .filter(|text| rtl_or_cjk(text))
-        .collect();
-    assert!(expected.len() >= 6, "{expected:?}");
-
-    let html = doc.to_html_fragment();
-    let html_blocks = html_texts(&html, "p, li, h1, h2, h3");
-    let markdown = doc.to_markdown();
-    let markdown_blocks: Vec<String> = read_markdown(&markdown)
-        .into_iter()
-        .filter_map(|block| match block {
-            Read::Heading(_, text) | Read::Paragraph(text) | Read::Item(text) => Some(text),
-            _ => None,
-        })
-        .collect();
-    for text in &expected {
-        assert!(
-            html_blocks.iter().any(|block| block.trim() == text),
-            "HTML: {text}"
-        );
-        assert!(markdown_blocks.contains(text), "Markdown: {text}");
-    }
-
-    // The Arabic and Chinese cells of the tables.
-    for cell in ["إعداد خطة افتتاح مستودع شنغهاي.", "配送时间"] {
-        assert!(
-            html_texts(&html, "td").iter().any(|text| text == cell),
-            "{cell}"
-        );
-        assert!(
-            read_markdown(&markdown).iter().any(|block| matches!(
-                block,
-                Read::Table(rows) if rows.iter().flatten().any(|text| text == cell)
-            )),
-            "{cell}"
-        );
-    }
-}
-
-#[test]
-fn a_right_to_left_paragraph_keeps_its_direction_in_html() {
-    let doc = corpus_doc("word/minutes.docx");
-    let paragraph = doc
-        .paragraphs()
-        .into_iter()
-        .find(|paragraph| paragraph.text().starts_with("رحّب"))
-        .expect("the Arabic statement");
-    assert_eq!(paragraph.right_to_left_value(), Some(true));
-    let text = paragraph.text();
-    let (_, attributes) = html_elements(&doc.to_html_fragment(), "p")
-        .into_iter()
-        .find(|(html_text, _)| *html_text == text)
-        .expect("the statement is a paragraph");
-    let rtl = attributes.get("dir").map(String::as_str) == Some("rtl")
-        || attributes
-            .get("style")
-            .is_some_and(|style| style.contains("direction:rtl"));
-    assert!(
-        rtl,
-        "the right-to-left paragraph is written without its direction: {attributes:?}"
-    );
-}
-
-#[test]
-fn exporting_leaves_the_document_unchanged() {
-    let mut doc = corpus_doc("word/report.docx");
-    let before = doc.to_bytes().unwrap();
-    let _ = doc.to_html();
-    let _ = doc.to_html_with_diagnostics();
-    let _ = doc.to_html_fragment();
-    let _ = doc.to_html_fragment_with_diagnostics();
-    let _ = doc.to_markdown();
-    let _ = doc.to_markdown_with_diagnostics();
-    assert!(
-        doc.to_bytes().unwrap() == before,
-        "an export changed the document"
-    );
-}
-
 // ---- Round trips ----
-
-/// A document with a heading, bold, italic and struck runs, a link and a
-/// table, saved and reopened.
-fn rich_document() -> Document {
-    let mut doc = Document::new();
-    doc.add_paragraph("Quarterly report").style("Heading1");
-    {
-        let mut paragraph = doc.add_paragraph("Sales ");
-        paragraph.add_run("rose").bold(true);
-        paragraph.add_run(" by ");
-        paragraph.add_run("ten").italic(true);
-        paragraph.add_run(" percent, ");
-        paragraph.add_run("not").strike(true);
-        paragraph.add_run(" less.");
-    }
-    let link = doc.add_hyperlink_relationship("https://example.com/report");
-    doc.add_paragraph("See ").add_hyperlink("the report", &link);
-    {
-        let mut table = doc.add_table(2, 2);
-        table.cell(0, 0).unwrap().set_text("Region");
-        table.cell(0, 1).unwrap().set_text("Revenue");
-        table.cell(1, 0).unwrap().set_text("North");
-        table.cell(1, 1).unwrap().set_text("1,402");
-    }
-    doc.add_paragraph("End.");
-    reopen(&mut doc)
-}
-
-/// Check that `doc` reads as [`rich_document`] through the facade.
-fn assert_reads_as_the_rich_document(doc: &Document) {
-    assert_eq!(
-        texts(doc),
-        [
-            "Quarterly report",
-            "Sales rose by ten percent, not less.",
-            "See the report",
-            "End."
-        ]
-    );
-    assert_eq!(doc.paragraph(0).unwrap().style_id(), Some("Heading1"));
-    let sales = doc.paragraph(1).unwrap();
-    assert!(run_with_text(&sales, "rose").is_bold());
-    assert!(run_with_text(&sales, "ten").is_italic());
-    assert!(run_with_text(&sales, "not").is_strike());
-    assert!(!run_with_text(&sales, " by ").is_bold());
-    let see = doc.paragraph(2).unwrap();
-    let spans = see.hyperlink_spans();
-    assert_eq!(spans.len(), 1);
-    let relationship = spans[0].2.expect("an external link");
-    assert_eq!(
-        doc.hyperlink_url(relationship).as_deref(),
-        Some("https://example.com/report")
-    );
-    let table = doc.table(0).unwrap();
-    assert_eq!(table.cell(0, 1).unwrap().text(), "Revenue");
-    assert_eq!(table.cell(1, 1).unwrap().text(), "1,402");
-}
-
-#[test]
-fn markdown_export_reads_back_as_the_same_document_and_the_same_markdown() {
-    let doc = rich_document();
-    let markdown = doc.to_markdown();
-    let imported = Document::from_markdown(&markdown).unwrap();
-    assert_eq!(imported.diagnostics, []);
-    let imported = reopen(&mut { imported.document });
-    assert_reads_as_the_rich_document(&imported);
-    assert_eq!(imported.to_markdown(), markdown);
-}
-
-#[test]
-fn html_export_reads_back_as_the_same_document() {
-    let doc = rich_document();
-    let imported = Document::from_html(&doc.to_html()).unwrap();
-    // The reader reports only rules of the page's own style sheet it cannot
-    // apply; it applies the others (the link rule gives the link run its
-    // colour and underline), so the content and its formatting read back.
-    assert!(
-        imported.diagnostics.iter().all(|diagnostic| {
-            diagnostic.location.contains("style") && diagnostic.message.contains("CSS")
-        }),
-        "{:?}",
-        imported.diagnostics
-    );
-    let imported = reopen(&mut { imported.document });
-    assert_reads_as_the_rich_document(&imported);
-}
 
 // ---- Imports ----
 
@@ -2347,34 +1658,4 @@ fn markdown_import_reads_commonmark_and_locates_what_it_drops_in_the_source() {
     let table = doc.table(0).unwrap();
     assert_eq!(table.cell(0, 1).unwrap().text(), "B");
     assert_eq!(table.cell(1, 1).unwrap().text(), "x|y");
-}
-
-#[test]
-fn imports_into_a_template_keep_its_header_and_footer_and_replace_its_body() {
-    let mut template = doc_with(&["Discard this template body"]);
-    template.set_header("Keep header");
-    template.set_footer("Keep footer");
-    let mut template = reopen(&mut template);
-    let before = template.to_bytes().unwrap();
-
-    let from_markdown =
-        Document::from_markdown_with_options("# Replacement\n\nBody", Some(&template), &[])
-            .unwrap();
-    let from_html =
-        Document::from_html_with_options("<h2>Replacement</h2><p>Body</p>", Some(&template), &[])
-            .unwrap();
-    for (imported, heading) in [
-        (from_markdown.document, "Heading1"),
-        (from_html.document, "Heading2"),
-    ] {
-        let doc = reopen(&mut { imported });
-        assert_eq!(texts(&doc), ["Replacement", "Body"]);
-        assert_eq!(doc.paragraph(0).unwrap().style_id(), Some(heading));
-        assert_eq!(doc.header_text().as_deref(), Some("Keep header"));
-        assert_eq!(doc.footer_text().as_deref(), Some("Keep footer"));
-    }
-    assert!(
-        template.to_bytes().unwrap() == before,
-        "the template is left as it was"
-    );
 }

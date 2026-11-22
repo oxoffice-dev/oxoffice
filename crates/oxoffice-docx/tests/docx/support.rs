@@ -169,16 +169,6 @@ pub fn every_copy() -> bool {
     std::env::var("OXOFFICE_WORKFLOWS").is_ok_and(|value| value == "full")
 }
 
-/// The copies a workflow test reads: the first producer's on a pull request,
-/// every producer's with [`every_copy`].
-pub fn workflow_copies<'a>(producers: &[&'a str]) -> Vec<&'a str> {
-    if every_copy() {
-        producers.to_vec()
-    } else {
-        producers[..1].to_vec()
-    }
-}
-
 /// The name the workflow tests give [`small_thesis`].
 pub const SMALL_THESIS: &str = "small-thesis";
 
@@ -289,16 +279,6 @@ pub fn every_thesis_copy() -> Vec<String> {
 /// comparisons and page fields only.
 pub fn walk_renders(copy: &str) -> bool {
     copy == SMALL_THESIS || copy.starts_with("word/")
-}
-
-/// The record copies a workflow test walks: the one Word then Google Docs
-/// saved on a pull request, every producer's copy with [`every_copy`].
-pub fn record_copies() -> Vec<String> {
-    let mut copies = every_record_copy();
-    if !every_copy() {
-        copies.truncate(1);
-    }
-    copies
 }
 
 /// Every producer's corpus copy of the record, the co-edited one first.

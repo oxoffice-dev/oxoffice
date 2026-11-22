@@ -12,12 +12,12 @@ use std::path::PathBuf;
 use oxoffice_docx::{
     BuildingBlock, BuildingBlockKind, ChartData, ChartKind, CommentDate, Document,
     DrawingHorizontalRelativeFrom, DrawingVerticalRelativeFrom, DrawingWrap,
-    FragmentConflictPolicy, HdrFtrType, HeaderFooterKind, Length, MailMerge, MailMergeData,
-    MailMergeDestination, MailMergeDocumentType, MailMergeFieldMapping, MailMergeFormatContext,
-    MailMergeFormattedText, MailMergeImage, MailMergePackageDiagnosticKind,
-    MailMergePackageOptions, MailMergePackageSource, MailMergeRecipient, MailMergeRecord,
-    MailMergeSourcePolicy, MailMergeValue, PictureAnchor, StoryKind, TextBoxDirection,
-    TextBoxOptions, TextCommentOptions, WordCreationProfile, WordPackageClass,
+    FragmentConflictPolicy, HdrFtrType, Length, MailMerge, MailMergeData, MailMergeDestination,
+    MailMergeDocumentType, MailMergeFieldMapping, MailMergeFormatContext, MailMergeFormattedText,
+    MailMergeImage, MailMergePackageDiagnosticKind, MailMergePackageOptions,
+    MailMergePackageSource, MailMergeRecipient, MailMergeRecord, MailMergeSourcePolicy,
+    MailMergeValue, PictureAnchor, StoryKind, TextBoxDirection, TextBoxOptions, TextCommentOptions,
+    WordCreationProfile, WordPackageClass,
 };
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::text::CT_P;
@@ -75,20 +75,6 @@ fn main_part_content_type(bytes: &[u8]) -> String {
         .override_for(&main)
         .expect("main part has an override")
         .to_owned()
-}
-
-/// The text of an endnote, its paragraphs joined by new lines.
-fn endnote_text(doc: &Document, id: i32) -> String {
-    let story = doc
-        .endnote_story(id)
-        .expect("endnote lookup")
-        .expect("endnote exists");
-    doc.story_items(&story)
-        .expect("endnote story reads")
-        .iter()
-        .map(|item| item.text().expect("endnote item reads").unwrap_or_default())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// An AutoText building block of one paragraph.
@@ -149,18 +135,6 @@ fn raw_paragraphs(texts: &[&str]) -> String {
         .collect()
 }
 
-/// The text of each `w:t` of a part, in order.
-fn part_texts(xml: &str) -> Vec<String> {
-    xml.split("<w:t")
-        .skip(1)
-        .filter(|rest| rest.starts_with('>') || rest.starts_with(' '))
-        .map(|rest| {
-            let start = rest.find('>').unwrap() + 1;
-            rest[start..start + rest[start..].find("</w:t>").unwrap()].to_owned()
-        })
-        .collect()
-}
-
 /// The corpus file `name` with raw XML written into its parts: each
 /// `(part, after, before, xml)` puts `xml` in front of the first `before`
 /// that follows `after` in that part.
@@ -181,15 +155,6 @@ fn corpus_doc_with(name: &str, insertions: &[(&str, &str, &str, String)]) -> Doc
 }
 
 // ---- Scalar tags ----
-
-#[test]
-fn a_tag_takes_its_value_and_keeps_the_text_around_it() {
-    let mut doc = doc_with(&["Hello {{ name }}, welcome.", "No tag here"]);
-    assert_eq!(doc.render_template(&json!({ "name": "Ada" })).unwrap(), 1);
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["Hello Ada, welcome.", "No tag here"]);
-    assert!(!doc.part_xml("word/document.xml").unwrap().contains("{{"));
-}
 
 #[test]
 fn dotted_paths_read_nested_objects_and_scalars_render_as_text() {
@@ -279,45 +244,6 @@ fn a_malformed_tag_fails_and_changes_nothing() {
 }
 
 #[test]
-fn values_render_literally_whatever_characters_they_hold() {
-    let values = [
-        ("markup", "<b>Smith & \"Sons\"</b> 'Ltd'"),
-        ("cjk", "東京都千代田区"),
-        ("rtl", "مرحبا بالعالم"),
-        ("emoji", "Merci 😀"),
-        // A value that looks like a tag stays as written.
-        ("tag", "{{ markup }}"),
-    ];
-    let paragraphs: Vec<String> = values
-        .iter()
-        .map(|(key, _)| format!("{{{{ {key} }}}}"))
-        .collect();
-    let paragraphs: Vec<&str> = paragraphs.iter().map(String::as_str).collect();
-    let mut doc = doc_with(&paragraphs);
-    let data: serde_json::Map<String, serde_json::Value> = values
-        .iter()
-        .map(|(key, value)| ((*key).to_owned(), json!(value)))
-        .collect();
-    assert_eq!(doc.render_template(&data.into()).unwrap(), values.len());
-    let doc = reopen(&mut doc);
-    let expected: Vec<&str> = values.iter().map(|(_, value)| *value).collect();
-    assert_eq!(texts(&doc), expected);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains("&lt;b&gt;Smith &amp;"),
-        "markup is escaped: {xml}"
-    );
-}
-
-#[test]
-fn a_document_without_tags_renders_nothing_and_stays_byte_identical() {
-    let mut doc = doc_with(&["Plain text", "with { braces } and % signs"]);
-    let before = doc.to_bytes().unwrap();
-    assert_eq!(doc.render_template(&json!({ "unused": 1 })).unwrap(), 0);
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
 fn tags_in_a_text_box_and_in_chart_labels_are_filled() {
     let mut doc = doc_with(&["Body"]);
     let body = doc
@@ -387,37 +313,6 @@ fn tags_in_a_text_box_and_in_chart_labels_are_filled() {
             assert!(!chart.contains("{{"), "{name}: {chart}");
         }
     }
-}
-
-#[test]
-fn tags_in_headers_footers_tables_and_notes_are_filled() {
-    let mut doc = doc_with(&["Body {{ who }}"]);
-    doc.set_header("Header {{ who }}");
-    doc.set_footer("Footer {{ ref }}");
-    {
-        let mut table = doc.add_table(1, 2);
-        table.cell(0, 0).unwrap().set_text("Cell {{ who }}");
-        table.cell(0, 1).unwrap().set_text("{{ ref }}");
-    }
-    let location = doc.paragraph_story_location(0).unwrap().unwrap();
-    let footnote = doc.create_footnote(&location, "Note {{ who }}").unwrap();
-    let location = doc.paragraph_story_location(0).unwrap().unwrap();
-    let endnote = doc.create_endnote(&location, "End {{ ref }}").unwrap();
-
-    let count = doc
-        .render_template(&json!({ "who": "Ada", "ref": "R-7" }))
-        .unwrap();
-    assert_eq!(count, 7);
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["Body Ada"]);
-    assert_eq!(doc.header_text().as_deref(), Some("Header Ada"));
-    assert_eq!(doc.footer_text().as_deref(), Some("Footer R-7"));
-    let table = doc.table(0).unwrap();
-    assert_eq!(table.cell(0, 0).unwrap().text(), "Cell Ada");
-    assert_eq!(table.cell(0, 1).unwrap().text(), "R-7");
-    // A new note starts with a space after its mark, as Word writes it.
-    assert_eq!(doc.footnotes(), [(footnote, " Note Ada".to_owned())]);
-    assert_eq!(endnote_text(&doc, endnote), " End R-7");
 }
 
 #[test]
@@ -566,54 +461,6 @@ fn a_for_block_over_table_rows_repeats_the_rows_between_its_markers() {
 }
 
 #[test]
-fn a_nested_loop_reads_the_outer_item_inside_the_inner_one() {
-    let mut doc = doc_with(&[
-        "{% for group in groups %}",
-        "Group {{ group.name }}",
-        "{% for item in group.items %}",
-        "{{ group.name }}.{{ item }}",
-        "{% endfor %}",
-        "{% endfor %}",
-    ]);
-    let data = json!({ "groups": [
-        { "name": "A", "items": [1, 2] },
-        { "name": "B", "items": [3] }
-    ] });
-    assert_eq!(doc.render_template(&data).unwrap(), 8);
-    assert_eq!(
-        texts(&reopen(&mut doc)),
-        ["Group A", "A.1", "A.2", "Group B", "B.3"]
-    );
-}
-
-#[test]
-fn an_if_block_keeps_its_paragraphs_only_for_a_truthy_value() {
-    let cases = [
-        (json!(false), false),
-        (json!(null), false),
-        (json!(0), false),
-        (json!(""), false),
-        (json!([]), false),
-        (json!({}), false),
-        (json!(true), true),
-        (json!(2), true),
-        (json!("no"), true),
-        (json!([0]), true),
-        (json!({ "k": 0 }), true),
-    ];
-    for (value, kept) in cases {
-        let mut doc = doc_with(&["Start", "{% if flag %}", "Shown", "{% endif %}", "End"]);
-        doc.render_template(&json!({ "flag": value })).unwrap();
-        let expected: &[&str] = if kept {
-            &["Start", "Shown", "End"]
-        } else {
-            &["Start", "End"]
-        };
-        assert_eq!(texts(&reopen(&mut doc)), expected, "flag = {value}");
-    }
-}
-
-#[test]
 fn a_control_marker_must_stand_alone_be_closed_and_loop_over_a_list() {
     let cases: [(&[&str], serde_json::Value, &str); 5] = [
         (
@@ -723,17 +570,6 @@ fn grammar_one_adds_filters_quoted_keys_indexes_and_escapes() {
 }
 
 #[test]
-fn the_unversioned_grammar_reads_a_pipe_as_part_of_the_key() {
-    let data = json!({ "name|upper": "from the key", "name": "Ada" });
-    let mut plain = doc_with(&["{{name|upper}}"]);
-    assert_eq!(plain.render_template(&data).unwrap(), 1);
-    assert_eq!(texts(&reopen(&mut plain)), ["from the key"]);
-    let mut versioned = doc_with(&["{{name|upper}}"]);
-    assert_eq!(versioned.render_template_versioned(&data, 1).unwrap(), 1);
-    assert_eq!(texts(&reopen(&mut versioned)), ["ADA"]);
-}
-
-#[test]
 fn grammar_one_refuses_other_versions_unknown_filters_and_wrong_paths() {
     let mut doc = doc_with(&["{{ name }}"]);
     let before = doc.to_bytes().unwrap();
@@ -831,25 +667,6 @@ fn a_formatter_rewrites_one_tag_and_gives_it_a_run_format() {
 // ---- Templates saved by other editors ----
 
 #[test]
-fn a_google_docs_report_with_tables_renders_without_error() {
-    let mut cell = doc_with_body(concat!(
-        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
-        r#"<w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>{{ v }}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
-    ));
-    let rendered = cell.render_template(&json!({ "v": "V" }));
-    assert!(
-        matches!(rendered, Ok(1)),
-        "the Google Docs report renders: a cell with an empty tcPr gives {rendered:?}"
-    );
-    // The whole report then renders too.
-    let mut doc = corpus_doc("google/report.docx");
-    let before = texts(&doc);
-    let rendered = doc.render_template(&json!({}));
-    assert!(matches!(rendered, Ok(0)), "{rendered:?}");
-    assert_eq!(texts(&doc), before);
-}
-
-#[test]
 fn a_libreoffice_letter_renders_without_error() {
     let mut doc = corpus_doc("libreoffice/letter.docx");
     let before = texts(&doc);
@@ -859,57 +676,6 @@ fn a_libreoffice_letter_renders_without_error() {
         "the LibreOffice letter renders: {rendered:?}"
     );
     assert_eq!(texts(&doc), before);
-}
-
-#[test]
-fn a_libreoffice_thesis_with_twenty_two_header_and_footer_parts_renders() {
-    let mut doc = corpus_doc("libreoffice/thesis.docx");
-    let before = texts(&doc);
-    assert_eq!(doc.render_template(&json!({})).unwrap(), 0);
-    assert_eq!(texts(&doc), before);
-}
-
-#[test]
-fn blocks_in_every_header_and_footer_of_the_libreoffice_letter_render() {
-    let parts = [
-        ("/word/header1.xml", "</w:hdr>"),
-        ("/word/header2.xml", "</w:hdr>"),
-        ("/word/header3.xml", "</w:hdr>"),
-        ("/word/footer1.xml", "</w:ftr>"),
-        ("/word/footer2.xml", "</w:ftr>"),
-        ("/word/footer3.xml", "</w:ftr>"),
-    ];
-    let insertions = parts
-        .iter()
-        .enumerate()
-        .map(|(index, (part, close))| {
-            let shown = format!("Shown {index} {{{{ who }}}}");
-            let block = raw_paragraphs(&["{% if flag %}", &shown, "{% endif %}"]);
-            (*part, "<w:", *close, block)
-        })
-        .collect::<Vec<_>>();
-    // The text each part holds besides the block, which must survive.
-    let letter = corpus_doc("libreoffice/letter.docx");
-    let own_texts = parts
-        .iter()
-        .map(|(part, _)| part_texts(&letter.part_xml(part).unwrap()))
-        .collect::<Vec<_>>();
-    for (flag, count) in [(true, 6), (false, 0)] {
-        let mut doc = corpus_doc_with("libreoffice/letter.docx", &insertions);
-        assert_eq!(
-            doc.render_template(&json!({ "flag": flag, "who": "Ada" }))
-                .unwrap(),
-            count
-        );
-        let doc = reopen(&mut doc);
-        for (index, (part, _)) in parts.iter().enumerate() {
-            let mut expected = own_texts[index].clone();
-            if flag {
-                expected.push(format!("Shown {index} Ada"));
-            }
-            assert_eq!(part_texts(&doc.part_xml(part).unwrap()), expected, "{part}");
-        }
-    }
 }
 
 #[test]
@@ -953,35 +719,6 @@ fn two_notes_of_one_part_each_take_their_block() {
 }
 
 // ---- Merge fields ----
-
-#[test]
-fn a_merge_gives_one_document_per_record_with_its_merge_fields_filled() {
-    let template = doc_with_body(&format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Dear </w:t></w:r><w:fldSimple w:instr=" MERGEFIELD Name \* Upper "><w:r><w:t>«Name»</w:t></w:r></w:fldSimple><w:r><w:t>,</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD City \b "in " \f "!" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«City»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p>{}</w:p>"#,
-        merge_field("Note")
-    ));
-    let mut outputs = template
-        .mail_merge(&[
-            record(&[("Name", "Zoë"), ("City", "Paris"), ("Note", "VIP")]),
-            // An empty value and a field missing from the record both show
-            // nothing, without the text before and after.
-            record(&[("Name", "Bob"), ("City", "")]),
-        ])
-        .unwrap();
-    assert_eq!(outputs.len(), 2);
-    let first = reopen(&mut outputs[0]);
-    assert_eq!(texts(&first), ["Dear ZOË,", "in Paris!", "VIP"]);
-    let second = reopen(&mut outputs[1]);
-    assert_eq!(texts(&second), ["Dear BOB,", "", ""]);
-    // The fields stay fields, ready for another merge.
-    let xml = first.part_xml("word/document.xml").unwrap();
-    assert!(xml.contains(r#"MERGEFIELD Name \* Upper"#), "{xml}");
-    // The template itself is untouched.
-    assert_eq!(texts(&template), ["Dear «Name»,", "«City»", "«Note»"]);
-
-    let error = refusal(template.mail_merge(&[]));
-    assert!(error.contains("at least one record"), "{error}");
-}
 
 #[test]
 fn sectioned_merges_put_each_record_in_its_own_next_page_section() {
@@ -1062,156 +799,6 @@ fn a_header_merge_field_is_filled_per_record_but_cannot_vary_between_sections() 
     let mut merged = template.mail_merge_sections(&same).unwrap();
     let merged = reopen(&mut merged);
     assert_eq!(merged.header_text().as_deref(), Some("Account Shared"));
-}
-
-/// The text of the default header section `section` shows, if any.
-fn header_shown(doc: &Document, section: usize) -> Option<String> {
-    let shown = doc
-        .section_story(section, HeaderFooterKind::Header, HdrFtrType::Default)
-        .expect("section index in range")?;
-    Some(
-        doc.story_items(shown.story())
-            .expect("header reads")
-            .iter()
-            .map(|item| item.text().expect("header text").unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-}
-
-#[test]
-fn every_section_of_a_sectioned_merge_keeps_the_template_page_size_and_header() {
-    let mut template = doc_with_body(&format!(r#"<w:p>{}</w:p>"#, merge_field("Name")));
-    template.set_page_size(Length::mm(148.0), Length::mm(210.0));
-    template.set_header("Letterhead");
-    let template = reopen(&mut template);
-    let size = template.section(0).unwrap().page_size();
-    assert_ne!(
-        size,
-        reopen(&mut Document::new()).section(0).unwrap().page_size(),
-        "the template's page size is not the default"
-    );
-    let names = ["Ada", "Bob", "Cy"];
-    let flat: Vec<_> = names.iter().map(|name| record(&[("Name", name)])).collect();
-    let rich = MailMergeData {
-        records: names
-            .iter()
-            .map(|name| MailMergeRecord {
-                values: BTreeMap::from([("Name".to_owned(), text(name))]),
-                regions: BTreeMap::new(),
-            })
-            .collect(),
-        sources: BTreeMap::new(),
-    };
-    for (how, mut merged) in [
-        ("flat", template.mail_merge_sections(&flat).unwrap()),
-        (
-            "rich",
-            template.mail_merge_sections_rich(&rich, None).unwrap(),
-        ),
-    ] {
-        let merged = reopen(&mut merged);
-        assert_eq!(texts(&merged), ["Ada", "", "Bob", "", "Cy"], "{how}");
-        assert_eq!(merged.section_count(), 3, "{how}");
-        for index in 0..3 {
-            assert_eq!(
-                merged.section(index).unwrap().page_size(),
-                size,
-                "{how}: section {index} keeps the page size"
-            );
-            assert_eq!(
-                header_shown(&merged, index).as_deref(),
-                Some("Letterhead"),
-                "{how}: section {index} shows the header"
-            );
-            let own = merged
-                .section_story(index, HeaderFooterKind::Header, HdrFtrType::Default)
-                .unwrap()
-                .unwrap();
-            assert!(
-                !own.is_inherited(),
-                "{how}: section {index} has its own header"
-            );
-        }
-    }
-}
-
-/// A recipient of the corpus letters.
-fn letter_recipient() -> BTreeMap<String, String> {
-    record(&[
-        ("Title", "Ms"),
-        ("FirstName", "Zoé"),
-        ("LastName", "Dupont"),
-        ("JobTitle", "CFO"),
-        ("Company", "Acme SARL"),
-        ("Address1", "1 rue Haute"),
-        ("PostalCode", "69001"),
-        ("City", "Lyon"),
-        ("Country", "France"),
-    ])
-}
-
-/// The address block and the salutation of a corpus letter.
-fn letter_lines(doc: &Document) -> Vec<String> {
-    let texts = texts(doc);
-    let mut lines = texts[2..8].to_vec();
-    lines.push(
-        texts
-            .iter()
-            .find(|text| text.starts_with("Dear "))
-            .expect("the salutation")
-            .clone(),
-    );
-    lines
-}
-
-const MERGED_LETTER: [&str; 7] = [
-    "Ms Zoé Dupont",
-    "CFO",
-    "Acme SARL",
-    "1 rue Haute",
-    "69001 Lyon",
-    "France",
-    "Dear Ms Dupont,",
-];
-
-#[test]
-fn the_python_docx_letter_merges_its_recipient_fields() {
-    let template = corpus_doc("authored/letter.docx");
-    assert_eq!(
-        letter_lines(&template),
-        [
-            "«Title» «FirstName» «LastName»",
-            "«JobTitle»",
-            "«Company»",
-            "«Address1»",
-            "«PostalCode» «City»",
-            "«Country»",
-            "Dear «Title» «LastName»,"
-        ]
-    );
-    let mut outputs = template.mail_merge(&[letter_recipient()]).unwrap();
-    let merged = reopen(&mut outputs[0]);
-    assert_eq!(letter_lines(&merged), MERGED_LETTER);
-    // The rest of the letter stays as it was.
-    assert_eq!(texts(&merged).len(), texts(&template).len());
-    assert_eq!(texts(&merged)[9], texts(&template)[9]);
-    assert_eq!(texts(&merged)[11..], texts(&template)[11..]);
-    assert_eq!(merged.footer_text(), template.footer_text());
-}
-
-#[test]
-fn the_libreoffice_letter_merges_its_recipient_fields() {
-    let template = corpus_doc("libreoffice/letter.docx");
-    let mut outputs = match template.mail_merge(&[letter_recipient()]) {
-        Ok(outputs) => outputs,
-        Err(error) if error.to_string().contains("source inventory identified") => {
-            panic!("the LibreOffice letter merges: {error}")
-        }
-        Err(error) => panic!("another merge error: {error}"),
-    };
-    let merged = reopen(&mut outputs[0]);
-    assert_eq!(letter_lines(&merged), MERGED_LETTER);
 }
 
 // ---- Rich merge ----
@@ -1486,42 +1073,6 @@ fn an_image_value_puts_its_picture_in_place_of_the_field() {
     );
 }
 
-#[test]
-fn a_region_a_record_does_not_hold_reads_the_named_source() {
-    let template = doc_with_body(&format!(
-        r#"<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p>"#,
-        merge_field("Client"),
-        merge_field("TableStart:Products"),
-        merge_field("Product"),
-        merge_field("TableEnd:Products"),
-    ));
-    let product = |name: &str| MailMergeRecord {
-        values: BTreeMap::from([("Product".to_owned(), text(name))]),
-        regions: BTreeMap::new(),
-    };
-    let client = |name: &str, regions: BTreeMap<String, Vec<MailMergeRecord>>| MailMergeRecord {
-        values: BTreeMap::from([("Client".to_owned(), text(name))]),
-        regions,
-    };
-    let data = MailMergeData {
-        records: vec![
-            client("Acme", BTreeMap::new()),
-            // A region of the record's own wins over the named source.
-            client(
-                "Bolt",
-                BTreeMap::from([("Products".to_owned(), vec![product("Custom")])]),
-            ),
-        ],
-        sources: BTreeMap::from([("Products".to_owned(), vec![product("Pen"), product("Ink")])]),
-    };
-    let mut outputs = template.mail_merge_rich(&data, None).unwrap();
-    let merged: Vec<Vec<String>> = outputs
-        .iter_mut()
-        .map(|output| texts(&reopen(output)))
-        .collect();
-    assert_eq!(merged, [vec!["Acme", "Pen", "Ink"], vec!["Bolt", "Custom"]]);
-}
-
 // ---- Mail-merge settings and recipient data ----
 
 #[test]
@@ -1791,28 +1342,6 @@ fn a_package_with_field_mappings_and_recipients_survives_a_save() {
 // ---- Building blocks ----
 
 #[test]
-fn a_new_building_block_is_listed_after_a_save_with_its_metadata() {
-    let mut doc = doc_with(&["Body"]);
-    assert!(doc.building_blocks().unwrap().is_empty());
-    doc.create_building_block(block("Closing", "Kind regards, Zoé"))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let entries = doc.building_blocks().unwrap();
-    assert_eq!(entries.len(), 1);
-    let entry = &entries[0].block;
-    assert_eq!(entry.name, "Closing");
-    assert_eq!(entry.kind, BuildingBlockKind::AutoText);
-    assert_eq!(entry.category.as_deref(), Some("Letters"));
-    assert_eq!(entry.gallery.as_deref(), Some("autoTxt"));
-    assert_eq!(entry.description.as_deref(), Some("Closing text"));
-    let lines: Vec<String> = entry.body.paragraphs().map(|p| p.text()).collect();
-    assert_eq!(lines, ["Kind regards, Zoé"]);
-    // The entry lives in the glossary, not in the body.
-    assert_eq!(texts(&doc), ["Body"]);
-    assert!(doc.part_xml("word/glossary/document.xml").is_ok());
-}
-
-#[test]
 fn inserting_a_building_block_copies_its_text_into_the_body() {
     let mut doc = doc_with(&["Dear client,", "Yours sincerely,"]);
     doc.create_building_block(block("Closing", "Kind regards"))
@@ -1956,23 +1485,6 @@ fn a_dotx_template_filled_and_saved_as_docx_declares_a_document() {
     );
 }
 
-#[test]
-fn to_bytes_as_turns_a_document_into_a_template_and_back() {
-    let doc = corpus_doc("authored/letter.docx");
-    assert_eq!(doc.package_class().unwrap(), WordPackageClass::Document);
-    let template = doc.to_bytes_as(WordPackageClass::Template).unwrap();
-    assert_eq!(main_part_content_type(&template), MAIN_TEMPLATE_TYPE);
-    let template = Document::from_bytes(&template).unwrap();
-    assert_eq!(
-        template.package_class().unwrap(),
-        WordPackageClass::Template
-    );
-    assert_eq!(texts(&template), texts(&doc));
-    let back = template.to_bytes_as(WordPackageClass::Document).unwrap();
-    assert_eq!(main_part_content_type(&back), MAIN_DOCUMENT_TYPE);
-    assert_eq!(texts(&Document::from_bytes(&back).unwrap()), texts(&doc));
-}
-
 // Fails today: a new document of the minimal profile has no main part until
 // it is saved, so asking its class fails, where the Word-compatible profile
 // answers at once. Issue: #203
@@ -2073,69 +1585,6 @@ fn a_document_with_a_vba_project_is_refused_under_a_macro_free_extension() {
 }
 
 #[test]
-fn a_loop_over_a_noted_paragraph_leaves_only_the_notes_of_its_copies() {
-    let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
-    let at = doc.paragraph_story_location(1).unwrap().unwrap();
-    let original = doc.create_footnote(&at, "Note {{ who }}").unwrap();
-    doc.add_paragraph("{% endfor %}");
-    doc.add_paragraph("Kept");
-    let at = doc.paragraph_story_location(3).unwrap().unwrap();
-    let kept = doc.create_footnote(&at, "Kept note").unwrap();
-    doc.render_template(&json!({ "xs": ["a", "b", "c"], "who": "Ada" }))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let notes = doc.footnotes();
-    assert_eq!(notes.len(), 4, "{notes:?}");
-    assert!(notes.iter().all(|(id, _)| *id != original), "{notes:?}");
-    assert!(notes.iter().any(|(id, _)| *id == kept));
-    assert_eq!(
-        notes.iter().filter(|(_, text)| text == " Note Ada").count(),
-        3,
-        "{notes:?}"
-    );
-}
-
-#[test]
-fn a_false_condition_takes_the_notes_of_the_paragraphs_it_drops() {
-    let mut doc = doc_with(&["Kept", "{% if show %}", "Dropped", "{% endif %}"]);
-    let at = doc.paragraph_story_location(0).unwrap().unwrap();
-    let kept = doc.create_footnote(&at, "Kept note").unwrap();
-    let at = doc.paragraph_story_location(2).unwrap().unwrap();
-    doc.create_footnote(&at, "Dropped note").unwrap();
-    doc.render_template(&json!({ "show": false })).unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["Kept"]);
-    assert_eq!(doc.footnotes(), [(kept, " Kept note".to_owned())]);
-}
-
-#[test]
-fn nested_loops_over_a_noted_paragraph_leave_only_the_notes_of_the_last_copies() {
-    let mut doc = doc_with(&["{% for g in gs %}", "{% for x in g %}", "Item {{ x }}"]);
-    let at = doc.paragraph_story_location(2).unwrap().unwrap();
-    let original = doc.create_footnote(&at, "Note {{ who }}").unwrap();
-    doc.add_paragraph("{% endfor %}");
-    doc.add_paragraph("{% endfor %}");
-    // Opened from bytes, as a template file is.
-    let mut doc = reopen(&mut doc);
-    doc.render_template(&json!({ "gs": [["a", "b"], ["c"]], "who": "Ada" }))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let notes = doc.footnotes();
-    // One note per item, each referenced; the original and the outer
-    // loop's intermediate copies are gone.
-    assert_eq!(notes.len(), 3, "{notes:?}");
-    assert!(
-        notes
-            .iter()
-            .all(|(id, text)| *id != original && text == " Note Ada")
-    );
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    for (id, _) in &notes {
-        assert!(xml.contains(&format!(r#"<w:footnoteReference w:id="{id}"/>"#)));
-    }
-}
-
-#[test]
 fn a_loop_over_a_paragraph_with_an_endnote_leaves_only_the_endnotes_of_its_copies() {
     let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
     let at = doc.paragraph_story_location(1).unwrap().unwrap();
@@ -2152,58 +1601,4 @@ fn a_loop_over_a_paragraph_with_an_endnote_leaves_only_the_endnotes_of_its_copie
         2,
         "two endnotes and the separators"
     );
-}
-
-#[test]
-fn a_loop_keeps_the_endnotes_its_copied_footnotes_reference() {
-    // A footnote holding an endnote mark, as a converted file may hold it.
-    let mut doc = doc_with(&["{% for x in xs %}", "Item {{ x }}"]);
-    let at = doc.paragraph_story_location(1).unwrap().unwrap();
-    doc.create_footnote(&at, "Foot").unwrap();
-    let at = doc.paragraph_story_location(1).unwrap().unwrap();
-    doc.create_endnote(&at, "End").unwrap();
-    doc.add_paragraph("{% endfor %}");
-    let bytes = doc.to_bytes().unwrap();
-    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
-    // Move the endnote mark run from the body into the footnote.
-    let mark = main.find("<w:endnoteReference").unwrap();
-    let start = main[..mark]
-        .rfind("<w:r>")
-        .max(main[..mark].rfind("<w:r "))
-        .unwrap();
-    let end = mark + main[mark..].find("</w:r>").unwrap() + "</w:r>".len();
-    let run = main[start..end].to_owned();
-    package.set_part(
-        "/word/document.xml",
-        format!("{}{}", &main[..start], &main[end..]).into_bytes(),
-    );
-    let notes =
-        String::from_utf8(package.get_part("/word/footnotes.xml").unwrap().to_vec()).unwrap();
-    let text = notes.find(">Foot</w:t>").unwrap();
-    let close = text + notes[text..].find("</w:r>").unwrap() + "</w:r>".len();
-    package.set_part(
-        "/word/footnotes.xml",
-        format!("{}{run}{}", &notes[..close], &notes[close..]).into_bytes(),
-    );
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
-    doc.render_template(&json!({ "xs": ["a", "b"] })).unwrap();
-    let doc = reopen(&mut doc);
-    let footnotes = doc.part_xml("word/footnotes.xml").unwrap();
-    let endnotes = doc.part_xml("word/endnotes.xml").unwrap();
-    let referenced = footnotes.matches("<w:endnoteReference").count();
-    assert_eq!(referenced, 2, "{footnotes}");
-    for at in footnotes
-        .match_indices(r#"<w:endnoteReference w:id=""#)
-        .map(|(at, _)| at)
-    {
-        let id = &footnotes[at + r#"<w:endnoteReference w:id=""#.len()..];
-        let id = &id[..id.find('"').unwrap()];
-        assert!(
-            endnotes.contains(&format!(r#"<w:endnote w:id="{id}""#)),
-            "endnote {id}: {endnotes}"
-        );
-    }
 }

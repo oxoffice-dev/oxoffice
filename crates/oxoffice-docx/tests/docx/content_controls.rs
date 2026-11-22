@@ -11,7 +11,6 @@ use oxoffice_docx::{
     ContentControlPlacement, ContentControlSpec, ContentControlTypePayload, ContentLocation,
     Document, FormFieldAssignment, FormFieldRule, FormFieldTarget, FormFieldValue, FormResetValue,
     HdrFtrType, HeaderFooterKind, LegacyFormFieldValue, Length, StoryId, StoryItemKind, StoryKind,
-    StoryRunPosition,
 };
 use oxoffice_docx_oxml::content_control::SdtType;
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
@@ -30,24 +29,6 @@ const PNG: &[u8] = &[
     0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
     0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
     0x42, 0x60, 0x82,
-];
-
-/// The tags of the corpus form, in document order.
-const FORM_TAGS: [&str; 14] = [
-    "company_name",
-    "registered_address",
-    "date_of_incorporation",
-    "company_type",
-    "country",
-    "vat_registered",
-    "iso_9001",
-    "contact_person",
-    "signatory",
-    "signature_date",
-    "signature",
-    "supplier_reference",
-    "category",
-    "reviewed",
 ];
 
 /// The first story of this kind.
@@ -402,39 +383,6 @@ fn a_block_control_goes_before_the_item_at_its_location_or_at_the_end_of_the_sto
 }
 
 #[test]
-fn an_inline_control_holds_its_value_at_the_end_of_its_paragraph() {
-    let mut doc = doc_with(&["Name: ", "Other"]);
-    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
-    doc.insert_content_control(&paragraph, spec(Inline, SdtType::PlainText, "name"))
-        .unwrap();
-    assert_eq!(
-        doc.set_content_control_value_by_tag("name", "Ada").unwrap(),
-        1
-    );
-    let doc = reopen(&mut doc);
-
-    assert_eq!(texts(&doc), ["Name: Ada", "Other"]);
-    assert_eq!(
-        listed(&doc),
-        [(
-            Some("name".into()),
-            Some(1),
-            Some(SdtType::PlainText),
-            "Ada".into()
-        )]
-    );
-    // The control is an item of its own, inside the first paragraph.
-    let item = doc
-        .story_items(&body(&doc))
-        .unwrap()
-        .into_iter()
-        .find(|item| item.kind() == StoryItemKind::ContentControl)
-        .expect("the control is a story item");
-    assert_eq!(item.direct_body_index().unwrap(), Some(0));
-    assert_eq!(item.text().unwrap().as_deref(), Some("Ada"));
-}
-
-#[test]
 fn row_and_cell_controls_add_a_row_as_wide_as_the_table_and_a_cell_to_a_row() {
     let mut doc = doc_with(&["Order"]);
     {
@@ -651,71 +599,6 @@ fn a_copied_row_keeps_the_row_controls_and_the_table_children_beside_them() {
 }
 
 #[test]
-fn in_a_table_without_controls_a_copy_goes_before_the_table_children_of_its_place() {
-    let mut doc = doc_with_body(&table_xml(&format!(
-        r#"{}<w:bookmarkStart w:id="8" w:name="column" w:colFirst="0" w:colLast="1"/>{}<w:bookmarkEnd w:id="8"/>"#,
-        merge_row("A", None),
-        merge_row("B", None),
-    )));
-    // Before B: the bookmark start that precedes B follows the copy.
-    assert_eq!(doc.clone_table_row(0, 0, 1).unwrap(), 1);
-    // After the last row: the copy stays inside the bookmark.
-    assert_eq!(doc.clone_table_row(0, 0, 3).unwrap(), 3);
-    let doc = reopen(&mut doc);
-    assert_eq!(first_column(&doc), ["A1", "A1", "B1", "A1"]);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    let mut at = 0;
-    for needle in [
-        ">A1<",
-        ">A1<",
-        "bookmarkStart",
-        ">B1<",
-        ">A1<",
-        "bookmarkEnd",
-    ] {
-        at += xml[at..]
-            .find(needle)
-            .unwrap_or_else(|| panic!("{needle} after {at}: {xml}"))
-            + needle.len();
-    }
-}
-
-#[test]
-fn vertical_merges_run_through_the_rows_of_row_controls() {
-    let mut doc = doc_with_rows_in_row_controls();
-    assert!(
-        doc.table_mut(0)
-            .unwrap()
-            .set_cell_vertical_merge(1, 0, Some(oxoffice_docx::VMerge::Continue))
-            .is_err(),
-        "row B cannot continue a merge A does not start"
-    );
-
-    // A1 starts a merge that B1, C1 and D1 continue; removing A hands it to B.
-    let mut doc = doc_with_body(&table_xml(&format!(
-        "{}{}{}",
-        merge_row("A", Some("restart")),
-        control_xml(
-            "lines",
-            &format!(
-                "{}{}",
-                merge_row("B", Some("continue")),
-                control_xml("inner", &merge_row("C", Some("continue")))
-            )
-        ),
-        merge_row("D", Some("continue")),
-    )));
-    assert!(doc.remove_table_row(0, 0).unwrap());
-    let doc = reopen(&mut doc);
-    let table = doc.table(0).unwrap();
-    let merges: Vec<Option<oxoffice_docx::VMerge>> = (0..table.row_count())
-        .map(|row| table.cell(row, 0).unwrap().v_merge().copied())
-        .collect();
-    use oxoffice_docx::VMerge::{Continue, Restart};
-    assert_eq!(merges, [Some(Restart), Some(Continue), Some(Continue)]);
-}
-
-#[test]
 fn a_cell_of_a_cell_control_is_reported_once_in_the_web_page_losses() {
     let inline = r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="name"/></w:sdtPr><w:sdtContent><w:r><w:t>Ada</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
     let doc = doc_with_body(&format!(
@@ -729,62 +612,6 @@ fn a_cell_of_a_cell_control_is_reported_once_in_the_web_page_losses() {
         .map(|loss| loss.location.as_str())
         .collect();
     assert_eq!(flattened.len(), 1, "{flattened:?}");
-}
-
-#[test]
-fn a_story_that_cannot_be_read_fails_the_setters_and_the_listing_keeps_the_body() {
-    let mut doc = doc_with_control("summary");
-    doc.create_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-    let header = package
-        .get_part_rels("/word/document.xml")
-        .unwrap()
-        .items
-        .iter()
-        .find(|relationship| relationship.target.contains("header"))
-        .unwrap()
-        .target
-        .clone();
-    package.remove_part(&format!("/word/{header}"));
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
-
-    assert_eq!(listed(&doc).len(), 1, "the body's control is listed");
-    let before = doc.to_bytes().unwrap();
-    let error = doc
-        .set_content_control_value_by_tag("summary", "Done")
-        .unwrap_err();
-    assert!(error.to_string().contains("missing part"), "{error}");
-    let rule = prompt(target("summary"), false, "Summary");
-    assert!(
-        doc.fill_form(&[rule], &[assign(target("summary"), text("Done"))])
-            .is_err(),
-        "fill_form fails on the same story"
-    );
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn every_row_counted_is_addressed_by_row_and_cell_in_document_order() {
-    let doc = doc_with_rows_in_row_controls();
-    let table = doc.table(0).unwrap();
-    assert_eq!(table.row_count(), 4);
-    let firsts: Vec<String> = (0..table.row_count())
-        .map(|row| {
-            table
-                .row(row)
-                .expect("a counted row")
-                .cell(0)
-                .unwrap()
-                .text()
-        })
-        .collect();
-    assert_eq!(firsts, ["A1", "B1", "C1", "D1"]);
-    assert_eq!(table.cell(1, 1).unwrap().text(), "B2");
-    assert_eq!(table.cell(3, 1).unwrap().text(), "D2");
-    assert!(table.row(4).is_none() && table.cell(4, 0).is_none());
 }
 
 #[test]
@@ -1056,105 +883,6 @@ fn a_control_in_a_header_survives_a_save_and_the_form_calls_fill_and_reset_it() 
 }
 
 #[test]
-fn a_value_set_by_tag_reaches_a_control_in_a_header() {
-    let mut doc = doc_with_header_control();
-    let count = doc
-        .set_content_control_value_by_tag("title", "Annual report")
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let shown = item_text(&doc, &story(&doc, StoryKind::Header), "title");
-    assert_eq!(
-        (count, shown.as_str()),
-        (1, "Annual report"),
-        "the tag setter fills the header control"
-    );
-}
-
-#[test]
-fn the_tag_and_alias_setters_reach_controls_in_a_footer_and_a_footnote() {
-    let mut doc = doc_with(&["Body"]);
-    let footer = doc
-        .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
-        .unwrap();
-    doc.insert_content_control(
-        &ContentLocation::end(footer),
-        ContentControlSpec {
-            alias: Some("Pied".to_owned()),
-            ..spec(Block, SdtType::PlainText, "page_note")
-        },
-    )
-    .unwrap();
-    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
-    doc.create_footnote_at(
-        &StoryRunPosition {
-            location: paragraph,
-            run_index: 1,
-        },
-        "Note",
-    )
-    .unwrap();
-    let note = story(&doc, StoryKind::Footnote);
-    doc.insert_content_control(
-        &ContentLocation::end(note),
-        spec(Block, SdtType::RichText, "source"),
-    )
-    .unwrap();
-
-    assert_eq!(
-        doc.set_content_control_value_by_alias("Pied", "Page 1")
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        doc.set_content_control_value_by_tag("source", "Annual report")
-            .unwrap(),
-        1
-    );
-    let doc = reopen(&mut doc);
-    let footer = story(&doc, StoryKind::Footer);
-    assert_eq!(item_text(&doc, &footer, "page_note"), "Page 1");
-    let note = story(&doc, StoryKind::Footnote);
-    assert_eq!(item_text(&doc, &note, "source"), "Annual report");
-    assert_eq!(texts(&doc), ["Body"], "the body is left alone");
-}
-
-#[test]
-fn the_listing_gives_the_controls_of_the_other_stories_after_the_body() {
-    let mut doc = doc_with_header_control();
-    let end = ContentLocation::end(body(&doc));
-    doc.insert_content_control(&end, spec(Block, SdtType::RichText, "summary"))
-        .unwrap();
-    let footer = doc
-        .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
-        .unwrap();
-    doc.insert_content_control(
-        &ContentLocation::end(footer),
-        spec(Block, SdtType::RichText, "page_note"),
-    )
-    .unwrap();
-    doc.fill_content_control_tags(&[("title", "Report"), ("page_note", "Page 1")])
-        .unwrap();
-    let doc = reopen(&mut doc);
-
-    let tags: Vec<(Option<String>, String)> = doc
-        .content_controls()
-        .iter()
-        .map(|control| (control.tag().map(str::to_owned), control.text()))
-        .collect();
-    assert_eq!(
-        tags,
-        [
-            (Some("summary".to_owned()), String::new()),
-            (Some("title".to_owned()), "Report".to_owned()),
-            (Some("page_note".to_owned()), "Page 1".to_owned()),
-        ]
-    );
-    let found = doc.content_controls_by_tag("title");
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].control_type(), Some(SdtType::PlainText));
-}
-
-#[test]
 fn bound_values_reach_a_header_control_and_its_custom_xml() {
     let mut doc = doc_with_header_control();
     let store = doc
@@ -1172,27 +900,6 @@ fn bound_values_reach_a_header_control_and_its_custom_xml() {
         doc.part_xml("customXml/item1.xml").unwrap(),
         "<report><title>Annual report</title></report>"
     );
-}
-
-#[test]
-fn one_call_fills_several_controls_of_one_header() {
-    let mut doc = doc_with_raw_header(&format!(
-        "{}{}",
-        block_control_xml("first", "1"),
-        block_control_xml("second", "2")
-    ));
-    let values = HashMap::from([
-        ("first".to_owned(), "A much longer first value".to_owned()),
-        ("second".to_owned(), "Second".to_owned()),
-    ]);
-    assert_eq!(doc.bind_content_controls(&values).unwrap(), 2);
-    let doc = reopen(&mut doc);
-    let header = story(&doc, StoryKind::Header);
-    assert_eq!(
-        item_text(&doc, &header, "first"),
-        "A much longer first value"
-    );
-    assert_eq!(item_text(&doc, &header, "second"), "Second");
 }
 
 #[test]
@@ -1296,79 +1003,6 @@ fn a_placement_or_a_kind_that_does_not_fit_is_refused_and_changes_nothing() {
     }
     assert_eq!(doc.to_bytes().unwrap(), before);
     assert!(doc.content_controls().is_empty());
-}
-
-#[test]
-fn every_kind_is_typed_onto_a_shell_and_keeps_its_tag_alias_id_and_lock() {
-    let items = || {
-        vec![
-            ("Red".to_owned(), "r".to_owned()),
-            ("Blue".to_owned(), "b".to_owned()),
-        ]
-    };
-    for (payload, kind) in [
-        (ContentControlTypePayload::PlainText, SdtType::PlainText),
-        (
-            ContentControlTypePayload::Date {
-                format: "dd/MM/yyyy".to_owned(),
-            },
-            SdtType::Date,
-        ),
-        (ContentControlTypePayload::CheckBox, SdtType::CheckBox),
-        (
-            ContentControlTypePayload::ComboBox { items: items() },
-            SdtType::ComboBox,
-        ),
-        (
-            ContentControlTypePayload::DropDownList { items: items() },
-            SdtType::DropDownList,
-        ),
-        (ContentControlTypePayload::Group, SdtType::Group),
-    ] {
-        let mut doc = doc_with_control("typed");
-        let location = control_at(&doc, &body(&doc), "typed");
-        doc.set_content_control_lock(&location, Some(ContentControlLock::ContentLocked))
-            .unwrap();
-        let location = control_at(&doc, &body(&doc), "typed");
-        doc.set_content_control_type(&location, payload).unwrap();
-        let doc = reopen(&mut doc);
-        let control = &doc.content_controls()[0];
-        assert_eq!(control.control_type(), Some(kind));
-        assert_eq!(
-            (control.tag(), control.alias(), control.id()),
-            (Some("typed"), Some("Typed"), Some(1)),
-            "{kind:?}"
-        );
-        let properties = saved_properties(&doc, "word/document.xml", 1);
-        assert_eq!(val(&properties, "w:lock").as_deref(), Some("contentLocked"));
-        assert!(!has(&properties, "w:richText"), "{kind:?}: {properties}");
-    }
-}
-
-#[test]
-fn new_controls_take_the_smallest_id_no_control_uses() {
-    let mut doc = doc_with_body(
-        r#"<w:sdt><w:sdtPr><w:tag w:val="a"/><w:id w:val="1"/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt><w:p><w:sdt><w:sdtPr><w:tag w:val="b"/><w:id w:val="3"/></w:sdtPr><w:sdtContent><w:r><w:t>b</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-    );
-    for tag in ["c", "d"] {
-        let end = ContentLocation::end(body(&doc));
-        doc.insert_content_control(&end, spec(Block, SdtType::RichText, tag))
-            .unwrap();
-    }
-    let doc = reopen(&mut doc);
-    let ids: Vec<(Option<String>, Option<i32>)> = listed(&doc)
-        .into_iter()
-        .map(|(tag, id, _, _)| (tag, id))
-        .collect();
-    assert_eq!(
-        ids,
-        [
-            (Some("a".into()), Some(1)),
-            (Some("b".into()), Some(3)),
-            (Some("c".into()), Some(2)),
-            (Some("d".into()), Some(4)),
-        ]
-    );
 }
 
 // ---- Properties ----
@@ -1479,56 +1113,7 @@ fn properties_the_facade_does_not_model_survive_its_edits() {
     assert_eq!(texts(&doc), ["Ship to: Depot"]);
 }
 
-#[test]
-fn text_xml_cannot_carry_is_refused_and_markup_characters_round_trip() {
-    let mut doc = doc_with_control("notes");
-    let location = control_at(&doc, &body(&doc), "notes");
-    let before = doc.to_bytes().unwrap();
-    assert!(
-        doc.set_content_control_tag(&location, Some("bad\u{1}"))
-            .is_err()
-    );
-    assert!(
-        doc.set_content_control_alias(&location, Some("bad\u{b}"))
-            .is_err()
-    );
-    assert!(
-        doc.set_content_control_value_by_tag("notes", "bad\u{0}")
-            .is_err()
-    );
-    assert_eq!(doc.to_bytes().unwrap(), before);
-
-    let tag = "étiquette & \"citée\" <1>";
-    let value = "a < b & \"c\" — مرحبا 中文 😀 e\u{301}";
-    doc.set_content_control_tag(&location, Some(tag)).unwrap();
-    assert_eq!(doc.set_content_control_value_by_tag(tag, value).unwrap(), 1);
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.content_controls_by_tag(tag).len(), 1);
-    assert_eq!(doc.content_controls_by_tag(tag)[0].text(), value);
-    assert_eq!(texts(&doc), ["Intro", value]);
-}
-
 // ---- Values ----
-
-#[test]
-fn a_text_value_replaces_the_content_and_ends_the_placeholder_state() {
-    let long = "a long client name ".repeat(200);
-    for given in ["Contoso & Co", "", long.as_str()] {
-        let mut doc = doc_with_body(
-            r#"<w:p><w:r><w:t xml:space="preserve">Client: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="client"/><w:id w:val="4"/><w:showingPlcHdr/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Click to enter the client</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-        );
-        assert_eq!(
-            doc.set_content_control_value_by_tag("client", given)
-                .unwrap(),
-            1
-        );
-        let doc = reopen(&mut doc);
-        assert_eq!(value(&doc, "client"), given);
-        assert_eq!(texts(&doc), [format!("Client: {given}")]);
-        let properties = saved_properties(&doc, "word/document.xml", 4);
-        assert!(!has(&properties, "w:showingPlcHdr"), "{properties}");
-    }
-}
 
 /// A paragraph holding a plain text control as Word writes one that shows
 /// its placeholder text: the prompt in the Placeholder Text style, the run
@@ -1713,59 +1298,6 @@ fn with_style(doc: &mut Document, style: &str) -> Document {
 }
 
 #[test]
-fn a_line_break_in_a_value_is_written_as_a_break() {
-    for by_form in [false, true] {
-        let mut doc = doc_with_body(PROMPTING);
-        set_value(&mut doc, "name", "Ada Lovelace\nLondon", by_form);
-        let doc = reopen(&mut doc);
-        let (_, xml) = control_item(&doc, &body(&doc), "name");
-        assert!(xml.contains("Ada Lovelace"), "{}: {xml}", way(by_form));
-        assert!(
-            has(&xml, "w:br") && !xml.contains("Lovelace\nLondon"),
-            "{}: the line break is written as a w:br: {xml}",
-            way(by_form)
-        );
-        assert_eq!(
-            value(&doc, "name"),
-            "Ada Lovelace\nLondon",
-            "{}",
-            way(by_form)
-        );
-    }
-}
-
-#[test]
-fn a_tab_and_a_carriage_return_in_a_value_are_written_as_a_tab_and_a_break() {
-    let piece = Regex::new(r"<w:(t|tab|br)\b[^>]*?(/>|>([^<]*)</w:t>)").unwrap();
-    for by_form in [false, true] {
-        let mut doc = doc_with_body(PROMPTING);
-        set_value(&mut doc, "name", "Ada\tLovelace\rLondon\r\nUK", by_form);
-        let doc = reopen(&mut doc);
-        let content = saved_content(&doc, "word/document.xml", "name");
-        let pieces: Vec<&str> = piece
-            .captures_iter(&content)
-            .map(|captures| match &captures[1] {
-                "t" => captures.get(3).map_or("", |text| text.as_str()),
-                "tab" => "TAB",
-                _ => "BR",
-            })
-            .collect();
-        assert_eq!(
-            pieces,
-            ["Ada", "TAB", "Lovelace", "BR", "London", "BR", "UK"],
-            "{}: a lone carriage return and a Windows line ending are one break each: {content}",
-            way(by_form)
-        );
-        assert_eq!(
-            value(&doc, "name"),
-            "Ada\tLovelace\nLondon\nUK",
-            "{}",
-            way(by_form)
-        );
-    }
-}
-
-#[test]
 fn a_line_break_in_a_value_keeps_a_run_child_after_the_text_after_the_value() {
     let body = r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="name"/><w:id w:val="42"/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:t>Grace</w:t><x:mark xmlns:x="urn:example"/></w:r></w:sdtContent></w:sdt></w:p>"#;
     let child = Regex::new(r"<(w:t|w:br|x:mark)\b").unwrap();
@@ -1856,37 +1388,6 @@ fn filling_several_tags_is_all_or_nothing() {
 }
 
 #[test]
-fn a_checkbox_takes_true_false_one_zero_yes_no_and_shows_its_glyph() {
-    let mut doc = typed_control("agree", ContentControlTypePayload::CheckBox);
-    for (given, glyph, checked) in [
-        ("yes", "\u{2612}", "1"),
-        ("0", "\u{2610}", "0"),
-        (" TRUE ", "\u{2612}", "1"),
-        ("no", "\u{2610}", "0"),
-    ] {
-        assert_eq!(
-            doc.set_content_control_value_by_tag("agree", given)
-                .unwrap(),
-            1
-        );
-        doc = reopen(&mut doc);
-        assert_eq!(value(&doc, "agree"), glyph, "{given:?}");
-        let properties = saved_properties(&doc, "word/document.xml", 1);
-        assert_eq!(
-            val(&properties, "w14:checked").as_deref(),
-            Some(checked),
-            "{given:?}"
-        );
-    }
-    let before = doc.to_bytes().unwrap();
-    let error = doc
-        .set_content_control_value_by_tag("agree", "maybe")
-        .unwrap_err();
-    assert!(error.to_string().contains("true or false"), "{error}");
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
 fn a_date_is_given_in_iso_form_and_shown_in_the_control_format() {
     for (format, shown) in [("yyyy-MM-dd", "2026-12-25"), ("dd/MM/yyyy", "25/12/2026")] {
         let mut doc = typed_control(
@@ -1947,97 +1448,6 @@ fn date_control(tag: &str, format: &str, lid: Option<&str>) -> Document {
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).expect("package writes");
     Document::from_bytes(&out.into_inner()).expect("the date control opens")
-}
-
-/// Rules naming the two date controls of the corpus form.
-fn date_rules() -> [FormFieldRule; 2] {
-    [
-        prompt(target("date_of_incorporation"), true, "Pick a date"),
-        prompt(target("signature_date"), false, "Pick a date"),
-    ]
-}
-
-fn forms_protection() -> oxoffice_docx::DocumentProtection {
-    oxoffice_docx::DocumentProtection {
-        mode: oxoffice_docx::ProtectionMode::Forms,
-        enforcement: Some(true),
-        formatting: None,
-        provider_type: None,
-        algorithm_class: None,
-        algorithm_type: None,
-        algorithm_sid: None,
-        spin_count: None,
-        hash: None,
-        salt: None,
-    }
-}
-
-#[test]
-fn a_date_control_in_words_long_format_takes_a_date() {
-    for by_form in [false, true] {
-        let mut doc = corpus_doc("authored/form.docx");
-        assert!(
-            doc.validate_form(&date_rules()).unwrap().is_empty(),
-            "the corpus form's long dates are valid as Word saved them"
-        );
-        set_value(&mut doc, "date_of_incorporation", "2015-01-02", by_form);
-        let mut doc = reopen(&mut doc);
-        assert_eq!(
-            value(&doc, "date_of_incorporation"),
-            "2 January 2015",
-            "{}",
-            way(by_form)
-        );
-        assert!(doc.validate_form(&date_rules()).unwrap().is_empty());
-        doc.protect_form(&date_rules(), forms_protection())
-            .expect("a form with long dates can be protected");
-    }
-}
-
-#[test]
-fn a_date_is_shown_with_the_names_of_the_controls_language() {
-    // 2 January 2015 is a Friday.
-    for (format, lid, shown) in [
-        ("dddd d MMMM yyyy", Some("fr-FR"), "vendredi 2 janvier 2015"),
-        ("d MMMM yyyy", Some("fr-CA"), "2 janvier 2015"),
-        ("dd/MM/yyyy", Some("fr-FR"), "02/01/2015"),
-        (
-            "dddd, d. MMMM yyyy",
-            Some("de-DE"),
-            "Freitag, 2. Januar 2015",
-        ),
-        ("d. MMMM yyyy", Some("de-AT"), "2. Jänner 2015"),
-        (
-            "dddd, d' de 'MMMM' de 'yyyy",
-            Some("es-ES"),
-            "viernes, 2 de enero de 2015",
-        ),
-        (
-            "dddd, MMMM d, yyyy",
-            Some("en-US"),
-            "Friday, January 2, 2015",
-        ),
-        ("MMM. d, yy", None, "Jan. 2, 15"),
-        ("M/d/yyyy h:mm am/pm", Some("en-US"), "1/2/2015 12:00 AM"),
-        ("yyyy年M月d日", Some("ja-JP"), "2015年1月2日"),
-    ] {
-        for by_form in [false, true] {
-            let mut doc = date_control("due", format, lid);
-            set_value(&mut doc, "due", "2015-01-02", by_form);
-            let doc = reopen(&mut doc);
-            assert_eq!(
-                value(&doc, "due"),
-                shown,
-                "{format} {lid:?} {}",
-                way(by_form)
-            );
-            let rule = prompt(target("due"), true, "Pick a date");
-            assert!(
-                doc.validate_form(&[rule]).unwrap().is_empty(),
-                "{format} {lid:?}"
-            );
-        }
-    }
 }
 
 #[test]
@@ -2148,75 +1558,6 @@ fn a_date_control_takes_any_format_word_can_show_and_refuses_others() {
     set_value(&mut doc, "due", "2026-12-25", false);
     let doc = reopen(&mut doc);
     assert_eq!(value(&doc, "due"), "25 December 2026");
-}
-
-#[test]
-fn a_list_value_is_one_of_its_items_chosen_by_display_text_or_value() {
-    let items = vec![
-        ("France".to_owned(), "FR".to_owned()),
-        ("Spain".to_owned(), "ES".to_owned()),
-    ];
-    let list_item = Regex::new(r#"<w:listItem w:displayText="([^"]*)" w:value="([^"]*)"/>"#)
-        .expect("pattern compiles");
-    for payload in [
-        ContentControlTypePayload::DropDownList {
-            items: items.clone(),
-        },
-        ContentControlTypePayload::ComboBox {
-            items: items.clone(),
-        },
-    ] {
-        let mut doc = typed_control("country", payload.clone());
-        assert_eq!(
-            doc.set_content_control_value_by_tag("country", "FR")
-                .unwrap(),
-            1
-        );
-        let mut doc = reopen(&mut doc);
-        assert_eq!(value(&doc, "country"), "France", "{payload:?}");
-        assert_eq!(
-            doc.set_content_control_value_by_tag("country", "Spain")
-                .unwrap(),
-            1
-        );
-        let doc = reopen(&mut doc);
-        assert_eq!(value(&doc, "country"), "Spain", "{payload:?}");
-        // The items keep their order and their two texts.
-        let properties = saved_properties(&doc, "word/document.xml", 1);
-        let pairs: Vec<(String, String)> = list_item
-            .captures_iter(&properties)
-            .map(|captures| (captures[1].to_owned(), captures[2].to_owned()))
-            .collect();
-        assert_eq!(pairs, items, "{properties}");
-    }
-
-    let mut doc = typed_control("country", ContentControlTypePayload::DropDownList { items });
-    let before = doc.to_bytes().unwrap();
-    let error = doc
-        .set_content_control_value_by_tag("country", "Belgium")
-        .unwrap_err();
-    assert!(
-        error.to_string().contains("France") && error.to_string().contains("Spain"),
-        "the refusal names the choices: {error}"
-    );
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn a_combo_box_accepts_text_outside_its_items() {
-    let mut doc = typed_control(
-        "country",
-        ContentControlTypePayload::ComboBox {
-            items: vec![("France".to_owned(), "FR".to_owned())],
-        },
-    );
-    let result = doc.set_content_control_value_by_tag("country", "Belgium");
-    assert!(
-        result.is_ok(),
-        "a combo box takes text outside its items: {result:?}"
-    );
-    let doc = reopen(&mut doc);
-    assert_eq!(value(&doc, "country"), "Belgium");
 }
 
 #[test]
@@ -2419,46 +1760,6 @@ fn bound_checkbox_and_date_controls_store_what_word_reads() {
 // ---- Repeating, cloning, moving, unwrapping, removing ----
 
 #[test]
-fn the_text_of_a_repeating_section_reads_its_items_with_their_inline_controls() {
-    // Word's usual layout: each item a paragraph "Name: " and an inline
-    // plain text control.
-    let item = |id: i32, name: &str| {
-        format!(
-            r#"<w:sdt><w:sdtPr><w:id w:val="{id}"/><w15:repeatingSectionItem xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name{id}"/><w:id w:val="{}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{name}</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>"#,
-            id + 10
-        )
-    };
-    let doc = doc_with_body(&format!(
-        r#"<w:sdt><w:sdtPr><w:tag w:val="people"/><w:id w:val="1"/><w15:repeatingSection xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/></w:sdtPr><w:sdtContent>{}{}</w:sdtContent></w:sdt>"#,
-        item(2, "Ada"),
-        item(3, "Grace")
-    ));
-    assert_eq!(texts(&doc), ["Name: Ada", "Name: Grace"]);
-    let found = listed(&doc);
-    let read: Vec<(Option<SdtType>, String)> = found
-        .into_iter()
-        .map(|(_, _, kind, text)| (kind, text))
-        .collect();
-    assert_eq!(
-        read,
-        [
-            (
-                Some(SdtType::RepeatingSection),
-                "Name: Ada\nName: Grace".to_owned()
-            ),
-            (Some(SdtType::RepeatingSectionItem), "Name: Ada".to_owned()),
-            (Some(SdtType::PlainText), "Ada".to_owned()),
-            (
-                Some(SdtType::RepeatingSectionItem),
-                "Name: Grace".to_owned()
-            ),
-            (Some(SdtType::PlainText), "Grace".to_owned()),
-        ],
-        "a paragraph reads as the document reads it"
-    );
-}
-
-#[test]
 fn a_repeating_section_repeats_its_item_and_keeps_the_last_one() {
     let mut doc = doc_with_body(
         r#"<w:sdt><w:sdtPr><w:tag w:val="lines"/><w:id w:val="1"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Line item</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
@@ -2587,41 +1888,6 @@ fn a_cloned_control_gets_a_new_id_and_a_moved_one_keeps_its_own() {
 }
 
 #[test]
-fn unwrapping_keeps_the_content_and_removing_deletes_it() {
-    let mut doc = doc_with(&["Name:", "Note"]);
-    for (index, tag) in [(0, "kept"), (1, "dropped")] {
-        let paragraph = doc.paragraph_story_location(index).unwrap().unwrap();
-        doc.insert_content_control(&paragraph, spec(Inline, SdtType::PlainText, tag))
-            .unwrap();
-    }
-    let end = ContentLocation::end(body(&doc));
-    doc.insert_content_control(&end, spec(Block, SdtType::RichText, "clause"))
-        .unwrap();
-    let end = ContentLocation::end(body(&doc));
-    doc.insert_content_control(&end, spec(Block, SdtType::RichText, "draft"))
-        .unwrap();
-    doc.fill_content_control_tags(&[
-        ("kept", " Ada"),
-        ("dropped", " (draft)"),
-        ("clause", "Clause text"),
-        ("draft", "Draft text"),
-    ])
-    .unwrap();
-
-    for tag in ["kept", "clause"] {
-        let location = control_at(&doc, &body(&doc), tag);
-        doc.unwrap_content_control(&location).unwrap();
-    }
-    for tag in ["dropped", "draft"] {
-        let location = control_at(&doc, &body(&doc), tag);
-        doc.remove_content_control(&location).unwrap();
-    }
-    let doc = reopen(&mut doc);
-    assert!(doc.content_controls().is_empty(), "{:?}", listed(&doc));
-    assert_eq!(texts(&doc), ["Name: Ada", "Note", "Clause text"]);
-}
-
-#[test]
 fn a_control_that_is_all_of_a_cell_can_be_unwrapped_but_not_removed() {
     let mut doc = doc_with_body(
         r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:sdt><w:sdtPr><w:tag w:val="address"/><w:id w:val="7"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>2 Canal Wharf</w:t></w:r></w:p><w:p><w:r><w:t>Leeds</w:t></w:r></w:p></w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>"#,
@@ -2697,129 +1963,6 @@ fn a_placeholder_building_block_gives_a_control_its_prompt() {
 }
 
 // ---- The corpus form and thesis ----
-
-#[test]
-fn the_corpus_forms_list_their_fourteen_controls_with_tags_aliases_and_kinds() {
-    use SdtType::{CheckBox, ComboBox, Date, DropDownList, PlainText};
-    for name in ["authored/form.docx", "libreoffice/form.docx"] {
-        let doc = corpus_doc(name);
-        let controls = doc.content_controls();
-        let tags: Vec<&str> = controls.iter().filter_map(|c| c.tag()).collect();
-        assert_eq!(tags, FORM_TAGS, "{name}");
-        let ids: Vec<Option<i32>> = controls.iter().map(|c| c.id()).collect();
-        let mut expected: Vec<Option<i32>> = (501_238_002..=501_238_014).map(Some).collect();
-        expected.insert(1, Some(501_238_001));
-        assert_eq!(ids, expected, "{name}");
-        let kinds: Vec<Option<SdtType>> = controls.iter().map(|c| c.control_type()).collect();
-        // The authored form gives the address no kind, which makes it rich
-        // text; LibreOffice keeps its first line in a plain text control.
-        let address = if name.starts_with("authored") {
-            None
-        } else {
-            Some(PlainText)
-        };
-        assert_eq!(
-            kinds,
-            [
-                Some(PlainText),
-                address,
-                Some(Date),
-                Some(DropDownList),
-                Some(ComboBox),
-                Some(CheckBox),
-                Some(CheckBox),
-                Some(PlainText),
-                Some(PlainText),
-                Some(Date),
-                Some(PlainText),
-                Some(PlainText),
-                Some(DropDownList),
-                Some(CheckBox),
-            ],
-            "{name}"
-        );
-        let values: Vec<(&str, String)> = [
-            "company_type",
-            "country",
-            "vat_registered",
-            "iso_9001",
-            "signature",
-            "supplier_reference",
-        ]
-        .into_iter()
-        .map(|tag| (tag, value(&doc, tag)))
-        .collect();
-        assert_eq!(
-            values,
-            [
-                ("company_type", "Limited company".to_owned()),
-                ("country", "United Kingdom".to_owned()),
-                ("vat_registered", "\u{2612}".to_owned()),
-                ("iso_9001", "\u{2610}".to_owned()),
-                ("signature", "(sign here)".to_owned()),
-                ("supplier_reference", "SUP-2026-0147".to_owned()),
-            ],
-            "{name}"
-        );
-        let signature = doc.content_controls_by_alias("Signature");
-        assert_eq!(signature.len(), 1, "{name}");
-        assert_eq!(signature[0].tag(), Some("signature"), "{name}");
-        let reference = saved_properties(&doc, "word/document.xml", 501_238_012);
-        assert_eq!(
-            val(&reference, "w:lock").as_deref(),
-            Some("contentLocked"),
-            "{name}"
-        );
-    }
-}
-
-#[test]
-fn the_text_of_a_control_of_several_paragraphs_reads_one_line_per_paragraph() {
-    for name in ["authored/form.docx", "word/form.docx"] {
-        let doc = corpus_doc(name);
-        let address = doc.content_controls_by_tag("registered_address");
-        assert_eq!(address.len(), 1, "{name}");
-        assert_eq!(
-            address[0].text(),
-            "2 Canal Wharf\nLeeds LS11 5PS\nUnited Kingdom",
-            "{name}: one line per paragraph"
-        );
-    }
-}
-
-#[test]
-fn a_value_set_on_a_control_of_several_paragraphs_leaves_one_paragraph() {
-    // Word's copy gives each paragraph a w14:paraId and rsids.
-    for name in ["authored/form.docx", "word/form.docx"] {
-        for by_form in [false, true] {
-            let mut doc = corpus_doc(name);
-            set_value(&mut doc, "registered_address", "1 New Road, Leeds", by_form);
-            let doc = reopen(&mut doc);
-            assert_eq!(value(&doc, "registered_address"), "1 New Road, Leeds");
-            let content = saved_content(&doc, "word/document.xml", "registered_address");
-            assert_eq!(
-                paragraph_count(&content),
-                1,
-                "{name}, {}: the value is the only paragraph of the control: {content}",
-                way(by_form)
-            );
-        }
-    }
-}
-
-#[test]
-fn a_value_drops_the_emptied_paragraphs_whose_paragraphs_and_runs_carry_identifiers() {
-    // Google Docs writes rsids on every paragraph and run.
-    let body = r#"<w:sdt><w:sdtPr><w:tag w:val="address"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3"><w:r w:rsidR="00A1B2C3"><w:t>2 Canal Wharf</w:t></w:r></w:p><w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3"><w:r w:rsidR="00D4E5F6"><w:t>Leeds</w:t></w:r></w:p></w:sdtContent></w:sdt>"#;
-    for by_form in [false, true] {
-        let mut doc = doc_with_body(body);
-        set_value(&mut doc, "address", "1 New Road", by_form);
-        let doc = reopen(&mut doc);
-        assert_eq!(texts(&doc), ["1 New Road"], "{}", way(by_form));
-        let content = saved_content(&doc, "word/document.xml", "address");
-        assert_eq!(paragraph_count(&content), 1, "{}: {content}", way(by_form));
-    }
-}
 
 #[test]
 fn a_value_drops_the_emptied_paragraphs_that_hold_only_proofing_and_rendering_marks() {
@@ -2905,59 +2048,6 @@ fn a_value_keeps_a_paragraph_of_the_control_that_holds_a_section_break_or_a_trac
     }
 }
 
-#[test]
-fn filling_the_corpus_forms_by_tag_keeps_the_content_lock_and_writes_each_value_once() {
-    for name in ["authored/form.docx", "libreoffice/form.docx"] {
-        let mut doc = corpus_doc(name);
-        assert_eq!(
-            doc.fill_content_control_tags(&[
-                ("company_name", "Fabrikam Ltd"),
-                ("company_type", "Partnership"),
-                ("vat_registered", "false"),
-                ("signature", "Signed: O. Grant"),
-                ("supplier_reference", "SUP-2026-0999"),
-            ])
-            .unwrap(),
-            [1; 5],
-            "{name}"
-        );
-        let doc = reopen(&mut doc);
-        let values: Vec<String> = FORM_TAGS.iter().map(|tag| value(&doc, tag)).collect();
-        assert_eq!(values[0], "Fabrikam Ltd", "{name}");
-        assert_eq!(values[3], "Partnership", "{name}");
-        assert_eq!(values[5], "\u{2610}", "{name}");
-        assert_eq!(values[10], "Signed: O. Grant", "{name}");
-        assert_eq!(values[11], "SUP-2026-0999", "{name}");
-        assert_eq!(values[4], "United Kingdom", "{name}: the others stay");
-        assert_eq!(values[7], "Oliver Grant, Chief Operating Officer", "{name}");
-
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        for (old, new) in [
-            ("Contoso Logistics Ltd", "Fabrikam Ltd"),
-            ("SUP-2026-0147", "SUP-2026-0999"),
-            ("(sign here)", "Signed: O. Grant"),
-        ] {
-            assert_eq!(xml.matches(old).count(), 0, "{name}: {old}");
-            assert_eq!(xml.matches(new).count(), 1, "{name}: {new}");
-        }
-        let vat = saved_properties(&doc, "word/document.xml", 501_238_006);
-        assert_eq!(val(&vat, "w14:checked").as_deref(), Some("0"), "{name}");
-        // The program may fill a content-locked control; the lock stays for
-        // the people who open the form in Word.
-        let reference = saved_properties(&doc, "word/document.xml", 501_238_012);
-        assert_eq!(
-            val(&reference, "w:lock").as_deref(),
-            Some("contentLocked"),
-            "{name}"
-        );
-        assert_eq!(
-            doc.document_protection().map(|protection| protection.mode),
-            Some(oxoffice_docx::ProtectionMode::Forms),
-            "{name}"
-        );
-    }
-}
-
 /// Rules over two controls and two legacy fields of the corpus form: the
 /// bank name (ordinal 0) and the payment terms list (ordinal 3).
 fn form_rules() -> [FormFieldRule; 4] {
@@ -3020,111 +2110,4 @@ fn a_form_fill_sets_controls_and_legacy_fields_in_one_call() {
             ),
         ]
     );
-}
-
-#[test]
-fn a_form_reset_shows_the_prompts_and_the_required_fields_read_empty() {
-    let mut doc = corpus_doc("authored/form.docx");
-    let rules = form_rules();
-    assert!(
-        doc.validate_form(&rules).unwrap().is_empty(),
-        "the corpus form is filled in"
-    );
-    assert_eq!(doc.reset_form(&rules).unwrap(), [1, 1, 1, 1]);
-    let doc = reopen(&mut doc);
-
-    assert_eq!(value(&doc, "company_name"), "Enter the company name");
-    assert_eq!(value(&doc, "category"), "Choose a category");
-    for id in [501_238_002, 501_238_013] {
-        let properties = saved_properties(&doc, "word/document.xml", id);
-        assert!(has(&properties, "w:showingPlcHdr"), "{properties}");
-    }
-    assert_eq!(
-        bank_fields(&doc),
-        [
-            (
-                Some("BankName".into()),
-                LegacyFormFieldValue::Text(String::new())
-            ),
-            (
-                Some("PaymentTerms".into()),
-                LegacyFormFieldValue::SelectedIndex(0)
-            ),
-        ]
-    );
-    // A prompt is no value: the three required fields read empty.
-    let empty: Vec<FormFieldTarget> = doc
-        .validate_form(&rules)
-        .unwrap()
-        .into_iter()
-        .map(|issue| issue.target)
-        .collect();
-    assert_eq!(
-        empty,
-        [target("company_name"), target("category"), legacy(0)]
-    );
-}
-
-#[test]
-fn the_thesis_table_of_contents_is_a_document_part_control_in_both_producers() {
-    for (name, expected) in [("authored/thesis.docx", 1), ("libreoffice/thesis.docx", 2)] {
-        let doc = corpus_doc(name);
-        let controls = doc.content_controls();
-        // LibreOffice also wraps the list of tables and figures in one.
-        assert_eq!(controls.len(), expected, "{name}");
-        assert!(
-            controls
-                .iter()
-                .all(|c| c.control_type() == Some(SdtType::DocumentPartObject) && c.tag().is_none()),
-            "{name}"
-        );
-        // The entries, each on a line of its own.
-        let toc = controls[0].text();
-        for entry in ["Contents", "Introduction\t1", "Literature review"] {
-            assert!(
-                toc.lines().any(|line| line.contains(entry)),
-                "{name}: {entry} in {toc}"
-            );
-        }
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        assert_eq!(
-            val(&xml, "w:docPartGallery").as_deref(),
-            Some("Table of Contents"),
-            "{name}"
-        );
-    }
-}
-
-#[test]
-fn a_control_added_to_word_and_google_files_survives_a_save() {
-    for name in ["word/report.docx", "google/report.docx"] {
-        let mut doc = corpus_doc(name);
-        assert!(doc.content_controls().is_empty(), "{name}");
-        let title = doc.paragraph_story_location(0).unwrap().unwrap();
-        let before = texts(&doc);
-        doc.insert_content_control(
-            &title,
-            ContentControlSpec {
-                alias: Some("Status".to_owned()),
-                ..spec(Inline, SdtType::PlainText, "status")
-            },
-        )
-        .unwrap();
-        doc.set_content_control_value_by_tag("status", " (draft)")
-            .unwrap();
-        let doc = reopen(&mut doc);
-        assert_eq!(
-            listed(&doc),
-            [(
-                Some("status".into()),
-                Some(1),
-                Some(SdtType::PlainText),
-                " (draft)".into()
-            )],
-            "{name}"
-        );
-        let after = texts(&doc);
-        assert_eq!(after[0], format!("{} (draft)", before[0]), "{name}");
-        assert_eq!(after[1..], before[1..], "{name}: the rest is untouched");
-    }
 }

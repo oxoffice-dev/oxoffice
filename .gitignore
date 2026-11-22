@@ -28,3 +28,4 @@ conda/dist/
 
 # Built at release from crates/oxoffice-cli/limitations/
 /docs/LIMITATIONS.md
+*.profraw
