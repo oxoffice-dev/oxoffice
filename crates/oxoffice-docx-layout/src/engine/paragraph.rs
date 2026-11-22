@@ -105,7 +105,7 @@ fn computed_layout_field(
                 let Some(bookmark) = field_text_argument(&instruction, 0) else {
                     return (None, None);
                 };
-                if bookmark_text(input, bookmark).is_none() {
+                if !bookmark_exists(input, bookmark) {
                     diagnostics.push(Diagnostic {
                         message: format!(
                             "PAGEREF target {bookmark} was not found, stored display retained"
@@ -2277,7 +2277,7 @@ fn push_targeted_bookmark_markers(
         marker.is_start()
             && marker_run_index == projected_run_index
             && marker.name().is_some_and(|name| {
-                document_has_page_ref(input, name) && bookmark_text(input, name).is_some()
+                document_has_page_ref(input, name) && bookmark_exists(input, name)
             })
     }) {
         if let Some(target) = marker.name().and_then(|name| page_ref_id(input, name)) {

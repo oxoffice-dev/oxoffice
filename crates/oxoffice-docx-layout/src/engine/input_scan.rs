@@ -650,6 +650,12 @@ fn bookmark_value_runs(input: &LayoutInput, name: &str) -> Option<Vec<Vec<CT_R>>
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
+/// Whether exactly one bookmark is named `name` and has a range, the
+/// condition for [`bookmark_text`] to give a value.
+pub(super) fn bookmark_exists(input: &LayoutInput, name: &str) -> bool {
+    bookmark_value_runs(input, name).is_some()
+}
+
 /// The name of the one bookmark whose name folds to `folded`.
 fn folded_bookmark_name(input: &LayoutInput, folded: &str) -> Option<String> {
     let block_bookmarks = input.block_bookmarks();
