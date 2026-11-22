@@ -78,3 +78,4 @@ dependency bumps and documentation.
 | 2026-11-22 | [A smaller test suite: the docx tests that run 99 % of the lines](2026-11-22-a-smaller-test-suite.md) | accepted |
 | 2026-11-22 | [PowerPoint binding: owners that do not depend on their slide position](2026-11-22-pptx-binding-owners-independent-of-slide-position.md) | shipped |
 | 2026-11-22 | [A line break keeps where its text restarts](2026-11-22-line-break-clear.md) | shipped |
+| 2026-11-22 | [Cut and pasted content keeps its bookmarks whole and its ids unique](2026-11-22-cut-content-keeps-its-bookmarks-and-ids.md) | accepted |

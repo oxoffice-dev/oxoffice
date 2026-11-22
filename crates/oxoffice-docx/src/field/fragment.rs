@@ -2506,7 +2506,7 @@ fn fragment_dependency_companions(fragment: &Document, selected: &[u8]) -> Resul
     Ok(companions)
 }
 
-pub(super) fn patch_fragment_note_ids(
+pub(crate) fn patch_fragment_note_ids(
     xml: &[u8],
     maps: &HashMap<StoryKind, BTreeMap<String, String>>,
 ) -> Result<Vec<u8>> {
@@ -3151,6 +3151,9 @@ fn relative_fragment_target(source_part: &str, target_part: &str) -> String {
 /// distinct OOXML scopes and remain local to the rich-merge combiner.
 pub(super) struct BodyIdentityState {
     used_content_control_ids: HashSet<u32>,
+    /// Every control id in use, read as Word's signed decimal numbers (Word
+    /// writes random negative ones), to tell a taken id.
+    taken_content_control_ids: HashSet<i64>,
     used_non_visual_drawing_ids: HashSet<u32>,
     used_names: HashSet<String>,
     /// `used_names` lowercased: a fresh name avoids every bookmark and
@@ -3170,6 +3173,7 @@ impl BodyIdentityState {
     pub(super) fn from_documents(documents: &[Document]) -> Result<Self> {
         let mut state = Self {
             used_content_control_ids: HashSet::new(),
+            taken_content_control_ids: HashSet::new(),
             used_non_visual_drawing_ids: HashSet::new(),
             used_names: HashSet::new(),
             folded_names: HashSet::new(),
@@ -3181,12 +3185,7 @@ impl BodyIdentityState {
         for document in documents {
             let xml = document.document.to_xml()?;
             let values = body_identity_values(&xml)?;
-            state.used_content_control_ids.extend(
-                values
-                    .content_control_ids
-                    .iter()
-                    .filter_map(|value| value.parse::<u32>().ok()),
-            );
+            state.use_content_control_ids(&values.content_control_ids);
             state.used_non_visual_drawing_ids.extend(
                 values
                     .non_visual_drawing_ids
@@ -3197,12 +3196,7 @@ impl BodyIdentityState {
             state.use_names(values.reference_names);
             for (part_name, bytes) in &document.package.parts {
                 if let Ok(values) = body_identity_values(&wrap_fragment_companion(bytes)) {
-                    state.used_content_control_ids.extend(
-                        values
-                            .content_control_ids
-                            .iter()
-                            .filter_map(|value| value.parse::<u32>().ok()),
-                    );
+                    state.use_content_control_ids(&values.content_control_ids);
                     state.used_non_visual_drawing_ids.extend(
                         values
                             .non_visual_drawing_ids
@@ -3219,6 +3213,17 @@ impl BodyIdentityState {
             }
         }
         Ok(state)
+    }
+
+    fn use_content_control_ids(&mut self, values: &[String]) {
+        for value in values {
+            if let Ok(id) = value.trim().parse::<i64>() {
+                self.taken_content_control_ids.insert(id);
+                if let Ok(id) = u32::try_from(id) {
+                    self.used_content_control_ids.insert(id);
+                }
+            }
+        }
     }
 
     fn allocate_content_control_id(&mut self) -> Result<String> {
@@ -4073,6 +4078,151 @@ fn half_bookmark_edits(xml: &[u8], offset: usize) -> Result<Vec<FieldSourceEdit>
             replacement: Vec::new(),
         })
         .collect())
+}
+
+/// Fresh identities for what inserting the wrapped fragment would repeat in
+/// `document`, the rest kept, so that a cut and paste changes nothing: each
+/// bookmark the fragment holds whole whose id the document holds, each
+/// bookmark name the document holds (any case; the fragment's references to
+/// it follow), and each control or drawing id it holds. A lone bookmark
+/// start or end keeps its id: pasted back, it meets its other half again.
+pub(crate) fn freshen_taken_content_fragment_identities(
+    document: &mut Document,
+    wrapped_fragment: &[u8],
+) -> Result<Vec<u8>> {
+    let wrapped_fragment = &uniquify_drawing_ids_in_xml(wrapped_fragment)?;
+    let values = body_identity_values(wrapped_fragment)?;
+    // A fragment with no such identity (most paragraphs) changes nothing.
+    if values.bookmark_ids.is_empty()
+        && values.bookmark_names.is_empty()
+        && values.content_control_ids.is_empty()
+        && values.drawing_ids.is_empty()
+        && values.non_visual_drawing_ids.is_empty()
+    {
+        return patch_body_identity_attributes(
+            wrapped_fragment,
+            &BodyIdentityRemap {
+                drop_paragraph_identities: true,
+                ..Default::default()
+            },
+        );
+    }
+    let starts = values
+        .bookmark_events
+        .iter()
+        .filter(|(_, start)| *start)
+        .map(|(id, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    let whole = values
+        .bookmark_events
+        .iter()
+        .filter(|(id, start)| !*start && starts.contains(id.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect::<HashSet<_>>();
+    let mut state = BodyIdentityState::from_documents(std::slice::from_ref(document))?;
+    // What the document holds is taken; the rest is kept, and held before
+    // any fresh id is given, so that no fresh id repeats a kept one.
+    let bookmark_taken = |value: &String| {
+        whole.contains(value)
+            && value
+                .trim()
+                .parse::<i32>()
+                .is_ok_and(|id| document.identifiers.holds_bookmark_id(id))
+    };
+    let drawing_taken = |value: &String| {
+        value
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|id| document.identifiers.holds_drawing_id(id))
+    };
+    let control_taken = |value: &String| {
+        value
+            .trim()
+            .parse::<i64>()
+            .is_ok_and(|id| state.taken_content_control_ids.contains(&id))
+    };
+    let non_visual_taken = |value: &String| {
+        value
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|id| state.used_non_visual_drawing_ids.contains(&id))
+    };
+    let taken_bookmarks = values
+        .bookmark_ids
+        .iter()
+        .filter(|value| bookmark_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let taken_drawings = values
+        .drawing_ids
+        .iter()
+        .filter(|value| drawing_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let taken_controls = values
+        .content_control_ids
+        .iter()
+        .filter(|value| control_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let taken_non_visual = values
+        .non_visual_drawing_ids
+        .iter()
+        .filter(|value| non_visual_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let kept_bookmarks = values
+        .bookmark_ids
+        .iter()
+        .filter_map(|value| value.trim().parse::<i32>().ok())
+        .collect::<Vec<_>>();
+    let kept_drawings = values
+        .drawing_ids
+        .iter()
+        .filter_map(|value| value.trim().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+    document
+        .identifiers
+        .hold_kept_ids(&kept_bookmarks, &kept_drawings);
+    state.use_content_control_ids(&values.content_control_ids);
+    state.used_non_visual_drawing_ids.extend(
+        values
+            .non_visual_drawing_ids
+            .iter()
+            .filter_map(|value| value.trim().parse::<u32>().ok()),
+    );
+    let mut remap = BodyIdentityRemap {
+        drop_paragraph_identities: true,
+        ..Default::default()
+    };
+    for value in taken_bookmarks {
+        let fresh = document.identifiers.reserve_bookmark_id()?.to_string();
+        remap.bookmark_ids.insert(value, fresh);
+    }
+    for value in taken_controls {
+        let fresh = state.allocate_content_control_id()?;
+        remap.content_control_ids.insert(value, fresh);
+    }
+    for value in taken_drawings {
+        let fresh = document.identifiers.reserve_drawing_id()?.to_string();
+        remap.drawing_ids.insert(value, fresh);
+    }
+    for value in taken_non_visual {
+        let fresh = state.allocate_non_visual_drawing_id()?;
+        remap.non_visual_drawing_ids.insert(value, fresh);
+    }
+    for value in values.bookmark_names {
+        if remap.bookmark_names.contains_key(&value) {
+            continue;
+        }
+        let name = if state.keep_free_name(&value) {
+            value.clone()
+        } else {
+            state.allocate_name(&value)?
+        };
+        remap.bookmark_names.insert(value, name);
+    }
+    patch_body_identity_attributes(wrapped_fragment, &remap)
 }
 
 fn validate_fragment_identity_ownership(values: &BodyIdentityValues) -> Result<()> {
