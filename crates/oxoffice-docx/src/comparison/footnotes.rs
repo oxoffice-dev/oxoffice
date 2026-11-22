@@ -2634,7 +2634,7 @@ fn bind_note_reference_revisions(
                     first = false;
                 }
                 let reference_id = metadata.ids.allocate()?;
-                replacement.push_str(&format!("<w:{expected} xmlns:w=\"{W_NS}\" w:id=\"{reference_id}\" w:author=\"{}\" w:date=\"{}\">",quick_xml::escape::escape(metadata.author),quick_xml::escape::escape(metadata.timestamp)));
+                replacement.push_str(&format!("<w:{expected} xmlns:w=\"{W_NS}\" w:id=\"{reference_id}\" w:author=\"{}\" w:date=\"{}\">",oxoffice_core::xml::escape_attribute_value(metadata.author),oxoffice_core::xml::escape_attribute_value(metadata.timestamp)));
                 replacement.push_str(&source[run.clone()]);
                 replacement.push_str(&format!("</w:{expected}>"));
                 cursor = run.end;

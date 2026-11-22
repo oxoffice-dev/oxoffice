@@ -75,7 +75,7 @@ use work::{
 pub(crate) use work::{
     FinalWordBlock, ParsedWordRunTexts, ParsedWordText, TemplateParagraphCloneLease,
     TemplateWordEvent, TemplateWordOrigin, WordParagraphReadFacts, WordParagraphTextFacts,
-    final_word_source, ordered_normalization_children, write_final_word_block,
+    escaped_source, final_word_source, ordered_normalization_children, write_final_word_block,
     write_prepared_validation_xml,
 };
 
@@ -5725,11 +5725,13 @@ pub(crate) fn optional_word_attribute(
                 .iter()
                 .any(|prefix| prefix.as_bytes() == &key[..separator])
         {
-            let value = std::str::from_utf8(&attribute.value).ok()?;
+            let value = oxoffice_core::xml::normalize_attribute_white_space(
+                std::str::from_utf8(&attribute.value).ok()?,
+            );
             return Some(
-                quick_xml::escape::unescape(value)
+                quick_xml::escape::unescape(&value)
                     .map(|value| value.into_owned())
-                    .unwrap_or_else(|_| value.to_owned()),
+                    .unwrap_or_else(|_| value.into_owned()),
             );
         }
     }

@@ -2344,7 +2344,9 @@ impl<'a> XmlTree<'a> {
                         && matches!(elements[index].local.as_str(), "t" | "delText")
                         && let Ok(text) = data.decode()
                     {
-                        elements[index].snapshot_scalar.push_str(&text);
+                        elements[index]
+                            .snapshot_scalar
+                            .push_str(&oxoffice_core::xml_text::normalize_line_ends(&text));
                     }
                 }
                 Event::Eof => break,

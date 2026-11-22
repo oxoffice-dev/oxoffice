@@ -788,9 +788,11 @@ fn legacy_form_word_attribute(
                     "duplicate legacy form {name} attribute"
                 )));
             }
-            let raw = std::str::from_utf8(&attribute.value)?;
+            let raw = oxoffice_core::xml::normalize_attribute_white_space(std::str::from_utf8(
+                &attribute.value,
+            )?);
             value = Some(
-                quick_xml::escape::unescape(raw)
+                quick_xml::escape::unescape(&raw)
                     .map_err(|error| {
                         OxmlError::InvalidValue(format!(
                             "invalid legacy form {name} attribute: {error}"

@@ -680,7 +680,7 @@ impl RootMergeAttribute<'_> {
         match self {
             Self::Encoded(attribute) => target.push_attribute(attribute.clone()),
             Self::Decoded { name, value } => {
-                target.push_attribute((std::str::from_utf8(name)?, *value))
+                target.push_attribute((*name, super::escaped_source(value).as_bytes()))
             }
         }
         Ok(())
@@ -1126,10 +1126,11 @@ fn merge_root_attributes(
                 })?;
             emission.reserve_inner_xml(length)?;
         }
+        let escaped = super::escaped_source(&value);
         if let Some((prefix, local)) = producer {
-            target.push_attribute((format!("{prefix}:{local}").as_str(), value.as_ref()));
+            target.push_attribute((format!("{prefix}:{local}").as_bytes(), escaped.as_bytes()));
         } else {
-            target.push_attribute((name, value.as_ref()));
+            target.push_attribute((name.as_bytes(), escaped.as_bytes()));
         }
     }
     Ok(())
@@ -2113,5 +2114,35 @@ fn raw_with_root_word_binding_in<'raw>(
         output.extend_from_slice(&raw[at..]);
         debug_assert_eq!(length, output.len());
         return Ok((Cow::Owned(output), prepaid));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retained_root_attribute_keeps_a_tab_written_as_a_reference() {
+        let source = br#"<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:x" x:note="a&#9;b"/>"#;
+        let mut reader = quick_xml::Reader::from_reader(&source[..]);
+        let Event::Empty(start) = reader.read_event().unwrap() else {
+            panic!("an empty run");
+        };
+        let prefixes = [
+            format!("\0w\0{}", crate::namespace::W_NS),
+            "\0x\0urn:x".to_owned(),
+        ];
+        let record = capture_root_attribute_record(&start, &prefixes)
+            .unwrap()
+            .expect("a record");
+        for (label, role) in [
+            ("source", XmlWriteRole::Source),
+            ("publication", XmlWriteRole::Publication),
+        ] {
+            let mut target = BytesStart::new("w:r");
+            push_root_attribute_record(&mut target, &record, None, role).unwrap();
+            let written = String::from_utf8(target.as_ref().to_vec()).unwrap();
+            assert!(written.contains(r#"note="a&#9;b""#), "{label}: {written}");
+        }
     }
 }

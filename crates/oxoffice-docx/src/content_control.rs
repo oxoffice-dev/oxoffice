@@ -2778,10 +2778,7 @@ fn val_element(name: &str, value: &str) -> String {
 }
 
 fn xml_attr(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('"', "&quot;")
+    oxoffice_core::xml::escape_attribute_value(value).into_owned()
 }
 
 fn parse_control(xml: &str) -> Result<CT_Sdt> {
@@ -5172,7 +5169,7 @@ fn element_text(xml: &[u8], elem: &XmlElem) -> Result<String> {
         .ok_or_else(|| form_fault("content control text is out of bounds"))?;
     let text = std::str::from_utf8(raw)
         .map_err(|error| form_fault(format!("content control text is invalid: {error}")))?;
-    quick_xml::escape::unescape(text)
+    quick_xml::escape::unescape(&oxoffice_core::xml_text::normalize_line_ends(text))
         .map(|value| value.into_owned())
         .map_err(|error| form_fault(format!("content control text is invalid: {error}")))
 }
@@ -5633,7 +5630,7 @@ fn read_bound_scalar(document: &Document, doc_part: &str, binding: &BindingRef) 
             "content-control custom XML text is invalid: {error}"
         ))
     })?;
-    quick_xml::escape::unescape(text)
+    quick_xml::escape::unescape(&oxoffice_core::xml_text::normalize_line_ends(text))
         .map(|value| value.into_owned())
         .map_err(|error| {
             form_fault(format!(

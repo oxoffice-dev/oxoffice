@@ -2970,9 +2970,11 @@ impl RangeAnchors {
                         .map_err(|error| failed(error.to_string()))?;
                     let text = std::str::from_utf8(text.as_ref())
                         .map_err(|error| failed(error.to_string()))?;
-                    let text = quick_xml::escape::unescape(text)
-                        .map_err(|error| failed(error.to_string()))?
-                        .into_owned();
+                    let text = quick_xml::escape::unescape(
+                        &oxoffice_core::xml_text::normalize_line_ends(text),
+                    )
+                    .map_err(|error| failed(error.to_string()))?
+                    .into_owned();
                     if let Some(index) = pending_mark.take() {
                         anchors.note_references[index].2 = Some(text);
                     }
