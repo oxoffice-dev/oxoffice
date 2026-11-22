@@ -66,8 +66,9 @@ thread per call.
   `resolve_table` and `CT_TableStyle::from_xml`, about 112 KB each. Plan
   step 2 is #160.
 
-Step 2 (#160, `perf(drawing)!`, breaking for Rust code that builds or reads
-the regions: `Box::new`, `as_deref()`):
+Step 2 (#160, `perf(drawing)`: Rust code that builds or reads the regions
+uses `Box::new` and `as_deref()`; not breaking, since `oxoffice-drawing` is
+not published and the facade does not re-export the type):
 
 - The background and the thirteen regions of `CT_TableStyle` became
   `Option<Box<...>>`: 55,544 to 208 bytes. The stack test checks it too.
