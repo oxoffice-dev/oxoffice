@@ -413,9 +413,8 @@ fn rtl_and_cjk_text_compare_by_character() {
 
 #[test]
 fn a_held_paragraph_whose_dropped_value_changed_keeps_the_refusal() {
-    // The reader reads both values of automatic spacing as off and the writer
-    // writes them alike, but the source says another thing: the held
-    // paragraph changed, and the comparison may not replace it.
+    // Automatic spacing turned from on to off: the held paragraph changed,
+    // and the comparison may not replace it.
     let body = |value: &str| {
         doc_with_body(&format!(
             concat!(
@@ -434,6 +433,9 @@ fn a_held_paragraph_whose_dropped_value_changed_keeps_the_refusal() {
             .contains("holds an existing tracked revision"),
         "{error}"
     );
+    // Two spellings of on are the same value: the held paragraph is unchanged.
+    let mut original = body("on");
+    original.compare(&body("1"), AUTHOR, DATE).unwrap();
     // A value the reader drops by design: the residual keeps it.
     let body = |properties: &str| {
         doc_with_body(&format!(

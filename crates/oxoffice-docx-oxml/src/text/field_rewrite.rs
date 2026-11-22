@@ -2484,7 +2484,7 @@ pub(super) fn field_source_lock(
     Ok(
         field_lock_owner(raw, form, word_prefixes)?.and_then(|owner| {
             optional_word_attribute(&owner.element, b"fldLock", &owner.prefixes)
-                .and_then(|value| parse_field_bool(&value))
+                .and_then(|value| crate::shared::ST_OnOff::parse(&value))
         }),
     )
 }

@@ -2568,7 +2568,7 @@ pub(crate) fn validate_checked_property_child(
     ) {
         if value
             .as_deref()
-            .is_some_and(|value| !matches!(value, "true" | "false" | "on" | "off" | "1" | "0"))
+            .is_some_and(|value| crate::shared::ST_OnOff::parse(value).is_none())
         {
             return Err(crate::error::OxmlError::InvalidValue(
                 "element XML run toggle has an invalid Word boolean".into(),
@@ -2721,14 +2721,14 @@ pub(crate) fn source_value_is_modeled(
                 | b"specVanish"
                 | b"oMath"
         ) {
-            return crate::numbering::parse_on_off_token(value).is_some();
+            return crate::shared::ST_OnOff::parse(value).is_some();
         }
     }
     if local == b"color" && matches!(key, b"themeTint" | b"themeShade") {
         return parse_uchar_hex(value).is_some();
     }
     if local == b"eastAsianLayout" && matches!(key, b"combine" | b"vert" | b"vertCompress") {
-        return crate::numbering::parse_on_off_token(value).is_some();
+        return crate::shared::ST_OnOff::parse(value).is_some();
     }
     true
 }

@@ -2217,14 +2217,11 @@ pub(super) fn generated_simple_span(
                         name,
                         AttributeNamespace::Word,
                     )? {
-                        let value = match value.as_str() {
-                            "1" | "true" | "on" => true,
-                            "0" | "false" | "off" => false,
-                            _ => {
-                                return Err(Error::Other(
-                                    "ambiguous bibliography simple control".into(),
-                                ));
-                            }
+                        let Some(value) = oxoffice_docx_oxml::shared::ST_OnOff::parse(&value)
+                        else {
+                            return Err(Error::Other(
+                                "ambiguous bibliography simple control".into(),
+                            ));
                         };
                         if locked {
                             field.set_locked(Some(value));

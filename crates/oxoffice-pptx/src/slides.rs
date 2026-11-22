@@ -609,7 +609,10 @@ impl Presentation {
 impl Presentation {
     /// Inserts a new slide at a final zero-based position, including append.
     ///
-    /// Layout selection, creation and placement share one staged publication.
+    /// Layout selection, creation and placement share one staged copy, which
+    /// replaces the presentation only when all three succeed. It edits the
+    /// package in place, as `add_slide` and `move_slide` do, so it publishes
+    /// without re-reading the whole package.
     pub fn add_slide_at(&mut self, layout_index: usize, position: usize) -> Result<usize> {
         if layout_index >= self.layouts.len() {
             return Err(Error::UnknownLayoutIndex {
@@ -632,7 +635,7 @@ impl Presentation {
         candidate.presentation.remove_slide_from_sections(id);
         candidate.move_slide(old_count, position)?;
         candidate.presentation.place_slide_in_sections(id);
-        self.commit_candidate(candidate)?;
+        *self = candidate;
         Ok(position)
     }
 

@@ -1055,15 +1055,6 @@ pub struct CT_TblLook {
     pub no_v_band: Option<bool>,
 }
 
-/// Read an OOXML boolean attribute, which may be written as 1/0 or true/false.
-fn parse_ooxml_bool(value: &str) -> Option<bool> {
-    match value {
-        "1" | "true" | "on" => Some(true),
-        "0" | "false" | "off" => Some(false),
-        _ => None,
-    }
-}
-
 fn ooxml_bool_str(value: bool) -> &'static str {
     if value { "1" } else { "0" }
 }
@@ -1078,17 +1069,17 @@ impl CT_TblLook {
             if matches_local_name(key, b"val") {
                 look.val = Some(value.to_string());
             } else if matches_local_name(key, b"firstRow") {
-                look.first_row = parse_ooxml_bool(value);
+                look.first_row = crate::shared::ST_OnOff::parse(value);
             } else if matches_local_name(key, b"lastRow") {
-                look.last_row = parse_ooxml_bool(value);
+                look.last_row = crate::shared::ST_OnOff::parse(value);
             } else if matches_local_name(key, b"firstColumn") {
-                look.first_column = parse_ooxml_bool(value);
+                look.first_column = crate::shared::ST_OnOff::parse(value);
             } else if matches_local_name(key, b"lastColumn") {
-                look.last_column = parse_ooxml_bool(value);
+                look.last_column = crate::shared::ST_OnOff::parse(value);
             } else if matches_local_name(key, b"noHBand") {
-                look.no_h_band = parse_ooxml_bool(value);
+                look.no_h_band = crate::shared::ST_OnOff::parse(value);
             } else if matches_local_name(key, b"noVBand") {
-                look.no_v_band = parse_ooxml_bool(value);
+                look.no_v_band = crate::shared::ST_OnOff::parse(value);
             }
         }
         Ok(look)
@@ -1102,17 +1093,17 @@ impl CT_TblLook {
             if is_word_attribute(key, b"val", word_prefixes) {
                 look.val = Some(value.to_string());
             } else if is_word_attribute(key, b"firstRow", word_prefixes) {
-                look.first_row = parse_ooxml_bool(value);
+                look.first_row = crate::shared::ST_OnOff::parse(value);
             } else if is_word_attribute(key, b"lastRow", word_prefixes) {
-                look.last_row = parse_ooxml_bool(value);
+                look.last_row = crate::shared::ST_OnOff::parse(value);
             } else if is_word_attribute(key, b"firstColumn", word_prefixes) {
-                look.first_column = parse_ooxml_bool(value);
+                look.first_column = crate::shared::ST_OnOff::parse(value);
             } else if is_word_attribute(key, b"lastColumn", word_prefixes) {
-                look.last_column = parse_ooxml_bool(value);
+                look.last_column = crate::shared::ST_OnOff::parse(value);
             } else if is_word_attribute(key, b"noHBand", word_prefixes) {
-                look.no_h_band = parse_ooxml_bool(value);
+                look.no_h_band = crate::shared::ST_OnOff::parse(value);
             } else if is_word_attribute(key, b"noVBand", word_prefixes) {
-                look.no_v_band = parse_ooxml_bool(value);
+                look.no_v_band = crate::shared::ST_OnOff::parse(value);
             }
         }
         Ok(look)
@@ -2284,7 +2275,8 @@ fn cnf_style_from_booleans(e: &BytesStart<'_>, prefixes: &[String]) -> Result<Op
         else {
             return Ok(None);
         };
-        let Some(on) = parse_ooxml_bool(std::str::from_utf8(&attribute.value)?) else {
+        let Some(on) = crate::shared::ST_OnOff::parse(std::str::from_utf8(&attribute.value)?)
+        else {
             return Ok(None);
         };
         bits[index] = if on { b'1' } else { b'0' };
@@ -4419,10 +4411,10 @@ pub(crate) fn source_value_is_modeled(
                 | (b"tcPr", b"noWrap")
         )
     {
-        return parse_ooxml_bool(value).is_some();
+        return crate::shared::ST_OnOff::parse(value).is_some();
     }
     if local == b"tblLook" && key != b"val" {
-        return parse_ooxml_bool(value).is_some();
+        return crate::shared::ST_OnOff::parse(value).is_some();
     }
     if local == b"tblpPr" {
         if matches!(key, b"horzAnchor" | b"vertAnchor") {

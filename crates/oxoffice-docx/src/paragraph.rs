@@ -2945,8 +2945,9 @@ impl RangeAnchors {
                                  {kind} {id}; accept or reject it first"
                             )));
                         }
-                        let custom = attribute(b"customMarkFollows")
-                            .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "on"));
+                        let custom = attribute(b"customMarkFollows").is_some_and(|value| {
+                            oxoffice_docx_oxml::shared::ST_OnOff::parse(&value) == Some(true)
+                        });
                         anchors
                             .note_references
                             .push((endnote, id, custom.then(String::new)));
