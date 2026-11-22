@@ -1660,16 +1660,21 @@ fn a_cut_fragment_pasted_twice_keeps_its_ids_then_takes_fresh_ones() {
 #[test]
 fn a_fresh_id_never_repeats_one_the_inserted_fragment_keeps() {
     // The block control's id 5 is taken in the destination; the lowest free
-    // id, 1, is the one its inner control keeps.
+    // id, 1, is the one its inner control keeps. Likewise for bookmarks:
+    // id 4 is taken, the lowest free id, 0, is kept by the other.
     let mut source = doc_with_body(concat!(
         r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p>"#,
+        r#"<w:bookmarkStart w:id="4" w:name="Taken"/><w:bookmarkStart w:id="0" w:name="Free"/>"#,
         r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent><w:r><w:t>inner</w:t></w:r></w:sdtContent></w:sdt>"#,
+        r#"<w:bookmarkEnd w:id="0"/><w:bookmarkEnd w:id="4"/>"#,
         r#"</w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
     ));
     let fragment = source.remove_content_at(&item_at(&source, 0)).unwrap();
-    let mut doc = doc_with_body(
-        r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>dest</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
-    );
+    let mut doc = doc_with_body(concat!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p>"#,
+        r#"<w:bookmarkStart w:id="4" w:name="Other"/><w:r><w:t>dest</w:t></w:r><w:bookmarkEnd w:id="4"/>"#,
+        r#"</w:p></w:sdtContent></w:sdt>"#,
+    ));
     doc.insert_content(&ContentLocation::end(body(&doc)), fragment)
         .unwrap();
     let mut doc = reopen(&mut doc);
@@ -1678,6 +1683,11 @@ fn a_fresh_id_never_repeats_one_the_inserted_fragment_keeps() {
     assert_eq!(ids.len(), 3, "{ids:?}");
     ids.dedup();
     assert_eq!(ids.len(), 3, "no id twice");
+    let mut bookmarks = main_values(&mut doc, "w:bookmarkStart", "w:id");
+    bookmarks.sort();
+    assert_eq!(bookmarks.len(), 3, "{bookmarks:?}");
+    bookmarks.dedup();
+    assert_eq!(bookmarks.len(), 3, "no bookmark id twice");
 }
 
 #[test]

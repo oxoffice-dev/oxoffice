@@ -8,7 +8,9 @@
 //! ends inside it, or in the bookmark ends written just after it (a
 //! bookmark around a whole table), with those ends. A leading start whose
 //! bookmark ends further on stays where it is, so no bookmark loses its
-//! start or ends before it starts.
+//! start or ends before it starts. A block also takes the bookmark ends
+//! written just after it that close a bookmark started inside it (a table
+//! whose bookmark starts in its first cell).
 
 use super::*;
 

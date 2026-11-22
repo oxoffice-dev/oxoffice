@@ -1672,8 +1672,9 @@ class Document:
 
         A bookmark start written between blocks belongs to the block after it (Google Docs writes a
         heading's bookmark so): the starts just before the item whose bookmark ends inside it, or in
-        the bookmark ends written just after it, go too, with those ends; each start that goes moves
-        the later items back by one more index.
+        the bookmark ends written just after it, go too, with those ends and the ends just after it that
+        close a bookmark started inside it; each start that goes moves the later items back by one more
+        index.
         """
     def remove_content_range(self, start: int, end: int) -> int:
         """Remove the direct body items ``start`` to ``end`` (excluded) and return how many items went.

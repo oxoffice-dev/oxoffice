@@ -252,7 +252,9 @@ impl DocumentFragment {
     /// ends before those of `end`, and starts before those of `start` when
     /// every one of them ends inside the range or in the bookmark ends
     /// written just after it, which it then takes, with those closing a
-    /// bookmark started inside it. Section properties can be
+    /// bookmark started inside it (when a leading start ends further on, the
+    /// range keeps its start and takes none of those ends, so an import of
+    /// it leaves those bookmarks out). Section properties can be
     /// included only when `end` is the main body's final boundary.
     pub fn from_range(
         document: &Document,

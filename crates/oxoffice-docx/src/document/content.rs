@@ -871,7 +871,8 @@ impl Document {
     ///
     /// The bookmark markers the child owns go too: the bookmark starts
     /// written just before it whose bookmark ends inside it or in the
-    /// bookmark ends written just after it, and those ends; a start whose
+    /// bookmark ends written just after it, those ends, and the ends written
+    /// just after it that close a bookmark started inside it; a start whose
     /// bookmark ends further on stays. Each start that goes moves the later
     /// body items back by one more index.
     pub fn try_remove_content(&mut self, index: usize) -> Result<bool> {
@@ -1044,7 +1045,8 @@ impl Document {
     /// The footnotes and endnotes nothing else references afterwards go too,
     /// and so do the bookmark markers the range owns: the bookmark starts
     /// written just before `start` whose bookmark ends inside the range or
-    /// in the bookmark ends written just after it, and those ends. Returns
+    /// in the bookmark ends written just after it, those ends, and the ends
+    /// written just after it that close a bookmark started inside it. Returns
     /// the number of body items removed, those markers included. An empty range removes nothing and
     /// returns 0. A reversed or out-of-bounds range returns an error and
     /// leaves the document unchanged.

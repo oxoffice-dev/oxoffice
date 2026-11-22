@@ -583,7 +583,8 @@ impl Document {
     ///
     /// The bookmark markers the child owns go with it, in the fragment: the
     /// bookmark starts written just before it whose bookmark ends inside it
-    /// or in the bookmark ends written just after it, and those ends.
+    /// or in the bookmark ends written just after it, those ends, and the
+    /// ends written just after it that close a bookmark started inside it.
     /// [`Self::insert_content`] writes them back around it.
     ///
     /// A picture the removal leaves unreferenced stays in the package until
