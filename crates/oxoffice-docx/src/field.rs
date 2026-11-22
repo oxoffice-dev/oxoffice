@@ -718,6 +718,9 @@ struct RefCopyField {
 struct RefBookmarkCache {
     runs: Vec<CT_R>,
     comment_ranges: Vec<CommentRangeMarker>,
+    /// The target's runs as the accepted view holds them, fields included,
+    /// one row per paragraph: what a REF's value is read from.
+    rows: Vec<Vec<CT_R>>,
 }
 
 struct CachedFieldUpdate {
