@@ -869,6 +869,29 @@ fn legacy_form_fields_saved_by_libreoffice_become_the_fields_word_saves() {
         doc.set_legacy_form_field_value(&part, ordinal, value)
             .unwrap();
     }
+    // An edit elsewhere in the document, then the saved XML: each bookmark
+    // is still where LibreOffice put it, inside its field.
+    doc.add_paragraph("Edited elsewhere");
+    let saved = doc.to_bytes().unwrap();
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(saved)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    for (filled, placed) in [
+        (
+            true,
+            r#"FORMTEXT </w:instrText></w:r><w:bookmarkStart w:id="0" w:name="BankName_Copy_1"/>"#,
+        ),
+        (
+            false,
+            r#"FORMTEXT </w:instrText></w:r><w:bookmarkStart w:id="1" w:name="IBAN_Copy_1"/>"#,
+        ),
+        (
+            true,
+            r#"<w:fldChar w:fldCharType="separate"/></w:r><w:bookmarkStart w:id="3" w:name="PaymentTerms_Copy_1"/>"#,
+        ),
+    ] {
+        assert!(xml.contains(placed), "filled {filled}: {placed}");
+    }
     let doc = reopen(&mut doc);
     assert_eq!(bookmarks(&doc), before);
     let values = legacy_kinds(&doc);
