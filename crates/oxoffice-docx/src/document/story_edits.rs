@@ -587,8 +587,9 @@ impl Document {
     /// ends written just after it that close a bookmark started inside it.
     /// [`Self::insert_content`] writes them back around it.
     ///
-    /// A picture the removal leaves unreferenced stays in the package until
-    /// the next write or signature, which drops it if nothing names it then:
+    /// A picture, chart, embedded object or link the removal leaves
+    /// unreferenced stays in the package until the next write or signature,
+    /// which drops it if nothing names it then:
     /// until a signature the fragment can be inserted again (cut and paste);
     /// a write drops it from the bytes written only.
     pub fn remove_content_at(&mut self, location: &ContentLocation) -> Result<ContentFragment> {
@@ -655,24 +656,21 @@ impl Document {
         for range in removed.into_iter().rev() {
             updated.drain(range);
         }
-        // The fragment's pictures go at the next write if nothing names them
-        // then (it may be inserted again before).
-        let images: Vec<&str> = fragment
+        // The fragment's pictures, charts, embedded objects and links go at
+        // the next write if nothing names them then (it may be inserted
+        // again before).
+        let freed: Vec<&str> = fragment
             .relationships
             .iter()
-            .filter(|(relationship, _)| {
-                relationship.rel_type == rel_types::IMAGE && relationship_is_internal(relationship)
-            })
+            .filter(|(relationship, _)| is_content_relationship(&relationship.rel_type))
             .map(|(relationship, _)| relationship.id.as_str())
             .collect();
-        if !images.is_empty() {
-            let referenced = xml_attribute_values(&updated)?;
-            for id in images {
-                let entry = (part_name.clone(), id.to_owned());
-                if !referenced.contains(id) && !candidate.freed_image_relationships.contains(&entry)
-                {
-                    candidate.freed_image_relationships.push(entry);
-                }
+        // Every one is recorded, named elsewhere or not: another edit may
+        // remove the other occurrence before the fragment comes back.
+        for id in freed {
+            let entry = (part_name.clone(), id.to_owned());
+            if !candidate.freed_relationships.contains(&entry) {
+                candidate.freed_relationships.push(entry);
             }
         }
         set_story_source_xml(&mut candidate, &part_name, updated)?;
