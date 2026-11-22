@@ -80,7 +80,8 @@ their names: `ci` with debug assertions, `scaling` without.
    a block calling a missing method fails the examples; every link removed
    from the runner still gives the in-order verdict.
 2. release.yml: build, a short check of each package, publish.
-3. oxoffice-skills: its CI, then `tests/skills/` leaves this repository.
+3. oxoffice-skills: its CI (oxoffice-dev/oxoffice-skills#2), then
+   `tests/skills/` leaves this repository.
 
 ## Links
 
