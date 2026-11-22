@@ -207,13 +207,15 @@ fn local_name(qname: &[u8]) -> &[u8] {
     }
 }
 
-/// Extract a named attribute value from an element.
+/// Extract a named attribute value from an element, its references resolved.
 fn get_attr(e: &quick_xml::events::BytesStart, attr_name: &[u8]) -> Option<String> {
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
         let local = local_name(key);
         if local == attr_name {
-            return std::str::from_utf8(&attr.value).ok().map(|s| s.to_string());
+            return oxoffice_core::xml::attribute_text(&attr)
+                .ok()
+                .map(std::borrow::Cow::into_owned);
         }
     }
     None
