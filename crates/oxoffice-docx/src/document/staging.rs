@@ -265,7 +265,9 @@ impl Document {
                         (Some(staged), Some(committed)) => staged.is_same_as(committed),
                         (staged, committed) => staged.is_none() && committed.is_none(),
                     },
-                    "direct properties edit left other custom properties"
+                    "direct properties edit left other custom properties: {:?} vs {:?}",
+                    staged.custom_properties,
+                    self.custom_properties
                 );
                 assert_eq!(
                     (

@@ -69,17 +69,27 @@ impl CustomProperties {
     /// Whether the two collections are written the same: as `==`, except
     /// that values are compared with [`CustomPropertyValue::is_same_value`].
     pub fn is_same_as(&self, other: &Self) -> bool {
-        self.extra_namespaces == other.extra_namespaces
-            && self.properties.len() == other.properties.len()
-            && self
-                .properties
+        // Destructured, so that a field added later is compared too.
+        let Self {
+            properties,
+            extra_namespaces,
+        } = self;
+        *extra_namespaces == other.extra_namespaces
+            && properties.len() == other.properties.len()
+            && properties
                 .iter()
                 .zip(&other.properties)
                 .all(|(left, right)| {
-                    left.fmtid == right.fmtid
-                        && left.pid == right.pid
-                        && left.name == right.name
-                        && left.value.is_same_value(&right.value)
+                    let CustomProperty {
+                        fmtid,
+                        pid,
+                        name,
+                        value,
+                    } = left;
+                    *fmtid == right.fmtid
+                        && *pid == right.pid
+                        && *name == right.name
+                        && value.is_same_value(&right.value)
                 })
     }
 
