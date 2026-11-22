@@ -376,6 +376,15 @@ impl Document {
     /// The other insertions at a location ([`Self::insert_html_fragment`],
     /// [`Self::clone_content`], [`Self::move_content`],
     /// [`Self::import_fragment`]) place their content the same way.
+    ///
+    /// The bookmark markers the fragment carries go around it. An identity
+    /// the document already holds takes a fresh value (a bookmark id or
+    /// name, which the fragment's REF fields follow; a control or drawing
+    /// id), and a note reference whose note another reference shows gets a
+    /// copy of the note; the rest is kept, so a cut and paste changes nothing
+    /// and the same fragment can be inserted twice. A lone bookmark start,
+    /// whose end the fragment does not hold, keeps its id: inserted where
+    /// that bookmark is whole, it is refused and changes nothing.
     pub fn insert_content(
         &mut self,
         destination: &ContentLocation,
@@ -393,9 +402,10 @@ impl Document {
         // drawing ids), a note another reference shows is copied, and the
         // paragraph and row ids (w14:paraId, w14:textId) go, as
         // clone_content drops them, and Word gives new ones.
+        // The notes go first: the fragment's fresh names then avoid theirs.
         let mut fragment = fragment;
-        freshen_taken_content_fragment_identities(&mut candidate, &mut fragment)?;
         copy_shown_notes(&mut candidate, &mut fragment)?;
+        freshen_taken_content_fragment_identities(&mut candidate, &mut fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
         let mut fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
@@ -720,8 +730,8 @@ impl Document {
         let destination_xml = destination_source.xml.into_owned();
         let (boundary, _, _) =
             validated_insertion_boundary(&destination_xml, &destination_owner, destination)?;
-        freshen_content_fragment_identities(&mut candidate, &mut fragment)?;
         copy_shown_notes(&mut candidate, &mut fragment)?;
+        freshen_content_fragment_identities(&mut candidate, &mut fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
         let mut updated = destination_xml;

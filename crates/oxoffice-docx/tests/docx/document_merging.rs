@@ -1618,7 +1618,8 @@ fn a_cut_fragment_pasted_twice_keeps_its_ids_then_takes_fresh_ones() {
         r#"<w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
         r#"<w:p><w:bookmarkStart w:id="5" w:name="Mark"/><w:r><w:t>marked</w:t></w:r><w:bookmarkEnd w:id="5"/>"#,
         r#"<w:fldSimple w:instr=" REF Mark "><w:r><w:t>marked</w:t></w:r></w:fldSimple></w:p>"#,
-        r#"<w:sdt><w:sdtPr><w:id w:val="77"/><w:tag w:val="t"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>control</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+        // Word writes random signed control ids.
+        r#"<w:sdt><w:sdtPr><w:id w:val="-1758118386"/><w:tag w:val="t"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>control</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
     ));
     let marked = doc.remove_content_at(&item_at(&doc, 1)).unwrap();
     let control = doc.remove_content_at(&item_at(&doc, 1)).unwrap();
@@ -1629,7 +1630,7 @@ fn a_cut_fragment_pasted_twice_keeps_its_ids_then_takes_fresh_ones() {
         .unwrap();
     assert_eq!(main_values(&mut doc, "w:bookmarkStart", "w:id"), ["5"]);
     assert_eq!(main_values(&mut doc, "w:bookmarkStart", "w:name"), ["Mark"]);
-    assert_eq!(main_values(&mut doc, "w:id", "w:val"), ["77"]);
+    assert_eq!(main_values(&mut doc, "w:id", "w:val"), ["-1758118386"]);
     // Pasted again, what the document holds is fresh, and the copy's REF
     // follows its own bookmark.
     doc.insert_content(&ContentLocation::end(body(&doc)), marked)
@@ -1654,6 +1655,29 @@ fn a_cut_fragment_pasted_twice_keeps_its_ids_then_takes_fresh_ones() {
     let controls = main_values(&mut doc, "w:id", "w:val");
     assert_eq!(controls.len(), 2);
     assert_ne!(controls[0], controls[1]);
+}
+
+#[test]
+fn a_fresh_id_never_repeats_one_the_inserted_fragment_keeps() {
+    // The block control's id 5 is taken in the destination; the lowest free
+    // id, 1, is the one its inner control keeps.
+    let mut source = doc_with_body(concat!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p>"#,
+        r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent><w:r><w:t>inner</w:t></w:r></w:sdtContent></w:sdt>"#,
+        r#"</w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
+    ));
+    let fragment = source.remove_content_at(&item_at(&source, 0)).unwrap();
+    let mut doc = doc_with_body(
+        r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>dest</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+    );
+    doc.insert_content(&ContentLocation::end(body(&doc)), fragment)
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let mut ids = main_values(&mut doc, "w:id", "w:val");
+    ids.sort();
+    assert_eq!(ids.len(), 3, "{ids:?}");
+    ids.dedup();
+    assert_eq!(ids.len(), 3, "no id twice");
 }
 
 #[test]
@@ -1800,6 +1824,49 @@ fn a_block_takes_the_bookmark_that_wraps_it_when_it_is_cut_moved_or_cloned() {
         names.iter().collect::<std::collections::HashSet<_>>().len(),
         3
     );
+}
+
+#[test]
+fn a_plain_paragraph_or_a_table_goes_with_the_bookmark_around_it() {
+    // A plain paragraph wrapped whole: start just before, end just after.
+    let wrapped = || {
+        doc_with_body(concat!(
+            r#"<w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
+            r#"<w:bookmarkStart w:id="3" w:name="Around"/><w:p><w:r><w:t>plain</w:t></w:r></w:p><w:bookmarkEnd w:id="3"/>"#,
+            r#"<w:p><w:r><w:t>end</w:t></w:r></w:p>"#,
+        ))
+    };
+    let mut doc = wrapped();
+    assert!(doc.remove_content(2));
+    assert_eq!(body_shape(&mut doc), "PP");
+    let mut doc = wrapped();
+    assert_eq!(doc.remove_content_range(2, 3).unwrap(), 3);
+    assert_eq!(body_shape(&mut doc), "PP");
+    // A table whose bookmark starts in its first cell and ends after it.
+    let table = || {
+        doc_with_body(concat!(
+            r#"<w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid><w:tr><w:tc><w:p>"#,
+            r#"<w:bookmarkStart w:id="9" w:name="Inside"/><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:bookmarkEnd w:id="9"/><w:p><w:r><w:t>end</w:t></w:r></w:p>"#,
+        ))
+    };
+    let mut doc = table();
+    doc.move_content(&item_at(&doc, 1), &ContentLocation::end(body(&doc)))
+        .unwrap();
+    assert_eq!(body_shape(&mut doc), "PPTE");
+    let mut doc = table();
+    doc.clone_content(&item_at(&doc, 1), &ContentLocation::end(body(&doc)))
+        .unwrap();
+    assert_eq!(body_shape(&mut doc), "PTEPTE");
+    let mut doc = table();
+    assert!(doc.remove_content(1));
+    assert_eq!(body_shape(&mut doc), "PP");
+    // A range from the heading to the wrapped table takes the heading's
+    // start and the table's end: five items.
+    let mut doc = with_wrapped_blocks();
+    assert_eq!(doc.remove_content_range(2, 5).unwrap(), 5);
+    assert_eq!(body_shape(&mut doc), "PP");
 }
 
 #[test]

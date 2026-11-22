@@ -74,6 +74,17 @@ fn bookmark_start_id(xml: &[u8], inherited: bool) -> Result<Option<String>> {
 
 /// The `w:id` values of the Word bookmark ends anywhere in a closed element.
 fn bookmark_end_ids(xml: &[u8]) -> Result<HashSet<String>> {
+    bookmark_marker_ids(xml, b"bookmarkEnd")
+}
+
+/// The `w:id` values of the Word bookmark starts anywhere in a closed element.
+fn bookmark_start_ids(xml: &[u8]) -> Result<HashSet<String>> {
+    bookmark_marker_ids(xml, b"bookmarkStart")
+}
+
+/// The `w:id` values of the Word `marker` elements anywhere in a closed
+/// element.
+fn bookmark_marker_ids(xml: &[u8], marker: &[u8]) -> Result<HashSet<String>> {
     let mut reader = NsReader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut ids = HashSet::new();
@@ -83,7 +94,7 @@ fn bookmark_end_ids(xml: &[u8]) -> Result<HashSet<String>> {
             .map_err(|error| Error::Other(format!("bookmark end scan failed: {error}")))?;
         match event {
             Event::Start(element) | Event::Empty(element)
-                if word_element(&namespace) && element.local_name().as_ref() == b"bookmarkEnd" =>
+                if word_element(&namespace) && element.local_name().as_ref() == marker =>
             {
                 if let Some(id) = word_id(&reader, &element, false)? {
                     ids.insert(id);
@@ -177,15 +188,17 @@ pub(super) fn owned_bookmark_marker_items(
         |item| Ok(item_is_block(item)),
         |item| item_start_id(xml, item),
     )?;
-    if starts.is_empty() {
+    let trailing = trailing_ends(items, owners.end, |item| item_end_id(xml, item))?;
+    if starts.is_empty() && trailing.is_empty() {
         return Ok(OwnedMarkers::default());
     }
-    let mut ends = HashSet::new();
+    let (mut ends, mut inner_starts) = (HashSet::new(), HashSet::new());
     for item in &items[owners.clone()] {
-        ends.extend(bookmark_end_ids(&item_xml(xml, item)?)?);
+        let owner = item_xml(xml, item)?;
+        ends.extend(bookmark_end_ids(&owner)?);
+        inner_starts.extend(bookmark_start_ids(&owner)?);
     }
-    let trailing = trailing_ends(items, owners.end, |item| item_end_id(xml, item))?;
-    Ok(owned_markers(starts, &ends, trailing))
+    Ok(owned_markers(starts, &ends, &inner_starts, trailing))
 }
 
 /// The bookmark markers that go with a block, as indices of its story.
@@ -215,12 +228,15 @@ fn trailing_ends<T>(
 }
 
 /// The leading `starts` whose bookmark ends in `inside` or in the first of
-/// the `trailing` ends, with those ends. Only the ends written right after
-/// the block count: an end that closes a bookmark started further up stops
-/// them, so what goes with the block is one run on each side.
+/// the `trailing` ends, with those ends, and the trailing ends of the
+/// bookmarks that start inside the items (`inner_starts`, a table whose
+/// bookmark starts in its first cell). Only the ends written right after the
+/// block count: an end that closes a bookmark started further up stops them,
+/// so what goes with the block is one run on each side.
 fn owned_markers(
     starts: Vec<(usize, String)>,
     inside: &HashSet<String>,
+    inner_starts: &HashSet<String>,
     trailing: Vec<(usize, String)>,
 ) -> OwnedMarkers {
     let leading = starts
@@ -229,7 +245,9 @@ fn owned_markers(
         .collect::<HashSet<_>>();
     let after = trailing
         .iter()
-        .take_while(|(_, id)| leading.contains(id.as_str()) && !inside.contains(id))
+        .take_while(|(_, id)| {
+            (leading.contains(id.as_str()) || inner_starts.contains(id)) && !inside.contains(id)
+        })
         .collect::<Vec<_>>();
     let closed_after = after
         .iter()
@@ -311,16 +329,16 @@ impl Document {
     ) -> Result<OwnedMarkers> {
         let content = &self.document.body.content;
         let starts = leading_starts(content, index, body_is_block, body_start_id)?;
-        if starts.is_empty() {
+        let trailing = trailing_ends(content, owners.end, body_end_id)?;
+        if starts.is_empty() && trailing.is_empty() {
             return Ok(OwnedMarkers::default());
         }
-        let mut ends = HashSet::new();
+        let (mut ends, mut inner_starts) = (HashSet::new(), HashSet::new());
         for block in &content[owners.clone()] {
-            ends.extend(bookmark_end_ids(&serialize_content_fragment(
-                block.clone(),
-            )?)?);
+            let owner = serialize_content_fragment(block.clone())?;
+            ends.extend(bookmark_end_ids(&owner)?);
+            inner_starts.extend(bookmark_start_ids(&owner)?);
         }
-        let trailing = trailing_ends(content, owners.end, body_end_id)?;
-        Ok(owned_markers(starts, &ends, trailing))
+        Ok(owned_markers(starts, &ends, &inner_starts, trailing))
     }
 }

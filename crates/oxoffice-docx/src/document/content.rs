@@ -878,8 +878,11 @@ impl Document {
         if index >= self.document.body.content.len() {
             return Ok(false);
         }
-        // A plain paragraph holds no bookmark end, so no leading start goes.
-        if self.plain_direct_paragraph(index) || self.plain_removable_paragraph(index) {
+        // A plain paragraph holds no bookmark end, so only a bookmark around
+        // it, its start written just before it, could go with it.
+        if (self.plain_direct_paragraph(index) || self.plain_removable_paragraph(index))
+            && self.block_insertion_index(index) == index
+        {
             self.document.body.remove(index);
             self.invalidate_layout();
             return Ok(true);

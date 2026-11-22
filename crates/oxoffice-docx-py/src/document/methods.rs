@@ -4612,6 +4612,7 @@ impl PyDocument {
 
     fn remove_content(&mut self, py: Python<'_>, index: usize) -> PyResult<bool> {
         if self.inner.plain_direct_paragraph(index)
+            && self.inner.block_insertion_index(index) == index
             && let Some((range, revision)) = self.prepare_tail_body_removal(index)?
         {
             let removed = py

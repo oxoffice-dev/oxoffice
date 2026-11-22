@@ -1671,15 +1671,17 @@ class Document:
         """Remove the direct body item at ``index``.
 
         A bookmark start written between blocks belongs to the block after it (Google Docs writes a
-        heading's bookmark so): the starts just before the item whose bookmark ends inside it go too, so
-        each one moves the later items back by one more index.
+        heading's bookmark so): the starts just before the item whose bookmark ends inside it, or in
+        the bookmark ends written just after it, go too, with those ends; each start that goes moves
+        the later items back by one more index.
         """
     def remove_content_range(self, start: int, end: int) -> int:
         """Remove the direct body items ``start`` to ``end`` (excluded) and return how many items went.
 
         A bookmark start written between blocks belongs to the block after it (Google Docs writes a
-        heading's bookmark so): the starts just before ``start`` whose bookmark ends inside the range go
-        too, and count in the result.
+        heading's bookmark so): the starts just before ``start`` whose bookmark ends inside the range, or
+        in the bookmark ends written just after it, go too, with those ends and the ends just after it
+        that close a bookmark started inside it; all count in the result.
         """
     @_overload
     def find_content_index(self, content: Paragraph | Table) -> int: ...
@@ -1714,7 +1716,9 @@ class Document:
         An identity the document already holds takes a fresh value (a bookmark id or name, whose
         REF fields in the fragment follow; a control or drawing id), and a note reference whose note
         another reference shows gets a copy of the note; the rest is kept, so a cut and paste
-        changes nothing and the same fragment can be inserted twice.
+        changes nothing and the same fragment can be inserted twice. A fragment holding a lone bookmark
+        start, whose end it does not hold, keeps its id: inserted where that bookmark is whole, it is
+        refused and changes nothing.
         """
     def clone_content(self, source: Paragraph | Table, destination: int) -> None: ...
     def move_content(self, source: Paragraph | Table, destination: int) -> None: ...

@@ -250,7 +250,9 @@ impl DocumentFragment {
     /// `start` is included and `end` is excluded, each with the bookmark
     /// starts written just before a block belonging to that block: the range
     /// ends before those of `end`, and starts before those of `start` when
-    /// every one of them ends inside the range. Section properties can be
+    /// every one of them ends inside the range or in the bookmark ends
+    /// written just after it, which it then takes, with those closing a
+    /// bookmark started inside it. Section properties can be
     /// included only when `end` is the main body's final boundary.
     pub fn from_range(
         document: &Document,
@@ -296,11 +298,13 @@ impl DocumentFragment {
         let items = direct_story_content_items(&source_xml, &owner)?;
         // The range starts before the bookmark starts that lead its start
         // block when every one of them ends inside the range or just after
-        // it, and then takes those ends.
+        // it, and then takes the bookmark ends written just after it that
+        // close them or a bookmark started inside it.
         let leading = leading_bookmark_start_item(&source_xml, &items, start_index)?;
         let owned =
             owned_bookmark_marker_items(&source_xml, &items, start_index, start_index..end_index)?;
-        if leading < start_index && owned.before.len() == start_index - leading {
+        let all_leading_owned = owned.before.len() == start_index - leading;
+        if all_leading_owned {
             start_index = leading;
             if let Some(last) = owned.after.last() {
                 end_index = end_index.max(last + 1);
