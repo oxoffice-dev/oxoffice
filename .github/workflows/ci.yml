@@ -2,16 +2,18 @@ name: CI
 
 # One set of jobs, the same on every pull request (drafts and stacked ones
 # included) and on every push to main: lint, the tests on Linux, macOS and
-# Windows, the Python suite under debug assertions, and the timings on Linux.
+# Windows, and the timings on Linux.
 # About 10 minutes, bounded by the slowest platform. The full sets (debug
 # assertions everywhere, the whole render corpus, every producer's copy in
 # the workflow walks, every scaling call) run every night in nightly.yml.
 # See specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
 # The tests build without debug assertions (the `scaling` profile): with
-# them every edit re-checks the whole document, which doubles the Rust tests
-# and quadruples the Python ones. The `Debug checks` job keeps them on the
-# Python suite. Only runs on main (pushes, a dispatch on main) save the Rust
-# caches; pull requests restore them (specs/2026-11-21-faster-build-job.md).
+# them every edit re-checks the whole document, which doubles the Rust
+# tests and quadruples the Python ones. They stay in every local debug
+# build and `cargo test`, in lint's pptx tests without `render`, and in
+# the nightly run. Only runs on main (pushes, a dispatch on main) save the
+# Rust caches; pull requests restore them
+# (specs/2026-11-21-faster-build-job.md).
 
 # Changes that only touch documentation do not build anything.
 on:
@@ -117,7 +119,8 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # nightly.yml's full scaling job restores this cache (same profile).
+          # nightly.yml's full scaling job restores this cache (same profile),
+          # its full test job only the downloaded crates (another profile).
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
@@ -152,34 +155,6 @@ jobs:
       - name: Python tests
         if: ${{ !cancelled() }}
         shell: bash
-        run: python -m pytest crates/oxoffice-py/tests -q -n auto
-
-  # Debug builds check every edit against a copy of the whole document. The
-  # Python suite, the widest set of edits, runs under those checks on every
-  # change; the Rust tests and the other platforms run under them at night.
-  debug:
-    name: Debug checks (ubuntu-latest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-      - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          # nightly.yml's full test jobs restore this cache (same profile).
-          shared-key: debug
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build the wheel with debug assertions
-        run: |
-          python -m pip install --require-hashes -r .github/requirements/ci.txt
-          maturin build --profile ci --locked -m crates/oxoffice-py/Cargo.toml -o dist
-          python -m pip install dist/*.whl
-      - name: Python tests
         run: python -m pytest crates/oxoffice-py/tests -q -n auto
 
   # The QUICK scaling sets time one call of each area, the edits of #6

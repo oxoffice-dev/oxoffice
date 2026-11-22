@@ -32,10 +32,9 @@ env:
   CARGO_INCREMENTAL: "0"
   PY_CRATES: --exclude oxoffice-py --exclude oxoffice-docx-py --exclude oxoffice-pptx-py
 
-# The jobs restore the caches the CI of main saves (shared keys `debug`, the
-# Linux wheel only, and `test`) and save none: the 10 GB of the Actions cache
-# stay for main's. The debug test builds compile from scratch on macOS and
-# Windows; nobody waits for them.
+# The jobs restore the caches the CI of main saves (shared key `test`) and
+# save none: the 10 GB of the Actions cache stay for main's. The debug builds
+# compile from scratch; nobody waits for them.
 jobs:
   test:
     name: Full test (${{ matrix.os }})
@@ -58,7 +57,9 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: debug
+          # The test jobs' cache: its downloaded crates; the `ci` profile
+          # itself builds from scratch.
+          shared-key: test
           save-if: false
       - name: Build the wheel with debug assertions
         shell: bash
