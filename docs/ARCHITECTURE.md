@@ -146,4 +146,4 @@ Edits made through the facade, and above all through Python, re-check and
 re-publish much more than the element they touch (owner inventories, staged
 save comparisons, whole-body proofs). On documents saved by Word or Google
 Docs this makes common edits cost the whole body. See
-[ROADMAP.md](../ROADMAP.md), section 3.
+[#466](https://github.com/oxoffice-dev/oxoffice/issues/466).

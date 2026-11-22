@@ -26,7 +26,7 @@ from Rust, the command line or Python.**
 - 🦀 **One engine, three doors**: a Rust API, an `oxoffice` command for everything that makes sense in a
   shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as bibliographies and
   encryption, are Rust only for now) for when the shell is not enough.
-- 📄 **Word and PowerPoint as equals**, with spreadsheets on the [roadmap](ROADMAP.md).
+- 📄 **Word and PowerPoint as equals**, with spreadsheets on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
 - ✍️ **Edits that keep the file intact**: unmodelled XML is carried over verbatim, child order follows the
   schema, and text changes keep their formatting.
 - 🔍 **Real review tools**: list, accept and reject tracked changes, compare two versions into a redline,
@@ -125,14 +125,14 @@ refused at open when one of its parts holds a control character.
 | Sections, headers and footers | ✅ | ⚠️ | ✅ | the document-wide header or footer setter reaches the last section only |
 | Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind, and removing a note leaves its custom mark |
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
-| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; writing your own edits as tracked changes is on the [roadmap](ROADMAP.md) |
+| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; writing your own edits as tracked changes is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
 | Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect in every story, export to fillable PDF fields; a date control shows month and day names in English, French, German, Spanish, Italian, Portuguese and Dutch, numeric dates in any language |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
 | Mail merge | ✅ | ✅ | ✅ | from Rust and Python |
-| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust only for now; more on the [roadmap](ROADMAP.md) |
+| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust only for now; more on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
 | Conversions | ✅ | — | ✅ | from Markdown and HTML; to PDF and PDF/A, HTML, Markdown, ODT, RTF, EPUB and page images |
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |
@@ -174,12 +174,36 @@ pdf = Document("form.docx").to_pdf(fillable_forms=True)
 - **Values.** A control showing its placeholder exports empty, with the placeholder as the field's tooltip.
 - **What stays static.** Controls outside the main body (headers, footers, text boxes...) stay static. So do body controls split across pages or columns, in a rotated cell or a vertical section, or around a floating picture, each with a diagnostic. See `oxoffice limitations`.
 
+## 🧭 How the library is meant to be used
+
+- **Rust first.** Every capability exists in the Rust API first.
+- **The CLI covers everything that makes sense from a shell**: inspect,
+  convert, render, find and replace, fill a template, compare, accept or
+  reject changes.
+- **Python covers the whole Rust API**, so that when the CLI is not enough
+  you switch to Python and keep going, without changing tools.
+- Rust, CLI and Python go together. None is preferred over the others, and a
+  feature is done when it reaches all three where it makes sense.
+- Word and PowerPoint stand as equals, and spreadsheets will join them.
+- **python-docx and python-pptx are a starting point, not a contract.**
+  Their names make the API familiar, but we do not keep parity with them:
+  the API differs wherever that makes it safer, simpler or faster.
+
 ## 🗺️ Status
 
 oxoffice is young: 0.x, and the API can still move. It starts from rdocx 0.17.0 and rpptx 0.15.0, which
-already cover a lot of Word and PowerPoint. What comes next is in the [roadmap](ROADMAP.md): a new test
-suite, edits that cost only the element they touch, fillable PDF forms, bibliographies, authoring tracked
-changes and completing comments, and spreadsheets.
+already cover a lot of Word and PowerPoint. What comes next lives in the issues labelled
+[`roadmap`](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap), one per workstream: edits that cost only
+the element they touch, the remaining code splits, bibliographies, authoring tracked changes and completing
+comments, and spreadsheets. Each gets a spec in `specs/` before work starts; nothing there is a promise of dates.
+
+### Not planned
+
+From the rdocx roadmap we leave out, unless a real need shows up: the
+watermark and shadow qualification work, SmartArt and VML authoring, web
+extensions and task panes, executable attachments, strict-conformance
+qualification, the external benchmark campaign, and on the spreadsheet
+side pivots, the Data Model, Power Query and Office Scripts.
 
 ## 🤝 Contributing
 
