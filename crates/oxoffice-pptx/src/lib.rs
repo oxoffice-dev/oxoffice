@@ -244,6 +244,7 @@ use media::{
 pub use pictures::PictureImage;
 
 mod charts;
+mod shared_parts;
 mod smartart;
 
 use charts::chart_internal_part;
@@ -505,6 +506,11 @@ pub struct Presentation {
     handout_master_dirty: bool,
     embedded_invalidated_signatures: HashSet<(String, String)>,
     package_signatures_invalidated: bool,
+    // A signed package as it was last opened, committed or signed: what a
+    // save is compared with to tell whether an edit invalidated the
+    // signature. Edits that write `package` in place (adding, moving or
+    // duplicating a slide) cannot hide behind it. None when unsigned.
+    signature_baseline: Option<Arc<OpcPackage>>,
     // The file this presentation was opened from, canonical, which `save`
     // refuses to replace. Clones and reopened candidates carry it.
     source_path: Option<PathBuf>,

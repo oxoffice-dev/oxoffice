@@ -336,12 +336,13 @@ impl Document {
             .transpose()?
         {
             let custom_part = self.reserve_custom_properties_bundle()?;
-            let changed = self
+            // Compared as written: a NaN number is not == itself, and -0 == 0.
+            let changed = !self
                 .package
                 .get_part(&custom_part)
                 .and_then(|xml| CustomProperties::from_xml(xml).ok())
-                .as_ref()
-                != self.custom_properties.as_ref();
+                .zip(self.custom_properties.as_ref())
+                .is_some_and(|(read, model)| read.is_same_as(model));
             if changed {
                 self.package.set_part(&custom_part, custom_xml);
             }

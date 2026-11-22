@@ -1,10 +1,12 @@
-"""pptx: every public mutating call of oxoffice.pptx costs about the same in a deck of N slides and in one of 4N: an
-edit touches its element and, for a picture or a slide, its own part. No call grows with the deck (measured on a build
-without debug assertions, 2026-11-20), so each one guards against a regression. `test_every_mutating_call_is_timed`
-keeps the list complete as the API grows.
+"""pptx: every public mutating call of oxoffice.pptx costs about the same in a deck of N slides and in one of 4N (16N
+for SLIDE_ORDER): an edit touches its element and, for a picture or a slide, its own part. No call grows with the deck
+(measured on a build without debug assertions, 2026-11-20), so each one guards against a regression.
+`test_every_mutating_call_is_timed` keeps the list complete as the API grows.
 
-Each slide of the two decks holds 25 text boxes, 12 rectangles, a 4x4 table, a picture of about 1 MB that does not
-compress, and speaker notes: both the shapes and the bytes of the package grow fourfold."""
+Each slide of the decks holds 25 text boxes, 12 rectangles, a 4x4 table, a picture of about 1 MB that does not
+compress, and speaker notes: both the shapes and the bytes of the package grow with the slides. The calls that shift
+every slide after the one they place (SLIDE_ORDER) are timed against a deck of 16N: a cost that follows the shapes of
+the shifted slides stays under the noise floor at 4N."""
 import ast
 import datetime
 import io
@@ -626,27 +628,41 @@ def decks(tmp_path_factory):
             Deck(edit_cost_pptx(folder / "4n.pptx", 4 * N, picture_side=600)))
 
 
+# Timed at N and 16N slides: inserting or moving a slide before the others shifts them all, which must not cost
+# their shapes.
+SLIDE_ORDER = {"SlideCollection.add_slide_at", "SlideCollection.move"}
+
+
+@pytest.fixture(scope="module")
+def deck_16n(tmp_path_factory):
+    return Deck(edit_cost_pptx(tmp_path_factory.mktemp("scaling") / "16n.pptx", 16 * N, picture_side=600))
+
+
 # ci.yml times these on every pull request and push to main: one call of each area.
 QUICK = {
-    "SlideCollection.add_slide", "SlideCollection.remove", "ShapeCollection.add_textbox", "ShapeCollection.add_picture",
-    "ShapeCollection.add_table", "Shape.left", "TextFrame.text", "Paragraph.text", "Font.bold", "Cell.merge",
-    "Chart.has_legend", "Presentation.slide_number_start", "CoreProperties.title",
+    "SlideCollection.add_slide", "SlideCollection.remove", "SlideCollection.move", "ShapeCollection.add_textbox",
+    "ShapeCollection.add_picture", "ShapeCollection.add_table", "Shape.left", "TextFrame.text", "Paragraph.text",
+    "Font.bold", "Cell.merge", "Chart.has_legend", "Presentation.slide_number_start", "CoreProperties.title",
 }
 
 
 @pytest.mark.parametrize("name", list(TIMED))
-def test_call_cost_does_not_grow_with_the_deck(decks, name):
+def test_call_cost_does_not_grow_with_the_deck(decks, request, name):
+    slides = 16 * N if name in SLIDE_ORDER else 4 * N
+    if name in SLIDE_ORDER:
+        decks = (decks[0], request.getfixturevalue("deck_16n"))
     small, large = costs_ms(decks, TIMED[name])
     for _ in range(REMEASURE):
         if large < RATIO * small + FLOOR_MS:
             break
         again = costs_ms(decks, TIMED[name])
         small, large = min(small, again[0]), min(large, again[1])
-    assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {4 * N} slides, {small:.1f} ms at {N}"
+    assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {slides} slides, {small:.1f} ms at {N}"
 
 
 def test_every_mutating_call_is_timed():
     assert sorted(QUICK - set(TIMED)) == []
+    assert sorted(SLIDE_ORDER - set(TIMED)) == []
     timed = {name.split(" (")[0] for name in TIMED}
     assert sorted(mutating_surface() - timed - set(WHOLE_DECK)) == []
     assert sorted((timed | set(WHOLE_DECK)) - mutating_surface()) == []

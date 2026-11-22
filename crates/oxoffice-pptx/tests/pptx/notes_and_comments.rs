@@ -7,7 +7,9 @@ use std::sync::OnceLock;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::rel_types;
-use oxoffice_pptx::{Comment, CommentAuthor, CommentReply, Error, Presentation, ValidationIssue};
+use oxoffice_pptx::{
+    Comment, CommentAuthor, CommentReply, Emu, Error, Presentation, ValidationIssue,
+};
 
 use crate::support::{corpus_deck, new_deck, reopen, slide_texts};
 
@@ -1475,4 +1477,219 @@ fn a_duplicated_slide_gets_its_own_copy_of_its_legacy_comments() {
     prs.remove_slide(0).unwrap();
     assert!(parts_under(&reopen(&prs), "ppt/comments/").is_empty());
     assert!(part_xml(&reopen(&prs), "/ppt/commentAuthors.xml").contains("Grace Hopper"));
+}
+
+/// Two slides of `prs` whose second slide relates to the first one's notes
+/// slide, as decks edited by oxoffice 0.1.0 can.
+fn deck_sharing_notes() -> Presentation {
+    let mut prs = blank_deck(2);
+    prs.set_notes_text(0, "Shared notes").unwrap();
+    let mut package = package_of(&prs);
+    let notes = package
+        .get_part_rels("/ppt/slides/slide1.xml")
+        .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
+        .map(|relationship| relationship.target.clone())
+        .expect("slide 1 has notes");
+    package
+        .get_or_create_part_rels("/ppt/slides/slide2.xml")
+        .add(rel_types::NOTES_SLIDE, &notes);
+    Presentation::from_bytes(&bytes_of(&package)).unwrap()
+}
+
+fn notes_of(prs: &Presentation) -> Vec<Option<String>> {
+    prs.slides().map(|slide| slide.notes_text()).collect()
+}
+
+fn no_shared_part(prs: &Presentation) -> bool {
+    !prs.validate()
+        .iter()
+        .any(|issue| matches!(issue, ValidationIssue::SharedSlidePart { .. }))
+}
+
+/// The slide each slide's notes slide names, by slide index.
+fn notes_named_slides(prs: &Presentation) -> Vec<Option<String>> {
+    let package = package_of(prs);
+    let slides = package
+        .get_part_rels("/ppt/presentation.xml")
+        .map(|relationships| relationships.get_all_by_type(rel_types::SLIDE))
+        .unwrap_or_default();
+    let order = elements_in(&part_xml(prs, "/ppt/presentation.xml"), "p:sldId");
+    order
+        .iter()
+        .map(|id| {
+            let relationship = slides
+                .iter()
+                .find(|relationship| relationship.id == *id)
+                .expect("slide relationship");
+            let slide =
+                OpcPackage::resolve_rel_target("/ppt/presentation.xml", &relationship.target);
+            let notes = package
+                .get_part_rels(&slide)
+                .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
+                .map(|relationship| OpcPackage::resolve_rel_target(&slide, &relationship.target))?;
+            package
+                .get_part_rels(&notes)
+                .and_then(|relationships| relationships.get_by_type(rel_types::SLIDE))
+                .map(|relationship| {
+                    let named = OpcPackage::resolve_rel_target(&notes, &relationship.target);
+                    if named == slide {
+                        "itself".to_owned()
+                    } else {
+                        named
+                    }
+                })
+        })
+        .collect()
+}
+
+/// The `r:id` of every `name` element of `xml`, in order.
+fn elements_in(xml: &str, name: &str) -> Vec<String> {
+    xml.split(&format!("<{name} "))
+        .skip(1)
+        .filter_map(|element| element.split("r:id=\"").nth(1)?.split('"').next())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn editing_the_notes_one_slide_shares_gives_it_its_own_and_leaves_the_other() {
+    type Edit = fn(&mut Presentation, usize);
+    let edits: [(&str, Edit); 4] = [
+        ("set_notes_text", |prs, slide| {
+            prs.set_notes_text(slide, "Edited").unwrap()
+        }),
+        ("try_replace_slide_text", |prs, slide| {
+            prs.try_replace_slide_text(slide, "Shared notes", "Edited", true, None)
+                .unwrap();
+        }),
+        // A committing edit after the notes edit re-reads the package.
+        ("set_notes_text then a commit", |prs, slide| {
+            prs.set_notes_text(slide, "Edited").unwrap();
+            prs.set_slide_number_start(Some(3)).unwrap();
+        }),
+        // An edit that stages the package, then commits it.
+        ("set_notes_text then a hyperlink", |prs, slide| {
+            prs.set_notes_text(slide, "Edited").unwrap();
+            prs.slide_mut(0)
+                .unwrap()
+                .add_textbox(Emu(0), Emu(0), Emu(914_400), Emu(457_200))
+                .unwrap();
+            let shape = prs.slide(0).unwrap().shapes().next().unwrap();
+            let shape = shape.non_visual_id().unwrap();
+            prs.set_shape_hyperlink(0, shape, Some("https://example.com/"))
+                .unwrap();
+        }),
+    ];
+    for (name, edit) in edits {
+        for edited in [0, 1] {
+            let mut prs = deck_sharing_notes();
+            edit(&mut prs, edited);
+            let reopened = reopen(&prs);
+            let mut expected = vec![Some("Shared notes".to_owned()); 2];
+            expected[edited] = Some("Edited".to_owned());
+            assert_eq!(notes_of(&reopened), expected, "{name}, slide {edited}");
+            assert!(
+                reopened.validate().is_empty(),
+                "{name}: {:?}",
+                reopened.validate()
+            );
+            assert_eq!(
+                notes_named_slides(&reopened),
+                [Some("itself".to_owned()), Some("itself".to_owned())],
+                "{name}, slide {edited}: each notes slide names its own slide"
+            );
+        }
+    }
+}
+
+#[test]
+fn replacing_text_in_every_slide_gives_each_slide_its_own_notes() {
+    let mut prs = deck_sharing_notes();
+    assert_eq!(prs.replace_text("Shared", "Own"), 2);
+    let reopened = reopen(&prs);
+    assert_eq!(notes_of(&reopened), vec![Some("Own notes".to_owned()); 2]);
+    assert!(no_shared_part(&reopened), "{:?}", reopened.validate());
+    assert_eq!(
+        notes_named_slides(&reopened),
+        [Some("itself".to_owned()), Some("itself".to_owned())]
+    );
+}
+
+#[test]
+fn a_refused_notes_edit_leaves_a_shared_notes_slide_shared() {
+    // A notes slide without a body placeholder refuses set_notes_text.
+    let prs = deck_sharing_notes();
+    let mut package = package_of(&prs);
+    let notes = package
+        .get_part_rels("/ppt/slides/slide1.xml")
+        .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
+        .map(|relationship| {
+            OpcPackage::resolve_rel_target("/ppt/slides/slide1.xml", &relationship.target)
+        })
+        .unwrap();
+    package.set_part(
+        &notes,
+        br#"<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:notes>"#.to_vec(),
+    );
+    let mut prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
+    let before = prs.to_bytes().unwrap();
+    assert!(prs.set_notes_text(1, "Edited").is_err());
+    assert_eq!(
+        prs.to_bytes().unwrap(),
+        before,
+        "a refused edit changes nothing"
+    );
+}
+
+#[test]
+fn removing_a_slide_keeps_the_notes_another_slide_shares() {
+    for removed in [0, 1] {
+        let mut prs = deck_sharing_notes();
+        prs.remove_slide(removed).unwrap();
+        let reopened = reopen(&prs);
+        assert_eq!(notes_of(&reopened), [Some("Shared notes".to_owned())]);
+        assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+        // The notes slide names the slide that kept it, not the removed one.
+        let package = package_of(&reopened);
+        let slide = package
+            .get_part_rels("/ppt/presentation.xml")
+            .and_then(|relationships| relationships.get_by_type(rel_types::SLIDE))
+            .map(|relationship| {
+                OpcPackage::resolve_rel_target("/ppt/presentation.xml", &relationship.target)
+            })
+            .expect("one slide left");
+        let notes = package
+            .get_part_rels(&slide)
+            .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
+            .map(|relationship| OpcPackage::resolve_rel_target(&slide, &relationship.target))
+            .expect("the slide keeps its notes");
+        let named = package
+            .get_part_rels(&notes)
+            .and_then(|relationships| relationships.get_by_type(rel_types::SLIDE))
+            .map(|relationship| OpcPackage::resolve_rel_target(&notes, &relationship.target));
+        assert_eq!(
+            named.as_deref(),
+            Some(slide.as_str()),
+            "removed slide {removed}"
+        );
+    }
+}
+
+#[test]
+fn removing_a_slide_keeps_the_legacy_comments_another_slide_shares() {
+    for removed in [0, 1] {
+        let prs = deck_with_legacy_comments(2);
+        let mut package = package_of(&prs);
+        package
+            .get_or_create_part_rels("/ppt/slides/slide2.xml")
+            .add(rel_types::COMMENTS, "../comments/comment1.xml");
+        let mut prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
+        prs.remove_slide(removed).unwrap();
+        let reopened = reopen(&prs);
+        assert!(
+            package_of(&reopened).contains_part("/ppt/comments/comment1.xml"),
+            "removed slide {removed}: the part the other slide relates to stays"
+        );
+        assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
+    }
 }

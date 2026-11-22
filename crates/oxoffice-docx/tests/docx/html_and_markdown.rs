@@ -1381,11 +1381,15 @@ fn equations_word_writes_in_wrappers_fields_and_display_groups_reach_both_export
         // A centred display group.
         r#"<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="center"/></m:oMathParaPr>"#,
         r#"<m:oMath><m:r><m:t>d</m:t></m:r></m:oMath></m:oMathPara></w:p>"#,
-        // After a two-run field, in a tracked insertion (the field's result
-        // text is lost there: #392).
+        // After a two-run field, in a tracked insertion: the field's result
+        // stays, before the equation.
         r#"<w:p><w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:fldSimple w:instr=" QUOTE a ">"#,
         r#"<w:r><w:t>1</w:t></w:r><w:r><w:t>2</w:t></w:r></w:fldSimple>"#,
         r#"<m:oMath><m:r><m:t>z</m:t></m:r></m:oMath><w:r><w:t>C</w:t></w:r></w:ins></w:p>"#,
+        // The same after a run: the equation keeps its place in the line.
+        r#"<w:p><w:r><w:t>A</w:t></w:r><w:ins w:id="6" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+        r#"<w:fldSimple w:instr=" QUOTE b "><w:r><w:t>34</w:t></w:r></w:fldSimple>"#,
+        r#"<m:oMath><m:r><m:t>w</m:t></m:r></m:oMath><w:r><w:t>D</w:t></w:r></w:ins></w:p>"#,
     ));
     let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
     assert!(markdown.contains("tag $y$"), "{markdown}");
@@ -1398,9 +1402,12 @@ fn equations_word_writes_in_wrappers_fields_and_display_groups_reach_both_export
         "{diagnostics:?}"
     );
     // Both exports place it before the run that follows it.
-    assert!(markdown.contains("$z$C"), "{markdown}");
+    assert!(markdown.contains("12$z$C"), "{markdown}");
+    assert!(markdown.contains("A34$w$D"), "{markdown}");
     let html = doc.to_html_fragment();
-    assert_eq!(html.matches("<math").count(), 4, "{html}");
+    assert_eq!(html.matches("<math").count(), 5, "{html}");
+    assert!(html.contains(">A34<math"), "{html}");
+    assert!(html.contains(">12<math"), "{html}");
     assert!(html.contains("<mi>z</mi></math>C</p>"), "{html}");
 }
 

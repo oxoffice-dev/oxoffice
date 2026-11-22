@@ -105,7 +105,7 @@ fn computed_layout_field(
                 let Some(bookmark) = field_text_argument(&instruction, 0) else {
                     return (None, None);
                 };
-                if bookmark_text(input, bookmark).is_none() {
+                if !bookmark_exists(input, bookmark) {
                     diagnostics.push(Diagnostic {
                         message: format!(
                             "PAGEREF target {bookmark} was not found, stored display retained"
@@ -154,14 +154,7 @@ pub(super) fn drawn_legacy_checkbox(
 /// The entry a legacy drop-down that stores no result draws: its selected
 /// one, as Word draws it. Word saves drop-downs that way.
 pub(super) fn drawn_legacy_dropdown(field: &oxoffice_docx_oxml::text::Field) -> Option<&str> {
-    let data = field.legacy_form.as_ref()?;
-    let oxoffice_docx_oxml::text::LegacyFormFieldValue::SelectedIndex(index) = data.value else {
-        return None;
-    };
-    if !field.effective_display().is_empty() {
-        return None;
-    }
-    data.choices.get(index).map(String::as_str)
+    field.unstored_dropdown_entry()
 }
 
 /// The fields of a paragraph's physical runs in source order, nested fields
@@ -2284,7 +2277,7 @@ fn push_targeted_bookmark_markers(
         marker.is_start()
             && marker_run_index == projected_run_index
             && marker.name().is_some_and(|name| {
-                document_has_page_ref(input, name) && bookmark_text(input, name).is_some()
+                document_has_page_ref(input, name) && bookmark_exists(input, name)
             })
     }) {
         if let Some(target) = marker.name().and_then(|name| page_ref_id(input, name)) {

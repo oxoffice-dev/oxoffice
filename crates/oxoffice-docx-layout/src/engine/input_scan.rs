@@ -1,5 +1,9 @@
 //! Scans of the layout input: page references, sequence and section fields, note labels, bookmark text.
 
+use std::collections::BTreeSet;
+
+use oxoffice_docx_oxml::text::{bookmarks_depending_on, field_ref_targets};
+
 use super::*;
 
 pub(super) fn page_ref_id(input: &LayoutInput, name: &str) -> Option<usize> {
@@ -605,7 +609,9 @@ fn bookmark_range_in_paragraphs(
     Some((start, end))
 }
 
-pub(super) fn bookmark_text(input: &LayoutInput, name: &str) -> Option<String> {
+/// The runs of the bookmark `name` as the revision view shows them, one row
+/// per paragraph, when exactly one bookmark has that name.
+fn bookmark_value_runs(input: &LayoutInput, name: &str) -> Option<Vec<Vec<CT_R>>> {
     let stories = input_story_paragraphs(input);
     let block_bookmarks = input.block_bookmarks();
     let named_starts = stories
@@ -623,23 +629,96 @@ pub(super) fn bookmark_text(input: &LayoutInput, name: &str) -> Option<String> {
     let mut matches = Vec::new();
     for paragraphs in stories {
         if let Some((start, end)) = bookmark_range_in_paragraphs(input, name, &paragraphs) {
-            let mut parts = Vec::new();
+            let mut rows = Vec::new();
             for (paragraph_index, paragraph) in
                 paragraphs.iter().enumerate().take(end.0 + 1).skip(start.0)
             {
-                parts.push(
+                rows.push(
                     project_paragraph_runs(paragraph, input.revision_view)
                         .into_iter()
                         .enumerate()
                         .filter(|(index, _)| {
                             (paragraph_index, *index) >= start && (paragraph_index, *index) < end
                         })
-                        .map(|(_, projected)| projected.run.text())
-                        .collect::<String>(),
+                        .map(|(_, projected)| projected.run.clone())
+                        .collect::<Vec<_>>(),
                 );
             }
-            matches.push(parts.join("\n"));
+            matches.push(rows);
         }
     }
     (matches.len() == 1).then(|| matches.remove(0))
+}
+
+/// Whether exactly one bookmark is named `name` and has a range, the
+/// condition for [`bookmark_text`] to give a value.
+pub(super) fn bookmark_exists(input: &LayoutInput, name: &str) -> bool {
+    bookmark_value_runs(input, name).is_some()
+}
+
+/// The name of the one bookmark whose name folds to `folded`.
+fn folded_bookmark_name(input: &LayoutInput, folded: &str) -> Option<String> {
+    let block_bookmarks = input.block_bookmarks();
+    let mut names = input_story_paragraphs(input)
+        .into_iter()
+        .flatten()
+        .flat_map(|p| {
+            let (before, after) = block_bookmarks.markers(p);
+            p.bookmark_markers
+                .iter()
+                .chain(before)
+                .chain(after)
+                .filter_map(|marker| marker.name().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .filter(|name| name.to_lowercase() == folded)
+        .collect::<BTreeSet<_>>();
+    let name = names.pop_first()?;
+    names.is_empty().then_some(name)
+}
+
+/// The folded REF targets of every field a reader sees in `rows`.
+fn rows_ref_targets(rows: &[Vec<CT_R>]) -> BTreeSet<String> {
+    let mut targets = BTreeSet::new();
+    for run in rows.iter().flatten() {
+        run.accepted_text_keeping(&mut |field| {
+            field_ref_targets(field, &mut targets);
+            true
+        });
+    }
+    targets
+}
+
+/// The value a REF to `name` copies: the text a reader sees in the bookmark,
+/// less the display of every field whose result depends on the bookmark
+/// itself, as `update_fields` reads it.
+pub(super) fn bookmark_text(input: &LayoutInput, name: &str) -> Option<String> {
+    let rows = bookmark_value_runs(input, name)?;
+    let own = rows_ref_targets(&rows);
+    let folded = name.to_lowercase();
+    let depending = bookmarks_depending_on(name, &mut |current| {
+        if current == folded {
+            return own.clone();
+        }
+        folded_bookmark_name(input, current)
+            .and_then(|other| bookmark_value_runs(input, &other))
+            .map(|other| rows_ref_targets(&other))
+            .unwrap_or_default()
+    });
+    Some(
+        rows.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|run| {
+                        run.accepted_text_keeping(&mut |field| {
+                            let mut targets = BTreeSet::new();
+                            field_ref_targets(field, &mut targets);
+                            !targets.iter().any(|target| depending.contains(target))
+                        })
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
