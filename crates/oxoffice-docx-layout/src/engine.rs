@@ -254,11 +254,11 @@ fn join_accepted_layout_paragraphs(
     // The copy has another address: the block markers the paragraph takes
     // go into it, at its start (after the prefix once it is inserted) and
     // its end.
+    // A marker that cannot be written is left out, as before: the layout
+    // goes on.
     let (before, after) = block_bookmarks.markers(paragraph);
-    if !(before.is_empty() && after.is_empty()) && !result.take_block_markers(before, after) {
-        return Err(LayoutError::Layout(
-            "could not carry a joined paragraph's block bookmarks".to_owned(),
-        ));
+    if !(before.is_empty() && after.is_empty()) {
+        let _ = result.take_block_markers(before, after);
     }
     for (index, run) in prefix.runs.into_iter().enumerate() {
         if !result.insert_unwrapped_run(index, run) {

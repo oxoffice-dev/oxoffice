@@ -2291,18 +2291,39 @@ fn a_bookmark_between_blocks_of_a_paragraph_that_receives_an_accepted_join_has_i
 
 #[test]
 fn a_bookmark_between_blocks_before_a_table_has_its_page_after_another_layout() {
-    // The start before the table belongs to the paragraph of its first cell:
-    // a second layout, which may retain the table, still finds it.
+    // The start before the table belongs to the paragraph of its first cell,
+    // a plain one or one that starts with a tracked insertion, as Google
+    // writes a suggestion: a second layout, which may retain the table,
+    // still finds it.
+    let insertion = r#"<w:ins w:id="5" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Cell</w:t></w:r></w:ins>"#;
+    for cell in [r#"<w:r><w:t>Cell</w:t></w:r>"#, insertion] {
+        let mut doc = doc_with_body(&format!(
+            r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>{cell}<w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
+            pageref("cell")
+        ));
+        doc.update_layout_backed_fields().unwrap();
+        assert_eq!(texts(&doc).last().unwrap(), "2", "{cell}");
+        doc.add_paragraph("Added.");
+        doc.update_layout_backed_fields().unwrap();
+        let texts = texts(&reopen(&mut doc));
+        assert_eq!(texts[texts.len() - 2], "2", "{cell}");
+    }
+}
+
+#[test]
+fn a_bookmark_start_that_comes_to_a_table_after_a_layout_has_its_page() {
+    // The start belongs to `X` until `X` goes: then to the paragraph of the
+    // table's first cell, whose table the first layout may have retained.
     let mut doc = doc_with_body(&format!(
-        r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
+        r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:p><w:r><w:t>X</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
         pageref("cell")
     ));
     doc.update_layout_backed_fields().unwrap();
     assert_eq!(texts(&doc).last().unwrap(), "2");
-    doc.add_paragraph("Added.");
+    let x = paragraph_location(&doc, "X");
+    doc.remove_content_at(&x).unwrap();
     doc.update_layout_backed_fields().unwrap();
-    let texts = texts(&reopen(&mut doc));
-    assert_eq!(texts[texts.len() - 2], "2");
+    assert_eq!(texts(&reopen(&mut doc)).last().unwrap(), "2");
 }
 
 #[test]

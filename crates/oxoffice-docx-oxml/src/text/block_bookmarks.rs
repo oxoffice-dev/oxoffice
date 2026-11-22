@@ -226,8 +226,8 @@ impl BlockBookmarks {
 
 impl CT_P {
     /// Write the block markers this paragraph takes ([`BlockBookmarks::markers`])
-    /// into the paragraph itself: those before at its start, ahead of its own
-    /// markers, those after at its end. For a copy whose address the markers
+    /// into the paragraph itself: those before at its first run boundary,
+    /// those after at its last. For a copy whose address the markers
     /// were not read for, such as the paragraph the accepted view joins.
     #[doc(hidden)]
     pub fn take_block_markers(
@@ -248,7 +248,10 @@ impl CT_P {
         let (Some(leading), Some(trailing)) = (leading, trailing) else {
             return false;
         };
-        self.extra_xml.splice(0..0, leading);
+        // Appended, as `insert_bookmark_start` does: the owners placed by a
+        // count of the raw children before them (revisions, equations,
+        // controls, comment ranges) keep their slots.
+        self.extra_xml.extend(leading);
         self.extra_xml.extend(trailing);
         if self.refresh_bookmark_projection() {
             true
