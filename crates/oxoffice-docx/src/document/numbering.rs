@@ -485,9 +485,11 @@ impl Document {
     /// Add a bullet list item at the given indentation level (0-based).
     ///
     /// If no bullet list definition exists yet, one is created automatically.
-    /// Returns a mutable `Paragraph` for further configuration.
+    /// Returns a mutable `Paragraph` for further configuration. A character
+    /// XML 1.0 cannot carry is dropped; [`Self::try_add_bullet_list_item`]
+    /// refuses it instead.
     pub fn add_bullet_list_item(&mut self, text: &str, level: u32) -> Paragraph<'_> {
-        self.try_add_bullet_list_item(text, level)
+        self.try_add_bullet_list_item(&oxoffice_core::xml::strip_non_xml_characters(text), level)
             .expect("the historical infallible list helper requires a valid document and level")
     }
 
@@ -502,9 +504,11 @@ impl Document {
     /// Add a numbered list item at the given indentation level (0-based).
     ///
     /// If no numbered list definition exists yet, one is created automatically.
-    /// Returns a mutable `Paragraph` for further configuration.
+    /// Returns a mutable `Paragraph` for further configuration. A character
+    /// XML 1.0 cannot carry is dropped; [`Self::try_add_numbered_list_item`]
+    /// refuses it instead.
     pub fn add_numbered_list_item(&mut self, text: &str, level: u32) -> Paragraph<'_> {
-        self.try_add_numbered_list_item(text, level)
+        self.try_add_numbered_list_item(&oxoffice_core::xml::strip_non_xml_characters(text), level)
             .expect("the historical infallible list helper requires a valid document and level")
     }
 
@@ -1592,7 +1596,15 @@ impl Document {
     /// that only learn a deeper level's format when content first reaches it.
     ///
     /// Returns `false` when `num_id` is unknown or `level` is out of range.
+    /// A character XML 1.0 cannot carry is dropped from the level text.
     pub fn set_list_level(&mut self, num_id: u32, level: u32, spec: ListLevel) -> bool {
+        let spec = match spec.level_text_value() {
+            Some(text) => {
+                let text = oxoffice_core::xml::without_non_xml_characters(text);
+                spec.level_text(text)
+            }
+            None => spec,
+        };
         if validate_list_level(level, &spec).is_err() {
             return false;
         }

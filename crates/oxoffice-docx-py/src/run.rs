@@ -296,6 +296,7 @@ impl PyRun {
     #[setter]
     fn set_text(&self, py: Python<'_>, text: &str) -> PyResult<()> {
         let (location, _) = self.validate(py)?;
+        crate::refuse_non_xml_characters(py, "run text", text)?;
         let mut document = self.document.borrow_mut(py);
         let publication = match &self.owner {
             Some(owner) => {

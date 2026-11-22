@@ -830,6 +830,16 @@ pub(super) fn numbering_override_has_unmodeled(value: &CT_NumLvl) -> bool {
             .is_some_and(numbering_level_has_unmodeled)
 }
 
+/// Refuses a level text holding a character XML 1.0 cannot carry. Only the
+/// levels a caller supplies are checked: a level the file already held, with
+/// such a character written as a reference, is kept as read.
+pub(super) fn reject_non_xml_level_text(value: &ListLevel) -> Result<()> {
+    if let Some(text) = &value.level_text {
+        oxoffice_core::xml::reject_non_xml_characters("numbering level text", text)?;
+    }
+    Ok(())
+}
+
 pub(super) fn validate_list_level(level: u32, value: &ListLevel) -> Result<()> {
     if level > 8 {
         return Err(Error::Other(format!(
@@ -895,6 +905,7 @@ fn default_list_level_text(level: u32, format: &ListNumberFormat) -> String {
 
 pub(super) fn ct_level_from_list(level: u32, value: &ListLevel) -> Result<CT_Lvl> {
     validate_list_level(level, value)?;
+    reject_non_xml_level_text(value)?;
     let mut result = CT_Lvl::new(level);
     result.template_code.clone_from(&value.template_code);
     result.tentative = value.tentative;
@@ -1030,6 +1041,7 @@ pub(super) fn validate_numbering_level_slice(levels: &[ListLevel]) -> Result<()>
     }
     for (level, value) in levels.iter().enumerate() {
         validate_list_level(level as u32, value)?;
+        reject_non_xml_level_text(value)?;
     }
     Ok(())
 }
@@ -1052,6 +1064,7 @@ pub(super) fn validate_numbering_definition_levels(
             )));
         }
         validate_list_level(value.level, &value.properties)?;
+        reject_non_xml_level_text(&value.properties)?;
     }
     Ok(())
 }

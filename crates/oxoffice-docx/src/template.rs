@@ -3448,9 +3448,10 @@ fn validate_expression_text(source: ValidationText<'_, '_>, filters: &[Filter]) 
     }
     if let Some((position, character)) = validator.first_invalid {
         return Err(oxoffice_core::OxmlError::InvalidValue(format!(
-            "template replacement holds U+{:04X} at character {}, a character XML 1.0 cannot carry",
+            "template replacement holds U+{:04X} at character {}, {}",
             u32::from(character),
             position,
+            oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL,
         ))
         .into());
     }

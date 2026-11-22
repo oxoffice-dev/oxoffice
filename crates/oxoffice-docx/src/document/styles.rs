@@ -622,11 +622,26 @@ impl Document {
     /// repeated, is retained, and [`Document::validate_style_graph`] still
     /// reports it. Only a defect the change introduces rejects it, and an ID
     /// that already exists is refused. The style mutations resolve a repeated
-    /// ID to its first definition, as layout and TOC rebuilding do.
+    /// ID to its first definition, as layout and TOC rebuilding do. A value
+    /// holding a character XML 1.0 cannot carry is refused: the ID, the name,
+    /// a based-on, next or linked style, and any font, colour or other
+    /// property the builder sets.
     pub fn add_style(&mut self, builder: StyleBuilder) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         candidate.reserve_styles_bundle()?;
         let (authored, _, _) = builder.build();
+        oxoffice_core::xml::reject_non_xml_characters("style ID", &authored.style_id)?;
+        for (what, value) in [
+            ("style name", &authored.name),
+            ("based-on style", &authored.based_on),
+            ("next style", &authored.next_style),
+            ("linked style", &authored.linked_style),
+        ] {
+            if let Some(value) = value {
+                oxoffice_core::xml::reject_non_xml_characters(what, value)?;
+            }
+        }
+        refuse_non_xml_style_values(&authored)?;
         if candidate.styles.get_by_id(&authored.style_id).is_some() {
             return Err(Error::Other(format!(
                 "style '{}' already exists",
@@ -661,11 +676,14 @@ impl Document {
     /// Replace an existing style after validating the change to the style graph.
     ///
     /// A repeated style ID updates its first definition. Validation retains
-    /// existing defects as in [`Document::add_style`].
+    /// existing defects as in [`Document::add_style`]. A value holding a
+    /// character XML 1.0 cannot carry is refused, as [`Document::add_style`]
+    /// refuses it.
     pub fn set_style(&mut self, builder: StyleBuilder) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         candidate.reserve_styles_bundle()?;
         let (mut authored, cleared, removed_regions) = builder.build();
+        refuse_non_xml_style_values(&authored)?;
         let index = candidate
             .styles
             .styles
@@ -1274,4 +1292,45 @@ impl Document {
             style_id,
         )
     }
+}
+
+/// Refuses a style that would write a character XML 1.0 cannot carry, in any
+/// value the builder set: the style is serialized as it will be saved, and
+/// the error names the style and the attribute or element that holds it.
+fn refuse_non_xml_style_values(style: &oxoffice_docx_oxml::styles::CT_Style) -> Result<()> {
+    let mut writer = quick_xml::Writer::new(Vec::new());
+    style.to_xml(&mut writer)?;
+    let xml = String::from_utf8_lossy(writer.get_ref());
+    let Some((at, character)) = xml
+        .char_indices()
+        .find(|(_, character)| !oxoffice_core::xml::is_xml_1_0_character(*character))
+    else {
+        return Ok(());
+    };
+    // The value sits in the last attribute or element opened before it.
+    let before = &xml[..at];
+    let element = before[before.rfind('<').map_or(0, |start| start + 1)..]
+        .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .next()
+        .unwrap_or_default();
+    let attribute = before
+        .rfind('=')
+        .filter(|equals| {
+            before.rfind('<').is_some_and(|open| open < *equals) && !before[*equals..].contains('>')
+        })
+        .map(|equals| {
+            let name = before[..equals].trim_end();
+            &name[name.rfind(char::is_whitespace).map_or(0, |space| space + 1)..]
+        });
+    let place = match attribute {
+        Some(attribute) => format!("{element}/@{attribute}"),
+        None => element.to_owned(),
+    };
+    Err(oxoffice_core::OxmlError::InvalidValue(format!(
+        "style {} value {place} holds U+{:04X}, {}",
+        oxoffice_core::xml::strip_non_xml_characters(&style.style_id),
+        u32::from(character),
+        oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL
+    ))
+    .into())
 }

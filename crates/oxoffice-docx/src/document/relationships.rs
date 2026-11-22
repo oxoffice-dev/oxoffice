@@ -200,12 +200,15 @@ impl Document {
         self.add_relative_internal_relationship_checked(owner, rel_types::IMAGE, &part_name)
     }
 
+    /// Adds an external relationship to `target`, refusing a target that
+    /// holds a character XML 1.0 cannot carry.
     pub(crate) fn add_external_relationship_checked(
         &mut self,
         owner: &str,
         rel_type: &str,
         target: &str,
     ) -> Result<String> {
+        oxoffice_core::xml::reject_non_xml_characters("external relationship target", target)?;
         let id = self.identifiers.reserve_relationship_id_checked(owner)?;
         self.package.get_or_create_part_rels(owner).items.push(
             oxoffice_opc::relationship::Relationship {

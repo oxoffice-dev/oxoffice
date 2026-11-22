@@ -2092,6 +2092,13 @@ fn a_kept_click_attribute_holding_a_double_quote_stays_well_formed_when_the_addr
 }
 
 #[test]
+fn a_bullet_character_xml_cannot_carry_is_refused() {
+    assert!(TextBulletCharacter::new("\u{7}").is_err());
+    assert!(TextBulletCharacter::new("\u{FFFE}").is_err());
+    assert!(TextBulletCharacter::new("•").is_ok());
+}
+
+#[test]
 fn an_entity_in_a_text_body_container_survives_an_edit_of_its_text() {
     // Character data a text body container keeps as written, with an entity
     // in it: the edit writes it back whole.

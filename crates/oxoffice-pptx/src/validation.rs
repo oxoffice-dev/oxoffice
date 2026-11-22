@@ -221,7 +221,8 @@ pub fn validate_presentation_file<P: AsRef<Path>>(path: P) -> Result<Vec<Validat
                 part,
                 path: "/".to_owned(),
                 message: format!(
-                    "holds U+{code_point:04X} at line {line}, column {column}, a character XML 1.0 cannot carry: PowerPoint cannot read that part either"
+                    "holds U+{code_point:04X} at line {line}, column {column}, {}: PowerPoint cannot read that part either",
+                    oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL
                 ),
             }]);
         }

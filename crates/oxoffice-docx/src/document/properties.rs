@@ -284,13 +284,14 @@ impl Document {
 
     /// Set the document title.
     ///
-    /// A character XML 1.0 cannot carry is taken as given, and every later save
-    /// then fails with the error of the package writer, which names the part
-    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead. Such a character in a value the file
-    /// already holds is dropped, as [`Self::set_core_properties`] does.
+    /// A character XML 1.0 cannot carry is dropped;
+    /// [`Self::set_core_properties`] refuses such a value instead. Such a
+    /// character in a value the file already holds is dropped too, as
+    /// [`Self::set_core_properties`] does.
     pub fn set_title(&mut self, title: &str) {
-        self.set_core_field(|core| core.title = Some(title.to_string()));
+        self.set_core_field(|core| {
+            core.title = Some(oxoffice_core::xml::without_non_xml_characters(title))
+        });
     }
 
     /// Get the document author/creator.
@@ -300,13 +301,14 @@ impl Document {
 
     /// Set the document author/creator.
     ///
-    /// A character XML 1.0 cannot carry is taken as given, and every later save
-    /// then fails with the error of the package writer, which names the part
-    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead. Such a character in a value the file
-    /// already holds is dropped, as [`Self::set_core_properties`] does.
+    /// A character XML 1.0 cannot carry is dropped;
+    /// [`Self::set_core_properties`] refuses such a value instead. Such a
+    /// character in a value the file already holds is dropped too, as
+    /// [`Self::set_core_properties`] does.
     pub fn set_author(&mut self, author: &str) {
-        self.set_core_field(|core| core.creator = Some(author.to_string()));
+        self.set_core_field(|core| {
+            core.creator = Some(oxoffice_core::xml::without_non_xml_characters(author))
+        });
     }
 
     /// Get the document subject.
@@ -316,13 +318,14 @@ impl Document {
 
     /// Set the document subject.
     ///
-    /// A character XML 1.0 cannot carry is taken as given, and every later save
-    /// then fails with the error of the package writer, which names the part
-    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead. Such a character in a value the file
-    /// already holds is dropped, as [`Self::set_core_properties`] does.
+    /// A character XML 1.0 cannot carry is dropped;
+    /// [`Self::set_core_properties`] refuses such a value instead. Such a
+    /// character in a value the file already holds is dropped too, as
+    /// [`Self::set_core_properties`] does.
     pub fn set_subject(&mut self, subject: &str) {
-        self.set_core_field(|core| core.subject = Some(subject.to_string()));
+        self.set_core_field(|core| {
+            core.subject = Some(oxoffice_core::xml::without_non_xml_characters(subject))
+        });
     }
 
     /// Get the document keywords.
@@ -332,13 +335,14 @@ impl Document {
 
     /// Set the document keywords.
     ///
-    /// A character XML 1.0 cannot carry is taken as given, and every later save
-    /// then fails with the error of the package writer, which names the part
-    /// (`/docProps/core.xml`) and the character; [`Self::set_core_properties`]
-    /// refuses such a value instead. Such a character in a value the file
-    /// already holds is dropped, as [`Self::set_core_properties`] does.
+    /// A character XML 1.0 cannot carry is dropped;
+    /// [`Self::set_core_properties`] refuses such a value instead. Such a
+    /// character in a value the file already holds is dropped too, as
+    /// [`Self::set_core_properties`] does.
     pub fn set_keywords(&mut self, keywords: &str) {
-        self.set_core_field(|core| core.keywords = Some(keywords.to_string()));
+        self.set_core_field(|core| {
+            core.keywords = Some(oxoffice_core::xml::without_non_xml_characters(keywords))
+        });
     }
 
     fn set_core_field(&mut self, edit: impl FnOnce(&mut CoreProperties)) {
@@ -404,7 +408,8 @@ fn reject_non_xml_character_references(what: &str, raw: &str) -> Result<()> {
             Some(character) if oxoffice_core::xml::is_xml_1_0_character(character) => {}
             _ => {
                 return Err(Error::Other(format!(
-                    "{what} holds the character reference &#{digits};, to a character XML 1.0 cannot carry"
+                    "{what} holds the character reference &#{digits};, to {}",
+                    oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL
                 )));
             }
         }

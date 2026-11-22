@@ -127,6 +127,8 @@ impl Document {
 
 impl Document {
     /// Add a paragraph with the given text and return a mutable reference.
+    /// A character XML 1.0 cannot carry is dropped;
+    /// [`Self::try_add_paragraph`] refuses it instead.
     pub fn add_paragraph(&mut self, text: &str) -> Paragraph<'_> {
         self.invalidate_layout();
         self.document

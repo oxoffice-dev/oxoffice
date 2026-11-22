@@ -11,6 +11,8 @@ use oxoffice_docx_oxml::text::{
 };
 use oxoffice_docx_oxml::units::{HalfPoint, Twips};
 
+use oxoffice_core::xml::{strip_non_xml_characters, without_non_xml_characters};
+
 use crate::{Error, Length, Result};
 
 /// A break embedded in a run.
@@ -515,7 +517,9 @@ impl<'a> Run<'a> {
     /// so its note or comment keeps it. A custom mark reads as part of the
     /// run's text, so the mark goes back where the new text has it; a mark
     /// that came before any text stays first, and the others follow the text.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_text(&mut self, text: &str) {
+        let text = &*strip_non_xml_characters(text);
         let mut content = Vec::new();
         let mut trailing = Vec::new();
         let mut rest = text;
@@ -556,10 +560,12 @@ impl<'a> Run<'a> {
         self.inner.replace_content(content);
     }
 
-    /// Add text to this run.
+    /// Add text to this run. A character XML 1.0 cannot carry is dropped.
     pub fn add_text(&mut self, text: &str) {
         self.inner
-            .append_content(RunContent::Text(CT_Text::new(text)));
+            .append_content(RunContent::Text(CT_Text::new(&strip_non_xml_characters(
+                text,
+            ))));
     }
 
     /// Append a tab at the current end of this run.
@@ -583,9 +589,11 @@ impl<'a> Run<'a> {
     /// Obtain `relationship_id` from [`crate::Document::embed_image`]. A run
     /// cannot reach the document's identifiers: the saved file gives the
     /// picture its drawing id (`wp:docPr/@id`), the document keeps a
-    /// placeholder, and an insert between two saves can change that id.
+    /// placeholder, and an insert between two saves can change that id. A
+    /// character XML 1.0 cannot carry is dropped from `relationship_id`.
     pub fn add_picture(&mut self, relationship_id: &str, width: Length, height: Length) {
-        let mut inline = CT_Inline::new(relationship_id, width.to_emu(), height.to_emu());
+        let relationship_id = strip_non_xml_characters(relationship_id);
+        let mut inline = CT_Inline::new(&relationship_id, width.to_emu(), height.to_emu());
         inline.doc_pr_id_unallocated = true;
         self.inner
             .append_content(RunContent::Drawing(CT_Drawing::inline(inline)));
@@ -612,7 +620,8 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Append one Unicode symbol as ordinary text in this run.
+    /// Append one Unicode symbol as ordinary text in this run. A character
+    /// XML 1.0 cannot carry is dropped.
     pub fn add_symbol(&mut self, symbol: char) {
         let mut encoded = [0_u8; 4];
         self.add_text(symbol.encode_utf8(&mut encoded));
@@ -746,6 +755,7 @@ impl<'a> Run<'a> {
     }
 
     /// Set the font name in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_font(&mut self, name: &str) {
         self.set_font_value(Some(name));
     }
@@ -756,11 +766,14 @@ impl<'a> Run<'a> {
     /// all four theme attributes. Word resolves a theme attribute in
     /// preference to the explicit name beside it, so leaving them meant the
     /// caller's font silently did nothing on a theme-fonted run. Use
-    /// [`Run::set_slot_font`] to change one slot.
+    /// [`Run::set_slot_font`] to change one slot. A character XML 1.0 cannot
+    /// carry is dropped.
     pub fn set_font_value(&mut self, name: Option<&str>) {
         if name.is_none() && self.inner.properties.is_none() {
             return;
         }
+        let name = name.map(strip_non_xml_characters);
+        let name = name.as_deref();
         let rpr = self.ensure_rpr();
         rpr.font_ascii = name.map(str::to_owned);
         rpr.font_hansi = name.map(str::to_owned);
@@ -775,35 +788,37 @@ impl<'a> Run<'a> {
     /// Set or clear the explicit font for one script slot.
     ///
     /// Clears that slot's theme attribute and touches no other slot.
-    /// `w:hint` is independent and is never cleared here.
+    /// `w:hint` is independent and is never cleared here. A character XML 1.0
+    /// cannot carry is dropped.
     pub fn set_slot_font(&mut self, slot: RunFontSlot, name: Option<&str>) {
         if name.is_none() && self.inner.properties.is_none() {
             return;
         }
         let rpr = self.ensure_rpr();
-        *slot.explicit_mut(rpr) = name.map(str::to_owned);
+        *slot.explicit_mut(rpr) = name.map(without_non_xml_characters);
         *slot.theme_mut(rpr) = None;
     }
 
     /// Set or clear the theme font for one script slot.
     ///
     /// Clears that slot's explicit attribute, mirroring
-    /// [`Run::set_slot_font`].
+    /// [`Run::set_slot_font`]. A character XML 1.0 cannot carry is dropped.
     pub fn set_slot_theme_font(&mut self, slot: RunFontSlot, theme: Option<&str>) {
         if theme.is_none() && self.inner.properties.is_none() {
             return;
         }
         let rpr = self.ensure_rpr();
-        *slot.theme_mut(rpr) = theme.map(str::to_owned);
+        *slot.theme_mut(rpr) = theme.map(without_non_xml_characters);
         *slot.explicit_mut(rpr) = None;
     }
 
     /// Set or clear `w:rFonts/@w:hint`, the slot hint for ambiguous characters.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_font_hint(&mut self, hint: Option<&str>) {
         if hint.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_rpr().font_hint = hint.map(str::to_owned);
+        self.ensure_rpr().font_hint = hint.map(without_non_xml_characters);
     }
 
     /// Set the run language used by language-aware text layout.
@@ -813,16 +828,18 @@ impl<'a> Run<'a> {
     }
 
     /// Set the run language in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_language(&mut self, language: &str) {
         self.set_language_value(Some(language));
     }
 
     /// Set or clear the direct Latin and high-ANSI run language.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_language_value(&mut self, language: Option<&str>) {
         if language.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_rpr().language = language.map(str::to_owned);
+        self.ensure_rpr().language = language.map(without_non_xml_characters);
     }
 
     /// Set text color as a hex string (e.g., "FF0000" for red).
@@ -832,6 +849,7 @@ impl<'a> Run<'a> {
     }
 
     /// Set text color in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_color(&mut self, hex: &str) {
         self.set_color_value(Some(hex));
     }
@@ -841,13 +859,14 @@ impl<'a> Run<'a> {
     /// An explicit colour replaces the theme reference, so this clears
     /// `w:themeColor`, `w:themeTint` and `w:themeShade` for the same reason
     /// [`Run::set_font_value`] clears the theme fonts. Use
-    /// [`Run::set_color_theme`] to author the reference instead.
+    /// [`Run::set_color_theme`] to author the reference instead. A character
+    /// XML 1.0 cannot carry is dropped.
     pub fn set_color_value(&mut self, hex: Option<&str>) {
         if hex.is_none() && self.inner.properties.is_none() {
             return;
         }
         let rpr = self.ensure_rpr();
-        rpr.color = hex.map(str::to_owned);
+        rpr.color = hex.map(without_non_xml_characters);
         rpr.color_theme = None;
         rpr.color_theme_tint = None;
         rpr.color_theme_shade = None;
@@ -858,13 +877,14 @@ impl<'a> Run<'a> {
     /// `w:val` is left as Word writes it, the literal Word cached beside the
     /// reference, rather than being replaced by a value this run has no theme
     /// to compute. Clearing the reference clears its tint and shade too,
-    /// because Word has nothing to apply them to without it.
+    /// because Word has nothing to apply them to without it. A character XML
+    /// 1.0 cannot carry is dropped.
     pub fn set_color_theme(&mut self, theme: Option<&str>, tint: Option<u8>, shade: Option<u8>) {
         if theme.is_none() && self.inner.properties.is_none() {
             return;
         }
         let rpr = self.ensure_rpr();
-        rpr.color_theme = theme.map(str::to_owned);
+        rpr.color_theme = theme.map(without_non_xml_characters);
         rpr.color_theme_tint = theme.and(tint);
         rpr.color_theme_shade = theme.and(shade);
     }
@@ -876,11 +896,12 @@ impl<'a> Run<'a> {
     }
 
     /// Set highlight color in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_highlight(&mut self, color: &str) {
         self.ensure_rpr().shading = Some(Box::new(CT_Shd {
             val: "clear".to_string(),
             color: Some("auto".to_string()),
-            fill: Some(color.to_string()),
+            fill: Some(without_non_xml_characters(color)),
             ..Default::default()
         }));
     }
@@ -908,6 +929,7 @@ impl<'a> Run<'a> {
     }
 
     /// Set or clear the direct run shading fill in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_shading_value(&mut self, color: Option<&str>) {
         match color {
             Some(color) => self.set_highlight(color),
@@ -1136,16 +1158,18 @@ impl<'a> Run<'a> {
     }
 
     /// Set the character style by ID in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_style(&mut self, style_id: &str) {
-        self.ensure_rpr().style_id = Some(style_id.to_string());
+        self.ensure_rpr().style_id = Some(without_non_xml_characters(style_id));
     }
 
     /// Set or clear the character style ID in place.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_style_value(&mut self, style_id: Option<&str>) {
         if style_id.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_rpr().style_id = style_id.map(str::to_owned);
+        self.ensure_rpr().style_id = style_id.map(without_non_xml_characters);
     }
 
     /// Append a `w:sym` symbol character at the current end of this run.
@@ -1153,10 +1177,11 @@ impl<'a> Run<'a> {
     /// `char_code` is the symbol font's own code point, which Word writes as
     /// four hex digits and usually places in the F020 to F0FF private-use
     /// block. This is separate from [`Run::add_symbol`], which stores one
-    /// Unicode scalar as ordinary text.
+    /// Unicode scalar as ordinary text. A character XML 1.0 cannot carry is
+    /// dropped from `font`.
     pub fn add_symbol_char(&mut self, font: &str, char_code: u16) {
         self.inner.append_content(RunContent::Symbol {
-            font: font.to_owned(),
+            font: without_non_xml_characters(font),
             char_code,
         });
     }
@@ -1196,19 +1221,21 @@ impl<'a> Run<'a> {
     }
 
     /// Set or clear `w:lang/@w:eastAsia`, the East Asian run language.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_language_east_asia_value(&mut self, language: Option<&str>) {
         if language.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_rpr().language_east_asia = language.map(str::to_owned);
+        self.ensure_rpr().language_east_asia = language.map(without_non_xml_characters);
     }
 
     /// Set or clear `w:lang/@w:bidi`, the complex-script run language.
+    /// A character XML 1.0 cannot carry is dropped.
     pub fn set_language_bidi_value(&mut self, language: Option<&str>) {
         if language.is_none() && self.inner.properties.is_none() {
             return;
         }
-        self.ensure_rpr().language_bidi = language.map(str::to_owned);
+        self.ensure_rpr().language_bidi = language.map(without_non_xml_characters);
     }
 
     /// Set or clear `w:outline`, stroke-only glyphs.

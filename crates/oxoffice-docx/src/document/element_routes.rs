@@ -330,12 +330,14 @@ impl Document {
     }
 
     /// The paragraph [`Self::insert_paragraph`] and [`Self::add_paragraph`]
-    /// place for `text`, built before it is placed.
+    /// place for `text`, built before it is placed, without the characters
+    /// XML 1.0 cannot carry.
     #[doc(hidden)]
     pub fn detached_text_paragraph(text: &str) -> CT_P {
+        let text = oxoffice_core::xml::strip_non_xml_characters(text);
         let mut p = CT_P::new();
         if !text.is_empty() {
-            p.add_run(text);
+            p.add_run(&text);
         }
         p
     }

@@ -26,7 +26,8 @@ impl Document {
     }
 
     /// Add a footnote with the given text; returns its id. Pair with
-    /// `Paragraph::add_footnote_ref` to reference it from the body.
+    /// `Paragraph::add_footnote_ref` to reference it from the body. A
+    /// character XML 1.0 cannot carry is dropped.
     pub fn add_footnote(&mut self, text: &str) -> i32 {
         let mut candidate = self.clone_for_staging();
         candidate
@@ -68,7 +69,7 @@ impl Document {
         marker.extra_xml_positions.push(1);
         p.runs.push(marker);
         p.add_run(" ");
-        p.add_run(text);
+        p.add_run(&oxoffice_core::xml::strip_non_xml_characters(text));
         candidate.footnotes.footnotes.push(CT_Footnote {
             id,
             note_type: oxoffice_docx_oxml::footnotes::NoteType::Normal,

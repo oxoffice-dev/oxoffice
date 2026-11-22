@@ -126,6 +126,12 @@ pub(crate) fn validate_path(
 }
 
 pub(crate) fn pptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyErr {
+    let message = error.to_string();
+    // A refused character XML 1.0 cannot carry is an `XmlError`, also a
+    // `ValueError`, wherever the refusal was wrapped.
+    if message.contains(oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL) {
+        return public_error(py, "XmlError", message);
+    }
     let class_name = match &error {
         oxoffice_pptx::Error::MalformedPart { .. } => "XmlError",
         oxoffice_pptx::Error::Package(_)
@@ -139,10 +145,27 @@ pub(crate) fn pptx_to_pyerr(py: Python<'_>, error: oxoffice_pptx::Error) -> PyEr
         | oxoffice_pptx::Error::DuplicateNotesSlides { .. } => "PackageError",
         _ => "PptxError",
     };
-    public_error(py, class_name, error.to_string())
+    public_error(py, class_name, message)
+}
+
+/// A refused value: an `XmlError` for a character XML 1.0 cannot carry, a
+/// `ValueError` with `fallback` otherwise.
+pub(crate) fn refused_value_to_pyerr(
+    py: Python<'_>,
+    error: impl std::fmt::Display,
+    fallback: &str,
+) -> PyErr {
+    let message = error.to_string();
+    if message.contains(oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL) {
+        return public_error(py, "XmlError", message);
+    }
+    pyo3::exceptions::PyValueError::new_err(fallback.to_owned())
 }
 
 pub(crate) fn pptx_value_to_pyerr(py: Python<'_>, message: String) -> PyErr {
+    if message.contains(oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL) {
+        return public_error(py, "XmlError", message);
+    }
     public_error(py, "PptxError", message)
 }
 
