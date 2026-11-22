@@ -10,7 +10,10 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
   model conventions, what is deliberately wrong.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): the loop, commits, commands.
 - [specs/README.md](specs/README.md): when and how to write a spec.
-- [ROADMAP.md](ROADMAP.md): where the project is heading.
+- Roadmap: the issues labelled
+  [`roadmap`](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap),
+  one per workstream; the principles are in
+  [README.md](README.md#-how-the-library-is-meant-to-be-used).
 
 ## Rules
 
