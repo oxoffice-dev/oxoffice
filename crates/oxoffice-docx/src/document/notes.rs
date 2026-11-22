@@ -1290,7 +1290,15 @@ impl Document {
             .ok_or_else(|| StoryError::OwnerNotFound {
                 story: story.clone(),
             })?;
+        let referenced_before = xml_attribute_values(&notes_xml)?;
         notes_xml.drain(owner.full);
+        // The pictures and links only the removed note showed go with it.
+        let referenced_after = xml_attribute_values(&notes_xml)?;
+        candidate.release_unreferenced_relationships(
+            &part_name,
+            &referenced_before,
+            &referenced_after,
+        );
         let document_xml = candidate
             .package
             .get_part(&candidate.doc_part_name)

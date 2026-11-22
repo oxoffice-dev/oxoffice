@@ -122,8 +122,12 @@ CLI where it makes sense and Python everywhere.
 - **A bookmark start between blocks belongs to the block after it**, as
   Google Docs writes a heading's bookmark. Reading (bookmarks, contents
   rebuilds) and block operations agree: an insertion before a block goes
-  before its leading starts, and a block that moves or goes takes the
-  leading starts whose bookmark ends inside it.
+  before its leading starts, and a block that moves, goes or is copied
+  takes the leading starts whose bookmark ends inside it or in the
+  bookmark ends written just after it (a bookmark around a whole table),
+  with those ends, and the ends just after it that close a bookmark
+  started inside it. A cut fragment carries them and an insertion writes
+  them back.
 - `thiserror` for errors, never `anyhow`.
 - Edition 2024, MSRV and toolchain pinned in `rust-toolchain.toml`.
 

@@ -519,6 +519,15 @@ pub(super) fn import_fragment_content_with_state(
         model_xml
     };
     prune_document_fragment_dependencies(&mut fragment, &dependency_source, true)?;
+    let edits = half_bookmark_edits(&fragment_xml, 0)?;
+    apply_fragment_xml_edits(
+        &mut fragment_xml,
+        &mut fragment_xml_source,
+        template
+            .as_mut()
+            .map(|(evaluation, _)| &mut evaluation.operation),
+        edits,
+    )?;
     let mut fragment_identity_values = body_identity_values(&fragment_xml)?;
     for companion in fragment_dependency_companions(&fragment, &dependency_source)? {
         for id in body_identity_values(&wrap_fragment_companion(&companion))?.comment_ids {
@@ -1295,7 +1304,19 @@ pub(super) fn import_fragment_content_with_state(
         crate::document::DocumentModel::unproved(CT_Document::from_xml(&fragment_xml)?)
     };
     let mut identity_xml = fragment_xml.clone();
-    for note in &note_copies {
+    for note in &mut note_copies {
+        let edits = half_bookmark_edits(
+            &wrap_fragment_companion(&note.xml),
+            FRAGMENT_COMPANION_OPEN.len(),
+        )?;
+        apply_fragment_xml_edits(
+            &mut note.xml,
+            &mut note.source,
+            template
+                .as_mut()
+                .map(|(evaluation, _)| &mut evaluation.operation),
+            edits,
+        )?;
         validate_fragment_identity_ownership(&body_identity_values(&wrap_fragment_companion(
             &note.xml,
         ))?)?;
@@ -2485,7 +2506,7 @@ fn fragment_dependency_companions(fragment: &Document, selected: &[u8]) -> Resul
     Ok(companions)
 }
 
-pub(super) fn patch_fragment_note_ids(
+pub(crate) fn patch_fragment_note_ids(
     xml: &[u8],
     maps: &HashMap<StoryKind, BTreeMap<String, String>>,
 ) -> Result<Vec<u8>> {
@@ -3130,6 +3151,9 @@ fn relative_fragment_target(source_part: &str, target_part: &str) -> String {
 /// distinct OOXML scopes and remain local to the rich-merge combiner.
 pub(super) struct BodyIdentityState {
     used_content_control_ids: HashSet<u32>,
+    /// Every control id in use, read as Word's signed decimal numbers (Word
+    /// writes random negative ones), to tell a taken id.
+    taken_content_control_ids: HashSet<i64>,
     used_non_visual_drawing_ids: HashSet<u32>,
     used_names: HashSet<String>,
     /// `used_names` lowercased: a fresh name avoids every bookmark and
@@ -3149,6 +3173,7 @@ impl BodyIdentityState {
     pub(super) fn from_documents(documents: &[Document]) -> Result<Self> {
         let mut state = Self {
             used_content_control_ids: HashSet::new(),
+            taken_content_control_ids: HashSet::new(),
             used_non_visual_drawing_ids: HashSet::new(),
             used_names: HashSet::new(),
             folded_names: HashSet::new(),
@@ -3160,12 +3185,7 @@ impl BodyIdentityState {
         for document in documents {
             let xml = document.document.to_xml()?;
             let values = body_identity_values(&xml)?;
-            state.used_content_control_ids.extend(
-                values
-                    .content_control_ids
-                    .iter()
-                    .filter_map(|value| value.parse::<u32>().ok()),
-            );
+            state.use_content_control_ids(&values.content_control_ids);
             state.used_non_visual_drawing_ids.extend(
                 values
                     .non_visual_drawing_ids
@@ -3176,12 +3196,7 @@ impl BodyIdentityState {
             state.use_names(values.reference_names);
             for (part_name, bytes) in &document.package.parts {
                 if let Ok(values) = body_identity_values(&wrap_fragment_companion(bytes)) {
-                    state.used_content_control_ids.extend(
-                        values
-                            .content_control_ids
-                            .iter()
-                            .filter_map(|value| value.parse::<u32>().ok()),
-                    );
+                    state.use_content_control_ids(&values.content_control_ids);
                     state.used_non_visual_drawing_ids.extend(
                         values
                             .non_visual_drawing_ids
@@ -3198,6 +3213,17 @@ impl BodyIdentityState {
             }
         }
         Ok(state)
+    }
+
+    fn use_content_control_ids(&mut self, values: &[String]) {
+        for value in values {
+            if let Ok(id) = value.trim().parse::<i64>() {
+                self.taken_content_control_ids.insert(id);
+                if let Ok(id) = u32::try_from(id) {
+                    self.used_content_control_ids.insert(id);
+                }
+            }
+        }
     }
 
     fn allocate_content_control_id(&mut self) -> Result<String> {
@@ -3971,6 +3997,230 @@ pub(crate) fn freshen_content_fragment_identities(
         {
             entry.insert(state.allocate_name(&value)?);
         }
+    }
+    patch_body_identity_attributes(wrapped_fragment, &remap)
+}
+
+/// Edits leaving out the bookmark markers of `xml` whose other half it does
+/// not hold: a start that never ends (LibreOffice writes one for each
+/// legacy form field it copies), or the start or end of a bookmark the
+/// copied range cuts. Word pastes no half bookmark either. Offsets are
+/// shifted back by `offset`, the length of a wrapper added before `xml`.
+fn half_bookmark_edits(xml: &[u8], offset: usize) -> Result<Vec<FieldSourceEdit>> {
+    let mut reader = NsReader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut markers = Vec::new();
+    loop {
+        let before = usize::try_from(reader.buffer_position())
+            .map_err(|_| Error::Other("fragment XML is too large".to_owned()))?;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("invalid fragment bookmark XML: {error}")))?;
+        let word = namespace_is_word(&namespace);
+        match event {
+            Event::Start(ref element) | Event::Empty(ref element)
+                if word
+                    && matches!(
+                        element.local_name().as_ref(),
+                        b"bookmarkStart" | b"bookmarkEnd"
+                    ) =>
+            {
+                let start = element.local_name().as_ref() == b"bookmarkStart";
+                let id = resolved_element_attribute(
+                    element,
+                    reader.resolver(),
+                    b"id",
+                    AttributeNamespace::Word,
+                )?
+                .map(|(_, value)| value.trim().to_owned());
+                if matches!(event, Event::Start(_)) {
+                    let name = element.name().as_ref().to_vec();
+                    reader
+                        .read_to_end_into(quick_xml::name::QName(&name), &mut Vec::new())
+                        .map_err(|error| {
+                            Error::Other(format!("invalid fragment bookmark XML: {error}"))
+                        })?;
+                }
+                let after = usize::try_from(reader.buffer_position())
+                    .map_err(|_| Error::Other("fragment XML is too large".to_owned()))?;
+                if let Some(id) = id {
+                    markers.push((id, start, before..after));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let starts = markers
+        .iter()
+        .filter(|(_, start, _)| *start)
+        .map(|(id, _, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    let ends = markers
+        .iter()
+        .filter(|(_, start, _)| !*start)
+        .map(|(id, _, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    Ok(markers
+        .iter()
+        .filter(|(id, start, _)| {
+            if *start {
+                !ends.contains(id.as_str())
+            } else {
+                !starts.contains(id.as_str())
+            }
+        })
+        .map(|(_, _, range)| FieldSourceEdit {
+            start: range.start - offset,
+            end: range.end - offset,
+            replacement: Vec::new(),
+        })
+        .collect())
+}
+
+/// Fresh identities for what inserting the wrapped fragment would repeat in
+/// `document`, the rest kept, so that a cut and paste changes nothing: each
+/// bookmark the fragment holds whole whose id the document holds, each
+/// bookmark name the document holds (any case; the fragment's references to
+/// it follow), and each control or drawing id it holds. A lone bookmark
+/// start or end keeps its id: pasted back, it meets its other half again.
+pub(crate) fn freshen_taken_content_fragment_identities(
+    document: &mut Document,
+    wrapped_fragment: &[u8],
+) -> Result<Vec<u8>> {
+    let wrapped_fragment = &uniquify_drawing_ids_in_xml(wrapped_fragment)?;
+    let values = body_identity_values(wrapped_fragment)?;
+    // A fragment with no such identity (most paragraphs) changes nothing.
+    if values.bookmark_ids.is_empty()
+        && values.bookmark_names.is_empty()
+        && values.content_control_ids.is_empty()
+        && values.drawing_ids.is_empty()
+        && values.non_visual_drawing_ids.is_empty()
+    {
+        return patch_body_identity_attributes(
+            wrapped_fragment,
+            &BodyIdentityRemap {
+                drop_paragraph_identities: true,
+                ..Default::default()
+            },
+        );
+    }
+    let starts = values
+        .bookmark_events
+        .iter()
+        .filter(|(_, start)| *start)
+        .map(|(id, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    let whole = values
+        .bookmark_events
+        .iter()
+        .filter(|(id, start)| !*start && starts.contains(id.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect::<HashSet<_>>();
+    let mut state = BodyIdentityState::from_documents(std::slice::from_ref(document))?;
+    // What the document holds is taken; the rest is kept, and held before
+    // any fresh id is given, so that no fresh id repeats a kept one.
+    let bookmark_taken = |value: &String| {
+        whole.contains(value)
+            && value
+                .trim()
+                .parse::<i32>()
+                .is_ok_and(|id| document.identifiers.holds_bookmark_id(id))
+    };
+    let drawing_taken = |value: &String| {
+        value
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|id| document.identifiers.holds_drawing_id(id))
+    };
+    let control_taken = |value: &String| {
+        value
+            .trim()
+            .parse::<i64>()
+            .is_ok_and(|id| state.taken_content_control_ids.contains(&id))
+    };
+    let non_visual_taken = |value: &String| {
+        value
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|id| state.used_non_visual_drawing_ids.contains(&id))
+    };
+    let taken_bookmarks = values
+        .bookmark_ids
+        .iter()
+        .filter(|value| bookmark_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let taken_drawings = values
+        .drawing_ids
+        .iter()
+        .filter(|value| drawing_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let taken_controls = values
+        .content_control_ids
+        .iter()
+        .filter(|value| control_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let taken_non_visual = values
+        .non_visual_drawing_ids
+        .iter()
+        .filter(|value| non_visual_taken(value))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let kept_bookmarks = values
+        .bookmark_ids
+        .iter()
+        .filter_map(|value| value.trim().parse::<i32>().ok())
+        .collect::<Vec<_>>();
+    let kept_drawings = values
+        .drawing_ids
+        .iter()
+        .filter_map(|value| value.trim().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+    document
+        .identifiers
+        .hold_kept_ids(&kept_bookmarks, &kept_drawings);
+    state.use_content_control_ids(&values.content_control_ids);
+    state.used_non_visual_drawing_ids.extend(
+        values
+            .non_visual_drawing_ids
+            .iter()
+            .filter_map(|value| value.trim().parse::<u32>().ok()),
+    );
+    let mut remap = BodyIdentityRemap {
+        drop_paragraph_identities: true,
+        ..Default::default()
+    };
+    for value in taken_bookmarks {
+        let fresh = document.identifiers.reserve_bookmark_id()?.to_string();
+        remap.bookmark_ids.insert(value, fresh);
+    }
+    for value in taken_controls {
+        let fresh = state.allocate_content_control_id()?;
+        remap.content_control_ids.insert(value, fresh);
+    }
+    for value in taken_drawings {
+        let fresh = document.identifiers.reserve_drawing_id()?.to_string();
+        remap.drawing_ids.insert(value, fresh);
+    }
+    for value in taken_non_visual {
+        let fresh = state.allocate_non_visual_drawing_id()?;
+        remap.non_visual_drawing_ids.insert(value, fresh);
+    }
+    for value in values.bookmark_names {
+        if remap.bookmark_names.contains_key(&value) {
+            continue;
+        }
+        let name = if state.keep_free_name(&value) {
+            value.clone()
+        } else {
+            state.allocate_name(&value)?
+        };
+        remap.bookmark_names.insert(value, name);
     }
     patch_body_identity_attributes(wrapped_fragment, &remap)
 }

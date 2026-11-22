@@ -1560,13 +1560,7 @@ pub(super) fn instruction_structure_eq(left: &FieldInstruction, right: &FieldIns
             .arguments
             .iter()
             .zip(&right.arguments)
-            .all(|(left, right)| match (left, right) {
-                (FieldArgument::Text(left), FieldArgument::Text(right)) => left == right,
-                (FieldArgument::Nested(left), FieldArgument::Nested(right)) => {
-                    instruction_structure_eq(&left.instruction, &right.instruction)
-                }
-                _ => false,
-            })
+            .all(|(left, right)| argument_structure_eq(left, right))
         && left.switches.len() == right.switches.len()
         && left
             .switches
@@ -1576,47 +1570,68 @@ pub(super) fn instruction_structure_eq(left: &FieldInstruction, right: &FieldIns
                 left.name == right.name
                     && match (&left.argument, &right.argument) {
                         (None, None) => true,
-                        (Some(FieldArgument::Text(left)), Some(FieldArgument::Text(right))) => {
-                            left == right
-                        }
-                        (Some(FieldArgument::Nested(left)), Some(FieldArgument::Nested(right))) => {
-                            instruction_structure_eq(&left.instruction, &right.instruction)
-                        }
+                        (Some(left), Some(right)) => argument_structure_eq(left, right),
                         _ => false,
                     }
             })
+}
+
+fn argument_structure_eq(left: &FieldArgument, right: &FieldArgument) -> bool {
+    match (left, right) {
+        (FieldArgument::Text(left), FieldArgument::Text(right)) => left == right,
+        (FieldArgument::Nested(left), FieldArgument::Nested(right)) => {
+            instruction_structure_eq(&left.instruction, &right.instruction)
+        }
+        (FieldArgument::Joined(left), FieldArgument::Joined(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| argument_structure_eq(left, right))
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn instruction_source_identity_eq(
     left: &FieldInstruction,
     right: &FieldInstruction,
 ) -> bool {
-    let argument_identities_match =
-        left.arguments
-            .iter()
-            .zip(&right.arguments)
-            .all(|(left, right)| match (left, right) {
-                (FieldArgument::Nested(left), FieldArgument::Nested(right)) => {
-                    field_source_identity_eq(left, right)
-                }
-                (FieldArgument::Text(_), FieldArgument::Text(_)) => true,
-                _ => false,
-            });
+    let argument_identities_match = left
+        .arguments
+        .iter()
+        .zip(&right.arguments)
+        .all(|(left, right)| argument_identity_eq(left, right));
     let switch_identities_match = left
         .switches
         .iter()
         .zip(&right.switches)
         .all(|(left, right)| match (&left.argument, &right.argument) {
-            (Some(FieldArgument::Nested(left)), Some(FieldArgument::Nested(right))) => {
-                field_source_identity_eq(left, right)
-            }
-            (None, None) | (Some(FieldArgument::Text(_)), Some(FieldArgument::Text(_))) => true,
+            (None, None) => true,
+            (Some(left), Some(right)) => argument_identity_eq(left, right),
             _ => false,
         });
     left.arguments.len() == right.arguments.len()
         && left.switches.len() == right.switches.len()
         && argument_identities_match
         && switch_identities_match
+}
+
+fn argument_identity_eq(left: &FieldArgument, right: &FieldArgument) -> bool {
+    match (left, right) {
+        (FieldArgument::Nested(left), FieldArgument::Nested(right)) => {
+            field_source_identity_eq(left, right)
+        }
+        (FieldArgument::Text(_), FieldArgument::Text(_)) => true,
+        (FieldArgument::Joined(left), FieldArgument::Joined(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| argument_identity_eq(left, right))
+        }
+        _ => false,
+    }
 }
 
 fn field_source_identity_eq(left: &Field, right: &Field) -> bool {
@@ -1663,11 +1678,13 @@ pub(super) fn instruction_contains_nested(instruction: &FieldInstruction) -> boo
     instruction
         .arguments
         .iter()
-        .any(|argument| matches!(argument, FieldArgument::Nested(_)))
-        || instruction
-            .switches
-            .iter()
-            .any(|switch| matches!(switch.argument, Some(FieldArgument::Nested(_))))
+        .any(|argument| !argument.nested_fields().is_empty())
+        || instruction.switches.iter().any(|switch| {
+            switch
+                .argument
+                .as_ref()
+                .is_some_and(|argument| !argument.nested_fields().is_empty())
+        })
 }
 
 fn write_simple_field<W: std::io::Write>(
@@ -1790,6 +1807,14 @@ fn write_complex_field<W: std::io::Write>(
                     work,
                 )?;
             }
+            FieldArgument::Joined(pieces) => write_joined_operand(
+                writer,
+                &mut text,
+                pieces,
+                foreign_word_namespace,
+                publication_scope,
+                work,
+            )?,
         }
     }
     for switch in &field.instruction.switches {
@@ -1815,6 +1840,14 @@ fn write_complex_field<W: std::io::Write>(
                         work,
                     )?;
                 }
+                FieldArgument::Joined(pieces) => write_joined_operand(
+                    writer,
+                    &mut text,
+                    pieces,
+                    foreign_word_namespace,
+                    publication_scope,
+                    work,
+                )?,
             }
         }
     }
@@ -1870,6 +1903,49 @@ fn write_nested_instruction_field<W: std::io::Write>(
         publication_scope,
         work,
     )
+}
+
+/// Write a joined operand quoted, its text escaped and its nested fields in
+/// place, so that it reads back as the same operand.
+fn write_joined_operand<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    text: &mut String,
+    pieces: &[FieldArgument],
+    foreign_word_namespace: Option<&str>,
+    publication_scope: Option<&[(&str, &str)]>,
+    work: &mut WordOperationWork,
+) -> Result<()> {
+    text.push_str(" \"");
+    for piece in pieces {
+        match piece {
+            FieldArgument::Text(value) => {
+                for character in value.chars() {
+                    if matches!(character, '"' | '\\') {
+                        text.push('\\');
+                    }
+                    text.push(character);
+                }
+            }
+            FieldArgument::Nested(field) => {
+                write_instruction_run(writer, text, foreign_word_namespace, work)?;
+                text.clear();
+                write_nested_instruction_field(
+                    writer,
+                    field,
+                    foreign_word_namespace,
+                    publication_scope,
+                    work,
+                )?;
+            }
+            FieldArgument::Joined(_) => {
+                return Err(OxmlError::InvalidValue(
+                    "a joined field operand holds a joined operand".into(),
+                ));
+            }
+        }
+    }
+    text.push('"');
+    Ok(())
 }
 
 fn push_canonical_field_token(output: &mut String, value: &str, force_quotes: bool) {

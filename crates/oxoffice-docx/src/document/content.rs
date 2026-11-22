@@ -869,31 +869,39 @@ impl Document {
     /// the footnotes and endnotes nothing else references after it goes.
     /// Partial comment cuts and unprovable companion ownership fail atomically.
     ///
-    /// The bookmark starts written just before the child whose bookmark ends
-    /// inside it go too; one that ends further on stays. Each start that goes
-    /// moves the later body items back by one more index.
+    /// The bookmark markers the child owns go too: the bookmark starts
+    /// written just before it whose bookmark ends inside it or in the
+    /// bookmark ends written just after it, those ends, and the ends written
+    /// just after it that close a bookmark started inside it; a start whose
+    /// bookmark ends further on stays. Each start that goes moves the later
+    /// body items back by one more index.
     pub fn try_remove_content(&mut self, index: usize) -> Result<bool> {
         if index >= self.document.body.content.len() {
             return Ok(false);
         }
-        // A plain paragraph holds no bookmark end, so no leading start goes.
-        if self.plain_direct_paragraph(index) || self.plain_removable_paragraph(index) {
+        // A plain paragraph holds no bookmark end, so only a bookmark around
+        // it, its start written just before it, could go with it.
+        if (self.plain_direct_paragraph(index) || self.plain_removable_paragraph(index))
+            && self.block_insertion_index(index) == index
+        {
             self.document.body.remove(index);
             self.invalidate_layout();
             return Ok(true);
         }
-        let starts = self.owned_leading_bookmark_starts(index, index..index + 1)?;
+        let owned = self.owned_bookmark_markers(index, index..index + 1)?;
         let mut candidate = self.clone_for_staging();
         let before = candidate.document.to_xml()?;
         let referenced_before = xml_attribute_values(&before)?;
-        candidate.document.body.remove(index);
-        for start in starts.into_iter().rev() {
-            candidate.document.body.remove(start);
+        let mut removed = owned.before;
+        removed.push(index);
+        removed.extend(owned.after);
+        for index in removed.into_iter().rev() {
+            candidate.document.body.remove(index);
         }
         let after = candidate.document.to_xml()?;
         let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
-        candidate.release_unreferenced_images(&owner, &referenced_before, &referenced_after);
+        candidate.release_unreferenced_relationships(&owner, &referenced_before, &referenced_after);
         candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -1026,7 +1034,11 @@ impl Document {
             // Pictures only the removed notes showed go with them.
             let referenced_before = xml_attribute_values(xml)?;
             let referenced_after = xml_attribute_values(&notes_xml)?;
-            self.release_unreferenced_images(&part_name, &referenced_before, &referenced_after);
+            self.release_unreferenced_relationships(
+                &part_name,
+                &referenced_before,
+                &referenced_after,
+            );
             set_story_source_xml(self, &part_name, notes_xml)?;
         }
         Ok(())
@@ -1035,9 +1047,11 @@ impl Document {
     /// Remove the half-open direct body range `[start, end)`.
     ///
     /// The footnotes and endnotes nothing else references afterwards go too,
-    /// and so do the bookmark starts written just before `start` whose
-    /// bookmark ends inside the range. Returns the number of body items
-    /// removed, those starts included. An empty range removes nothing and
+    /// and so do the bookmark markers the range owns: the bookmark starts
+    /// written just before `start` whose bookmark ends inside the range or
+    /// in the bookmark ends written just after it, those ends, and the ends
+    /// written just after it that close a bookmark started inside it. Returns
+    /// the number of body items removed, those markers included. An empty range removes nothing and
     /// returns 0. A reversed or out-of-bounds range returns an error and
     /// leaves the document unchanged.
     /// The call does not walk into tables.
@@ -1057,34 +1071,34 @@ impl Document {
             self.invalidate_layout();
             return Ok(end - start);
         }
-        let starts = self.owned_leading_bookmark_starts(start, start..end)?;
-        let leading = starts.len();
+        let owned = self.owned_bookmark_markers(start, start..end)?;
+        let markers = owned.before.len() + owned.after.len();
         let mut candidate = self.clone_for_staging();
         let before = candidate.document.to_xml()?;
         let referenced_before = xml_attribute_values(&before)?;
-        for index in (start..end).rev() {
+        let mut removed = owned.before;
+        removed.extend(start..end);
+        removed.extend(owned.after);
+        for index in removed.into_iter().rev() {
             candidate.document.body.remove(index);
-        }
-        for start in starts.into_iter().rev() {
-            candidate.document.body.remove(start);
         }
         let after = candidate.document.to_xml()?;
         let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
-        candidate.release_unreferenced_images(&owner, &referenced_before, &referenced_after);
+        candidate.release_unreferenced_relationships(&owner, &referenced_before, &referenced_after);
         candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
-        Ok(end - start + leading)
+        Ok(end - start + markers)
     }
 }
 
 /// The footnote and endnote ids some references name.
 #[derive(Default)]
-struct NoteReferenceIds {
-    footnotes: BTreeSet<i32>,
-    endnotes: BTreeSet<i32>,
+pub(super) struct NoteReferenceIds {
+    pub(super) footnotes: BTreeSet<i32>,
+    pub(super) endnotes: BTreeSet<i32>,
 }
 
 impl NoteReferenceIds {
@@ -1096,7 +1110,7 @@ impl NoteReferenceIds {
 /// The ids every `w:footnoteReference` and `w:endnoteReference` of a part
 /// names, however deep it sits: in a tracked change, a content control, a
 /// text box or unmodelled XML.
-fn note_reference_ids_in(xml: &[u8]) -> Result<NoteReferenceIds> {
+pub(super) fn note_reference_ids_in(xml: &[u8]) -> Result<NoteReferenceIds> {
     let mut reader = NsReader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut ids = NoteReferenceIds::default();

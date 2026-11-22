@@ -529,7 +529,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
-            freed_image_relationships: Vec::new(),
+            freed_relationships: Vec::new(),
             package_signatures_invalidated,
             source_path: None,
             glossary,
@@ -786,16 +786,22 @@ impl Document {
         Ok((candidate, normalized))
     }
 
-    /// Drop the image relationships `remove_content_at` freed that no
-    /// element of their part names any more, and their media when no other
-    /// relationship reaches it. Other parts nobody references, such as a
-    /// producer's orphan media, are left as they are.
+    /// Drop the content relationships (pictures, charts, embedded objects,
+    /// links) `remove_content_at` freed that no element of their part names
+    /// any more, and then those that any other edit removed: a story part
+    /// that changed since the file was opened no longer names one it named
+    /// then. Their parts go when no other relationship reaches them. Other
+    /// parts nobody references, such as a producer's orphan media, and
+    /// content added and removed after the file was opened, are left as they
+    /// are.
     ///
-    /// Returns whether anything was released. A signed package that loses a
+    /// Returns whether a relationship a cut freed was released: the output
+    /// is then not installed, so the cut fragment can still be inserted. A signed package that loses a
     /// relationship or a part has its signature marked invalid.
-    pub(super) fn release_freed_image_relationships(&mut self) -> Result<bool> {
+    pub(super) fn release_freed_relationships(&mut self) -> Result<bool> {
         let mut by_owner: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-        for (owner, id) in std::mem::take(&mut self.freed_image_relationships) {
+        let pending = std::mem::take(&mut self.freed_relationships);
+        for (owner, id) in pending.iter().cloned() {
             by_owner.entry(owner).or_default().insert(id);
         }
         let mut released = false;
@@ -811,14 +817,67 @@ impl Document {
                 .package
                 .get_part_rels(&owner)
                 .map_or(0, |relationships| relationships.items.len());
-            self.release_unreferenced_images(&owner, &freed, &referenced);
+            self.release_unreferenced_relationships(&owner, &freed, &referenced);
             let after = self
                 .package
                 .get_part_rels(&owner)
                 .map_or(0, |relationships| relationships.items.len());
             released |= after < before;
         }
-        if released
+        // Content any other edit removed since the file was opened: a story
+        // part that changed no longer names a picture, chart or link it
+        // named then. A relationship a pending cut names is left to the cut,
+        // so this copy stays installable.
+        let mut dropped = false;
+        if let Some(parsed) = self.parsed.clone() {
+            let owners = self
+                .package
+                .part_rels
+                .iter()
+                .filter(|(_, relationships)| {
+                    relationships
+                        .items
+                        .iter()
+                        .any(|relationship| is_content_relationship(&relationship.rel_type))
+                })
+                .map(|(owner, _)| owner.clone())
+                .collect::<Vec<_>>();
+            // A relationship a pending cut names is the cut's to release.
+            for owner in owners {
+                let (Some(now), Some(opened)) = (
+                    self.package.get_part(&owner),
+                    parsed.package.get_part(&owner),
+                ) else {
+                    continue;
+                };
+                if now == opened {
+                    continue;
+                }
+                let referenced_opened = xml_relationship_ids_in_order(opened)?
+                    .into_iter()
+                    .collect::<HashSet<_>>();
+                let mut referenced = xml_relationship_ids_in_order(now)?
+                    .into_iter()
+                    .collect::<HashSet<_>>();
+                referenced.extend(
+                    pending
+                        .iter()
+                        .filter(|(part, _)| *part == owner)
+                        .map(|(_, id)| id.clone()),
+                );
+                let before = self
+                    .package
+                    .get_part_rels(&owner)
+                    .map_or(0, |relationships| relationships.items.len());
+                self.release_unreferenced_relationships(&owner, &referenced_opened, &referenced);
+                let after = self
+                    .package
+                    .get_part_rels(&owner)
+                    .map_or(0, |relationships| relationships.items.len());
+                dropped |= after < before;
+            }
+        }
+        if (released || dropped)
             && self
                 .package
                 .package_rels

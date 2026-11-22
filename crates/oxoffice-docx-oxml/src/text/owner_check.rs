@@ -359,8 +359,16 @@ fn discard_instruction(instruction: FieldInstruction, pending: &mut Vec<CheckedD
             .into_iter()
             .filter_map(|switch| switch.argument),
     ) {
-        if let FieldArgument::Nested(field) = argument {
-            pending.push(CheckedDiscard::Field(field));
+        match argument {
+            FieldArgument::Text(_) => {}
+            FieldArgument::Nested(field) => pending.push(CheckedDiscard::Field(field)),
+            FieldArgument::Joined(pieces) => {
+                for piece in pieces {
+                    if let FieldArgument::Nested(field) = piece {
+                        pending.push(CheckedDiscard::Field(field));
+                    }
+                }
+            }
         }
     }
 }

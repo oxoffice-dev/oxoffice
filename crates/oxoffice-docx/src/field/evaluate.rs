@@ -86,6 +86,20 @@ fn bookmark_range_runs(displays: &[Vec<CT_R>], range: crate::RunRange) -> Result
     Ok(rows)
 }
 
+/// The field of `current` in the place `effective` holds in `effective_slot`:
+/// the same operand slot, and the same nested piece of a joined operand.
+fn nested_in_same_slot<'f>(
+    effective_slot: Option<&FieldArgument>,
+    current_slot: Option<&'f FieldArgument>,
+    effective: &Field,
+) -> Option<&'f Field> {
+    let piece = effective_slot?
+        .nested_fields()
+        .iter()
+        .position(|child| std::ptr::eq(*child, effective))?;
+    current_slot?.nested_fields().get(piece).copied()
+}
+
 fn field_needs_numbering_layout(field: &Field) -> bool {
     let instruction = field.effective_instruction();
     let own = unsupported_switch(&instruction).is_none()
@@ -753,26 +767,43 @@ impl<'a> Evaluator<'a> {
         }
         let mut selected = HashSet::new();
         for effective in field.effective_nested_fields_in_source_order(instruction) {
-            let original = instruction.arguments.iter().enumerate().find_map(|(slot, argument)| {
-                matches!(argument, FieldArgument::Nested(child) if std::ptr::eq(child.as_ref(), effective))
-                    .then(|| field.instruction.arguments.get(slot)).flatten()
-            }).or_else(|| instruction.switches.iter().enumerate().find_map(|(slot, switch)| {
-                matches!(&switch.argument, Some(FieldArgument::Nested(child)) if std::ptr::eq(child.as_ref(), effective))
-                    .then(|| field.instruction.switches.get(slot).and_then(|switch| switch.argument.as_ref())).flatten()
-            }));
-            let Some(FieldArgument::Nested(original)) = original else {
+            let original = (0..instruction.arguments.len())
+                .find_map(|slot| {
+                    nested_in_same_slot(
+                        instruction.arguments.get(slot),
+                        field.instruction.arguments.get(slot),
+                        effective,
+                    )
+                })
+                .or_else(|| {
+                    (0..instruction.switches.len()).find_map(|slot| {
+                        nested_in_same_slot(
+                            instruction
+                                .switches
+                                .get(slot)
+                                .and_then(|s| s.argument.as_ref()),
+                            field
+                                .instruction
+                                .switches
+                                .get(slot)
+                                .and_then(|s| s.argument.as_ref()),
+                            effective,
+                        )
+                    })
+                });
+            let Some(original) = original else {
                 return Err(Error::Other(
                     "effective nested field has no current instruction slot".into(),
                 ));
             };
             let position = original_nested
                 .iter()
-                .position(|candidate| std::ptr::eq(*candidate, original.as_ref()))
+                .position(|candidate| std::ptr::eq(*candidate, original))
                 .ok_or_else(|| {
                     Error::Other("effective nested field has no active source occurrence".into())
                 })?;
             if !selected.insert(position)
-                || original.as_ref() != effective
+                || original != effective
                 || original.form() != effective.form()
                 || original.source_owner_id() != effective.source_owner_id()
             {
@@ -1027,6 +1058,20 @@ impl<'a> Evaluator<'a> {
                         Err(format!("nested field was not resolved: {diagnostic}"))
                     }
                 }
+            }
+            // Word reads the pieces of one operand joined, each nested field
+            // giving its result.
+            FieldArgument::Joined(pieces) => {
+                let mut value = String::new();
+                for piece in pieces {
+                    value.push_str(&self.resolve_argument(
+                        piece,
+                        story,
+                        paragraphs,
+                        paragraph_index,
+                    )?);
+                }
+                Ok(value)
             }
         }
     }

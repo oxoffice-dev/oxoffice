@@ -160,7 +160,8 @@ mod tables;
 mod template;
 
 use headers_footers::{
-    header_footer_story_has_expected_root, header_type_index, materialize_header_footer_inheritance,
+    header_footer_story_has_expected_root, header_type_index, is_content_relationship,
+    materialize_header_footer_inheritance,
 };
 use media::chart_with_workbook_relationship;
 pub use numbering::{ListItemKind, NumberingJournal};
@@ -252,21 +253,22 @@ mod walkers;
 
 use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context};
 use fragment_checks::{
-    WordXmlOwner, content_fragment_for_insertion, fragment_content_boundary,
+    WordXmlOwner, content_fragment_for_insertion, copy_shown_notes, fragment_content_boundary,
     fragment_insertion_boundary, fragment_uses_w14, freshen_content_fragment_identities,
-    insert_story_fragment, physical_table_cell_owner, referenced_relationships,
-    reject_section_owning_content_fragment, serialize_content_fragment, standalone_body_item_span,
-    story_owner_content_end, story_owner_content_end_in, validate_element_owner_relationships,
-    validate_element_xml_identity_change, validate_fragment_block_item,
-    validate_fragment_relationships, validate_serialized_block_content_control,
-    validated_content_boundary, validated_direct_content_item, validated_insertion_boundary,
-    without_w14_identities, xml_1_0_whitespace,
+    freshen_taken_content_fragment_identities, insert_story_fragment, physical_table_cell_owner,
+    referenced_relationships, reject_section_owning_content_fragment, serialize_content_fragment,
+    standalone_body_item_span, story_owner_content_end, story_owner_content_end_in,
+    validate_element_owner_relationships, validate_element_xml_identity_change,
+    validate_fragment_block_item, validate_fragment_relationships,
+    validate_serialized_block_content_control, validated_content_boundary,
+    validated_direct_content_item, validated_insertion_boundary, without_w14_identities,
+    xml_1_0_whitespace,
 };
 pub(crate) use fragment_checks::{
     close_content_fragment_namespaces, package_authoritative_body_fragment,
     package_authoritative_body_source, validate_fragment_block_content,
 };
-use leading_bookmarks::{leading_bookmark_start_item, owned_leading_bookmark_start_items};
+use leading_bookmarks::{OwnedMarkers, leading_bookmark_start_item, owned_bookmark_marker_items};
 use package_checks::{validate_fresh_word_compatible_package, validated_word_package_class};
 use story_fields::{admit_story_sdt_content_slot, complex_story_field_xml, modeled_story_event};
 use story_scan::{
@@ -414,6 +416,19 @@ pub struct ContentFragment {
     /// they were where it was taken (empty when it was built, not taken), so
     /// that an insertion where those ids name something else is refused.
     relationships: Vec<(oxoffice_opc::relationship::Relationship, Option<u64>)>,
+    /// The bookmark starts written just before the item and the bookmark
+    /// ends written just after it that belong to it (a heading's bookmark as
+    /// Google Docs writes it, a bookmark around a whole table), each one
+    /// element in the item's namespace scope. An insertion writes them
+    /// around the item.
+    markers: FragmentMarkers,
+}
+
+/// The bookmark markers a [`ContentFragment`] carries around its item.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FragmentMarkers {
+    pub(crate) before: Vec<Vec<u8>>,
+    pub(crate) after: Vec<Vec<u8>>,
 }
 
 /// An owned story range and the package dependencies it can reach.
@@ -911,11 +926,11 @@ pub struct Document {
     pub(crate) comments_extended_owned: bool,
     /// Embedded identities whose retained signature evidence is known invalid.
     pub(crate) embedded_invalidated_signatures: HashSet<(String, String)>,
-    /// Image relationships (owner part, id) that `remove_content_at` left
-    /// unreferenced. They stay until the document is written, so a removed
-    /// fragment can be inserted again; the output drops those still
-    /// unreferenced then, with their media when nothing else reaches it.
-    pub(crate) freed_image_relationships: Vec<(String, String)>,
+    /// Content relationships (owner part, id) a fragment `remove_content_at`
+    /// took names. They stay until the document is written, so a removed
+    /// fragment can be inserted again; the output drops those no element
+    /// names then, with their parts when nothing else reaches them.
+    pub(crate) freed_relationships: Vec<(String, String)>,
     /// Whether retained package signature evidence is known invalid.
     pub(crate) package_signatures_invalidated: bool,
     /// The file this document was opened from, canonical, which `save`
@@ -1652,7 +1667,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
-            freed_image_relationships: Vec::new(),
+            freed_relationships: Vec::new(),
             package_signatures_invalidated: false,
             source_path: None,
             glossary: None,

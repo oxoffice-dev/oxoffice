@@ -1630,7 +1630,7 @@ fn append_accepted_cell_runs<'a>(
 fn field_argument_text(argument: &FieldArgument) -> Option<&str> {
     match argument {
         FieldArgument::Text(value) => Some(value),
-        FieldArgument::Nested(_) => None,
+        FieldArgument::Nested(_) | FieldArgument::Joined(_) => None,
     }
 }
 
