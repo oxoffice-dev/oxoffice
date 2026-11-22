@@ -534,6 +534,286 @@ fn an_if_field_whose_quoted_operand_joins_text_and_a_nested_field_is_updated() {
     );
 }
 
+/// A complex field with one result run.
+fn complex_field(instruction: &str, result: &str) -> String {
+    format!(
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    )
+}
+
+/// A simple field with one result run.
+fn simple_field(instruction: &str, result: &str) -> String {
+    format!(
+        r#"<w:fldSimple w:instr=" {instruction} "><w:r><w:t>{result}</w:t></w:r></w:fldSimple>"#
+    )
+}
+
+/// A paragraph that is the bookmark `name` around `content`.
+fn bookmarked(id: u32, name: &str, content: &str) -> String {
+    format!(
+        r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/>{content}<w:bookmarkEnd w:id="{id}"/></w:p>"#
+    )
+}
+
+fn plain(text: &str) -> String {
+    format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+}
+
+/// The paragraph texts after each of three updates and after a reopen.
+fn texts_over_updates(body: &str) -> Vec<Vec<String>> {
+    let mut doc = doc_with_body(body);
+    let mut rounds = Vec::new();
+    for _ in 0..3 {
+        doc.update_fields(&no_context()).unwrap();
+        rounds.push(texts(&doc));
+    }
+    rounds.push(texts(&reopen(&mut doc)));
+    rounds
+}
+
+#[test]
+fn a_ref_reads_its_bookmark_as_a_reader_sees_it() {
+    // A simple field's result, a drop-down that stores no result, and a REF
+    // to another bookmark are part of the text a REF copies.
+    let dropdown = word_dropdown(r#"<w:result w:val="1"/>"#);
+    for (body, expected) in [
+        (
+            format!(
+                "{}<w:p>{}</w:p>",
+                bookmarked(
+                    0,
+                    "total",
+                    &(plain("Total: ") + &simple_field("QUOTE 5", "5"))
+                ),
+                complex_field("REF total", "old")
+            ),
+            "Total: 5",
+        ),
+        (
+            format!(
+                "{}<w:p>{}</w:p>",
+                bookmarked(0, "PaymentTerms", &dropdown),
+                complex_field("REF PaymentTerms", "old")
+            ),
+            "30 days",
+        ),
+        (
+            format!(
+                "{}{}<w:p>{}</w:p>",
+                bookmarked(0, "a", &(plain("a ") + &simple_field("REF c", "C"))),
+                bookmarked(1, "c", &plain("C")),
+                complex_field("REF a", "old")
+            ),
+            "a C",
+        ),
+    ] {
+        let rounds = texts_over_updates(&body);
+        for round in &rounds {
+            assert_eq!(round.last().unwrap(), expected, "{body}: {rounds:?}");
+        }
+    }
+}
+
+#[test]
+fn a_word_saved_dropdown_reads_its_selected_entry() {
+    let doc = doc_with_body(&format!(
+        "<w:p>{}{}</w:p>",
+        plain("Terms: "),
+        word_dropdown(r#"<w:result w:val="1"/>"#)
+    ));
+    assert_eq!(texts(&doc), ["Terms: 30 days"]);
+}
+
+#[test]
+fn a_ref_evaluates_to_its_bookmark_as_a_reader_sees_it() {
+    let doc = doc_with_body(&format!(
+        "{}<w:p>{}</w:p>",
+        bookmarked(
+            0,
+            "b",
+            &(plain("X ") + &simple_field("QUOTE 5", "5") + &simple_field("REF b", "old"))
+        ),
+        complex_field("REF b", "old")
+    ));
+    let outcomes = doc
+        .evaluate_fields(&no_context())
+        .unwrap()
+        .into_iter()
+        .map(|evaluation| evaluation.outcome)
+        .collect::<Vec<_>>();
+    assert!(
+        outcomes.contains(&FieldOutcome::Resolved("X 5".into())),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
+fn a_ref_to_a_footnote_bookmark_that_refers_to_itself_is_stable() {
+    let mut doc = Document::new();
+    let id = doc.add_footnote("NOTE");
+    doc.add_paragraph("See").add_footnote_ref(id);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let notes = package
+        .zip_entries()
+        .unwrap()
+        .into_iter()
+        .map(|(name, _)| format!("/{name}"))
+        .find(|name| name.ends_with("footnotes.xml"))
+        .expect("a footnotes part");
+    let xml = String::from_utf8(package.get_part(&notes).unwrap().to_vec()).unwrap();
+    let edited = xml.replacen(
+        "NOTE</w:t></w:r>",
+        &format!(
+            r#"NOTE</w:t></w:r><w:bookmarkStart w:id="90" w:name="fn"/>{}{}<w:bookmarkEnd w:id="90"/>"#,
+            plain("N "),
+            simple_field("REF fn", "old")
+        ),
+        1,
+    );
+    assert_ne!(edited, xml, "the note holds the bookmark");
+    package.set_part(&notes, edited.into_bytes());
+    let body = package.main_document_part().unwrap();
+    let main = String::from_utf8(package.get_part(&body).unwrap().to_vec()).unwrap();
+    let main = main.replacen(
+        "<w:sectPr",
+        &format!("<w:p>{}</w:p><w:sectPr", complex_field("REF fn", "old")),
+        1,
+    );
+    package.set_part(&body, main.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    for _ in 0..3 {
+        doc.update_fields(&no_context()).unwrap();
+        assert_eq!(texts(&doc).last().unwrap(), "N ");
+    }
+}
+
+#[test]
+fn a_ref_draws_its_bookmark_as_a_reader_sees_it() {
+    // Drawn without an update: the layout reads the bookmark itself.
+    let dropdown = word_dropdown(r#"<w:result w:val="1"/>"#);
+    for (body, drawn) in [
+        (
+            format!(
+                "{}<w:p>{}</w:p>",
+                bookmarked(
+                    0,
+                    "total",
+                    &(plain("Total: ") + &simple_field("QUOTE 5", "5"))
+                ),
+                complex_field("REF total", "old")
+            ),
+            "Total: 5Total: 5",
+        ),
+        (
+            format!(
+                "{}<w:p>{}</w:p>",
+                bookmarked(0, "PaymentTerms", &dropdown),
+                complex_field("REF PaymentTerms", "old")
+            ),
+            "30 days30 days",
+        ),
+        // A REF to the bookmark itself, and two bookmarks that copy each
+        // other, draw what update_fields writes.
+        (
+            bookmarked(0, "b", &(plain("X ") + &simple_field("REF b", "old"))),
+            "X X ",
+        ),
+        (
+            bookmarked(0, "a", &(plain("a ") + &simple_field("REF b", "x")))
+                + &bookmarked(1, "b", &(plain("b ") + &simple_field("REF a", "y"))),
+            "a b b a ",
+        ),
+    ] {
+        assert_eq!(drawn_text(&doc_with_body(&body)), drawn, "{body}");
+    }
+}
+
+#[test]
+fn a_ref_that_depends_on_its_own_bookmark_gives_the_same_text_on_every_update() {
+    // Word refuses a bookmark self-reference: the REF's result is left out of
+    // the bookmark's value, so it cannot grow from one update to the next.
+    let if_around = |reference: &str| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "</w:instrText></w:r>{reference}<w:r><w:instrText xml:space="preserve">" "no" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    };
+    for (body, expected) in [
+        (
+            bookmarked(0, "b", &(plain("X ") + &simple_field("REF b", "old"))),
+            vec!["X X "],
+        ),
+        (
+            bookmarked(0, "b", &(plain("X ") + &complex_field("REF b", "old"))),
+            vec!["X X "],
+        ),
+        (
+            bookmarked(
+                0,
+                "b",
+                &(plain("X ") + &if_around(&complex_field("REF b", "in"))),
+            ),
+            vec!["X X "],
+        ),
+        (
+            bookmarked(0, "a", &(plain("a ") + &simple_field("REF b", "x")))
+                + &bookmarked(1, "b", &(plain("b ") + &simple_field("REF a", "y"))),
+            vec!["a b ", "b a "],
+        ),
+    ] {
+        let rounds = texts_over_updates(&body);
+        for round in &rounds {
+            assert_eq!(round, &expected, "{body}: {rounds:?}");
+        }
+    }
+}
+
+#[test]
+fn a_tracked_deletion_of_its_only_citation_leaves_a_category_empty() {
+    let ta = |category: u8| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:{{text}} xml:space="preserve"> TA \l "Case {category}" \s "C{category}" \c {category} </w:{{text}}></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    };
+    let deleted = format!(
+        r#"<w:del w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z">{}</w:del>"#,
+        ta(2).replace("{text}", "delInstrText")
+    );
+    // A later citation marked with its short form alone, as Word's Mark All
+    // writes it, has no category of its own.
+    let short = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TA \s "C1" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}{deleted}{short}</w:p><w:p>{}</w:p>",
+        ta(1).replace("{text}", "instrText"),
+        plain("End")
+    ));
+    let end = ContentLocation::end(body_story(&doc));
+    doc.insert_table_of_authorities(&end, &Default::default())
+        .unwrap();
+    let categories = field_list(&doc)
+        .into_iter()
+        .filter(|(_, instruction, _)| instruction.starts_with("TOA"))
+        .map(|(_, instruction, _)| instruction)
+        .collect::<Vec<_>>();
+    assert_eq!(categories.len(), 1, "{categories:?}");
+    assert!(categories[0].contains(r"\c 1"), "{categories:?}");
+
+    let mut doc = doc_with_body(&format!("<w:p>{}{deleted}</w:p>", plain("Body")));
+    let end = ContentLocation::end(body_story(&doc));
+    let error = doc
+        .insert_table_of_authorities(&end, &Default::default())
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("no populated authority category"),
+        "{error}"
+    );
+}
+
 /// An IF field whose bookmark starts among its instruction runs, as
 /// LibreOffice writes a form field's bookmark, with LibreOffice's empty runs.
 const FIELD_WITH_INSTRUCTION_BOOKMARK: &str = r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF 1 = 1 "new" "no" </w:instrText></w:r><w:bookmarkStart w:id="0" w:name="Mark"/><w:r></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r></w:r><w:bookmarkEnd w:id="0"/><w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#;

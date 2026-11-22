@@ -145,6 +145,8 @@ pub(crate) use field_write::{write_mixed_field_run, write_published_run_field, w
 
 mod block_bookmarks;
 pub use block_bookmarks::BlockBookmarks;
+mod ref_cycles;
+pub use ref_cycles::{bookmarks_depending_on, field_ref_targets};
 mod paragraph_projection;
 mod paragraph_read;
 mod paragraph_write;
@@ -1554,11 +1556,18 @@ pub(crate) fn set_simple_field_source_in(
 /// Append the text of the accepted view of `paragraph` to `output`, see
 /// [`CT_P::accepted_text`].
 fn append_accepted_text(paragraph: &CT_P, output: &mut String) {
-    let wrapper_text = |raw: &[u8], prefixes: &[String], output: &mut String| {
-        if let Some(content) = run_wrapper_paragraph(raw, prefixes) {
-            append_accepted_text(&content, output);
-        }
-    };
+    append_accepted_text_keeping(paragraph, output, &mut |_| true);
+}
+
+/// The text a reader sees in `paragraph`, with the display of each field
+/// `keep` refuses left out. `keep` sees every field a reader sees, simple
+/// fields inside insertions and wrappers included, outermost first; the
+/// fields nested in one are part of its display.
+fn append_accepted_text_keeping(
+    paragraph: &CT_P,
+    output: &mut String,
+    keep: &mut dyn FnMut(&Field) -> bool,
+) {
     for boundary in 0..=paragraph.runs.len() {
         for owner in boundary_owners(paragraph, boundary) {
             let mut runs = Vec::new();
@@ -1571,32 +1580,45 @@ fn append_accepted_text(paragraph: &CT_P, output: &mut String) {
                     // other wrappers included.
                     if let Some(content) = accepted_revision_content(&paragraph.revisions[index].2)
                     {
-                        append_accepted_text(&content, output);
+                        append_accepted_text_keeping(&content, output, keep);
                     }
                 }
                 BoundaryOwner::Wrapper(index) => {
-                    wrapper_text(&paragraph.extra_xml[index].1, &["w".to_owned()], output);
+                    if let Some(content) =
+                        run_wrapper_paragraph(&paragraph.extra_xml[index].1, &["w".to_owned()])
+                    {
+                        append_accepted_text_keeping(&content, output, keep);
+                    }
                 }
             }
             for run in runs {
-                append_current_run_text(run, output);
+                append_current_run_text(run, output, keep);
             }
         }
         if let Some(run) = paragraph.runs.get(boundary) {
-            append_current_run_text(run, output);
+            append_current_run_text(run, output, keep);
         }
     }
 }
 
-fn append_current_run_text(run: &CT_R, output: &mut String) {
+fn append_current_run_text(run: &CT_R, output: &mut String, keep: &mut dyn FnMut(&Field) -> bool) {
     if let [RunContent::Field(field)] = run.content.as_slice()
         && field.form() == FieldForm::Simple
         && (field.ordered_result.is_some() || simple_field_source(run).is_none())
     {
-        output.push_str(&field.effective_display());
+        if keep(field) {
+            output.push_str(&field.reader_display());
+        }
     } else if let Some((raw, prefixes)) = simple_field_source(run) {
+        // Its source is read again as a wrapper of its result runs: the field
+        // itself is the run's.
+        if let [RunContent::Field(field)] = run.content.as_slice()
+            && !keep(field)
+        {
+            return;
+        }
         if let Some(paragraph) = run_wrapper_paragraph(raw, prefixes) {
-            append_accepted_text(&paragraph, output);
+            append_accepted_text_keeping(&paragraph, output, keep);
         }
     } else {
         // A field added to a run beside other content stays in that run until
@@ -1605,7 +1627,11 @@ fn append_current_run_text(run: &CT_R, output: &mut String) {
         // as the saved file reads it.
         for content in &run.content {
             match content {
-                RunContent::Field(field) => output.push_str(&field.effective_display()),
+                RunContent::Field(field) => {
+                    if keep(field) {
+                        output.push_str(&field.reader_display());
+                    }
+                }
                 other => output.push_str(CT_R::content_text(other)),
             }
         }
@@ -2292,7 +2318,9 @@ impl CT_P {
     /// the text of [`Self::accepted_bookmark_runs`], and that of the runs
     /// inside smart tags, inline custom XML elements and simple fields, in
     /// document order, nested ones included. The runs of a wrapper inside a
-    /// content control, a revision or a hyperlink are not read.
+    /// content control, a revision or a hyperlink are not read. A legacy
+    /// drop-down that stores no result reads its selected entry, as Word
+    /// shows it ([`Field::reader_display`]).
     #[doc(hidden)]
     pub fn accepted_text(&self) -> String {
         let mut text = String::new();
@@ -2324,7 +2352,7 @@ impl CT_P {
                 }
             }
             if boundary < end {
-                append_current_run_text(&self.runs[boundary], &mut text);
+                append_current_run_text(&self.runs[boundary], &mut text, &mut |_| true);
             }
         }
         text

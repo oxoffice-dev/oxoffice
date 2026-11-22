@@ -154,14 +154,7 @@ pub(super) fn drawn_legacy_checkbox(
 /// The entry a legacy drop-down that stores no result draws: its selected
 /// one, as Word draws it. Word saves drop-downs that way.
 pub(super) fn drawn_legacy_dropdown(field: &oxoffice_docx_oxml::text::Field) -> Option<&str> {
-    let data = field.legacy_form.as_ref()?;
-    let oxoffice_docx_oxml::text::LegacyFormFieldValue::SelectedIndex(index) = data.value else {
-        return None;
-    };
-    if !field.effective_display().is_empty() {
-        return None;
-    }
-    data.choices.get(index).map(String::as_str)
+    field.unstored_dropdown_entry()
 }
 
 /// The fields of a paragraph's physical runs in source order, nested fields
