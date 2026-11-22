@@ -1154,50 +1154,50 @@ fn semantic_table_marks(
     if let Some(style) = style {
         let rows = table.rows.len();
         let columns = table.grid.columns.len();
-        let mut regions = vec![style.whole_table.as_ref()];
+        let mut regions = vec![style.whole_table.as_deref()];
         if props.is_some_and(|p| p.band_rows) {
             let offset = usize::from(props.is_some_and(|p| p.first_row));
             regions.push(if row.saturating_sub(offset) % 2 == 0 {
-                style.band1_horizontal.as_ref()
+                style.band1_horizontal.as_deref()
             } else {
-                style.band2_horizontal.as_ref()
+                style.band2_horizontal.as_deref()
             });
         }
         if props.is_some_and(|p| p.band_columns) {
             let offset = usize::from(props.is_some_and(|p| p.first_column));
             regions.push(if column.saturating_sub(offset) % 2 == 0 {
-                style.band1_vertical.as_ref()
+                style.band1_vertical.as_deref()
             } else {
-                style.band2_vertical.as_ref()
+                style.band2_vertical.as_deref()
             });
         }
         if column == 0 && props.is_some_and(|p| p.first_column) {
-            regions.push(style.first_column.as_ref());
+            regions.push(style.first_column.as_deref());
         }
         if column + 1 == columns && props.is_some_and(|p| p.last_column) {
-            regions.push(style.last_column.as_ref());
+            regions.push(style.last_column.as_deref());
         }
         if row == 0 && props.is_some_and(|p| p.first_row) {
-            regions.push(style.first_row.as_ref());
+            regions.push(style.first_row.as_deref());
         }
         if row + 1 == rows && props.is_some_and(|p| p.last_row) {
-            regions.push(style.last_row.as_ref());
+            regions.push(style.last_row.as_deref());
         }
         if row == 0 && column == 0 && props.is_some_and(|p| p.first_row && p.first_column) {
-            regions.push(style.north_west_cell.as_ref());
+            regions.push(style.north_west_cell.as_deref());
         }
         if row == 0 && column + 1 == columns && props.is_some_and(|p| p.first_row && p.last_column)
         {
-            regions.push(style.north_east_cell.as_ref());
+            regions.push(style.north_east_cell.as_deref());
         }
         if row + 1 == rows && column == 0 && props.is_some_and(|p| p.last_row && p.first_column) {
-            regions.push(style.south_west_cell.as_ref());
+            regions.push(style.south_west_cell.as_deref());
         }
         if row + 1 == rows
             && column + 1 == columns
             && props.is_some_and(|p| p.last_row && p.last_column)
         {
-            regions.push(style.south_east_cell.as_ref());
+            regions.push(style.south_east_cell.as_deref());
         }
         for region in regions.into_iter().flatten() {
             if let Some(p) = &region.text_style {
