@@ -259,7 +259,16 @@ impl Document {
                     format!("{:?}", staged.application_properties),
                     format!("{:?}", self.application_properties)
                 );
-                assert_eq!(staged.custom_properties, self.custom_properties);
+                // Compared as written: a NaN number is not == itself.
+                assert!(
+                    match (&staged.custom_properties, &self.custom_properties) {
+                        (Some(staged), Some(committed)) => staged.is_same_as(committed),
+                        (staged, committed) => staged.is_none() && committed.is_none(),
+                    },
+                    "direct properties edit left other custom properties: {:?} vs {:?}",
+                    staged.custom_properties,
+                    self.custom_properties
+                );
                 assert_eq!(
                     (
                         &staged.core_properties_part_name,
