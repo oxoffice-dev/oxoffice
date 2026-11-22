@@ -90,6 +90,17 @@ fn a_link_holding_an_inserted_simple_field_reads_its_result_in_both_link_lists()
         .unwrap();
     let links = doc.story_links(&body).unwrap();
     assert_eq!(links[0].1.text, "See 12C");
+    // The field is a story item of its own, as outside an insertion.
+    let items = doc
+        .story_items(&body)
+        .unwrap()
+        .into_iter()
+        .map(|item| (item.kind(), item.text().unwrap()))
+        .collect::<Vec<_>>();
+    assert!(
+        items.contains(&(oxoffice_docx::StoryItemKind::Field, Some("12".to_owned()))),
+        "{items:?}"
+    );
 }
 
 #[test]
