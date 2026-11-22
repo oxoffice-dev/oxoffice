@@ -601,6 +601,44 @@ fn a_custom_number_property_may_be_nan() {
     }
 }
 
+#[test]
+fn a_number_property_set_to_negative_zero_replaces_zero() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_custom_property(custom("Offset", 2, CustomPropertyValue::R8(0.0)))
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    // -0 == 0, but the two are written differently: the save writes it.
+    doc.set_custom_property(custom("Offset", 2, CustomPropertyValue::R8(-0.0)))
+        .unwrap();
+    match reopen(&mut doc).custom_property("Offset").map(|p| &p.value) {
+        Some(CustomPropertyValue::R8(value)) => assert!(value.is_sign_negative(), "{value}"),
+        other => panic!("Offset reads {other:?}"),
+    }
+}
+
+#[test]
+fn a_save_without_an_edit_keeps_a_nan_number_property_as_its_producer_wrote_it() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_custom_property(custom("Ratio", 2, CustomPropertyValue::R8(f64::NAN)))
+        .unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml =
+        String::from_utf8(package.get_part("/docProps/custom.xml").unwrap().to_vec()).unwrap();
+    // Another producer's spelling of the same part: a line end after the
+    // declaration, which oxoffice does not write.
+    let produced = xml.replacen("?>", "?>\n", 1);
+    assert_ne!(produced, xml);
+    package.set_part("/docProps/custom.xml", produced.clone().into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let saved = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    assert_eq!(
+        String::from_utf8(saved.get_part("/docProps/custom.xml").unwrap().to_vec()).unwrap(),
+        produced
+    );
+}
+
 // ---- Settings: on-off settings ----
 
 /// An on-off setting: its element in the settings or web settings part and

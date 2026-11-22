@@ -66,6 +66,23 @@ pub struct CustomProperties {
 }
 
 impl CustomProperties {
+    /// Whether the two collections are written the same: as `==`, except
+    /// that values are compared with [`CustomPropertyValue::is_same_value`].
+    pub fn is_same_as(&self, other: &Self) -> bool {
+        self.extra_namespaces == other.extra_namespaces
+            && self.properties.len() == other.properties.len()
+            && self
+                .properties
+                .iter()
+                .zip(&other.properties)
+                .all(|(left, right)| {
+                    left.fmtid == right.fmtid
+                        && left.pid == right.pid
+                        && left.name == right.name
+                        && left.value.is_same_value(&right.value)
+                })
+    }
+
     /// Parse a `docProps/custom.xml` part.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
         if !custom_property_namespaces_are_valid(xml) {
