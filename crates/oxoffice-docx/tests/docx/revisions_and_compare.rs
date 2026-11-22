@@ -1953,3 +1953,22 @@ fn a_rebuilt_table_of_contents_removed_whole_keeps_its_simple_page_fields() {
     assert_eq!(texts(&accepted(&mut doc)), texts(&without()));
     assert_eq!(texts(&rejected(&mut doc)), texts(&with_toc()));
 }
+
+#[test]
+fn a_comparison_tracks_a_break_that_only_changes_where_its_text_restarts() {
+    // The clear is part of the break: a break that starts clearing the
+    // floats is a change, as a page break replacing a line break is.
+    let body = |br: &str| {
+        doc_with_body(&format!(
+            "<w:p><w:r><w:t>x</w:t>{br}<w:t>y</w:t></w:r></w:p>"
+        ))
+    };
+    let cleared = r#"<w:br w:type="textWrapping" w:clear="all"/>"#;
+    let doc = redline(body("<w:br/>"), &body(cleared));
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("<w:delText>x</w:delText><w:br/>"), "{xml}");
+    assert!(xml.contains(&format!("<w:t>x</w:t>{cleared}")), "{xml}");
+    let doc = redline(body(cleared), &body(cleared));
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
+}

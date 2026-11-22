@@ -20,7 +20,7 @@ use oxoffice_docx_oxml::shared::ST_HighlightColor;
 use oxoffice_docx_oxml::styles::CT_Styles;
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent, ST_VerticalJc};
 use oxoffice_docx_oxml::text::{
-    BookmarkMarker, BreakType, CT_P, CT_R, FieldArgument, FieldInstruction, RunContent,
+    BookmarkMarker, BreakClear, BreakType, CT_P, CT_R, FieldArgument, FieldInstruction, RunContent,
     SpecialCharacter, hyperlink_revision_index,
 };
 
@@ -46,8 +46,8 @@ use crate::{WordBodyLayoutFragment, WordSourcePath, WordStory};
 use oxoffice_layout::{
     Color, Diagnostic, DocumentMetadata, DocumentStructure, FieldKind, FieldSource, FontId,
     FontManager, FontTraceEvent, GlyphRun, GroupElement, InlineItem, LayoutError, LayoutResult,
-    LineItem, NoteRef, NoteStream, PageFrame, Point, PositionedElement, Rect, Result, ShapedText,
-    SourceNodeId, SourceSpan, StructureId, StructureNode, StructureRole, TextDirection,
+    LineClear, LineItem, NoteRef, NoteStream, PageFrame, Point, PositionedElement, Rect, Result,
+    ShapedText, SourceNodeId, SourceSpan, StructureId, StructureNode, StructureRole, TextDirection,
     TextSegment, Transform, Underline, break_multilingual_into_lines,
 };
 

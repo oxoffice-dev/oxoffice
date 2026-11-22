@@ -572,6 +572,83 @@ fn a_floating_picture_keeps_its_position_wrap_distances_and_crop() {
     }
 }
 
+/// Where the layout draws each text of `doc`, first occurrence, as (x, y).
+fn text_origins(doc: &Document) -> BTreeMap<String, (f64, f64)> {
+    let result = doc.layout().unwrap();
+    let mut origins = BTreeMap::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                origins
+                    .entry(run.text.trim().to_owned())
+                    .or_insert((run.origin.x, run.origin.y));
+            }
+        });
+    }
+    origins
+}
+
+#[test]
+fn a_clearing_break_restarts_the_text_below_the_floats_on_its_side() {
+    // A square-wrapped picture, an inch square at the left or the right of
+    // the column, then a paragraph beside it whose break says where "after"
+    // restarts: below the picture, or on the next line beside it.
+    let margin_left = 72.0;
+    let picture_bottom = 72.0 + 72.0;
+    for (side, alignment) in [
+        ("left", DrawingHorizontalAlignment::Left),
+        ("right", DrawingHorizontalAlignment::Right),
+    ] {
+        let mut doc = Document::new();
+        let story = body(&doc);
+        let options = PictureOptions {
+            anchor: Some(PictureAnchor {
+                horizontal_alignment: Some(alignment),
+                wrap: DrawingWrap::Square,
+                ..floating()
+            }),
+            ..sized(Length::pt(72.0), Length::pt(72.0))
+        };
+        doc.add_picture_with_options(&story, &png(4, 4, 30), "float.png", options)
+            .unwrap();
+        let bytes = doc.to_bytes().unwrap();
+        for clear in ["left", "right", "all", "none"] {
+            let mut package = OpcPackage::from_reader(Cursor::new(bytes.clone())).unwrap();
+            let part = package.main_document_part().unwrap();
+            let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+            let at = xml.find("<w:sectPr").unwrap();
+            let xml = format!(
+                concat!(
+                    r#"{}<w:p><w:r><w:t>beside</w:t>"#,
+                    r#"<w:br w:type="textWrapping" w:clear="{}"/><w:t>after</w:t></w:r></w:p>{}"#,
+                ),
+                &xml[..at],
+                clear,
+                &xml[at..]
+            );
+            package.set_part(&part, xml.into_bytes());
+            let mut out = Cursor::new(Vec::new());
+            package.write_to(&mut out).unwrap();
+            let doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+            let origins = text_origins(&doc);
+            let (beside, after) = (origins["beside"], origins["after"]);
+            let case = format!("picture on the {side}, clear {clear}: {origins:?}");
+            assert!(beside.1 < picture_bottom, "{case}");
+            if clear == side || clear == "all" {
+                assert!(after.1 > picture_bottom, "below the picture: {case}");
+                assert!((after.0 - margin_left).abs() < 0.01, "{case}");
+            } else {
+                assert!(after.1 < picture_bottom, "beside the picture: {case}");
+                assert!(after.1 > beside.1, "on the next line: {case}");
+            }
+            if side == "left" {
+                assert!(beside.0 >= margin_left + 72.0, "{case}");
+            }
+        }
+    }
+}
+
 #[test]
 fn a_floating_picture_can_be_aligned_and_sent_behind_the_text() {
     let (aligned, front, back) = (png(2, 2, 1), png(2, 2, 2), png(2, 2, 3));

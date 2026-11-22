@@ -25,9 +25,10 @@ use crate::properties::is_word_element;
 use crate::revision::{CT_Revision, RevisionKind};
 use crate::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use crate::text::{
-    AcceptedRunPath, AcceptedRunPathSegment, BoundaryOwner, BreakType, CT_P, CT_R, CT_Text,
-    FieldXmlEmission, RunContent, SpecialCharacter, WordExtraSourceMaps, WordOperationWork,
-    boundary_owners, optional_word_attribute, raw_with_external_bindings, simple_field_source,
+    AcceptedRunPath, AcceptedRunPathSegment, BoundaryOwner, BreakClear, BreakType, CT_P, CT_R,
+    CT_Text, FieldXmlEmission, RunContent, SpecialCharacter, WordExtraSourceMaps,
+    WordOperationWork, boundary_owners, optional_word_attribute, raw_with_external_bindings,
+    simple_field_source,
 };
 
 /// Replace all occurrences of `placeholder` with `replacement` in a paragraph.
@@ -1588,7 +1589,7 @@ fn searched_text(content: &RunContent) -> Option<&str> {
     match content {
         RunContent::Text(t) => Some(&t.text),
         RunContent::Tab => Some("\t"),
-        RunContent::Break(_) | RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => {
+        RunContent::Break(..) | RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => {
             Some("\n")
         }
         RunContent::SpecialCharacter(SpecialCharacter::NoBreakHyphen) => Some("-"),
@@ -1751,7 +1752,7 @@ fn push_replacement(
                 if character == '\r' {
                     characters.next_if_eq(&'\n');
                 }
-                RunContent::Break(BreakType::Line)
+                RunContent::Break(BreakType::Line, BreakClear::None)
             }
             _ => {
                 current.text.push(character);

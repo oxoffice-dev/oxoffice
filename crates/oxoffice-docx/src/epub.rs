@@ -1303,10 +1303,11 @@ impl<'a> EpubWriter<'a> {
                             .to_owned(),
                     )?;
                 }
-                RunContent::Break(oxoffice_docx_oxml::text::BreakType::Column) => self.diagnose(
-                    content_path,
-                    "column break was simplified to a line break during EPUB export".to_owned(),
-                )?,
+                RunContent::Break(oxoffice_docx_oxml::text::BreakType::Column, _) => self
+                    .diagnose(
+                        content_path,
+                        "column break was simplified to a line break during EPUB export".to_owned(),
+                    )?,
                 RunContent::DeletedText(_) => self.diagnose(
                     content_path,
                     "deleted-text revision semantics were flattened during EPUB export".to_owned(),
@@ -2656,7 +2657,7 @@ fn render_run_content(content: &RunContent) -> RunContent {
         RunContent::Text(text) => RunContent::Text(text.clone()),
         RunContent::DeletedText(text) => RunContent::DeletedText(text.clone()),
         RunContent::Tab => RunContent::Tab,
-        RunContent::Break(kind) => RunContent::Break(*kind),
+        RunContent::Break(kind, clear) => RunContent::Break(*kind, *clear),
         RunContent::Drawing(drawing) => RunContent::Drawing(render_drawing_projection(drawing)),
         RunContent::Field(field) => {
             let mut projected = Field::new("", &field.cached_result);
@@ -3734,7 +3735,7 @@ fn measure_paragraph(
                 RunContent::Text(text) | RunContent::DeletedText(text) => {
                     add_source_bytes(text_bytes, text.text.len())?;
                 }
-                RunContent::Tab | RunContent::Break(_) | RunContent::SpecialCharacter(_) => {
+                RunContent::Tab | RunContent::Break(..) | RunContent::SpecialCharacter(_) => {
                     add_source_bytes(text_bytes, 1)?
                 }
                 RunContent::Symbol { font, .. } => {

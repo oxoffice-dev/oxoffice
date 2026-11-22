@@ -87,8 +87,9 @@ pub enum InlineItem {
     },
     /// A tab character.
     Tab,
-    /// A forced line break.
-    LineBreak,
+    /// A forced line break, and where the text after it restarts beside
+    /// floating objects.
+    LineBreak(LineClear),
     /// A forced page break.
     PageBreak,
     /// A forced column break.
@@ -257,11 +258,27 @@ impl LineItem {
     }
 }
 
+/// Where the text after a forced line break restarts beside the floating
+/// objects that wrap text (Word's `w:clear`). The line breaker only carries
+/// it: whoever places the floats moves the next line below them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineClear {
+    /// The next line, as any line break.
+    #[default]
+    None,
+    /// Below the floats on the left.
+    Left,
+    /// Below the floats on the right.
+    Right,
+    /// Below every float.
+    All,
+}
+
 /// The kind of explicit break that ended a laid-out line.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForcedBreakKind {
-    Line,
+    Line(LineClear),
     Page,
     Column,
 }
@@ -1513,14 +1530,14 @@ fn build_breakable_segments(
 
     for (input_slot, item) in items.iter().enumerate() {
         match item {
-            InlineItem::LineBreak => {
+            InlineItem::LineBreak(clear) => {
                 if !current_group.is_empty() {
                     segments.push(BreakableSegment::Items(
                         std::mem::take(&mut current_group),
                         std::mem::take(&mut current_origins),
                     ));
                 }
-                segments.push(BreakableSegment::ForcedBreak(ForcedBreakKind::Line));
+                segments.push(BreakableSegment::ForcedBreak(ForcedBreakKind::Line(*clear)));
             }
             InlineItem::PageBreak => {
                 if !current_group.is_empty() {
@@ -2103,7 +2120,7 @@ fn inline_item_width(item: &InlineItem) -> f64 {
         InlineItem::Group { width, .. } => *width,
         InlineItem::Figure { item, .. } => inline_item_width(item),
         InlineItem::Marker(seg) => seg.width,
-        InlineItem::LineBreak | InlineItem::PageBreak | InlineItem::ColumnBreak => 0.0,
+        InlineItem::LineBreak(_) | InlineItem::PageBreak | InlineItem::ColumnBreak => 0.0,
     }
 }
 
@@ -2143,7 +2160,7 @@ fn item_metrics(item: &InlineItem) -> (f64, f64, f64, f64, f64) {
             (*width, baseline, *height - baseline, *height, 0.0)
         }
         InlineItem::Figure { item, .. } => item_metrics(item),
-        InlineItem::LineBreak | InlineItem::PageBreak | InlineItem::ColumnBreak => {
+        InlineItem::LineBreak(_) | InlineItem::PageBreak | InlineItem::ColumnBreak => {
             (0.0, 0.0, 0.0, 0.0, 0.0)
         }
     }
@@ -2206,12 +2223,14 @@ fn inline_to_line_item(item: &InlineItem) -> LineItem {
             alternate_text: alternate_text.clone(),
             structure_id: *structure_id,
         },
-        InlineItem::LineBreak | InlineItem::PageBreak | InlineItem::ColumnBreak => LineItem::Tab {
-            width: 0.0,
-            leader: None,
-            align: TabAlign::Left,
-            gap: 0.0,
-        },
+        InlineItem::LineBreak(_) | InlineItem::PageBreak | InlineItem::ColumnBreak => {
+            LineItem::Tab {
+                width: 0.0,
+                leader: None,
+                align: TabAlign::Left,
+                gap: 0.0,
+            }
+        }
     }
 }
 

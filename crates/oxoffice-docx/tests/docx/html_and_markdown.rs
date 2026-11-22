@@ -453,6 +453,40 @@ fn markdown_escapes_a_character_reference_in_split_runs_alt_text_and_links() {
 }
 
 #[test]
+fn a_break_that_clears_floats_keeps_its_side_in_html_and_rtf() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>a</w:t><w:br w:type="textWrapping" w:clear="left"/>"#,
+        r#"<w:t>b</w:t><w:br w:type="textWrapping" w:clear="right"/>"#,
+        r#"<w:t>c</w:t><w:br w:type="textWrapping" w:clear="all"/>"#,
+        r#"<w:t>d</w:t><w:br/><w:t>e</w:t></w:r></w:p>"#,
+    ));
+    let styles: Vec<_> = html_elements(&doc.to_html_fragment(), "br")
+        .into_iter()
+        .map(|(_, attributes)| attributes.get("style").cloned())
+        .collect();
+    assert_eq!(
+        styles,
+        [
+            Some("clear: left".to_owned()),
+            Some("clear: right".to_owned()),
+            Some("clear: both".to_owned()),
+            None,
+        ]
+    );
+    // RTF spells the side before the break, as LibreOffice reads it.
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(
+        rtf.contains(r"a\lbr1\line b\lbr2\line c\lbr3\line d\line e"),
+        "{rtf}"
+    );
+    // Markdown has no side: each is a line break.
+    assert_eq!(
+        read_markdown(&doc.to_markdown()),
+        [Read::Paragraph("a\nb\nc\nd\ne".to_owned())]
+    );
+}
+
+#[test]
 fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
     let mut doc = Document::new();
     {

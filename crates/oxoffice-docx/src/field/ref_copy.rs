@@ -1440,7 +1440,10 @@ pub(super) fn ref_bookmark_runs(
             };
             if index > range.start.body_index {
                 let mut line = CT_R::new("");
-                line.content = vec![RunContent::Break(oxoffice_docx_oxml::text::BreakType::Line)];
+                line.content = vec![RunContent::Break(
+                    oxoffice_docx_oxml::text::BreakType::Line,
+                    oxoffice_docx_oxml::text::BreakClear::None,
+                )];
                 cache.runs.push(line);
             }
             append_ref_target_paragraph(paragraph, start, end, &mut cache)?;
@@ -1512,7 +1515,10 @@ pub(super) fn ref_bookmark_runs(
         };
         if !cache.runs.is_empty() {
             let mut line = CT_R::new("");
-            line.content = vec![RunContent::Break(oxoffice_docx_oxml::text::BreakType::Line)];
+            line.content = vec![RunContent::Break(
+                oxoffice_docx_oxml::text::BreakType::Line,
+                oxoffice_docx_oxml::text::BreakClear::None,
+            )];
             cache.runs.push(line);
         }
         append_ref_target_paragraph(&paragraph, first, last, &mut cache)?;
