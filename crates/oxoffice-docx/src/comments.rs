@@ -1354,6 +1354,28 @@ impl Document {
         Ok((paired, name_counts))
     }
 
+    /// Whether the bookmark markers with this identifier that sit between
+    /// blocks lead the paragraph they are read as (`true`) or close it, for
+    /// the start and for the end; `None` when no such marker or when they
+    /// disagree.
+    pub(crate) fn block_bookmark_sides(&self, id: i32) -> Result<(Option<bool>, Option<bool>)> {
+        let (sources, _) = self.story_range_located_paragraphs_with_sources()?;
+        let sources = sources.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+        let mut sides = (HashSet::new(), HashSet::new());
+        for marker in sources_block_bookmarks(&sources)?.into_iter().flatten() {
+            if marker.id == id {
+                if marker.start {
+                    sides.0.insert(marker.leading);
+                } else {
+                    sides.1.insert(marker.leading);
+                }
+            }
+        }
+        let one =
+            |side: HashSet<bool>| (side.len() == 1).then(|| side.into_iter().next()).flatten();
+        Ok((one(sides.0), one(sides.1)))
+    }
+
     pub(crate) fn ensure_fragment_comment_models_staged(&mut self) -> Result<String> {
         self.ensure_comment_models()?;
         self.ensure_comment_relationships()?;

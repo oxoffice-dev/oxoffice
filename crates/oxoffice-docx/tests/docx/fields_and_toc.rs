@@ -2346,7 +2346,11 @@ fn ranges_beside_a_bookmark_between_blocks_still_move_and_go_away() {
     // own, the body paragraph shares the heading's story.
     let body = format!(
         "{LED_HEADING}{}{}",
-        one_cell_table(&bookmarked_paragraph("In cell", 20, "cell")),
+        one_cell_table(&format!(
+            "{}{}",
+            bookmarked_paragraph("In cell", 20, "cell"),
+            "<w:p><w:r><w:t>Cell two</w:t></w:r></w:p>"
+        )),
         bookmarked_paragraph("Closing", 21, "closing")
     );
     for name in ["cell", "closing", "_Toc217000001"] {
@@ -2367,6 +2371,11 @@ fn ranges_beside_a_bookmark_between_blocks_still_move_and_go_away() {
     doc.move_story_range(&bookmark_range(&doc, "closing"), first_run(&after))
         .unwrap();
     assert!(bookmark_list(&reopen(&mut doc)).contains(&("closing".to_owned(), "After".to_owned())));
+    let mut doc = doc_with_body(&body);
+    let cell_two = paragraph_at(&doc, StoryKind::TableCell, "Cell two");
+    doc.move_story_range(&bookmark_range(&doc, "cell"), first_run(&cell_two))
+        .unwrap();
+    assert!(bookmark_list(&reopen(&mut doc)).contains(&("cell".to_owned(), "Cell two".to_owned())));
 
     // A heading bookmark between the blocks of a cell, then a body range
     // after the table.
@@ -2528,9 +2537,9 @@ fn a_ref_reads_a_header_bookmark_that_starts_between_paragraphs() {
 }
 
 #[test]
-fn a_ref_reads_header_bookmarks_whose_end_is_between_paragraphs() {
-    // `wrap(start, paragraph, end)` places both markers around the header
-    // paragraph; the REF reads what they wrap.
+fn a_ref_reads_a_header_bookmark_by_where_its_markers_sit() {
+    // `wrap(start, paragraph, end)` places both markers in or around the
+    // header paragraph; the REF reads what they wrap.
     let header_ref = |wrap: fn(&str, &str, &str) -> String, expected: &str| {
         let mut doc = doc_with(&["See "]);
         doc.set_header("Header words");

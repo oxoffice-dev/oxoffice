@@ -1482,6 +1482,7 @@ pub(super) fn ref_bookmark_runs(
         comment_ranges: Vec::new(),
         rows: Vec::new(),
     };
+    let (start_side, end_side) = document.block_bookmark_sides(*id)?;
     for (location, xml) in document.story_range_paragraphs()? {
         if location == range.range().start.location {
             selected = true;
@@ -1494,10 +1495,16 @@ pub(super) fn ref_bookmark_runs(
         }
         let paragraph = CT_P::from_xml_fragment(&xml)?;
         let runs = paragraph.accepted_bookmark_runs();
-        // A marker the story range places on this paragraph but the
-        // paragraph does not hold sits between blocks: it leads the
-        // paragraph (run 0) or closes it.
-        let between_blocks = |run_index: usize| if run_index == 0 { 0 } else { runs.len() };
+        // A marker between blocks leads the paragraph it is read as (run 0)
+        // or closes it; any other marker the paragraph does not hold
+        // leaves the REF unresolved.
+        let between_blocks = |side: Option<bool>, which: &str| match side {
+            Some(true) => Ok(0),
+            Some(false) => Ok(runs.len()),
+            None => Err(Error::Other(format!(
+                "REF f target {which} marker is absent from its physical projection"
+            ))),
+        };
         let first = if location == range.range().start.location {
             paragraph
                 .bookmark_markers
@@ -1510,9 +1517,9 @@ pub(super) fn ref_bookmark_runs(
                             .is_some_and(|name| same_bookmark_name(name, target))
                 })
                 .map_or_else(
-                    || between_blocks(range.range().start.run_index),
-                    oxoffice_docx_oxml::text::BookmarkMarker::projected_run_index,
-                )
+                    || between_blocks(start_side, "start"),
+                    |marker| Ok(marker.projected_run_index()),
+                )?
         } else {
             0
         };
@@ -1522,9 +1529,9 @@ pub(super) fn ref_bookmark_runs(
                 .iter()
                 .find(|marker| !marker.is_start() && marker.id() == Some(*id))
                 .map_or_else(
-                    || between_blocks(range.range().end.run_index),
-                    oxoffice_docx_oxml::text::BookmarkMarker::projected_run_index,
-                )
+                    || between_blocks(end_side, "end"),
+                    |marker| Ok(marker.projected_run_index()),
+                )?
         } else {
             runs.len()
         };
