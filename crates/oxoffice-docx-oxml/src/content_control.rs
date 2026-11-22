@@ -678,7 +678,7 @@ impl CT_SdtPr {
                     .iter()
                     .flat_map(|element| &element.attributes)
                     .find(|(name, _)| local_part(name) == "multiLine")
-                    .and_then(|(_, value)| crate::settings::parse_on_off(value))
+                    .and_then(|(_, value)| crate::shared::ST_OnOff::parse(value))
                     .unwrap_or(false),
             },
             Some(SdtType::CheckBox) => SdtFormPayload::CheckBox {
@@ -715,7 +715,7 @@ impl CT_SdtPr {
         Ok(match self.raw_property(b"showingPlcHdr")? {
             None => false,
             Some(None) => true,
-            Some(Some(value)) => crate::settings::parse_on_off(&value).unwrap_or(false),
+            Some(Some(value)) => crate::shared::ST_OnOff::parse(&value).unwrap_or(false),
         })
     }
 
@@ -787,7 +787,7 @@ impl CT_SdtPr {
             OxmlError::InvalidValue("checkbox type payload is missing".to_owned())
         })?;
         let value = std::str::from_utf8(&element.children[range])?;
-        crate::settings::parse_on_off(value).ok_or_else(|| {
+        crate::shared::ST_OnOff::parse(value).ok_or_else(|| {
             OxmlError::InvalidValue(format!("checkbox checked value {value:?} is not on or off"))
         })
     }

@@ -3334,7 +3334,7 @@ fn property_leaf_is_valid(
         | ("naryPr", "grow" | "subHide" | "supHide")
         | ("dPr", "grow") => value
             .as_deref()
-            .is_none_or(|value| parse_bool(value).is_some()),
+            .is_none_or(|value| crate::shared::ST_OnOff::parse(value).is_some()),
         ("rPr", "scr") => value
             .as_deref()
             .is_some_and(|value| MathScriptStyle::parse(value).is_some()),
@@ -3368,7 +3368,7 @@ fn property_leaf_is_valid(
         ("mathPr", "mathFont") => value.as_deref().is_some_and(|value| !value.is_empty()),
         ("mathPr", "smallFrac" | "dispDef") => value
             .as_deref()
-            .is_none_or(|value| parse_bool(value).is_some()),
+            .is_none_or(|value| crate::shared::ST_OnOff::parse(value).is_some()),
         (
             "mathPr",
             "lMargin" | "rMargin" | "preSp" | "postSp" | "interSp" | "intraSp" | "wrapIndent",
@@ -3796,16 +3796,9 @@ fn preserve_unrecognized_property_children(
     Ok(parsed.preservation)
 }
 
-fn parse_bool(value: &str) -> Option<bool> {
-    match value {
-        "1" | "true" | "on" => Some(true),
-        "0" | "false" | "off" => Some(false),
-        _ => None,
-    }
-}
 fn parse_present_on_off(value: Option<&str>) -> Option<bool> {
     match value {
-        Some(value) => parse_bool(value),
+        Some(value) => crate::shared::ST_OnOff::parse(value),
         None => Some(true),
     }
 }

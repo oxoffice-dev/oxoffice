@@ -1,10 +1,10 @@
 //! Word content controls exported as fillable PDF form fields.
 
 use lopdf::{Dictionary, Document as Pdf, Object};
-use oxoffice_docx::{Document, RenderOptions};
+use oxoffice_docx::{Document, LegacyFormFieldValue, RenderOptions};
 use oxoffice_layout::{FormFieldKind, PositionedElement};
 
-use crate::support::doc_with_body;
+use crate::support::{corpus_doc, doc_with_body, reopen};
 
 const W14: &str = r#"xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
 
@@ -816,6 +816,93 @@ fn legacy_form_fields_become_named_fields_with_their_values() {
     assert!(read_only("Reference"), "a disabled field is read only");
     assert!(read_only("Today"), "a computed date is read only");
     assert!(!read_only("Company"));
+}
+
+/// Name and kind of the fillable fields made from the corpus form's legacy
+/// fields, as the layout gives them.
+fn legacy_kinds(doc: &Document) -> Vec<(String, FormFieldKind)> {
+    const LEGACY: [&str; 6] = [
+        "BankName",
+        "IBAN",
+        "BIC",
+        "PaymentTerms",
+        "RemittanceEmail",
+        "Declaration",
+    ];
+    doc.layout_with_options(fillable())
+        .unwrap()
+        .layout
+        .form_fields
+        .iter()
+        .filter(|field| LEGACY.contains(&field.name.as_str()))
+        .map(|field| (field.name.clone(), field.kind.clone()))
+        .collect()
+}
+
+#[test]
+fn legacy_form_fields_saved_by_libreoffice_become_the_fields_word_saves() {
+    // LibreOffice puts each field's bookmark among its instruction runs or at
+    // the start of its result, where Word puts it around the field.
+    let word = legacy_kinds(&corpus_doc("authored/form.docx"));
+    assert_eq!(word.len(), 6, "{word:?}");
+    let mut doc = corpus_doc("libreoffice/form.docx");
+    assert_eq!(legacy_kinds(&doc), word);
+
+    // Filled, saved and opened again, they keep LibreOffice's bookmarks.
+    let bookmarks = |doc: &Document| {
+        doc.bookmarks()
+            .iter()
+            .map(|bookmark| bookmark.name().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    let before = bookmarks(&doc);
+    let part = doc
+        .legacy_form_fields()
+        .unwrap()
+        .remove(0)
+        .source_part
+        .clone();
+    for (ordinal, value) in [
+        (0, LegacyFormFieldValue::Text("HSBC UK".into())),
+        (3, LegacyFormFieldValue::SelectedIndex(2)),
+    ] {
+        doc.set_legacy_form_field_value(&part, ordinal, value)
+            .unwrap();
+    }
+    // An edit elsewhere in the document, then the saved XML: each bookmark
+    // is still where LibreOffice put it, inside its field.
+    doc.add_paragraph("Edited elsewhere");
+    let saved = doc.to_bytes().unwrap();
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(saved)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    for (filled, placed) in [
+        (
+            true,
+            r#"FORMTEXT </w:instrText></w:r><w:bookmarkStart w:id="0" w:name="BankName_Copy_1"/>"#,
+        ),
+        (
+            false,
+            r#"FORMTEXT </w:instrText></w:r><w:bookmarkStart w:id="1" w:name="IBAN_Copy_1"/>"#,
+        ),
+        (
+            true,
+            r#"<w:fldChar w:fldCharType="separate"/></w:r><w:bookmarkStart w:id="3" w:name="PaymentTerms_Copy_1"/>"#,
+        ),
+    ] {
+        assert!(xml.contains(placed), "filled {filled}: {placed}");
+    }
+    let doc = reopen(&mut doc);
+    assert_eq!(bookmarks(&doc), before);
+    let values = legacy_kinds(&doc);
+    assert!(
+        matches!(&values[0].1, FormFieldKind::Text { value, .. } if value == "HSBC UK"),
+        "{values:?}"
+    );
+    assert!(
+        matches!(&values[3].1, FormFieldKind::Choice { value: Some(value), .. } if value == "60 days"),
+        "{values:?}"
+    );
 }
 
 #[test]

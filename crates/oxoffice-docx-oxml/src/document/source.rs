@@ -409,7 +409,7 @@ impl WordSourceMap {
         self.length
     }
 
-    fn original(range: std::ops::Range<usize>) -> Self {
+    pub(crate) fn original(range: std::ops::Range<usize>) -> Self {
         Self::original_part(0, range)
     }
 
@@ -7432,8 +7432,10 @@ impl<'a> ScopedWordOperation<'a> {
     }
 
     /// Copy one actual source occurrence without renewing any input role.
-    /// Only positively observed Field intervals supply copied Field demand.
-    /// Their complement remains unproved, rather than certified ordinary.
+    /// Only positively observed Field intervals are selected for the field
+    /// work ledger, which credits their first reach to the constructors; the
+    /// copy itself never debits the output ledger. Their complement remains
+    /// unproved, rather than certified ordinary.
     pub fn repeat_source(&mut self, source: &ScopedWordSource) -> Result<ScopedWordSource> {
         self.check_source(source)?;
         if self.field_work.resource_refused() {
