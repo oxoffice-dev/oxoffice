@@ -105,7 +105,7 @@ fn computed_layout_field(
                 let Some(bookmark) = field_text_argument(&instruction, 0) else {
                     return (None, None);
                 };
-                if bookmark_text(input, bookmark).is_none() {
+                if !bookmark_exists(input, bookmark) {
                     diagnostics.push(Diagnostic {
                         message: format!(
                             "PAGEREF target {bookmark} was not found, stored display retained"
@@ -154,14 +154,7 @@ pub(super) fn drawn_legacy_checkbox(
 /// The entry a legacy drop-down that stores no result draws: its selected
 /// one, as Word draws it. Word saves drop-downs that way.
 pub(super) fn drawn_legacy_dropdown(field: &oxoffice_docx_oxml::text::Field) -> Option<&str> {
-    let data = field.legacy_form.as_ref()?;
-    let oxoffice_docx_oxml::text::LegacyFormFieldValue::SelectedIndex(index) = data.value else {
-        return None;
-    };
-    if !field.effective_display().is_empty() {
-        return None;
-    }
-    data.choices.get(index).map(String::as_str)
+    field.unstored_dropdown_entry()
 }
 
 /// The fields of a paragraph's physical runs in source order, nested fields
@@ -1333,8 +1326,10 @@ fn layout_paragraph_with_source_and_table(
                 }
                 // Word drops a page or column break inside a table cell, so
                 // the text on either side of it joins on one line.
-                RunContent::Break(bt) => match bt {
-                    BreakType::Line => inline_items.push(InlineItem::LineBreak),
+                RunContent::Break(bt, clear) => match bt {
+                    BreakType::Line => {
+                        inline_items.push(InlineItem::LineBreak(line_clear(*clear)));
+                    }
                     BreakType::Page | BreakType::Column if in_table_cell => {}
                     BreakType::Page => inline_items.push(InlineItem::PageBreak),
                     BreakType::Column => inline_items.push(InlineItem::ColumnBreak),
@@ -1560,7 +1555,7 @@ fn layout_paragraph_with_source_and_table(
                         {
                             let control = match character {
                                 '\t' => Some(InlineItem::Tab),
-                                '\n' => Some(InlineItem::LineBreak),
+                                '\n' => Some(InlineItem::LineBreak(LineClear::None)),
                                 '\u{000c}' => Some(InlineItem::PageBreak),
                                 '\u{000b}' => Some(InlineItem::ColumnBreak),
                                 '\0' if index == value.len() => None,
@@ -1807,7 +1802,7 @@ fn layout_paragraph_with_source_and_table(
                 }
                 RunContent::SpecialCharacter(character) => match character {
                     SpecialCharacter::CarriageReturn => {
-                        inline_items.push(InlineItem::LineBreak);
+                        inline_items.push(InlineItem::LineBreak(LineClear::None));
                     }
                     SpecialCharacter::NoBreakHyphen => {
                         // U+2011 carries Unicode line-break class GL, so the
@@ -2212,6 +2207,16 @@ fn layout_paragraph_with_source_and_table(
     Ok((result, paint))
 }
 
+/// The layout's clear for a line break's `w:clear`.
+fn line_clear(clear: BreakClear) -> LineClear {
+    match clear {
+        BreakClear::None => LineClear::None,
+        BreakClear::Left => LineClear::Left,
+        BreakClear::Right => LineClear::Right,
+        BreakClear::All => LineClear::All,
+    }
+}
+
 /// Remove the line break that closes a display equation when nothing that
 /// draws follows it in the paragraph.
 ///
@@ -2227,7 +2232,7 @@ fn drop_trailing_display_break(
     let Some(index) = display_break else {
         return;
     };
-    if !matches!(items.get(index), Some(InlineItem::LineBreak)) {
+    if !matches!(items.get(index), Some(InlineItem::LineBreak(_))) {
         return;
     }
     if !items[index + 1..].iter().all(draws_nothing) {
@@ -2284,7 +2289,7 @@ fn push_targeted_bookmark_markers(
         marker.is_start()
             && marker_run_index == projected_run_index
             && marker.name().is_some_and(|name| {
-                document_has_page_ref(input, name) && bookmark_text(input, name).is_some()
+                document_has_page_ref(input, name) && bookmark_exists(input, name)
             })
     }) {
         if let Some(target) = marker.name().and_then(|name| page_ref_id(input, name)) {

@@ -513,6 +513,118 @@ fn a_replacement_holding_a_break_or_a_tab_writes_them_as_items() {
     );
 }
 
+/// A body with `<w:br {attributes}/>` in a run, in the result of a simple
+/// field and in the result of a complex field, after a paragraph to edit.
+fn doc_with_breaks(attributes: &str) -> Document {
+    doc_with_body(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t>Edit me</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>before</w:t><w:br {a}/><w:t>after</w:t></w:r></w:p>"#,
+            r#"<w:p><w:fldSimple w:instr=" DOCPROPERTY Title ">"#,
+            r#"<w:r><w:t>simple</w:t><w:br {a}/><w:t>result</w:t></w:r>"#,
+            r#"</w:fldSimple></w:p>"#,
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+            r#"<w:r><w:instrText xml:space="preserve"> DOCPROPERTY Title </w:instrText></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+            r#"<w:r><w:t>complex</w:t><w:br {a}/><w:t>result</w:t></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        ),
+        a = attributes
+    ))
+}
+
+/// The kind and clear of every `w:br` of `xml`, defaults filled in: a break
+/// without a type is a line break, one without a clear clears nothing.
+fn break_kinds_and_clears(xml: &str) -> Vec<(String, String)> {
+    xml.match_indices("<w:br")
+        .map(|(start, _)| {
+            let tag = &xml[start..start + xml[start..].find('>').unwrap()];
+            let attribute = |name: &str, default: &str| {
+                tag.find(&format!(" w:{name}=\""))
+                    .map(|at| {
+                        let value = &tag[at + name.len() + 5..];
+                        value[..value.find('"').unwrap()].to_owned()
+                    })
+                    .unwrap_or_else(|| default.to_owned())
+            };
+            (
+                attribute("type", "textWrapping"),
+                attribute("clear", "none"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_break_keeps_where_its_text_restarts_through_an_edit_and_a_reopen() {
+    // `w:clear` says where the text after the break restarts beside a
+    // float. A page or column break keeps it too: the file had it.
+    for (attributes, kind, clear) in [
+        (
+            r#"w:type="textWrapping" w:clear="all""#,
+            "textWrapping",
+            "all",
+        ),
+        (r#"w:clear="left""#, "textWrapping", "left"),
+        (
+            r#"w:clear="right" w:type="textWrapping""#,
+            "textWrapping",
+            "right",
+        ),
+        (r#"w:type="page" w:clear="all""#, "page", "all"),
+        (r#"w:type="column" w:clear="left""#, "column", "left"),
+    ] {
+        // An edit of another paragraph, and an edit of the text around the
+        // breaks the search reaches.
+        let mut doc = doc_with_breaks(attributes);
+        doc.paragraph_mut(0).unwrap().add_run(", edited");
+        doc.paragraph_mut(3).unwrap().add_run(", edited");
+        for (from, to) in [("before", "Before"), ("simple", "Simple")] {
+            assert_eq!(doc.replace_text(from, to), 1, "{attributes}: {from}");
+        }
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert_eq!(
+            break_kinds_and_clears(&xml),
+            vec![(kind.to_owned(), clear.to_owned()); 3],
+            "{attributes}: the run and both field results keep the break: {xml}"
+        );
+        // The edited run and simple field result are written from the
+        // model, in Word's spelling; the complex field result keeps its
+        // source bytes, even when its paragraph is edited.
+        let written = format!(r#"<w:br w:type="{kind}" w:clear="{clear}"/>"#);
+        for text in ["Before", "Simple"] {
+            let expected = format!("<w:t>{text}</w:t>{written}");
+            assert!(xml.contains(&expected), "{attributes}: {expected}: {xml}");
+        }
+        let source = format!("<w:t>complex</w:t><w:br {attributes}/>");
+        assert!(xml.contains(&source), "{attributes}: {source}: {xml}");
+    }
+}
+
+#[test]
+fn a_break_that_clears_nothing_is_written_without_a_clear() {
+    // `none` is the default and an unknown value reads as it: both are
+    // written as absent, as Word writes a plain break.
+    for (attributes, written) in [
+        (r#"w:type="textWrapping" w:clear="none""#, "<w:br/>"),
+        (r#"w:clear="sideways""#, "<w:br/>"),
+        (
+            r#"w:type="page" w:clear="none""#,
+            r#"<w:br w:type="page"/>"#,
+        ),
+    ] {
+        let mut doc = doc_with_breaks(attributes);
+        assert_eq!(doc.replace_text("before", "Before"), 1);
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert!(
+            xml.contains(&format!("<w:t>Before</w:t>{written}")),
+            "{attributes}: {written}: {xml}"
+        );
+    }
+}
+
 #[test]
 fn a_match_over_a_symbol_in_a_run_keeps_the_symbol() {
     // A symbol has no text, so a search reads over it; the replacement takes
@@ -818,4 +930,43 @@ fn run_measures_with_a_unit_pass_the_checked_paragraph_route() {
     doc.replace_paragraph_xml(&location, &paragraph("12pt"))
         .unwrap();
     assert_eq!(doc.paragraph(0).unwrap().run(0).unwrap().size(), Some(12.0));
+}
+
+#[test]
+fn a_carriage_return_in_run_text_reads_back_as_set_after_a_save() {
+    let mut doc = doc_with(&["first"]);
+    doc.add_paragraph("line\rend");
+    doc.paragraph_mut(0).unwrap().add_run("a\rb");
+    let saved = doc.to_bytes().unwrap();
+    let doc = reopen(&mut Document::from_bytes(&saved).unwrap());
+    assert_eq!(texts(&doc), ["firsta\rb", "line\rend"]);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("line&#13;end") && !xml.contains('\r'), "{xml}");
+}
+
+#[test]
+fn a_raw_carriage_return_in_saved_text_reads_as_a_line_feed_everywhere() {
+    // A part written with Windows line ends holds a raw CR LF inside w:t,
+    // which every XML reader reads as one line feed; a CR written as a
+    // reference stays one.
+    let doc = doc_with_body(concat!(
+        "<w:p><w:r><w:t>one\r\ntwo\rthree&#13;four</w:t></w:r></w:p>",
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        "<w:r><w:instrText xml:space=\"preserve\"> REF a\r\nb </w:instrText></w:r>",
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>r</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    let expected = "one\ntwo\nthree\rfour";
+    assert_eq!(texts(&doc)[0], expected);
+    let story = doc.story_paragraphs().unwrap();
+    assert_eq!(story[0].text, expected);
+    let mut instruction = None;
+    for run in doc.paragraphs()[1].runs() {
+        for item in run.items() {
+            if let RunItemRef::Field(field) = item {
+                instruction = Some(field.instruction().to_owned());
+            }
+        }
+    }
+    assert_eq!(instruction.as_deref().map(str::trim), Some("REF a\nb"));
 }

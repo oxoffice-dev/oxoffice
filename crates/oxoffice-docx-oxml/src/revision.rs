@@ -762,11 +762,7 @@ impl CT_Revision {
         // the raw XML is read only while it is still what was opened.
         let edited = self.accepted_fields_pending || self.accepted_payload_pending;
         match self.content_paragraph.as_deref() {
-            // Equations keep their places in the stored paragraph only:
-            // its run axis is the one their positions count on.
-            Some(paragraph)
-                if !self.semantic_fields_pending || edited || !paragraph.equations.is_empty() =>
-            {
+            Some(paragraph) if !self.semantic_fields_pending || edited => {
                 Some(std::borrow::Cow::Borrowed(paragraph))
             }
             stored => {

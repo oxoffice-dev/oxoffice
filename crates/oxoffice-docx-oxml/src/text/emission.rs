@@ -362,7 +362,7 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
         })?;
         let prefix = plan.render();
         self.start
-            .push_attribute((format!("{prefix}:{local}").as_str(), value));
+            .push_attribute(escaped_attribute(&format!("{prefix}:{local}"), value));
         Ok(())
     }
 
@@ -409,7 +409,7 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
         self.reserved = self.reserved.checked_add(length).ok_or_else(|| {
             OxmlError::InvalidValue("normalized event payload length overflow".into())
         })?;
-        self.start.push_attribute((name, value));
+        self.start.push_attribute(escaped_attribute(name, value));
         Ok(())
     }
 
@@ -521,7 +521,7 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
             OxmlError::InvalidValue("normalized event payload length overflow".into())
         })?;
         self.start
-            .push_attribute((format!("{prefix}:{local}").as_str(), value));
+            .push_attribute(escaped_attribute(&format!("{prefix}:{local}"), value));
         Ok(())
     }
 
@@ -779,7 +779,7 @@ impl FieldXmlEmission {
             element.push_attribute((format!("xmlns:{prefix}").as_str(), crate::namespace::W_NS));
         }
         for (name, value) in attributes.iter().flatten() {
-            element.push_attribute((format!("{prefix}:{name}").as_str(), *value));
+            element.push_attribute(escaped_attribute(&format!("{prefix}:{name}"), value));
         }
         let _transport = prepaid
             .then(|| self.prepaid_xml_transport(element.as_ref()))
@@ -846,7 +846,7 @@ impl FieldXmlEmission {
             .ok_or_else(overflow)?;
         let prepaid = self.reserve_inner_xml(length)?;
         let mut element = BytesStart::new(format!("{prefix}:{local}"));
-        element.push_attribute((format!("{prefix}:val").as_str(), value));
+        element.push_attribute(escaped_attribute(&format!("{prefix}:val"), value));
         let _transport = prepaid
             .then(|| self.prepaid_xml_transport(element.as_ref()))
             .transpose()?;
@@ -919,5 +919,21 @@ impl FieldXmlEmission {
             .transpose()?;
         writer.write_event(Event::Text(event.borrow()))?;
         Ok(())
+    }
+}
+
+/// `key="value"`, the value escaped by [`escaped_source_piece`] as the
+/// emitters measure it, never by quick-xml's own escaping.
+fn escaped_attribute<'a>(
+    key: &'a str,
+    value: &'a str,
+) -> quick_xml::events::attributes::Attribute<'a> {
+    let value = match super::escaped_source(value) {
+        Cow::Borrowed(value) => Cow::Borrowed(value.as_bytes()),
+        Cow::Owned(value) => Cow::Owned(value.into_bytes()),
+    };
+    quick_xml::events::attributes::Attribute {
+        key: quick_xml::name::QName(key.as_bytes()),
+        value,
     }
 }

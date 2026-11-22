@@ -104,11 +104,13 @@ impl SourceXml {
                         .last()
                         .ok_or_else(|| bibliography_error("CDATA outside XML root"))?;
                     nodes[index].opaque_scalar = true;
-                    nodes[index].text.push_str(
-                        &text
-                            .decode()
-                            .map_err(|error| bibliography_error(error.to_string()))?,
-                    );
+                    nodes[index]
+                        .text
+                        .push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                            &text
+                                .decode()
+                                .map_err(|error| bibliography_error(error.to_string()))?,
+                        ));
                 }
                 Event::GeneralRef(reference) => {
                     let index = *stack
@@ -940,10 +942,7 @@ fn datastore_properties(identity: &str, schema_uris: &[&str]) -> Vec<u8> {
 }
 
 fn xml_attribute(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('"', "&quot;")
+    oxoffice_core::xml::escape_attribute_value(value).into_owned()
 }
 
 pub(super) fn create_collection(candidate: &mut Document) -> Result<String> {

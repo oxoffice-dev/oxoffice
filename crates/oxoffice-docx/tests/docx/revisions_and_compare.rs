@@ -375,8 +375,8 @@ fn header_changes_are_compared_unless_headers_are_ignored() {
 }
 
 #[test]
-fn author_names_with_markup_characters_and_offset_dates_survive_the_redline() {
-    let author = "Ada & \"Bob\" <QA>";
+fn author_names_with_markup_characters_tabs_and_line_ends_and_offset_dates_survive_the_redline() {
+    let author = "Ada & \"Bob\"\t<QA>\nteam\r";
     let date = "2026-11-21T09:00:00+01:00";
     let mut doc = doc_with(&["old"]);
     doc.compare(&doc_with(&["new"]), author, date).unwrap();
@@ -966,6 +966,12 @@ fn a_reference_in_another_case_follows_a_renamed_toc_bookmark_but_a_link_to_anot
             concat!(
                 r#"<w:p><w:fldSimple w:instr=" PAGEREF {upper} \h "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
                 r#"<w:p><w:fldSimple w:instr=" HYPERLINK \o &quot;tip&quot; &quot;other.docx&quot; \l &quot;_Toc7&quot; "><w:r><w:t>Other</w:t></w:r></w:fldSimple></w:p>"#,
+                // The address is a nested field.
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Url </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>url</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+                r#"<w:r><w:instrText xml:space="preserve"> \l &quot;_Toc7&quot; </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+                r#"<w:r><w:t>Away</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
                 r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
                 r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#,
             ),
@@ -976,13 +982,14 @@ fn a_reference_in_another_case_follows_a_renamed_toc_bookmark_but_a_link_to_anot
     };
     let mut doc = redline(document("_Toc1", "Old."), &document("_Toc7", "New."));
     let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy)[2..], ["Intro", "New."]);
+    assert_eq!(texts(&copy)[3..], ["Intro", "New."]);
     assert_eq!(bookmark_names(&copy), ["_Toc1"]);
     assert_eq!(
         field_instructions(&copy),
         [
             r#"PAGEREF _Toc1 \h"#,
-            r#"HYPERLINK \o "tip" "other.docx" \l "_Toc7""#
+            r#"HYPERLINK \o "tip" "other.docx" \l "_Toc7""#,
+            r#"HYPERLINK  \l "_Toc7""#,
         ]
     );
 }
@@ -1952,4 +1959,23 @@ fn a_rebuilt_table_of_contents_removed_whole_keeps_its_simple_page_fields() {
     assert!(part_xml(&mut doc, "document.xml").contains("<w:fldSimple"));
     assert_eq!(texts(&accepted(&mut doc)), texts(&without()));
     assert_eq!(texts(&rejected(&mut doc)), texts(&with_toc()));
+}
+
+#[test]
+fn a_comparison_tracks_a_break_that_only_changes_where_its_text_restarts() {
+    // The clear is part of the break: a break that starts clearing the
+    // floats is a change, as a page break replacing a line break is.
+    let body = |br: &str| {
+        doc_with_body(&format!(
+            "<w:p><w:r><w:t>x</w:t>{br}<w:t>y</w:t></w:r></w:p>"
+        ))
+    };
+    let cleared = r#"<w:br w:type="textWrapping" w:clear="all"/>"#;
+    let doc = redline(body("<w:br/>"), &body(cleared));
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("<w:delText>x</w:delText><w:br/>"), "{xml}");
+    assert!(xml.contains(&format!("<w:t>x</w:t>{cleared}")), "{xml}");
+    let doc = redline(body(cleared), &body(cleared));
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
 }

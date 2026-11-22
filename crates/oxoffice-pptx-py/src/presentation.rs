@@ -2508,9 +2508,37 @@ struct OwnerAddress {
     table: bool,
 }
 
+/// A stored owner's address within its part. A slide part's paths leave out
+/// the leading `Slide(i)`, so a part whose slide moves is shared as it is;
+/// the layout and master part keeps whole paths.
+#[derive(Clone, Debug, PartialEq)]
+struct PartAddress {
+    physical: PhysicalOwner,
+    local: smallvec::SmallVec<[oxoffice_py_support::PathSeg; 5]>,
+    layout_index: Option<usize>,
+    table: bool,
+}
+
+impl PartAddress {
+    /// The stored form of a walked address of `part`.
+    fn new(address: OwnerAddress, part: OwnerPart) -> Self {
+        debug_assert_eq!(OwnerPart::of(&address.path), part, "owner address part");
+        let local = match part {
+            OwnerPart::Slide(_) => smallvec::SmallVec::from_slice(part.local_path(&address.path)),
+            OwnerPart::Masters => address.path,
+        };
+        Self {
+            physical: address.physical,
+            local,
+            layout_index: address.layout_index,
+            table: address.table,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct LiveOwner {
-    address: OwnerAddress,
+    address: PartAddress,
     owner: oxoffice_py_support::RevisionState,
     text: oxoffice_py_support::RevisionState,
     xml_children: oxoffice_py_support::RevisionState,
@@ -2571,10 +2599,10 @@ impl PartEdit {
 
     /// The proof of an owner this edit keeps unchanged, or `None` when it
     /// removes the owner's slide or layout.
-    fn proof(self, owner: &LiveOwner) -> Option<OwnerSurvival> {
+    fn proof(self, owner: OwnerView<'_>) -> Option<OwnerSurvival> {
         let mut proof = OwnerSurvival {
             generation: owner.owner.generation(),
-            destination: owner.address.path.clone(),
+            destination: owner.path(),
             layout_index: owner.address.layout_index,
             text_changed: false,
             xml_children_changed: false,
@@ -2634,7 +2662,7 @@ impl OwnerProofs {
             owners
                 .owners
                 .iter()
-                .filter_map(|owner| self.edit.proof(owner)),
+                .filter_map(|live| self.edit.proof(OwnerView { live, part })),
         );
         Ok(std::borrow::Cow::Owned(proofs))
     }
@@ -2668,11 +2696,72 @@ impl OwnerPart {
             _ => Self::Masters,
         }
     }
+
+    /// A path of this part without its slide, as the part stores it.
+    fn local_path(self, path: &[PathSeg]) -> &[PathSeg] {
+        match self {
+            Self::Slide(_) => path.get(1..).unwrap_or_default(),
+            Self::Masters => path,
+        }
+    }
+
+    /// The whole path of an owner this part stores at `local`.
+    fn full_path(self, local: &[PathSeg]) -> smallvec::SmallVec<[PathSeg; 5]> {
+        let mut path = smallvec::SmallVec::new();
+        if let Self::Slide(index) = self {
+            path.push(PathSeg::Slide(index));
+        }
+        path.extend_from_slice(local);
+        path
+    }
+}
+
+/// A stored owner seen from the part it sits in, which gives its whole path.
+#[derive(Clone, Copy, Debug)]
+struct OwnerView<'a> {
+    live: &'a LiveOwner,
+    part: OwnerPart,
+}
+
+impl std::ops::Deref for OwnerView<'_> {
+    type Target = LiveOwner;
+
+    fn deref(&self) -> &LiveOwner {
+        self.live
+    }
+}
+
+impl OwnerView<'_> {
+    fn path(&self) -> smallvec::SmallVec<[PathSeg; 5]> {
+        self.part.full_path(&self.live.address.local)
+    }
+
+    /// Whether the whole path starts with `prefix`, without building it.
+    fn path_starts_with(&self, prefix: &[PathSeg]) -> bool {
+        let local = &self.live.address.local;
+        match (self.part, prefix.split_first()) {
+            (OwnerPart::Slide(index), Some((first, rest))) => {
+                *first == PathSeg::Slide(index) && local.starts_with(rest)
+            }
+            (OwnerPart::Slide(_), None) => true,
+            (OwnerPart::Masters, _) => local.starts_with(prefix),
+        }
+    }
+}
+
+/// A key a part keeps for its whole life, whatever slide ordinal it moves
+/// to. A part walked again gets a new one.
+type PartKey = u64;
+
+fn next_part_key() -> PartKey {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The owners of one part in inventory order, with their local lookups.
 #[derive(Clone, Debug, Default)]
 struct PartOwners {
+    key: PartKey,
     owners: Vec<LiveOwner>,
     by_path: HashMap<OwnerPathKey, usize>,
     shape_ids: HashMap<(PartIdentity, u32), usize>,
@@ -2684,6 +2773,7 @@ struct PartOwners {
 impl PartOwners {
     fn new(owners: Vec<LiveOwner>) -> PyResult<Self> {
         let mut part = Self {
+            key: next_part_key(),
             owners,
             ..Self::default()
         };
@@ -2715,7 +2805,11 @@ impl PartOwners {
         let owner = &self.owners[index];
         let body = matches!(owner.address.physical, PhysicalOwner::TextBody { .. });
         self.by_path
-            .entry((owner.address.path.clone(), owner.address.layout_index, body))
+            .entry((
+                owner.address.local.clone(),
+                owner.address.layout_index,
+                body,
+            ))
             .or_insert(index);
         if let PhysicalOwner::Shape {
             slide,
@@ -2747,32 +2841,41 @@ impl PartOwners {
                 _ => None,
             })
     }
-
-    /// The same owners after their slide moved to another ordinal.
-    fn moved_to(&self, slide: usize) -> PyResult<Self> {
-        let mut owners = Vec::new();
-        owners.try_reserve_exact(self.owners.len()).map_err(|_| {
-            pyo3::exceptions::PyMemoryError::new_err("moved owner inventory allocation failed")
-        })?;
-        owners.extend(self.owners.iter().cloned());
-        for owner in &mut owners {
-            if let Some(PathSeg::Slide(index)) = owner.address.path.first_mut() {
-                *index = slide;
-            }
-        }
-        Self::new(owners)
-    }
 }
 
 /// The owner inventory in parts, one per slide in slide order, then the
-/// layouts and masters. Untouched parts are shared with a prepared edit.
+/// layouts and masters. Untouched parts are shared with a prepared edit, and
+/// so is a part whose slide only moved.
 #[derive(Clone, Debug, Default)]
 struct OwnerParts {
     slides: Vec<Arc<PartOwners>>,
     masters: Arc<PartOwners>,
+    /// The slide ordinal of each slide part's key.
+    positions: HashMap<PartKey, usize>,
 }
 
 impl OwnerParts {
+    fn new(slides: Vec<Arc<PartOwners>>, masters: Arc<PartOwners>) -> PyResult<Self> {
+        let mut positions = HashMap::new();
+        positions.try_reserve(slides.len()).map_err(|_| {
+            pyo3::exceptions::PyMemoryError::new_err("PowerPoint owner part allocation failed")
+        })?;
+        positions.extend(slides.iter().enumerate().map(|(at, part)| (part.key, at)));
+        Ok(Self {
+            slides,
+            masters,
+            positions,
+        })
+    }
+
+    /// Where the part with this key sits.
+    fn position(&self, key: PartKey) -> Option<OwnerPart> {
+        if key == self.masters.key {
+            return Some(OwnerPart::Masters);
+        }
+        self.positions.get(&key).copied().map(OwnerPart::Slide)
+    }
+
     fn part(&self, part: OwnerPart) -> Option<&PartOwners> {
         match part {
             OwnerPart::Slide(index) => self.slides.get(index).map(|owners| &**owners),
@@ -2805,10 +2908,18 @@ impl OwnerParts {
         path: &[PathSeg],
         layout_index: Option<usize>,
         body: bool,
-    ) -> Option<&LiveOwner> {
-        let part = self.part(OwnerPart::of(path))?;
-        let key = (smallvec::SmallVec::from_slice(path), layout_index, body);
-        part.owners.get(*part.by_path.get(&key)?)
+    ) -> Option<OwnerView<'_>> {
+        let part = OwnerPart::of(path);
+        let owners = self.part(part)?;
+        let key = (
+            smallvec::SmallVec::from_slice(part.local_path(path)),
+            layout_index,
+            body,
+        );
+        Some(OwnerView {
+            live: owners.owners.get(*owners.by_path.get(&key)?)?,
+            part,
+        })
     }
 }
 
@@ -2816,7 +2927,9 @@ impl OwnerParts {
 #[derive(Debug, Default)]
 struct OwnerInventory {
     parts: OwnerParts,
-    by_generation: HashMap<u64, (OwnerPart, usize)>,
+    /// Each owner's part key and index in that part. A part that moves
+    /// keeps its key, so its owners keep their entries.
+    by_generation: HashMap<u64, (PartKey, usize)>,
     shape_ids: HashMap<(PartIdentity, u32), usize>,
 }
 
@@ -2834,11 +2947,11 @@ impl OwnerInventory {
             .by_generation
             .try_reserve(parts.len())
             .map_err(fail)?;
-        for (part, owners) in parts.iter() {
+        for (_, owners) in parts.iter() {
             for (index, owner) in owners.owners.iter().enumerate() {
                 inventory
                     .by_generation
-                    .insert(owner.owner.generation(), (part, index));
+                    .insert(owner.owner.generation(), (owners.key, index));
             }
             for (key, count) in &owners.shape_ids {
                 *inventory.shape_ids.entry(key.clone()).or_default() += count;
@@ -2847,9 +2960,18 @@ impl OwnerInventory {
         Ok(inventory)
     }
 
-    fn owner(&self, generation: u64) -> Option<&LiveOwner> {
-        let (part, index) = self.by_generation.get(&generation)?;
-        self.parts.part(*part)?.owners.get(*index)
+    /// The part and index of the owner with this generation.
+    fn locate(&self, generation: u64) -> Option<(OwnerPart, usize)> {
+        let (key, index) = self.by_generation.get(&generation)?;
+        Some((self.parts.position(*key)?, *index))
+    }
+
+    fn owner(&self, generation: u64) -> Option<OwnerView<'_>> {
+        let (part, index) = self.locate(generation)?;
+        Some(OwnerView {
+            live: self.parts.part(part)?.owners.get(index)?,
+            part,
+        })
     }
 
     /// Reserves every index entry a prepared change adds, before its commit.
@@ -2859,7 +2981,7 @@ impl OwnerInventory {
         };
         let mut owners = 0;
         let mut ids = 0;
-        for part in change.rebuilt.iter().chain(&change.moved) {
+        for part in &change.rebuilt {
             let part = change.parts.part(*part).expect("prepared inventory part");
             owners += part.owners.len();
             ids += part.shape_ids.len();
@@ -2869,7 +2991,8 @@ impl OwnerInventory {
         Ok(())
     }
 
-    /// Installs a prepared change. Nothing here can fail.
+    /// Installs a prepared change. Nothing here can fail. Carried parts,
+    /// moved or not, keep their keys and so their index entries.
     fn apply(&mut self, change: InventoryChange) {
         for part in &change.dropped {
             let owners = self.parts.part(*part).expect("dropped live part");
@@ -2886,15 +3009,12 @@ impl OwnerInventory {
             }
         }
         self.parts = change.parts;
-        for part in change.rebuilt.iter().chain(&change.moved) {
-            let owners = self.parts.part(*part).expect("prepared inventory part");
-            for (index, owner) in owners.owners.iter().enumerate() {
-                self.by_generation
-                    .insert(owner.owner.generation(), (*part, index));
-            }
-        }
         for part in &change.rebuilt {
             let owners = self.parts.part(*part).expect("rebuilt inventory part");
+            for (index, owner) in owners.owners.iter().enumerate() {
+                self.by_generation
+                    .insert(owner.owner.generation(), (owners.key, index));
+            }
             for (key, count) in &owners.shape_ids {
                 *self.shape_ids.entry(key.clone()).or_default() += count;
             }
@@ -2903,7 +3023,8 @@ impl OwnerInventory {
         self.assert_indexes();
     }
 
-    /// Debug builds check that the indexes kept by deltas match a rebuild.
+    /// Debug builds check that the indexes kept by deltas match a rebuild,
+    /// and that every part has its own key at its own position.
     #[cfg(debug_assertions)]
     fn assert_indexes(&self) {
         let rebuilt = Self::new(self.parts.clone()).expect("debug index rebuild");
@@ -2912,6 +3033,23 @@ impl OwnerInventory {
             "owner generation index"
         );
         assert_eq!(self.shape_ids, rebuilt.shape_ids, "shape ID index");
+        let positions = &self.parts.positions;
+        for (at, part) in self.parts.slides.iter().enumerate() {
+            assert_eq!(
+                positions.get(&part.key),
+                Some(&at),
+                "slide part key position"
+            );
+        }
+        assert_eq!(
+            positions.len(),
+            self.parts.slides.len(),
+            "one key per slide part"
+        );
+        assert!(
+            !positions.contains_key(&self.parts.masters.key),
+            "the master part has its own key"
+        );
     }
 }
 
@@ -2922,8 +3060,6 @@ struct InventoryChange {
     dropped: Vec<OwnerPart>,
     /// Prepared parts walked again, whose owners enter the indexes.
     rebuilt: Vec<OwnerPart>,
-    /// Prepared parts carried from another slide ordinal.
-    moved: Vec<OwnerPart>,
 }
 
 /// The live parts a prepared edit keeps.
@@ -2962,7 +3098,8 @@ impl CarriedParts {
 
 enum OwnerChanges {
     Replace(InventoryChange),
-    Append(Vec<LiveOwner>),
+    /// Owners appended to one slide's part.
+    Append(usize, Vec<LiveOwner>),
 }
 
 pub(crate) struct PreparedOwners {
@@ -2988,9 +3125,15 @@ fn assert_same_preparation(carried: &PyResult<PreparedOwners>, walked: &PyResult
         let owners = change
             .parts
             .iter()
-            .flat_map(|(_, part)| &part.owners)
+            .flat_map(|(part, owners)| {
+                owners
+                    .owners
+                    .iter()
+                    .map(move |live| OwnerView { live, part })
+            })
             .map(|owner| {
                 (
+                    owner.path(),
                     owner.address.clone(),
                     owner.owner.generation(),
                     owner.text.generation(),
@@ -3311,14 +3454,17 @@ impl PyPresentation {
         let masters = states
             .next()
             .expect("three inventory scopes were initialized");
-        let mut parts = OwnerParts::default();
+        let mut slide_parts = Vec::new();
         let mut owners = Vec::new();
         for (at, address) in addresses.into_iter().enumerate() {
-            if parts.slides.len() < slide_ends.len() && at == slide_ends[parts.slides.len()] {
-                parts
-                    .slides
-                    .push(Arc::new(PartOwners::new(std::mem::take(&mut owners))?));
+            while slide_parts.len() < slide_ends.len() && at == slide_ends[slide_parts.len()] {
+                slide_parts.push(Arc::new(PartOwners::new(std::mem::take(&mut owners))?));
             }
+            let part = if slide_parts.len() < slide_ends.len() {
+                OwnerPart::Slide(slide_parts.len())
+            } else {
+                OwnerPart::Masters
+            };
             let owner = states.next().expect("owner scope was initialized");
             let text = states.next().expect("text scope was initialized");
             let xml_children = states.next().expect("XML child scope was initialized");
@@ -3329,19 +3475,17 @@ impl PyPresentation {
                 pyo3::exceptions::PyMemoryError::new_err("owner inventory allocation failed")
             })?;
             owners.push(LiveOwner {
-                address,
+                address: PartAddress::new(address, part),
                 owner,
                 text,
                 xml_children,
                 grid,
             });
         }
-        while parts.slides.len() < slide_ends.len() {
-            parts
-                .slides
-                .push(Arc::new(PartOwners::new(std::mem::take(&mut owners))?));
+        while slide_parts.len() < slide_ends.len() {
+            slide_parts.push(Arc::new(PartOwners::new(std::mem::take(&mut owners))?));
         }
-        parts.masters = Arc::new(PartOwners::new(owners)?);
+        let parts = OwnerParts::new(slide_parts, Arc::new(PartOwners::new(owners)?))?;
         Ok(Self {
             inner,
             revisions,
@@ -3359,7 +3503,7 @@ impl PyPresentation {
         path: &[oxoffice_py_support::PathSeg],
         layout_index: Option<usize>,
         body: bool,
-    ) -> Option<&LiveOwner> {
+    ) -> Option<OwnerView<'_>> {
         self.owners.parts.owner_at(path, layout_index, body)
     }
 
@@ -3367,11 +3511,11 @@ impl PyPresentation {
         &self,
         path: &[oxoffice_py_support::PathSeg],
         layout_index: Option<usize>,
-    ) -> Option<&LiveOwner> {
+    ) -> Option<OwnerView<'_>> {
         self.indexed_owner_at(path, layout_index, false)
     }
 
-    fn body_owner_at(&self, path: &[oxoffice_py_support::PathSeg]) -> Option<&LiveOwner> {
+    fn body_owner_at(&self, path: &[oxoffice_py_support::PathSeg]) -> Option<OwnerView<'_>> {
         self.indexed_owner_at(path, None, true)
     }
 
@@ -3390,10 +3534,8 @@ impl PyPresentation {
         let mut path = captured.clone();
         let end = match &owner.address.physical {
             PhysicalOwner::TextBody { cell, .. } => {
-                let native_path = oxoffice_py_support::ContentPath::new(
-                    owner.address.path.clone(),
-                    self.revisions.current(),
-                );
+                let native_path =
+                    oxoffice_py_support::ContentPath::new(owner.path(), self.revisions.current());
                 let shape = crate::shape::native_shape_ref_at(&self.inner, &native_path)?;
                 let exists = match cell {
                     Some((row, column)) => {
@@ -3445,7 +3587,7 @@ impl PyPresentation {
                 .position(|seg| matches!(seg, PathSeg::Master(_)))?,
         };
         let suffix = captured.segs.iter().skip(end + 1).copied();
-        path.segs = owner.address.path.clone();
+        path.segs = owner.path();
         path.segs.extend(suffix);
         Some(path)
     }
@@ -3510,7 +3652,7 @@ impl PyPresentation {
                 segs,
                 (descendants, false, false),
             ),
-            OwnerChanges::Append(owners) => {
+            OwnerChanges::Append(appended_to, owners) => {
                 use oxoffice_py_support::PathSeg;
                 let [PathSeg::Slide(slide), PathSeg::Shape(_)] = segs.as_slice() else {
                     return Err(PyValueError::new_err("append requires a root shape owner"));
@@ -3526,7 +3668,8 @@ impl PyPresentation {
                 let shape = owners
                     .iter()
                     .find(|owner| {
-                        owner.address.path == segs
+                        slide == appended_to
+                            && owner.address.local.as_slice() == &segs[1..]
                             && matches!(owner.address.physical, PhysicalOwner::Shape { .. })
                     })
                     .ok_or_else(|| PyValueError::new_err("append shape owner is absent"))?;
@@ -3633,8 +3776,10 @@ impl PyPresentation {
             Some(owner) => owner,
             None => {
                 // An opaque ancestor shares the first segment, so its part.
+                let owner_part = OwnerPart::of(&owner_path);
+                let local = owner_part.local_path(&owner_path);
                 let opaque_parent = !select_body
-                    && parts.part(OwnerPart::of(&owner_path)).is_some_and(|part| {
+                    && parts.part(owner_part).is_some_and(|part| {
                         part.owners.iter().any(|owner| {
                             matches!(
                                 &owner.address.physical,
@@ -3642,8 +3787,8 @@ impl PyPresentation {
                                     kind: oxoffice_pptx::ShapeKind::AlternateContent,
                                     ..
                                 }
-                            ) && owner_path.starts_with(&owner.address.path)
-                                && owner_path.len() > owner.address.path.len()
+                            ) && local.starts_with(&owner.address.local)
+                                && local.len() > owner.address.local.len()
                         })
                     });
                 if opaque_parent && serial == self.revisions.current() {
@@ -3827,7 +3972,7 @@ impl PyPresentation {
             && (0..candidate.master_count()).all(|index| {
                 let live = self.owners.parts.owner_at(&[PathSeg::Master(index)], None, false);
                 matches!(
-                    (live.map(|owner| &owner.address.physical), candidate.slide_master_part_name(index)),
+                    (live.map(|owner| &owner.live.address.physical), candidate.slide_master_part_name(index)),
                     (Some(PhysicalOwner::Master(live)), Ok(Some(part))) if *live == part
                 )
             });
@@ -3838,9 +3983,8 @@ impl PyPresentation {
             for proof in list {
                 let own = self
                     .owners
-                    .by_generation
-                    .get(&proof.generation)
-                    .is_some_and(|(at, _)| at == part);
+                    .locate(proof.generation)
+                    .is_some_and(|(at, _)| at == *part);
                 if !own || carried.keeps(OwnerPart::of(&proof.destination)) {
                     return walk_all;
                 }
@@ -3951,8 +4095,7 @@ impl PyPresentation {
                 .enumerate()
                 .any(|(at, from)| from.is_some_and(|from| from != at))
             || retained.iter().any(|(old, proof)| {
-                old.address.path != proof.destination
-                    || old.address.layout_index != proof.layout_index
+                old.path() != proof.destination || old.address.layout_index != proof.layout_index
             });
         if structural {
             // A mutation cannot disambiguate imported missing/duplicate IDs by
@@ -4111,8 +4254,8 @@ impl PyPresentation {
                             .successor(at)
                             .expect("affected scope successor exists")
                     };
-                    let mut owner = old.clone();
-                    owner.address = address;
+                    let mut owner = old.live.clone();
+                    owner.address = PartAddress::new(address, part);
                     if let Some(at) = text {
                         owner.text = successor(at);
                     }
@@ -4130,7 +4273,7 @@ impl PyPresentation {
                         .table
                         .then(|| revision.born(start + 3).expect("table birth exists"));
                     owners.push(LiveOwner {
-                        address,
+                        address: PartAddress::new(address, part),
                         owner: revision.born(start).expect("owner birth exists"),
                         text: revision.born(start + 1).expect("text birth exists"),
                         xml_children: revision.born(start + 2).expect("XML child birth exists"),
@@ -4140,24 +4283,25 @@ impl PyPresentation {
             }
             rebuilt.push((part, Arc::new(PartOwners::new(owners)?)));
         }
-        let mut parts = OwnerParts::default();
-        let mut moved = Vec::new();
+        // A carried part is shared wherever its slide lands: its paths leave
+        // out the slide, and its key gives the new position.
         let mut walked = rebuilt.iter();
-        for (at, from) in carried.slides.iter().enumerate() {
-            parts.slides.push(match from {
-                Some(from) if *from == at => Arc::clone(&live.slides[*from]),
-                Some(from) => {
-                    moved.push(OwnerPart::Slide(at));
-                    Arc::new(live.slides[*from].moved_to(at)?)
-                }
-                None => Arc::clone(&walked.next().expect("walked slide part").1),
-            });
-        }
-        parts.masters = if carried.masters {
+        let mut slide_parts = Vec::new();
+        slide_parts
+            .try_reserve_exact(carried.slides.len())
+            .map_err(|_| {
+                pyo3::exceptions::PyMemoryError::new_err("candidate owner parts allocation failed")
+            })?;
+        slide_parts.extend(carried.slides.iter().map(|from| match from {
+            Some(from) => Arc::clone(&live.slides[*from]),
+            None => Arc::clone(&walked.next().expect("walked slide part").1),
+        }));
+        let masters_part = if carried.masters {
             Arc::clone(&live.masters)
         } else {
             Arc::clone(&walked.next().expect("walked master part").1)
         };
+        let parts = OwnerParts::new(slide_parts, masters_part)?;
         let slides = slides_at.map_or_else(
             || self.slides.clone(),
             |at| revision.successor(at).expect("inventory successor exists"),
@@ -4176,7 +4320,6 @@ impl PyPresentation {
                 parts,
                 dropped: old_parts.iter().map(|(part, _, _)| *part).collect(),
                 rebuilt: rebuilt.into_iter().map(|(part, _)| part).collect(),
-                moved,
             }),
             slides,
             layouts,
@@ -4200,7 +4343,7 @@ impl PyPresentation {
     pub(crate) fn commit_prepared(&mut self, prepared: PreparedOwners) -> PyResult<()> {
         match &prepared.owners {
             OwnerChanges::Replace(change) => self.owners.reserve(change)?,
-            OwnerChanges::Append(owners) => {
+            OwnerChanges::Append(_, owners) => {
                 self.owners
                     .by_generation
                     .try_reserve(owners.len())
@@ -4221,16 +4364,13 @@ impl PyPresentation {
             .map_err(oxoffice_py_support::revision_to_pyerr)?;
         match prepared.owners {
             OwnerChanges::Replace(change) => self.owners.apply(change),
-            OwnerChanges::Append(owners) => {
-                let Some(&PathSeg::Slide(slide)) = owners[0].address.path.first() else {
-                    unreachable!("appended owners belong to a slide");
-                };
-                let part = OwnerPart::Slide(slide);
+            OwnerChanges::Append(slide, owners) => {
                 let owners_part = self
                     .owners
                     .parts
-                    .part_mut(part)
+                    .part_mut(OwnerPart::Slide(slide))
                     .expect("appended slide part");
+                let key = owners_part.key;
                 for owner in owners {
                     let index = owners_part.owners.len();
                     if let PhysicalOwner::Shape {
@@ -4247,7 +4387,7 @@ impl PyPresentation {
                     }
                     self.owners
                         .by_generation
-                        .insert(owner.owner.generation(), (part, index));
+                        .insert(owner.owner.generation(), (key, index));
                     owners_part.owners.push(owner);
                     owners_part.index(index);
                 }
@@ -4363,7 +4503,7 @@ impl PyPresentation {
             .map(|(index, address)| {
                 let start = index * 3;
                 LiveOwner {
-                    address,
+                    address: PartAddress::new(address, OwnerPart::Slide(slide_index)),
                     owner: revision.born(start).expect("textbox owner birth"),
                     text: revision.born(start + 1).expect("textbox text birth"),
                     xml_children: revision.born(start + 2).expect("textbox xml birth"),
@@ -4373,7 +4513,7 @@ impl PyPresentation {
             .collect::<Vec<_>>();
         Ok(PreparedOwners {
             revision,
-            owners: OwnerChanges::Append(born),
+            owners: OwnerChanges::Append(slide_index, born),
             slides: self.slides.clone(),
             layouts: self.layouts.clone(),
             masters: self.masters.clone(),
@@ -4396,7 +4536,7 @@ impl PyPresentation {
             .expect("successful textbox append");
         let id = shape.non_visual_id();
         let kind = shape.kind();
-        let OwnerChanges::Append(owners) = &mut prepared.owners else {
+        let OwnerChanges::Append(_, owners) = &mut prepared.owners else {
             unreachable!("textbox append has prepared births");
         };
         for owner in owners {
@@ -4425,16 +4565,16 @@ impl PyPresentation {
     ) -> PyResult<OwnerProofs> {
         use oxoffice_py_support::PathSeg;
         let mut parts = self.prefix_parts(&path.segs);
-        if let Some((part, _)) = self.owners.by_generation.get(&generation)
-            && !parts.contains(part)
+        if let Some((part, _)) = self.owners.locate(generation)
+            && !parts.contains(&part)
         {
-            parts.push(*part);
+            parts.push(part);
         }
         self.part_owner_proofs(parts, |old, proof| {
             let old_path = if let Some(index) = old.address.layout_index {
                 smallvec![PathSeg::Layout(index)]
             } else {
-                old.address.path.clone()
+                old.path()
             };
             if proof.generation == generation {
                 proof.xml_children_changed = kind != PptElementKind::Table;
@@ -4463,12 +4603,10 @@ impl PyPresentation {
         &mut self,
         path: &oxoffice_py_support::ContentPath,
     ) -> PyResult<PreparedShapeXml> {
-        let (part, selected) = *self
+        let (part, selected) = self
             .owners
-            .by_generation
-            .get(
-                &path
-                    .owner_generation()
+            .locate(
+                path.owner_generation()
                     .ok_or_else(|| PyValueError::new_err("Element owner is absent"))?,
             )
             .ok_or_else(|| PyValueError::new_err("Element owner is absent"))?;
@@ -4487,7 +4625,11 @@ impl PyPresentation {
         let mut indices = Vec::with_capacity(addresses.len());
         for address in addresses {
             let body = matches!(address.physical, PhysicalOwner::TextBody { .. });
-            let key = (address.path, address.layout_index, body);
+            let key = (
+                smallvec::SmallVec::from_slice(part.local_path(&address.path)),
+                address.layout_index,
+                body,
+            );
             let index = *owners
                 .by_path
                 .get(&key)
@@ -4560,13 +4702,14 @@ impl PyPresentation {
             .parts
             .part_mut(prepared.part)
             .expect("prepared shape part");
+        let key = owners.key;
         for (index, owner) in prepared.updates {
             self.owners
                 .by_generation
                 .remove(&owners.owners[index].owner.generation());
             self.owners
                 .by_generation
-                .insert(owner.owner.generation(), (prepared.part, index));
+                .insert(owner.owner.generation(), (key, index));
             owners.owners[index] = owner;
         }
         Ok(())
@@ -4840,7 +4983,9 @@ impl PyPresentation {
                             let unchanged = owners
                                 .owners
                                 .iter()
-                                .filter_map(|owner| PartEdit::Unchanged.proof(owner))
+                                .filter_map(|live| {
+                                    PartEdit::Unchanged.proof(OwnerView { live, part: *part })
+                                })
                                 .collect::<Vec<_>>();
                             assert_eq!(&unchanged, list, "footer proofs of kept {part:?}");
                         }
@@ -4894,9 +5039,7 @@ impl PyPresentation {
             if matches!(
                 old.address.physical,
                 PhysicalOwner::Paragraph { .. } | PhysicalOwner::Run { .. }
-            ) && changed_bodies
-                .iter()
-                .any(|base| old.address.path.starts_with(base))
+            ) && changed_bodies.iter().any(|base| old.path_starts_with(base))
             {
                 return Ok(false);
             }
@@ -4910,7 +5053,7 @@ impl PyPresentation {
                     return Err(PyValueError::new_err("footer owner identity is ambiguous"));
                 }
             };
-            let before_path = ContentPath::new(old.address.path.clone(), self.revisions.current());
+            let before_path = ContentPath::new(old.path(), self.revisions.current());
             let after_path = ContentPath::new(after.path.clone(), self.revisions.current());
             let text_changed = match &old.address.physical {
                 PhysicalOwner::Shape { .. } => {
@@ -4938,7 +5081,7 @@ impl PyPresentation {
                 | PhysicalOwner::Run { .. } => false,
             };
             if text_changed && matches!(old.address.physical, PhysicalOwner::TextBody { .. }) {
-                changed_bodies.push(old.address.path.clone());
+                changed_bodies.push(old.path());
             }
             proof.destination = after.path.clone();
             proof.layout_index = after.layout_index;
@@ -4963,7 +5106,7 @@ impl PyPresentation {
     fn part_owner_proofs(
         &self,
         parts: Vec<OwnerPart>,
-        mut edit: impl FnMut(&LiveOwner, &mut OwnerSurvival) -> PyResult<bool>,
+        mut edit: impl FnMut(OwnerView<'_>, &mut OwnerSurvival) -> PyResult<bool>,
     ) -> PyResult<OwnerProofs> {
         let mut listed = Vec::new();
         for part in parts {
@@ -4974,7 +5117,8 @@ impl PyPresentation {
             proofs.try_reserve_exact(owners.owners.len()).map_err(|_| {
                 pyo3::exceptions::PyMemoryError::new_err("owner proofs allocation failed")
             })?;
-            for owner in &owners.owners {
+            for live in &owners.owners {
+                let owner = OwnerView { live, part };
                 let mut proof = PartEdit::Unchanged
                     .proof(owner)
                     .expect("an unchanged owner survives");
@@ -5088,7 +5232,7 @@ impl PyPresentation {
             })
             .collect();
         let mut proofs = self.part_owner_proofs(parts, |owner, proof| {
-            let path = ContentPath::new(owner.address.path.clone(), self.revisions.current());
+            let path = ContentPath::new(owner.path(), self.revisions.current());
             proof.text_changed = match &owner.address.physical {
                 PhysicalOwner::Slide(_) => {
                     let index = crate::shape::slide_index(&path)?;
@@ -5127,7 +5271,7 @@ impl PyPresentation {
                     proof.text_changed
                         && matches!(owner.address.physical, PhysicalOwner::TextBody { .. })
                 })
-                .map(|(owner, _)| owner.address.path.clone())
+                .map(|(owner, _)| owner.address.local.clone())
                 .collect::<Vec<_>>();
             let mut owners = owners.iter();
             list.retain(|_| {
@@ -5137,7 +5281,7 @@ impl PyPresentation {
                     PhysicalOwner::Paragraph { .. } | PhysicalOwner::Run { .. }
                 ) || !changed
                     .iter()
-                    .any(|base| owner.address.path.starts_with(base))
+                    .any(|base| owner.address.local.starts_with(base))
             });
         }
         Ok(proofs)
@@ -5164,8 +5308,7 @@ impl PyPresentation {
             .copied()
             .collect::<smallvec::SmallVec<[PathSeg; 5]>>();
         self.part_owner_proofs(self.prefix_parts(&table_path), |owner, proof| {
-            if owner.address.layout_index.is_some() || !owner.address.path.starts_with(&table_path)
-            {
+            if owner.address.layout_index.is_some() || !owner.path_starts_with(&table_path) {
                 return Ok(true);
             }
             let cell = match owner.address.physical {
@@ -5203,10 +5346,9 @@ impl PyPresentation {
         let generation = path
             .owner_generation()
             .ok_or_else(|| PyValueError::new_err("text append needs a bound owner"))?;
-        let (part, _) = *self
+        let (part, _) = self
             .owners
-            .by_generation
-            .get(&generation)
+            .locate(generation)
             .ok_or_else(|| PyValueError::new_err("text append owner is absent"))?;
         self.part_owner_proofs(vec![part], |_, proof| {
             proof.text_changed |= proof.generation == generation;
@@ -5240,38 +5382,38 @@ impl PyPresentation {
         let body = self
             .body_owner_at(&base)
             .map(|owner| owner.owner.generation());
-        let owner = self.owners.by_generation.get(&generation);
+        let owner = self.owners.locate(generation);
         // The slide scalar setter edits only the notes part. Slide body
         // owners are unrelated and cannot be retired by that operation.
         if let Some((part, index)) = owner
             && matches!(
                 self.owners
                     .parts
-                    .part(*part)
-                    .map(|owners| &owners.owners[*index].address.physical),
+                    .part(part)
+                    .map(|owners| &owners.owners[index].address.physical),
                 Some(PhysicalOwner::Slide(_))
             )
         {
-            return self.part_owner_proofs(vec![*part], |_, proof| {
+            return self.part_owner_proofs(vec![part], |_, proof| {
                 proof.text_changed |= proof.generation == generation;
                 Ok(true)
             });
         }
         let mut parts = self.prefix_parts(&base);
         if let Some((part, _)) = owner
-            && !parts.contains(part)
+            && !parts.contains(&part)
         {
-            parts.push(*part);
+            parts.push(part);
         }
         self.part_owner_proofs(parts, |old, proof| {
             let removed = if paragraph {
                 matches!(old.address.physical, PhysicalOwner::Run { .. })
-                    && old.address.path.starts_with(&current.segs)
+                    && old.path_starts_with(&current.segs)
             } else {
                 matches!(
                     old.address.physical,
                     PhysicalOwner::Paragraph { .. } | PhysicalOwner::Run { .. }
-                ) && old.address.path.starts_with(&base)
+                ) && old.path_starts_with(&base)
             };
             if removed {
                 return Ok(false);

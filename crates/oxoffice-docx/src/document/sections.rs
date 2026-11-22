@@ -426,13 +426,13 @@ impl Document {
             }
         });
         if let Some(rel_id) = relationship_id {
-            references.insert(
-                slot,
-                HdrFtrRef {
-                    hdr_ftr_type: hdr_type,
-                    rel_id,
-                },
-            );
+            // A replacement keeps the place of the reference it replaces.
+            let mut reference = removed
+                .first()
+                .cloned()
+                .unwrap_or_else(|| HdrFtrRef::new(hdr_type, String::new()));
+            reference.rel_id = rel_id;
+            references.insert(slot, reference);
             if hdr_type == HdrFtrType::First {
                 section.inner.title_pg = Some(true);
             }
@@ -746,14 +746,20 @@ impl Document {
                 if !following_header_overrides[slot]
                     && let Some(inherited) = inherited
                 {
-                    place_story_reference(&mut following.properties_mut().header_refs, inherited);
+                    place_story_reference(
+                        &mut following.properties_mut().header_refs,
+                        HdrFtrRef::new(inherited.hdr_ftr_type, inherited.rel_id),
+                    );
                 }
             }
             for (slot, inherited) in effective_footers.into_iter().enumerate() {
                 if !following_footer_overrides[slot]
                     && let Some(inherited) = inherited
                 {
-                    place_story_reference(&mut following.properties_mut().footer_refs, inherited);
+                    place_story_reference(
+                        &mut following.properties_mut().footer_refs,
+                        HdrFtrRef::new(inherited.hdr_ftr_type, inherited.rel_id),
+                    );
                 }
             }
         }

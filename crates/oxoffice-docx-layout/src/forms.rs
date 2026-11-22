@@ -343,7 +343,7 @@ fn push_shown_text(run: &CT_R, text: &mut String) {
                 }
             })),
             RunContent::Tab => text.push('\t'),
-            RunContent::Break(_)
+            RunContent::Break(..)
             | RunContent::SpecialCharacter(SpecialCharacter::CarriageReturn) => text.push('\n'),
             RunContent::Field(field) => {
                 if let Some(projected) = field.effective_projected_text() {

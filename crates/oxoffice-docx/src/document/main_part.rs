@@ -2479,7 +2479,7 @@ fn plain_picture_free_paragraph(paragraph: &CT_P) -> bool {
             && run.content.iter().all(|content| {
                 matches!(
                     content,
-                    RunContent::Text(_) | RunContent::Tab | RunContent::Break(_)
+                    RunContent::Text(_) | RunContent::Tab | RunContent::Break(..)
                 )
             })
     })

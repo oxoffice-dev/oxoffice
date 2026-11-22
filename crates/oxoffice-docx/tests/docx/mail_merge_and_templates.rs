@@ -1564,11 +1564,7 @@ fn a_dotx_template_filled_and_saved_as_docx_declares_a_document() {
     );
 }
 
-// Fails today: a new document of the minimal profile has no main part until
-// it is saved, so asking its class fails, where the Word-compatible profile
-// answers at once. Issue: #203
 #[test]
-#[should_panic(expected = "a new minimal template knows its class")]
 fn a_new_minimal_template_knows_its_class_before_a_save() {
     let profile = WordCreationProfile::Minimal(WordPackageClass::Template);
     let class = Document::new_with_profile(profile).package_class();
@@ -1679,5 +1675,86 @@ fn a_loop_over_a_paragraph_with_an_endnote_leaves_only_the_endnotes_of_its_copie
         xml.matches("<w:endnote ").count() - 2,
         2,
         "two endnotes and the separators"
+    );
+}
+
+#[test]
+fn a_raw_carriage_return_in_an_embedded_recipient_cell_reads_as_a_line_feed() {
+    // A custom XML part written with Windows line ends holds a raw CR LF in
+    // a cell, which every XML reader reads as one line feed; a CR written as
+    // a reference stays one.
+    let mut doc = doc_with_body(&format!("<w:p>{}</w:p>", merge_field("Name")));
+    doc.set_mail_merge_package(MailMergePackageOptions {
+        settings: package_settings(),
+        source: MailMergePackageSource::Embedded {
+            columns: vec!["Name".to_owned()],
+            records: vec![vec!["CELLMARK".to_owned()]],
+        },
+        mappings: Vec::new(),
+        recipients: Vec::new(),
+    })
+    .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let store = crate::support::package_parts(&bytes)
+        .into_iter()
+        .find(|(_, data)| data.windows(8).any(|window| window == b"CELLMARK"))
+        .map(|(name, _)| format!("/{name}"))
+        .expect("the part holding the recipient table");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part(&store).unwrap().to_vec()).unwrap();
+    package.set_part(
+        &store,
+        xml.replace("CELLMARK", "one\r\ntwo\rthree&#13;four")
+            .into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let package = doc.mail_merge_package().unwrap().expect("the package");
+    assert_eq!(
+        package.source,
+        MailMergePackageSource::Embedded {
+            columns: vec!["Name".to_owned()],
+            records: vec![vec!["one\ntwo\nthree\rfour".to_owned()]],
+        }
+    );
+}
+
+#[test]
+fn a_building_block_name_category_and_description_with_tabs_and_line_ends_read_back_as_set() {
+    let created = "a\tb\nc\rd";
+    let mut new = block(created, "Kind regards");
+    new.category = Some(created.to_owned());
+    new.description = Some(created.to_owned());
+    let mut doc = doc_with(&["Body"]);
+    doc.create_building_block(new).unwrap();
+    let mut doc = reopen(&mut doc);
+    let entry = doc.building_blocks().unwrap().remove(0);
+    let read = &entry.block;
+    assert_eq!(
+        (
+            &*read.name,
+            read.category.as_deref(),
+            read.description.as_deref()
+        ),
+        (created, Some(created), Some(created))
+    );
+
+    // An update rewrites the values in the existing entry.
+    let updated = "e\r\nf\tg";
+    let mut changed = entry.block.clone();
+    changed.name = updated.to_owned();
+    changed.category = Some(updated.to_owned());
+    changed.description = Some(updated.to_owned());
+    doc.update_building_block(&entry, changed).unwrap();
+    let doc = reopen(&mut doc);
+    let read = &doc.building_blocks().unwrap()[0].block;
+    assert_eq!(
+        (
+            &*read.name,
+            read.category.as_deref(),
+            read.description.as_deref()
+        ),
+        (updated, Some(updated), Some(updated))
     );
 }

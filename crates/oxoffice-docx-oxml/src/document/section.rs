@@ -827,10 +827,7 @@ impl CT_SectPr {
                             }
                         }
                         if !rel_id.is_empty() {
-                            sect.header_refs.push(HdrFtrRef {
-                                hdr_ftr_type: hdr_type,
-                                rel_id,
-                            });
+                            sect.push_story_reference(HdrFtrRef::new(hdr_type, rel_id), true);
                             header_count += 1;
                         }
                         raw_position = (0, header_count);
@@ -853,10 +850,7 @@ impl CT_SectPr {
                             }
                         }
                         if !rel_id.is_empty() {
-                            sect.footer_refs.push(HdrFtrRef {
-                                hdr_ftr_type: ftr_type,
-                                rel_id,
-                            });
+                            sect.push_story_reference(HdrFtrRef::new(ftr_type, rel_id), false);
                             footer_count += 1;
                         }
                         raw_position = (1, footer_count);
@@ -936,7 +930,7 @@ impl CT_SectPr {
                         {
                             sect.push_extra_xml(raw, 0, header_count);
                         } else if let Some(reference) = Self::parse_story_reference(e, &prefixes)? {
-                            sect.header_refs.push(reference);
+                            sect.push_story_reference(reference, true);
                             header_count += 1;
                         }
                         raw_position = (0, header_count);
@@ -950,7 +944,7 @@ impl CT_SectPr {
                         {
                             sect.push_extra_xml(raw, 1, footer_count);
                         } else if let Some(reference) = Self::parse_story_reference(e, &prefixes)? {
-                            sect.footer_refs.push(reference);
+                            sect.push_story_reference(reference, false);
                             footer_count += 1;
                         }
                         raw_position = (1, footer_count);
@@ -1196,10 +1190,67 @@ impl CT_SectPr {
                 relationship_id = Some(value);
             }
         }
-        Ok(relationship_id.map(|rel_id| HdrFtrRef {
-            hdr_ftr_type,
-            rel_id,
-        }))
+        Ok(relationship_id.map(|rel_id| HdrFtrRef::new(hdr_ftr_type, rel_id)))
+    }
+
+    /// Append a header (or footer) reference read from the source, with its
+    /// place among all the header and footer references of the section.
+    fn push_story_reference(&mut self, mut reference: HdrFtrRef, header: bool) {
+        reference.source_index = Some(self.header_refs.len() + self.footer_refs.len());
+        if header {
+            self.header_refs.push(reference);
+        } else {
+            self.footer_refs.push(reference);
+        }
+    }
+
+    /// The order the header and footer references are written in, each as
+    /// whether it is a header and its index in its list. Each list keeps its
+    /// own order. References read together keep the order they were read
+    /// in, Word's interleaving included. A new reference goes just before
+    /// the next reference read in its list, and those at the end of their
+    /// list after every reference read, header then footer for each type
+    /// in the order default, first, even: the order Word writes a default
+    /// and a first-page header and footer in.
+    fn story_reference_order(&self) -> Vec<(bool, usize)> {
+        // (place of the next reference read, read after new, type rank)
+        fn keys(references: &[HdrFtrRef], header: bool) -> Vec<(usize, u8, u8)> {
+            let mut next_read = usize::MAX;
+            let mut keys = vec![(0, 0, 0); references.len()];
+            for (index, reference) in references.iter().enumerate().rev() {
+                keys[index] = match reference.source_index {
+                    Some(source) => {
+                        next_read = source;
+                        (source, 1, 0)
+                    }
+                    None => {
+                        let rank = match reference.hdr_ftr_type {
+                            HdrFtrType::Default => 0,
+                            HdrFtrType::First => 2,
+                            HdrFtrType::Even => 4,
+                        } + u8::from(!header);
+                        (next_read, 0, rank)
+                    }
+                };
+            }
+            keys
+        }
+        let headers = keys(&self.header_refs, true);
+        let footers = keys(&self.footer_refs, false);
+        let (mut header, mut footer) = (0, 0);
+        let mut order = Vec::with_capacity(headers.len() + footers.len());
+        while header < headers.len() || footer < footers.len() {
+            if footer == footers.len()
+                || (header < headers.len() && headers[header] <= footers[footer])
+            {
+                order.push((true, header));
+                header += 1;
+            } else {
+                order.push((false, footer));
+                footer += 1;
+            }
+        }
+        order
     }
 
     fn parse_page_number(
@@ -1783,37 +1834,30 @@ impl CT_SectPr {
             self.write_story_reference_boundary(writer, &self.header_refs, true, 0)?;
         }
 
-        // headerReference elements
-        for (index, hdr) in self.header_refs.iter().enumerate() {
-            let mut e =
-                crate::text::FieldXmlStart::word(&word_prefix, "headerReference", emission)?;
-            e.push_word(&word_prefix, "type", hdr.hdr_ftr_type.to_str())?;
+        // headerReference and footerReference elements
+        for (header, index) in self.story_reference_order() {
+            let (references, local) = if header {
+                (&self.header_refs, "headerReference")
+            } else {
+                (&self.footer_refs, "footerReference")
+            };
+            if ordered_raw && !header && index == 0 {
+                self.write_story_reference_boundary(writer, references, false, 0)?;
+            }
+            let reference = &references[index];
+            let mut e = crate::text::FieldXmlStart::word(&word_prefix, local, emission)?;
+            e.push_word(&word_prefix, "type", reference.hdr_ftr_type.to_str())?;
             if declare_relationship {
                 e.push_word("xmlns", relationship_prefix, crate::namespace::R_NS)?;
             }
-            e.push_word(relationship_prefix, "id", hdr.rel_id.as_str())?;
+            e.push_word(relationship_prefix, "id", reference.rel_id.as_str())?;
             e.write(writer, true)?;
             if ordered_raw {
-                self.write_story_reference_boundary(writer, &self.header_refs, true, index + 1)?;
+                self.write_story_reference_boundary(writer, references, header, index + 1)?;
             }
         }
-        if ordered_raw {
+        if ordered_raw && self.footer_refs.is_empty() {
             self.write_story_reference_boundary(writer, &self.footer_refs, false, 0)?;
-        }
-
-        // footerReference elements
-        for (index, ftr) in self.footer_refs.iter().enumerate() {
-            let mut e =
-                crate::text::FieldXmlStart::word(&word_prefix, "footerReference", emission)?;
-            e.push_word(&word_prefix, "type", ftr.hdr_ftr_type.to_str())?;
-            if declare_relationship {
-                e.push_word("xmlns", relationship_prefix, crate::namespace::R_NS)?;
-            }
-            e.push_word(relationship_prefix, "id", ftr.rel_id.as_str())?;
-            e.write(writer, true)?;
-            if ordered_raw {
-                self.write_story_reference_boundary(writer, &self.footer_refs, false, index + 1)?;
-            }
         }
         // footnotePr and endnotePr. Their effect on notes is not applied yet.
         if let Some(footnote_pr) = &self.footnote_pr {

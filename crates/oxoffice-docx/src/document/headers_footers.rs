@@ -794,10 +794,7 @@ impl Document {
 
         for (location, hdr_type) in insertions {
             let relationship_id = self.create_watermark_header_relationship(hdr_type)?;
-            let reference = HdrFtrRef {
-                hdr_ftr_type: hdr_type,
-                rel_id: relationship_id,
-            };
+            let reference = HdrFtrRef::new(hdr_type, relationship_id);
             match location {
                 Some(index) => {
                     let BodyContent::Paragraph(paragraph) = &mut self.document.body.content[index]
@@ -1164,13 +1161,7 @@ impl Document {
         } else {
             &mut sect.footer_refs
         };
-        place_story_reference(
-            refs,
-            HdrFtrRef {
-                hdr_ftr_type: hdr_type,
-                rel_id,
-            },
-        );
+        place_story_reference(refs, HdrFtrRef::new(hdr_type, rel_id));
 
         Ok(part_name)
     }
@@ -1812,10 +1803,7 @@ pub(super) fn materialize_header_footer_inheritance(
             } else if let Some(reference) = effective[index].clone() {
                 references.push(reference);
             } else if hdr_type == HdrFtrType::Even && materialize_blank_even {
-                references.push(HdrFtrRef {
-                    hdr_ftr_type: HdrFtrType::Even,
-                    rel_id: String::new(),
-                });
+                references.push(HdrFtrRef::new(HdrFtrType::Even, String::new()));
             }
         }
     };

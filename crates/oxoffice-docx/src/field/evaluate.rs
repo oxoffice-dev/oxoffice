@@ -1,10 +1,89 @@
 //! Evaluating fields: the evaluator and what it reads from the document.
 
 use super::*;
+use oxoffice_docx_oxml::text::{bookmarks_depending_on, field_ref_targets};
 
 pub(super) struct BookmarkValue {
     text: String,
     range: Option<crate::RunRange>,
+    /// The bookmark's runs as a reader sees them, one row per paragraph,
+    /// when the value is read from them.
+    runs: Option<Vec<Vec<CT_R>>>,
+}
+
+/// The text a reader sees in `runs`, without the display of a field that
+/// depends on a bookmark `excluded` refuses.
+fn runs_text_without(runs: &[Vec<CT_R>], excluded: &dyn Fn(&str) -> bool) -> String {
+    runs.iter()
+        .map(|paragraph| {
+            paragraph
+                .iter()
+                .map(|run| {
+                    run.accepted_text_keeping(&mut |field| {
+                        let mut targets = BTreeSet::new();
+                        field_ref_targets(field, &mut targets);
+                        !targets.iter().any(|target| excluded(target))
+                    })
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Give each bookmark read from its runs the text a reader sees there, less
+/// the display of every field whose result depends on the bookmark itself: a
+/// REF to it, or to a bookmark whose value depends on it in turn. Word
+/// refuses such a self-reference, and keeping its stored result would make
+/// the value grow on every update. Every other field shows its result.
+fn settle_bookmark_texts(bookmarks: &mut BTreeMap<String, BookmarkValue>) {
+    let mut depends = HashMap::<String, BTreeSet<String>>::new();
+    for (name, bookmark) in bookmarks.iter() {
+        let Some(runs) = &bookmark.runs else {
+            continue;
+        };
+        let targets = depends.entry(name.to_lowercase()).or_default();
+        for run in runs.iter().flatten() {
+            run.accepted_text_keeping(&mut |field| {
+                field_ref_targets(field, targets);
+                true
+            });
+        }
+    }
+    for (name, bookmark) in bookmarks.iter_mut() {
+        let Some(runs) = &bookmark.runs else {
+            continue;
+        };
+        let depending = bookmarks_depending_on(name, &mut |current| {
+            depends.get(current).cloned().unwrap_or_default()
+        });
+        bookmark.text = runs_text_without(runs, &|target| depending.contains(target));
+    }
+}
+
+/// The runs of a body bookmark's range, one row per paragraph.
+fn bookmark_range_runs(displays: &[Vec<CT_R>], range: crate::RunRange) -> Result<Vec<Vec<CT_R>>> {
+    let mut rows = Vec::new();
+    for index in range.start.body_index..=range.end.body_index {
+        let Some(runs) = displays.get(index) else {
+            return Err(Error::Other("bookmark range owner is missing".into()));
+        };
+        let start = if index == range.start.body_index {
+            range.start.run_index
+        } else {
+            0
+        };
+        let end = if index == range.end.body_index {
+            range.end.run_index
+        } else {
+            runs.len()
+        };
+        let Some(slice) = runs.get(start..end) else {
+            return Err(Error::Other("bookmark range is stale".into()));
+        };
+        rows.push(slice.to_vec());
+    }
+    Ok(rows)
 }
 
 fn field_needs_numbering_layout(field: &Field) -> bool {
@@ -34,10 +113,28 @@ impl<'a> Evaluator<'a> {
                     BookmarkValue {
                         text: bookmark.text().to_owned(),
                         range: bookmark.range(),
+                        runs: None,
                     },
                 ))
             })
             .collect();
+        let mut main = Vec::new();
+        collect_body_paragraphs(&document.document.body, &mut main, None);
+        let displays = main
+            .iter()
+            .map(|paragraph| {
+                paragraph
+                    .accepted_bookmark_runs()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        for bookmark in bookmarks.values_mut() {
+            bookmark.runs = bookmark
+                .range
+                .and_then(|range| bookmark_range_runs(&displays, range).ok());
+        }
         // Paragraph inventory keeps the legacy body map and its name filter.
         // Pairing failure blocks only extra related admission.
         let mut cross_owner_bookmarks = HashSet::new();
@@ -63,8 +160,9 @@ impl<'a> Evaluator<'a> {
                         bookmarks.insert(
                             name.clone(),
                             BookmarkValue {
-                                text: cache.runs.iter().map(CT_R::text).collect(),
+                                text: String::new(),
                                 range: None,
+                                runs: Some(cache.rows),
                             },
                         );
                     }
@@ -72,6 +170,7 @@ impl<'a> Evaluator<'a> {
             }
             bookmarks.retain(|name, _| name_counts.get(name).is_some_and(|count| *count == 1));
         }
+        settle_bookmark_texts(&mut bookmarks);
         Self {
             document,
             context,
@@ -184,7 +283,7 @@ impl<'a> Evaluator<'a> {
                                 );
                             }
                         }
-                        displayed.text()
+                        displayed
                     })
                     .collect::<Vec<_>>(),
             );
@@ -193,30 +292,9 @@ impl<'a> Evaluator<'a> {
             let Some(range) = bookmark.range else {
                 continue;
             };
-            let mut parts = Vec::new();
-            for index in range.start.body_index..=range.end.body_index {
-                let Some(runs) = displays.get(index) else {
-                    return Err(Error::Other(
-                        "bookmark sequence range owner is missing".into(),
-                    ));
-                };
-                let start = if index == range.start.body_index {
-                    range.start.run_index
-                } else {
-                    0
-                };
-                let end = if index == range.end.body_index {
-                    range.end.run_index
-                } else {
-                    runs.len()
-                };
-                let Some(slice) = runs.get(start..end) else {
-                    return Err(Error::Other("bookmark sequence range is stale".into()));
-                };
-                parts.push(slice.concat());
-            }
-            bookmark.text = parts.join("\n");
+            bookmark.runs = Some(bookmark_range_runs(&displays, range)?);
         }
+        settle_bookmark_texts(&mut self.bookmarks);
         Ok(())
     }
 
@@ -775,7 +853,10 @@ impl<'a> Evaluator<'a> {
                     self.bookmarks
                         .get(target)
                         .map(|bookmark| bookmark.text.clone())
-                        .unwrap_or_else(|| cache.runs.iter().map(CT_R::text).collect()),
+                        .unwrap_or_else(|| {
+                            let name = target.to_lowercase();
+                            runs_text_without(&cache.rows, &|candidate| candidate == name)
+                        }),
                 ),
                 Ok(None) => keep(&format!("REF target {target} was not found")),
                 Err(error) => keep(&format!("REF f source could not be resolved: {error}")),

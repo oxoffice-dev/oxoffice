@@ -291,7 +291,7 @@ fn push_preserved_attributes(
         if root && name == "xmlns:w15" {
             continue;
         }
-        start.push_attribute((name.as_str(), value.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(start, name, value);
     }
 }
 

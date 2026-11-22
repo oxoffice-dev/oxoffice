@@ -453,6 +453,40 @@ fn markdown_escapes_a_character_reference_in_split_runs_alt_text_and_links() {
 }
 
 #[test]
+fn a_break_that_clears_floats_keeps_its_side_in_html_and_rtf() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>a</w:t><w:br w:type="textWrapping" w:clear="left"/>"#,
+        r#"<w:t>b</w:t><w:br w:type="textWrapping" w:clear="right"/>"#,
+        r#"<w:t>c</w:t><w:br w:type="textWrapping" w:clear="all"/>"#,
+        r#"<w:t>d</w:t><w:br/><w:t>e</w:t></w:r></w:p>"#,
+    ));
+    let styles: Vec<_> = html_elements(&doc.to_html_fragment(), "br")
+        .into_iter()
+        .map(|(_, attributes)| attributes.get("style").cloned())
+        .collect();
+    assert_eq!(
+        styles,
+        [
+            Some("clear: left".to_owned()),
+            Some("clear: right".to_owned()),
+            Some("clear: both".to_owned()),
+            None,
+        ]
+    );
+    // RTF spells the side before the break, as LibreOffice reads it.
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(
+        rtf.contains(r"a\lbr1\line b\lbr2\line c\lbr3\line d\line e"),
+        "{rtf}"
+    );
+    // Markdown has no side: each is a line break.
+    assert_eq!(
+        read_markdown(&doc.to_markdown()),
+        [Read::Paragraph("a\nb\nc\nd\ne".to_owned())]
+    );
+}
+
+#[test]
 fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
     let mut doc = Document::new();
     {
@@ -465,6 +499,37 @@ fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
     let doc = reopen(&mut doc);
     let read = read_markdown(&doc.to_markdown());
     assert_eq!(read, [Read::Paragraph("a\n\nb".to_owned())]);
+}
+
+#[test]
+fn a_break_that_clears_floats_is_a_plain_break_in_epub() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>a</w:t><w:br w:type="textWrapping" w:clear="left"/>"#,
+        r#"<w:t>b</w:t><w:br w:clear="all"/><w:t>c</w:t></w:r></w:p>"#,
+    ));
+    let epub = doc.to_epub_bytes().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
+    let mut breaks = 0;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+        let mut xhtml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xhtml).unwrap();
+        // Every chapter stays well-formed XML, as EPUB readers parse it.
+        let mut reader = quick_xml::Reader::from_str(&xhtml);
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Ok(_) => {}
+                Err(error) => panic!("{name} is not well-formed: {error}: {xhtml}"),
+            }
+        }
+        breaks += xhtml.matches("a<br/>b<br/>c").count();
+    }
+    assert_eq!(breaks, 1);
 }
 
 #[test]
@@ -1381,11 +1446,15 @@ fn equations_word_writes_in_wrappers_fields_and_display_groups_reach_both_export
         // A centred display group.
         r#"<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="center"/></m:oMathParaPr>"#,
         r#"<m:oMath><m:r><m:t>d</m:t></m:r></m:oMath></m:oMathPara></w:p>"#,
-        // After a two-run field, in a tracked insertion (the field's result
-        // text is lost there: #392).
+        // After a two-run field, in a tracked insertion: the field's result
+        // stays, before the equation.
         r#"<w:p><w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:fldSimple w:instr=" QUOTE a ">"#,
         r#"<w:r><w:t>1</w:t></w:r><w:r><w:t>2</w:t></w:r></w:fldSimple>"#,
         r#"<m:oMath><m:r><m:t>z</m:t></m:r></m:oMath><w:r><w:t>C</w:t></w:r></w:ins></w:p>"#,
+        // The same after a run: the equation keeps its place in the line.
+        r#"<w:p><w:r><w:t>A</w:t></w:r><w:ins w:id="6" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+        r#"<w:fldSimple w:instr=" QUOTE b "><w:r><w:t>34</w:t></w:r></w:fldSimple>"#,
+        r#"<m:oMath><m:r><m:t>w</m:t></m:r></m:oMath><w:r><w:t>D</w:t></w:r></w:ins></w:p>"#,
     ));
     let (markdown, diagnostics) = doc.to_markdown_with_diagnostics();
     assert!(markdown.contains("tag $y$"), "{markdown}");
@@ -1398,9 +1467,12 @@ fn equations_word_writes_in_wrappers_fields_and_display_groups_reach_both_export
         "{diagnostics:?}"
     );
     // Both exports place it before the run that follows it.
-    assert!(markdown.contains("$z$C"), "{markdown}");
+    assert!(markdown.contains("12$z$C"), "{markdown}");
+    assert!(markdown.contains("A34$w$D"), "{markdown}");
     let html = doc.to_html_fragment();
-    assert_eq!(html.matches("<math").count(), 4, "{html}");
+    assert_eq!(html.matches("<math").count(), 5, "{html}");
+    assert!(html.contains(">A34<math"), "{html}");
+    assert!(html.contains(">12<math"), "{html}");
     assert!(html.contains("<mi>z</mi></math>C</p>"), "{html}");
 }
 

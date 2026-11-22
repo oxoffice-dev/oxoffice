@@ -302,18 +302,20 @@ fn read_paragraph(
                 }
             }
             Event::Text(value) if visible && in_text => text.push_str(
-                &quick_xml::escape::unescape(&value.decode().map_err(|error| {
-                    Error::Other(format!("story paragraph text decode failed: {error}"))
-                })?)
+                &quick_xml::escape::unescape(&oxoffice_core::xml_text::normalize_line_ends(
+                    &value.decode().map_err(|error| {
+                        Error::Other(format!("story paragraph text decode failed: {error}"))
+                    })?,
+                ))
                 .map_err(|error| {
                     Error::Other(format!("story paragraph text unescape failed: {error}"))
                 })?,
             ),
-            Event::CData(value) if visible && in_text => {
-                text.push_str(&value.decode().map_err(|error| {
-                    Error::Other(format!("story paragraph CDATA decode failed: {error}"))
-                })?)
-            }
+            Event::CData(value) if visible && in_text => text.push_str(
+                &oxoffice_core::xml_text::normalize_line_ends(&value.decode().map_err(
+                    |error| Error::Other(format!("story paragraph CDATA decode failed: {error}")),
+                )?),
+            ),
             Event::GeneralRef(value) if visible && in_text => {
                 text.push_str(&oxoffice_core::xml_text::resolve_entity(&value))
             }

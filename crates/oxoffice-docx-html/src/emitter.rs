@@ -7,7 +7,7 @@ use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_Jc;
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, VMerge};
-use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
+use oxoffice_docx_oxml::text::{BreakClear, BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
 use crate::css;
 use crate::sanitize::{escape_html, escape_html_attr};
@@ -456,8 +456,13 @@ fn emit_run(
             RunContent::Tab => {
                 out.push_str("&emsp;");
             }
-            RunContent::Break(bt) => match bt {
-                BreakType::Line => out.push_str("<br>"),
+            RunContent::Break(bt, clear) => match bt {
+                BreakType::Line => out.push_str(match clear {
+                    BreakClear::None => "<br>",
+                    BreakClear::Left => "<br style=\"clear: left\">",
+                    BreakClear::Right => "<br style=\"clear: right\">",
+                    BreakClear::All => "<br style=\"clear: both\">",
+                }),
                 BreakType::Page => out.push_str("<hr>"),
                 BreakType::Column => out.push_str("<br>"),
             },

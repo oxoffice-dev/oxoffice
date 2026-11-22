@@ -596,6 +596,7 @@ pub(super) fn scan_dynamic_table_spans(
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid table of contents instruction: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     let unescaped = quick_xml::escape::unescape(&decoded).map_err(|error| {
                         Error::Other(format!("invalid table of contents instruction: {error}"))
                     })?;
@@ -625,9 +626,15 @@ pub(super) fn scan_dynamic_table_spans(
                 if let Some(field) = fields.last_mut()
                     && field.separator_paragraph.is_none()
                 {
-                    field.instruction.push_str(&text.decode().map_err(|error| {
-                        Error::Other(format!("invalid table of contents instruction: {error}"))
-                    })?);
+                    field
+                        .instruction
+                        .push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                            &text.decode().map_err(|error| {
+                                Error::Other(format!(
+                                    "invalid table of contents instruction: {error}"
+                                ))
+                            })?,
+                        ));
                 }
             }
             Event::Comment(_) | Event::PI(_) => {
@@ -1014,9 +1021,16 @@ fn dynamic_toc_run_position(
         && modeled_simple_field
         && accepted_simple_field_parent(elements, paragraph)
     {
-        if elements.last().is_some_and(|parent| {
-            parent.is_typed_inline_owner
-                && matches!(parent.local_name.as_slice(), b"ins" | b"moveTo")
+        // Nested whenever a revision or a control sits between it and the
+        // paragraph, a hyperlink in a tracked insertion included, as for a run.
+        let nested = elements.iter().rev().take_while(|element| {
+            !element.is_typed_paragraph || element.paragraph != Some(paragraph)
+        });
+        if nested.into_iter().any(|element| {
+            matches!(
+                element.local_name.as_slice(),
+                b"sdt" | b"sdtContent" | b"ins" | b"moveTo"
+            )
         }) {
             let outer = inherited.unwrap_or(TocRunPosition {
                 run_boundary: *next,

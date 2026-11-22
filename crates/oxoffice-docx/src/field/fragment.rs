@@ -1,6 +1,7 @@
 //! Importing document fragments: parts, styles and numbering, notes and markers, and fresh identities for what they bring.
 
 use super::*;
+use oxoffice_docx_oxml::text::NESTED_FIELD_STAND_IN;
 
 pub(crate) fn import_document_fragment_content(
     document: &mut Document,
@@ -3468,9 +3469,9 @@ pub(super) fn body_identity_values(xml: &[u8]) -> Result<BodyIdentityValues> {
             }
             Event::Text(text) if body_depth.is_some() && in_instruction_text => {
                 append_complex_instruction_text(
-                    &text.decode().map_err(|error| {
-                        Error::Other(format!("invalid field instruction text: {error}"))
-                    })?,
+                    &oxoffice_core::xml_text::normalize_line_ends(&text.decode().map_err(
+                        |error| Error::Other(format!("invalid field instruction text: {error}")),
+                    )?),
                     &mut complex,
                 )?;
             }
@@ -3478,9 +3479,23 @@ pub(super) fn body_identity_values(xml: &[u8]) -> Result<BodyIdentityValues> {
                 if let Some(instruction) = complex.last_mut()
                     && instruction.collecting
                 {
-                    instruction.text.push_str(&text.decode().map_err(|error| {
-                        Error::Other(format!("invalid field instruction text: {error}"))
-                    })?);
+                    instruction
+                        .text
+                        .push_str(&oxoffice_core::xml_text::normalize_line_ends(
+                            &text.decode().map_err(|error| {
+                                Error::Other(format!("invalid field instruction text: {error}"))
+                            })?,
+                        ));
+                }
+            }
+            // An entity reference (`&lt;`, `&quot;`) is an event of its own.
+            Event::GeneralRef(reference) if body_depth.is_some() && in_instruction_text => {
+                if let Some(instruction) = complex.last_mut()
+                    && instruction.collecting
+                {
+                    instruction
+                        .text
+                        .push_str(&oxoffice_core::xml_text::resolve_entity(&reference));
                 }
             }
             Event::End(element) => {
@@ -3601,10 +3616,17 @@ fn collect_body_reference_values(
         .map(|(_, value)| value)
         .as_deref()
         {
-            Some("begin") => complex.push(ComplexInstruction {
-                text: String::new(),
-                collecting: true,
-            }),
+            Some("begin") => {
+                if let Some(outer) = complex.last_mut()
+                    && outer.collecting
+                {
+                    outer.text.push(NESTED_FIELD_STAND_IN);
+                }
+                complex.push(ComplexInstruction {
+                    text: String::new(),
+                    collecting: true,
+                })
+            }
             Some("separate") => {
                 if let Some(instruction) = complex.last_mut() {
                     instruction.collecting = false;
@@ -3633,30 +3655,42 @@ fn append_complex_instruction_text(text: &str, complex: &mut [ComplexInstruction
     Ok(())
 }
 
+/// Every name a field may give a bookmark (see
+/// [`oxoffice_docx_oxml::text::bookmark_reference_spans`]).
 fn collect_reference_field_name(instruction: &str, references: &mut Vec<String>) {
-    if let Some(name) = reference_field_name(instruction) {
-        references.push(name);
+    references.extend(
+        oxoffice_docx_oxml::text::bookmark_reference_spans(instruction)
+            .into_iter()
+            .map(|(_, name)| name),
+    );
+}
+
+/// The bookmarks an import renamed, found by any case of their old name.
+struct RenamedBookmarks<'a> {
+    names: &'a BTreeMap<String, String>,
+    folded: HashMap<String, &'a String>,
+}
+
+impl<'a> RenamedBookmarks<'a> {
+    fn new(names: &'a BTreeMap<String, String>) -> Self {
+        let mut folded = HashMap::with_capacity(names.len());
+        for (old, new) in names {
+            folded.entry(old.to_lowercase()).or_insert(new);
+        }
+        Self { names, folded }
     }
-}
 
-/// The bookmark a field refers to (see
-/// [`oxoffice_docx_oxml::text::bookmark_reference_span`]).
-fn reference_field_name(instruction: &str) -> Option<String> {
-    oxoffice_docx_oxml::text::bookmark_reference_span(instruction).map(|(_, name)| name)
-}
-
-/// The new name of the bookmark `old` names, when an import renamed it.
-/// Word compares bookmark names without regard to case, so a reference
-/// written in another case follows the rename too.
-fn renamed_bookmark<'a>(names: &'a BTreeMap<String, String>, old: &str) -> Option<&'a String> {
-    let new = names.get(old).or_else(|| {
+    /// The new name of the bookmark `old` names, when the import renamed
+    /// it. Word compares bookmark names without regard to case, so a
+    /// reference written in another case follows the rename too.
+    fn get(&self, old: &str) -> Option<&'a String> {
         let folded = old.to_lowercase();
-        names
-            .iter()
-            .find(|(name, _)| name.to_lowercase() == folded)
-            .map(|(_, new)| new)
-    })?;
-    (new.to_lowercase() != old.to_lowercase()).then_some(new)
+        let new = self
+            .names
+            .get(old)
+            .or_else(|| self.folded.get(&folded).copied())?;
+        (new.to_lowercase() != folded).then_some(new)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3732,9 +3766,11 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
     let mut depth = 0usize;
     let mut body_depth = None;
     let mut sdt_properties_depth = None;
+    let mut form_data_depth = None;
     let mut edits = Vec::new();
     let mut complex = Vec::<ComplexInstructionEdit>::new();
     let mut in_instruction_text = false;
+    let renamed = RenamedBookmarks::new(&remap.bookmark_names);
     loop {
         let before = reader.buffer_position() as usize;
         let event = reader
@@ -3775,7 +3811,8 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                         after,
                         &element,
                         reader.resolver(),
-                        remap,
+                        &renamed,
+                        form_data_depth.is_some_and(|form| form + 1 == depth),
                         &mut complex,
                         &mut edits,
                     )? {
@@ -3785,6 +3822,11 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                         && matches_local_name(element.name().as_ref(), b"sdtPr")
                     {
                         sdt_properties_depth = Some(depth);
+                    }
+                    if identity_namespace.word
+                        && matches_local_name(element.name().as_ref(), b"ffData")
+                    {
+                        form_data_depth = Some(depth);
                     }
                 }
                 depth += 1;
@@ -3807,7 +3849,8 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                     after,
                     &element,
                     reader.resolver(),
-                    remap,
+                    &renamed,
+                    form_data_depth.is_some_and(|form| form + 1 == depth),
                     &mut complex,
                     &mut edits,
                 )?;
@@ -3819,13 +3862,15 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     let decoded = quick_xml::escape::unescape(&decoded).map_err(|error| {
                         Error::Other(format!("invalid field instruction entity: {error}"))
                     })?;
                     instruction.text.push_str(&decoded);
-                    instruction
-                        .spans
-                        .push((before, after, Some(decoded.into_owned())));
+                    instruction.spans.push(InstructionSpan {
+                        source: Some(before..after),
+                        text: decoded.into_owned(),
+                    });
                 }
             }
             Event::CData(text) if body_depth.is_some() && in_instruction_text => {
@@ -3835,8 +3880,26 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                     let decoded = text.decode().map_err(|error| {
                         Error::Other(format!("invalid field instruction text: {error}"))
                     })?;
+                    let decoded = oxoffice_core::xml_text::normalize_line_ends(&decoded);
                     instruction.text.push_str(&decoded);
-                    instruction.spans.push((before, after, None));
+                    instruction.spans.push(InstructionSpan {
+                        source: None,
+                        text: decoded.into_owned(),
+                    });
+                }
+            }
+            // An entity reference (`&lt;`, `&quot;`) is an event of its own,
+            // read but not edited.
+            Event::GeneralRef(reference) if body_depth.is_some() && in_instruction_text => {
+                if let Some(instruction) = complex.last_mut()
+                    && instruction.collecting
+                {
+                    let resolved = oxoffice_core::xml_text::resolve_entity(&reference);
+                    instruction.text.push_str(&resolved);
+                    instruction.spans.push(InstructionSpan {
+                        source: None,
+                        text: resolved,
+                    });
                 }
             }
             Event::End(element) => {
@@ -3849,6 +3912,9 @@ fn body_identity_edits(xml: &[u8], remap: &BodyIdentityRemap) -> Result<Vec<Fiel
                 depth = depth.saturating_sub(1);
                 if sdt_properties_depth == Some(depth) {
                     sdt_properties_depth = None;
+                }
+                if form_data_depth == Some(depth) {
+                    form_data_depth = None;
                 }
                 if body_depth == Some(depth) {
                     body_depth = None;
@@ -4220,9 +4286,16 @@ pub(super) fn add_identity_attribute_edit(
 struct ComplexInstructionEdit {
     text: String,
     collecting: bool,
-    /// Each source span of the instruction text with its decoded text, or
-    /// `None` for a CDATA span, which is not edited.
-    spans: Vec<(usize, usize, Option<String>)>,
+    /// The pieces of `text`, in order.
+    spans: Vec<InstructionSpan>,
+}
+
+/// A piece of a field instruction's text: the decoded text of one
+/// `instrText`, with its source bytes, or a piece that is not edited (a
+/// CDATA section, the stand-in of a nested field), with none.
+struct InstructionSpan {
+    source: Option<std::ops::Range<usize>>,
+    text: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4232,7 +4305,8 @@ fn collect_body_reference_edits(
     end: usize,
     element: &BytesStart<'_>,
     resolver: &NamespaceResolver,
-    remap: &BodyIdentityRemap,
+    renamed: &RenamedBookmarks<'_>,
+    in_form_data: bool,
     complex: &mut Vec<ComplexInstructionEdit>,
     edits: &mut Vec<FieldSourceEdit>,
 ) -> Result<bool> {
@@ -4240,20 +4314,28 @@ fn collect_body_reference_edits(
     if !namespace_is_word(&namespace) {
         return Ok(false);
     }
-    if local.as_ref() == b"hyperlink" {
+    if in_form_data && local.as_ref() == b"name" {
+        // A legacy form field and the bookmark around it share their name.
+        if let Some((key, old)) =
+            resolved_element_attribute(element, resolver, b"val", AttributeNamespace::Word)?
+            && let Some(replacement) = renamed.get(&old)
+        {
+            add_attribute_value_edit(xml, start, end, &key, replacement, true, edits)?;
+        }
+    } else if local.as_ref() == b"hyperlink" {
         // A link with an address names a place in that address.
         if resolved_element_attribute(element, resolver, b"id", AttributeNamespace::Relationship)?
             .is_none()
             && let Some((key, old)) =
                 resolved_element_attribute(element, resolver, b"anchor", AttributeNamespace::Word)?
-            && let Some(replacement) = renamed_bookmark(&remap.bookmark_names, &old)
+            && let Some(replacement) = renamed.get(&old)
         {
             add_attribute_value_edit(xml, start, end, &key, replacement, true, edits)?;
         }
     } else if local.as_ref() == b"fldSimple" {
         if let Some((key, instruction)) =
             resolved_element_attribute(element, resolver, b"instr", AttributeNamespace::Word)?
-            && let Some(updated) = remap_reference_instruction(&instruction, &remap.bookmark_names)
+            && let Some(updated) = remap_reference_instruction(&instruction, renamed)
         {
             add_attribute_value_edit(xml, start, end, &key, &updated, true, edits)?;
         }
@@ -4267,50 +4349,31 @@ fn collect_body_reference_edits(
         .map(|(_, value)| value)
         .as_deref()
         {
-            Some("begin") => complex.push(ComplexInstructionEdit {
-                text: String::new(),
-                collecting: true,
-                spans: Vec::new(),
-            }),
+            Some("begin") => {
+                if let Some(outer) = complex.last_mut()
+                    && outer.collecting
+                {
+                    let stand_in = NESTED_FIELD_STAND_IN.to_string();
+                    outer.text.push_str(&stand_in);
+                    outer.spans.push(InstructionSpan {
+                        source: None,
+                        text: stand_in,
+                    });
+                }
+                complex.push(ComplexInstructionEdit {
+                    text: String::new(),
+                    collecting: true,
+                    spans: Vec::new(),
+                })
+            }
             Some("separate") => {
                 if let Some(instruction) = complex.last_mut() {
                     instruction.collecting = false;
                 }
             }
             Some("end") => {
-                // Only the source span that holds the whole name is edited, so
-                // no text moves around a nested field; a name split across
-                // spans, or in CDATA, is left as it is.
-                if let Some(instruction) = complex.pop()
-                    && let Some((range, replacement)) =
-                        renamed_reference_range(&instruction.text, &remap.bookmark_names)
-                {
-                    let mut offset = 0;
-                    for (start, end, decoded) in &instruction.spans {
-                        let length = decoded.as_ref().map_or_else(|| usize::MAX / 2, String::len);
-                        if let Some(decoded) = decoded
-                            && offset <= range.start
-                            && range.end <= offset + length
-                        {
-                            let mut updated = decoded.clone();
-                            updated.replace_range(
-                                range.start - offset..range.end - offset,
-                                &replacement,
-                            );
-                            edits.push(FieldSourceEdit {
-                                start: *start,
-                                end: *end,
-                                replacement: quick_xml::escape::escape(&updated)
-                                    .into_owned()
-                                    .into_bytes(),
-                            });
-                            break;
-                        }
-                        if decoded.is_none() {
-                            break;
-                        }
-                        offset += length;
-                    }
+                if let Some(instruction) = complex.pop() {
+                    instruction_reference_edits(&instruction, renamed, edits);
                 }
             }
             _ => {}
@@ -4335,7 +4398,7 @@ fn add_attribute_value_edit(
         ));
     };
     let replacement = if escape {
-        quick_xml::escape::escape(replacement)
+        oxoffice_core::xml::escape_attribute_value(replacement)
             .into_owned()
             .into_bytes()
     } else {
@@ -4349,25 +4412,83 @@ fn add_attribute_value_edit(
     Ok(())
 }
 
+/// Rename the bookmarks a complex field's code names. A name written
+/// across several `instrText` takes its new name in the first and leaves the
+/// others its remainder, so no text moves around a nested field; a name
+/// that reaches into CDATA or a nested field is left as it is.
+fn instruction_reference_edits(
+    instruction: &ComplexInstructionEdit,
+    renamed: &RenamedBookmarks<'_>,
+    edits: &mut Vec<FieldSourceEdit>,
+) {
+    let mut pieces = vec![Vec::new(); instruction.spans.len()];
+    for (range, replacement) in renamed_reference_ranges(&instruction.text, renamed) {
+        let mut covered = Vec::new();
+        let mut offset = 0;
+        for (index, span) in instruction.spans.iter().enumerate() {
+            let span_range = offset..offset + span.text.len();
+            offset = span_range.end;
+            let start = range.start.max(span_range.start);
+            let end = range.end.min(span_range.end);
+            if start < end {
+                covered.push((index, start - span_range.start..end - span_range.start));
+            }
+        }
+        if covered
+            .iter()
+            .any(|(index, _)| instruction.spans[*index].source.is_none())
+        {
+            continue;
+        }
+        for (order, (index, local)) in covered.into_iter().enumerate() {
+            let text = if order == 0 { replacement } else { "" };
+            pieces[index].push((local, text));
+        }
+    }
+    for (span, pieces) in instruction.spans.iter().zip(pieces) {
+        let Some(source) = span.source.clone().filter(|_| !pieces.is_empty()) else {
+            continue;
+        };
+        let mut updated = span.text.clone();
+        for (local, text) in pieces.into_iter().rev() {
+            updated.replace_range(local, text);
+        }
+        edits.push(FieldSourceEdit {
+            start: source.start,
+            end: source.end,
+            replacement: oxoffice_core::xml::escape_text(&updated)
+                .into_owned()
+                .into_bytes(),
+        });
+    }
+}
+
 fn remap_reference_instruction(
     instruction: &str,
-    names: &BTreeMap<String, String>,
+    renamed: &RenamedBookmarks<'_>,
 ) -> Option<String> {
-    let (range, replacement) = renamed_reference_range(instruction, names)?;
+    let ranges = renamed_reference_ranges(instruction, renamed);
+    if ranges.is_empty() {
+        return None;
+    }
     let mut updated = instruction.to_owned();
-    updated.replace_range(range, &replacement);
+    for (range, replacement) in ranges.into_iter().rev() {
+        updated.replace_range(range, replacement);
+    }
     Some(updated)
 }
 
 /// Where the instruction names a bookmark the import renamed, and its new
-/// name: the name's own bytes, never the keyword or another operand.
-fn renamed_reference_range(
+/// name, in order: the names' own bytes, never the keyword or another
+/// operand.
+fn renamed_reference_ranges<'a>(
     instruction: &str,
-    names: &BTreeMap<String, String>,
-) -> Option<(std::ops::Range<usize>, String)> {
-    let (range, old) = oxoffice_docx_oxml::text::bookmark_reference_span(instruction)?;
-    let replacement = renamed_bookmark(names, &old)?;
-    Some((range, replacement.clone()))
+    renamed: &RenamedBookmarks<'a>,
+) -> Vec<(std::ops::Range<usize>, &'a str)> {
+    oxoffice_docx_oxml::text::bookmark_reference_spans(instruction)
+        .into_iter()
+        .filter_map(|(range, old)| Some((range, renamed.get(&old)?.as_str())))
+        .collect()
 }
 
 pub(crate) fn attribute_value_span(

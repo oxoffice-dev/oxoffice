@@ -2192,7 +2192,7 @@ impl Engine {
                         let registered = sources.is_some_and(|registry| {
                             registry.nodes.get(source.get() as usize - 1).is_some()
                         });
-                        (registered && bookmark_text(input, name).is_some())
+                        (registered && bookmark_exists(input, name))
                             .then(|| (name.to_owned(), numbering.clone()))
                     }),
             );
@@ -2203,7 +2203,7 @@ impl Engine {
                     self.navigation_by_source
                         .get(source)
                         .is_some_and(|facts| facts.suppressed_numbering)
-                        && bookmark_text(input, name).is_some()
+                        && bookmark_exists(input, name)
                 })
                 .map(|(name, _)| name.to_owned()),
         );

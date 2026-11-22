@@ -696,7 +696,7 @@ pub(super) fn replace_ordered_result_text(
         for content in std::mem::take(&mut run.content) {
             boundaries.push(next.len());
             match content {
-                RunContent::Text(_) | RunContent::Tab | RunContent::Break(_) => {
+                RunContent::Text(_) | RunContent::Tab | RunContent::Break(..) => {
                     if !written {
                         let start = next.len();
                         next.extend(replacement.iter().cloned());

@@ -38,6 +38,17 @@ pub enum CustomPropertyValue {
     Raw(Vec<u8>),
 }
 
+impl CustomPropertyValue {
+    /// Whether the two values are written the same. Unlike `==`, a NaN
+    /// number is the same as itself, and `-0` is not the same as `0`.
+    pub fn is_same_value(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::R8(left), Self::R8(right)) => r8_text(*left) == r8_text(*right),
+            _ => self == other,
+        }
+    }
+}
+
 /// One property in `docProps/custom.xml`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomProperty {
@@ -55,6 +66,33 @@ pub struct CustomProperties {
 }
 
 impl CustomProperties {
+    /// Whether the two collections are written the same: as `==`, except
+    /// that values are compared with [`CustomPropertyValue::is_same_value`].
+    pub fn is_same_as(&self, other: &Self) -> bool {
+        // Destructured, so that a field added later is compared too.
+        let Self {
+            properties,
+            extra_namespaces,
+        } = self;
+        *extra_namespaces == other.extra_namespaces
+            && properties.len() == other.properties.len()
+            && properties
+                .iter()
+                .zip(&other.properties)
+                .all(|(left, right)| {
+                    let CustomProperty {
+                        fmtid,
+                        pid,
+                        name,
+                        value,
+                    } = left;
+                    *fmtid == right.fmtid
+                        && *pid == right.pid
+                        && *name == right.name
+                        && value.is_same_value(&right.value)
+                })
+    }
+
     /// Parse a `docProps/custom.xml` part.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
         if !custom_property_namespaces_are_valid(xml) {

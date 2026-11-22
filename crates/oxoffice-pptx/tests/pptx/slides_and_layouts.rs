@@ -2007,6 +2007,26 @@ fn a_carriage_return_in_a_core_property_survives_a_save() {
 }
 
 #[test]
+fn a_number_property_set_to_negative_zero_replaces_zero() {
+    let number = |value: f64| oxoffice_pptx::CustomProperty {
+        fmtid: "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}".to_owned(),
+        pid: 2,
+        name: Some("Offset".to_owned()),
+        value: oxoffice_pptx::CustomPropertyValue::R8(value),
+    };
+    let mut prs = new_deck();
+    prs.set_custom_property(number(0.0)).unwrap();
+    // -0 == 0, but the two are written differently: the edit is no no-op.
+    prs.set_custom_property(number(-0.0)).unwrap();
+    match reopen(&prs).custom_property("Offset").map(|p| &p.value) {
+        Some(oxoffice_pptx::CustomPropertyValue::R8(value)) => {
+            assert!(value.is_sign_negative(), "Offset reads {value}")
+        }
+        other => panic!("Offset reads {other:?}"),
+    }
+}
+
+#[test]
 fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
     // A deck's application and custom properties parts are patched in place.
     let custom = |name: &str, pid: i32, text: &str| oxoffice_pptx::CustomProperty {
@@ -2398,4 +2418,28 @@ fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
             id: ids[1].parse().unwrap()
         }]
     );
+}
+
+#[test]
+fn a_slide_name_holding_a_tab_and_line_ends_survives_an_odp_round_trip() {
+    let name = "Plan\tQ1\nend\rnote";
+    let deck = deck_with_titles(&["Plan"]);
+    let mut package = OpcPackage::from_reader(Cursor::new(deck.to_bytes().unwrap())).unwrap();
+    let slide = String::from_utf8(package.get_part("/ppt/slides/slide1.xml").unwrap().to_vec())
+        .unwrap()
+        .replacen(
+            "<p:cSld>",
+            r#"<p:cSld name="Plan&#9;Q1&#10;end&#13;note">"#,
+            1,
+        );
+    assert!(slide.contains("&#9;Q1"), "the slide has a p:cSld to name");
+    package.set_part("/ppt/slides/slide1.xml", slide.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let deck = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(deck.slide(0).unwrap().name(), Some(name));
+
+    let odp = deck.to_odp_bytes().unwrap().bytes;
+    let read = Presentation::from_odp_bytes(&odp).unwrap().presentation;
+    assert_eq!(read.slide(0).unwrap().name(), Some(name));
 }

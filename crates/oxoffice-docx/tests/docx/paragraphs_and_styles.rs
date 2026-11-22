@@ -1046,3 +1046,36 @@ fn document_defaults_set_the_font_size_and_spacing_of_plain_text() {
     assert!(cleared.default_paragraph_properties().is_none());
     assert_eq!(cleared.default_font_name(), Some("Georgia"));
 }
+
+#[test]
+fn empty_paragraph_and_mark_properties_reach_their_written_form_in_one_save() {
+    // Google Docs writes a paragraph mark with empty run properties. Each
+    // form is written once as it stays: an edit pass run again on the saved
+    // file changes no byte of the paragraphs it did not edit.
+    let forms = [
+        r#"<w:p><w:pPr><w:rPr/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:rPr/></w:pPr></w:p>"#,
+        r#"<w:p><w:pPr/></w:p>"#,
+        r#"<w:p><w:pPr/><w:r><w:t>x</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:jc w:val="center"/><w:rPr/></w:pPr><w:r><w:rPr/><w:t>x</w:t></w:r></w:p>"#,
+    ];
+    let main_xml = |bytes: &[u8]| {
+        let package = OpcPackage::from_reader(Cursor::new(bytes.to_vec())).unwrap();
+        let part = package.main_document_part().unwrap();
+        String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap()
+    };
+    for form in forms {
+        let bytes = doc_with_body(&format!("{form}<w:p><w:r><w:t>H</w:t></w:r></w:p>"))
+            .to_bytes()
+            .unwrap();
+        let pass = |bytes: &[u8], text: &str| {
+            let mut doc = Document::from_bytes(bytes).unwrap();
+            doc.paragraph_mut(1).unwrap().set_text(text).unwrap();
+            doc.to_bytes().unwrap()
+        };
+        let once = pass(&bytes, "one");
+        let again = pass(&pass(&once, "two"), "one");
+        assert_eq!(main_xml(&again), main_xml(&once), "{form}");
+    }
+}
