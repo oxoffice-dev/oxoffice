@@ -559,11 +559,24 @@ fn rewrite_body_bookmarks(
     let mut edits = Vec::new();
     // The instruction elements of each open complex field, while its
     // instruction is read: a renamed name must sit in one of them.
+    // `NESTED_FIELD` stands where a nested field begins.
     let mut fields: Vec<(Vec<usize>, bool)> = Vec::new();
+    const NESTED_FIELD: usize = usize::MAX;
     let instruction = |elements: Vec<usize>, edits: &mut Vec<(Range<usize>, Vec<u8>)>| {
         let mut text = Vec::new();
         let mut segments = Vec::new();
         for index in elements {
+            // A nested field is an operand of the code around it: in
+            // `HYPERLINK { MERGEFIELD Url } \l "_Toc1"`, the address.
+            if index == NESTED_FIELD {
+                let mut stand_in = [0; 4];
+                text.extend_from_slice(
+                    oxoffice_docx_oxml::text::NESTED_FIELD_STAND_IN
+                        .encode_utf8(&mut stand_in)
+                        .as_bytes(),
+                );
+                continue;
+            }
             let node = &tree.elements[index];
             if node.empty {
                 continue;
@@ -600,7 +613,12 @@ fn rewrite_body_bookmarks(
                     .get("fldCharType")
                     .map(String::as_str)
                 {
-                    Some("begin") => fields.push((Vec::new(), true)),
+                    Some("begin") => {
+                        if let Some((elements, true)) = fields.last_mut() {
+                            elements.push(NESTED_FIELD);
+                        }
+                        fields.push((Vec::new(), true));
+                    }
                     Some("separate") => {
                         if let Some(field) = fields.last_mut() {
                             field.1 = false;

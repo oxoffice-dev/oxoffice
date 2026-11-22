@@ -430,6 +430,214 @@ pub fn bookmark_reference_span(raw: &str) -> Option<(std::ops::Range<usize>, Str
     name_span(raw, &tokens[named_reference(&tokens)?])
 }
 
+/// Every place a field instruction may name a bookmark, in order: the name
+/// [`bookmark_reference_span`] reads, each identifier of an `=` formula that
+/// is not a function, the bare operands `IF` and `COMPARE` compare, and the
+/// first word of an implicit `REF` (`{ Mark }`), a field whose name is no
+/// field Word knows. A word in a formula or a comparison is a bookmark only
+/// when one has its name: a caller matches these against the names it has.
+#[doc(hidden)]
+pub fn bookmark_reference_spans(raw: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let tokens = lex_field_text(raw);
+    if let Some(index) = named_reference(&tokens) {
+        return name_span(raw, &tokens[index]).into_iter().collect();
+    }
+    let Some(name) = tokens.first().and_then(operand_text) else {
+        return Vec::new();
+    };
+    let positional = positional_operands(&name.to_ascii_uppercase(), &tokens);
+    if name.starts_with('=') {
+        let mut spans = Vec::new();
+        for token in std::iter::once(&tokens[0]).chain(positional.iter().map(|&i| &tokens[i])) {
+            spans.extend(formula_identifiers(raw, token));
+        }
+        return spans;
+    }
+    match name.to_ascii_uppercase().as_str() {
+        "IF" | "COMPARE" => [0, 2]
+            .into_iter()
+            .filter_map(|at| positional.get(at))
+            .filter(|&&index| !tokens[index].quoted)
+            .filter_map(|&index| name_span(raw, &tokens[index]))
+            .filter(|(_, name)| is_bookmark_word(name))
+            .collect(),
+        upper if !WORD_FIELD_NAMES.contains(&upper) && is_bookmark_word(name) => {
+            name_span(raw, &tokens[0]).into_iter().collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The identifiers of an unquoted formula token that are not functions
+/// (followed by `(`), table cell references or words Word reserves in
+/// formulas, its functions included. A nested field's stand-in separates
+/// identifiers as an operator does.
+fn formula_identifiers(
+    raw: &str,
+    token: &InstructionToken,
+) -> Vec<(std::ops::Range<usize>, String)> {
+    let Some((span, text)) = (!token.quoted).then(|| token_span(raw, token)).flatten() else {
+        return Vec::new();
+    };
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut identifiers = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    let mut previous = None;
+    while let Some((start, c)) = chars.next() {
+        if !(c.is_alphabetic() || c == '_') || previous.is_some_and(word) {
+            previous = Some(c);
+            continue;
+        }
+        let mut end = start + c.len_utf8();
+        while let Some(&(at, next)) = chars.peek().filter(|(_, next)| word(*next)) {
+            end = at + next.len_utf8();
+            chars.next();
+        }
+        previous = text[..end].chars().next_back();
+        let identifier = &text[start..end];
+        let function = text[end..].starts_with('(');
+        if !function
+            && !is_cell_reference(identifier)
+            && !FORMULA_WORDS
+                .iter()
+                .any(|w| w.eq_ignore_ascii_case(identifier))
+        {
+            identifiers.push((span.start + start..span.start + end, identifier.to_owned()));
+        }
+    }
+    identifiers
+}
+
+/// Whether a word can be a bookmark name: a letter or an underscore, then
+/// letters, digits and underscores.
+fn is_bookmark_word(word: &str) -> bool {
+    let mut chars = word.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Whether a formula word is a table cell reference: `A1`, `BK63` or the
+/// `R1C1` form (`RC`, `R2C`, `R1C3`), which a formula reads as cells.
+fn is_cell_reference(word: &str) -> bool {
+    let letters = word.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    let a1 = (1..=2).contains(&letters) && word.len() > letters && digits(&word[letters..]);
+    let r1c1 = word
+        .strip_prefix(['R', 'r'])
+        .and_then(|rest| {
+            let row = rest.bytes().take_while(u8::is_ascii_digit).count();
+            rest[row..].strip_prefix(['C', 'c'])
+        })
+        .is_some_and(digits);
+    a1 || r1c1
+}
+
+/// Words an `=` formula reads as values, table ranges or functions, not
+/// bookmarks.
+const FORMULA_WORDS: &[&str] = &[
+    "TRUE", "FALSE", "LEFT", "RIGHT", "ABOVE", "BELOW", "ABS", "AND", "AVERAGE", "COUNT",
+    "DEFINED", "IF", "INT", "MAX", "MIN", "MOD", "NOT", "OR", "PRODUCT", "ROUND", "SIGN", "SUM",
+];
+
+/// The field names Word knows (ECMA-376 Part 1, 17.16.5). Any other first
+/// word makes the field an implicit `REF` to the bookmark it names.
+const WORD_FIELD_NAMES: &[&str] = &[
+    "ADDIN",
+    "ADDRESSBLOCK",
+    "ADVANCE",
+    "ASK",
+    "AUTHOR",
+    "AUTONUM",
+    "AUTONUMLGL",
+    "AUTONUMOUT",
+    "AUTOTEXT",
+    "AUTOTEXTLIST",
+    "BARCODE",
+    "BIBLIOGRAPHY",
+    "BIDIOUTLINE",
+    "CITATION",
+    "COMMENTS",
+    "COMPARE",
+    "CONTROL",
+    "CREATEDATE",
+    "DATABASE",
+    "DATE",
+    "DDE",
+    "DDEAUTO",
+    "DISPLAYBARCODE",
+    "DOCPROPERTY",
+    "DOCVARIABLE",
+    "EDITTIME",
+    "EMBED",
+    "EQ",
+    "FILENAME",
+    "FILESIZE",
+    "FILLIN",
+    "FORMCHECKBOX",
+    "FORMDROPDOWN",
+    "FORMTEXT",
+    "FTNREF",
+    "GLOSSARY",
+    "GOTOBUTTON",
+    "GREETINGLINE",
+    "HTMLCONTROL",
+    "HYPERLINK",
+    "IF",
+    "IMPORT",
+    "INCLUDE",
+    "INCLUDEPICTURE",
+    "INCLUDETEXT",
+    "INDEX",
+    "INFO",
+    "KEYWORDS",
+    "LASTSAVEDBY",
+    "LINK",
+    "LISTNUM",
+    "MACROBUTTON",
+    "MERGEBARCODE",
+    "MERGEFIELD",
+    "MERGEREC",
+    "MERGESEQ",
+    "NEXT",
+    "NEXTIF",
+    "NOTEREF",
+    "NUMCHARS",
+    "NUMPAGES",
+    "NUMWORDS",
+    "OCX",
+    "PAGE",
+    "PAGEREF",
+    "PRINT",
+    "PRINTDATE",
+    "PRIVATE",
+    "QUOTE",
+    "RD",
+    "REF",
+    "REVNUM",
+    "SAVEDATE",
+    "SECTION",
+    "SECTIONPAGES",
+    "SEQ",
+    "SET",
+    "SHAPE",
+    "SKIPIF",
+    "STYLEREF",
+    "SUBJECT",
+    "SUBSCRIBER",
+    "SYMBOL",
+    "TA",
+    "TC",
+    "TEMPLATE",
+    "TIME",
+    "TITLE",
+    "TOA",
+    "TOC",
+    "USERADDRESS",
+    "USERINITIALS",
+    "USERNAME",
+    "XE",
+];
+
 /// Whether a `HYPERLINK` instruction has an address, so that its `\l` names
 /// a place in that address, not a bookmark of this document.
 #[doc(hidden)]
@@ -511,9 +719,23 @@ fn positional_operands(name: &str, tokens: &[InstructionToken]) -> Vec<usize> {
     operands
 }
 
+/// The character a caller that reads an instruction as text puts where a
+/// nested field stands, so that the field still counts as an operand: in
+/// `HYPERLINK { MERGEFIELD Url } \l "Mark"` it is the address. No name
+/// holds it.
+#[doc(hidden)]
+pub const NESTED_FIELD_STAND_IN: char = '\u{FFFC}';
+
 /// The name a token spells and its bytes in `raw`, quotes excluded; `None`
-/// for a switch, a nested field, an ill-formed token or one with escapes.
+/// for a switch, a nested field (or its stand-in), an ill-formed token or
+/// one with escapes.
 fn name_span(raw: &str, token: &InstructionToken) -> Option<(std::ops::Range<usize>, String)> {
+    token_span(raw, token).filter(|(_, value)| !value.contains(NESTED_FIELD_STAND_IN))
+}
+
+/// The text a token spells and its bytes in `raw`, quotes excluded; `None`
+/// for a switch, a nested field, an ill-formed token or one with escapes.
+fn token_span(raw: &str, token: &InstructionToken) -> Option<(std::ops::Range<usize>, String)> {
     if !token.well_formed || token_switch_name(token).is_some() {
         return None;
     }
@@ -678,5 +900,58 @@ mod tests {
         ] {
             assert_eq!(hyperlink_has_address(raw), expected, "{raw:?}");
         }
+    }
+
+    fn names(raw: &str) -> Vec<&str> {
+        bookmark_reference_spans(raw)
+            .into_iter()
+            .map(|(span, name)| {
+                assert_eq!(&raw[span.clone()], name, "{raw:?}");
+                &raw[span]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn formula_comparison_and_implicit_ref_operands_are_bookmark_names() {
+        assert_eq!(names(r#" = Price * Qty \# "0.00" "#), ["Price", "Qty"]);
+        assert_eq!(names(" =Price*2+Tax_2 "), ["Price", "Tax_2"]);
+        assert_eq!(names(" = SUM(ABOVE) + Défaut - 1E3 "), ["Défaut"]);
+        assert_eq!(names(" = DEFINED(Mark) "), ["Mark"]);
+        assert_eq!(names(" = SUM (ABOVE) + Mark "), ["Mark"]);
+        assert_eq!(names(" = SUM(A1:B2) + R1C2 + RC + bk63 + Q1x "), ["Q1x"]);
+        assert_eq!(names(" = Round(Mark; 2) "), ["Mark"]);
+        assert_eq!(names(r#" IF Mark = "yes" "a" "b" "#), ["Mark"]);
+        assert_eq!(names(r#" IF "x" <> Other "a" "b" "#), ["Other"]);
+        assert_eq!(names(r#" IF 3 > 2 "Mark" "b" "#), Vec::<&str>::new());
+        assert_eq!(
+            names(r#" COMPARE Left_1 >= Right_1 "#),
+            ["Left_1", "Right_1"]
+        );
+        assert_eq!(names(" Mark "), ["Mark"]);
+        assert_eq!(names(r#" Mark \* MERGEFORMAT "#), ["Mark"]);
+        assert_eq!(names(" REF Mark "), ["Mark"]);
+        assert_eq!(names(" PAGE "), Vec::<&str>::new());
+        assert_eq!(names(" mergefield Mark "), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_nested_field_stand_in_is_an_operand_but_never_a_name() {
+        let stand_in = NESTED_FIELD_STAND_IN;
+        assert!(hyperlink_has_address(&format!(
+            r#" HYPERLINK {stand_in} \l "Mark" "#
+        )));
+        assert_eq!(
+            names(&format!(r#" HYPERLINK {stand_in} \l "Mark" "#)),
+            Vec::<&str>::new()
+        );
+        assert_eq!(names(&format!(" REF {stand_in} ")), Vec::<&str>::new());
+        assert_eq!(names(&format!(" REF Mark{stand_in} ")), Vec::<&str>::new());
+        assert_eq!(names(&format!(" = Mark + {stand_in} ")), ["Mark"]);
+        assert_eq!(names(&format!(" =Mark*{stand_in}+Tax ")), ["Mark", "Tax"]);
+        assert_eq!(
+            names(&format!(r#" IF {stand_in} = Mark "a" "b" "#)),
+            ["Mark"]
+        );
     }
 }
