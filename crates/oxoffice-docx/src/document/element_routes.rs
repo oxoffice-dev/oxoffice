@@ -560,7 +560,8 @@ impl Document {
 
     /// Whether removal takes the direct body child at `slot` alone.
     ///
-    /// A plain paragraph with no section qualifies. Retained `w:sdt`
+    /// A plain paragraph with no section, and no bookmark start written just
+    /// before it (whose bookmark it may own), qualifies. Retained `w:sdt`
     /// namespace owners whose current replay still saves keep that removal
     /// local. Any other unsavable body stays on the checked staged path.
     #[doc(hidden)]
@@ -574,7 +575,10 @@ impl Document {
                         .as_ref()
                         .is_none_or(|properties| properties.sect_pr.is_none())
         );
-        if !plain || self.unsavable_body_edit().is_some() {
+        if !plain
+            || self.unsavable_body_edit().is_some()
+            || self.block_insertion_index(slot) != slot
+        {
             return false;
         }
         if !self.plain_local_edit_blocked {
@@ -674,6 +678,7 @@ impl Document {
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         self.replace_checked_element_content(location, fragment)
     }
@@ -768,6 +773,7 @@ impl Document {
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         self.replace_checked_element_content(location, fragment)
     }

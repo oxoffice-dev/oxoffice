@@ -1449,11 +1449,26 @@ pub(super) fn content_fragment_for_insertion(
     fragment: &ContentFragment,
 ) -> Result<Vec<u8>> {
     validate_fragment_relationships(document, destination, fragment)?;
-    if fragment.source_part_name.is_none() || story_scope_matches_fragment(destination, fragment) {
-        Ok(fragment.xml.clone())
-    } else {
-        close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)
+    let keep_scope =
+        fragment.source_part_name.is_none() || story_scope_matches_fragment(destination, fragment);
+    let mut xml = Vec::new();
+    for piece in fragment
+        .markers
+        .before
+        .iter()
+        .chain(std::iter::once(&fragment.xml))
+        .chain(&fragment.markers.after)
+    {
+        if keep_scope {
+            xml.extend_from_slice(piece);
+        } else {
+            xml.extend(close_content_fragment_namespaces(
+                piece,
+                &fragment.namespace_scope,
+            )?);
+        }
     }
+    Ok(xml)
 }
 
 /// `xml` without the `w14:paraId` and `w14:textId` of its paragraphs and
@@ -1493,10 +1508,107 @@ pub(super) fn without_w14_identities(xml: &[u8], scope: &BTreeMap<String, String
     result.into_bytes()
 }
 
+/// Give every document-wide identity of the fragment, its bookmark markers
+/// included, a fresh value, as a copy needs.
 pub(super) fn freshen_content_fragment_identities(
     document: &mut Document,
-    fragment: &ContentFragment,
-) -> Result<Vec<u8>> {
+    fragment: &mut ContentFragment,
+) -> Result<()> {
+    let wrapped = wrapped_content_fragment(fragment)?;
+    let updated = crate::field::freshen_content_fragment_identities(document, &wrapped)?;
+    let updated = remove_comment_anchors_from_fragment(&updated)?;
+    replace_wrapped_content_fragment(fragment, &updated)
+}
+
+/// Give a fresh value to each identity of the fragment, its bookmark markers
+/// included, that `document` already holds, as an insertion needs: what is
+/// free keeps its value, so a cut and paste changes nothing.
+pub(super) fn freshen_taken_content_fragment_identities(
+    document: &mut Document,
+    fragment: &mut ContentFragment,
+) -> Result<()> {
+    let wrapped = wrapped_content_fragment(fragment)?;
+    let updated = crate::field::freshen_taken_content_fragment_identities(document, &wrapped)?;
+    replace_wrapped_content_fragment(fragment, &updated)
+}
+
+/// Give each note reference of the fragment whose note a reference of
+/// `document` already shows a copy of that note, with fresh identities, as
+/// Word gives a pasted note mark: two references never share one note. A
+/// note no reference shows (its reference was cut) keeps its reference.
+pub(super) fn copy_shown_notes(
+    document: &mut Document,
+    fragment: &mut ContentFragment,
+) -> Result<()> {
+    let wrapped = wrapped_content_fragment(fragment)?;
+    let references = crate::field::fragment_note_references(&wrapped)?;
+    if references.is_empty() {
+        return Ok(());
+    }
+    document.flush_to_package()?;
+    let main = document
+        .package
+        .get_part(&document.doc_part_name)
+        .ok_or_else(|| Error::Other("main document part is missing".to_owned()))?;
+    let shown = super::content::note_reference_ids_in(main)?;
+    let mut maps = HashMap::<StoryKind, BTreeMap<String, String>>::new();
+    let mut used = HashMap::<StoryKind, HashSet<i32>>::new();
+    for (kind, id) in references {
+        let is_shown = match kind {
+            StoryKind::Footnote => shown.footnotes.contains(&id),
+            StoryKind::Endnote => shown.endnotes.contains(&id),
+            _ => false,
+        };
+        if !is_shown
+            || maps
+                .get(&kind)
+                .is_some_and(|map| map.contains_key(&id.to_string()))
+        {
+            continue;
+        }
+        let (part, note) = document.fragment_note_dependency(kind, id)?;
+        let taken = match used.entry(kind) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let part_xml = document
+                    .package
+                    .get_part(&part)
+                    .ok_or_else(|| Error::Other(format!("note part {part} is missing")))?;
+                let notes = oxoffice_docx_oxml::footnotes::CT_Footnotes::from_xml(part_xml)?;
+                entry.insert(notes.footnotes.iter().map(|note| note.id).collect())
+            }
+        };
+        let mut fresh = 1i32;
+        while taken.contains(&fresh) {
+            fresh = fresh
+                .checked_add(1)
+                .ok_or_else(|| Error::Other("note ids are exhausted".to_owned()))?;
+        }
+        taken.insert(fresh);
+        let map = HashMap::from([(kind, BTreeMap::from([(id.to_string(), fresh.to_string())]))]);
+        let note = crate::field::patch_fragment_note_ids(&note, &map)?;
+        let open = format!(r#"<w:document xmlns:w="{WORD_NAMESPACE}"><w:body>"#);
+        let close = "</w:body></w:document>";
+        let mut copy = open.clone().into_bytes();
+        copy.extend_from_slice(&note);
+        copy.extend_from_slice(close.as_bytes());
+        let copy = crate::field::freshen_taken_content_fragment_identities(document, &copy)?;
+        let note = copy[open.len()..copy.len() - close.len()].to_vec();
+        document.publish_fragment_note_staged(kind, &part, note, None)?;
+        maps.entry(kind)
+            .or_default()
+            .insert(id.to_string(), fresh.to_string());
+    }
+    if maps.is_empty() {
+        return Ok(());
+    }
+    let updated = crate::field::patch_fragment_note_ids(&wrapped, &maps)?;
+    replace_wrapped_content_fragment(fragment, &updated)
+}
+
+/// The fragment's markers and item, in order, as the body of a document
+/// that declares the fragment's namespace scope.
+fn wrapped_content_fragment(fragment: &ContentFragment) -> Result<Vec<u8>> {
     let mut wrapper_prefix = "rdocxw".to_owned();
     let mut suffix = 1usize;
     while fragment.namespace_scope.contains_key(&wrapper_prefix) {
@@ -1524,21 +1636,36 @@ pub(super) fn freshen_content_fragment_identities(
     prefix.extend_from_slice(format!("><{wrapper_prefix}:body>").as_bytes());
     let suffix = format!("</{wrapper_prefix}:body></{wrapper_prefix}:document>");
     let mut wrapped = prefix;
+    for marker in &fragment.markers.before {
+        wrapped.extend_from_slice(marker);
+    }
     wrapped.extend_from_slice(&fragment.xml);
+    for marker in &fragment.markers.after {
+        wrapped.extend_from_slice(marker);
+    }
     wrapped.extend_from_slice(suffix.as_bytes());
-    let updated = crate::field::freshen_content_fragment_identities(document, &wrapped)?;
-    let updated = remove_comment_anchors_from_fragment(&updated)?;
-    let owner = scan_story_owners(&updated, StoryKind::Body)?
+    Ok(wrapped)
+}
+
+/// Put the markers and item of a rewritten [`wrapped_content_fragment`]
+/// back in the fragment.
+fn replace_wrapped_content_fragment(fragment: &mut ContentFragment, updated: &[u8]) -> Result<()> {
+    let owner = scan_story_owners(updated, StoryKind::Body)?
         .into_iter()
         .find(|owner| owner.kind == StoryKind::Body)
         .ok_or_else(|| Error::Other("rewritten content wrapper has no body".to_owned()))?;
-    let items = direct_story_content_items(&updated, &owner)?;
-    let [item] = items.as_slice() else {
+    let items = direct_story_content_items(updated, &owner)?;
+    let before = fragment.markers.before.len();
+    if items.len() != before + 1 + fragment.markers.after.len() {
         return Err(Error::Other(
-            "rewritten content wrapper must contain exactly one item".to_owned(),
+            "rewritten content wrapper must keep its item and markers".to_owned(),
         ));
-    };
-    Ok(updated[item.full.clone()].to_vec())
+    }
+    let piece = |index: usize| updated[items[index].full.clone()].to_vec();
+    fragment.markers.before = (0..before).map(piece).collect();
+    fragment.xml = piece(before);
+    fragment.markers.after = (before + 1..items.len()).map(piece).collect();
+    Ok(())
 }
 
 fn remove_comment_anchors_from_fragment(xml: &[u8]) -> Result<Vec<u8>> {
