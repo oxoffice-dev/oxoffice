@@ -66,6 +66,8 @@ jobs:
             echo "::error file=docs/LIMITATIONS.md::built at release, not committed: git rm docs/LIMITATIONS.md"
             exit 1
           fi
+      - name: Release highlights script works
+        run: python3 scripts/release_highlights.py --check
       - name: Wheel licence files match the root ones
         run: cmp LICENSE crates/oxoffice-py/LICENSE && cmp NOTICE crates/oxoffice-py/NOTICE
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
