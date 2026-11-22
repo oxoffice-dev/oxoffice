@@ -1049,6 +1049,109 @@ fn an_internal_link_in_another_case_reaches_its_bookmark_in_both_exports() {
 }
 
 #[test]
+fn rtf_odt_and_epub_report_bookmarks_between_paragraphs_as_dropped_bookmarks() {
+    // Google Docs writes a heading bookmark's start between paragraphs; a
+    // table cell can hold one too.
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:bookmarkStart w:id="1" w:name="_Toc1"/><w:p><w:r><w:t>Title</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:tbl><w:tr><w:tc><w:bookmarkStart w:id="2" w:name="Cell"/><w:p><w:r><w:t>In cell</w:t></w:r></w:p>"#,
+        r#"<w:bookmarkEnd w:id="2"/></w:tc></w:tr><w:tr><w:tc><w:sdt><w:sdtContent>"#,
+        r#"<w:bookmarkStart w:id="3" w:name="InControl"/><w:p><w:r><w:t>c</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p>"#,
+        r#"</w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>"#,
+    )));
+    let check = |messages: Vec<String>, format: &str| {
+        let bookmarks = messages
+            .iter()
+            .filter(|message| message.starts_with("bookmark marker") && message.contains(format))
+            .count();
+        // The body start and the end inside its paragraph, the cell's start
+        // and end, and the start in the cell's control and its end.
+        assert_eq!(bookmarks, 6, "{format}: {messages:?}");
+        assert!(
+            !messages.iter().any(|message| {
+                message.starts_with("unmodelled body XML")
+                    || message.starts_with("unmodelled table-cell XML")
+            }),
+            "{format}: {messages:?}"
+        );
+    };
+    check(
+        doc.to_rtf_bytes()
+            .unwrap()
+            .diagnostics
+            .into_iter()
+            .map(|d| d.message)
+            .collect(),
+        "RTF",
+    );
+    check(
+        doc.to_odt_bytes()
+            .unwrap()
+            .diagnostics
+            .into_iter()
+            .map(|d| d.message)
+            .collect(),
+        "ODT",
+    );
+    check(
+        doc.to_epub_bytes()
+            .unwrap()
+            .diagnostics
+            .into_iter()
+            .map(|d| d.message)
+            .collect(),
+        "EPUB",
+    );
+}
+
+#[test]
+fn an_odt_list_runs_on_through_a_bookmark_between_its_items() {
+    let odt_lists = |marker: bool| {
+        let mut doc = Document::new();
+        let definition = doc
+            .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+            .unwrap();
+        let list = doc.add_numbering_instance(definition, &[]).unwrap();
+        for item in ["alpha", "beta"] {
+            doc.add_paragraph(item).numbering(list, 0);
+        }
+        let bytes = doc.to_bytes().unwrap();
+        let mut package = oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+        let xml =
+            String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+        // As Google Docs writes a heading bookmark: its start before the
+        // item, its end inside it.
+        let at = xml.rfind("<w:p>").or_else(|| xml.rfind("<w:p ")).unwrap();
+        let close = xml.rfind("</w:p>").unwrap();
+        let edited = if marker {
+            format!(
+                r#"{}<w:bookmarkStart w:id="50" w:name="Second"/>{}<w:bookmarkEnd w:id="50"/>{}"#,
+                &xml[..at],
+                &xml[at..close],
+                &xml[close..]
+            )
+        } else {
+            xml
+        };
+        package.set_part("/word/document.xml", edited.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let odt = Document::from_bytes(&out.into_inner())
+            .unwrap()
+            .to_odt_bytes()
+            .unwrap()
+            .bytes;
+        let mut archive = zip::ZipArchive::new(Cursor::new(odt)).unwrap();
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("content.xml").unwrap(), &mut content)
+            .unwrap();
+        content.matches("<text:list ").count() + content.matches("<text:list>").count()
+    };
+    assert_eq!(odt_lists(true), odt_lists(false));
+    assert_eq!(odt_lists(false), 1);
+}
+
+#[test]
 fn internal_links_reach_their_bookmark_in_both_exports() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,
