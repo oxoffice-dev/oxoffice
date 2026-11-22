@@ -35,6 +35,27 @@ pub(crate) fn import_document_fragment_content(
     .map(|imported| (imported.xml, imported.source))
 }
 
+/// The custom XML part of the source holding the store a binding names,
+/// none when no store of the source has that id: such a binding is kept as
+/// it is. Word's document property quick parts (Title, Author, Company)
+/// bind the core and extended properties, and a store may have been deleted.
+fn source_store_part(fragment: &Document, store_item_id: &str) -> Result<Option<String>> {
+    if crate::content_control::custom_xml_store_item_count(
+        &fragment.package,
+        &fragment.doc_part_name,
+        store_item_id,
+    )? == 0
+    {
+        return Ok(None);
+    }
+    crate::content_control::resolve_custom_xml_part(
+        &fragment.package,
+        &fragment.doc_part_name,
+        store_item_id,
+    )
+    .map(Some)
+}
+
 fn apply_fragment_xml_edits(
     xml: &mut Vec<u8>,
     source: &mut Option<Arc<oxoffice_docx_oxml::document::ScopedWordSource>>,
@@ -592,22 +613,9 @@ pub(super) fn import_fragment_content_with_state(
         store_item_ids.extend(ids);
     }
     for store_item_id in store_item_ids {
-        // A binding to no store of the source is kept as it is: Word's
-        // document property quick parts (Title, Author, Company) bind the
-        // core and extended properties, and a store may have been deleted.
-        if crate::content_control::custom_xml_store_item_count(
-            &fragment.package,
-            &fragment.doc_part_name,
-            &store_item_id,
-        )? == 0
-        {
+        let Some(source_part) = source_store_part(&fragment, &store_item_id)? else {
             continue;
-        }
-        let source_part = crate::content_control::resolve_custom_xml_part(
-            &fragment.package,
-            &fragment.doc_part_name,
-            &store_item_id,
-        )?;
+        };
         let relationship = source_rels.items.iter().find(|relationship| {
             relationship.rel_type.ends_with("/customXml")
                 && crate::document::relationship_is_internal(relationship)
@@ -636,11 +644,9 @@ pub(super) fn import_fragment_content_with_state(
         companion_comment_ids,
     )? {
         for store_item_id in fragment_store_item_ids(&comment_xml)? {
-            let source_item_part = crate::content_control::resolve_custom_xml_part(
-                &fragment.package,
-                &fragment.doc_part_name,
-                &store_item_id,
-            )?;
+            let Some(source_item_part) = source_store_part(&fragment, &store_item_id)? else {
+                continue;
+            };
             if !binding_stores.iter().any(|(id, _)| id == &store_item_id) {
                 binding_stores.push((store_item_id, source_item_part));
             }
@@ -720,11 +726,9 @@ pub(super) fn import_fragment_content_with_state(
             }),
         )?;
         for store_item_id in fragment_store_item_ids(&note_xml)? {
-            let source_item_part = crate::content_control::resolve_custom_xml_part(
-                &fragment.package,
-                &fragment.doc_part_name,
-                &store_item_id,
-            )?;
+            let Some(source_item_part) = source_store_part(&fragment, &store_item_id)? else {
+                continue;
+            };
             if !binding_stores.iter().any(|(id, _)| id == &store_item_id) {
                 binding_stores.push((store_item_id, source_item_part));
             }

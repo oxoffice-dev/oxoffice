@@ -877,7 +877,21 @@ fn a_control_bound_to_a_document_property_imports_as_it_is() {
         r#" w:xpath="/ns1:coreProperties[1]/ns0:title[1]" w:storeItemID="{6C3C8BC8-F283-45AE-878A-BAB7291924A1}"/>"#,
         r#"<w:text/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Title</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
     );
-    let source = with_raw_story(title, title, &[], true);
+    // The same quick part in a footnote too.
+    let mut source = with_raw_story(title, title, &[], true);
+    let id = source.add_footnote("note");
+    source.add_paragraph("noted").add_footnote_ref(id);
+    let mut package = OpcPackage::from_reader(Cursor::new(saved(&mut source))).unwrap();
+    let notes =
+        String::from_utf8(package.get_part("/word/footnotes.xml").unwrap().to_vec()).unwrap();
+    let at = notes.rfind("</w:footnote>").unwrap();
+    package.set_part(
+        "/word/footnotes.xml",
+        format!("{}{title}{}", &notes[..at], &notes[at..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let source = Document::from_bytes(&out.into_inner()).expect("the source opens");
     for entry in ["append", "insert_document"] {
         let mut doc = doc_with(&["dest"]);
         match entry {
@@ -889,7 +903,11 @@ fn a_control_bound_to_a_document_property_imports_as_it_is() {
         let stories: Vec<_> = bindings.iter().map(|(part, _)| part.as_str()).collect();
         assert_eq!(
             stories,
-            ["word/document.xml", "word/footer1.xml"],
+            [
+                "word/document.xml",
+                "word/footer1.xml",
+                "word/footnotes.xml"
+            ],
             "{entry}"
         );
         assert!(
