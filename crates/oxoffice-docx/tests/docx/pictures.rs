@@ -689,6 +689,18 @@ fn an_anchor_without_side_distances_keeps_text_an_eighth_of_an_inch_away() {
     let xml = doc.part_xml("word/document.xml").unwrap();
     assert!(!xml.contains("distL="), "{xml}");
     assert!((text_origins(&doc)["Beside"].0 - 153.0).abs() < 0.01);
+    // Even a resize of the picture keeps its anchor's source bytes.
+    let mut doc = doc;
+    let relationship = doc.pictures().unwrap().remove(0).relationship_id;
+    assert_eq!(
+        doc.set_picture_size(&relationship, Length::pt(72.0), Length::pt(72.0))
+            .unwrap(),
+        1
+    );
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("distL="), "{xml}");
+    assert!((text_origins(&doc)["Beside"].0 - 153.0).abs() < 0.01);
 }
 
 #[test]

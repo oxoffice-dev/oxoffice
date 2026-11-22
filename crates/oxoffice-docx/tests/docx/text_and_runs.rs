@@ -578,6 +578,7 @@ fn a_break_keeps_where_its_text_restarts_through_an_edit_and_a_reopen() {
         // breaks the search reaches.
         let mut doc = doc_with_breaks(attributes);
         doc.paragraph_mut(0).unwrap().add_run(", edited");
+        doc.paragraph_mut(3).unwrap().add_run(", edited");
         for (from, to) in [("before", "Before"), ("simple", "Simple")] {
             assert_eq!(doc.replace_text(from, to), 1, "{attributes}: {from}");
         }
@@ -589,8 +590,8 @@ fn a_break_keeps_where_its_text_restarts_through_an_edit_and_a_reopen() {
             "{attributes}: the run and both field results keep the break: {xml}"
         );
         // The edited run and simple field result are written from the
-        // model, in Word's spelling; the complex field result the search
-        // does not reach keeps its source bytes.
+        // model, in Word's spelling; the complex field result keeps its
+        // source bytes, even when its paragraph is edited.
         let written = format!(r#"<w:br w:type="{kind}" w:clear="{clear}"/>"#);
         for text in ["Before", "Simple"] {
             let expected = format!("<w:t>{text}</w:t>{written}");
