@@ -66,6 +66,21 @@ thread per call.
   `resolve_table` and `CT_TableStyle::from_xml`, about 112 KB each. Plan
   step 2 is #160.
 
+Step 2 (#160, `perf(drawing)`: Rust code that builds or reads the regions
+uses `Box::new` and `as_deref()`; not breaking, since `oxoffice-drawing` is
+not published and the facade does not re-export the type):
+
+- The background and the thirteen regions of `CT_TableStyle` became
+  `Option<Box<...>>`: 55,544 to 208 bytes. The stack test checks it too.
+- The frame of `resolve_table` in the release code of `oxoffice-pptx-layout`
+  went from 112,792 to 2,120 bytes (`--emit=asm`, its stack probe and
+  `subq`, Linux x86_64).
+- The smoke work did not move: 272 KiB for the 20 corpus decks and 416 KiB
+  for the whole corpus, before and after (Linux x86_64 release wheels, 16 KiB
+  steps). Rendering a deck without a table needs the same 272 KiB, so the
+  table path is no longer the deepest one in these wheels; it was when #160
+  was seen (`ulimit -s 360` after #47).
+
 ## Links
 
 - #15, and #20 for the 1 MiB stack budget the release wheels must fit in

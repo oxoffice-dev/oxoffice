@@ -2654,7 +2654,7 @@ impl ResolveCtx<'_> {
                         if let Some(style) = style {
                             let mut priority = 1u8;
                             cascade.apply_region(
-                                style.whole_table.as_ref(),
+                                style.whole_table.as_deref(),
                                 true,
                                 position,
                                 priority,
@@ -2665,9 +2665,9 @@ impl ResolveCtx<'_> {
                                     table_properties.is_some_and(|properties| properties.first_row),
                                 );
                                 let region = if row_index.saturating_sub(offset) % 2 == 0 {
-                                    style.band1_horizontal.as_ref()
+                                    style.band1_horizontal.as_deref()
                                 } else {
-                                    style.band2_horizontal.as_ref()
+                                    style.band2_horizontal.as_deref()
                                 };
                                 cascade.apply_region(region, false, position, priority);
                                 priority += 1;
@@ -2678,9 +2678,9 @@ impl ResolveCtx<'_> {
                                         .is_some_and(|properties| properties.first_column),
                                 );
                                 let region = if column_index.saturating_sub(offset) % 2 == 0 {
-                                    style.band1_vertical.as_ref()
+                                    style.band1_vertical.as_deref()
                                 } else {
-                                    style.band2_vertical.as_ref()
+                                    style.band2_vertical.as_deref()
                                 };
                                 cascade.apply_region(region, false, position, priority);
                                 priority += 1;
@@ -2690,7 +2690,7 @@ impl ResolveCtx<'_> {
                                     .is_some_and(|properties| properties.first_column)
                             {
                                 cascade.apply_region(
-                                    style.first_column.as_ref(),
+                                    style.first_column.as_deref(),
                                     false,
                                     position,
                                     priority,
@@ -2701,7 +2701,7 @@ impl ResolveCtx<'_> {
                                 && table_properties.is_some_and(|properties| properties.last_column)
                             {
                                 cascade.apply_region(
-                                    style.last_column.as_ref(),
+                                    style.last_column.as_deref(),
                                     false,
                                     position,
                                     priority,
@@ -2712,7 +2712,7 @@ impl ResolveCtx<'_> {
                                 && table_properties.is_some_and(|properties| properties.first_row)
                             {
                                 cascade.apply_region(
-                                    style.first_row.as_ref(),
+                                    style.first_row.as_deref(),
                                     false,
                                     position,
                                     priority,
@@ -2723,7 +2723,7 @@ impl ResolveCtx<'_> {
                                 && table_properties.is_some_and(|properties| properties.last_row)
                             {
                                 cascade.apply_region(
-                                    style.last_row.as_ref(),
+                                    style.last_row.as_deref(),
                                     false,
                                     position,
                                     priority,
@@ -2740,15 +2740,15 @@ impl ResolveCtx<'_> {
                                 table_properties.is_some_and(|properties| properties.last_column);
                             let corner = match (row_index, column_index) {
                                 (0, 0) if first_row && first_column => {
-                                    style.north_west_cell.as_ref()
+                                    style.north_west_cell.as_deref()
                                 }
                                 (0, column)
                                     if column + 1 == column_count && first_row && last_column =>
                                 {
-                                    style.north_east_cell.as_ref()
+                                    style.north_east_cell.as_deref()
                                 }
                                 (row, 0) if row + 1 == row_count && last_row && first_column => {
-                                    style.south_west_cell.as_ref()
+                                    style.south_west_cell.as_deref()
                                 }
                                 (row, column)
                                     if row + 1 == row_count
@@ -2756,7 +2756,7 @@ impl ResolveCtx<'_> {
                                         && last_row
                                         && last_column =>
                                 {
-                                    style.south_east_cell.as_ref()
+                                    style.south_east_cell.as_deref()
                                 }
                                 _ => None,
                             };
@@ -2850,7 +2850,7 @@ impl ResolveCtx<'_> {
                 })
             })
             .collect::<Result<Vec<_>, ResolveError>>()?;
-        let background = match style.and_then(|style| style.background.as_ref()) {
+        let background = match style.and_then(|style| style.background.as_deref()) {
             Some(background) => {
                 let size = (
                     column_widths.iter().sum(),

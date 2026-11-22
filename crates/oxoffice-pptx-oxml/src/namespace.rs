@@ -152,7 +152,7 @@ pub(crate) fn non_visual_drawing_without_identity(xml: &[u8]) -> Result<Vec<u8>,
                 for attribute in start.attributes().with_checks(false) {
                     let attribute = attribute?;
                     if !matches!(attribute.key.as_ref(), b"id" | b"name") {
-                        replacement.push_attribute(attribute);
+                        oxoffice_core::xml::push_raw_attribute(&mut replacement, attribute);
                     }
                 }
                 let mut writer = Writer::new(Vec::new());
@@ -194,7 +194,7 @@ pub(crate) fn set_non_visual_drawing_name(xml: &mut Vec<u8>, name: &str) -> Resu
                         push_escaped_attribute(&mut replacement, "name", name);
                         replaced = true;
                     } else {
-                        replacement.push_attribute(attribute);
+                        oxoffice_core::xml::push_raw_attribute(&mut replacement, attribute);
                     }
                 }
                 if !replaced {

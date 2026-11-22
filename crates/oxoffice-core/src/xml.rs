@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use quick_xml::XmlVersion;
 use quick_xml::errors::{Error as QuickXmlError, IllFormedError, SyntaxError};
+use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesRef, BytesStart, Event};
 use quick_xml::name::{Namespace, NamespaceResolver, PrefixDeclaration, QName, ResolveResult};
 use quick_xml::reader::Reader;
@@ -83,6 +84,48 @@ pub fn escape_attribute_value(value: &str) -> Cow<'_, str> {
 /// [`escape_attribute_value`].
 pub fn push_escaped_attribute(start: &mut BytesStart<'_>, key: &str, value: &str) {
     start.push_attribute((key.as_bytes(), escape_attribute_value(value).as_bytes()));
+}
+
+/// The value of `attribute` with its entity and character references
+/// resolved. Read every value a model holds as a string this way, so that
+/// the writer, which escapes it, gives back what was read. Literal white
+/// space is kept as written, without the attribute-value normalisation an
+/// XML reader applies (a literal tab or line feed reads as a space there),
+/// see #100. A value with a malformed reference, which no well-formed part
+/// holds, is kept as written.
+pub fn attribute_text<'a>(attribute: &'a Attribute<'_>) -> Result<Cow<'a, str>> {
+    let raw = std::str::from_utf8(&attribute.value)?;
+    Ok(quick_xml::escape::unescape(raw).unwrap_or(Cow::Borrowed(raw)))
+}
+
+/// `raw`, an attribute value kept as read, its references unresolved, ready
+/// to be written between double quotes: a literal `"`, which only a value
+/// read between single quotes holds, becomes `&quot;`.
+pub fn quote_raw_attribute_value(raw: &str) -> Cow<'_, str> {
+    if raw.contains('"') {
+        Cow::Owned(raw.replace('"', "&quot;"))
+    } else {
+        Cow::Borrowed(raw)
+    }
+}
+
+/// Pushes `attribute`, read from a part and kept as read, onto `start`: its
+/// raw value, references unresolved, with a literal `"` turned into
+/// `&quot;` as [`quote_raw_attribute_value`] does, since quick-xml always
+/// writes double quotes.
+pub fn push_raw_attribute(start: &mut BytesStart<'_>, mut attribute: Attribute<'_>) {
+    if attribute.value.contains(&b'"') {
+        let mut quoted = Vec::with_capacity(attribute.value.len() + 5);
+        for &byte in attribute.value.iter() {
+            if byte == b'"' {
+                quoted.extend_from_slice(b"&quot;");
+            } else {
+                quoted.push(byte);
+            }
+        }
+        attribute.value = Cow::Owned(quoted);
+    }
+    start.push_attribute(attribute);
 }
 
 /// Escapes `value` for a text node so that every XML reader reads it back as
@@ -502,13 +545,14 @@ pub fn matches_local_name(name: &[u8], expected: &[u8]) -> bool {
     local_name(name) == expected
 }
 
-/// Return a named attribute value, matching with or without a prefix.
+/// Return a named attribute value, matching with or without a prefix, read
+/// by [`attribute_text`].
 pub fn get_attr(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {
     element
         .attributes()
         .flatten()
         .find(|attr| matches_local_name(attr.key.as_ref(), name))
-        .and_then(|attr| std::str::from_utf8(&attr.value).ok().map(str::to_owned))
+        .and_then(|attr| attribute_text(&attr).ok().map(Cow::into_owned))
 }
 
 /// Return non-`vt` prefixed namespace declarations needed by raw XML children.
@@ -528,4 +572,50 @@ pub(crate) fn extra_namespace_declarations(
         }
     }
     Ok(declarations)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn first_attribute(xml: &str) -> BytesStart<'static> {
+        let mut reader = Reader::from_str(xml);
+        match reader.read_event().unwrap() {
+            Event::Empty(start) => start.into_owned(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_attribute_read_with_references_reads_resolved() {
+        let start = first_attribute(r#"<a v="&#81;&amp;A &lt;x&gt;" w='say "hi"' bad="&nope;"/>"#);
+        let values: Vec<_> = start
+            .attributes()
+            .map(|attribute| attribute_text(&attribute.unwrap()).unwrap().into_owned())
+            .collect();
+        assert_eq!(values, ["Q&A <x>", "say \"hi\"", "&nope;"]);
+        assert_eq!(get_attr(&start, b"v").as_deref(), Some("Q&A <x>"));
+    }
+
+    #[test]
+    fn an_attribute_kept_as_read_is_written_well_formed_between_double_quotes() {
+        let source = first_attribute(r#"<a w='&amp;"hi"' v="&#9;x"/>"#);
+        let mut copy = BytesStart::new("a");
+        for attribute in source.attributes() {
+            push_raw_attribute(&mut copy, attribute.unwrap());
+        }
+        let written = String::from_utf8(copy.to_vec()).unwrap();
+        assert_eq!(written, r#"a w="&amp;&quot;hi&quot;" v="&#9;x""#);
+        let reread = first_attribute(&format!("<{written}/>"));
+        let values: Vec<_> = reread
+            .attributes()
+            .map(|attribute| attribute_text(&attribute.unwrap()).unwrap().into_owned())
+            .collect();
+        assert_eq!(values, ["&\"hi\"", "\tx"]);
+        assert_eq!(quote_raw_attribute_value("a\"b"), "a&quot;b");
+        assert!(matches!(
+            quote_raw_attribute_value("ab"),
+            Cow::Borrowed("ab")
+        ));
+    }
 }

@@ -137,20 +137,20 @@ pub struct CT_TableStyleList {
 pub struct CT_TableStyle {
     pub style_id: String,
     pub style_name: String,
-    pub background: Option<CT_TableBackgroundStyle>,
-    pub whole_table: Option<CT_TablePartStyle>,
-    pub band1_horizontal: Option<CT_TablePartStyle>,
-    pub band2_horizontal: Option<CT_TablePartStyle>,
-    pub band1_vertical: Option<CT_TablePartStyle>,
-    pub band2_vertical: Option<CT_TablePartStyle>,
-    pub first_column: Option<CT_TablePartStyle>,
-    pub last_column: Option<CT_TablePartStyle>,
-    pub first_row: Option<CT_TablePartStyle>,
-    pub last_row: Option<CT_TablePartStyle>,
-    pub north_west_cell: Option<CT_TablePartStyle>,
-    pub north_east_cell: Option<CT_TablePartStyle>,
-    pub south_west_cell: Option<CT_TablePartStyle>,
-    pub south_east_cell: Option<CT_TablePartStyle>,
+    pub background: Option<Box<CT_TableBackgroundStyle>>,
+    pub whole_table: Option<Box<CT_TablePartStyle>>,
+    pub band1_horizontal: Option<Box<CT_TablePartStyle>>,
+    pub band2_horizontal: Option<Box<CT_TablePartStyle>>,
+    pub band1_vertical: Option<Box<CT_TablePartStyle>>,
+    pub band2_vertical: Option<Box<CT_TablePartStyle>>,
+    pub first_column: Option<Box<CT_TablePartStyle>>,
+    pub last_column: Option<Box<CT_TablePartStyle>>,
+    pub first_row: Option<Box<CT_TablePartStyle>>,
+    pub last_row: Option<Box<CT_TablePartStyle>>,
+    pub north_west_cell: Option<Box<CT_TablePartStyle>>,
+    pub north_east_cell: Option<Box<CT_TablePartStyle>>,
+    pub south_west_cell: Option<Box<CT_TablePartStyle>>,
+    pub south_east_cell: Option<Box<CT_TablePartStyle>>,
     raw_attributes: RawAttributes,
     raw_children: OrderedRawChildren,
 }
@@ -2253,7 +2253,7 @@ impl CT_TableStyle {
             ));
         }
         if name == b"tblBg" {
-            self.background = Some(CT_TableBackgroundStyle::from_xml(&raw)?);
+            self.background = Some(Box::new(CT_TableBackgroundStyle::from_xml(&raw)?));
             *boundary = slot + 1;
             return Ok(());
         }
@@ -2264,12 +2264,12 @@ impl CT_TableStyle {
                 String::from_utf8_lossy(name)
             )));
         }
-        *destination = Some(CT_TablePartStyle::from_xml(&raw, name)?);
+        *destination = Some(Box::new(CT_TablePartStyle::from_xml(&raw, name)?));
         *boundary = slot + 1;
         Ok(())
     }
 
-    fn region_mut(&mut self, name: &[u8]) -> &mut Option<CT_TablePartStyle> {
+    fn region_mut(&mut self, name: &[u8]) -> &mut Option<Box<CT_TablePartStyle>> {
         match name {
             b"wholeTbl" => &mut self.whole_table,
             b"band1H" => &mut self.band1_horizontal,
@@ -2299,19 +2299,19 @@ impl CT_TableStyle {
             background.write_xml(writer)?;
         }
         let ordered = [
-            ("a:wholeTbl", self.whole_table.as_ref()),
-            ("a:band1H", self.band1_horizontal.as_ref()),
-            ("a:band2H", self.band2_horizontal.as_ref()),
-            ("a:band1V", self.band1_vertical.as_ref()),
-            ("a:band2V", self.band2_vertical.as_ref()),
-            ("a:lastCol", self.last_column.as_ref()),
-            ("a:firstCol", self.first_column.as_ref()),
-            ("a:lastRow", self.last_row.as_ref()),
-            ("a:seCell", self.south_east_cell.as_ref()),
-            ("a:swCell", self.south_west_cell.as_ref()),
-            ("a:firstRow", self.first_row.as_ref()),
-            ("a:neCell", self.north_east_cell.as_ref()),
-            ("a:nwCell", self.north_west_cell.as_ref()),
+            ("a:wholeTbl", self.whole_table.as_deref()),
+            ("a:band1H", self.band1_horizontal.as_deref()),
+            ("a:band2H", self.band2_horizontal.as_deref()),
+            ("a:band1V", self.band1_vertical.as_deref()),
+            ("a:band2V", self.band2_vertical.as_deref()),
+            ("a:lastCol", self.last_column.as_deref()),
+            ("a:firstCol", self.first_column.as_deref()),
+            ("a:lastRow", self.last_row.as_deref()),
+            ("a:seCell", self.south_east_cell.as_deref()),
+            ("a:swCell", self.south_west_cell.as_deref()),
+            ("a:firstRow", self.first_row.as_deref()),
+            ("a:neCell", self.north_east_cell.as_deref()),
+            ("a:nwCell", self.north_west_cell.as_deref()),
         ];
         for (index, (tag, region)) in ordered.into_iter().enumerate() {
             emit_raw(writer, self.raw_children.at(index + 1))?;

@@ -751,7 +751,7 @@ fn glossary_body_as_document(body: &[u8]) -> oxoffice_docx_oxml::error::Result<V
                 let mut start = quick_xml::events::BytesStart::new(&body_name);
                 for attribute in element.attributes() {
                     let attribute = attribute?;
-                    start.push_attribute(attribute);
+                    oxoffice_core::xml::push_raw_attribute(&mut start, attribute);
                 }
                 writer.write_event(quick_xml::events::Event::Start(start))?;
                 let begin = reader.buffer_position() as usize;
@@ -868,7 +868,7 @@ fn updated_word_value(parent: &[u8], local: &str, value: &str) -> Result<Vec<u8>
             replacement.push_attribute((key, value));
             seen = true;
         } else {
-            replacement.push_attribute(attribute);
+            oxoffice_core::xml::push_raw_attribute(&mut replacement, attribute);
         }
     }
     if !seen {

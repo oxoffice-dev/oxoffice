@@ -550,7 +550,8 @@ pub(super) fn remove_note_references(xml: &[u8], id: i32, kind: StoryKind) -> Re
             match local.as_ref() {
                 b"id" => reference_id = value.parse::<i32>().ok(),
                 b"customMarkFollows" => {
-                    custom_mark_follows = matches!(value.as_ref(), "1" | "true" | "on");
+                    custom_mark_follows =
+                        oxoffice_docx_oxml::shared::ST_OnOff::parse(&value) == Some(true);
                 }
                 _ => {}
             }

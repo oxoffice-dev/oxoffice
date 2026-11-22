@@ -544,6 +544,85 @@ fn a_loop_copies_its_note_and_picture_beside_header_and_footer_tags() {
     }
 }
 
+const PAGE_FIELD: &str = r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#;
+const NUMPAGES_FIELD: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+
+/// The instructions of the fields a part holds, in order.
+fn field_instructions(xml: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for piece in xml.split('<').skip(1) {
+        if let Some(rest) = piece.strip_prefix(r#"w:fldSimple w:instr=""#) {
+            found.push(rest[..rest.find('"').unwrap()].trim().to_owned());
+        } else if let Some(rest) = piece.strip_prefix(r#"w:instrText xml:space="preserve">"#) {
+            found.push(rest.trim().to_owned());
+        }
+    }
+    found
+}
+
+#[test]
+fn a_tag_beside_a_field_is_filled_and_the_field_kept() {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Delivery {{{{ delivery }}}} - page </w:t></w:r>{PAGE_FIELD}<w:r><w:t xml:space="preserve"> of </w:t></w:r>{NUMPAGES_FIELD}</w:p>"#
+    ));
+    doc.set_raw_footer_with_images(
+        format!(
+            r#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t xml:space="preserve">Ref {{{{ ref }}}} - page </w:t></w:r>{PAGE_FIELD}<w:r><w:t xml:space="preserve"> of </w:t></w:r>{NUMPAGES_FIELD}</w:p></w:ftr>"#
+        )
+        .into_bytes(),
+        &[],
+        HdrFtrType::Default,
+    );
+
+    let data = json!({ "delivery": "2026-01-01", "ref": "R-7" });
+    assert_eq!(doc.render_template(&data).unwrap(), 2);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["Delivery 2026-01-01 - page 1 of 2"]);
+    assert_eq!(doc.footer_text().as_deref(), Some("Ref R-7 - page 1 of 2"));
+    let body = doc.part_xml("word/document.xml").unwrap();
+    assert_eq!(field_instructions(&body), ["PAGE", "NUMPAGES"]);
+    let footer = doc
+        .part_names()
+        .unwrap()
+        .into_iter()
+        .find(|name| name.contains("word/footer"))
+        .unwrap();
+    let footer = doc.part_xml(&footer).unwrap();
+    assert_eq!(field_instructions(&footer), ["PAGE", "NUMPAGES"]);
+}
+
+#[test]
+fn a_loop_repeats_a_paragraph_holding_a_field_with_its_field() {
+    for (items, filled) in [
+        (json!([]), 0),
+        (json!(["a"]), 1),
+        (json!(["a", "b", "c"]), 3),
+    ] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:t>{{% for x in xs %}}</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Line {{{{ x }}}} - page </w:t></w:r>{PAGE_FIELD}</w:p><w:p><w:r><w:t xml:space="preserve">Total </w:t></w:r>{NUMPAGES_FIELD}</w:p><w:p><w:r><w:t>{{% endfor %}}</w:t></w:r></w:p>"#
+        ));
+        assert_eq!(
+            doc.render_template(&json!({ "xs": items })).unwrap(),
+            filled
+        );
+        let doc = reopen(&mut doc);
+        let expected = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|x| {
+                [
+                    format!("Line {} - page 1", x.as_str().unwrap()),
+                    "Total 2".to_owned(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts(&doc), expected);
+        let body = doc.part_xml("word/document.xml").unwrap();
+        assert_eq!(field_instructions(&body).len(), 2 * filled);
+    }
+}
+
 // ---- Grammar version 1 ----
 
 #[test]

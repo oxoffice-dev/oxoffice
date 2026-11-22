@@ -1,9 +1,0 @@
-{
-  "id": "docx-pdf-forms-libreoffice-legacy",
-  "format": "docx",
-  "area": "pdf forms",
-  "title": "Legacy form fields saved by LibreOffice stay static",
-  "symptom": "with fillable_forms, FORMTEXT, FORMCHECKBOX and FORMDROPDOWN fields saved by LibreOffice, with a bookmark inside the field, export as page content without a diagnostic",
-  "workaround": "save the form from Word, or replace legacy form fields with content controls",
-  "issue": 139
-}

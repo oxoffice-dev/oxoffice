@@ -142,7 +142,7 @@ impl CT_BorderEdge {
                     .decode(e.name().as_ref(), key, v)?
                     .apply_border(&mut edge);
             } else if matches_local_name(key, b"color") {
-                edge.color = Some(v.to_string());
+                edge.color = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
             } else {
                 edge.extra_attributes
                     .push((std::str::from_utf8(key)?.to_owned(), v.to_owned()));
@@ -173,7 +173,7 @@ impl CT_BorderEdge {
                     .decode(e.name().as_ref(), key, value)?
                     .apply_border(&mut edge);
             } else if is_word_attribute(key, b"color", word_prefixes) {
-                edge.color = Some(value.to_string());
+                edge.color = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
             } else {
                 edge.extra_attributes
                     .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
@@ -208,10 +208,13 @@ impl CT_BorderEdge {
         include_retained: bool,
     ) {
         for (name, value) in self.extra_attributes.iter().filter(|_| include_retained) {
-            e.push_attribute(Attribute {
-                key: QName(name.as_bytes()),
-                value: Cow::Borrowed(value.as_bytes()),
-            });
+            oxoffice_core::xml::push_raw_attribute(
+                e,
+                Attribute {
+                    key: QName(name.as_bytes()),
+                    value: Cow::Borrowed(value.as_bytes()),
+                },
+            );
         }
         let (mut size, mut space) = (itoa::Buffer::new(), itoa::Buffer::new());
         for (name, value) in self

@@ -3599,7 +3599,7 @@ fn rewrite_math_properties(source: &[u8], properties: Option<&MathProperties>) -
 
 pub(crate) fn parse_toggle(element: &BytesStart<'_>, prefixes: &[String]) -> Result<Option<bool>> {
     Ok(match word_attribute(element, b"val", prefixes)? {
-        Some(value) => parse_on_off(&value),
+        Some(value) => crate::shared::ST_OnOff::parse(&value),
         None => Some(true),
     })
 }
@@ -3654,11 +3654,11 @@ fn parse_document_protection(
     let value = |name| word_attribute(element, name, prefixes).ok().flatten();
     let mode = ProtectionMode::parse(&value(b"edit")?)?;
     let enforcement = match value(b"enforcement") {
-        Some(value) => Some(parse_on_off(&value)?),
+        Some(value) => Some(crate::shared::ST_OnOff::parse(&value)?),
         None => None,
     };
     let formatting = match value(b"formatting") {
-        Some(value) => Some(parse_on_off(&value)?),
+        Some(value) => Some(crate::shared::ST_OnOff::parse(&value)?),
         None => None,
     };
     let provider_type = match value(b"cryptProviderType") {
@@ -3711,14 +3711,6 @@ pub(crate) fn word_attribute(
         }
     }
     Ok(None)
-}
-
-pub(crate) fn parse_on_off(value: &str) -> Option<bool> {
-    match value {
-        "1" | "true" | "on" => Some(true),
-        "0" | "false" | "off" => Some(false),
-        _ => None,
-    }
 }
 
 fn write_document_protection(protection: &DocumentProtection) -> Result<Vec<u8>> {

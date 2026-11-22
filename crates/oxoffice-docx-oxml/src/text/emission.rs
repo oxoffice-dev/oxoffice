@@ -414,6 +414,7 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
     }
 
     pub(crate) fn push_raw(&mut self, name: &str, value: &str) -> Result<()> {
+        let value = oxoffice_core::xml::quote_raw_attribute_value(value);
         let length = name
             .len()
             .checked_add(4)
@@ -435,10 +436,20 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
         Ok(())
     }
 
+    /// Pushes an attribute kept as read, its value unresolved, fixing only
+    /// the literal `"` a single-quoted source may hold.
     pub(super) fn push_raw_attribute(
         &mut self,
-        attribute: quick_xml::events::attributes::Attribute<'_>,
+        mut attribute: quick_xml::events::attributes::Attribute<'_>,
     ) -> Result<()> {
+        if attribute.value.contains(&b'"') {
+            let raw = std::str::from_utf8(&attribute.value)?;
+            attribute.value = Cow::Owned(
+                oxoffice_core::xml::quote_raw_attribute_value(raw)
+                    .into_owned()
+                    .into_bytes(),
+            );
+        }
         let length = attribute
             .key
             .as_ref()
@@ -459,6 +470,7 @@ impl<'a, 'name> FieldXmlStart<'a, 'name> {
     }
 
     pub(crate) fn push_raw_word(&mut self, prefix: &str, local: &str, value: &str) -> Result<()> {
+        let value = oxoffice_core::xml::quote_raw_attribute_value(value);
         let key = prefix
             .len()
             .checked_add(1)
