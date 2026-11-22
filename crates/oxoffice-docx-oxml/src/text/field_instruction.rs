@@ -469,21 +469,23 @@ fn named_reference(tokens: &[InstructionToken]) -> Option<usize> {
         "XE" | "TA" => Some("r"),
         _ => return None,
     };
-    let mut positional = false;
+    // A HYPERLINK with an address: `\l` is a place in it.
+    if name == "HYPERLINK" && !positional_operands(&name, tokens).is_empty() {
+        return None;
+    }
     let mut index = 1;
     while index < tokens.len() {
         let next = tokens.get(index + 1);
         match token_switch_name(&tokens[index]) {
             Some(switch) if switch_argument_follows(&name, switch, next) => {
                 if wanted.is_some_and(|wanted| switch.eq_ignore_ascii_case(wanted)) {
-                    // A HYPERLINK with an address: `\l` is a place in it.
-                    return (!(name == "HYPERLINK" && positional)).then_some(index + 1);
+                    return Some(index + 1);
                 }
                 index += 1;
             }
             Some(_) => {}
             None if wanted.is_none() => return Some(index),
-            None => positional = true,
+            None => {}
         }
         index += 1;
     }
@@ -569,13 +571,13 @@ pub fn bibliography_option_switch_edits(
             ));
         };
         let name = name.to_ascii_lowercase();
-        let takes_argument = switch_takes_argument("BIBLIOGRAPHY", &name)
-            || !switch_is_known_flag("BIBLIOGRAPHY", &name)
-                && tokens.get(index + 1).is_some_and(|token| token.quoted);
-        let has_argument = takes_argument && tokens.get(index + 1).is_some_and(|token| {
-            token.quoted
-                || !matches!(&token.argument, InstructionOperand::Text(value) if value.starts_with('\\'))
-        });
+        if tokens
+            .get(index + 1)
+            .is_some_and(|token| matches!(token.argument, InstructionOperand::Nested(_)))
+        {
+            return Err(OxmlError::InvalidValue("nested bibliography token".into()));
+        }
+        let has_argument = switch_argument_follows("BIBLIOGRAPHY", &name, tokens.get(index + 1));
         let start = tokens[index]
             .source_span
             .as_ref()
@@ -627,6 +629,13 @@ mod tests {
             (r#" REF Mark \h "#, Some("Mark")),
             (r#" REF \* MERGEFORMAT Mark "#, Some("Mark")),
             (r#" REF \f \h Mark "#, Some("Mark")),
+            (r#" REF \f Mark "#, Some("Mark")),
+            (r#" REF \r Mark \h "#, Some("Mark")),
+            (r#" ASK \o Mark "Prompt" "#, Some("Mark")),
+            (r#" HYPERLINK \o tip \l Mark "#, Some("Mark")),
+            (r#" HYPERLINK \t _blank \l "Mark" "#, Some("Mark")),
+            (r#" HYPERLINK \m \l "Mark" "#, Some("Mark")),
+            (r#" HYPERLINK \l "Mark" "other.docx" "#, None),
             (r#" REF \d "-" Mark "#, Some("Mark")),
             (r#" NOTEREF \f Mark \h "#, Some("Mark")),
             (r#" PAGEREF \# "0" Mark "#, Some("Mark")),
@@ -663,6 +672,8 @@ mod tests {
             (r#" HYPERLINK \o "tip" "http://example.com" "#, true),
             (r#" HYPERLINK \o "tip" \l "Mark" "#, false),
             (r#" HYPERLINK \l Mark \t "_blank" "#, false),
+            (r#" HYPERLINK \n "http://example.com" "#, true),
+            (r#" HYPERLINK \l "Mark" "other.docx" "#, true),
             (r#" REF "Mark" "#, false),
         ] {
             assert_eq!(hyperlink_has_address(raw), expected, "{raw:?}");
