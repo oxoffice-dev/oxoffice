@@ -518,9 +518,7 @@ fn an_if_field_picks_a_quoted_nested_merge_field_as_its_result() {
     }
 }
 
-// Fails today: a quoted operand made of text and a nested field has no model, so the IF gets too many operands and keeps its stored result. Issue: #50
 #[test]
-#[should_panic(expected = "the IF field compares the text joined to its nested field")]
 fn an_if_field_whose_quoted_operand_joins_text_and_a_nested_field_is_updated() {
     let mut doc = doc_with_body(
         r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "Mr </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Name»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Mr Smith" "Known" "Unknown" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Unknown</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
@@ -890,6 +888,142 @@ fn a_bookmark_after_a_picture_a_field_shows_keeps_its_place() {
         .map(|bookmark| bookmark.range().expect("a whole bookmark").start.run_index)
         .collect::<Vec<_>>();
     assert_ne!(starts, [0], "the bookmark does not start before the field");
+}
+
+/// A complex field with this instruction, `{ ... }` marking each nested
+/// MERGEFIELD by name, and this stored result.
+fn merge_instruction_field(instruction: &str, result: &str) -> String {
+    let mut runs = String::from(r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#);
+    let mut rest = instruction;
+    while let Some(open) = rest.find('{') {
+        let close = rest[open..].find('}').expect("closed nested field") + open;
+        runs.push_str(&format!(
+            r#"<w:r><w:instrText xml:space="preserve">{}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD {} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«x»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            &rest[..open],
+            rest[open + 1..close].trim()
+        ));
+        rest = &rest[close + 1..];
+    }
+    runs.push_str(&format!(
+        r#"<w:r><w:instrText xml:space="preserve">{rest}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    ));
+    format!("<w:p>{runs}</w:p>")
+}
+
+#[test]
+fn an_operand_joining_nested_fields_is_their_results_joined() {
+    let context = merge_context(&[("First", "Ada"), ("Last", "Lovelace"), ("Qty", "4")]);
+    for (instruction, expected) in [
+        // Two nested fields with a space between them, quoted.
+        (
+            r#" IF "{First} {Last}" = "Ada Lovelace" "yes" "no" "#,
+            "yes",
+        ),
+        // Text and a nested field side by side, without quotes.
+        (" = {Qty}*2 ", "8"),
+        // Two nested fields side by side, without quotes.
+        (r#" IF {First}{Last} = "AdaLovelace" "yes" "no" "#, "yes"),
+        // The field name written against a nested field, as Word's Ctrl+F9
+        // leaves it.
+        (" ={Qty}*2 ", "8"),
+        (r#" IF{First} = "Ada" "yes" "no" "#, "yes"),
+    ] {
+        let mut doc = doc_with_body(&merge_instruction_field(instruction, "old"));
+        doc.update_fields(&context).unwrap();
+        assert_eq!(texts(&doc), [expected], "{instruction}");
+        // Saved and opened again, the same operands evaluate the same way.
+        let mut doc = reopen(&mut doc);
+        doc.update_fields(&context).unwrap();
+        assert_eq!(texts(&doc), [expected], "{instruction} after a reopen");
+    }
+}
+
+#[test]
+fn a_joined_operand_without_one_nested_result_keeps_the_stored_result() {
+    let mut doc = doc_with_body(&merge_instruction_field(
+        r#" IF "Mr {Name}" = "Mr Smith" "Known" "Unknown" "#,
+        "stored",
+    ));
+    let outcome = doc
+        .evaluate_fields(&no_context())
+        .unwrap()
+        .remove(0)
+        .outcome;
+    let FieldOutcome::KeepStored { diagnostic } = outcome else {
+        panic!("a missing merge field keeps the stored result: {outcome:?}");
+    };
+    assert!(
+        diagnostic.contains("nested field was not resolved"),
+        "{diagnostic}"
+    );
+    doc.update_fields(&no_context()).unwrap();
+    assert_eq!(texts(&doc), ["stored"]);
+}
+
+#[test]
+fn a_new_field_with_a_joined_operand_is_written_and_read_back() {
+    use oxoffice_docx_oxml::text::{FieldArgument, FieldForm, FieldInstruction};
+    let instruction = FieldInstruction::new(
+        "IF",
+        vec![
+            // Text with a quote and a backslash, then a nested field.
+            FieldArgument::Joined(vec![
+                FieldArgument::Text(r#"Mr "\ "#.into()),
+                FieldArgument::Nested(Box::new(Field::new("MERGEFIELD Name", "«Name»"))),
+            ]),
+            FieldArgument::Text("=".into()),
+            FieldArgument::Text(r#"Mr "\ Smith"#.into()),
+            FieldArgument::Text("Known".into()),
+            FieldArgument::Text("Unknown".into()),
+        ],
+        Vec::new(),
+    )
+    .unwrap();
+    let field = Field::from_instruction(instruction, FieldForm::Complex, Vec::new()).unwrap();
+    let mut doc = doc_with(&["x"]);
+    doc.insert_field(&body_position(&doc, "x", 1), field)
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    doc.update_fields(&merge_context(&[("Name", "Smith")]))
+        .unwrap();
+    assert_eq!(texts(&doc), ["xKnown"]);
+}
+
+#[test]
+fn a_document_with_joined_operands_saves_unchanged() {
+    let body = merge_instruction_field(
+        r#" IF "Mr {Name}" = "Mr Smith" "Known" "Unknown" "#,
+        "Unknown",
+    );
+    let mut doc = doc_with_body(&body);
+    let saved = main_part_xml(&doc.to_bytes().unwrap());
+    assert!(saved.contains(&body), "{saved}");
+    // Opened again, the operand still joins its text and its nested field.
+    let mut doc = reopen(&mut doc);
+    doc.update_fields(&merge_context(&[("Name", "Smith")]))
+        .unwrap();
+    assert_eq!(texts(&doc), ["Known"]);
+}
+
+#[test]
+fn a_new_joined_operand_needs_a_nested_field_and_no_adjacent_text() {
+    use oxoffice_docx_oxml::text::{FieldArgument, FieldInstruction};
+    let nested = || FieldArgument::Nested(Box::new(Field::new("MERGEFIELD Name", "x")));
+    let text = |value: &str| FieldArgument::Text(value.into());
+    for pieces in [
+        Vec::new(),
+        vec![nested()],
+        vec![text("a"), text("b")],
+        vec![text("a"), text("b"), nested()],
+    ] {
+        let joined = FieldArgument::Joined(pieces);
+        assert!(
+            FieldInstruction::new("QUOTE", vec![joined.clone()], Vec::new()).is_err(),
+            "{joined:?}"
+        );
+    }
+    let joined = FieldArgument::Joined(vec![text("a"), nested()]);
+    assert!(FieldInstruction::new("QUOTE", vec![joined], Vec::new()).is_ok());
 }
 
 // ---- Sequences and captions ----

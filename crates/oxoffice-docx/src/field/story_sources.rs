@@ -695,10 +695,18 @@ pub(super) fn same_field_inventory(left: &CT_P, right: &CT_P) -> bool {
     if left.len() != right.len() {
         return false;
     }
-    fn argument(argument: &FieldArgument) -> Option<&str> {
-        match argument {
-            FieldArgument::Text(text) => Some(text.as_str()),
+    // The text of an operand, a nested field's place marked; the nested
+    // fields themselves are compared one by one above.
+    fn argument(operand: &FieldArgument) -> Option<String> {
+        match operand {
+            FieldArgument::Text(text) => Some(text.clone()),
             FieldArgument::Nested(_) => None,
+            FieldArgument::Joined(pieces) => Some(
+                pieces
+                    .iter()
+                    .map(|piece| argument(piece).unwrap_or_else(|| "\u{0}".into()))
+                    .collect(),
+            ),
         }
     }
     for ((left, locked_left), (right, locked_right)) in left.iter().zip(&right) {

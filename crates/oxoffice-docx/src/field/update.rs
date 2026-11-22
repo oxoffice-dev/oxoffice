@@ -1585,19 +1585,17 @@ fn apply_updates_to_field(
 }
 
 fn nested_field_mut(field: &mut Field, pointer: usize) -> Option<&mut Field> {
-    for argument in &mut field.instruction.arguments {
-        if let FieldArgument::Nested(nested) = argument
-            && std::ptr::from_ref(nested.as_ref()) as usize == pointer
-        {
-            return Some(nested.as_mut());
-        }
-    }
-    for field_switch in &mut field.instruction.switches {
-        if let Some(FieldArgument::Nested(nested)) = &mut field_switch.argument
-            && std::ptr::from_ref(nested.as_ref()) as usize == pointer
-        {
-            return Some(nested.as_mut());
-        }
-    }
-    None
+    field
+        .instruction
+        .arguments
+        .iter_mut()
+        .chain(
+            field
+                .instruction
+                .switches
+                .iter_mut()
+                .filter_map(|field_switch| field_switch.argument.as_mut()),
+        )
+        .flat_map(FieldArgument::nested_fields_mut)
+        .find(|nested| std::ptr::from_ref::<Field>(nested) as usize == pointer)
 }

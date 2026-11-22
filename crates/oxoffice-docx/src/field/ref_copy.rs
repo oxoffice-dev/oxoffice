@@ -29,7 +29,7 @@ pub(crate) fn prepared_current_field(field: &Field) -> Result<Field> {
                 .iter_mut()
                 .filter_map(|switch| switch.argument.as_mut()),
         ) {
-            if let FieldArgument::Nested(child) = argument {
+            for child in argument.nested_fields_mut() {
                 normalize(child)?;
             }
         }

@@ -26,13 +26,33 @@ pub(super) enum InstructionPart {
 pub(super) enum InstructionOperand {
     Text(String),
     Nested(usize),
+    /// One token of several pieces, each `Text` or `Nested`.
+    Joined(Vec<InstructionOperand>),
 }
 
 impl InstructionOperand {
     fn text_bytes(&self) -> Option<usize> {
         match self {
             Self::Text(text) => Some(text.len()),
-            Self::Nested(_) => None,
+            Self::Nested(_) | Self::Joined(_) => None,
+        }
+    }
+
+    /// The occurrence indices of the nested fields the operand holds.
+    pub(super) fn nested_indices(&self) -> Vec<usize> {
+        match self {
+            Self::Text(_) => Vec::new(),
+            Self::Nested(index) => vec![*index],
+            Self::Joined(pieces) => pieces.iter().flat_map(Self::nested_indices).collect(),
+        }
+    }
+
+    /// How many nested fields the operand holds.
+    fn nested_count(&self) -> usize {
+        match self {
+            Self::Text(_) => 0,
+            Self::Nested(_) => 1,
+            Self::Joined(pieces) => pieces.iter().map(Self::nested_count).sum(),
         }
     }
 
@@ -44,6 +64,12 @@ impl InstructionOperand {
                     .take()
                     .expect("one field per instruction occurrence"),
             )),
+            Self::Joined(pieces) => FieldArgument::Joined(
+                pieces
+                    .into_iter()
+                    .map(|piece| piece.materialize(fields))
+                    .collect(),
+            ),
         }
     }
 }
@@ -129,11 +155,37 @@ pub(super) fn classify_instruction_tokens(
     tokens: Vec<InstructionToken>,
 ) -> InstructionSyntax {
     let mut tokens = tokens.into_iter();
-    let name = match tokens.next().map(|token| token.argument) {
-        Some(InstructionOperand::Text(value)) => value.to_uppercase(),
-        Some(InstructionOperand::Nested(_)) | None => String::new(),
+    // A name written against a nested field, `={ MERGEFIELD Qty }*2` as
+    // Word's Ctrl+F9 leaves it, is the name, and the rest is the first
+    // operand.
+    let mut first_operand = None;
+    let name = match tokens.next() {
+        Some(InstructionToken {
+            argument: InstructionOperand::Text(value),
+            ..
+        }) => value.to_uppercase(),
+        Some(InstructionToken {
+            argument: InstructionOperand::Joined(mut pieces),
+            ..
+        }) if matches!(pieces.first(), Some(InstructionOperand::Text(_))) => {
+            let InstructionOperand::Text(value) = pieces.remove(0) else {
+                unreachable!("the first piece is text");
+            };
+            first_operand = Some(InstructionToken {
+                argument: if pieces.len() == 1 {
+                    pieces.remove(0)
+                } else {
+                    InstructionOperand::Joined(pieces)
+                },
+                quoted: false,
+                source_span: None,
+                well_formed: true,
+            });
+            value.to_uppercase()
+        }
+        Some(_) | None => String::new(),
     };
-    let remaining = tokens.collect::<Vec<_>>();
+    let remaining = first_operand.into_iter().chain(tokens).collect::<Vec<_>>();
     let mut arguments = Vec::new();
     let mut switches = Vec::new();
     let mut nested_order = Vec::new();
@@ -145,7 +197,8 @@ pub(super) fn classify_instruction_tokens(
             ..
         } = &remaining[index]
         else {
-            if matches!(&remaining[index].argument, InstructionOperand::Nested(_)) {
+            // A joined operand is listed once per nested piece.
+            for _ in 0..remaining[index].argument.nested_count() {
                 nested_order.push(NestedFieldPosition::Argument(arguments.len()));
             }
             arguments.push(remaining[index].argument.clone());
@@ -167,7 +220,10 @@ pub(super) fn classify_instruction_tokens(
         } else {
             None
         };
-        if matches!(&argument, Some(InstructionOperand::Nested(_))) {
+        for _ in 0..argument
+            .as_ref()
+            .map_or(0, InstructionOperand::nested_count)
+        {
             nested_order.push(NestedFieldPosition::Switch(switches.len()));
         }
         switches.push((switch_name.to_ascii_lowercase(), argument));
@@ -209,7 +265,11 @@ fn switch_argument_follows(
     };
     let takes_argument = switch_takes_argument(field_name, switch_name)
         || !switch_is_known_flag(field_name, switch_name)
-            && (next.quoted || matches!(next.argument, InstructionOperand::Nested(_)));
+            && (next.quoted
+                || matches!(
+                    next.argument,
+                    InstructionOperand::Nested(_) | InstructionOperand::Joined(_)
+                ));
     takes_argument
         && (next.quoted
             || !matches!(&next.argument, InstructionOperand::Text(text) if text.starts_with('\\')))
@@ -396,8 +456,15 @@ impl FieldLexer {
                 }
             }
             // Text joined to a nested field, or two nested fields in one
-            // operand: the model holds no such operand, so each piece is one
-            // and the token is marked ill-formed.
+            // operand: one joined operand, as Word reads it.
+            Err(pieces) if well_formed => self.tokens.push(InstructionToken {
+                source_span: None,
+                argument: InstructionOperand::Joined(pieces),
+                quoted,
+                well_formed,
+            }),
+            // A quote that closes inside the token: each piece is one, and
+            // the token is ill-formed.
             Err(pieces) => {
                 self.tokens
                     .extend(pieces.into_iter().map(|argument| InstructionToken {
@@ -446,7 +513,7 @@ pub fn hyperlink_has_address(raw: &str) -> bool {
 fn operand_text(token: &InstructionToken) -> Option<&str> {
     match &token.argument {
         InstructionOperand::Text(value) => Some(value),
-        InstructionOperand::Nested(_) => None,
+        InstructionOperand::Nested(_) | InstructionOperand::Joined(_) => None,
     }
 }
 
@@ -571,10 +638,12 @@ pub fn bibliography_option_switch_edits(
             ));
         };
         let name = name.to_ascii_lowercase();
-        if tokens
-            .get(index + 1)
-            .is_some_and(|token| matches!(token.argument, InstructionOperand::Nested(_)))
-        {
+        if tokens.get(index + 1).is_some_and(|token| {
+            matches!(
+                token.argument,
+                InstructionOperand::Nested(_) | InstructionOperand::Joined(_)
+            )
+        }) {
             return Err(OxmlError::InvalidValue("nested bibliography token".into()));
         }
         let has_argument = switch_argument_follows("BIBLIOGRAPHY", &name, tokens.get(index + 1));
@@ -622,6 +691,88 @@ pub fn bibliography_option_switch_edits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The operands and nested order of an instruction read from text pieces
+    /// and nested fields (`None`), as the field reader feeds the lexer.
+    fn operands(parts: &[Option<&str>]) -> (Vec<InstructionOperand>, Vec<NestedFieldPosition>) {
+        let mut lexer = FieldLexer::new();
+        let mut nested = 0;
+        for part in parts {
+            match part {
+                Some(text) => lexer.text(text),
+                None => {
+                    lexer.nested(nested);
+                    nested += 1;
+                }
+            }
+        }
+        let syntax = classify_instruction_tokens(String::new(), lexer.finish());
+        (syntax.arguments, syntax.nested_order)
+    }
+
+    fn shape(operand: &InstructionOperand) -> String {
+        match operand {
+            InstructionOperand::Text(text) => format!("{text:?}"),
+            InstructionOperand::Nested(index) => format!("#{index}"),
+            InstructionOperand::Joined(pieces) => {
+                format!(
+                    "[{}]",
+                    pieces.iter().map(shape).collect::<Vec<_>>().join(" ")
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn a_token_of_several_pieces_is_one_joined_operand() {
+        for (parts, expected, nested_in) in [
+            (
+                vec![Some(r#" IF "Mr "#), None, Some(r#"" = "Mr Smith" "#)],
+                r#"["Mr " #0] "=" "Mr Smith""#,
+                vec![0],
+            ),
+            (
+                vec![Some(r#" IF ""#), None, Some(" "), None, Some(r#"" = "x" "#)],
+                r#"[#0 " " #1] "=" "x""#,
+                vec![0, 0],
+            ),
+            (
+                vec![Some(" = "), None, Some("*2 ")],
+                r#"[#0 "*2"]"#,
+                vec![0],
+            ),
+            (
+                vec![Some(" IF "), None, None, Some(" = 1 ")],
+                r#"[#0 #1] "=" "1""#,
+                vec![0, 0],
+            ),
+            // A name written against a nested field stays the name.
+            (vec![Some(" ="), None, Some("*2 ")], r#"[#0 "*2"]"#, vec![0]),
+            (
+                vec![Some(" IF"), None, Some(r#" = "x" "#)],
+                r#"#0 "=" "x""#,
+                vec![0],
+            ),
+            // One piece per token reads as before.
+            (
+                vec![Some(r#" IF ""#), None, Some(r#"" = "x" "#)],
+                r#"#0 "=" "x""#,
+                vec![0],
+            ),
+        ] {
+            let (arguments, order) = operands(&parts);
+            let read = arguments.iter().map(shape).collect::<Vec<_>>().join(" ");
+            assert_eq!(read, expected, "{parts:?}");
+            let order = order
+                .into_iter()
+                .map(|position| match position {
+                    NestedFieldPosition::Argument(index) => index,
+                    NestedFieldPosition::Switch(_) => usize::MAX,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(order, nested_in, "{parts:?}");
+        }
+    }
 
     #[test]
     fn a_bookmark_operand_is_found_past_switches_and_their_arguments() {

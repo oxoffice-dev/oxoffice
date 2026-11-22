@@ -77,3 +77,4 @@ dependency bumps and documentation.
 | 2026-11-22 | [A short release: build, check each package, publish](2026-11-22-a-short-release.md) | accepted |
 | 2026-11-22 | [A smaller test suite: the docx tests that run 99 % of the lines](2026-11-22-a-smaller-test-suite.md) | accepted |
 | 2026-11-22 | [PowerPoint binding: owners that do not depend on their slide position](2026-11-22-pptx-binding-owners-independent-of-slide-position.md) | shipped |
+| 2026-11-22 | [A field operand that joins text and nested fields](2026-11-22-joined-field-operands.md) | accepted |

@@ -48,7 +48,7 @@ pub(super) fn initial_field_work_bytes(
             bytes,
             match argument {
                 FieldArgument::Text(text) => Some(text.len()),
-                FieldArgument::Nested(_) => None,
+                FieldArgument::Nested(_) | FieldArgument::Joined(_) => None,
             },
         );
     }
@@ -2403,9 +2403,9 @@ pub(super) fn admit_initial_field_capture(
             .iter()
             .filter_map(|(_, argument)| argument.as_ref()),
     ) {
-        if let InstructionOperand::Nested(index) = operand {
+        for index in operand.nested_indices() {
             result
-                .add_child(nested_summaries[*index], 0)
+                .add_child(nested_summaries[index], 0)
                 .inspect_err(&record)?;
         }
     }
