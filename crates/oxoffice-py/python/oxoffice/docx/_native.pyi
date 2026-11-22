@@ -1702,12 +1702,20 @@ class Document:
         """Remove the direct body item at ``index`` and return it as a fragment.
 
         A bookmark start written between blocks belongs to the block after it (Google Docs writes a
-        heading's bookmark so): the starts just before the item whose bookmark ends inside it go too,
-        and are not part of the fragment, which keeps the bookmark's end without its start.
+        heading's bookmark so): the starts just before the item whose bookmark ends inside it, or in
+        the bookmark ends written just after it (a bookmark around a whole table), go too, with those
+        ends, in the fragment. ``insert_content`` writes them back around the item.
         """
     def insert_content(
         self, destination: int | StoryItem | Story, fragment: ContentFragment
-    ) -> None: ...
+    ) -> None:
+        """Insert a fragment, with the bookmark markers it carries.
+
+        An identity the document already holds takes a fresh value (a bookmark id or name, whose
+        REF fields in the fragment follow; a control or drawing id), and a note reference whose note
+        another reference shows gets a copy of the note; the rest is kept, so a cut and paste
+        changes nothing and the same fragment can be inserted twice.
+        """
     def clone_content(self, source: Paragraph | Table, destination: int) -> None: ...
     def move_content(self, source: Paragraph | Table, destination: int) -> None: ...
 

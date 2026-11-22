@@ -86,11 +86,12 @@ use fragment::{
     AttributeNamespace, BodyIdentityState, W14_NS, add_identity_attribute_edit,
     attribute_source_span, body_identity_values, discover_fragment_part_closure,
     import_fragment_content_with_state, namespace_matches, patch_body_identity_attributes,
-    patch_fragment_note_ids, remap_body_identities, resolved_element_attribute,
+    remap_body_identities, resolved_element_attribute,
 };
 pub(crate) use fragment::{
     attribute_value_span, copy_fragment_part, fragment_note_references,
-    freshen_content_fragment_identities, import_document_fragment_content, patch_relationship_ids,
+    freshen_content_fragment_identities, freshen_taken_content_fragment_identities,
+    import_document_fragment_content, patch_fragment_note_ids, patch_relationship_ids,
     patch_relationship_source, relationship_ids_in_xml,
 };
 pub use mail_merge::{

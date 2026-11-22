@@ -2238,7 +2238,7 @@ fn fragment_dependency_companions(fragment: &Document, selected: &[u8]) -> Resul
     Ok(companions)
 }
 
-pub(super) fn patch_fragment_note_ids(
+pub(crate) fn patch_fragment_note_ids(
     xml: &[u8],
     maps: &HashMap<StoryKind, BTreeMap<String, String>>,
 ) -> Result<Vec<u8>> {
@@ -3640,6 +3640,85 @@ pub(crate) fn freshen_content_fragment_identities(
         {
             entry.insert(state.allocate_name(&value)?);
         }
+    }
+    patch_body_identity_attributes(wrapped_fragment, &remap)
+}
+
+/// Fresh identities for what inserting the wrapped fragment would repeat in
+/// `document`, the rest kept, so that a cut and paste changes nothing: each
+/// bookmark the fragment holds whole whose id the document holds, each
+/// bookmark name the document holds (any case; the fragment's references to
+/// it follow), and each control or drawing id it holds. A lone bookmark
+/// start or end keeps its id: pasted back, it meets its other half again.
+pub(crate) fn freshen_taken_content_fragment_identities(
+    document: &mut Document,
+    wrapped_fragment: &[u8],
+) -> Result<Vec<u8>> {
+    let wrapped_fragment = &uniquify_drawing_ids_in_xml(wrapped_fragment)?;
+    let values = body_identity_values(wrapped_fragment)?;
+    let starts = values
+        .bookmark_events
+        .iter()
+        .filter(|(_, start)| *start)
+        .map(|(id, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    let whole = values
+        .bookmark_events
+        .iter()
+        .filter(|(id, start)| !*start && starts.contains(id.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect::<HashSet<_>>();
+    let mut state = BodyIdentityState::from_documents(std::slice::from_ref(document))?;
+    let mut remap = BodyIdentityRemap {
+        drop_paragraph_identities: true,
+        ..Default::default()
+    };
+    for value in values.bookmark_ids {
+        let taken = value
+            .parse::<i32>()
+            .is_ok_and(|id| document.identifiers.holds_bookmark_id(id));
+        if taken && whole.contains(&value) && !remap.bookmark_ids.contains_key(&value) {
+            let fresh = document.identifiers.reserve_bookmark_id()?.to_string();
+            remap.bookmark_ids.insert(value, fresh);
+        }
+    }
+    for value in values.content_control_ids {
+        let taken = value
+            .parse::<u32>()
+            .is_ok_and(|id| state.used_content_control_ids.contains(&id));
+        if taken && !remap.content_control_ids.contains_key(&value) {
+            let fresh = state.allocate_content_control_id()?;
+            remap.content_control_ids.insert(value, fresh);
+        }
+    }
+    for value in values.drawing_ids {
+        let taken = value
+            .parse::<u32>()
+            .is_ok_and(|id| document.identifiers.holds_drawing_id(id));
+        if taken && !remap.drawing_ids.contains_key(&value) {
+            let fresh = document.identifiers.reserve_drawing_id()?.to_string();
+            remap.drawing_ids.insert(value, fresh);
+        }
+    }
+    for value in values.non_visual_drawing_ids {
+        let taken = value
+            .parse::<u32>()
+            .is_ok_and(|id| state.used_non_visual_drawing_ids.contains(&id));
+        if taken && !remap.non_visual_drawing_ids.contains_key(&value) {
+            let fresh = state.allocate_non_visual_drawing_id()?;
+            remap.non_visual_drawing_ids.insert(value, fresh);
+        }
+    }
+    for value in values.bookmark_names {
+        if remap.bookmark_names.contains_key(&value) {
+            continue;
+        }
+        let name = if state.keep_free_name(&value) {
+            value.clone()
+        } else {
+            state.allocate_name(&value)?
+        };
+        remap.bookmark_names.insert(value, name);
     }
     patch_body_identity_attributes(wrapped_fragment, &remap)
 }

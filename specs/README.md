@@ -76,3 +76,4 @@ dependency bumps and documentation.
 | 2026-11-22 | [One CI for pull requests and main, the full sets at night](2026-11-22-one-ci-for-pull-requests-and-main.md) | accepted |
 | 2026-11-22 | [A short release: build, check each package, publish](2026-11-22-a-short-release.md) | accepted |
 | 2026-11-22 | [A smaller test suite: the docx tests that run 99 % of the lines](2026-11-22-a-smaller-test-suite.md) | accepted |
+| 2026-11-22 | [Cut and pasted content keeps its bookmarks whole and its ids unique](2026-11-22-cut-content-keeps-its-bookmarks-and-ids.md) | accepted |

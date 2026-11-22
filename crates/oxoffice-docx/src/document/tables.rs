@@ -443,7 +443,7 @@ impl Document {
             .map(|(name, value)| (namespace_prefix(name), value.clone()))
             .collect::<BTreeMap<_, _>>();
         namespace_scope.insert("w".to_owned(), WORD_NAMESPACE.to_owned());
-        let fragment = ContentFragment {
+        let mut fragment = ContentFragment {
             kind: StoryItemKind::Table,
             xml,
             source_part_name: None,
@@ -451,9 +451,10 @@ impl Document {
             source_owner_index: None,
             namespace_scope,
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
-        let freshened = freshen_content_fragment_identities(self, &fragment)?;
-        let closed = close_content_fragment_namespaces(&freshened, &fragment.namespace_scope)?;
+        freshen_content_fragment_identities(self, &mut fragment)?;
+        let closed = close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)?;
         let mut wrapped =
             format!(r#"<w:document xmlns:w="{WORD_NAMESPACE}"><w:body>"#).into_bytes();
         wrapped.extend(closed);

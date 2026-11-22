@@ -388,11 +388,16 @@ impl Document {
         let source_xml = source.xml.into_owned();
         let (boundary, _, _) = validated_insertion_boundary(&source_xml, &owner, destination)?;
         reject_section_owning_content_fragment(&fragment)?;
+        // The same fragment can be inserted twice: what the document already
+        // holds takes a fresh identity (bookmark ids and names, control and
+        // drawing ids), a note another reference shows is copied, and the
+        // paragraph and row ids (w14:paraId, w14:textId) go, as
+        // clone_content drops them, and Word gives new ones.
+        let mut fragment = fragment;
+        freshen_taken_content_fragment_identities(&mut candidate, &mut fragment)?;
+        copy_shown_notes(&mut candidate, &mut fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
-        // The same fragment can be inserted twice: its paragraph and row ids
-        // (w14:paraId, w14:textId) go, as clone_content drops them, and Word
-        // gives new ones.
         let mut fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
         // A header, footer, note or comment part keeps the drawing ids it
         // holds at a save, so the drawings it receives take theirs now.
@@ -566,9 +571,10 @@ impl Document {
 
     /// Remove one checked direct child and return it as an owned fragment.
     ///
-    /// The bookmark starts written just before the child whose bookmark ends
-    /// inside it go too, and are not part of the fragment: the fragment keeps
-    /// the bookmark's end without its start.
+    /// The bookmark markers the child owns go with it, in the fragment: the
+    /// bookmark starts written just before it whose bookmark ends inside it
+    /// or in the bookmark ends written just after it, and those ends.
+    /// [`Self::insert_content`] writes them back around it.
     ///
     /// A picture the removal leaves unreferenced stays in the package until
     /// the next write or signature, which drops it if nothing names it then:
@@ -605,28 +611,35 @@ impl Document {
             source_owner_index: Some(location.story.owner_index),
             namespace_scope,
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &location.story, &fragment)?;
         fragment.relationships = referenced_relationships(&candidate, &location.story, &fragment)?;
-        // The bookmark starts that lead the item and end inside it go too.
+        // The bookmark markers the item owns go too, in the fragment.
         let direct_items = direct_story_content_items(&source_xml, &owner)?;
-        let mut removed = match direct_items
+        let owned = match direct_items
             .iter()
             .position(|direct| direct.full == item.full)
         {
-            Some(index) => owned_leading_bookmark_start_items(
-                &source_xml,
-                &direct_items,
-                index,
-                index..index + 1,
-            )?
-            .into_iter()
-            .map(|start| direct_items[start].full.clone())
-            .collect(),
-            None => Vec::new(),
+            Some(index) => {
+                owned_bookmark_marker_items(&source_xml, &direct_items, index, index..index + 1)?
+            }
+            None => OwnedMarkers::default(),
         };
+        let marker = |index: &usize| source_xml[direct_items[*index].full.clone()].to_vec();
+        fragment.markers = FragmentMarkers {
+            before: owned.before.iter().map(marker).collect(),
+            after: owned.after.iter().map(marker).collect(),
+        };
+        let mut removed = owned
+            .before
+            .iter()
+            .chain(&owned.after)
+            .map(|index| direct_items[*index].full.clone())
+            .collect::<Vec<_>>();
         removed.push(item.full);
+        removed.sort_by_key(|range| range.start);
         let mut updated = source_xml;
         for range in removed.into_iter().rev() {
             updated.drain(range);
@@ -659,8 +672,10 @@ impl Document {
 
     /// Clone one checked direct child into a checked insertion boundary.
     ///
-    /// Document-wide identities of the copy are made unique, and its
-    /// paragraphs and table rows drop `w14:paraId` and `w14:textId`.
+    /// The bookmark markers the child owns (see [`Self::remove_content_at`])
+    /// are copied with it. Document-wide identities of the copy are made
+    /// unique, a note it references is copied for it, and its paragraphs and
+    /// table rows drop `w14:paraId` and `w14:textId`.
     pub fn clone_content(
         &mut self,
         source_location: &ContentLocation,
@@ -680,10 +695,24 @@ impl Document {
             source_owner_index: Some(source_location.story.owner_index),
             namespace_scope: story_namespace_scope_at(&source_xml, source_item.full.start)?,
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         fragment.relationships =
             referenced_relationships(&candidate, &source_location.story, &fragment)?;
+        let source_items = direct_story_content_items(&source_xml, &source_owner)?;
+        if let Some(index) = source_items
+            .iter()
+            .position(|direct| direct.full == source_item.full)
+        {
+            let owned =
+                owned_bookmark_marker_items(&source_xml, &source_items, index, index..index + 1)?;
+            let marker = |index: &usize| source_xml[source_items[*index].full.clone()].to_vec();
+            fragment.markers = FragmentMarkers {
+                before: owned.before.iter().map(marker).collect(),
+                after: owned.after.iter().map(marker).collect(),
+            };
+        }
 
         let (destination_source, destination_owner) =
             candidate.story_source_and_owner(&destination.story)?;
@@ -691,7 +720,8 @@ impl Document {
         let destination_xml = destination_source.xml.into_owned();
         let (boundary, _, _) =
             validated_insertion_boundary(&destination_xml, &destination_owner, destination)?;
-        fragment.xml = freshen_content_fragment_identities(&mut candidate, &fragment)?;
+        freshen_content_fragment_identities(&mut candidate, &mut fragment)?;
+        copy_shown_notes(&mut candidate, &mut fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
         let mut updated = destination_xml;
@@ -704,9 +734,10 @@ impl Document {
 
     /// Move one checked direct child within its current story owner.
     ///
-    /// The bookmark starts written just before the child whose bookmark ends
-    /// inside it move with it; one that ends further on stays. A destination
-    /// at the child, at its leading starts or just after it moves nothing.
+    /// The bookmark markers the child owns (see [`Self::remove_content_at`])
+    /// move with it; a start whose bookmark ends further on stays. A
+    /// destination at the child, at its markers or just after them moves
+    /// nothing.
     pub fn move_content(
         &mut self,
         source_location: &ContentLocation,
@@ -742,26 +773,31 @@ impl Document {
             source_owner_index: Some(source_location.story.owner_index),
             namespace_scope: story_namespace_scope_at(&source_xml, source_item.full.start)?,
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         reject_section_owning_content_fragment(&fragment)?;
         validate_fragment_relationships(&candidate, &destination.story, &fragment)?;
-        // The item moves with the bookmark starts that lead it and end
-        // inside it; a destination at the item or just after it changes
-        // nothing.
-        let leading_first = leading_bookmark_start_item(&source_xml, &direct_items, source_index)?;
-        if (leading_first..=source_index + 1).contains(&destination_index) {
-            return Ok(());
-        }
-        let mut removed = owned_leading_bookmark_start_items(
+        // The item moves with the bookmark markers it owns; a destination
+        // at the item, at its markers or just after them changes nothing.
+        let owned = owned_bookmark_marker_items(
             &source_xml,
             &direct_items,
             source_index,
             source_index..source_index + 1,
-        )?
-        .into_iter()
-        .map(|start| direct_items[start].full.clone())
-        .collect::<Vec<_>>();
+        )?;
+        let leading_first = leading_bookmark_start_item(&source_xml, &direct_items, source_index)?;
+        let last = owned.after.last().copied().unwrap_or(source_index);
+        if (leading_first..=last + 1).contains(&destination_index) {
+            return Ok(());
+        }
+        let mut removed = owned
+            .before
+            .iter()
+            .chain(&owned.after)
+            .map(|index| direct_items[*index].full.clone())
+            .collect::<Vec<_>>();
         removed.push(source_item.full);
+        removed.sort_by_key(|range| range.start);
         let mut moved = Vec::new();
         for range in &removed {
             moved.extend_from_slice(&source_xml[range.clone()]);

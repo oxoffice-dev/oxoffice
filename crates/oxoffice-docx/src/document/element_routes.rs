@@ -674,6 +674,7 @@ impl Document {
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         self.replace_checked_element_content(location, fragment)
     }
@@ -768,6 +769,7 @@ impl Document {
             source_story_kind: Some(location.story.kind),
             source_owner_index: Some(location.story.owner_index),
             relationships: Vec::new(),
+            markers: FragmentMarkers::default(),
         };
         self.replace_checked_element_content(location, fragment)
     }

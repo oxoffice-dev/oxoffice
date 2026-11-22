@@ -448,6 +448,14 @@ impl DocumentIdentifiers {
         }
     }
 
+    pub(crate) fn holds_bookmark_id(&self, id: i32) -> bool {
+        self.bookmark_ids.contains(&id)
+    }
+
+    pub(crate) fn holds_drawing_id(&self, id: u32) -> bool {
+        self.drawing_ids.contains(&id)
+    }
+
     pub(crate) fn reserve_bookmark_id(&mut self) -> Result<i32> {
         reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")
     }
