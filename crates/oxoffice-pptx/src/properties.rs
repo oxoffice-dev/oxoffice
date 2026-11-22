@@ -267,7 +267,7 @@ impl Presentation {
         oxoffice_core::xml::reject_non_xml_characters("custom property name", &name)
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?;
         if let Some(old) = self.custom_property(&name) {
-            if old.value == property.value {
+            if old.value.is_same_value(&property.value) {
                 return Ok(());
             }
             if matches!(old.value, CustomPropertyValue::Raw(_)) {

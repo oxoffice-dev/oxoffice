@@ -814,9 +814,9 @@ impl CT_SectPr {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
-                            let val = std::str::from_utf8(&attr.value)?;
+                            let val = oxoffice_core::xml::attribute_text(&attr)?;
                             if is_word_attribute(key, b"type", &prefixes) {
-                                hdr_type = HdrFtrType::from_str(val);
+                                hdr_type = HdrFtrType::from_str(&val);
                             } else if attribute_in_namespace(
                                 key,
                                 b"id",
@@ -837,9 +837,9 @@ impl CT_SectPr {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
-                            let val = std::str::from_utf8(&attr.value)?;
+                            let val = oxoffice_core::xml::attribute_text(&attr)?;
                             if is_word_attribute(key, b"type", &prefixes) {
-                                ftr_type = HdrFtrType::from_str(val);
+                                ftr_type = HdrFtrType::from_str(&val);
                             } else if attribute_in_namespace(
                                 key,
                                 b"id",

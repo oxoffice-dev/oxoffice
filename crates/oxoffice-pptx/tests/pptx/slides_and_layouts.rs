@@ -2007,6 +2007,26 @@ fn a_carriage_return_in_a_core_property_survives_a_save() {
 }
 
 #[test]
+fn a_number_property_set_to_negative_zero_replaces_zero() {
+    let number = |value: f64| oxoffice_pptx::CustomProperty {
+        fmtid: "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}".to_owned(),
+        pid: 2,
+        name: Some("Offset".to_owned()),
+        value: oxoffice_pptx::CustomPropertyValue::R8(value),
+    };
+    let mut prs = new_deck();
+    prs.set_custom_property(number(0.0)).unwrap();
+    // -0 == 0, but the two are written differently: the edit is no no-op.
+    prs.set_custom_property(number(-0.0)).unwrap();
+    match reopen(&prs).custom_property("Offset").map(|p| &p.value) {
+        Some(oxoffice_pptx::CustomPropertyValue::R8(value)) => {
+            assert!(value.is_sign_negative(), "Offset reads {value}")
+        }
+        other => panic!("Offset reads {other:?}"),
+    }
+}
+
+#[test]
 fn a_carriage_return_or_a_tab_in_a_patched_property_survives_a_save() {
     // A deck's application and custom properties parts are patched in place.
     let custom = |name: &str, pid: i32, text: &str| oxoffice_pptx::CustomProperty {

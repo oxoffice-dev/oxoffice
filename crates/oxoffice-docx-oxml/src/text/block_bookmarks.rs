@@ -272,7 +272,12 @@ fn push_raw(raw: &[u8], items: &mut Vec<BlockItem<'_>>) {
             let key = attribute.key;
             (key.local_name().as_ref() == local
                 && key.prefix().map(|p| p.as_ref().to_vec()) == prefix)
-                .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
+                .then(|| {
+                    oxoffice_core::xml::attribute_text(&attribute)
+                        .map(std::borrow::Cow::into_owned)
+                        .ok()
+                })
+                .flatten()
         })
     };
     items.push(BlockItem::Marker(

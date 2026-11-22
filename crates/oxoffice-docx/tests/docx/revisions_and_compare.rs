@@ -958,6 +958,35 @@ fn simple_fields_and_hyperlink_fields_follow_a_renamed_toc_bookmark() {
     );
 }
 
+#[test]
+fn a_reference_in_another_case_follows_a_renamed_toc_bookmark_but_a_link_to_another_file_does_not()
+{
+    let document = |name: &str, text: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:fldSimple w:instr=" PAGEREF {upper} \h "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
+                r#"<w:p><w:fldSimple w:instr=" HYPERLINK \o &quot;tip&quot; &quot;other.docx&quot; \l &quot;_Toc7&quot; "><w:r><w:t>Other</w:t></w:r></w:fldSimple></w:p>"#,
+                r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+                r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#,
+            ),
+            name = name,
+            upper = name.to_uppercase(),
+            text = text,
+        ))
+    };
+    let mut doc = redline(document("_Toc1", "Old."), &document("_Toc7", "New."));
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy)[2..], ["Intro", "New."]);
+    assert_eq!(bookmark_names(&copy), ["_Toc1"]);
+    assert_eq!(
+        field_instructions(&copy),
+        [
+            r#"PAGEREF _Toc1 \h"#,
+            r#"HYPERLINK \o "tip" "other.docx" \l "_Toc7""#
+        ]
+    );
+}
+
 /// Each body paragraph's text with its footnote references shown as
 /// `[note text]`, whatever their ids.
 fn noted_texts(doc: &Document) -> Vec<String> {

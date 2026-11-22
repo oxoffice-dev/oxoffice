@@ -333,7 +333,7 @@ fn parse_symbol(e: &BytesStart<'_>, prefixes: &[String]) -> Result<Option<Specia
         let key = attribute.key.as_ref();
         let value = std::str::from_utf8(&attribute.value)?;
         if is_word_attribute(key, b"font", prefixes) {
-            font = Some(value.to_owned());
+            font = Some(oxoffice_core::xml::attribute_text(&attribute)?.into_owned());
         } else if is_word_attribute(key, b"char", prefixes) {
             if value.len() != 4 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 return Ok(None);
@@ -1639,7 +1639,7 @@ impl CT_R {
                         .is_some_and(|prefix| local_bindings.iter().any(|local| local == prefix))
                     {
                         // Preserve the actual declaration's lexical value, including references.
-                        record.push_attribute(attribute);
+                        oxoffice_core::xml::push_raw_attribute(&mut record, attribute);
                     }
                 }
             }

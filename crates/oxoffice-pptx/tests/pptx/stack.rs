@@ -6,10 +6,12 @@
 //! needed about 820 KiB of stack, most of the 1 MiB a Windows program that
 //! embeds Python gives its main thread. The release workflow is to measure
 //! the stack of each wheel it builds (#15); this test catches the cause in
-//! every pull request.
+//! every pull request. Rendering a slide with a table holds its table style
+//! in a few frames: with its thirteen regions inline, a style was 55 KB.
 
 use std::mem::size_of;
 
+use oxoffice_drawing::table::CT_TableStyle;
 use oxoffice_drawing::text::list_style::CT_TextListStyle;
 use oxoffice_pptx::Presentation;
 use oxoffice_pptx_oxml::notes_parts::CT_NotesMaster;
@@ -20,6 +22,7 @@ use oxoffice_pptx_oxml::slide_parts::CT_SlideMaster;
 fn values_moved_on_the_stack_stay_small() {
     let sizes = [
         ("CT_TextListStyle", size_of::<CT_TextListStyle>(), 512),
+        ("CT_TableStyle", size_of::<CT_TableStyle>(), 512),
         ("CT_SlideMaster", size_of::<CT_SlideMaster>(), 4096),
         ("CT_NotesMaster", size_of::<CT_NotesMaster>(), 4096),
         ("CT_Presentation", size_of::<CT_Presentation>(), 2048),
