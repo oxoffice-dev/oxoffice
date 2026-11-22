@@ -1343,6 +1343,13 @@ impl HdrFtrRef {
             source_index: None,
         }
     }
+
+    /// Take the place `replaced` was read at, for a reference that replaces
+    /// it in its section.
+    #[doc(hidden)]
+    pub fn take_place_of(&mut self, replaced: &HdrFtrRef) {
+        self.source_index = replaced.source_index;
+    }
 }
 
 impl PartialEq for HdrFtrRef {

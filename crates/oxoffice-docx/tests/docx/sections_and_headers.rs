@@ -954,3 +954,54 @@ fn references_inherited_from_a_removed_section_are_new_to_the_next_one() {
         ]
     );
 }
+
+#[test]
+fn a_header_set_over_one_read_keeps_its_place_among_the_others() {
+    // The Word letter has a default and a first-page header and footer.
+    // With its title page turned off, a new first-page header replaces the
+    // one read: it takes the place of the one it replaces.
+    let mut doc = corpus_doc("word/letter.docx");
+    let read = section_references(&doc.to_bytes().unwrap());
+    assert_eq!(read, [["h:default", "f:default", "h:first", "f:first"]]);
+    doc.set_different_first_page(false);
+    doc.set_first_page_header("New first page");
+    // A body edit, so that the save writes the section again.
+    doc.add_paragraph("Added.");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(section_references(&doc.to_bytes().unwrap()), read);
+    assert_eq!(
+        first_page_header(&doc, 0).as_deref(),
+        Some("New first page")
+    );
+}
+
+#[test]
+fn an_unknown_element_between_header_and_footer_references_keeps_its_place() {
+    let source = corpus_doc("word/letter.docx").to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(source)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let footer = r#"<w:footerReference w:type="default" r:id="rId12"/>"#;
+    let foreign = r#"<x:mark xmlns:x="urn:example"/>"#;
+    assert_eq!(xml.matches(footer).count(), 1);
+    package.set_part(
+        &part,
+        xml.replace(footer, &format!("{footer}{foreign}"))
+            .into_bytes(),
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.add_paragraph("Added.");
+    let xml = String::from_utf8(main_part(&doc.to_bytes().unwrap())).unwrap();
+    let section = &xml[xml.rfind("<w:sectPr").unwrap()..];
+    let after_footer = &section[section
+        .find(r#"<w:footerReference w:type="default""#)
+        .unwrap()..];
+    let after_footer = &after_footer[after_footer.find("/>").unwrap() + 2..];
+    assert!(after_footer.starts_with(foreign), "{section}");
+    assert!(
+        after_footer[foreign.len()..].starts_with(r#"<w:headerReference w:type="first""#),
+        "{section}"
+    );
+}
