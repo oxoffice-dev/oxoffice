@@ -225,11 +225,15 @@ impl Document {
         Ok(())
     }
 
-    /// Numeric `_TocN` bookmark suffixes already present in the body.
+    /// Numeric `_TocN` bookmark suffixes already present in the body,
+    /// between its blocks too.
     fn toc_bookmark_suffixes(&self) -> HashSet<u64> {
         let mut suffixes = HashSet::new();
+        let blocks =
+            oxoffice_docx_oxml::text::BlockBookmarks::of_blocks(&self.document.body.content);
         visit_body_paragraphs(&self.document.body.content, false, &mut |p| {
-            for marker in &p.bookmark_markers {
+            let (before, after) = blocks.markers(p);
+            for marker in before.iter().chain(&p.bookmark_markers).chain(after) {
                 let Some(name) = marker.name() else {
                     continue;
                 };

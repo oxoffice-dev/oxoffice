@@ -1356,6 +1356,8 @@ pub(crate) enum ExportItem<'a> {
     Table(Box<Cow<'a, CT_Tbl>>),
     /// A block content control. What it wraps follows it.
     ContentControl,
+    /// A bookmark start or end between blocks.
+    BookmarkMarker,
     RawXml,
 }
 
@@ -1377,10 +1379,18 @@ pub(crate) fn body_export_items(content: &[BodyContent]) -> Vec<(ExportItem<'_>,
             BodyContent::ContentControl(control) => {
                 push_control_export_items(control, path, &mut items)
             }
-            BodyContent::RawXml(_) => items.push((ExportItem::RawXml, path)),
+            BodyContent::RawXml(raw) => items.push((raw_export_item(raw), path)),
         }
     }
     items
+}
+
+fn raw_export_item<'a>(raw: &[u8]) -> ExportItem<'a> {
+    if super::is_block_bookmark_marker(raw) {
+        ExportItem::BookmarkMarker
+    } else {
+        ExportItem::RawXml
+    }
 }
 
 fn push_control_export_items<'a>(
@@ -1403,7 +1413,7 @@ fn push_control_export_items<'a>(
             // A control around a paragraph or a table holds no rows, cells or
             // runs of its own.
             SdtContent::Row(_) | SdtContent::Cell(_) | SdtContent::Run(_) => {}
-            SdtContent::RawXml(_) => items.push((ExportItem::RawXml, path)),
+            SdtContent::RawXml(raw) => items.push((raw_export_item(raw), path)),
         }
     }
 }
@@ -1440,10 +1450,11 @@ pub(crate) fn unwrap_table_controls(table: &CT_Tbl) -> Cow<'_, CT_Tbl> {
                 .into_iter()
                 .map(|cell| {
                     let mut content = Vec::with_capacity(cell.content.len());
+                    let mut extra_xml = cell.extra_xml.clone();
                     for item in &cell.content {
                         match item {
                             CellContent::ContentControl(control) => {
-                                push_control_cell_content(control, &mut content)
+                                push_control_cell_content(control, &mut content, &mut extra_xml)
                             }
                             item => content.push(item.clone()),
                         }
@@ -1451,7 +1462,7 @@ pub(crate) fn unwrap_table_controls(table: &CT_Tbl) -> Cow<'_, CT_Tbl> {
                     CT_Tc {
                         properties: cell.properties.clone(),
                         content,
-                        extra_xml: cell.extra_xml.clone(),
+                        extra_xml,
                     }
                 })
                 .collect(),
@@ -1468,18 +1479,24 @@ pub(crate) fn unwrap_table_controls(table: &CT_Tbl) -> Cow<'_, CT_Tbl> {
     })
 }
 
-fn push_control_cell_content(control: &CT_Sdt, content: &mut Vec<CellContent>) {
+/// The content a cell's control wraps, in its place; the control's raw
+/// children go with the cell's, so the exports still report them.
+fn push_control_cell_content(
+    control: &CT_Sdt,
+    content: &mut Vec<CellContent>,
+    extra_xml: &mut Vec<(usize, Vec<u8>)>,
+) {
     for item in &control.content {
         match item {
             SdtContent::Paragraph(paragraph) => {
                 content.push(CellContent::Paragraph(paragraph.clone()))
             }
             SdtContent::Table(table) => content.push(CellContent::Table(table.clone())),
-            SdtContent::ContentControl(nested) => push_control_cell_content(nested, content),
-            SdtContent::Row(_)
-            | SdtContent::Cell(_)
-            | SdtContent::Run(_)
-            | SdtContent::RawXml(_) => {}
+            SdtContent::ContentControl(nested) => {
+                push_control_cell_content(nested, content, extra_xml)
+            }
+            SdtContent::RawXml(raw) => extra_xml.push((content.len(), raw.clone())),
+            SdtContent::Row(_) | SdtContent::Cell(_) | SdtContent::Run(_) => {}
         }
     }
 }

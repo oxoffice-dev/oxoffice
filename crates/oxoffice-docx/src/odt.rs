@@ -306,6 +306,9 @@ impl<'a> OdtWriter<'a> {
             ExportItem::ContentControl => {
                 self.diagnose(path, "body content control was flattened during ODT export")
             }
+            ExportItem::BookmarkMarker => {
+                self.diagnose(path, "bookmark markers were dropped during ODT export")
+            }
             ExportItem::RawXml => {
                 self.diagnose(path, "unmodelled body XML was dropped during ODT export")
             }
@@ -336,10 +339,14 @@ impl<'a> OdtWriter<'a> {
                 "table grid column widths were dropped during ODT export",
             )?;
         }
-        for (index, _) in &table.extra_xml {
+        for (index, raw) in &table.extra_xml {
             self.diagnose(
                 &format!("{path}/raw[{index}]"),
-                "unmodelled table XML was dropped during ODT export",
+                if crate::document::is_block_bookmark_marker(raw) {
+                    "bookmark markers were dropped during ODT export"
+                } else {
+                    "unmodelled table XML was dropped during ODT export"
+                },
             )?;
         }
         for (row_index, row) in table.rows.iter().enumerate() {
@@ -366,7 +373,11 @@ impl<'a> OdtWriter<'a> {
                 }
                 self.diagnose(
                     &format!("{row_path}/raw[{index}]"),
-                    "unmodelled table-row XML was dropped during ODT export",
+                    if crate::document::is_block_bookmark_marker(raw) {
+                        "bookmark markers were dropped during ODT export"
+                    } else {
+                        "unmodelled table-row XML was dropped during ODT export"
+                    },
                 )?;
             }
             for (cell_index, cell) in row.cells.iter().enumerate() {
@@ -394,10 +405,14 @@ impl<'a> OdtWriter<'a> {
                         "unsupported table-cell properties were dropped during ODT export",
                     )?;
                 }
-                for (index, _) in &cell.extra_xml {
+                for (index, raw) in &cell.extra_xml {
                     self.diagnose(
                         &format!("{cell_path}/raw[{index}]"),
-                        "unmodelled table-cell XML was dropped during ODT export",
+                        if crate::document::is_block_bookmark_marker(raw) {
+                            "bookmark markers were dropped during ODT export"
+                        } else {
+                            "unmodelled table-cell XML was dropped during ODT export"
+                        },
                     )?;
                 }
                 if matches!(
@@ -1475,10 +1490,16 @@ impl<'a> OdtWriter<'a> {
             output.push_str("</text:list-style>");
         }
         output.push_str("</office:automatic-styles><office:body><office:text>");
-        // A list continues through the content controls it runs into.
+        // A list continues through the content controls it runs into, and
+        // the bookmark markers between its paragraphs.
         let items = body_export_items(&self.document.document.body.content)
             .into_iter()
-            .filter(|(item, _)| !matches!(item, ExportItem::ContentControl))
+            .filter(|(item, _)| {
+                !matches!(
+                    item,
+                    ExportItem::ContentControl | ExportItem::BookmarkMarker
+                )
+            })
             .collect::<Vec<_>>();
         let mut index = 0_usize;
         let mut written_lists = BTreeSet::new();
@@ -1517,7 +1538,7 @@ impl<'a> OdtWriter<'a> {
         match item {
             ExportItem::Paragraph(paragraph) => self.write_paragraph(output, paragraph, path),
             ExportItem::Table(table) => self.write_table(output, table, path),
-            ExportItem::ContentControl | ExportItem::RawXml => Ok(()),
+            ExportItem::ContentControl | ExportItem::BookmarkMarker | ExportItem::RawXml => Ok(()),
         }
     }
 

@@ -241,6 +241,9 @@ impl<'a> RtfWriter<'a> {
                 &location,
                 "body content control was flattened during RTF export",
             ),
+            ExportItem::BookmarkMarker => {
+                self.diagnose(&location, "bookmark marker was dropped during RTF export")
+            }
             ExportItem::RawXml => self.diagnose(
                 &location,
                 "unmodelled body XML was dropped during RTF export",
@@ -252,10 +255,14 @@ impl<'a> RtfWriter<'a> {
         if let Some(properties) = &table.properties {
             self.scan_table_properties(table, properties, &location);
         }
-        for (index, _) in &table.extra_xml {
+        for (index, raw) in &table.extra_xml {
             self.diagnose(
                 &format!("{location}/raw[{index}]"),
-                "unmodelled table XML was dropped during RTF export",
+                if crate::document::is_block_bookmark_marker(raw) {
+                    "bookmark marker was dropped during RTF export"
+                } else {
+                    "unmodelled table XML was dropped during RTF export"
+                },
             );
         }
         for (row_index, row) in table.rows.iter().enumerate() {
@@ -268,7 +275,11 @@ impl<'a> RtfWriter<'a> {
                 }
                 self.diagnose(
                     &format!("{location}/row[{row_index}]/raw[{index}]"),
-                    "unmodelled table-row XML was dropped during RTF export",
+                    if crate::document::is_block_bookmark_marker(raw) {
+                        "bookmark marker was dropped during RTF export"
+                    } else {
+                        "unmodelled table-row XML was dropped during RTF export"
+                    },
                 );
             }
             for (cell_index, cell) in row.cells.iter().enumerate() {
@@ -284,10 +295,14 @@ impl<'a> RtfWriter<'a> {
                         &format!("{location}/row[{row_index}]/cell[{cell_index}]"),
                     );
                 }
-                for (index, _) in &cell.extra_xml {
+                for (index, raw) in &cell.extra_xml {
                     self.diagnose(
                         &format!("{location}/row[{row_index}]/cell[{cell_index}]/raw[{index}]"),
-                        "unmodelled table-cell XML was dropped during RTF export",
+                        if crate::document::is_block_bookmark_marker(raw) {
+                            "bookmark marker was dropped during RTF export"
+                        } else {
+                            "unmodelled table-cell XML was dropped during RTF export"
+                        },
                     );
                 }
                 for (content_index, content) in cell.content.iter().enumerate() {
@@ -999,7 +1014,7 @@ impl<'a> RtfWriter<'a> {
         match item {
             ExportItem::Paragraph(paragraph) => self.write_paragraph(output, paragraph, location),
             ExportItem::Table(table) => self.write_table(output, table, location),
-            ExportItem::ContentControl | ExportItem::RawXml => Ok(()),
+            ExportItem::ContentControl | ExportItem::BookmarkMarker | ExportItem::RawXml => Ok(()),
         }
     }
 

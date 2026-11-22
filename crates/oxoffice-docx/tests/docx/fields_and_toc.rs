@@ -846,6 +846,37 @@ fn a_reference_written_in_another_case_reaches_its_bookmark() {
 }
 
 #[test]
+fn inserting_a_toc_takes_no_name_or_id_of_a_bookmark_between_paragraphs() {
+    // A `_Toc1` bookmark starting between paragraphs.
+    let mut doc = doc_with_body(concat!(
+        r#"<w:bookmarkStart w:id="100" w:name="_Toc1"/><w:p><w:r><w:t>Note</w:t></w:r><w:bookmarkEnd w:id="100"/></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Scope</w:t></w:r></w:p>"#,
+    ));
+    doc.insert_toc(0, 1).unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let xml = String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
+        .unwrap();
+    let starts: Vec<_> = xml
+        .match_indices("<w:bookmarkStart ")
+        .map(|(at, _)| &xml[at..at + xml[at..].find("/>").unwrap()])
+        .collect();
+    let attribute = |start: &str, name: &str| {
+        let at = start.find(&format!(r#"{name}=""#)).unwrap() + name.len() + 2;
+        start[at..at + start[at..].find('"').unwrap()].to_owned()
+    };
+    let names: std::collections::BTreeSet<_> = starts
+        .iter()
+        .map(|start| attribute(start, "w:name"))
+        .collect();
+    let ids: std::collections::BTreeSet<_> = starts
+        .iter()
+        .map(|start| attribute(start, "w:id"))
+        .collect();
+    assert_eq!(starts.len(), 2, "{xml}");
+    assert_eq!((names.len(), ids.len()), (2, 2), "{starts:?}");
+}
+
+#[test]
 fn a_ref_that_depends_on_its_own_bookmark_gives_the_same_text_on_every_update() {
     // Word refuses a bookmark self-reference: the REF's result is left out of
     // the bookmark's value, so it cannot grow from one update to the next.
