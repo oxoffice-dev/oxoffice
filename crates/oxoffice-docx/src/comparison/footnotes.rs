@@ -1486,7 +1486,7 @@ fn rewrite_note_marker_pair(
             match local {
                 Some("id") => updated.push_attribute((key, id.as_str())),
                 Some("name") => updated.push_attribute((key, name.as_str())),
-                _ => updated.push_attribute((key.as_bytes(), attribute.value.as_ref())),
+                _ => oxoffice_core::xml::push_raw_attribute(&mut updated, attribute),
             }
         }
         let mut writer = Writer::new(Vec::new());
@@ -2448,7 +2448,7 @@ fn note_revision_opening(
         {
             continue;
         }
-        out.push_attribute((key.as_bytes(), attribute.value.as_ref()));
+        oxoffice_core::xml::push_raw_attribute(&mut out, attribute);
     }
     out.push_attribute(("w:id", id.to_string().as_str()));
     out.push_attribute(("xmlns:w", W_NS));
@@ -2776,4 +2776,27 @@ pub(super) fn normal_note_owner(xml: &str, inherited: &[(String, String)]) -> Re
         raw_note_type_in_scope(xml, inherited)?,
         RawNoteType::Omitted | RawNoteType::ExplicitNormal
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_revision_opening_keeps_a_single_quoted_attribute_well_formed() {
+        let xml = concat!(
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" "#,
+            r#"xmlns:x="urn:example"><w:ins w:id="4" w:author="A" x:note='a"b'></w:ins>"#,
+            r#"</w:document>"#,
+        );
+        let tree = crate::revision::XmlTree::parse(xml.as_bytes()).unwrap();
+        let index = tree
+            .elements
+            .iter()
+            .position(|element| element.local == "ins")
+            .unwrap();
+        let opening = note_revision_opening(xml, &tree, index, 9).unwrap();
+        assert!(opening.contains(r#"x:note="a&quot;b""#), "{opening}");
+        assert!(opening.contains(r#"w:id="9""#), "{opening}");
+    }
 }

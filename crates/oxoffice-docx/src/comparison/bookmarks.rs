@@ -734,7 +734,7 @@ pub(super) fn rewritten_opening(
                 changed = true;
                 updated.push_attribute((key.as_bytes(), replacement.as_slice()));
             }
-            None => updated.push_attribute((key.as_bytes(), attribute.value.as_ref())),
+            None => oxoffice_core::xml::push_raw_attribute(&mut updated, attribute),
         }
     }
     if !changed {
@@ -747,4 +747,33 @@ pub(super) fn rewritten_opening(
         Event::Start(updated)
     })?;
     Ok(Some(writer.into_inner()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rewritten_opening_keeps_a_single_quoted_attribute_well_formed() {
+        let xml = concat!(
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" "#,
+            r#"xmlns:x="urn:example"><w:bookmarkStart w:id="0" w:name="_Toc7" x:note='a"b'/>"#,
+            r#"</w:document>"#,
+        );
+        let tree = crate::revision::XmlTree::parse(xml.as_bytes()).unwrap();
+        let index = tree
+            .elements
+            .iter()
+            .position(|element| element.local == "bookmarkStart")
+            .unwrap();
+        let rewritten = rewritten_opening(&tree, xml.as_bytes(), index, |local, _| {
+            (local == "name").then(|| b"_Toc1".to_vec())
+        })
+        .unwrap()
+        .expect("the name is rewritten");
+        assert_eq!(
+            String::from_utf8(rewritten).unwrap(),
+            r#"<w:bookmarkStart w:id="0" w:name="_Toc1" x:note="a&quot;b"/>"#
+        );
+    }
 }

@@ -88,16 +88,18 @@ impl CT_Shd {
             let attr = attr?;
             let key = attr.key.as_ref();
             let v = std::str::from_utf8(&attr.value)?;
+            let text =
+                || oxoffice_core::xml::attribute_text(&attr).map(std::borrow::Cow::into_owned);
             if matches_local_name(key, b"val") {
-                shd.val = v.to_string();
+                shd.val = text()?;
             } else if matches_local_name(key, b"color") {
-                shd.color = Some(v.to_string());
+                shd.color = Some(text()?);
             } else if matches_local_name(key, b"fill") {
-                shd.fill = Some(v.to_string());
+                shd.fill = Some(text()?);
             } else if matches_local_name(key, b"themeColor") {
-                shd.theme_color = Some(v.to_string());
+                shd.theme_color = Some(text()?);
             } else if matches_local_name(key, b"themeFill") {
-                shd.theme_fill = Some(v.to_string());
+                shd.theme_fill = Some(text()?);
             } else if let Some(slot) = shd.theme_byte_slot(key) {
                 match parse_uchar_hex(v) {
                     Some(parsed) => *slot = Some(parsed),
@@ -124,16 +126,18 @@ impl CT_Shd {
             let attr = attr?;
             let key = attr.key.as_ref();
             let v = std::str::from_utf8(&attr.value)?;
+            let text =
+                || oxoffice_core::xml::attribute_text(&attr).map(std::borrow::Cow::into_owned);
             if is_word_attribute(key, b"val", word_prefixes) {
-                shd.val = v.to_string();
+                shd.val = text()?;
             } else if is_word_attribute(key, b"color", word_prefixes) {
-                shd.color = Some(v.to_string());
+                shd.color = Some(text()?);
             } else if is_word_attribute(key, b"fill", word_prefixes) {
-                shd.fill = Some(v.to_string());
+                shd.fill = Some(text()?);
             } else if is_word_attribute(key, b"themeColor", word_prefixes) {
-                shd.theme_color = Some(v.to_string());
+                shd.theme_color = Some(text()?);
             } else if is_word_attribute(key, b"themeFill", word_prefixes) {
-                shd.theme_fill = Some(v.to_string());
+                shd.theme_fill = Some(text()?);
             } else if let Some(slot) = shd.word_theme_byte_slot(key, word_prefixes) {
                 match parse_uchar_hex(v) {
                     Some(parsed) => *slot = Some(parsed),
@@ -473,6 +477,9 @@ pub(crate) fn is_word_attribute(key: &[u8], local: &[u8], word_prefixes: &[Strin
             .any(|prefix| prefix.as_bytes() == &key[..separator])
 }
 
+/// The `w:val` attribute of `e`, read by
+/// [`oxoffice_core::xml::attribute_text`], so that a caption or a style id
+/// holding `&` or `<` reads back as it was written.
 pub(crate) fn get_word_val_attr(
     e: &BytesStart,
     word_prefixes: &[String],
@@ -480,7 +487,9 @@ pub(crate) fn get_word_val_attr(
     for attr in e.attributes() {
         let attr = attr?;
         if is_word_attribute(attr.key.as_ref(), b"val", word_prefixes) {
-            return Ok(Some(std::str::from_utf8(&attr.value)?.to_string()));
+            return Ok(Some(
+                oxoffice_core::xml::attribute_text(&attr)?.into_owned(),
+            ));
         }
     }
     Ok(None)
