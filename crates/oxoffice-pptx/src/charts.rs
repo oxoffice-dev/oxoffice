@@ -1,6 +1,7 @@
 //! Charts: reading chart data, types and legends, replacing data and legends, and adding charts with their parts.
 
 use super::*;
+use crate::shared_parts::{part_users, unused_part_name};
 
 impl Presentation {
     /// Reads the current cached data of the uniquely identified chart frame.
@@ -188,17 +189,17 @@ impl Presentation {
             .into_iter()
             .filter(|id| *id == relationship_id)
             .count();
-        let shared_chart = relationship_uses > 1 || chart_part_users(&self.package, &old_chart) > 1;
+        let shared_chart = relationship_uses > 1 || part_users(&self.package, &old_chart) > 1;
         let shared_workbook = workbook_candidate.is_some()
-            && (shared_chart || chart_part_users(&self.package, &old_workbook) > 1);
+            && (shared_chart || part_users(&self.package, &old_workbook) > 1);
         let mut staged = self.clone();
         let chart_part = if shared_chart {
-            chart_unused_part(&staged.package, "/ppt/charts/chart", ".xml")
+            unused_part_name(&staged.package, "/ppt/charts/chart", ".xml")
         } else {
             old_chart.clone()
         };
         let workbook_part = if shared_workbook {
-            chart_unused_part(&staged.package, "/ppt/embeddings/Workbook", ".xlsx")
+            unused_part_name(&staged.package, "/ppt/embeddings/Workbook", ".xlsx")
         } else {
             old_workbook.clone()
         };
@@ -312,8 +313,8 @@ impl Presentation {
         validate_chart_extents(width, height)?;
         let slide_part = slide.part_name.clone();
         let id = ShapeIdAllocator::scan(&slide.slide.common_slide_data.shape_tree).allocate();
-        let chart_part = chart_unused_part(&self.package, "/ppt/charts/chart", ".xml");
-        let workbook_part = chart_unused_part(&self.package, "/ppt/embeddings/Workbook", ".xlsx");
+        let chart_part = unused_part_name(&self.package, "/ppt/charts/chart", ".xml");
+        let workbook_part = unused_part_name(&self.package, "/ppt/embeddings/Workbook", ".xlsx");
 
         let mut package = self.package.clone();
         let slide_relationship_id = package.get_or_create_part_rels(&slide_part).add(
@@ -372,23 +373,6 @@ fn chart_shape_id_count(children: &[ShapeTreeChild], id: u32) -> usize {
                 }
         })
         .sum()
-}
-
-fn chart_unused_part(package: &OpcPackage, prefix: &str, suffix: &str) -> String {
-    let mut number = next_numbered_part_number(package, prefix, suffix);
-    loop {
-        let candidate = format!("{prefix}{number}{suffix}");
-        let occupied = package
-            .parts
-            .keys()
-            .chain(package.part_rels.keys())
-            .chain(package.content_types.overrides.keys())
-            .any(|part| part.eq_ignore_ascii_case(&candidate));
-        if !occupied {
-            return candidate;
-        }
-        number += 1;
-    }
 }
 
 // Keep namespace aliases, foreign attributes and opaque .rels children when changing chart targets.
@@ -550,22 +534,6 @@ pub(super) fn chart_internal_part(
     require_internal_related_part(package, source, id, relationship_type)
 }
 
-fn chart_part_users(package: &OpcPackage, target: &str) -> usize {
-    std::iter::once(("/", &package.package_rels))
-        .chain(
-            package
-                .part_rels
-                .iter()
-                .map(|(source, items)| (source.as_str(), items)),
-        )
-        .flat_map(|(source, items)| items.items.iter().map(move |item| (source, item)))
-        .filter(|(source, item)| {
-            !relationship_is_external(item)
-                && OpcPackage::resolve_rel_target(source, &item.target).eq_ignore_ascii_case(target)
-        })
-        .count()
-}
-
 // Splice only the namespace-owned relationship value. The rest of the frame stays exact.
 fn chart_frame_relationship(xml: &[u8], relationship_id: &str) -> Result<Vec<u8>> {
     const CHART_NS: &[u8] = b"http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -656,30 +624,6 @@ fn validate_chart_extents(width: Emu, height: Emu) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn next_numbered_part_number(package: &OpcPackage, prefix: &str, suffix: &str) -> usize {
-    let occupied = package
-        .parts
-        .keys()
-        .filter_map(|part| numbered_part_suffix(part, prefix, suffix))
-        .collect::<HashSet<_>>();
-    let mut candidate = occupied
-        .iter()
-        .copied()
-        .max()
-        .and_then(|value| value.checked_add(1))
-        .unwrap_or(1);
-    while occupied.contains(&candidate) {
-        candidate = candidate.checked_add(1).unwrap_or(1);
-    }
-    candidate
-}
-
-fn numbered_part_suffix(part: &str, prefix: &str, suffix: &str) -> Option<usize> {
-    let value = part.strip_prefix(prefix)?.strip_suffix(suffix)?;
-    let parsed = value.parse::<usize>().ok()?;
-    (parsed != 0).then_some(parsed)
 }
 
 fn invalid_chart_mutation(operation: &'static str, message: impl Into<String>) -> Error {

@@ -1,6 +1,7 @@
 //! Slides: the borrowed slide handles, slide size and numbering, sections, adding, removing, moving and duplicating slides, and notes text with the notes master it needs.
 
 use super::*;
+use crate::shared_parts::{give_slide_its_own_part, point_back_at};
 
 impl Presentation {
     /// Returns the number of slides in presentation order.
@@ -466,11 +467,36 @@ impl Presentation {
         let mut candidates = HashSet::new();
         self.release_slide_jumps_to(&record.part_name, &mut candidates)?;
         collect_internal_targets(&self.package, &record.part_name, &mut candidates);
+        // A notes slide another slide still relates to stays with that
+        // slide, and names it.
+        let sharer = |part: &str, of: fn(&SlideRecord) -> Option<&str>| {
+            self.slides
+                .iter()
+                .enumerate()
+                .find(|(other, slide)| {
+                    *other != index && of(slide).is_some_and(|name| name.eq_ignore_ascii_case(part))
+                })
+                .map(|(_, slide)| slide.part_name.clone())
+        };
+        let notes_sharer = record.notes.as_ref().and_then(|notes| {
+            sharer(&notes.part_name, |slide| {
+                slide.notes.as_ref().map(|notes| notes.part_name.as_str())
+            })
+        });
         if let Some(notes) = &record.notes {
-            collect_internal_targets(&self.package, &notes.part_name, &mut candidates);
-            self.package.remove_part(&notes.part_name);
-            self.package.remove_part_rels(&notes.part_name);
-            self.package.content_types.remove_override(&notes.part_name);
+            if let Some(sharer) = &notes_sharer {
+                point_back_at(
+                    &mut self.package,
+                    &notes.part_name,
+                    &record.part_name,
+                    sharer,
+                );
+            } else {
+                collect_internal_targets(&self.package, &notes.part_name, &mut candidates);
+                self.package.remove_part(&notes.part_name);
+                self.package.remove_part_rels(&notes.part_name);
+                self.package.content_types.remove_override(&notes.part_name);
+            }
         }
         if let Some(comments) = &record.comments {
             self.package.remove_part(&comments.part_name);
@@ -494,6 +520,54 @@ impl Presentation {
         prune_unreachable_parts(&mut self.package, &candidates);
         self.media_store = self.media_store.rescan(&self.package);
         self.refresh_document_metadata(MetadataEdit::Removal)
+    }
+}
+
+impl Presentation {
+    /// Gives slide `index` a notes slide of its own before an edit writes
+    /// its notes, when another slide relates to the same part (decks edited
+    /// by oxoffice 0.1.0 can): the copy holds what the part holds, and the
+    /// part then names one of the slides that keep it. Nothing changes for
+    /// notes no other slide relates to.
+    pub(super) fn own_notes_in_place(&mut self, index: usize) {
+        let record = &self.slides[index];
+        let Some(notes) = &record.notes else {
+            return;
+        };
+        let Some(keeper) =
+            self.slides
+                .iter()
+                .enumerate()
+                .find(|(other, slide)| {
+                    *other != index
+                        && slide.notes.as_ref().is_some_and(|other| {
+                            other.part_name.eq_ignore_ascii_case(&notes.part_name)
+                        })
+                })
+                .map(|(_, slide)| slide.part_name.clone())
+        else {
+            return;
+        };
+        let slide_part = record.part_name.clone();
+        let original = notes.part_name.clone();
+        let relationship_id = self
+            .package
+            .get_part_rels(&slide_part)
+            .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
+            .map(|relationship| relationship.id.clone());
+        let bytes = self.package.get_part(&original).map(<[u8]>::to_vec);
+        let (Some(relationship_id), Some(bytes)) = (relationship_id, bytes) else {
+            return;
+        };
+        let Ok(copy) =
+            give_slide_its_own_part(&mut self.package, &slide_part, &relationship_id, bytes)
+        else {
+            return;
+        };
+        point_back_at(&mut self.package, &original, &slide_part, &keeper);
+        if let Some(notes) = &mut Arc::make_mut(&mut self.slides[index]).notes {
+            notes.part_name = copy;
+        }
     }
 }
 
@@ -875,14 +949,15 @@ impl<'a> SlideMut<'a> {
 
     /// Replaces speaker-note text while preserving its body placeholder.
     pub fn set_notes_text(&mut self, text: &str) -> Result<()> {
-        let notes = Arc::make_mut(&mut self.presentation.slides[self.index])
+        let mut candidate = self.presentation.slides[self.index]
             .notes
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| Error::InvalidSlideMutation {
                 operation: "set notes text",
                 message: "slide has no notes part".to_owned(),
-            })?;
-        let mut candidate = notes.notes.clone();
+            })?
+            .notes
+            .clone();
         let body = first_notes_body_mut(&mut candidate.common_slide_data.shape_tree.children)
             .ok_or_else(|| Error::InvalidSlideMutation {
                 operation: "set notes text",
@@ -923,7 +998,11 @@ impl<'a> SlideMut<'a> {
                 operation: "set notes text",
                 message: error.to_string(),
             })?;
-        notes.notes = candidate;
+        // Only an edit that succeeds unshares the notes.
+        self.presentation.own_notes_in_place(self.index);
+        if let Some(notes) = &mut Arc::make_mut(&mut self.presentation.slides[self.index]).notes {
+            notes.notes = candidate;
+        }
         Ok(())
     }
 
