@@ -2265,3 +2265,51 @@ fn a_range_with_a_leading_bookmark_that_ends_outside_it_imports_without_the_half
     assert_eq!(texts(&target), ["Target", "Introduction"]);
     assert!(target.bookmarks().is_empty());
 }
+
+/// A paragraph ending page 1 with a page break, so that what follows is on page 2.
+const PAGE_ONE: &str = r#"<w:p><w:r><w:t>One</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>"#;
+
+/// A paragraph holding `PAGEREF name` with the stale result 9.
+fn pageref(name: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF {name} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    )
+}
+
+#[test]
+fn a_bookmark_between_blocks_of_a_paragraph_that_receives_an_accepted_join_has_its_page() {
+    // The deleted mark of `Joined` joins it to the next paragraph in the
+    // accepted view; the bookmark that starts before that paragraph is still
+    // on page 2.
+    let mut doc = doc_with_body(&format!(
+        r#"{PAGE_ONE}<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="target"/><w:p><w:r><w:t>Target</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+        pageref("target")
+    ));
+    doc.update_layout_backed_fields().unwrap();
+    assert_eq!(texts(&reopen(&mut doc)).last().unwrap(), "2");
+}
+
+#[test]
+fn a_bookmark_between_blocks_before_a_table_has_its_page_after_another_layout() {
+    // The start before the table belongs to the paragraph of its first cell:
+    // a second layout, which may retain the table, still finds it.
+    let mut doc = doc_with_body(&format!(
+        r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
+        pageref("cell")
+    ));
+    doc.update_layout_backed_fields().unwrap();
+    assert_eq!(texts(&doc).last().unwrap(), "2");
+    doc.add_paragraph("Added.");
+    doc.update_layout_backed_fields().unwrap();
+    let texts = texts(&reopen(&mut doc));
+    assert_eq!(texts[texts.len() - 2], "2");
+}
+
+#[test]
+fn a_bookmark_between_cells_of_a_row_in_a_row_control_wraps_the_next_cell() {
+    let mut doc = doc_with_body(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:sdt><w:sdtPr><w:tag w:val="row"/></w:sdtPr><w:sdtContent><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:bookmarkStart w:id="3" w:name="second"/><w:tc><w:p><w:r><w:t>B</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl><w:p/>"#,
+    );
+    assert_eq!(bookmark_list(&doc), pairs(&[("second", "B")]));
+    assert_eq!(bookmark_list(&reopen(&mut doc)), pairs(&[("second", "B")]));
+}

@@ -501,6 +501,16 @@ fn layout_table_inner(
         resolved_properties.width = None;
     }
     resolved_table.properties = Some(resolved_properties);
+    // The copy's paragraphs have other addresses than those the block
+    // bookmarks were read for: they carry the markers they take.
+    if !input
+        .block_bookmarks()
+        .carry_into_table_copy(tbl, &mut resolved_table)
+    {
+        return Err(oxoffice_layout::LayoutError::Layout(
+            "could not carry a table's block bookmarks".to_owned(),
+        ));
+    }
     let tbl = &resolved_table;
     let source_rows = accepted_table_rows(tbl, path, input);
     if let Some(sources) = sources {

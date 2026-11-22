@@ -593,7 +593,11 @@ impl Engine {
                 {
                     if !accepted_paragraph_is_blank(para) {
                         carried = Some(match carried.take() {
-                            Some(prefix) => join_accepted_layout_paragraphs(prefix, para)?,
+                            Some(prefix) => join_accepted_layout_paragraphs(
+                                prefix,
+                                para,
+                                &input.block_bookmarks(),
+                            )?,
                             None => para.accepted_view().into_owned(),
                         });
                     }
@@ -601,7 +605,9 @@ impl Engine {
                 MainStoryLayoutItem::Paragraph(para, path) => {
                     let joined = carried
                         .take()
-                        .map(|prefix| join_accepted_layout_paragraphs(prefix, para))
+                        .map(|prefix| {
+                            join_accepted_layout_paragraphs(prefix, para, &input.block_bookmarks())
+                        })
                         .transpose()?;
                     let para = joined.as_ref().unwrap_or(para);
                     // Check if this paragraph ends a section (has sect_pr)
@@ -996,6 +1002,7 @@ impl Engine {
                     }
                     BodyContent::Table(table) if block.table().is_some() => {
                         table_is_cache_safe(table, styles)
+                            && !table_takes_block_markers(table, &input.block_bookmarks())
                     }
                     _ => false,
                 });
@@ -2410,7 +2417,10 @@ impl Engine {
                 children: path.to_vec(),
             })
         });
-        if !table_is_cache_safe(table, styles) || excluded_owner {
+        if !table_is_cache_safe(table, styles)
+            || table_takes_block_markers(table, &input.block_bookmarks())
+            || excluded_owner
+        {
             self.paragraph_cache_reads_enabled = false;
             return table::layout_table_with_provenance(
                 table,
