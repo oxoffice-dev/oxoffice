@@ -1378,6 +1378,24 @@ fn a_heading_bookmark_that_starts_between_paragraphs_is_reused_by_the_toc_rebuil
     );
 }
 
+#[test]
+fn an_index_entry_after_a_toc_ending_in_a_tracked_link_with_a_simple_page_field_is_indexed() {
+    // The TOC's last entry is a tracked insertion of a link whose page number
+    // is a simple field; its end follows in the same paragraph, then an XE in
+    // a tracked insertion. The XE is outside the TOC: the index lists it.
+    let toc = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:hyperlink w:anchor="_Toc1"><w:r><w:t>Intro</w:t></w:r><w:fldSimple w:instr=" PAGEREF _Toc1 \h "><w:r><w:t>3</w:t></w:r></w:fldSimple></w:hyperlink></w:ins><w:r><w:fldChar w:fldCharType="end"/></w:r><w:ins w:id="6" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> XE "Apple" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:ins></w:p>"#;
+    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#;
+    let index = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> INDEX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let mut doc = doc_with_body(&format!("{toc}{heading}{index}"));
+    let report = doc.rebuild_generated_tables().unwrap();
+    assert_eq!(report.index_entries, 1, "{report:?}");
+    assert!(
+        texts(&doc).contains(&"Apple, 1".to_owned()),
+        "{:?}",
+        texts(&doc)
+    );
+}
+
 /// The main document part of a saved package.
 fn main_part_xml(bytes: &[u8]) -> String {
     let package =
