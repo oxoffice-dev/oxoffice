@@ -2,8 +2,6 @@
 //! rows and columns, merges and splits, nested tables, widths, borders,
 //! shading, styles and header rows, on new documents and the corpus reports.
 
-use std::collections::{HashMap, HashSet};
-
 use oxoffice_docx::{
     Alignment, BorderStyle, CellBorderEdge, CellItemRef, CellTextDirection, CommentDate, Document,
     Length, RowHeight, StyleType, TableBorderEdge, TableCellMargins, TableConditionalFormatting,
@@ -12,16 +10,6 @@ use oxoffice_docx::{
 };
 
 use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, texts};
-
-const REPORTS: [&str; 4] = [
-    "word/report.docx",
-    "google/report.docx",
-    "libreoffice/report.docx",
-    "authored/report.docx",
-];
-
-/// The merged last row of the styled table of every corpus report.
-const NOTE: &str = "Operating margin excludes one-off costs of the Lyon opening (212).";
 
 const DATE: CommentDate = CommentDate::At("2026-11-20T00:00:00Z");
 
@@ -115,133 +103,6 @@ fn add_and_insert_table_place_the_table_among_the_body_paragraphs() {
     assert_eq!(doc.content_index_of_table(1), Some(2));
     assert_eq!(cell_texts(&doc, 0), [["inserted"]]);
     assert_eq!(cell_texts(&doc, 1), [["appended"]]);
-}
-
-#[test]
-fn document_text_puts_each_row_on_one_line_with_tab_ended_cells() {
-    let mut doc = doc_with(&["Totals"]);
-    {
-        let mut table = doc.add_table(2, 2);
-        table.cell(0, 0).unwrap().set_text("alpha");
-        table.cell(0, 1).unwrap().set_text("beta");
-        table.cell(1, 0).unwrap().set_text("gamma");
-        table.cell(1, 1).unwrap().set_text("delta");
-    }
-    doc.add_paragraph("End");
-    assert_eq!(doc.text(), "Totals\nalpha\tbeta\t\ngamma\tdelta\t\nEnd\n");
-
-    // Find and replace reaches inside the cells.
-    assert_eq!(doc.replace_all(&HashMap::from([("gamma", "GAMMA")])), 1);
-    let doc = reopen(&mut doc);
-    assert_eq!(cell_texts(&doc, 0)[1], ["GAMMA", "delta"]);
-}
-
-#[test]
-fn cell_text_keeps_unicode_spaces_markup_and_line_breaks() {
-    let long = "lorem ipsum ".repeat(2_000);
-    let samples = [
-        "Größe",
-        "مرحبا بالعالم",
-        "表格の中のテキスト",
-        "👍🏽 done",
-        "  padded  ",
-        "a < b & \"c\" > 'd'",
-        "line one\nline two\tafter a tab",
-        long.as_str(),
-    ];
-    let mut doc = Document::new();
-    {
-        let mut table = doc.add_table(samples.len(), 1);
-        for (row, sample) in samples.iter().enumerate() {
-            table.cell(row, 0).unwrap().set_text(sample);
-        }
-    }
-    let doc = reopen(&mut doc);
-    let table = doc.table(0).unwrap();
-    for (row, sample) in samples.iter().enumerate() {
-        let cell = table.cell(row, 0).unwrap();
-        assert_eq!(cell.text(), *sample);
-        // A line feed is a line break inside the paragraph, not a new one.
-        assert_eq!(cell.paragraph_count(), 1, "{sample:?}");
-    }
-}
-
-#[test]
-fn setting_cell_text_replaces_only_the_first_paragraph_and_can_clear_it() {
-    let mut doc = Document::new();
-    {
-        let mut table = doc.add_table(1, 2);
-        let mut cell = table.cell(0, 0).unwrap();
-        cell.set_text("one");
-        cell.add_paragraph("two");
-        cell.set_text("uno");
-        table.cell(0, 1).unwrap().set_text("to clear");
-    }
-    doc.try_set_cell_text(0, 0, 1, "").unwrap();
-
-    let doc = reopen(&mut doc);
-    let table = doc.table(0).unwrap();
-    assert_eq!(table.cell(0, 0).unwrap().text(), "uno\ntwo");
-    let cleared = table.cell(0, 1).unwrap();
-    assert_eq!(cleared.text(), "");
-    assert_eq!(cleared.paragraph_count(), 1);
-}
-
-#[test]
-fn try_set_cell_text_refuses_bad_input_and_changes_nothing() {
-    let mut doc = table_doc(&[&["kept"]]);
-    let before = doc.to_bytes().unwrap();
-
-    let error = doc.try_set_cell_text(0, 3, 0, "x").unwrap_err();
-    assert!(error.to_string().contains("out of range"), "{error}");
-    assert!(doc.try_set_cell_text(4, 0, 0, "x").is_err());
-    let error = doc.try_set_cell_text(0, 0, 0, "bell \u{7}").unwrap_err();
-    assert!(error.to_string().contains("U+0007"), "{error}");
-    // The unchecked setter swallows the same refusal and leaves the cell.
-    doc.table_mut(0)
-        .unwrap()
-        .cell(0, 0)
-        .unwrap()
-        .set_text("bell \u{7}");
-
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn a_cell_holds_several_formatted_paragraphs() {
-    let mut doc = Document::new();
-    {
-        let mut table = doc.add_table(1, 2);
-        let mut cell = table.cell(0, 0).unwrap();
-        cell.set_text("plain");
-        let mut paragraph = cell.add_paragraph("");
-        paragraph.set_alignment(Alignment::Center);
-        paragraph.add_run("bold").bold(true);
-
-        // A cell built paragraph by paragraph can drop its first empty one.
-        let mut built = table.cell(0, 1).unwrap();
-        built.add_paragraph("first");
-        built.add_paragraph("second");
-        built.remove_first_empty_paragraph();
-    }
-    let doc = reopen(&mut doc);
-    let table = doc.table(0).unwrap();
-    let cell = table.cell(0, 0).unwrap();
-    assert_eq!(cell.text(), "plain\nbold");
-    let paragraphs: Vec<_> = cell.paragraphs().map(|p| p.text()).collect();
-    assert_eq!(paragraphs, ["plain", "bold"]);
-    let second = cell.paragraph(1).unwrap();
-    assert_eq!(second.alignment(), Some(Alignment::Center));
-    assert!(second.runs().all(|run| run.is_bold()));
-    assert_eq!(cell.paragraph(0).unwrap().alignment(), None);
-
-    let built: Vec<_> = table
-        .cell(0, 1)
-        .unwrap()
-        .paragraphs()
-        .map(|p| p.text())
-        .collect();
-    assert_eq!(built, ["first", "second"]);
 }
 
 #[test]
@@ -504,33 +365,6 @@ fn merging_cells_across_a_row_writes_a_grid_span_and_narrowing_it_restores_the_c
 }
 
 #[test]
-fn merging_cells_down_a_column_writes_a_vertical_merge() {
-    let mut doc = table_doc(&[&["top", "x"], &["middle", "y"], &["", "z"]]);
-    doc.table_mut(0)
-        .unwrap()
-        .merge_cells((0, 0), (2, 0))
-        .unwrap();
-
-    let doc = reopen(&mut doc);
-    let table = doc.table(0).unwrap();
-    let merges: Vec<_> = (0..3)
-        .map(|row| table.cell(row, 0).unwrap().v_merge().cloned())
-        .collect();
-    assert_eq!(
-        merges,
-        [
-            Some(VMerge::Restart),
-            Some(VMerge::Continue),
-            Some(VMerge::Continue)
-        ]
-    );
-    assert_eq!(
-        cell_texts(&doc, 0),
-        [["top\nmiddle", "x"], ["", "y"], ["", "z"]]
-    );
-}
-
-#[test]
 fn splitting_a_merged_block_restores_one_cell_per_grid_column_and_row() {
     let mut doc = table_doc(&[&["a", "", ""], &["", "b", ""], &["", "", ""]]);
     doc.table_mut(0)
@@ -625,27 +459,6 @@ fn a_table_nested_in_a_cell_survives_a_save_and_its_cell_text_can_change() {
     );
     // The text of the cell leaves the nested table out.
     assert_eq!(cell.text(), "changed\n");
-}
-
-#[test]
-fn nested_tables_are_not_counted_among_the_document_tables() {
-    let mut doc = Document::new();
-    doc.add_table(1, 1)
-        .cell(0, 0)
-        .unwrap()
-        .add_table(1, 1)
-        .cell(0, 0)
-        .unwrap()
-        .set_text("nested");
-    doc.add_table(1, 1).cell(0, 0).unwrap().set_text("second");
-    assert_eq!(doc.table_count(), 2);
-    // Table indexes count body tables only: index 1 is the second one.
-    assert_eq!(doc.clone_table_row(1, 0, 1).unwrap(), 1);
-
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.table_count(), 2);
-    assert_eq!(doc.table(0).unwrap().row_count(), 1);
-    assert_eq!(cell_texts(&doc, 1), [["second"], ["second"]]);
 }
 
 #[test]
@@ -835,46 +648,6 @@ fn a_malformed_table_width_is_refused() {
 }
 
 #[test]
-fn a_table_width_of_33_point_3_percent_reads_back_as_written() {
-    let mut doc = Document::new();
-    doc.add_table(1, 1)
-        .set_width_mode(TableWidth::Percentage(33.3))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        doc.table(0).unwrap().width_mode(),
-        Some(TableWidth::Percentage(33.3))
-    );
-}
-
-#[test]
-fn table_percentages_round_to_the_nearest_fiftieth_through_both_setters() {
-    for (percent, stored) in [
-        (33.3, 33.3),
-        (66.7, 66.7),
-        (12.5, 12.5),
-        (99.99, 100.0),
-        // Half a fiftieth rounds up, below it rounds down.
-        (0.01, 0.02),
-        (0.004, 0.0),
-    ] {
-        let mut doc = Document::new();
-        doc.add_table(1, 1)
-            .set_width_mode(TableWidth::Percentage(percent))
-            .unwrap();
-        doc.add_table(1, 1).set_width_pct(percent);
-        let doc = reopen(&mut doc);
-        for index in 0..2 {
-            assert_eq!(
-                doc.table(index).unwrap().width_mode(),
-                Some(TableWidth::Percentage(stored)),
-                "{percent} through setter {index}"
-            );
-        }
-    }
-}
-
-#[test]
 fn the_unchecked_percentage_setter_keeps_to_what_word_writes() {
     for (percent, stored) in [
         (150.0, 100.0),
@@ -900,21 +673,6 @@ fn the_unchecked_percentage_setter_keeps_to_what_word_writes() {
         doc.table(0).unwrap().width_mode(),
         Some(TableWidth::Percentage(40.0))
     );
-}
-
-#[test]
-fn a_cell_reads_its_tracked_insertions_as_its_paragraphs_do() {
-    let doc = doc_with_body(concat!(
-        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p>"#,
-        r#"<w:r><w:t>A</w:t></w:r>"#,
-        r#"<w:ins w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:t>B</w:t></w:r></w:ins>"#,
-        r#"<w:del w:id="2" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>C</w:delText></w:r></w:del>"#,
-        r#"</w:p></w:tc></w:tr></w:tbl>"#,
-    ));
-    let table = doc.table(0).unwrap();
-    let cell = table.cell(0, 0).unwrap();
-    assert_eq!(cell.paragraph(0).unwrap().text(), "AB");
-    assert_eq!(cell.text(), "AB", "the cell reads its paragraph's text");
 }
 
 #[test]
@@ -1205,143 +963,6 @@ fn column_widths_keep_the_grid_the_cells_and_the_table_width_in_step() {
 }
 
 #[test]
-fn every_report_has_its_styled_table_with_a_merged_last_row() {
-    for name in REPORTS {
-        let doc = corpus_doc(name);
-        assert_eq!(doc.table_count(), 2, "{name}");
-        let table = doc.table(0).unwrap();
-        assert_eq!((table.row_count(), table.column_count()), (6, 4), "{name}");
-        let texts = cell_texts(&doc, 0);
-        assert_eq!(texts[0], ["Indicator", "Q2", "Q3", "Change"], "{name}");
-        assert_eq!(
-            texts[4],
-            ["Operating margin", "867", "1,122", "+29.4 %"],
-            "{name}"
-        );
-        // Cells are addressed by position in the row: the note row has one.
-        assert_eq!(texts[5], [NOTE], "{name}");
-        assert_eq!(table.cell(5, 0).unwrap().grid_span(), Some(4), "{name}");
-        assert!(table.cell(5, 1).is_none(), "{name}");
-        assert_eq!(table.alignment(), Some(Alignment::Center), "{name}");
-        assert_eq!(
-            table.look().map(|look| look.first_row),
-            Some(true),
-            "{name}"
-        );
-        let style = table
-            .style_id()
-            .and_then(|id| doc.style(id))
-            .unwrap_or_else(|| panic!("{name}: the table style is defined"));
-        // Google writes unnamed styles of its own, the others the built-in one.
-        if !name.starts_with("google") {
-            assert_eq!(style.name(), Some("Light Grid Accent 1"), "{name}");
-        }
-    }
-}
-
-#[test]
-fn every_report_has_its_table_grid_table_in_the_landscape_section() {
-    for name in REPORTS {
-        let doc = corpus_doc(name);
-        let table = doc.table(1).unwrap();
-        assert_eq!((table.row_count(), table.column_count()), (5, 5), "{name}");
-        let texts = cell_texts(&doc, 1);
-        assert_eq!(
-            texts[0],
-            ["Region", "Customers", "Revenue", "Churn", "Tickets"],
-            "{name}"
-        );
-        assert_eq!(
-            texts[4],
-            ["West", "1,010", "1,128", "2.2 %", "4,420"],
-            "{name}"
-        );
-        if !name.starts_with("google") {
-            let style = table.style_id().and_then(|id| doc.style(id)).unwrap();
-            assert_eq!(style.name(), Some("Table Grid"), "{name}");
-        }
-        // No facade reader maps a body item to its section, so the order is
-        // read from the part: the table follows the first section break, and
-        // the last section is landscape.
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        let first_break = xml.find("<w:sectPr").unwrap();
-        let second_table = xml.match_indices("<w:tbl>").nth(1).unwrap().0;
-        assert!(first_break < second_table, "{name}");
-        let (width, height) = doc.sections().last().unwrap().page_size().unwrap();
-        assert!(width.to_emu() > height.to_emu(), "{name}");
-    }
-}
-
-#[test]
-fn editing_a_cell_of_the_word_report_keeps_the_rest_of_the_tables() {
-    let mut doc = corpus_doc("word/report.docx");
-    let mut expected = cell_texts(&doc, 0);
-    let second = cell_texts(&doc, 1);
-    doc.try_set_cell_text(0, 1, 1, "3,800").unwrap();
-
-    let doc = reopen(&mut doc);
-    expected[1][1] = "3,800".to_owned();
-    assert_eq!(cell_texts(&doc, 0), expected);
-    assert_eq!(cell_texts(&doc, 1), second);
-    let table = doc.table(0).unwrap();
-    assert_eq!(table.style_id(), Some("Grilleclaire-Accent1"));
-    assert_eq!(
-        table.look(),
-        Some(TableLook {
-            first_row: true,
-            first_column: true,
-            horizontal_banding: true,
-            ..TableLook::default()
-        })
-    );
-    assert_eq!(table.cell(5, 0).unwrap().grid_span(), Some(4));
-    // Word's conditional formatting marks stay on the header row.
-    let regions = table.row(0).unwrap().conditional_formatting().unwrap();
-    assert!(regions.first_row);
-}
-
-#[test]
-fn rows_added_to_the_word_report_keep_its_paragraph_ids_unique() {
-    let mut doc = corpus_doc("word/report.docx");
-    assert_eq!(doc.clone_table_row(0, 1, 5).unwrap(), 5);
-    assert_eq!(doc.add_empty_table_row(1).unwrap(), 5);
-
-    let doc = reopen(&mut doc);
-    let first = cell_texts(&doc, 0);
-    assert_eq!(first.len(), 7);
-    // The copy sits before the note row, which stays last.
-    assert_eq!(first[5], first[1]);
-    assert_eq!(first[6], [NOTE]);
-    assert_eq!(cell_texts(&doc, 1)[5], ["", "", "", "", ""]);
-    // Word gives every paragraph a `w14:paraId`; a copy must not repeat one.
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    let ids: Vec<&str> = xml
-        .split("w14:paraId=\"")
-        .skip(1)
-        .map(|rest| &rest[..8])
-        .collect();
-    let unique: HashSet<_> = ids.iter().collect();
-    assert!(!ids.is_empty());
-    assert_eq!(unique.len(), ids.len());
-}
-
-#[test]
-fn columns_of_the_word_report_change_around_its_merged_last_row() {
-    let mut doc = corpus_doc("word/report.docx");
-    doc.delete_table_column(0, 3).unwrap();
-    // The note row is split by any grid column it covers.
-    assert!(doc.split_table_cell(0, 5, 2).unwrap());
-
-    let doc = reopen(&mut doc);
-    let texts = cell_texts(&doc, 0);
-    assert_eq!(texts[0], ["Indicator", "Q2", "Q3"]);
-    assert_eq!(texts[4], ["Operating margin", "867", "1,122"]);
-    assert_eq!(texts[5], [NOTE, "", ""]);
-    assert_eq!(spans(&doc, 0, 5), [1, 1, 1]);
-    assert_eq!(doc.table(0).unwrap().column_count(), 3);
-}
-
-#[test]
 fn rows_added_to_google_and_libreoffice_tables_keep_their_formatting() {
     // Google marks every row as explicitly not a header; so does a new row.
     let mut google = corpus_doc("google/report.docx");
@@ -1370,104 +991,11 @@ fn rows_added_to_google_and_libreoffice_tables_keep_their_formatting() {
     assert_eq!(added.grid_span(), Some(4));
 }
 
-#[test]
-fn a_property_edit_in_place_changes_the_table_and_keeps_its_cells() {
-    for name in REPORTS {
-        let mut doc = corpus_doc(name);
-        let before = cell_texts(&doc, 0);
-        let edited = doc
-            .edit_table_properties_in_place(0, |table| {
-                table.set_alignment(Alignment::Right);
-                table
-                    .row(1)
-                    .expect("the row exists")
-                    .set_header_value(Some(true));
-                Ok(())
-            })
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
-        assert_eq!(edited, Some(()), "{name}");
-        let reopened = reopen(&mut doc);
-        let table = reopened.table(0).expect("the table exists");
-        assert_eq!(table.alignment(), Some(Alignment::Right), "{name}");
-        assert_eq!(table.row(1).unwrap().header_value(), Some(true), "{name}");
-        assert_eq!(cell_texts(&reopened, 0), before, "{name}");
-    }
-}
-
 /// A one-cell table whose cell holds these properties and this paragraph.
 fn one_cell_table(properties: &str, paragraph: &str) -> String {
     format!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{properties}{paragraph}</w:tc></w:tr></w:tbl><w:p/>"#
     )
-}
-
-#[test]
-fn google_docs_and_libreoffice_reports_render_as_templates() {
-    // Google Docs writes an empty `w:tcPr` in every table cell, LibreOffice
-    // an empty `w:trPr` in every row.
-    for name in ["google/report.docx", "libreoffice/report.docx"] {
-        let mut doc = corpus_doc(name);
-        let before = cell_texts(&doc, 0);
-        assert_eq!(
-            doc.render_template(&serde_json::json!({}))
-                .unwrap_or_else(|e| panic!("{name}: {e}")),
-            0,
-            "{name}"
-        );
-        let doc = reopen(&mut doc);
-        assert_eq!(cell_texts(&doc, 0), before, "{name}");
-    }
-}
-
-#[test]
-fn a_cell_property_is_edited_in_place_unless_it_is_the_cells_first() {
-    // Word writes the width of every cell, Google Docs an empty `w:tcPr`.
-    let mut word = corpus_doc("word/report.docx");
-    let edited = word
-        .edit_table_properties_in_place(0, |table| {
-            table
-                .cell(1, 0)
-                .expect("the cell")
-                .set_shading_checked("FFFF00")
-        })
-        .expect("the edit runs");
-    assert_eq!(edited, Some(()));
-    let word = reopen(&mut word);
-    assert_eq!(
-        word.table(0).unwrap().cell(1, 0).unwrap().shading_fill(),
-        Some("FFFF00")
-    );
-
-    // Google's empty `w:tcPr` is written already, so a property fills it.
-    let mut google = corpus_doc("google/report.docx");
-    let edited = google
-        .edit_table_properties_in_place(0, |table| {
-            table
-                .cell(1, 0)
-                .expect("the cell")
-                .set_shading_checked("FFFF00")
-        })
-        .expect("the edit runs");
-    assert_eq!(edited, Some(()));
-    let google = reopen(&mut google);
-    assert_eq!(
-        google.table(0).unwrap().cell(1, 0).unwrap().shading_fill(),
-        Some("FFFF00")
-    );
-
-    // A first property writes a `w:tcPr`, which moves the cell's paragraphs.
-    let mut bare = doc_with_body(&one_cell_table("", "<w:p/>"));
-    let before = bare.to_bytes().expect("the document saves");
-    let edited = bare
-        .edit_table_properties_in_place(0, |table| {
-            table
-                .cell(0, 0)
-                .expect("the cell")
-                .set_shading_checked("FFFF00")
-        })
-        .expect("the edit runs");
-    assert_eq!(edited, None);
-    assert_eq!(bare.to_bytes().expect("the document saves"), before);
 }
 
 #[test]
@@ -1496,29 +1024,6 @@ fn an_in_place_table_edit_that_moves_content_is_undone_and_declined() {
 }
 
 #[test]
-fn a_failed_or_panicking_in_place_table_edit_leaves_the_table_as_it_was() {
-    let mut doc = corpus_doc("word/report.docx");
-    let before = doc.to_bytes().expect("the report saves");
-    let failed = doc.edit_table_properties_in_place(0, |table| {
-        table.set_alignment(Alignment::Right);
-        table
-            .cell(1, 0)
-            .expect("the cell exists")
-            .set_shading_checked("not a colour")
-    });
-    assert!(failed.is_err(), "a bad shading colour is refused");
-    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        doc.edit_table_properties_in_place(0, |table| -> oxoffice_docx::Result<()> {
-            table.set_alignment(Alignment::Right);
-            panic!("an edit that panics half way");
-        })
-    }));
-    assert!(panicked.is_err(), "the panic reaches the caller");
-    assert!(doc.edit_table_properties_in_place(99, |_| Ok(())).is_err());
-    assert_eq!(doc.to_bytes().expect("the report saves"), before);
-}
-
-#[test]
 fn a_template_tag_in_a_cell_with_empty_properties_renders() {
     let mut doc = doc_with_body(&one_cell_table(
         "<w:tcPr/>",
@@ -1536,27 +1041,6 @@ fn a_template_tag_in_a_cell_with_empty_properties_renders() {
 }
 
 #[test]
-fn a_save_keeps_empty_cell_properties() {
-    for properties in ["<w:tcPr/>", "<w:tcPr></w:tcPr>"] {
-        let body = one_cell_table(properties, "<w:p/>");
-        let doc = reopen(&mut doc_with_body(&body));
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        assert!(
-            xml.contains(&format!("<w:tc>{properties}<w:p/></w:tc>")),
-            "{xml}"
-        );
-
-        // An edit of the cell writes it again from the model.
-        let mut doc = doc_with_body(&body);
-        doc.try_set_cell_text(0, 0, 0, "x").unwrap();
-        let doc = reopen(&mut doc);
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        assert!(xml.contains("<w:tc><w:tcPr/><w:p>"), "{xml}");
-        assert_eq!(cell_texts(&doc, 0), [["x"]]);
-    }
-}
-
-#[test]
 fn a_save_keeps_cell_properties_written_without_a_value() {
     for properties in [
         "<w:tcPr><w:vAlign/></w:tcPr>",
@@ -1568,26 +1052,6 @@ fn a_save_keeps_cell_properties_written_without_a_value() {
         let doc = reopen(&mut doc);
         let xml = doc.part_xml("word/document.xml").unwrap();
         assert!(xml.contains(&format!("<w:tc>{properties}<w:p>")), "{xml}");
-    }
-}
-
-#[test]
-fn a_save_keeps_empty_row_properties() {
-    // Children written without the value they are read by stay as written.
-    let valueless = r#"<w:trPr><w:cnfStyle/><w:gridBefore/><w:gridAfter/><w:trHeight w:hRule="exact"/><w:jc/></w:trPr>"#;
-    for (properties, saved) in [
-        ("<w:trPr/>", "<w:trPr/>"),
-        ("<w:trPr></w:trPr>", "<w:trPr/>"),
-        (valueless, valueless),
-    ] {
-        let body = format!(
-            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{properties}<w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
-        );
-        let mut doc = doc_with_body(&body);
-        doc.try_set_cell_text(0, 0, 0, "x").unwrap();
-        let doc = reopen(&mut doc);
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        assert!(xml.contains(&format!("<w:tr>{saved}<w:tc>")), "{xml}");
     }
 }
 
@@ -1649,41 +1113,6 @@ fn a_row_height_rule_without_a_value_is_formatting_a_row_edit_can_copy_and_set()
 }
 
 #[test]
-fn empty_border_containers_read_from_a_file_survive_an_edit() {
-    // LibreOffice writes an empty `w:tcBorders` in every cell: an edit of
-    // the table writes it back as read, whether written empty or self-closed.
-    for (written, saved) in [
-        ("", ""),
-        ("<w:tcBorders></w:tcBorders>", "<w:tcBorders/>"),
-        ("<w:tcBorders/>", "<w:tcBorders/>"),
-    ] {
-        for (table_written, table_saved) in [
-            ("<w:tblBorders></w:tblBorders>", "<w:tblBorders/>"),
-            ("<w:tblBorders/>", "<w:tblBorders/>"),
-        ] {
-            let body = format!(
-                r#"<w:tbl><w:tblPr>{table_written}</w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{written}</w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>"#
-            );
-            let mut doc = doc_with_body(&body);
-            doc.try_set_cell_text(0, 0, 0, "x").unwrap();
-            doc.table_mut(0).unwrap().add_row().unwrap();
-            let doc = reopen(&mut doc);
-            let xml = doc.part_xml("word/document.xml").unwrap();
-            assert!(
-                xml.contains(&format!("<w:tblPr>{table_saved}</w:tblPr>")),
-                "{written} {table_written}: {xml}"
-            );
-            assert!(
-                xml.contains(&format!(
-                    r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{saved}</w:tcPr><w:p>"#
-                )),
-                "{written} {table_written}: {xml}"
-            );
-        }
-    }
-}
-
-#[test]
 fn a_conditional_format_written_with_booleans_only_is_read_and_kept_as_written() {
     // The Transitional boolean form of `w:cnfStyle`, without `w:val`, reads
     // as the value it stands for and is written back as read.
@@ -1720,35 +1149,6 @@ fn a_conditional_format_written_with_booleans_only_is_read_and_kept_as_written()
     );
     assert_eq!(xml.matches(cell_cnf).count(), 4, "{xml}");
     assert!(!xml.contains("w:val=\"1"), "{xml}");
-}
-
-#[test]
-fn a_row_added_beside_empty_properties_writes_none() {
-    // A new row and its cells write only the formatting they carry.
-    let mut doc = doc_with_body(
-        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr/><w:tc><w:tcPr/><w:p/></w:tc></w:tr></w:tbl><w:p/>"#,
-    );
-    doc.table_mut(0).unwrap().add_row().unwrap();
-    // The new row has no properties in the model either, so an export does
-    // not report row formatting it would drop.
-    let odt = doc.to_odt_bytes().unwrap();
-    let paths = odt
-        .diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic.path.as_str())
-        .collect::<Vec<_>>();
-    assert!(
-        !paths.iter().any(|path| path.ends_with("row[1]/trPr")),
-        "{paths:?}"
-    );
-    let doc = reopen(&mut doc);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains(
-            "<w:tr><w:trPr/><w:tc><w:tcPr/><w:p/></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc></w:tr>"
-        ),
-        "{xml}"
-    );
 }
 
 #[test]

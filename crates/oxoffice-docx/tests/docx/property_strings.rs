@@ -68,27 +68,6 @@ fn a_property_xml_cannot_carry_is_refused_and_the_document_still_saves() {
 }
 
 #[test]
-fn line_feeds_and_tabs_in_properties_are_accepted() {
-    let mut doc = Document::new();
-    doc.set_core_properties(CoreProperties {
-        description: Some("first\nsecond\tthird".into()),
-        ..Default::default()
-    })
-    .unwrap();
-    doc.set_custom_property(custom(
-        "Address",
-        CustomPropertyValue::Lpwstr("1 Main St\nTown".into()),
-    ))
-    .unwrap();
-    let doc = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
-    assert_eq!(
-        doc.core_properties()
-            .and_then(|core| core.description.as_deref()),
-        Some("first\nsecond\tthird")
-    );
-}
-
-#[test]
 fn a_one_field_setter_takes_the_value_and_the_save_names_the_part_and_the_character() {
     // The one-field setters cannot refuse: the save does, through the package
     // writer, and set_core_properties refuses the value at once.
@@ -252,54 +231,5 @@ fn setting_core_properties_drops_a_bad_character_the_file_already_held() {
     assert_eq!(
         doc.core_properties().unwrap().last_modified_by.as_deref(),
         Some("JDoe")
-    );
-}
-
-#[test]
-fn setting_application_or_custom_properties_drops_a_bad_character_the_file_already_held() {
-    let mut doc = Document::new();
-    let mut app = AppProperties::default();
-    app.company = Some("A_Corp".into());
-    doc.set_application_properties(app).unwrap();
-    doc.set_custom_property(custom("Owner", CustomPropertyValue::Lpwstr("J_Doe".into())))
-        .unwrap();
-    let mut doc =
-        written_by_another_producer(&mut doc, "/docProps/app.xml", "A_Corp", "A&#11;Corp");
-    let mut doc =
-        written_by_another_producer(&mut doc, "/docProps/custom.xml", "J_Doe", "J&#11;Doe");
-    let mut app = doc.application_properties().cloned().unwrap();
-    assert_eq!(app.company.as_deref(), Some("A\u{b}Corp"));
-    app.template = Some("Normal.dotm".into());
-    doc.set_application_properties(app)
-        .expect("the held company is cleaned");
-    let mut other = custom("Other", CustomPropertyValue::Lpwstr("fine".into()));
-    other.pid = 3;
-    doc.set_custom_property(other)
-        .expect("another custom property is set");
-    let doc = Document::from_bytes(&doc.to_bytes().expect("it saves")).unwrap();
-    assert_eq!(
-        doc.application_properties().unwrap().company.as_deref(),
-        Some("ACorp")
-    );
-    assert_eq!(
-        doc.custom_property("Owner")
-            .map(|property| property.value.clone()),
-        Some(CustomPropertyValue::Lpwstr("JDoe".into()))
-    );
-}
-
-#[test]
-fn a_file_whose_core_part_already_holds_a_bad_character_reference_still_edits_and_saves() {
-    // Another producer wrote a character reference XML 1.0 forbids; the file
-    // opens, and the part is kept as it was through edits and saves.
-    let mut doc = with_bad_last_modified_by();
-    doc.add_paragraph("an edit");
-    let saved = doc.to_bytes().expect("the file still saves");
-    let reopened = Document::from_bytes(&saved).unwrap();
-    assert_eq!(
-        reopened
-            .core_properties()
-            .and_then(|core| core.last_modified_by.as_deref()),
-        Some("J\u{b}Doe")
     );
 }

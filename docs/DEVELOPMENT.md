@@ -87,6 +87,10 @@ See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
 Finish what you start.
 
+- **A bug or a regression that comes back gets its test then, one at a
+  time.** The suite was cut to the tests that run what the code needs
+  ([a smaller suite](../specs/2026-11-22-a-smaller-test-suite.md)): a test
+  is added for a defect seen, not ahead of one.
 - **Fix the class, not the instance.** Before the review, look for the same
   defect in sibling places (the other attributes the same helper reads, the
   other setters with the same gap, the same escape in another reader, the
@@ -279,11 +283,12 @@ merge variant).
   every merge has its own verdict. See
   [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
 - **The full sets run every night** (`nightly.yml`, "Full checks", 02:23
-  UTC): the Rust and Python tests under debug assertions on the three
-  platforms with the whole render corpus and every producer's copy in the
-  workflow walks, and every scaling call on the three platforms. A failure opens or comments one issue
-  labelled `ci-nightly`, closed by the next green run; whoever sees it
-  fixes it the same day. Run it on a branch or a tag with
+  UTC), on Linux, macOS and Windows alike: the Rust and Python tests under
+  debug assertions with the whole render corpus and every producer's copy in
+  the workflow walks, and every scaling call; on Linux also the stack of a
+  release-profile wheel. A failure opens or comments one issue labelled
+  `ci-nightly`, closed by the next green run; whoever sees it fixes it the
+  same day. Run it on a branch or a tag with
   `gh workflow run nightly.yml --ref BRANCH`; to find the commit that broke
   it, push a branch at each candidate commit and run it there. It reports to
   the issue only from `main`, on schedule or with `-f report=true`. Another

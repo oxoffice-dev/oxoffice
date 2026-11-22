@@ -137,16 +137,6 @@ fn a_cell_extent_is_its_story_with_what_it_holds() {
 }
 
 #[test]
-fn a_paragraph_in_a_cell_counts_its_own_cell_story_before_it() {
-    let doc = document();
-    let cell = story(&doc, StoryKind::TableCell, 0);
-    let extent = doc.element_extent(&cell, Some(&[0])).unwrap().unwrap();
-    assert_eq!(extent.items, (0, 1));
-    assert_eq!(extent.cell_stories, (1, 0));
-    assert_eq!(extent.text_boxes, (1, 0));
-}
-
-#[test]
 fn a_block_read_gives_the_extent_of_the_whole_part_for_its_block() {
     let doc = document();
     let body = story(&doc, StoryKind::Body, 0);
@@ -189,30 +179,8 @@ fn a_block_read_gives_the_extent_of_the_whole_part_for_its_block() {
     );
 }
 
-#[test]
-fn an_element_the_part_does_not_hold_has_no_extent() {
-    let doc = document();
-    let body = story(&doc, StoryKind::Body, 0);
-    assert_eq!(doc.element_extent(&body, Some(&[2])).unwrap(), None);
-    let missing = StoryId::new(StoryKind::TableCell, body.part_name(), 9);
-    assert_eq!(doc.element_extent(&missing, None).unwrap(), None);
-}
-
 const A: &str = "urn:a";
 const B: &str = "urn:b";
-
-#[test]
-fn moved_namespace_declarations_leave_the_resolved_events_equal() {
-    let on_root = format!(r#"<x:p xmlns:x="{A}" xmlns:y="{B}"><x:r y:id="1">t</x:r></x:p>"#);
-    let on_child = format!(r#"<x:p xmlns:x="{A}"><x:r xmlns:y="{B}" y:id="1">t</x:r></x:p>"#);
-    let other_prefix = format!(r#"<z:p xmlns:z="{A}" xmlns:y="{B}"><z:r y:id="1">t</z:r></z:p>"#);
-    let events = resolved_xml_events(on_root.as_bytes()).unwrap();
-    assert_eq!(resolved_xml_events(on_child.as_bytes()).unwrap(), events);
-    assert_eq!(
-        resolved_xml_events(other_prefix.as_bytes()).unwrap(),
-        events
-    );
-}
 
 #[test]
 fn a_prefix_bound_to_another_namespace_changes_the_resolved_events() {

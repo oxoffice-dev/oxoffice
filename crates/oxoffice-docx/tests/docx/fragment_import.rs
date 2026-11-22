@@ -9,7 +9,7 @@ use std::io::Cursor;
 
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{corpus_doc, doc_with_body, reopen};
+use crate::support::{doc_with_body, reopen};
 
 /// A document of one paragraph whose run is bookmarked as `name`.
 fn bookmarked(name: &str) -> Document {
@@ -39,147 +39,6 @@ fn bookmark_a_new_paragraph(doc: &mut Document, name: &str) {
         },
     };
     doc.add_bookmark(name, range).unwrap();
-}
-
-/// Every bookmark name of `doc`, in document order.
-fn bookmark_names(doc: &Document) -> Vec<String> {
-    doc.bookmarks()
-        .iter()
-        .filter_map(|bookmark| bookmark.name().map(str::to_owned))
-        .collect()
-}
-
-/// Import the whole body of `source` at the end of the body of `destination`.
-fn import_body(destination: &mut Document, source: &Document) {
-    let start = source
-        .story_paragraphs()
-        .unwrap()
-        .into_iter()
-        .find(|paragraph| paragraph.location.story().kind() == StoryKind::Body)
-        .expect("a body paragraph")
-        .location;
-    let end = ContentLocation::end(start.story().clone());
-    let fragment = DocumentFragment::from_range(source, &start, &end, false).unwrap();
-    let body = destination
-        .stories()
-        .unwrap()
-        .into_iter()
-        .find(|story| story.kind() == StoryKind::Body)
-        .unwrap();
-    destination
-        .import_fragment(
-            &ContentLocation::end(body),
-            &fragment,
-            FragmentConflictPolicy::for_insert_document(None),
-        )
-        .unwrap();
-}
-
-#[test]
-fn an_imported_bookmark_whose_name_is_free_keeps_it() {
-    let mut destination = bookmarked("Intro");
-    import_body(&mut destination, &bookmarked("Summary"));
-    let destination = reopen(&mut destination);
-    assert_eq!(bookmark_names(&destination), ["Intro", "Summary"]);
-}
-
-#[test]
-fn an_inserted_document_s_free_bookmark_name_is_kept() {
-    let mut destination = bookmarked("Intro");
-    destination.insert_document(0, &bookmarked("Summary"));
-    let destination = reopen(&mut destination);
-    let mut names = bookmark_names(&destination);
-    names.sort();
-    assert_eq!(names, ["Intro", "Summary"]);
-}
-
-#[test]
-fn an_imported_bookmark_whose_name_is_taken_in_any_case_gets_a_new_one() {
-    let mut destination = bookmarked("summary");
-    import_body(&mut destination, &bookmarked("Summary"));
-    let destination = reopen(&mut destination);
-    let names = bookmark_names(&destination);
-    assert_eq!(names.len(), 2, "{names:?}");
-    assert_eq!(names[0], "summary", "the destination's stays");
-    assert!(
-        !names[1].eq_ignore_ascii_case("summary"),
-        "the imported one is renamed: {names:?}"
-    );
-}
-
-#[test]
-fn two_documents_imported_with_the_same_free_name_keep_it_once() {
-    let mut destination = Document::new();
-    import_body(&mut destination, &bookmarked("Summary"));
-    import_body(&mut destination, &bookmarked("Summary"));
-    let destination = reopen(&mut destination);
-    let names = bookmark_names(&destination);
-    assert_eq!(names.len(), 2, "{names:?}");
-    assert_eq!(names[0], "Summary", "the first import keeps it");
-    assert_ne!(names[1], "Summary", "the second is renamed: {names:?}");
-}
-
-#[test]
-fn a_free_name_is_kept_even_after_a_taken_one_got_a_fresh_name() {
-    // The fresh name of "Intro" must not take the source's own MailMerge1.
-    let mut destination = bookmarked("Intro");
-    import_body(
-        &mut destination,
-        &bookmarked_paragraphs(&["Intro", "MailMerge1"]),
-    );
-    let destination = reopen(&mut destination);
-    let names = bookmark_names(&destination);
-    assert_eq!(names.len(), 3, "{names:?}");
-    assert_eq!(names[0], "Intro");
-    assert_eq!(names[2], "MailMerge1", "kept: {names:?}");
-    assert!(
-        !["Intro", "MailMerge1"].contains(&names[1].as_str()),
-        "the imported Intro is renamed: {names:?}"
-    );
-}
-
-#[test]
-fn a_name_the_destination_only_references_is_free_and_its_reference_then_resolves() {
-    let mut destination = doc_with_body(
-        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:fldSimple w:instr=" REF Methods "><w:r><w:t>Error! Reference source not found.</w:t></w:r></w:fldSimple></w:p>"#,
-    );
-    import_body(&mut destination, &bookmarked("Methods"));
-    let destination = reopen(&mut destination);
-    assert_eq!(bookmark_names(&destination), ["Methods"]);
-}
-
-#[test]
-fn a_name_taken_only_in_a_header_of_the_destination_gets_a_new_one() {
-    let bytes = corpus_doc("word/report.docx").to_bytes().unwrap();
-    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let header = String::from_utf8(package.get_part("/word/header1.xml").unwrap().to_vec())
-        .unwrap()
-        .replacen(
-            "<w:r><w:t>Northwind",
-            r#"<w:bookmarkStart w:id="900" w:name="Masthead"/><w:r><w:t>Northwind"#,
-            1,
-        )
-        .replacen(
-            "Review</w:t></w:r>",
-            r#"Review</w:t></w:r><w:bookmarkEnd w:id="900"/>"#,
-            1,
-        );
-    assert!(
-        header.contains("Masthead"),
-        "the header bookmark is in place"
-    );
-    package.set_part("/word/header1.xml", header.into_bytes());
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut destination = Document::from_bytes(&out.into_inner()).unwrap();
-    import_body(&mut destination, &bookmarked("Masthead"));
-    let destination = reopen(&mut destination);
-    let names = bookmark_names(&destination);
-    assert!(
-        !names.iter().any(|name| name == "Masthead"),
-        "the body has no Masthead: the imported one is renamed: {names:?}"
-    );
-    assert_eq!(names.len(), 1, "{names:?}");
 }
 
 /// A one-pixel PNG.
@@ -277,16 +136,6 @@ fn check_dependencies(mut doc: Document, how: &str) {
 }
 
 #[test]
-fn an_appended_document_keeps_its_pictures_links_notes_comments_and_fresh_ids() {
-    let mut destination = rich_destination();
-    destination.append(&rich_source());
-    check_dependencies(destination, "append");
-    let mut destination = rich_destination();
-    destination.append_with_break(&rich_source(), oxoffice_docx::SectionBreak::NextPage);
-    check_dependencies(destination, "append_with_break");
-}
-
-#[test]
 fn an_inserted_document_keeps_its_pictures_links_notes_comments_and_fresh_ids() {
     let mut destination = rich_destination();
     destination.insert_document(0, &rich_source());
@@ -356,17 +205,6 @@ fn import_with(policy: FragmentConflictPolicy) -> (String, Vec<String>) {
 }
 
 #[test]
-fn keeping_the_destination_formatting_keeps_its_style_for_imported_text() {
-    let keep = FragmentConflictPolicy::for_insert_document(Some(
-        FragmentConflictPolicy::reuse_equivalent().with_destination_formatting(true),
-    ));
-    assert_eq!(
-        import_with(keep),
-        ("Accent".to_owned(), vec!["Accent".to_owned()])
-    );
-}
-
-#[test]
 fn without_the_destination_formatting_a_different_style_is_imported_under_a_new_id() {
     let rename = FragmentConflictPolicy::for_insert_document(Some(
         FragmentConflictPolicy::reuse_equivalent().with_destination_formatting(false),
@@ -375,140 +213,4 @@ fn without_the_destination_formatting_a_different_style_is_imported_under_a_new_
     assert_ne!(imported, "Accent", "the source's Accent is renamed");
     assert_eq!(accents.len(), 2, "{accents:?}");
     assert!(accents.contains(&imported));
-}
-
-#[test]
-fn an_appended_or_inserted_document_takes_the_destination_s_styles() {
-    for how in ["append", "insert_document"] {
-        let mut destination = with_accent_style("<w:b/>", "destination");
-        let source = with_accent_style("<w:i/>", "imported");
-        match how {
-            "append" => destination.append(&source),
-            _ => destination.insert_document(0, &source),
-        }
-        let destination = reopen(&mut destination);
-        let imported = destination
-            .paragraphs()
-            .iter()
-            .find(|paragraph| paragraph.text() == "imported")
-            .and_then(|paragraph| paragraph.style_id().map(str::to_owned));
-        assert_eq!(imported.as_deref(), Some("Accent"), "{how}");
-        let accents = destination
-            .styles()
-            .iter()
-            .filter(|style| style.style_id().starts_with("Accent"))
-            .count();
-        assert_eq!(accents, 1, "{how}: the destination's Accent only");
-    }
-}
-
-#[test]
-fn a_word_file_with_crossing_caption_bookmarks_appends_and_inserts() {
-    // Word writes a caption's _Ref and _Toc bookmarks as crossing ranges.
-    let source = crate::support::corpus_doc("word/thesis.docx");
-    for how in ["append", "insert_document"] {
-        let mut destination = Document::new();
-        destination.add_paragraph("before");
-        match how {
-            "append" => destination.append(&source),
-            _ => destination.insert_document(1, &source),
-        }
-        let destination = reopen(&mut destination);
-        assert!(
-            destination.content_count() > source.content_count(),
-            "{how}: the source's content is there"
-        );
-    }
-}
-
-#[test]
-fn a_google_report_takes_a_libreoffice_report_with_its_linked_heading_styles() {
-    // Google's Heading1 has no linked character style; LibreOffice's links
-    // Heading1Char, which then comes in unlinked.
-    let mut destination = crate::support::corpus_doc("google/report.docx");
-    let source = crate::support::corpus_doc("libreoffice/report.docx");
-    let end = destination.content_count();
-    destination.insert_document(end, &source);
-    let destination = reopen(&mut destination);
-    let errors = |doc: &Document| {
-        doc.validate()
-            .unwrap()
-            .findings
-            .into_iter()
-            .filter(|finding| finding.severity == oxoffice_docx::ValidationSeverity::Error)
-            .map(|finding| finding.message)
-            .collect::<Vec<_>>()
-    };
-    // The styles of the inner section's header and footer are left behind
-    // (#290); the body and its linked styles come in clean.
-    let new_errors = errors(&destination)
-        .into_iter()
-        .filter(|error| !error.contains("/word/header") && !error.contains("/word/footer"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        new_errors,
-        errors(&crate::support::corpus_doc("google/report.docx")),
-        "no new error in the body"
-    );
-    assert!(destination.style("Heading1Char").is_some());
-}
-
-#[test]
-fn a_same_id_style_of_another_type_comes_in_under_a_new_id() {
-    // The destination's Accent is a character style, the source's a paragraph
-    // style: the imported paragraph keeps a paragraph style.
-    let mut destination = with_accent_style_of("character", "<w:b/>", "destination");
-    destination.append(&with_accent_style("<w:i/>", "imported"));
-    let destination = reopen(&mut destination);
-    let imported = destination
-        .paragraphs()
-        .iter()
-        .find(|paragraph| paragraph.text() == "imported")
-        .and_then(|paragraph| paragraph.style_id().map(str::to_owned))
-        .unwrap();
-    assert_ne!(imported, "Accent");
-    assert!(imported.starts_with("Accent"), "{imported}");
-}
-
-/// A document of one bookmarked paragraph per name, as Word writes them:
-/// `add_bookmark` refuses a hidden name.
-fn with_raw_bookmarks(names: &[&str]) -> Document {
-    let body: String = names
-        .iter()
-        .enumerate()
-        .map(|(id, name)| {
-            format!(
-                r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>bookmarked text</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
-            )
-        })
-        .collect();
-    let mut doc = doc_with_body(&body);
-    reopen(&mut doc)
-}
-
-#[test]
-fn a_taken_hidden_bookmark_name_gets_a_hidden_fresh_name() {
-    // Word hides the bookmarks whose name starts with an underscore, such
-    // as _GoBack; a fresh name for one stays out of Word's bookmark list.
-    for insert_document in [false, true] {
-        let mut destination = with_raw_bookmarks(&["_GoBack", "Intro"]);
-        let source = with_raw_bookmarks(&["_GoBack", "Intro"]);
-        if insert_document {
-            destination.insert_document(destination.content_count(), &source);
-        } else {
-            import_body(&mut destination, &source);
-        }
-        let destination = reopen(&mut destination);
-        let names = bookmark_names(&destination);
-        assert_eq!(names.len(), 4, "{names:?}");
-        assert_eq!(names[..2], ["_GoBack", "Intro"], "the destination's stay");
-        assert!(
-            names[2].starts_with('_') && names[2] != "_GoBack",
-            "the imported _GoBack is renamed and hidden: {names:?}"
-        );
-        assert!(
-            !names[3].starts_with('_') && names[3] != "Intro",
-            "the imported Intro is renamed and visible: {names:?}"
-        );
-    }
 }

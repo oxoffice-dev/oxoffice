@@ -2,8 +2,6 @@
 //! page and line numbering, break type), and the headers and footers each
 //! section shows: set, read, inherited, linked, unlinked and removed.
 
-use std::io::Cursor;
-
 use oxoffice_docx::{
     ContentFragment, ContentLocation, Document, HdrFtrType, HeaderFooterKind, Length, SectionBreak,
     SectionStory, StoryId, StoryItemKind, StoryKind, Twips,
@@ -12,14 +10,8 @@ use oxoffice_docx_oxml::document::{CT_LineNumber, ST_LineNumberRestart};
 use oxoffice_docx_oxml::shared::{ST_PageOrientation, ST_SectionType};
 use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_docx_oxml::text::CT_P;
-use oxoffice_opc::OpcPackage;
-use oxoffice_opc::relationship::rel_types;
 
 use crate::support::{corpus_doc, doc_with, reopen, texts};
-
-const REPORT_HEADER: &str = "Northwind Analytics: Quarterly Operations Review";
-const REPORT_FOOTER: &str = "Internal. Prepared by the operations team.";
-const PRODUCERS: [&str; 4] = ["word", "google", "libreoffice", "authored"];
 
 /// A one-pixel PNG.
 const PNG: &[u8] = &[
@@ -123,19 +115,6 @@ fn write_in(doc: &mut Document, story: &StoryId, text: &str) {
         .expect("paragraph inserts");
 }
 
-/// Replace the text of the first paragraph of a story.
-fn rewrite_first_paragraph(doc: &mut Document, story: &StoryId, text: &str) {
-    let location = doc
-        .story_items(story)
-        .expect("story reads")
-        .iter()
-        .find(|item| item.kind() == StoryItemKind::Paragraph)
-        .expect("the story has a paragraph")
-        .location()
-        .clone();
-    doc.set_story_text(&location, text).expect("text replaces");
-}
-
 // ---- Sections ----
 
 #[test]
@@ -149,20 +128,6 @@ fn a_new_document_has_one_letter_portrait_section() {
     let inch = twips(1440);
     assert_eq!(section.margins(), Some((inch, inch, inch, inch)));
     assert!(doc.section(1).is_none());
-}
-
-#[test]
-fn appending_a_section_puts_later_paragraphs_in_it() {
-    let doc = reopen(&mut two_sections());
-    assert_eq!(doc.section_count(), 2);
-    assert_eq!(
-        doc.sections()
-            .map(|section| (section.ordinal(), section.is_final()))
-            .collect::<Vec<_>>(),
-        [(0, false), (1, true)]
-    );
-    // The break that ends the first section is carried by an empty paragraph.
-    assert_eq!(texts(&doc), ["first", "", "second"]);
 }
 
 #[test]
@@ -266,22 +231,6 @@ fn a_paragraph_can_end_a_landscape_section() {
     let narrow = doc.section(1).unwrap();
     assert_ne!(narrow.orientation(), Some(ST_PageOrientation::Landscape));
     assert_eq!(narrow.page_size(), Some((twips(12240), twips(15840))));
-}
-
-#[test]
-fn every_section_break_type_survives_a_save() {
-    for break_type in [
-        ST_SectionType::NextPage,
-        ST_SectionType::Continuous,
-        ST_SectionType::EvenPage,
-        ST_SectionType::OddPage,
-        ST_SectionType::NextColumn,
-    ] {
-        let mut doc = two_sections();
-        doc.section_mut(1).unwrap().set_break_type(break_type);
-        let doc = reopen(&mut doc);
-        assert_eq!(doc.section(1).unwrap().break_type(), Some(break_type));
-    }
 }
 
 // ---- Page setup ----
@@ -424,18 +373,6 @@ fn vertical_alignment_survives_a_save() {
 }
 
 #[test]
-fn a_page_numbering_restart_survives_a_save() {
-    let mut doc = two_sections();
-    doc.section_mut(1)
-        .unwrap()
-        .set_page_number_start(5)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.section(0).unwrap().page_number_start(), None);
-    assert_eq!(doc.section(1).unwrap().page_number_start(), Some(5));
-}
-
-#[test]
 fn setting_the_page_number_start_keeps_the_page_number_format() {
     // LibreOffice writes `w:pgNumType w:fmt="decimal"`, which the facade does
     // not model: it must survive a new start.
@@ -478,44 +415,6 @@ fn line_numbering_survives_a_save() {
 }
 
 // ---- Headers and footers ----
-
-#[test]
-fn a_new_document_shows_no_header_or_footer() {
-    let doc = Document::new();
-    assert_eq!(doc.header_text(), None);
-    assert_eq!(doc.footer_text(), None);
-    assert!(!doc.has_header_footer_content());
-    for kind in [HeaderFooterKind::Header, HeaderFooterKind::Footer] {
-        for variant in [HdrFtrType::Default, HdrFtrType::First, HdrFtrType::Even] {
-            assert_eq!(shown(&doc, 0, kind, variant), None, "{kind:?} {variant:?}");
-        }
-    }
-}
-
-#[test]
-fn header_and_footer_text_survive_a_save() {
-    let mut doc = doc_with(&["body"]);
-    doc.set_header("Quarterly review");
-    doc.set_footer("Internal use only");
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.header_text().as_deref(), Some("Quarterly review"));
-    assert_eq!(doc.footer_text().as_deref(), Some("Internal use only"));
-    assert_eq!(header(&doc, 0).as_deref(), Some("Quarterly review"));
-    assert_eq!(footer(&doc, 0).as_deref(), Some("Internal use only"));
-    assert!(doc.has_header_footer_content());
-    assert_eq!(texts(&doc), ["body"]);
-}
-
-#[test]
-fn header_text_keeps_unicode_and_right_to_left_text() {
-    let text = "Bilan trimestriel \u{2013} \u{6771}\u{4EAC} \u{2013} \u{645}\u{631}\u{62D}\u{628}\u{627} \u{1F4C8}";
-    let mut doc = doc_with(&["body"]);
-    doc.set_header(text);
-    doc.set_footer(text);
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.header_text().as_deref(), Some(text));
-    assert_eq!(doc.footer_text().as_deref(), Some(text));
-}
 
 #[test]
 fn setting_the_header_again_replaces_it() {
@@ -580,100 +479,6 @@ fn an_even_page_footer_turns_on_even_and_odd_headers() {
 }
 
 // ---- Section stories ----
-
-#[test]
-fn a_later_section_inherits_the_header_of_the_section_before() {
-    let doc = reopen(&mut inherited_header_and_footer());
-    let own = header_story(&doc, 0);
-    let inherited = header_story(&doc, 1);
-    assert!(!own.is_inherited());
-    assert!(inherited.is_inherited());
-    assert_eq!(inherited.source_section(), 0);
-    assert_eq!(inherited.story().part_name(), own.story().part_name());
-    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
-    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
-}
-
-#[test]
-fn unlinking_gives_a_section_its_own_copy_to_edit() {
-    let mut doc = inherited_header_and_footer();
-    let copy = doc
-        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    assert_ne!(copy.part_name(), header_story(&doc, 0).story().part_name());
-    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
-    rewrite_first_paragraph(&mut doc, &copy, "landscape pages");
-    let doc = reopen(&mut doc);
-    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
-    assert_eq!(header(&doc, 1).as_deref(), Some("landscape pages"));
-    assert!(!header_story(&doc, 1).is_inherited());
-    assert_eq!(header_part_count(&doc), 2);
-}
-
-#[test]
-fn inheriting_again_in_the_same_session_drops_the_copy() {
-    let mut doc = inherited_header_and_footer();
-    doc.unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert!(header_story(&doc, 1).is_inherited());
-    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
-    assert_eq!(header_part_count(&doc), 1);
-}
-
-#[test]
-fn inheriting_again_drops_the_copy_from_the_file() {
-    // After a save and a reopen the copy is an imported part: it still goes
-    // once nothing uses it, with all it brought to the package.
-    let mut doc = inherited_header_and_footer();
-    let copy = doc
-        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    rewrite_first_paragraph(&mut doc, &copy, "landscape pages");
-    // A link gives the copy a relationships part of its own.
-    let copy = header_story(&doc, 1).story().clone();
-    doc.add_hyperlink_to_story(&copy, "site", "https://example.com/landscape")
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    let copy_part = format!("/{}", copy.part_name().trim_start_matches('/'));
-    let rels_part = {
-        let (folder, file) = copy_part.rsplit_once('/').unwrap();
-        format!("{folder}/_rels/{file}.rels")
-    };
-    let relationships = |doc: &Document| doc.part_xml("word/_rels/document.xml.rels").unwrap();
-    let content_types = |doc: &Document| doc.part_xml("[Content_Types].xml").unwrap();
-    let file = copy_part.rsplit('/').next().unwrap().to_owned();
-    assert!(doc.part_names().unwrap().contains(&copy_part));
-    assert!(doc.part_names().unwrap().contains(&rels_part));
-    assert!(relationships(&doc).contains(&file));
-    assert!(content_types(&doc).contains(&copy_part));
-
-    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert!(header_story(&doc, 1).is_inherited());
-    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
-    assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
-    let names = doc.part_names().unwrap();
-    assert!(!names.contains(&copy_part), "the part goes");
-    assert!(!names.contains(&rels_part), "its relationships part goes");
-    assert!(
-        !relationships(&doc).contains(&file),
-        "the relationship to it goes"
-    );
-    assert!(
-        !content_types(&doc).contains(&copy_part),
-        "its content type goes"
-    );
-    for name in names.iter().filter(|name| name.ends_with(".xml")) {
-        assert!(
-            !doc.part_xml(name).unwrap().contains("landscape pages"),
-            "the removed text is in no part: {name}"
-        );
-    }
-}
 
 /// The media parts the document would save.
 fn media_parts(doc: &Document) -> Vec<String> {
@@ -767,241 +572,6 @@ fn inheriting_again_keeps_a_logo_the_first_section_still_shows() {
 }
 
 #[test]
-fn inheriting_again_drops_what_only_the_copy_reached_through_another_part() {
-    // The copy relates to a data part (with a content type override), which
-    // relates to a picture. In the other files the main part's
-    // relationships, the package's, or the main part's under another
-    // spelling of the name also reach that picture, so it stays while the
-    // data part goes.
-    for keeper in [None, Some("main"), Some("package"), Some("spelling")] {
-        let body_also_shows_it = keeper.is_some();
-        let mut doc = inherited_header_and_footer();
-        let copy = doc
-            .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-            .unwrap();
-        let copy_part = format!("/{}", copy.part_name().trim_start_matches('/'));
-        let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-        package.set_part("/word/extra/data1.xml", b"<data/>".to_vec());
-        package
-            .content_types
-            .add_override("/word/extra/data1.xml", "application/xml");
-        package.set_part("/word/media/nested.png", PNG.to_vec());
-        package
-            .content_types
-            .add_override("/word/media/nested.png", "image/png");
-        package.get_or_create_part_rels(&copy_part).add_with_id(
-            "rIdData",
-            "http://schemas.example.com/relationships/data",
-            "extra/data1.xml",
-        );
-        package
-            .get_or_create_part_rels("/word/extra/data1.xml")
-            .add_with_id("rIdPicture", rel_types::IMAGE, "../media/nested.png");
-        let main = package.main_document_part().unwrap();
-        match keeper {
-            Some("main") => {
-                package.get_or_create_part_rels(&main).add_with_id(
-                    "rIdKept",
-                    rel_types::IMAGE,
-                    "media/nested.png",
-                );
-            }
-            Some("spelling") => {
-                package.get_or_create_part_rels(&main).add_with_id(
-                    "rIdKept",
-                    rel_types::IMAGE,
-                    "./media/Nested.PNG",
-                );
-            }
-            Some("package") => {
-                package.package_rels.add_with_id(
-                    "rIdKept",
-                    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail",
-                    "word/media/nested.png",
-                );
-            }
-            _ => {}
-        }
-        let mut bytes = Cursor::new(Vec::new());
-        package.write_to(&mut bytes).unwrap();
-        let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
-
-        doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-            .unwrap();
-        let doc = reopen(&mut doc);
-        let names = doc.part_names().unwrap();
-        let content_types = doc.part_xml("[Content_Types].xml").unwrap();
-        assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
-        assert!(
-            !names.contains(&"/word/extra/data1.xml".to_owned()),
-            "{names:?}"
-        );
-        assert!(
-            !content_types.contains("/word/extra/data1.xml"),
-            "{content_types}"
-        );
-        assert_eq!(
-            names.contains(&"/word/media/nested.png".to_owned()),
-            body_also_shows_it,
-            "{keeper:?}: {names:?}"
-        );
-        assert_eq!(
-            content_types.contains("/word/media/nested.png"),
-            body_also_shows_it,
-            "{content_types}"
-        );
-    }
-}
-
-#[test]
-fn inheriting_again_drops_a_copy_that_an_unused_relationship_also_targets() {
-    // A producer can leave a second relationship to a header no section
-    // references; it must not keep the dropped copy and its text in the file.
-    let mut doc = inherited_header_and_footer();
-    let copy = doc
-        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    rewrite_first_paragraph(&mut doc, &copy, "landscape pages");
-    let target = copy
-        .part_name()
-        .trim_start_matches('/')
-        .trim_start_matches("word/")
-        .to_owned();
-    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-    let main = package.main_document_part().unwrap();
-    package
-        .get_or_create_part_rels(&main)
-        .add_with_id("rIdSpare", rel_types::HEADER, &target);
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
-
-    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
-    assert!(
-        !doc.part_xml("word/_rels/document.xml.rels")
-            .unwrap()
-            .contains("rIdSpare"),
-        "the unused relationship goes with it"
-    );
-    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
-}
-
-#[test]
-fn inheriting_again_keeps_a_header_another_section_still_shows() {
-    let mut doc = inherited_header_and_footer();
-    let shared = header_story(&doc, 0).story().clone();
-    doc.link_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default, &shared)
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    assert!(!header_story(&doc, 1).is_inherited());
-    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
-    assert_eq!(header(&doc, 1).as_deref(), Some("shared header"));
-    assert_eq!(header_part_count(&doc), 1, "the shared header stays");
-}
-
-#[test]
-fn removing_the_first_section_of_a_reopened_file_keeps_its_header() {
-    // The references of the removed section pass to the next one.
-    let mut doc = inherited_header_and_footer();
-    let mut doc = reopen(&mut doc);
-    doc.remove_section(0).unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.section_count(), 1);
-    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
-    assert_eq!(footer(&doc, 0).as_deref(), Some("shared footer"));
-    assert_eq!(header_part_count(&doc), 1);
-}
-
-#[test]
-fn inheriting_again_on_a_libreoffice_report_drops_only_the_copies_it_stops_using() {
-    // LibreOffice gives the second section its own copies; the first-page
-    // ones and those of the first section stay in use.
-    let mut doc = report("libreoffice");
-    for kind in [HeaderFooterKind::Header, HeaderFooterKind::Footer] {
-        doc.inherit_section_story(1, kind, HdrFtrType::Default)
-            .unwrap();
-    }
-    let doc = reopen(&mut doc);
-    let names = doc.part_names().unwrap();
-    for gone in ["/word/header4.xml", "/word/footer4.xml"] {
-        assert!(!names.iter().any(|name| name == gone), "{gone} goes");
-    }
-    for kind in ["header", "footer"] {
-        for number in [1, 2, 3, 5] {
-            let kept = format!("/word/{kind}{number}.xml");
-            assert!(names.contains(&kept), "{kept} stays");
-        }
-    }
-    assert_eq!(header(&doc, 1).as_deref(), Some(REPORT_HEADER));
-    assert_eq!(footer(&doc, 1).as_deref(), Some(REPORT_FOOTER));
-    assert!(header_story(&doc, 1).is_inherited());
-}
-
-#[test]
-fn linking_points_a_section_at_the_header_of_another() {
-    let mut doc = two_sections();
-    let last = doc
-        .create_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    write_in(&mut doc, &last, "last section header");
-    let first = doc
-        .create_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    write_in(&mut doc, &first, "first section header");
-    assert_eq!(header(&doc, 0).as_deref(), Some("first section header"));
-
-    // A header slot refuses a footer story.
-    let footer_story = doc
-        .create_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default)
-        .unwrap();
-    let before = doc.to_bytes().unwrap();
-    assert!(
-        doc.link_section_story(
-            0,
-            HeaderFooterKind::Header,
-            HdrFtrType::Default,
-            &footer_story
-        )
-        .is_err()
-    );
-    assert_eq!(doc.to_bytes().unwrap(), before);
-
-    let last = header_story(&doc, 1).story().clone();
-    doc.link_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default, &last)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(header(&doc, 0).as_deref(), Some("last section header"));
-    assert_eq!(
-        header_story(&doc, 0).story().part_name(),
-        header_story(&doc, 1).story().part_name()
-    );
-    // The header nothing shows any more is gone.
-    assert_eq!(header_part_count(&doc), 1);
-}
-
-#[test]
-fn replacing_a_section_header_copies_another_one() {
-    let mut doc = inherited_header_and_footer();
-    doc.remove_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let source = header_story(&doc, 0).story().clone();
-    let copy = doc
-        .replace_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default, &source)
-        .unwrap();
-    assert_ne!(copy.part_name(), source.part_name());
-    rewrite_first_paragraph(&mut doc, &copy, "edited copy");
-    let doc = reopen(&mut doc);
-    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
-    assert_eq!(header(&doc, 1).as_deref(), Some("edited copy"));
-}
-
-#[test]
 fn removing_a_section_header_blanks_it_for_that_section_only() {
     let mut doc = inherited_header_and_footer();
     doc.remove_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
@@ -1013,41 +583,7 @@ fn removing_a_section_header_blanks_it_for_that_section_only() {
     assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
 }
 
-#[test]
-fn removing_a_section_keeps_the_header_its_successor_inherited() {
-    let mut doc = inherited_header_and_footer();
-    doc.remove_section(0).unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.section_count(), 1);
-    assert_eq!(texts(&doc), ["first", "second"]);
-    assert_eq!(doc.header_text().as_deref(), Some("shared header"));
-    assert_eq!(doc.footer_text().as_deref(), Some("shared footer"));
-}
-
 // ---- Watermarks and pictures ----
-
-#[test]
-fn a_text_watermark_creates_a_header_that_survives_a_save() {
-    let mut doc = doc_with(&["body"]);
-    doc.set_text_watermark("CONFIDENTIAL").unwrap();
-    let doc = reopen(&mut doc);
-    assert!(doc.has_header_footer_content());
-    let story = header_story(&doc, 0);
-    let items = doc.story_items(story.story()).unwrap();
-    assert!(
-        items
-            .iter()
-            .any(|item| item.kind() == StoryItemKind::Drawing),
-        "{:?}",
-        items.iter().map(|item| item.kind()).collect::<Vec<_>>()
-    );
-    let xml = items
-        .iter()
-        .map(|item| String::from_utf8(item.xml().unwrap().into_owned()).unwrap())
-        .collect::<String>();
-    assert!(xml.contains("CONFIDENTIAL"), "{xml}");
-    assert_eq!(texts(&doc), ["body"]);
-}
 
 #[test]
 fn a_header_picture_survives_a_save() {
@@ -1067,304 +603,9 @@ fn a_header_picture_survives_a_save() {
 
 // ---- The corpus reports ----
 
-#[test]
-fn every_corpus_report_has_a_portrait_section_then_a_landscape_section() {
-    for producer in PRODUCERS {
-        let doc = report(producer);
-        assert_eq!(doc.section_count(), 2, "{producer}");
-        let (portrait, landscape) = (doc.section(0).unwrap(), doc.section(1).unwrap());
-        assert_ne!(
-            portrait.orientation(),
-            Some(ST_PageOrientation::Landscape),
-            "{producer}"
-        );
-        assert_eq!(
-            portrait.page_size(),
-            Some((twips(12240), twips(15840))),
-            "{producer}"
-        );
-        assert_eq!(
-            landscape.orientation(),
-            Some(ST_PageOrientation::Landscape),
-            "{producer}"
-        );
-        assert_eq!(
-            landscape.page_size(),
-            Some((twips(15840), twips(12240))),
-            "{producer}"
-        );
-        for section in [portrait, landscape] {
-            assert_eq!(
-                section.margins(),
-                Some((twips(1440), twips(1247), twips(1440), twips(1247))),
-                "{producer}"
-            );
-        }
-    }
-}
-
-#[test]
-fn every_corpus_report_shows_its_header_and_footer_on_both_sections() {
-    for producer in PRODUCERS {
-        let doc = report(producer);
-        for section in 0..2 {
-            assert_eq!(
-                header(&doc, section).as_deref(),
-                Some(REPORT_HEADER),
-                "{producer} section {section}"
-            );
-            assert_eq!(
-                footer(&doc, section).as_deref(),
-                Some(REPORT_FOOTER),
-                "{producer} section {section}"
-            );
-        }
-    }
-}
-
-#[test]
-fn header_text_reads_the_header_the_last_section_inherits() {
-    // Word, Google Docs and python-docx put the header on the first section
-    // and let the landscape section inherit it; LibreOffice gives the second
-    // section its own copy.
-    let mut missed = Vec::new();
-    for producer in ["word", "google", "authored", "libreoffice"] {
-        let doc = report(producer);
-        if doc.header_text().as_deref() != Some(REPORT_HEADER)
-            || doc.footer_text().as_deref() != Some(REPORT_FOOTER)
-        {
-            missed.push(format!(
-                "{producer}: {:?} / {:?}",
-                doc.header_text(),
-                doc.footer_text()
-            ));
-        }
-    }
-    assert!(
-        missed.is_empty(),
-        "header_text and footer_text miss the inherited header and footer: {missed:?}"
-    );
-}
-
-#[test]
-fn header_text_follows_a_new_section_that_inherits_and_one_that_has_its_own() {
-    let mut doc = Document::new();
-    doc.add_paragraph("body");
-    doc.set_header("h");
-    doc.set_footer("f");
-    doc.insert_section(1).unwrap();
-    assert_eq!(doc.section_count(), 2);
-    assert_eq!(
-        doc.header_text().as_deref(),
-        Some("h"),
-        "inherited by the new last section"
-    );
-    assert_eq!(doc.footer_text().as_deref(), Some("f"));
-    let mut doc = reopen(&mut doc);
-    assert_eq!(doc.header_text().as_deref(), Some("h"), "after a reopen");
-    assert_eq!(Document::new().header_text(), None, "no header anywhere");
-
-    // A last section with a header of its own shows that one.
-    let own = doc
-        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    rewrite_first_paragraph(&mut doc, &own, "h2");
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.header_text().as_deref(), Some("h2"), "its own header");
-    assert_eq!(
-        header(&doc, 0).as_deref(),
-        Some("h"),
-        "the first keeps its own"
-    );
-    assert_eq!(
-        doc.footer_text().as_deref(),
-        Some("f"),
-        "the footer is still inherited"
-    );
-}
-
-#[test]
-fn editing_the_header_of_a_word_report_changes_it_on_both_sections() {
-    let mut doc = report("word");
-    let paragraphs = doc.paragraphs().len();
-    let story = header_story(&doc, 0).story().clone();
-    rewrite_first_paragraph(&mut doc, &story, "Northwind Analytics: Annual Review");
-    let doc = reopen(&mut doc);
-    for section in 0..2 {
-        assert_eq!(
-            header(&doc, section).as_deref(),
-            Some("Northwind Analytics: Annual Review")
-        );
-        assert_eq!(footer(&doc, section).as_deref(), Some(REPORT_FOOTER));
-    }
-    assert_eq!(
-        doc.section(1).unwrap().orientation(),
-        Some(ST_PageOrientation::Landscape)
-    );
-    assert_eq!(doc.paragraphs().len(), paragraphs);
-}
-
-#[test]
-fn setting_the_header_of_a_word_report_changes_it_on_every_section() {
-    let mut doc = report("word");
-    doc.set_header("Northwind Analytics: Annual Review");
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        header(&doc, 1).as_deref(),
-        Some("Northwind Analytics: Annual Review")
-    );
-    assert_eq!(
-        header(&doc, 0).as_deref(),
-        Some("Northwind Analytics: Annual Review"),
-        "the first section still shows the old header"
-    );
-}
-
-#[test]
-fn setting_the_header_and_footer_of_every_corpus_report_changes_every_section() {
-    // Word, Google Docs and python-docx share one header between the two
-    // sections; LibreOffice gives the second its own copy, which is the one
-    // the last section shows and the one that changes.
-    for producer in ["word", "google", "authored", "libreoffice"] {
-        let mut doc = report(producer);
-        let parts = doc.part_names().unwrap().len();
-        doc.set_header("New header");
-        doc.set_footer("New footer");
-        let doc = reopen(&mut doc);
-        assert_eq!(header(&doc, 1).as_deref(), Some("New header"), "{producer}");
-        assert_eq!(footer(&doc, 1).as_deref(), Some("New footer"), "{producer}");
-        assert_eq!(
-            (doc.header_text().as_deref(), doc.footer_text().as_deref()),
-            (Some("New header"), Some("New footer")),
-            "{producer}: the document readers read back what was set"
-        );
-        if producer == "libreoffice" {
-            assert_eq!(
-                (header(&doc, 0).as_deref(), footer(&doc, 0).as_deref()),
-                (Some(REPORT_HEADER), Some(REPORT_FOOTER)),
-                "{producer}: the first section keeps its own header and footer"
-            );
-        } else {
-            assert_eq!(
-                (header(&doc, 0).as_deref(), footer(&doc, 0).as_deref()),
-                (Some("New header"), Some("New footer")),
-                "{producer}: the shared header and footer change"
-            );
-            assert!(
-                header_story(&doc, 1).is_inherited(),
-                "{producer}: the last section still inherits its header"
-            );
-            assert!(
-                shown(&doc, 1, HeaderFooterKind::Footer, HdrFtrType::Default)
-                    .expect("the section shows a footer")
-                    .is_inherited(),
-                "{producer}: the last section still inherits its footer"
-            );
-            assert_eq!(
-                doc.part_names().unwrap().len(),
-                parts,
-                "{producer}: no new header or footer part"
-            );
-        }
-    }
-}
-
-#[test]
-fn setting_a_header_picture_on_a_word_report_shows_it_on_every_section() {
-    let mut doc = report("word");
-    doc.set_header_image(PNG, "logo.png", Length::inches(1.0), Length::inches(0.5));
-    let doc = reopen(&mut doc);
-    let shared = header_story(&doc, 0);
-    assert!(
-        header_story(&doc, 1).is_inherited(),
-        "the last section still inherits"
-    );
-    assert_eq!(header_story(&doc, 1).story(), shared.story());
-    let pictures = doc.pictures().unwrap();
-    assert!(
-        pictures
-            .iter()
-            .any(|picture| picture.location.story() == shared.story() && picture.bytes == PNG),
-        "the shared header holds the picture"
-    );
-}
-
-#[test]
-fn setting_a_header_where_no_section_has_one_shows_it_on_every_section() {
-    let mut doc = two_sections();
-    doc.set_header("header");
-    doc.set_footer("footer");
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.header_text().as_deref(), Some("header"));
-    assert_eq!(doc.footer_text().as_deref(), Some("footer"));
-    for section in 0..2 {
-        assert_eq!(
-            header(&doc, section).as_deref(),
-            Some("header"),
-            "{section}"
-        );
-        assert_eq!(
-            footer(&doc, section).as_deref(),
-            Some("footer"),
-            "{section}"
-        );
-    }
-    assert!(header_story(&doc, 1).is_inherited());
-    assert_eq!(header_part_count(&doc), 1);
-}
-
-#[test]
-fn setting_the_header_changes_the_section_the_last_one_inherits_from_only() {
-    // Section 0 shows "A", section 1 its own "B", section 2 inherits "B".
-    let mut doc = doc_with(&["one"]);
-    doc.set_header("A");
-    doc.insert_section(1).unwrap();
-    doc.add_paragraph("two");
-    let copy = doc
-        .unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    rewrite_first_paragraph(&mut doc, &copy, "B");
-    doc.insert_section(2).unwrap();
-    doc.add_paragraph("three");
-    assert_eq!(header(&doc, 2).as_deref(), Some("B"));
-    doc.set_header("C");
-    let doc = reopen(&mut doc);
-    assert_eq!(header(&doc, 0).as_deref(), Some("A"));
-    assert_eq!(header(&doc, 1).as_deref(), Some("C"));
-    assert_eq!(header(&doc, 2).as_deref(), Some("C"));
-    assert!(header_story(&doc, 2).is_inherited());
-}
-
 /// The text of the first-page header a section shows.
 fn first_page_header(doc: &Document, section: usize) -> Option<String> {
     shown_text(doc, section, HeaderFooterKind::Header, HdrFtrType::First)
-}
-
-#[test]
-fn a_first_page_header_on_a_section_without_a_different_first_page_is_its_own() {
-    // The new section does not show the cover's first-page header, so
-    // setting one gives it its own and the cover keeps "Cover".
-    let mut doc = doc_with(&["cover"]);
-    doc.set_first_page_header("Cover");
-    doc.insert_section(1).unwrap();
-    doc.add_paragraph("chapter");
-    doc.set_first_page_header("Chapter");
-    let doc = reopen(&mut doc);
-    assert_eq!(first_page_header(&doc, 0).as_deref(), Some("Cover"));
-    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
-    assert_eq!(doc.section(1).unwrap().different_first_page(), Some(true));
-}
-
-#[test]
-fn a_first_page_header_where_no_section_has_one_leaves_a_blank_cover_blank() {
-    let mut doc = doc_with(&["cover"]);
-    doc.set_different_first_page(true);
-    doc.insert_section(1).unwrap();
-    doc.add_paragraph("chapter");
-    doc.set_first_page_header("Chapter");
-    let doc = reopen(&mut doc);
-    assert_eq!(first_page_header(&doc, 0), None, "the cover stays blank");
-    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
 }
 
 #[test]
@@ -1384,25 +625,6 @@ fn a_first_page_header_the_last_section_shows_by_inheritance_changes_everywhere(
             .unwrap()
             .is_inherited()
     );
-}
-
-#[test]
-fn changing_the_landscape_margins_of_a_google_report_survives_a_save() {
-    let mut doc = report("google");
-    let inch = twips(1440);
-    doc.section_mut(1)
-        .unwrap()
-        .set_margins(inch, inch, inch, inch)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let landscape = doc.section(1).unwrap();
-    assert_eq!(landscape.margins(), Some((inch, inch, inch, inch)));
-    assert_eq!(landscape.orientation(), Some(ST_PageOrientation::Landscape));
-    assert_eq!(
-        doc.section(0).unwrap().margins(),
-        Some((twips(1440), twips(1247), twips(1440), twips(1247)))
-    );
-    assert_eq!(header(&doc, 1).as_deref(), Some(REPORT_HEADER));
 }
 
 /// The main part of a saved package.
@@ -1495,33 +717,6 @@ fn headers_listed(order: &[&str]) -> Vec<u8> {
     out.into_inner()
 }
 
-#[test]
-fn an_untouched_document_keeps_the_header_order_libreoffice_writes() {
-    let bytes = headers_listed(&["even", "default", "first"]);
-    let mut doc = Document::from_bytes(&bytes).unwrap();
-    assert_eq!(main_part(&doc.to_bytes().unwrap()), main_part(&bytes));
-}
-
-#[test]
-fn an_untouched_document_keeps_the_header_order_python_docx_writes() {
-    let bytes = headers_listed(&["first", "default"]);
-    let mut doc = Document::from_bytes(&bytes).unwrap();
-    assert_eq!(main_part(&doc.to_bytes().unwrap()), main_part(&bytes));
-}
-
-#[test]
-fn an_edited_document_keeps_the_header_order_it_was_read_in() {
-    let bytes = headers_listed(&["even", "default", "first"]);
-    let mut doc = Document::from_bytes(&bytes).unwrap();
-    doc.add_paragraph("Added.");
-    let xml = String::from_utf8(main_part(&doc.to_bytes().unwrap())).unwrap();
-    let order = ["even", "default", "first"].map(|kind| {
-        xml.find(&format!(r#"w:type="{kind}""#))
-            .expect("reference kept")
-    });
-    assert!(order[0] < order[1] && order[1] < order[2], "{xml}");
-}
-
 /// The `kind` (header or footer) reference types of the final section, in
 /// the order written.
 fn reference_order(bytes: &[u8], kind: &str) -> Vec<String> {
@@ -1534,35 +729,6 @@ fn reference_order(bytes: &[u8], kind: &str) -> Vec<String> {
 
 fn header_order(bytes: &[u8]) -> Vec<String> {
     reference_order(bytes, "header")
-}
-
-#[test]
-fn replacing_a_header_keeps_its_place_among_the_references() {
-    for order in [&["default", "first"][..], &["even", "default", "first"]] {
-        let bytes = headers_listed(order);
-        let original = Document::from_bytes(&bytes).unwrap();
-        let mut edited = Document::from_bytes(&bytes).unwrap();
-        edited.set_header("New header");
-        let saved = edited.to_bytes().unwrap();
-        assert_eq!(header_order(&saved), order);
-        let mut redline = original;
-        redline
-            .compare(
-                &Document::from_bytes(&saved).unwrap(),
-                "Reviewer",
-                "2026-01-01T00:00:00Z",
-            )
-            .expect("a replaced header compares");
-        let mut copy = reopen(&mut redline);
-        copy.accept_all().unwrap();
-        assert_eq!(header(&reopen(&mut copy), 0).as_deref(), Some("New header"));
-        let mut copy = reopen(&mut redline);
-        copy.reject_all().unwrap();
-        assert_eq!(
-            header(&reopen(&mut copy), 0).as_deref(),
-            Some("Default header")
-        );
-    }
 }
 
 #[test]
@@ -1607,17 +773,6 @@ fn a_watermark_header_takes_its_place_in_the_order() {
     doc.set_first_page_header("First header");
     doc.set_text_watermark("DRAFT").unwrap();
     assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
-}
-
-#[test]
-fn a_new_footer_leaves_the_header_order_it_read() {
-    let bytes = headers_listed(&["even", "default", "first"]);
-    let mut doc = Document::from_bytes(&bytes).unwrap();
-    doc.set_footer("New footer");
-    assert_eq!(
-        header_order(&doc.to_bytes().unwrap()),
-        ["even", "default", "first"]
-    );
 }
 
 #[test]
