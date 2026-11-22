@@ -926,6 +926,7 @@ fn parse_comment_children(
             Event::End(end) if local_name(end.name().as_ref()) == b"cm" => break,
             Event::Eof => return Err(missing("closing p188:cm")),
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
@@ -1061,6 +1062,7 @@ fn parse_reply(xml: &[u8], inherited: &NamespaceBindings) -> Result<CommentReply
                         Event::End(end) if local_name(end.name().as_ref()) == b"reply" => break,
                         Event::Eof => return Err(missing("closing p188:reply")),
                         event @ (Event::Text(_)
+                        | Event::GeneralRef(_)
                         | Event::CData(_)
                         | Event::Comment(_)
                         | Event::PI(_)
@@ -1330,6 +1332,7 @@ fn parse_ordered_children<T>(
             }
             Event::End(end) if local_name(end.name().as_ref()) == closing => break,
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
@@ -1356,6 +1359,7 @@ fn capture_all_children(reader: &mut Reader<&[u8]>, closing: &[u8]) -> Result<Or
             Event::Empty(child) => children.push(0, capture_empty_element(&child)?),
             Event::End(end) if local_name(end.name().as_ref()) == closing => break,
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)

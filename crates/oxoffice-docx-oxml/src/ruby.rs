@@ -149,7 +149,7 @@ impl RubyContentAction {
 pub(crate) fn rejects_direct_characters(event: &Event<'_>) -> bool {
     match event {
         Event::Text(text) => !text.iter().all(u8::is_ascii_whitespace),
-        Event::CData(_) => true,
+        Event::CData(_) | Event::GeneralRef(_) => true,
         _ => false,
     }
 }

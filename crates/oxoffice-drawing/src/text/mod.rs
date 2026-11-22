@@ -273,7 +273,11 @@ impl CT_TextBody {
                 Event::Eof => {
                     return Err(missing_end(&String::from_utf8_lossy(root_local_name)));
                 }
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     raw_children.push(boundary, text_capture_opaque_event(event)?);
                 }
                 _ => {}

@@ -202,7 +202,11 @@ impl CT_TextListStyle {
                         std::str::from_utf8(&root_name).unwrap_or("list style"),
                     ));
                 }
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     style
                         .raw_children
                         .push(boundary, text_capture_opaque_event(event)?);

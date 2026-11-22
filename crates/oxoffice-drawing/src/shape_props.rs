@@ -786,6 +786,10 @@ fn inherited_shape_metadata(
                 let key = format!("{}!cdata:{:?}", paths.last().unwrap(), &*text);
                 *metadata.entry(key).or_insert(0) += 1;
             }
+            Event::GeneralRef(entity) => {
+                let key = format!("{}!ref:{:?}", paths.last().unwrap(), &*entity);
+                *metadata.entry(key).or_insert(0) += 1;
+            }
             Event::Eof => break,
             _ => {}
         }

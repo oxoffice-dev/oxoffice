@@ -149,6 +149,9 @@ pub(super) fn document_style_references(
             Event::CData(_) if open.is_empty() => {
                 return Err("the part has CDATA outside its root element".into());
             }
+            Event::GeneralRef(_) if open.is_empty() => {
+                return Err("the part has text outside its root element".into());
+            }
             Event::Eof if roots == 0 => return Err("the part has no root element".into()),
             Event::Eof if !open.is_empty() => {
                 return Err(format!(

@@ -837,6 +837,32 @@ fn sectioned_merges_put_each_record_in_its_own_next_page_section() {
 }
 
 #[test]
+fn a_quoted_header_merge_field_name_keeps_its_spaces_when_sections_are_checked() {
+    // Word quotes a field name with a space, and writes the quotes as
+    // entities: `MERGEFIELD &quot;Account Id&quot;`.
+    let mut template = doc_with_body(&format!(r#"<w:p>{}</w:p>"#, merge_field("Name")));
+    template.set_raw_header_with_images(
+        concat!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p>"#,
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+            r#"<w:r><w:instrText xml:space="preserve"> MERGEFIELD &quot;Account Id&quot; </w:instrText></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Account Id»</w:t></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:hdr>"#,
+        )
+        .as_bytes()
+        .to_vec(),
+        &[],
+        HdrFtrType::Default,
+    );
+    let records = [
+        record(&[("Name", "Ada"), ("Account Id", "A-1")]),
+        record(&[("Name", "Bob"), ("Account Id", "B-2")]),
+    ];
+    let error = refusal(template.mail_merge_sections(&records));
+    assert!(error.contains("cannot vary fields in headers"), "{error}");
+}
+
+#[test]
 fn a_header_merge_field_is_filled_per_record_but_cannot_vary_between_sections() {
     let mut template = doc_with_body(&format!(r#"<w:p>{}</w:p>"#, merge_field("Name")));
     // A complex field: the header text reader leaves out simple field

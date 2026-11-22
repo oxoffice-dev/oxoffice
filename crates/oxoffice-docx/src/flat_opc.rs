@@ -295,6 +295,7 @@ fn read_xml_data(
             Event::Empty(_)
             | Event::Text(_)
             | Event::CData(_)
+            | Event::GeneralRef(_)
             | Event::Comment(_)
             | Event::PI(_)
                 if depth > 0 =>
@@ -357,15 +358,12 @@ fn read_binary_data(reader: &mut NsReader<&[u8]>, limit: u64) -> Result<Vec<u8>>
             .map_err(|error| invalid(format!("invalid Flat OPC binaryData: {error}")))?;
         match event {
             Event::Text(ref text) => {
-                let bytes: &[u8] = text.as_ref();
-                for byte in bytes {
-                    if !byte.is_ascii_whitespace() {
-                        encoded.push(*byte);
-                        if encoded.len() as u64 > maximum_encoded {
-                            return Err(limit_error("part size", limit));
-                        }
-                    }
-                }
+                push_base64_text(text.as_ref(), &mut encoded, maximum_encoded, limit)?;
+            }
+            // A character reference (`&#10;`) stands for its character.
+            Event::GeneralRef(ref entity) => {
+                let resolved = oxoffice_core::xml_text::resolve_entity(entity);
+                push_base64_text(resolved.as_bytes(), &mut encoded, maximum_encoded, limit)?;
             }
             Event::End(ref element) => {
                 require_element(namespace, element.local_name().as_ref(), b"binaryData")?;
@@ -1125,6 +1123,24 @@ fn validate_content_type(content_type: &str) -> Result<()> {
             .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace() || !byte.is_ascii())
     {
         return Err(invalid("Flat OPC part content type is not canonical"));
+    }
+    Ok(())
+}
+
+/// Append the base64 characters of `bytes` to `encoded`, skipping white space.
+fn push_base64_text(
+    bytes: &[u8],
+    encoded: &mut Vec<u8>,
+    maximum_encoded: u64,
+    limit: u64,
+) -> Result<()> {
+    for byte in bytes {
+        if !byte.is_ascii_whitespace() {
+            encoded.push(*byte);
+            if encoded.len() as u64 > maximum_encoded {
+                return Err(limit_error("part size", limit));
+            }
+        }
     }
     Ok(())
 }

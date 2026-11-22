@@ -10,6 +10,7 @@ mod content_controls;
 mod corpus;
 mod document_merging;
 mod element_extents;
+mod entities;
 mod fields_and_toc;
 mod fonts;
 mod fragment_import;

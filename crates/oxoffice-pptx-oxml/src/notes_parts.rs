@@ -311,6 +311,7 @@ fn parse_root_children(
                 return Ok(parsed);
             }
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
