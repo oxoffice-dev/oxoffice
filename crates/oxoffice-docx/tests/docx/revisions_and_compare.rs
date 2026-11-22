@@ -375,8 +375,8 @@ fn header_changes_are_compared_unless_headers_are_ignored() {
 }
 
 #[test]
-fn author_names_with_markup_characters_and_offset_dates_survive_the_redline() {
-    let author = "Ada & \"Bob\" <QA>";
+fn author_names_with_markup_characters_tabs_and_line_ends_and_offset_dates_survive_the_redline() {
+    let author = "Ada & \"Bob\"\t<QA>\nteam\r";
     let date = "2026-11-21T09:00:00+01:00";
     let mut doc = doc_with(&["old"]);
     doc.compare(&doc_with(&["new"]), author, date).unwrap();

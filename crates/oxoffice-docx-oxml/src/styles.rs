@@ -548,7 +548,7 @@ impl CT_Style {
     pub fn to_xml<W: std::io::Write>(&self, writer: &mut Writer<W>) -> Result<()> {
         let mut e = BytesStart::new("w:style");
         e.push_attribute(("w:type", self.style_type.to_str()));
-        e.push_attribute(("w:styleId", self.style_id.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(&mut e, "w:styleId", &self.style_id);
         if self.is_default {
             e.push_attribute(("w:default", "1"));
         }
@@ -2166,7 +2166,7 @@ fn reject_conflicting_style_bindings(bindings: &[(String, String)]) -> Result<()
 
 fn push_style_attributes(element: &mut BytesStart<'_>, attributes: &[(String, String)]) {
     for (name, value) in attributes {
-        element.push_attribute((name.as_str(), value.as_str()));
+        oxoffice_core::xml::push_escaped_attribute(element, name, value);
     }
 }
 
@@ -2468,14 +2468,14 @@ fn rewritten_style_scalar_start(
         let key = std::str::from_utf8(attribute.key.as_ref())?.to_owned();
         if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes) {
             if !wrote_value {
-                rewritten.push_attribute((key.as_str(), value));
+                oxoffice_core::xml::push_escaped_attribute(&mut rewritten, &key, value);
                 wrote_value = true;
             }
         } else {
             let attribute_value = attribute
                 .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())?
                 .into_owned();
-            rewritten.push_attribute((key.as_str(), attribute_value.as_str()));
+            oxoffice_core::xml::push_escaped_attribute(&mut rewritten, &key, &attribute_value);
         }
     }
     if !wrote_value {
@@ -2504,7 +2504,7 @@ fn rewritten_style_scalar_start(
             candidate
         });
         let key = format!("{prefix}:val");
-        rewritten.push_attribute((key.as_str(), value));
+        oxoffice_core::xml::push_escaped_attribute(&mut rewritten, &key, value);
     }
     Ok(rewritten.into_owned())
 }
@@ -2555,7 +2555,7 @@ fn write_style_string<W: std::io::Write>(
         return write_rewritten_style_scalar(writer, raw, value);
     }
     let mut element = BytesStart::new(name);
-    element.push_attribute(("w:val", value));
+    oxoffice_core::xml::push_escaped_attribute(&mut element, "w:val", value);
     writer.write_event(Event::Empty(element))?;
     Ok(())
 }

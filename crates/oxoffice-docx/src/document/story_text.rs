@@ -802,9 +802,11 @@ pub(super) fn story_item_text(
             {
                 push_story_text(
                     &mut pieces,
-                    &quick_xml::escape::unescape(&value.decode().map_err(|error| {
-                        Error::Other(format!("story text decode failed: {error}"))
-                    })?)
+                    &quick_xml::escape::unescape(&oxoffice_core::xml_text::normalize_line_ends(
+                        &value.decode().map_err(|error| {
+                            Error::Other(format!("story text decode failed: {error}"))
+                        })?,
+                    ))
                     .map_err(|error| {
                         Error::Other(format!("story text unescape failed: {error}"))
                     })?,
@@ -815,9 +817,9 @@ pub(super) fn story_item_text(
             {
                 push_story_text(
                     &mut pieces,
-                    &value.decode().map_err(|error| {
-                        Error::Other(format!("story CDATA decode failed: {error}"))
-                    })?,
+                    &oxoffice_core::xml_text::normalize_line_ends(&value.decode().map_err(
+                        |error| Error::Other(format!("story CDATA decode failed: {error}")),
+                    )?),
                 )
             }
             Event::GeneralRef(value)

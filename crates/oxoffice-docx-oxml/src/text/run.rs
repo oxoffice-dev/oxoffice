@@ -1846,7 +1846,7 @@ impl CT_R {
                     if let Some(emission) = emission {
                         emission.write_text(writer, &t.text, word_text)?;
                     } else {
-                        let event = BytesText::new(&t.text);
+                        let event = BytesText::from_escaped(super::escaped_source(&t.text));
                         let _word = word_text
                             .map(|input| WordPayloadTransport::new(event.as_ref(), input))
                             .transpose()?;
@@ -1868,7 +1868,7 @@ impl CT_R {
                     if let Some(emission) = emission {
                         emission.write_text(writer, &t.text, None)?;
                     } else {
-                        let event = BytesText::new(&t.text);
+                        let event = BytesText::from_escaped(super::escaped_source(&t.text));
                         writer.write_event(Event::Text(event))?;
                     }
                     if let Some(emission) = emission {
@@ -1931,9 +1931,11 @@ impl CT_R {
                         if let Some(emission) = emission {
                             emission.write_text(writer, mark, None)?;
                         } else {
-                            writer.write_event(Event::Text(quick_xml::events::BytesText::new(
-                                mark,
-                            )))?;
+                            writer.write_event(Event::Text(
+                                quick_xml::events::BytesText::from_escaped(super::escaped_source(
+                                    mark,
+                                )),
+                            ))?;
                         }
                         if let Some(emission) = emission {
                             emission.write_word_end(writer, &word_prefix, "t")?;
@@ -1961,9 +1963,11 @@ impl CT_R {
                         if let Some(emission) = emission {
                             emission.write_text(writer, mark, None)?;
                         } else {
-                            writer.write_event(Event::Text(quick_xml::events::BytesText::new(
-                                mark,
-                            )))?;
+                            writer.write_event(Event::Text(
+                                quick_xml::events::BytesText::from_escaped(super::escaped_source(
+                                    mark,
+                                )),
+                            ))?;
                         }
                         if let Some(emission) = emission {
                             emission.write_word_end(writer, &word_prefix, "t")?;

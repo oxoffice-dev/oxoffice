@@ -2951,11 +2951,11 @@ pub(super) fn decode_merge_table(xml: &[u8]) -> Result<MailMergePackageSource> {
                 parse.close(element.local_name().as_ref())?;
             }
             Event::Text(_) => {
-                let value = quick_xml::escape::unescape(
+                let raw = oxoffice_core::xml_text::normalize_line_ends(
                     std::str::from_utf8(&xml[before..after])
                         .map_err(|_| merge_table_error("mail-merge cell text is not UTF-8"))?,
-                )
-                .map_err(|error| {
+                );
+                let value = quick_xml::escape::unescape(&raw).map_err(|error| {
                     merge_table_error(format!("invalid mail-merge cell text: {error}"))
                 })?;
                 parse.append_text(&value)?;
@@ -2969,7 +2969,7 @@ pub(super) fn decode_merge_table(xml: &[u8]) -> Result<MailMergePackageSource> {
                 let value = text.decode().map_err(|error| {
                     merge_table_error(format!("invalid mail-merge cell text: {error}"))
                 })?;
-                parse.append_text(&value)?;
+                parse.append_text(&oxoffice_core::xml_text::normalize_line_ends(&value))?;
             }
             Event::GeneralRef(_) => {
                 if !parse.in_cell() {
