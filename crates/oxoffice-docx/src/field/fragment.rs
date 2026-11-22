@@ -183,8 +183,13 @@ fn with_story_body_content(
     }
     let mut document = CT_Document::from_xml(&wrapped)?;
     document.body.sect_pr = None;
+    let before = document.to_xml()?;
     edit(&mut document.body.content);
     let written = document.to_xml()?;
+    // A part the edit leaves alone keeps its bytes.
+    if written == before {
+        return Ok(xml.to_vec());
+    }
     // The writer names the root `<prefix:document` with its namespaces.
     let open = find_bytes(&written, b":document ")
         .ok_or_else(|| Error::Other("written story has no document root".to_owned()))?;
@@ -587,6 +592,17 @@ pub(super) fn import_fragment_content_with_state(
         store_item_ids.extend(ids);
     }
     for store_item_id in store_item_ids {
+        // A binding to no store of the source is kept as it is: Word's
+        // document property quick parts (Title, Author, Company) bind the
+        // core and extended properties, and a store may have been deleted.
+        if crate::content_control::custom_xml_store_item_count(
+            &fragment.package,
+            &fragment.doc_part_name,
+            &store_item_id,
+        )? == 0
+        {
+            continue;
+        }
         let source_part = crate::content_control::resolve_custom_xml_part(
             &fragment.package,
             &fragment.doc_part_name,
@@ -1295,8 +1311,10 @@ pub(super) fn import_fragment_content_with_state(
         keep_free_names,
     )?;
     // The header and footer parts copied whole take fresh identities too,
-    // part by part, as producers number drawings per part. Their references
-    // follow the body's renamed bookmarks, and the body's follow theirs.
+    // part by part, as producers number drawings per part. All their renames
+    // are known before any part is patched: a REF follows its bookmark from
+    // any part to any other, the body and the notes included.
+    let mut header_footer_remaps = Vec::new();
     for source_part in &header_footer_parts {
         let Some(copied) = part_map.get(source_part) else {
             continue;
@@ -1310,14 +1328,22 @@ pub(super) fn import_fragment_content_with_state(
             wrap_fragment_companion(document.package.get_part(copied).ok_or_else(|| {
                 Error::Other(format!("copied fragment part {copied} is missing"))
             })?);
-        let (xml, mut remap) = fragment_identity_remap(
+        let (xml, remap) = fragment_identity_remap(
             &xml,
             &mut document.identifiers,
             identity_state,
             true,
             keep_free_names,
         )?;
-        let own_names = remap.bookmark_names.clone();
+        for (old, new) in &remap.bookmark_names {
+            identity_remap
+                .bookmark_names
+                .entry(old.clone())
+                .or_insert_with(|| new.clone());
+        }
+        header_footer_remaps.push((copied.clone(), xml, remap));
+    }
+    for (copied, xml, mut remap) in header_footer_remaps {
         for (old, new) in &identity_remap.bookmark_names {
             remap
                 .bookmark_names
@@ -1327,10 +1353,7 @@ pub(super) fn import_fragment_content_with_state(
         let patched = patch_body_identity_attributes(&xml, &remap)?;
         document
             .package
-            .set_part(copied, unwrap_fragment_companion(&patched));
-        for (old, new) in own_names {
-            identity_remap.bookmark_names.entry(old).or_insert(new);
-        }
+            .set_part(&copied, unwrap_fragment_companion(&patched));
     }
     let patched_comments = Document::fragment_comment_dependency_xml(
         fragment.comments.as_ref(),

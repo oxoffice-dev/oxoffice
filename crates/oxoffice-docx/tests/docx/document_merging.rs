@@ -7,10 +7,13 @@
 
 use std::io::Cursor;
 
+use std::collections::BTreeMap;
+
 use oxoffice_docx::{
     CommentDate, ContentLocation, Document, DocumentFragment, FragmentConflictPolicy, HdrFtrType,
-    HeaderFooterKind, Length, ListLevel, RunItemRef, SectionBreak, StoryId, StoryItemKind,
-    StoryKind, StyleBuilder, StyleType, TextCommentOptions, ValidationSeverity,
+    HeaderFooterKind, Length, ListLevel, MailMergeData, MailMergeRecord, MailMergeValue,
+    RunItemRef, SectionBreak, StoryId, StoryItemKind, StoryKind, StyleBuilder, StyleType,
+    TextCommentOptions, ValidationSeverity,
 };
 use oxoffice_docx_oxml::shared::{ST_PageOrientation, ST_SectionType};
 use oxoffice_opc::OpcPackage;
@@ -632,19 +635,50 @@ fn an_imported_header_takes_fresh_drawing_bookmark_and_control_ids() {
         r#"<w:p><w:bookmarkStart w:id="3" w:name="BodyMark"/><w:r><w:t>Body mark</w:t></w:r><w:bookmarkEnd w:id="3"/>"#,
         r#"<w:fldSimple w:instr=" REF Mark "><w:r><w:t>Header mark</w:t></w:r></w:fldSimple></w:p>"#,
     );
-    let source = with_raw_story(cover, header, &[("rIdLogo", PNG, "logo.png")], false);
-    for entry in ["append", "insert_document", "import_fragment"] {
-        let mut doc = doc_with_body(concat!(
-            r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>dst mark</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
-            r#"<w:p><w:bookmarkStart w:id="1" w:name="BodyMark"/><w:r><w:t>dst body mark</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
-            r#"<w:sdt><w:sdtPr><w:id w:val="5"/><w:tag w:val="dst"/></w:sdtPr>"#,
-            r#"<w:sdtContent><w:p><w:r><w:t>dst control</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
-        ));
+    let mut source = with_raw_story(cover, header, &[("rIdLogo", PNG, "logo.png")], false);
+    let source_bytes = saved(&mut source);
+    let destination = concat!(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>dst mark</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="BodyMark"/><w:r><w:t>dst body mark</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:sdt><w:sdtPr><w:id w:val="5"/><w:tag w:val="dst"/></w:sdtPr>"#,
+        r#"<w:sdtContent><w:p><w:r><w:t>dst control</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+    );
+    for entry in [
+        "append",
+        "append_with_break",
+        "insert_document",
+        "import_fragment",
+        "mail_merge_rich",
+    ] {
+        // A rich merge puts the source in place of a merge field.
+        let merge_field = if entry == "mail_merge_rich" {
+            r#"<w:p><w:fldSimple w:instr=" MERGEFIELD Terms "><w:r><w:t>Terms</w:t></w:r></w:fldSimple></w:p>"#
+        } else {
+            ""
+        };
+        let mut doc = doc_with_body(&format!("{destination}{merge_field}"));
         doc.add_picture(PNG, "dot.png", Length::inches(1.0), Length::inches(1.0));
         let mut doc = reopen(&mut doc);
         match entry {
             "append" => doc.append(&source),
+            "append_with_break" => doc.append_with_break(&source, SectionBreak::NextPage),
             "insert_document" => doc.insert_document(1, &source),
+            "mail_merge_rich" => {
+                let data = MailMergeData {
+                    records: vec![MailMergeRecord {
+                        values: BTreeMap::from([(
+                            "Terms".to_owned(),
+                            MailMergeValue::Fragment(source_bytes.clone()),
+                        )]),
+                        regions: BTreeMap::new(),
+                    }],
+                    sources: BTreeMap::new(),
+                };
+                doc = doc
+                    .mail_merge_rich(&data, None)
+                    .unwrap_or_else(|error| panic!("{entry}: {error}"))
+                    .remove(0);
+            }
             _ => {
                 let start = item_at(&source, 0);
                 let end = ContentLocation::end(body(&source));
@@ -696,6 +730,52 @@ fn an_imported_header_takes_fresh_drawing_bookmark_and_control_ids() {
         expected.sort();
         assert_eq!(references, expected, "{entry}");
     }
+}
+
+#[test]
+fn a_header_reference_follows_a_renamed_footer_bookmark() {
+    let story = |root: &str, content: &str| {
+        format!(
+            r#"<w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{content}</w:{root}>"#
+        )
+        .into_bytes()
+    };
+    let mut source = doc_with(&["cover"]);
+    source.set_raw_header_with_images(
+        story(
+            "hdr",
+            r#"<w:p><w:fldSimple w:instr=" REF FooterMark "><w:r><w:t>Footer mark</w:t></w:r></w:fldSimple></w:p>"#,
+        ),
+        &[],
+        HdrFtrType::Default,
+    );
+    source.set_raw_footer_with_images(
+        story(
+            "ftr",
+            r#"<w:p><w:bookmarkStart w:id="4" w:name="FooterMark"/><w:r><w:t>Footer mark</w:t></w:r><w:bookmarkEnd w:id="4"/></w:p>"#,
+        ),
+        &[],
+        HdrFtrType::Default,
+    );
+    source.insert_section(1).expect("a section appends");
+    source.add_paragraph("body");
+    let source = reopen(&mut source);
+    let mut doc = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="FooterMark"/><w:r><w:t>dst</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+    );
+    doc.insert_document(1, &source);
+    let mut doc = reopen(&mut doc);
+    let names = saved_values(&mut doc, "w:bookmarkStart", "w:name");
+    let (_, renamed) = names
+        .iter()
+        .find(|(part, _)| part.contains("footer"))
+        .unwrap_or_else(|| panic!("{names:?}"));
+    assert_ne!(renamed, "FooterMark");
+    let references = saved_values(&mut doc, "w:fldSimple", "w:instr");
+    assert_eq!(
+        references,
+        [("word/header1.xml".to_owned(), format!(" REF {renamed} "))]
+    );
 }
 
 /// A two-section document whose first section's footer holds a control
@@ -786,6 +866,75 @@ fn an_imported_footer_control_stays_bound_to_the_data_it_showed() {
             assert_eq!(names, ["Source Ada"], "{bindings:?}");
         }
     }
+}
+
+#[test]
+fn a_control_bound_to_a_document_property_imports_as_it_is() {
+    // Word's Insert > Quick Parts > Document Property > Title binds the core
+    // properties, which no custom XML store holds.
+    let title = concat!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="12"/><w:dataBinding w:prefixMappings="xmlns:ns0='http://purl.org/dc/elements/1.1/'""#,
+        r#" w:xpath="/ns1:coreProperties[1]/ns0:title[1]" w:storeItemID="{6C3C8BC8-F283-45AE-878A-BAB7291924A1}"/>"#,
+        r#"<w:text/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Title</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+    );
+    let source = with_raw_story(title, title, &[], true);
+    for entry in ["append", "insert_document"] {
+        let mut doc = doc_with(&["dest"]);
+        match entry {
+            "append" => doc.append(&source),
+            _ => doc.insert_document(1, &source),
+        }
+        let mut doc = reopen(&mut doc);
+        let bindings = saved_values(&mut doc, "w:dataBinding", "w:storeItemID");
+        let stories: Vec<_> = bindings.iter().map(|(part, _)| part.as_str()).collect();
+        assert_eq!(
+            stories,
+            ["word/document.xml", "word/footer1.xml"],
+            "{entry}"
+        );
+        assert!(
+            bindings
+                .iter()
+                .all(|(_, id)| id == "{6C3C8BC8-F283-45AE-878A-BAB7291924A1}"),
+            "{entry}: {bindings:?}"
+        );
+    }
+}
+
+/// A header holding a VML watermark and a page number, whose runs already
+/// name the fonts and size the source's defaults give, so an import keeping
+/// the source's formatting has nothing to prepare in it.
+#[test]
+fn a_header_the_source_formatting_leaves_alone_keeps_its_bytes() {
+    let header = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Header"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Dest Sans" w:hAnsi="Dest Sans"/><w:sz w:val="22"/></w:rPr>"#,
+        r##"<w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="PowerPlusWaterMarkObject" type="#_x0000_t136" style="width:400pt;height:100pt"/></w:pict>"##,
+        r#"<w:t xml:space="preserve">Page  </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:rFonts w:ascii="Dest Sans" w:hAnsi="Dest Sans"/><w:sz w:val="22"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    let mut source = with_raw_story(
+        r#"<w:p><w:r><w:t>cover</w:t></w:r></w:p>"#,
+        header,
+        &[],
+        false,
+    );
+    let original = source_stories_with(&mut source, "PowerPlusWaterMarkObject");
+    let mut doc = doc_with(&["dest"]);
+    let start = item_at(&source, 0);
+    let end = ContentLocation::end(body(&source));
+    let fragment = DocumentFragment::from_range(&source, &start, &end, true).unwrap();
+    doc.import_fragment(
+        &ContentLocation::end(body(&doc)),
+        &fragment,
+        FragmentConflictPolicy::for_insert_document(Some(
+            FragmentConflictPolicy::reuse_equivalent(),
+        )),
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        source_stories_with(&mut doc, "PowerPlusWaterMarkObject"),
+        original
+    );
 }
 
 #[test]
