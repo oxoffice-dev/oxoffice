@@ -196,6 +196,7 @@ impl Presentation {
             }
         })?;
 
+        let signature_baseline = embedded::signature_baseline(&package);
         Ok(Self {
             package,
             media_store,
@@ -218,6 +219,7 @@ impl Presentation {
             handout_master_dirty: false,
             embedded_invalidated_signatures: HashSet::new(),
             package_signatures_invalidated,
+            signature_baseline,
             source_path: None,
             layouts,
             masters,

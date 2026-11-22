@@ -267,6 +267,7 @@ impl Presentation {
             .into());
         }
         self.package = candidate;
+        self.signature_baseline = embedded::signature_baseline(&self.package);
         Ok(report)
     }
 }
