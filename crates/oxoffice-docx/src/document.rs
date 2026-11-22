@@ -905,10 +905,10 @@ pub struct Document {
     pub(crate) comments_extended_owned: bool,
     /// Embedded identities whose retained signature evidence is known invalid.
     pub(crate) embedded_invalidated_signatures: HashSet<(String, String)>,
-    /// Image relationships (owner part, id) that `remove_content_at` left
-    /// unreferenced. They stay until the document is written, so a removed
-    /// fragment can be inserted again; the output drops those still
-    /// unreferenced then, with their media when nothing else reaches it.
+    /// Content relationships (owner part, id) a fragment `remove_content_at`
+    /// took names. They stay until the document is written, so a removed
+    /// fragment can be inserted again; the output drops those no element
+    /// names then, with their parts when nothing else reaches them.
     pub(crate) freed_relationships: Vec<(String, String)>,
     /// Whether retained package signature evidence is known invalid.
     pub(crate) package_signatures_invalidated: bool,

@@ -641,13 +641,12 @@ impl Document {
             .filter(|(relationship, _)| is_content_relationship(&relationship.rel_type))
             .map(|(relationship, _)| relationship.id.as_str())
             .collect();
-        if !freed.is_empty() {
-            let referenced = xml_attribute_values(&updated)?;
-            for id in freed {
-                let entry = (part_name.clone(), id.to_owned());
-                if !referenced.contains(id) && !candidate.freed_relationships.contains(&entry) {
-                    candidate.freed_relationships.push(entry);
-                }
+        // Every one is recorded, named elsewhere or not: another edit may
+        // remove the other occurrence before the fragment comes back.
+        for id in freed {
+            let entry = (part_name.clone(), id.to_owned());
+            if !candidate.freed_relationships.contains(&entry) {
+                candidate.freed_relationships.push(entry);
             }
         }
         set_story_source_xml(&mut candidate, &part_name, updated)?;

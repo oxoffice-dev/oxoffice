@@ -249,8 +249,8 @@ impl Document {
         let normalized = self.prepare_staged_package()?;
         #[cfg(debug_assertions)]
         IdentifierSummary::of_package(self).assert_reads_back(&IdentifierSummary::of(self));
-        // Pictures `remove_content_at` freed leave the written copy only: a
-        // copy that released one is not installed, so the live document can
+        // Content `remove_content_at` freed leaves the written copy only: a
+        // copy that released some is not installed, so the live document can
         // still take the removed fragment back.
         let released = self.release_freed_relationships()?;
         #[cfg(debug_assertions)]

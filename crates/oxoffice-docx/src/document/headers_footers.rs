@@ -1885,6 +1885,7 @@ pub(super) fn materialize_header_footer_inheritance(
 pub(crate) fn is_content_relationship(rel_type: &str) -> bool {
     const CONTENT: &[&str] = &[
         "/image",
+        "/hdphoto",
         "/chart",
         "/chartEx",
         "/oleObject",

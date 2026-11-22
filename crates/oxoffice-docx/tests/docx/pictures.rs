@@ -1930,3 +1930,63 @@ fn a_picture_or_link_removed_by_another_edit_leaves_the_saved_file() {
     doc.remove_hyperlink(&body, 0).unwrap();
     assert!(!saved_entries(&mut doc)["word/_rels/document.xml.rels"].contains("gone.example"));
 }
+
+#[test]
+fn a_cut_picture_comes_back_after_its_other_occurrence_goes() {
+    // Two pictures share one relationship, as Word writes a duplicated one.
+    let picture = |name: &str| {
+        format!(
+            concat!(
+                r#"<w:p>"#,
+                r#"<w:r><w:drawing><wp:inline><wp:extent cx="91440" cy="91440"/><wp:docPr id="{id}" name="{name}"/>"#,
+                r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+                r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="{id}" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+                r#"<pic:blipFill><a:blip r:embed="rIdShared"/></pic:blipFill><pic:spPr/></pic:pic>"#,
+                r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+            ),
+            id = if name == "first" { 1 } else { 2 },
+            name = name
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        "{}{}<w:p><w:r><w:t>end</w:t></w:r></w:p>",
+        picture("first"),
+        picture("second")
+    ));
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    package.set_part("/word/media/shared.png", png(2, 2, 40));
+    package.content_types.add_default("png", "image/png");
+    package
+        .get_or_create_part_rels("/word/document.xml")
+        .add_with_id("rIdShared", IMAGE, "media/shared.png");
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let story = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.kind() == StoryKind::Body)
+        .unwrap();
+    let first = doc.story_items(&story).unwrap()[0].location().clone();
+    let fragment = doc.remove_content_at(&first).unwrap();
+    {
+        let mut paragraph = doc.paragraph_mut(0).expect("the second picture");
+        let runs = paragraph.runs().count();
+        for run in (0..runs).rev() {
+            paragraph.remove_run(run).unwrap();
+        }
+    }
+    for _ in 0..2 {
+        doc.to_bytes().unwrap();
+    }
+    let story = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.kind() == StoryKind::Body)
+        .unwrap();
+    doc.insert_content(&oxoffice_docx::ContentLocation::end(story), fragment)
+        .expect("the cut picture comes back");
+    assert!(saved_entries(&mut doc).contains_key("word/media/shared.png"));
+}
