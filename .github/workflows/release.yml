@@ -1,10 +1,12 @@
 name: Release
 
 # Manual only, from main. Give the version, the workflow does the rest:
-#   1. every build job checks out the commit the run was dispatched on and
-#      sets the version in its own workspace: the `oxoffice` binary, the
-#      Python wheels and the sdist for every platform, each wheel run on its
-#      platform, each conda package built and tested into a local channel
+#   1. the commit must have a green run of the full checks (nightly.yml);
+#      every build job checks out that commit and sets the version in its
+#      own workspace: the `oxoffice` binary, the Python wheels and the sdist
+#      for every platform; each wheel is installed on its platform, opens,
+#      edits and saves four corpus files, and its conda package is built and
+#      tested into a local channel
 #   2. once all of it is green, one job commits the version and CHANGELOG.md
 #      on top of the dispatched commit, tags that commit vX.Y.Z, builds the
 #      installers, the known limitations page, an SBOM, SHA256SUMS and a
@@ -15,8 +17,10 @@ name: Release
 #      prefix.dev, both through trusted publishers
 # Nothing reaches main or the tags before the push of step 2. Merging into
 # main during the run is fine: those merges are not in the release, and the
-# tag holds exactly the tree that was built. See docs/RELEASE.md and
-# specs/2026-11-21-release-pushes-after-the-builds.md.
+# tag holds exactly the tree that was built. No test suite runs here: the
+# full checks ran on the commit. See docs/RELEASE.md,
+# specs/2026-11-21-release-pushes-after-the-builds.md and
+# specs/2026-11-22-a-short-release.md.
 
 on:
   workflow_dispatch:
@@ -41,6 +45,9 @@ jobs:
   check:
     name: Version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the version and the branch
@@ -59,6 +66,18 @@ jobs:
             # The tag is pushed by the last job: if the run that pushed it
             # failed after that, re-run its failed jobs instead.
             echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+      # The tests do not run in the release: the full checks (every test
+      # under debug assertions on three platforms, the whole corpus, every
+      # scaling call, the stack measure) must be green on this very commit.
+      - name: Full checks green on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?head_sha=$GITHUB_SHA&status=success" --jq '.total_count > 0')"
+          if [ "$green" != true ]; then
+            echo "::error::no green Full checks run on $GITHUB_SHA: run nightly.yml on that commit (gh workflow run nightly.yml --ref main if main is still there, about 30 minutes), then re-run the failed jobs of this run"
+            exit 1
           fi
 
   cli:
@@ -179,17 +198,16 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
-  # Each wheel, installed on its own platform, opens, edits, saves and renders
-  # the corpus on the main thread (the tests run on an 8 MiB thread), then
-  # measures the stack the same work needs and fails above the budget in
-  # scripts/wheel_smoke.py: 1 MiB, the main thread of most Windows programs
-  # that embed Python. The script and the corpus come from the commit the
-  # run was dispatched on, like every build.
-  smoke:
-    name: Smoke ${{ matrix.wheel }}
+  # Each wheel, installed on its own platform, opens, edits, saves, reopens
+  # and renders four corpus files (Word, Google Docs, LibreOffice,
+  # PowerPoint) on the main thread, about a minute. The conda packages
+  # repackage the wheels: each one is built and its recipe's tests run
+  # (imports and `oxoffice --version`) into a local channel before anything
+  # is pushed; the `conda` job builds it again after the tag and uploads it.
+  # The script, the corpus and the recipe come from the dispatched commit.
+  wheel-check:
+    name: Check ${{ matrix.wheel }}
     needs: wheels
-    permissions:
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -199,41 +217,6 @@ jobs:
           - { runner: macos-latest, wheel: wheel-macos-latest-aarch64 }
           - { runner: macos-15-intel, wheel: wheel-macos-latest-x86_64 }
           - { runner: windows-latest, wheel: wheel-windows-latest-x64 }
-    runs-on: ${{ matrix.runner }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ matrix.wheel }}
-          path: dist
-      - run: python -m pip install --no-index --find-links dist oxoffice
-      - name: Open, edit, save and render the corpus, measure the stack
-        run: python -I scripts/wheel_smoke.py tests/corpus/files --measure --version "$VERSION"
-
-  # The conda packages repackage the wheels and need no version step. This
-  # job builds each one and runs the recipe's tests (imports and `oxoffice
-  # --version`) into a local channel before anything is pushed; the `conda`
-  # job builds it again after the tag and uploads it.
-  conda-check:
-    name: Conda check ${{ matrix.subdir }}
-    needs: wheels
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { subdir: linux-64, runner: ubuntu-latest, wheel: wheel-ubuntu-latest-x86_64 }
-          - { subdir: linux-aarch64, runner: ubuntu-24.04-arm, wheel: wheel-ubuntu-latest-aarch64 }
-          - { subdir: osx-arm64, runner: macos-latest, wheel: wheel-macos-latest-aarch64 }
-          - { subdir: osx-64, runner: macos-15-intel, wheel: wheel-macos-latest-x86_64 }
-          - { subdir: win-64, runner: windows-latest, wheel: wheel-windows-latest-x64 }
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -248,10 +231,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ matrix.wheel }}
           path: conda/dist
+      - run: python -m pip install --no-index --find-links conda/dist oxoffice
+      - name: Open, edit, save and render four corpus files
+        run: |
+          python -I scripts/wheel_smoke.py tests/corpus/files --version "$VERSION" \
+            --files word/paper.docx google/paper.docx libreoffice/paper.docx powerpoint/deck.pptx
+      # The conda recipe's tests run `oxoffice --version` in its own
+      # environment, which keeps this PATH after its own: the pip-installed
+      # command must not answer for a conda package that lacks one.
+      - name: Uninstall the wheel before the conda check
+        run: |
+          python -m pip uninstall -y oxoffice
+          if command -v oxoffice; then echo "::error::an oxoffice command is still on PATH"; exit 1; fi
       - name: Licences
         run: |
           mkdir -p conda/dist/licenses
@@ -262,7 +260,7 @@ jobs:
           pixi-version: v0.84.2
           run-install: false
           cache: false
-      - name: Build and test into a local channel
+      - name: Build and test the conda package into a local channel
         run: |
           dir="$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })/conda-channel"
           case "$dir" in /*) to="file://$dir" ;; *) to="file:///$dir" ;; esac
@@ -271,7 +269,7 @@ jobs:
 
   release:
     name: Commit, tag and GitHub release
-    needs: [cli, wheels, sdist, smoke, conda-check]
+    needs: [cli, wheels, sdist, wheel-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write

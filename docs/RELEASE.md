@@ -7,16 +7,22 @@ One manual workflow, no manual tags, no hand-edited changelog.
 1. Make sure `main` is green, and that the full checks are green on the
    commit you release: the last nightly run on `main`
    (`gh run list -w nightly.yml -b main -L 1 --json headSha,conclusion`) if
-   it ran on that commit, otherwise `gh workflow run nightly.yml --ref main` and
-   wait for it (about 30 minutes).
+   it ran on that commit, otherwise `gh workflow run nightly.yml --ref main`
+   and wait for it (about 30 minutes), merging nothing into `main` until the
+   release is dispatched. The release's first job refuses a commit without a
+   green run of the full checks: no test suite runs in the release. If it
+   refused, run the full checks on the commit it names (a branch at that
+   commit), then **Re-run failed jobs**.
 2. Actions, **Release**, **Run workflow** from `main`, the version (or
-   `gh workflow run release.yml -f version=X.Y.Z`). Merging into `main`
-   meanwhile is fine. Every build job checks out the commit the run was
+   `gh workflow run release.yml -f version=X.Y.Z`). Once it has started,
+   merging into `main` is fine. Every build job checks out the commit the run was
    dispatched on and sets the version in its own workspace
    (`scripts/set_version.py`, then `cargo update --workspace`): the binaries,
-   the wheels and the sdist all come from that one commit. Each wheel runs
-   on its platform (`scripts/wheel_smoke.py`), and each conda package is
-   built and tested into a local channel.
+   the wheels and the sdist all come from that one commit. Each wheel is
+   installed on its platform and opens, edits, saves, reopens and renders
+   four corpus files on the main thread (`scripts/wheel_smoke.py --files`,
+   about a minute), and each conda package is built and tested into a local
+   channel. The stack a script needs is measured every night, not here.
 3. Only once all of that is green, the last job sets the version again on
    the dispatched commit, regenerates `CHANGELOG.md` with git-cliff, commits
    `chore(release): vX.Y.Z` on top of that commit and tags it: the tag holds
@@ -34,15 +40,16 @@ A conflict in that merge is resolved by the workflow: `CHANGELOG.md` takes
 the release's, `Cargo.toml` and `Cargo.lock` take `main`'s, and the version is
 set again on them (a crate added during the run gets it too).
 
-The smoke check opens, edits, saves and renders the corpus on the main thread,
-then measures the smallest thread stack the same work needs and fails above
-its budget, 1 MiB (`STACK_BUDGET_KIB`): the main thread of most Windows
-programs that embed Python. Each job's summary shows the measure.
+Every night, the full checks build a release-profile Linux wheel, open, edit,
+save and render the whole corpus with it on the main thread, then measure the
+smallest thread stack the same work needs and fail above its budget, 1 MiB
+(`STACK_BUDGET_KIB`): the main thread of most Windows programs that embed
+Python. The job's summary shows the measure.
 
 ### When a run fails
 
-Nothing reaches `main` or the tags before every build, smoke check, conda
-check and asset is done: the push is the last step but the GitHub release.
+Nothing reaches `main` or the tags before every build, wheel check and asset
+is done: the push is the last step but the GitHub release.
 
 - **A build, a check or an asset fails**: nothing was pushed. A transient
   failure is retried with **Re-run failed jobs**. Otherwise fix the cause on

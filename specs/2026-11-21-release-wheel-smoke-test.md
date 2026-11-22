@@ -107,3 +107,5 @@ Not done here:
 - #14, the Python tests on an 8 MiB thread
 - [2026-11-20-ci-and-release.md](2026-11-20-ci-and-release.md)
 - #47, [2026-11-21-text-list-style-levels-on-the-heap.md](2026-11-21-text-list-style-levels-on-the-heap.md)
+- Amended by [a short release](2026-11-22-a-short-release.md): the release checks four files, the stack is measured
+  every night.
