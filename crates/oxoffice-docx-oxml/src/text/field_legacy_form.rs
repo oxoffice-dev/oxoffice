@@ -754,7 +754,7 @@ fn legacy_form_boolean_value(
     let Some(value) = legacy_form_value_attribute(element, word_prefixes)? else {
         return Ok(true);
     };
-    parse_field_bool(&value)
+    crate::shared::ST_OnOff::parse(&value)
         .ok_or_else(|| OxmlError::InvalidValue(format!("invalid {name} boolean token")))
 }
 

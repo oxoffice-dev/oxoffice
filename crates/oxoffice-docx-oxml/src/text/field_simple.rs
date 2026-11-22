@@ -46,7 +46,7 @@ impl SimpleFieldHeader {
             };
         }
         let dirty = optional_word_attribute(start, b"dirty", prefixes)
-            .and_then(|value| parse_field_bool(&value));
+            .and_then(|value| crate::shared::ST_OnOff::parse(&value));
         Self {
             syntax: Some(syntax),
             dirty,
@@ -1265,13 +1265,5 @@ fn simple_result_run_display(raw: &[u8], word_prefixes: &[String]) -> Result<Opt
             Event::Eof => return Ok(display),
             _ => {}
         }
-    }
-}
-
-pub(super) fn parse_field_bool(value: &str) -> Option<bool> {
-    match value {
-        "1" | "true" | "on" => Some(true),
-        "0" | "false" | "off" => Some(false),
-        _ => None,
     }
 }

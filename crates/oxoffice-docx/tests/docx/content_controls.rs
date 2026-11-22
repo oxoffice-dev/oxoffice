@@ -2111,3 +2111,26 @@ fn a_form_fill_sets_controls_and_legacy_fields_in_one_call() {
         ]
     );
 }
+
+#[test]
+fn a_checkbox_state_spelled_in_another_case_is_an_invalid_form_value() {
+    // On/off values are lowercase: `True` is no spelling of on, for the form
+    // reader as for the checkbox model.
+    let checkbox = |value: &str| {
+        format!(
+            r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="agree"/><w14:checkbox xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w14:checked w14:val="{value}"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>☒</w:t></w:r></w:sdtContent></w:sdt></w:p>"#
+        )
+    };
+    let rule = FormFieldRule {
+        target: target("agree"),
+        required: false,
+        reset: FormResetValue::Value(FormFieldValue::Checked(false)),
+    };
+    let doc = doc_with_body(&checkbox("on"));
+    let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    let doc = doc_with_body(&checkbox("True"));
+    let issues = doc.validate_form(&[rule]).unwrap();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].message, "current form value is invalid");
+}

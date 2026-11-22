@@ -287,7 +287,7 @@ impl RunChildPlan {
                     .and_then(|value| value.parse::<i32>().ok())
                     .unwrap_or(0);
                 let custom_mark = optional_word_attribute(start, b"customMarkFollows", prefixes)
-                    .filter(|value| matches!(value.as_str(), "1" | "true" | "on"))
+                    .filter(|value| crate::shared::ST_OnOff::parse(value) == Some(true))
                     .map(|_| String::new());
                 Some(if action == A::FootnoteReference {
                     RunLeafValue::Footnote { id, custom_mark }

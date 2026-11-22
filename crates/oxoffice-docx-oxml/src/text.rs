@@ -128,8 +128,8 @@ pub(crate) use field_simple::{
 };
 use field_simple::{
     contiguous_ordered_result_runs, ordered_paragraph_mapped_xml_in, parse_empty_simple_field,
-    parse_field_bool, parse_ordered_field_result, parse_simple_field_with_summary,
-    replace_ordered_result_runs, replace_ordered_result_text,
+    parse_ordered_field_result, parse_simple_field_with_summary, replace_ordered_result_runs,
+    replace_ordered_result_text,
 };
 use field_write::{
     FieldResultPart, FieldResultParts, canonical_instruction_text, capture_standalone_event,
@@ -5807,12 +5807,12 @@ pub(crate) fn source_value_is_modeled(
         }
         if key == b"customMarkFollows" {
             // The reader takes every on/off spelling; an off one is absent.
-            return parse_field_bool(value).is_some();
+            return crate::shared::ST_OnOff::parse(value).is_some();
         }
     }
     if matches!(local, b"fldSimple" | b"fldChar") {
         if matches!(key, b"dirty" | b"fldLock") {
-            return parse_field_bool(value).is_some();
+            return crate::shared::ST_OnOff::parse(value).is_some();
         }
         if key == b"fldCharType" {
             return matches!(value, "begin" | "separate" | "end");

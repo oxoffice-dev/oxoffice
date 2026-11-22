@@ -811,7 +811,7 @@ fn clean_simple_complex_source(
                 instruction = Some(value.into_owned());
             }
             b"dirty" | b"fldLock" => {
-                if !matches!(value.as_ref(), "0" | "1" | "false" | "true" | "off" | "on") {
+                if oxoffice_docx_oxml::shared::ST_OnOff::parse(&value).is_none() {
                     return Err(Error::Other(format!(
                         "unmappable simple-field flag {}={value:?}",
                         String::from_utf8_lossy(local.as_ref())

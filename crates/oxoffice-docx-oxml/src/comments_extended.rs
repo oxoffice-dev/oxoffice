@@ -132,11 +132,9 @@ fn parse_comment_ex(element: &BytesStart<'_>, prefixes: &[String]) -> Result<CT_
         .ok_or_else(|| OxmlError::MissingElement("commentEx paraId attribute".to_owned()))?;
     let para_id_parent = extension_attribute(element, b"paraIdParent", prefixes)?;
     let done_value = extension_attribute(element, b"done", prefixes)?;
-    let done = done_value.as_deref().and_then(|value| match value {
-        "1" | "true" | "on" => Some(true),
-        "0" | "false" | "off" => Some(false),
-        _ => None,
-    });
+    let done = done_value
+        .as_deref()
+        .and_then(crate::shared::ST_OnOff::parse);
     let modelled: &[&[u8]] = if done_value.is_none() || done.is_some() {
         &[b"paraId", b"paraIdParent", b"done"]
     } else {

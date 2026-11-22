@@ -547,11 +547,9 @@ fn finish_recipient(
 
 fn parse_recipient_active(value: &Option<String>) -> Result<bool> {
     match value.as_deref() {
-        None | Some("true" | "1" | "on") => Ok(true),
-        Some("false" | "0" | "off") => Ok(false),
-        Some(_) => Err(Error::Other(
-            "mail-merge recipient active is malformed".to_owned(),
-        )),
+        None => Ok(true),
+        Some(value) => oxoffice_docx_oxml::shared::ST_OnOff::parse(value)
+            .ok_or_else(|| Error::Other("mail-merge recipient active is malformed".to_owned())),
     }
 }
 
