@@ -373,6 +373,24 @@ pub(super) fn table_is_cache_safe(table: &CT_Tbl, styles: &CT_Styles) -> bool {
         })
 }
 
+/// Whether a paragraph of the table takes a bookmark marker written between
+/// blocks: one before the table belongs to its first paragraph, one after it
+/// to its last, which a retained table block would not record.
+pub(super) fn table_takes_block_markers(table: &CT_Tbl, block_bookmarks: &BlockBookmarks) -> bool {
+    !block_bookmarks.is_empty()
+        && table.rows.iter().flat_map(|row| &row.cells).any(|cell| {
+            cell.content.iter().any(|content| match content {
+                CellContent::Paragraph(paragraph) => {
+                    let (before, after) = block_bookmarks.markers(paragraph);
+                    !before.is_empty() || !after.is_empty()
+                }
+                CellContent::Table(table) => table_takes_block_markers(table, block_bookmarks),
+                // A control already makes the table unsafe to retain.
+                CellContent::ContentControl(_) => false,
+            })
+        })
+}
+
 pub(super) fn table_semantics(
     table: &CT_Tbl,
     block: &table::TableBlock,

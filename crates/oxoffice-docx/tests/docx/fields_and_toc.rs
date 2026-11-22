@@ -2296,3 +2296,87 @@ fn a_range_with_a_leading_bookmark_that_ends_outside_it_imports_without_the_half
     assert_eq!(texts(&target), ["Target", "Introduction"]);
     assert!(target.bookmarks().is_empty());
 }
+
+/// A paragraph ending page 1 with a page break, so that what follows is on page 2.
+const PAGE_ONE: &str = r#"<w:p><w:r><w:t>One</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>"#;
+
+/// Updates the layout-backed fields, every PAGEREF finding its bookmark: a
+/// PAGEREF whose bookmark is not found keeps its stored result, so an
+/// earlier update's result alone proves nothing.
+fn no_pageref_retained(doc: &mut Document) {
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("PAGEREF")),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
+/// A paragraph holding `PAGEREF name` with the stale result 9.
+fn pageref(name: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF {name} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    )
+}
+
+#[test]
+fn a_bookmark_between_blocks_of_a_paragraph_that_receives_an_accepted_join_has_its_page() {
+    // The deleted mark of `Joined` joins it to `Target` in the accepted
+    // view. The bookmark written after `Target`, at the end of the body,
+    // belongs to it, and is on page 2.
+    let mut doc = doc_with_body(&format!(
+        r#"{}{PAGE_ONE}<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Joined </w:t></w:r></w:p><w:p><w:r><w:t>Target</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="target"/><w:bookmarkEnd w:id="1"/>"#,
+        pageref("target")
+    ));
+    doc.update_layout_backed_fields().unwrap();
+    assert_eq!(texts(&reopen(&mut doc))[0], "2");
+}
+
+#[test]
+fn a_bookmark_between_blocks_before_a_table_has_its_page_after_another_layout() {
+    // The start before the table belongs to the paragraph of its first cell,
+    // a plain one or one that starts with a tracked insertion, as Google
+    // writes a suggestion: a second layout, which may retain the table,
+    // still finds it.
+    let insertion = r#"<w:ins w:id="5" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Cell</w:t></w:r></w:ins>"#;
+    for cell in [r#"<w:r><w:t>Cell</w:t></w:r>"#, insertion] {
+        let mut doc = doc_with_body(&format!(
+            r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>{cell}<w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
+            pageref("cell")
+        ));
+        no_pageref_retained(&mut doc);
+        assert_eq!(texts(&doc).last().unwrap(), "2", "{cell}");
+        doc.add_paragraph("Added.");
+        no_pageref_retained(&mut doc);
+        let texts = texts(&reopen(&mut doc));
+        assert_eq!(texts[texts.len() - 2], "2", "{cell}");
+    }
+}
+
+#[test]
+fn a_bookmark_start_that_comes_to_a_table_after_a_layout_has_its_page() {
+    // The start belongs to `X` until `X` goes: then to the paragraph of the
+    // table's first cell, whose table the first layout may have retained.
+    let mut doc = doc_with_body(&format!(
+        r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:p><w:r><w:t>X</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
+        pageref("cell")
+    ));
+    no_pageref_retained(&mut doc);
+    assert_eq!(texts(&doc).last().unwrap(), "2");
+    let x = paragraph_location(&doc, "X");
+    doc.remove_content_at(&x).unwrap();
+    no_pageref_retained(&mut doc);
+    assert_eq!(texts(&reopen(&mut doc)).last().unwrap(), "2");
+}
+
+#[test]
+fn a_bookmark_between_cells_of_a_row_in_a_row_control_wraps_the_next_cell() {
+    let mut doc = doc_with_body(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:sdt><w:sdtPr><w:tag w:val="row"/></w:sdtPr><w:sdtContent><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:bookmarkStart w:id="3" w:name="second"/><w:tc><w:p><w:r><w:t>B</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl><w:p/>"#,
+    );
+    assert_eq!(bookmark_list(&doc), pairs(&[("second", "B")]));
+    assert_eq!(bookmark_list(&reopen(&mut doc)), pairs(&[("second", "B")]));
+}
