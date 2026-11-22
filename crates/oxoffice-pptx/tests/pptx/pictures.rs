@@ -1000,6 +1000,48 @@ fn filling_a_picture_placeholder_puts_the_picture_in_its_place() {
 }
 
 #[test]
+fn a_picture_in_its_placeholder_survives_an_odp_round_trip() {
+    // PowerPoint saves a filled picture placeholder with an empty
+    // `p:spPr`: the picture keeps the place its layout gives it.
+    let (mut prs, _, index) = with_picture_placeholder_slide(new_deck(), "Picture with Caption");
+    let image = png(120, 60, [0, 90, 200]);
+    prs.fill_picture_placeholder(0, &[index], &image, "photo.png")
+        .unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    let part = "/ppt/slides/slide1.xml";
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let picture = xml.find("<p:pic>").unwrap();
+    let start = picture + xml[picture..].find("<a:xfrm").unwrap();
+    let end = start + xml[start..].find("</a:xfrm>").unwrap() + "</a:xfrm>".len();
+    let mut xml = xml;
+    xml.replace_range(start..end, "");
+    package.set_part(part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let prs = Presentation::from_bytes(&out.into_inner()).unwrap();
+
+    let written = prs.to_odp_bytes().unwrap();
+    assert!(
+        !written
+            .diagnostics
+            .iter()
+            .any(|diagnostic| format!("{diagnostic:?}").contains("without bounds")),
+        "{:?}",
+        written.diagnostics
+    );
+    let read = Presentation::from_odp_bytes(&written.bytes)
+        .unwrap()
+        .presentation;
+    let pictures = read
+        .slide(0)
+        .unwrap()
+        .shapes()
+        .filter(|shape| shape.kind() == ShapeKind::Picture)
+        .count();
+    assert_eq!(pictures, 1);
+}
+
+#[test]
 fn a_placeholder_crops_the_picture_to_its_box_around_the_centre() {
     for (width, height) in [(400, 50), (50, 400)] {
         let (mut prs, _, index) =
