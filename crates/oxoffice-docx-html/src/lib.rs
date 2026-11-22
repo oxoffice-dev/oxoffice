@@ -17,6 +17,7 @@ use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_NumberFormat};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Tbl, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::CT_P;
+use oxoffice_docx_oxml::text::bookmark_name_key;
 
 /// Options for HTML conversion.
 #[derive(Debug, Clone)]
@@ -424,7 +425,9 @@ fn numbering_turned_off_level(paragraph: &CT_P) -> Option<u32> {
 /// the bookmarks a link of the body targets.
 pub(crate) struct Links<'a> {
     pub(crate) urls: &'a HashMap<String, String>,
-    pub(crate) bookmarks: HashSet<String>,
+    /// The linked bookmarks by `bookmark_name_key`, each with its own
+    /// spelling, which the anchor and every link to it write.
+    pub(crate) bookmarks: HashMap<String, String>,
 }
 
 impl<'a> Links<'a> {
@@ -458,13 +461,13 @@ fn hyperlink_targets(paragraph: &CT_P, links: &Links<'_>) -> HashMap<usize, Stri
                     Some(fragment) if !url.contains('#') => format!("{url}{fragment}"),
                     _ => url.to_owned(),
                 }),
-            // A link to a bookmark the exports write an anchor for.
-            None => fragment.filter(|_| {
-                hyperlink
-                    .anchor
-                    .as_ref()
-                    .is_some_and(|anchor| links.bookmarks.contains(anchor))
-            }),
+            // A link to a bookmark the exports write an anchor for, in any
+            // case: Word compares bookmark names without regard to case.
+            None => hyperlink
+                .anchor
+                .as_deref()
+                .and_then(|anchor| links.bookmarks.get(&bookmark_name_key(anchor)))
+                .map(|name| format!("#{name}")),
         };
         if let Some(target) = target {
             for run in hyperlink.run_start..hyperlink.run_end {
@@ -478,11 +481,11 @@ fn hyperlink_targets(paragraph: &CT_P, links: &Links<'_>) -> HashMap<usize, Stri
 /// The bookmarks of the body that a hyperlink of the body links to and that
 /// start in a paragraph the exports write: those get an anchor, and only
 /// links to those become links (a link to a missing bookmark stays text).
-fn linked_bookmarks(body: &CT_Body) -> HashSet<String> {
+fn linked_bookmarks(body: &CT_Body) -> HashMap<String, String> {
     fn collect(
         blocks: Vec<Block<'_>>,
         linked: &mut HashSet<String>,
-        present: &mut HashSet<String>,
+        present: &mut HashMap<String, String>,
     ) {
         for block in blocks {
             match block {
@@ -492,15 +495,16 @@ fn linked_bookmarks(body: &CT_Body) -> HashSet<String> {
                             .hyperlinks
                             .iter()
                             .filter(|hyperlink| hyperlink.rel_id.is_none())
-                            .filter_map(|hyperlink| hyperlink.anchor.clone()),
+                            .filter_map(|hyperlink| hyperlink.anchor.as_deref())
+                            .map(bookmark_name_key),
                     );
-                    present.extend(
-                        paragraph
-                            .current_bookmark_projection()
-                            .iter()
-                            .filter(|marker| marker.is_start())
-                            .filter_map(|marker| marker.name().map(str::to_owned)),
-                    );
+                    for marker in paragraph.current_bookmark_projection() {
+                        if let Some(name) = marker.name().filter(|_| marker.is_start()) {
+                            present
+                                .entry(bookmark_name_key(name))
+                                .or_insert_with(|| name.to_owned());
+                        }
+                    }
                 }
                 // The exports leave out a table or row that accepting the
                 // tracked changes removes.
@@ -518,23 +522,22 @@ fn linked_bookmarks(body: &CT_Body) -> HashSet<String> {
             }
         }
     }
-    let (mut linked, mut present) = (HashSet::new(), HashSet::new());
+    let (mut linked, mut present) = (HashSet::new(), HashMap::new());
     collect(body_blocks(body, false), &mut linked, &mut present);
-    linked.retain(|name| present.contains(name));
-    linked
+    present.retain(|key, _| linked.contains(key));
+    present
 }
 
 /// The bookmarks that start in a paragraph and that a link targets, each at
 /// its run boundary in the accepted view.
-fn bookmark_anchors(paragraph: &CT_P, linked: &HashSet<String>) -> Vec<(usize, String)> {
+fn bookmark_anchors(paragraph: &CT_P, linked: &HashMap<String, String>) -> Vec<(usize, String)> {
     paragraph
         .current_bookmark_projection()
         .iter()
         .filter(|marker| marker.is_start())
         .filter_map(|marker| {
             let name = marker.name()?;
-            linked
-                .contains(name)
+            (linked.get(&bookmark_name_key(name))? == name)
                 .then(|| (marker.projected_run_index(), name.to_owned()))
         })
         .collect()

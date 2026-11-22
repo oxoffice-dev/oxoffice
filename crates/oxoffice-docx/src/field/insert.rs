@@ -1,6 +1,7 @@
 //! Inserting sequence, caption, cross-reference and plain fields.
 
 use super::*;
+use oxoffice_docx_oxml::text::bookmark_name_key;
 
 /// Switches governing one authored sequence field.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -159,14 +160,14 @@ impl Document {
             validate_reference_name(&base)?;
             let mut name = base.clone();
             let mut counter = 1u32;
-            while names.contains(&name) {
+            while names.contains(&bookmark_name_key(&name)) {
                 name = format!("{base}_{counter}");
                 validate_reference_name(&name)?;
                 counter = counter
                     .checked_add(1)
                     .ok_or_else(|| Error::Other("caption bookmark names exhausted".into()))?;
             }
-            names.insert(name.clone());
+            names.insert(bookmark_name_key(&name));
             allocated.push(name);
         }
         candidate
@@ -295,6 +296,8 @@ fn sequence_instruction(identifier: &str, options: &SequenceOptions) -> Result<F
     Ok(instruction)
 }
 
+/// The bookmark names of every part, keyed by `bookmark_name_key`: a new
+/// name must differ from each in more than case.
 pub(super) fn caption_bookmark_names(document: &Document) -> Result<HashSet<String>> {
     let mut names = HashSet::new();
     for (part_name, xml) in &document.package.parts {
@@ -323,7 +326,7 @@ pub(super) fn caption_bookmark_names(document: &Document) -> Result<HashSet<Stri
                         b"name",
                         AttributeNamespace::Word,
                     )? {
-                        names.insert(name);
+                        names.insert(bookmark_name_key(&name));
                     }
                 }
                 Event::Eof => break,

@@ -5,7 +5,8 @@ use oxoffice_docx::{
     CaptionOptions, ContentLocation, CrossReferenceOptions, Document, Field, FieldDateTime,
     FieldEvaluationContext, FieldKind, FieldOutcome, ParagraphItemRef, RenderOptions, RevisionView,
     RunItemRef, RunPosition, RunRange, SequenceOptions, StoryId, StoryItemKind, StoryKind,
-    StoryRunPosition, TabAlignment, TabLeader, TableOfFiguresOptions, TocRebuildReport,
+    StoryRunPosition, StoryRunRange, TabAlignment, TabLeader, TableOfFiguresOptions,
+    TocRebuildReport,
 };
 
 use crate::support::{doc_with, doc_with_body, reopen, texts};
@@ -731,6 +732,120 @@ fn a_ref_draws_its_bookmark_as_a_reader_sees_it() {
 }
 
 #[test]
+fn a_reference_written_in_another_case_reaches_its_bookmark() {
+    // Word compares bookmark names without regard to case.
+    let body = format!(
+        "{}<w:p>{}</w:p>",
+        bookmarked(0, "Total", &plain("Total: 5")),
+        complex_field("REF TOTAL", "old")
+    );
+    assert_eq!(drawn_text(&doc_with_body(&body)), "Total: 5Total: 5");
+    for round in texts_over_updates(&body) {
+        assert_eq!(round, ["Total: 5", "Total: 5"]);
+    }
+    let formatted = format!(
+        "{}<w:p>{}</w:p>",
+        bookmarked(0, "Total", &plain("Total: 5")),
+        complex_field(r"REF total \f \h", "old")
+    );
+    for round in texts_over_updates(&formatted) {
+        assert_eq!(round, ["Total: 5", "Total: 5"], "{formatted}");
+    }
+    // A REF in another case to the bookmark around it is a self-reference
+    // too, left out of the bookmark's value.
+    assert_eq!(
+        texts_over_updates(&bookmarked(
+            0,
+            "b",
+            &(plain("X ") + &simple_field("REF B", "old"))
+        ))[3],
+        ["X X "]
+    );
+
+    let mut doc = doc_with(&["See page "]);
+    doc.add_paragraph("Target").page_break_before(true);
+    doc.add_bookmark("Target", runs(1, 0, 1, 1)).unwrap();
+    doc.paragraph_mut(0)
+        .unwrap()
+        .add_run("")
+        .add_field(r"PAGEREF TARGET \h", "?")
+        .unwrap();
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert_eq!(report.page_reference_fields, 1);
+    assert_eq!(texts(&reopen(&mut doc)), ["See page 2", "Target"]);
+
+    // A numbered reference reads the number of the bookmarked item.
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    doc.add_paragraph("First").numbering(list, 0);
+    doc.add_paragraph("Second").numbering(list, 0);
+    doc.add_bookmark("Clause", runs(1, 0, 1, 1)).unwrap();
+    doc.add_paragraph("See ")
+        .add_run("")
+        .add_field(r"REF CLAUSE \r \h", "?")
+        .unwrap();
+    doc.add_paragraph("See ")
+        .add_run("")
+        .add_field(r"REF clause \p", "?")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    doc.update_fields(&no_context()).unwrap();
+    assert_eq!(texts(&doc)[2..], ["See 2", "See above"]);
+
+    // A REF \f copies a header bookmark named in another case.
+    let mut doc = doc_with(&["See "]);
+    doc.set_header("Header words");
+    let header = paragraph_at(&doc, StoryKind::Header, "Header words");
+    let position = |run_index| StoryRunPosition {
+        location: header.clone(),
+        run_index,
+    };
+    doc.add_story_bookmark(
+        "Head",
+        StoryRunRange {
+            start: position(0),
+            end: position(1),
+        },
+    )
+    .unwrap();
+    doc.paragraph_mut(0)
+        .unwrap()
+        .add_run("")
+        .add_field(r"REF HEAD \f \h", "?")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    doc.update_fields(&no_context()).unwrap();
+    assert_eq!(texts(&doc), ["See Header words"]);
+
+    // Two bookmarks whose names differ only in case are one name twice:
+    // a REF to either keeps its stored result.
+    let body = format!(
+        "{}{}<w:p>{}</w:p>",
+        bookmarked(0, "Total", &plain("A")),
+        bookmarked(1, "TOTAL", &plain("B")),
+        complex_field("REF total", "old")
+    );
+    assert_eq!(drawn_text(&doc_with_body(&body)), "ABold");
+    for round in texts_over_updates(&body) {
+        assert_eq!(round, ["A", "B", "old"]);
+    }
+
+    // So does a SEQ field's bookmark operand.
+    let body = format!(
+        "<w:p>{}</w:p>{}<w:p>{}</w:p>",
+        simple_field("SEQ Figure", "?"),
+        bookmarked(0, "Second", &simple_field("SEQ Figure", "?")),
+        simple_field("SEQ Figure SECOND", "?")
+    );
+    let mut doc = doc_with_body(&body);
+    doc.update_fields(&no_context()).unwrap();
+    assert_eq!(texts(&doc), ["1", "2", "2"]);
+}
+
+#[test]
 fn a_ref_that_depends_on_its_own_bookmark_gives_the_same_text_on_every_update() {
     // Word refuses a bookmark self-reference: the REF's result is left out of
     // the bookmark's value, so it cannot grow from one update to the next.
@@ -1136,6 +1251,8 @@ fn bookmark_names_follow_word_rules() {
         // Names starting with an underscore are Word's own (`_Toc`, `_Ref`).
         ("_Toc9", "reserved for producer use"),
         ("chapter_2", "already exists"),
+        // Word compares bookmark names without regard to case.
+        ("Chapter_2", "already exists"),
     ] {
         let error = doc
             .add_bookmark(name, runs(1, 0, 1, 1))
@@ -1148,6 +1265,25 @@ fn bookmark_names_follow_word_rules() {
         .map(|(name, _)| name)
         .collect();
     assert_eq!(names, [longest.as_str(), "chapter_2"]);
+
+    // A bookmark in a header too.
+    doc.set_header("Header");
+    let header = paragraph_at(&doc, StoryKind::Header, "Header");
+    let range = |location: &ContentLocation| StoryRunRange {
+        start: StoryRunPosition {
+            location: location.clone(),
+            run_index: 0,
+        },
+        end: StoryRunPosition {
+            location: location.clone(),
+            run_index: 1,
+        },
+    };
+    let error = doc
+        .add_story_bookmark("CHAPTER_2", range(&header))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("already exists"), "{error}");
 }
 
 #[test]
@@ -1252,6 +1388,124 @@ fn inserting_a_toc_lists_headings_up_to_the_level_with_links_to_toc_bookmarks() 
         bookmark_list(&doc),
         pairs(&[("_Toc1", "Chapter one"), ("_Toc2", "Section one point one")])
     );
+}
+
+#[test]
+fn generated_tables_and_captions_name_bookmarks_in_any_case() {
+    // A TOC limited to a bookmark, and an index entry whose pages are a
+    // bookmark's, written in another case.
+    let field = |instruction: &str| {
+        format!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let heading = |id: u32, name: &str, text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>{text}</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        "{}{}{}{}{}",
+        concat!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \b ANNEX </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>"#,
+            r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        ),
+        heading(1, "Intro", "Intro"),
+        heading(2, "Annex", "Annex"),
+        field(r#"XE "Apple" \r RANGE"#),
+        bookmarked(3, "Range", &plain("Fruit"))
+            + &field("INDEX")
+            // A name the index's own bookmark would take.
+            + &bookmarked(5, "generatedtable_0", &plain("Aside"))
+    ));
+    let report = doc.rebuild_generated_tables().unwrap();
+    assert_eq!(report.index_entries, 1, "{report:?}");
+    assert_eq!(doc.rebuild_toc().unwrap().entry_count, 1);
+    let shown = texts(&doc);
+    assert!(shown.contains(&"Apple, 1–1".to_owned()), "{shown:?}");
+    assert!(
+        shown.iter().any(|text| text.starts_with("Annex\t")),
+        "{shown:?}"
+    );
+    assert!(
+        !shown.iter().any(|text| text.starts_with("Intro\t")),
+        "{shown:?}"
+    );
+    let names: Vec<_> = bookmark_list(&reopen(&mut doc))
+        .into_iter()
+        .map(|(name, _)| name.to_lowercase())
+        .collect();
+    let distinct: std::collections::BTreeSet<_> = names.iter().collect();
+    assert_eq!(distinct.len(), names.len(), "{names:?}");
+    assert!(names.contains(&"generatedtable_1".to_owned()), "{names:?}");
+
+    // So does the bookmark a rebuilt TOC gives a heading.
+    let mut doc = doc_with_body(&format!(
+        "{}{}{}",
+        concat!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>"#,
+            r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Intro</w:t></w:r></w:p>"#
+        ),
+        bookmarked(4, "_toc1", &plain("Note")),
+        "<w:p/>"
+    ));
+    assert_eq!(doc.rebuild_toc().unwrap().entry_count, 1);
+    let names: Vec<_> = bookmark_list(&reopen(&mut doc))
+        .into_iter()
+        .map(|(name, _)| name.to_lowercase())
+        .collect();
+    let distinct: std::collections::BTreeSet<_> = names.iter().collect();
+    assert_eq!(distinct.len(), names.len(), "{names:?}");
+
+    // A caption's bookmark takes a name no bookmark has in any case.
+    let mut doc = doc_with_body(&format!(
+        "{}<w:p><w:r><w:t>chart</w:t></w:r></w:p>",
+        bookmarked(0, "fig1", &plain("Intro"))
+    ));
+    let location = paragraph_at(&doc, StoryKind::Body, "chart");
+    doc.insert_caption(
+        &location,
+        &CaptionOptions {
+            text: "Sales".into(),
+            bookmark: "Fig1".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let names: Vec<_> = bookmark_list(&reopen(&mut doc))
+        .into_iter()
+        .map(|(name, _)| name.to_lowercase())
+        .collect();
+    let distinct: std::collections::BTreeSet<_> = names.iter().collect();
+    assert_eq!(distinct.len(), names.len(), "{names:?}");
+
+    // An internal link names its bookmark in any case.
+    let mut doc = doc_with_body(&bookmarked(0, "Total", &plain("Total")));
+    doc.add_paragraph("See");
+    let location = paragraph_at(&doc, StoryKind::Body, "See");
+    doc.add_internal_hyperlink_at(&location, " the total", "TOTAL", None)
+        .unwrap();
+}
+
+#[test]
+fn a_toc_rebuilds_its_pages_after_a_page_reference_to_its_heading_in_another_case() {
+    let mut doc = Document::new();
+    for heading in ["Scope", "Results"] {
+        doc.add_paragraph(heading).style("Heading1");
+    }
+    doc.insert_toc(0, 1).unwrap();
+    let mut doc = reopen(&mut doc);
+    let (name, _) = bookmark_list(&doc).remove(0);
+    doc.insert_paragraph(0, "See page ")
+        .add_run("")
+        .add_field(&format!(r"PAGEREF {} \h", name.to_uppercase()), "?")
+        .unwrap();
+
+    let report = doc.rebuild_toc().unwrap();
+    assert_eq!(report.entry_count, 2);
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc)[2..4], ["Scope\t1", "Results\t1"]);
 }
 
 #[test]

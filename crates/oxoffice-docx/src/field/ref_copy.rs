@@ -1,6 +1,7 @@
 //! Copying the result of a REF field: the bookmarked runs, with their notes and comments.
 
 use super::*;
+use oxoffice_docx_oxml::text::same_bookmark_name;
 
 /// Preflight before copying a current Field. The boolean identifies unchanged
 /// imported facts whose established raw preservation bypasses semantic editing.
@@ -1410,7 +1411,11 @@ pub(super) fn ref_bookmark_runs(
     let bookmarks = document.bookmarks();
     let matching = bookmarks
         .iter()
-        .filter(|bookmark| bookmark.name() == Some(target))
+        .filter(|bookmark| {
+            bookmark
+                .name()
+                .is_some_and(|name| same_bookmark_name(name, target))
+        })
         .collect::<Vec<_>>();
     if !matching.is_empty() {
         if matching.len() != 1 || matching[0].issue().is_some() {
@@ -1458,13 +1463,13 @@ pub(super) fn ref_bookmark_runs(
     let (ranges, across) = document.story_range_inventory()?;
     if across
         .iter()
-        .any(|kind| matches!(kind, crate::StoryRangeKind::Bookmark { name, .. } if name == target))
+        .any(|kind| matches!(kind, crate::StoryRangeKind::Bookmark { name, .. } if same_bookmark_name(name, target)))
     {
         return Err(Error::Other(
             "REF f target bookmark runs across story owners".into(),
         ));
     }
-    let range = ranges.into_iter().find(|range| matches!(range.kind(), crate::StoryRangeKind::Bookmark { name, .. } if name == target));
+    let range = ranges.into_iter().find(|range| matches!(range.kind(), crate::StoryRangeKind::Bookmark { name, .. } if same_bookmark_name(name, target)));
     let Some(range) = range else {
         return Ok(None);
     };
@@ -1494,7 +1499,11 @@ pub(super) fn ref_bookmark_runs(
                 .bookmark_markers
                 .iter()
                 .find(|marker| {
-                    marker.is_start() && marker.id() == Some(*id) && marker.name() == Some(target)
+                    marker.is_start()
+                        && marker.id() == Some(*id)
+                        && marker
+                            .name()
+                            .is_some_and(|name| same_bookmark_name(name, target))
                 })
                 .ok_or_else(|| {
                     Error::Other(

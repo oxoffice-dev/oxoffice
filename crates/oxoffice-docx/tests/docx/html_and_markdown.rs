@@ -1030,6 +1030,25 @@ fn charts_export_as_data_tables_and_an_unreadable_chart_is_diagnosed() {
 // ---- Stories other than the body ----
 
 #[test]
+fn an_internal_link_in_another_case_reaches_its_bookmark_in_both_exports() {
+    // Word compares bookmark names without regard to case; an anchor and
+    // its links are written in the bookmark's own spelling.
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="Goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="GOAL">"#,
+        r#"<w:r><w:t>the goal</w:t></w:r></w:hyperlink></w:p>"#,
+    )));
+    let html = doc.to_html_fragment();
+    assert!(html.contains(r##"<a id="Goal"></a>Goal"##), "{html}");
+    assert!(
+        html.contains(r##"See <a href="#Goal">the goal</a>"##),
+        "{html}"
+    );
+    let markdown = doc.to_markdown();
+    assert!(markdown.contains("See [the goal](#Goal)"), "{markdown}");
+}
+
+#[test]
 fn internal_links_reach_their_bookmark_in_both_exports() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,

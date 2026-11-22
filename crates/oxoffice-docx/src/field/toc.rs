@@ -1,6 +1,7 @@
 //! Tables of contents: their bookmarks, sources, entries and rebuild.
 
 use super::*;
+use oxoffice_docx_oxml::text::bookmark_name_key;
 
 impl Document {
     /// Rebuild every supported table of contents already present in the document.
@@ -250,12 +251,14 @@ impl Document {
         }
         let mut page_edits = Vec::with_capacity(placeholders.len());
         for placeholder in &placeholders {
-            let target = page_values.get(&placeholder.bookmark).ok_or_else(|| {
-                Error::Other(format!(
-                    "table of contents page target {} was not resolved",
-                    placeholder.bookmark
-                ))
-            })?;
+            let target = page_values
+                .get(&bookmark_name_key(&placeholder.bookmark))
+                .ok_or_else(|| {
+                    Error::Other(format!(
+                        "table of contents page target {} was not resolved",
+                        placeholder.bookmark
+                    ))
+                })?;
             let span = &final_spans[placeholder.toc_index];
             let owned = &final_xml[span.result_start..span.result_end];
             let matches = byte_match_offsets(owned, placeholder.token.as_bytes());
@@ -318,6 +321,7 @@ struct TocBookmark {
 #[derive(Debug)]
 struct TocBookmarkState {
     max_id: i32,
+    /// Keyed by `bookmark_name_key`, as the next one.
     names: HashSet<String>,
     named_ranges: HashMap<String, (TocDocumentPosition, TocDocumentPosition)>,
     whole_paragraphs: HashMap<usize, (i32, String)>,
@@ -379,7 +383,7 @@ fn inspect_toc_bookmarks(body: &CT_Body, xml: &[u8]) -> Result<TocBookmarkState>
                         "table of contents source has a bookmark without a name".to_owned(),
                     )
                 })?;
-                if !names.insert(name.to_owned()) || starts.contains_key(&id) {
+                if !names.insert(bookmark_name_key(name)) || starts.contains_key(&id) {
                     return Err(Error::Other(
                         "table of contents source has ambiguous duplicate bookmarks".to_owned(),
                     ));
@@ -428,7 +432,7 @@ fn inspect_toc_bookmarks(body: &CT_Body, xml: &[u8]) -> Result<TocBookmarkState>
             ));
         }
         named_ranges.insert(
-            name.clone(),
+            bookmark_name_key(&name),
             (
                 TocDocumentPosition {
                     paragraph: start_paragraph,
@@ -879,14 +883,19 @@ fn paragraph_token(
 struct TocBookmarkAllocator {
     next_id: Option<i32>,
     next_name: Option<u32>,
+    /// The names taken, keyed by `bookmark_name_key`.
     names: HashSet<String>,
     whole_paragraphs: HashMap<usize, (i32, String)>,
 }
 
 impl TocBookmarkAllocator {
     fn new(state: TocBookmarkState, authored_names: &HashSet<String>) -> Self {
+        let authored = authored_names
+            .iter()
+            .map(|name| bookmark_name_key(name))
+            .collect::<HashSet<_>>();
         let mut names = state.names;
-        names.retain(|name| !authored_names.contains(name));
+        names.retain(|name| !authored.contains(name));
         Self {
             next_id: state.max_id.checked_add(1),
             next_name: Some(1),
@@ -916,7 +925,7 @@ impl TocBookmarkAllocator {
             })?;
             let name = format!("_Toc{suffix}");
             self.next_name = suffix.checked_add(1);
-            if self.names.insert(name.clone()) {
+            if self.names.insert(bookmark_name_key(&name)) {
                 return Ok(name);
             }
         }
@@ -1000,11 +1009,15 @@ fn discover_toc_sources(
             .bookmark
             .as_ref()
             .map(|name| {
-                bookmarks.named_ranges.get(name).copied().ok_or_else(|| {
-                    Error::Other(format!(
-                        "table of contents source bookmark {name} was not found"
-                    ))
-                })
+                bookmarks
+                    .named_ranges
+                    .get(&bookmark_name_key(name))
+                    .copied()
+                    .ok_or_else(|| {
+                        Error::Other(format!(
+                            "table of contents source bookmark {name} was not found"
+                        ))
+                    })
             })
             .transpose()?;
         let mut sources = Vec::new();
@@ -3098,6 +3111,7 @@ pub(super) fn reopen_staged_document(document: Document) -> Result<Document> {
     document.reopen_prepared_staged()
 }
 
+/// The page each page reference shows, keyed by `bookmark_name_key`.
 fn deterministic_toc_page_values(document: &Document) -> Result<HashMap<String, String>> {
     let layout = document.layout_deterministic()?;
     let section_formats = section_page_formats(&document.document);
@@ -3141,13 +3155,13 @@ fn deterministic_toc_page_values(document: &Document) -> Result<HashMap<String, 
                     });
                 if !valid_page
                     || output
-                        .get(name)
+                        .get(&bookmark_name_key(name))
                         .is_some_and(|existing| existing != &run.text)
                 {
                     invalid_target.get_or_insert_with(|| name.to_owned());
                 } else {
                     output
-                        .entry(name.to_owned())
+                        .entry(bookmark_name_key(name))
                         .or_insert_with(|| run.text.clone());
                 }
             }

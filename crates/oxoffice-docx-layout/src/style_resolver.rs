@@ -10,6 +10,7 @@ use oxoffice_docx_oxml::numbering::{CT_Lvl, CT_Numbering, ST_LvlSuffix, ST_Numbe
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_TabJc;
 use oxoffice_docx_oxml::styles::{CT_Style, CT_Styles, StyleType};
+use oxoffice_docx_oxml::text::bookmark_name_key;
 use oxoffice_layout::{NoteRef, SourceNodeId};
 
 /// A fully resolved paragraph with merged properties and numbering info.
@@ -213,6 +214,7 @@ pub struct NumberingState {
     pending_sections: HashSet<u32>,
     resolved_by_source: HashMap<SourceNodeId, ResolvedNumbering>,
     pub(crate) navigation: HashMap<SourceNodeId, crate::ParagraphNavigation>,
+    /// Keyed by `bookmark_name_key`, as the next one.
     bookmark_sources: HashMap<String, SourceNodeId>,
     resolved_by_bookmark: HashMap<String, (SourceNodeId, ResolvedNumbering)>,
     main_story_sources: HashSet<SourceNodeId>,
@@ -388,11 +390,12 @@ impl NumberingState {
         numbering: &ResolvedNumbering,
     ) {
         self.resolved_by_bookmark
-            .insert(name.to_owned(), (source, numbering.clone()));
+            .insert(bookmark_name_key(name), (source, numbering.clone()));
     }
 
     pub(crate) fn record_bookmark_source(&mut self, name: &str, source: SourceNodeId) {
-        self.bookmark_sources.insert(name.to_owned(), source);
+        self.bookmark_sources
+            .insert(bookmark_name_key(name), source);
     }
 
     pub(crate) fn bookmark_sources(&self) -> impl Iterator<Item = (&str, SourceNodeId)> {
@@ -402,12 +405,12 @@ impl NumberingState {
     }
 
     pub(crate) fn bookmark_source(&self, name: &str) -> Option<SourceNodeId> {
-        self.bookmark_sources.get(name).copied()
+        self.bookmark_sources.get(&bookmark_name_key(name)).copied()
     }
 
     pub(crate) fn bookmark(&self, name: &str) -> Option<(SourceNodeId, &ResolvedNumbering)> {
         self.resolved_by_bookmark
-            .get(name)
+            .get(&bookmark_name_key(name))
             .map(|(source, numbering)| (*source, numbering))
     }
 

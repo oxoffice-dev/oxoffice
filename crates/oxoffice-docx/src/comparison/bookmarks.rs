@@ -1,6 +1,7 @@
 //! Body bookmarks: reconciling and rewriting them after a comparison.
 
 use super::*;
+use oxoffice_docx_oxml::text::bookmark_name_key;
 
 /// A bookmark start of a main story.
 struct BodyBookmark {
@@ -214,7 +215,7 @@ pub(super) fn reconcile_body_bookmarks(
                     for (document, name) in &parts {
                         // Word compares bookmark names without regard to case.
                         for token in name_tokens(part_xml(document, name)?) {
-                            tokens.insert(token.to_lowercase());
+                            tokens.insert(bookmark_name_key(token));
                         }
                     }
                     let suffix = tokens
@@ -230,7 +231,7 @@ pub(super) fn reconcile_body_bookmarks(
                     Error::Other("comparison bookmark names are exhausted".into())
                 })?;
                 let candidate = format!("_Toc{suffix}");
-                if !taken.contains(&candidate.to_lowercase()) {
+                if !taken.contains(&bookmark_name_key(&candidate)) {
                     break candidate;
                 }
             };
@@ -344,7 +345,7 @@ pub(super) fn reconcile_body_bookmarks(
             if std::ptr::eq(*document, &*edited)
                 && *name != edited.doc_part_name
                 && name_tokens(part_xml(document, name)?)
-                    .any(|token| folded.contains_key(&token.to_lowercase()))
+                    .any(|token| folded.contains_key(&bookmark_name_key(token)))
             {
                 return Ok(None);
             }
@@ -522,7 +523,7 @@ fn name_tokens(text: &[u8]) -> impl Iterator<Item = &str> {
 fn folded_names(names: &HashMap<String, String>) -> HashMap<String, &String> {
     names
         .iter()
-        .map(|(old, new)| (old.to_lowercase(), new))
+        .map(|(old, new)| (bookmark_name_key(old), new))
         .collect()
 }
 
@@ -541,7 +542,7 @@ fn rewrite_body_bookmarks(
         let mut at = 0;
         for range in name_token_ranges(value) {
             let token = std::str::from_utf8(&value[range.clone()]).expect("ASCII token");
-            if let Some(name) = names.get(&token.to_lowercase()) {
+            if let Some(name) = names.get(&bookmark_name_key(token)) {
                 output.extend_from_slice(&value[at..range.start]);
                 output.extend_from_slice(name.as_bytes());
                 at = range.end;
@@ -589,7 +590,7 @@ fn rewrite_body_bookmarks(
         }
         for range in name_token_ranges(&text) {
             let token = std::str::from_utf8(&text[range.clone()]).expect("ASCII token");
-            let Some(name) = names.get(&token.to_lowercase()) else {
+            let Some(name) = names.get(&bookmark_name_key(token)) else {
                 continue;
             };
             let at = segments.partition_point(|(start, _)| *start <= range.start) - 1;

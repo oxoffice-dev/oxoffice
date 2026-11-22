@@ -1,7 +1,7 @@
 //! Importing document fragments: parts, styles and numbering, notes and markers, and fresh identities for what they bring.
 
 use super::*;
-use oxoffice_docx_oxml::text::NESTED_FIELD_STAND_IN;
+use oxoffice_docx_oxml::text::{NESTED_FIELD_STAND_IN, bookmark_name_key};
 
 pub(crate) fn import_document_fragment_content(
     document: &mut Document,
@@ -3223,15 +3223,15 @@ impl BodyIdentityState {
 
     fn use_names(&mut self, names: impl IntoIterator<Item = String>) {
         for name in names {
-            self.folded_names.insert(name.to_lowercase());
+            self.folded_names.insert(bookmark_name_key(&name));
             self.used_names.insert(name);
         }
     }
 
     fn use_bookmark_names(&mut self, names: impl IntoIterator<Item = String>) {
         for name in names {
-            self.folded_bookmark_names.insert(name.to_lowercase());
-            self.folded_names.insert(name.to_lowercase());
+            self.folded_bookmark_names.insert(bookmark_name_key(&name));
+            self.folded_names.insert(bookmark_name_key(&name));
             self.used_names.insert(name);
         }
     }
@@ -3246,11 +3246,12 @@ impl BodyIdentityState {
             self.next_name = self.next_name.checked_add(1).ok_or_else(|| {
                 Error::Other("mail merge exhausted the bookmark name range".to_owned())
             })?;
-            if !self.folded_names.contains(&candidate.to_lowercase())
+            if !self.folded_names.contains(&bookmark_name_key(&candidate))
                 && self.used_names.insert(candidate.clone())
             {
-                self.folded_names.insert(candidate.to_lowercase());
-                self.folded_bookmark_names.insert(candidate.to_lowercase());
+                self.folded_names.insert(bookmark_name_key(&candidate));
+                self.folded_bookmark_names
+                    .insert(bookmark_name_key(&candidate));
                 return Ok(candidate);
             }
         }
@@ -3261,7 +3262,7 @@ impl BodyIdentityState {
     /// any case. A reference to it in the destination then reaches the
     /// imported bookmark, as when Word pastes one.
     fn keep_free_name(&mut self, name: &str) -> bool {
-        let folded = name.to_lowercase();
+        let folded = bookmark_name_key(name);
         if !self.folded_bookmark_names.insert(folded.clone()) {
             return false;
         }
@@ -3659,7 +3660,7 @@ impl<'a> RenamedBookmarks<'a> {
     fn new(names: &'a BTreeMap<String, String>) -> Self {
         let mut folded = HashMap::with_capacity(names.len());
         for (old, new) in names {
-            folded.entry(old.to_lowercase()).or_insert(new);
+            folded.entry(bookmark_name_key(old)).or_insert(new);
         }
         Self { names, folded }
     }
@@ -3668,12 +3669,12 @@ impl<'a> RenamedBookmarks<'a> {
     /// it. Word compares bookmark names without regard to case, so a
     /// reference written in another case follows the rename too.
     fn get(&self, old: &str) -> Option<&'a String> {
-        let folded = old.to_lowercase();
+        let folded = bookmark_name_key(old);
         let new = self
             .names
             .get(old)
             .or_else(|| self.folded.get(&folded).copied())?;
-        (new.to_lowercase() != folded).then_some(new)
+        (bookmark_name_key(new) != folded).then_some(new)
     }
 }
 

@@ -1,7 +1,7 @@
 //! Evaluating fields: the evaluator and what it reads from the document.
 
 use super::*;
-use oxoffice_docx_oxml::text::{bookmarks_depending_on, field_ref_targets};
+use oxoffice_docx_oxml::text::{bookmark_name_key, bookmarks_depending_on, field_ref_targets};
 
 pub(super) struct BookmarkValue {
     text: String,
@@ -42,7 +42,7 @@ fn settle_bookmark_texts(bookmarks: &mut BTreeMap<String, BookmarkValue>) {
         let Some(runs) = &bookmark.runs else {
             continue;
         };
-        let targets = depends.entry(name.to_lowercase()).or_default();
+        let targets = depends.entry(name.clone()).or_default();
         for run in runs.iter().flatten() {
             run.accepted_text_keeping(&mut |field| {
                 field_ref_targets(field, targets);
@@ -117,13 +117,14 @@ fn field_needs_numbering_layout(field: &Field) -> bool {
 
 impl<'a> Evaluator<'a> {
     pub(super) fn new(document: &'a Document, context: &'a FieldEvaluationContext) -> Self {
+        // Keyed by `bookmark_name_key`: a field names a bookmark in any case.
         let mut bookmarks: BTreeMap<String, BookmarkValue> = document
             .bookmarks()
             .into_iter()
             .filter(|bookmark| bookmark.issue().is_none())
             .filter_map(|bookmark| {
                 Some((
-                    bookmark.name()?.to_owned(),
+                    bookmark_name_key(bookmark.name()?),
                     BookmarkValue {
                         text: bookmark.text().to_owned(),
                         range: bookmark.range(),
@@ -156,23 +157,23 @@ impl<'a> Evaluator<'a> {
             if let Ok((ranges, across)) = paired {
                 for kind in across {
                     if let crate::StoryRangeKind::Bookmark { name, .. } = kind
-                        && !bookmarks.contains_key(&name)
+                        && !bookmarks.contains_key(&bookmark_name_key(&name))
                     {
-                        cross_owner_bookmarks.insert(name);
+                        cross_owner_bookmarks.insert(bookmark_name_key(&name));
                     }
                 }
                 for range in ranges {
                     let crate::StoryRangeKind::Bookmark { name, .. } = range.kind() else {
                         continue;
                     };
-                    if bookmarks.contains_key(name)
+                    if bookmarks.contains_key(&bookmark_name_key(name))
                         || range.range().start.location.story().kind() == StoryKind::Body
                     {
                         continue;
                     }
                     if let Ok(Some(cache)) = ref_bookmark_runs(document, name) {
                         bookmarks.insert(
-                            name.clone(),
+                            bookmark_name_key(name),
                             BookmarkValue {
                                 text: String::new(),
                                 range: None,
@@ -182,7 +183,12 @@ impl<'a> Evaluator<'a> {
                     }
                 }
             }
-            bookmarks.retain(|name, _| name_counts.get(name).is_some_and(|count| *count == 1));
+            // Two names in different cases are one name to Word.
+            let mut counts = HashMap::<String, usize>::new();
+            for (name, count) in &name_counts {
+                *counts.entry(bookmark_name_key(name)).or_default() += count;
+            }
+            bookmarks.retain(|key, _| counts.get(key).is_some_and(|count| *count == 1));
         }
         settle_bookmark_texts(&mut bookmarks);
         Self {
@@ -882,10 +888,10 @@ impl<'a> Evaluator<'a> {
             return match ref_bookmark_runs(self.document, target) {
                 Ok(Some(cache)) => FieldOutcome::Resolved(
                     self.bookmarks
-                        .get(target)
+                        .get(&bookmark_name_key(target))
                         .map(|bookmark| bookmark.text.clone())
                         .unwrap_or_else(|| {
-                            let name = target.to_lowercase();
+                            let name = bookmark_name_key(target);
                             runs_text_without(&cache.rows, &|candidate| candidate == name)
                         }),
                 ),
@@ -893,7 +899,7 @@ impl<'a> Evaluator<'a> {
                 Err(error) => keep(&format!("REF f source could not be resolved: {error}")),
             };
         }
-        match self.bookmarks.get(target) {
+        match self.bookmarks.get(&bookmark_name_key(target)) {
             Some(bookmark) => {
                 let position = if has_switch(instruction, "p") {
                     match self
@@ -962,7 +968,10 @@ impl<'a> Evaluator<'a> {
                 }
                 FieldOutcome::Resolved(value)
             }
-            None if self.cross_owner_bookmarks.contains(target) => {
+            None if self
+                .cross_owner_bookmarks
+                .contains(&bookmark_name_key(target)) =>
+            {
                 keep(&format!("REF target {target} runs across story owners"))
             }
             None => keep(&format!("REF target {target} was not found")),
@@ -973,7 +982,7 @@ impl<'a> Evaluator<'a> {
         let Some(target) = text_argument(instruction, 0) else {
             return keep("PAGEREF requires a bookmark name");
         };
-        if self.bookmarks.contains_key(target) {
+        if self.bookmarks.contains_key(&bookmark_name_key(target)) {
             FieldOutcome::DeferredPagination
         } else {
             keep(&format!("PAGEREF target {target} was not found"))
