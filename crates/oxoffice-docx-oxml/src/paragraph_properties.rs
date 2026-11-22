@@ -1931,6 +1931,11 @@ impl CT_PPr {
         }
     }
 
+    /// Whether the paragraph's writer writes nothing for these properties.
+    pub(crate) fn writes_nothing(&self) -> bool {
+        self.is_empty_in(true)
+    }
+
     fn is_empty_in(&self, positioned: bool) -> bool {
         self.style_id.is_none()
             && self.jc.is_none()
@@ -1975,7 +1980,9 @@ impl CT_PPr {
             && (self.tabs.is_none()
                 || (!positioned && self.modeled_source_index(PPR_TABS_SLOT).is_some()))
             && self.shading.is_none()
-            && self.rpr.is_none()
+            // Mark run properties the writer writes nothing for, such as
+            // Google's `<w:pPr><w:rPr/></w:pPr>`, leave nothing to write.
+            && self.rpr.as_ref().is_none_or(CT_RPr::writes_nothing)
             && self.num_id.is_none()
             && self.num_ilvl.is_none()
             && self.num_id_raw.is_none()

@@ -1318,10 +1318,35 @@ impl HdrFtrType {
 }
 
 /// A header or footer reference (stored in section properties).
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Two references are equal when they have the same type and relationship,
+/// wherever they were read.
+#[derive(Debug, Clone)]
 pub struct HdrFtrRef {
     /// The type (default, first, even)
     pub hdr_ftr_type: HdrFtrType,
     /// Relationship ID
     pub rel_id: String,
+    /// Its place among all the header and footer references of the section
+    /// it was read in, which interleaves the two lists of `CT_SectPr` back
+    /// in that order. `None` for a reference new to its section.
+    pub(crate) source_index: Option<usize>,
+}
+
+impl HdrFtrRef {
+    /// A reference of `hdr_ftr_type` to the story under relationship
+    /// `rel_id`, new to its section.
+    pub fn new(hdr_ftr_type: HdrFtrType, rel_id: impl Into<String>) -> Self {
+        Self {
+            hdr_ftr_type,
+            rel_id: rel_id.into(),
+            source_index: None,
+        }
+    }
+}
+
+impl PartialEq for HdrFtrRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.hdr_ftr_type == other.hdr_ftr_type && self.rel_id == other.rel_id
+    }
 }

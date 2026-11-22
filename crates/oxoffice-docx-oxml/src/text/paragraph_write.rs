@@ -58,7 +58,10 @@ impl CT_P {
         let _source_scope = (role == XmlWriteRole::Source).then(|| root_binding_scope(0));
         crate::document::admit_word_model(crate::document::WordOwner::Paragraph(self))?;
         if para_id.is_none()
-            && self.properties.is_none()
+            && self
+                .properties
+                .as_ref()
+                .is_none_or(crate::properties::CT_PPr::writes_nothing)
             && self.runs.is_empty()
             && self.hyperlinks.is_empty()
             && self.comment_ranges.is_empty()
