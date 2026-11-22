@@ -2497,6 +2497,46 @@ fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
 }
 
 #[test]
+fn placeholder_text_survives_an_odp_round_trip() {
+    // A placeholder that takes its place from its layout carries no
+    // transform of its own; ODP needs one for every frame.
+    let mut prs = new_deck();
+    let layout = layout_named(&prs, "Title and Content");
+    prs.add_slide(layout).unwrap();
+    let placeholders = prs.slide(0).unwrap().shapes().count();
+    assert!(placeholders >= 2, "a title and a body");
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("Quarterly plan")
+        .unwrap();
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(1)
+        .unwrap()
+        .set_text("Ship the beta")
+        .unwrap();
+    let written = prs.to_odp_bytes().unwrap();
+    assert!(
+        !written
+            .diagnostics
+            .iter()
+            .any(|diagnostic| format!("{diagnostic:?}").contains("without bounds")),
+        "{:?}",
+        written.diagnostics
+    );
+    let read = Presentation::from_odp_bytes(&written.bytes)
+        .unwrap()
+        .presentation;
+    let text = read.slide(0).unwrap().text();
+    assert!(
+        text.contains("Quarterly plan") && text.contains("Ship the beta"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_slide_name_holding_a_tab_and_line_ends_survives_an_odp_round_trip() {
     let name = "Plan\tQ1\nend\rnote";
     let deck = deck_with_titles(&["Plan"]);

@@ -1214,6 +1214,27 @@ impl<'a> OdpWriter<'a> {
         Ok(output)
     }
 
+    /// A shape's own transform, or the one a placeholder without one
+    /// inherits from its layout or master, where PowerPoint places it.
+    fn placed_transform(
+        &self,
+        slide_index: usize,
+        own: Option<&CT_Transform2D>,
+        placeholder: Option<&CT_Placeholder>,
+    ) -> Result<Option<CT_Transform2D>> {
+        match (own, placeholder) {
+            (Some(transform), _) => Ok(Some(transform.clone())),
+            // A layout or master that cannot be read leaves the shape
+            // unplaced: it is dropped with its diagnostic, not the export.
+            (None, Some(placeholder)) => Ok(self
+                .presentation
+                .inherited_transform(slide_index, placeholder)
+                .ok()
+                .flatten()),
+            (None, None) => Ok(None),
+        }
+    }
+
     fn write_shape(
         &mut self,
         output: &mut String,
@@ -1238,9 +1259,12 @@ impl<'a> OdpWriter<'a> {
                         "shape appearance was omitted",
                     )?;
                 }
-                let Some(rect) = shape
-                    .shape_properties
-                    .transform
+                let Some(rect) = self
+                    .placed_transform(
+                        slide_index,
+                        shape.shape_properties.transform.as_ref(),
+                        shape.placeholder.as_ref(),
+                    )?
                     .as_ref()
                     .and_then(transform_rect)
                 else {
@@ -1301,9 +1325,12 @@ impl<'a> OdpWriter<'a> {
                         "media playback metadata was omitted",
                     )?;
                 }
-                let Some(rect) = picture
-                    .shape_properties
-                    .transform
+                let Some(rect) = self
+                    .placed_transform(
+                        slide_index,
+                        picture.shape_properties.transform.as_ref(),
+                        picture.placeholder.as_ref(),
+                    )?
                     .as_ref()
                     .and_then(transform_rect)
                 else {
@@ -1412,11 +1439,15 @@ impl<'a> OdpWriter<'a> {
 }
 
 fn transform_rect(transform: &CT_Transform2D) -> Option<FrameRect> {
-    let offset = transform.offset.as_ref()?;
+    // A missing offset is the slide's origin, as the render reads it.
+    let (left, top) = transform
+        .offset
+        .as_ref()
+        .map_or((Emu(0), Emu(0)), |offset| (offset.x, offset.y));
     let extent = transform.extent.as_ref()?;
     (extent.cx.0 > 0 && extent.cy.0 > 0).then_some(FrameRect {
-        left: offset.x,
-        top: offset.y,
+        left,
+        top,
         width: extent.cx,
         height: extent.cy,
     })
