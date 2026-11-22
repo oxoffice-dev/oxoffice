@@ -37,8 +37,12 @@ minutes, bounded by the slowest platform):
 | --- | --- |
 | Format, clippy, licences, WebAssembly | as before, with the WebAssembly check and the pptx tests without `render` folded in |
 | Test (3 OS) | wheel, smoke, Rust integration tests, Python tests, all without debug assertions (`--profile scaling`); render subset on Linux, off elsewhere; workflow walks on one copy |
-| Debug checks (Linux) | the Python suite on a wheel with debug assertions (`--profile ci`) |
 | Timings (Linux) | the QUICK scaling sets, without the untimed run-once test the test jobs already run |
+
+A `Debug checks` job (the Python suite on a debug wheel, 12 minutes on its
+first run) was removed the same day (user decision): debug assertions run in
+every local debug build and `cargo test`, in lint's pptx tests without
+`render`, and at night.
 
 `nightly.yml` ("Full checks", 02:23 UTC, `workflow_dispatch`,
 `workflow_call`) runs what the CI leaves out: the Rust and Python tests
@@ -46,8 +50,7 @@ under debug assertions on the three platforms with `OXOFFICE_RENDER=full`
 and `OXOFFICE_WORKFLOWS=full`; every scaling call on the three platforms.
 A failure opens or comments one issue labelled `ci-nightly`; the next green
 run closes it. Its jobs restore main's caches (shared keys) and save none:
-the debug test builds start from scratch on macOS and Windows, which nobody
-waits for.
+the debug test builds start from scratch, which nobody waits for.
 
 Every push, drafts and stacked pull requests included, now runs a macOS job.
 The night of 2026-11-21 queued on the 5 macOS jobs the organization could

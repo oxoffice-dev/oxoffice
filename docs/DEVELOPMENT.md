@@ -273,10 +273,10 @@ merge variant).
   WebAssembly check and the PowerPoint tests without the `render` feature:
   the WebAssembly bindings build the facade, so an edit must not need the
   rendering crates); `Test` on the three platforms, built without debug
-  assertions (`--profile scaling`); `Debug checks`, the Python suite under
-  debug assertions on Linux; `Timings` on Linux, the QUICK scaling sets. A
-  push to `main` runs in full, beside the runs before it, so every merge has
-  its own verdict. See
+  assertions (`--profile scaling`); `Timings` on Linux, the QUICK scaling
+  sets. Debug assertions run in every local debug build and `cargo test`, in
+  lint's pptx tests without `render`, and at night. A push to `main` runs in full, beside the runs before it, so
+  every merge has its own verdict. See
   [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
 - **The full sets run every night** (`nightly.yml`, "Full checks", 02:23
   UTC): the Rust and Python tests under debug assertions on the three
