@@ -920,7 +920,7 @@ impl Document {
         validate_bookmark_name(name)?;
         let (ranges, across) = self.story_range_inventory()?;
         if ranges.iter().map(StoryRangeRef::kind).chain(&across).any(|kind| {
-            matches!(kind, StoryRangeKind::Bookmark { name: existing, .. } if existing == name)
+            matches!(kind, StoryRangeKind::Bookmark { name: existing, .. } if oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
         }) {
             return Err(Error::Other(format!("bookmark name {name} already exists")));
         }
@@ -1673,11 +1673,11 @@ impl Document {
     fn insert_bookmark(&mut self, name: &str, range: RunRange) -> Result<i32> {
         validate_bookmark_name(name)?;
         validate_bookmark_range(&self.document.body.content, range)?;
-        if self
-            .bookmarks()
-            .iter()
-            .any(|bookmark| bookmark.name() == Some(name))
-        {
+        if self.bookmarks().iter().any(|bookmark| {
+            bookmark.name().is_some_and(|existing| {
+                oxoffice_docx_oxml::text::same_bookmark_name(existing, name)
+            })
+        }) {
             return Err(Error::Other(format!("bookmark name {name} already exists")));
         }
         let mut identifiers = self.identifiers.clone();

@@ -386,7 +386,9 @@ impl SequenceCollector<'_> {
             let starts = self
                 .bookmark_starts
                 .iter()
-                .filter(|(_, name, _, _, _)| name == target)
+                .filter(|(_, name, _, _, _)| {
+                    oxoffice_docx_oxml::text::same_bookmark_name(name, target)
+                })
                 .collect::<Vec<_>>();
             let result = if starts.is_empty() {
                 Ok("Error! Bookmark not defined.".into())

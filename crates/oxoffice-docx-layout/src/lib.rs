@@ -234,7 +234,7 @@ impl WordSequenceSnapshot {
             .ok_or("REF relative source physical owner is unavailable")?;
         let mut starts = Vec::new();
         for (id, name, node, run, order) in &self.position_bookmark_starts {
-            if name != target {
+            if !oxoffice_docx_oxml::text::same_bookmark_name(name, target) {
                 continue;
             }
             let Some((owner, children, run)) = position(*node, *run) else {
@@ -350,6 +350,7 @@ pub struct WordLayoutResult {
     navigation_failure: Option<String>,
     navigation_by_source: std::collections::BTreeMap<SourceNodeId, ParagraphNavigation>,
     paragraph_pages: std::collections::BTreeMap<SourceNodeId, usize>,
+    /// Keyed by `bookmark_name_key`, as the next one.
     bookmark_numbering: std::collections::BTreeMap<String, style_resolver::ResolvedNumbering>,
     bookmark_suppressed: std::collections::BTreeSet<String>,
     page_reference_names: Vec<String>,
@@ -416,7 +417,7 @@ impl WordLayoutResult {
         let index = self
             .page_reference_names
             .iter()
-            .position(|value| value == name)?;
+            .position(|value| oxoffice_docx_oxml::text::same_bookmark_name(value, name))?;
         self.bookmark_pages.get(&index).copied()
     }
 
@@ -532,13 +533,15 @@ impl WordLayoutResult {
     /// Visible numbering for one uniquely paired accepted physical bookmark owner.
     #[doc(hidden)]
     pub fn bookmark_numbering(&self, name: &str) -> Option<&style_resolver::ResolvedNumbering> {
-        self.bookmark_numbering.get(name)
+        self.bookmark_numbering
+            .get(&oxoffice_docx_oxml::text::bookmark_name_key(name))
     }
 
     /// Explicit numbering suppression at a uniquely paired physical bookmark.
     #[doc(hidden)]
     pub fn bookmark_numbering_suppressed(&self, name: &str) -> bool {
-        self.bookmark_suppressed.contains(name)
+        self.bookmark_suppressed
+            .contains(&oxoffice_docx_oxml::text::bookmark_name_key(name))
     }
 
     /// Resolve numbering by flattened main-story paragraph order.

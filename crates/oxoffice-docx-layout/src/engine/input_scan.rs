@@ -2,14 +2,16 @@
 
 use std::collections::BTreeSet;
 
-use oxoffice_docx_oxml::text::{bookmarks_depending_on, field_ref_targets};
+use oxoffice_docx_oxml::text::{
+    bookmark_name_key, bookmarks_depending_on, field_ref_targets, same_bookmark_name,
+};
 
 use super::*;
 
 pub(super) fn page_ref_id(input: &LayoutInput, name: &str) -> Option<usize> {
     page_reference_names(input)
         .iter()
-        .position(|candidate| candidate == name)
+        .position(|candidate| same_bookmark_name(candidate, name))
 }
 
 pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
@@ -25,7 +27,9 @@ pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
                     let instruction = field.effective_instruction();
                     if instruction.name == "PAGEREF"
                         && let Some(bookmark) = field_text_argument(&instruction, 0)
-                        && !names.iter().any(|candidate| candidate == bookmark)
+                        && !names
+                            .iter()
+                            .any(|candidate| same_bookmark_name(candidate, bookmark))
                     {
                         names.push(bookmark.to_owned());
                     }
@@ -593,7 +597,11 @@ fn bookmark_range_in_paragraphs(
         .iter()
         .filter_map(|(id, starts)| {
             let ends = ends.get(id)?;
-            (starts.len() == 1 && starts[0].0 == Some(name) && ends.len() == 1)
+            (starts.len() == 1
+                && starts[0]
+                    .0
+                    .is_some_and(|start| same_bookmark_name(start, name))
+                && ends.len() == 1)
                 .then_some((starts[0].1, ends[0]))
         })
         .collect::<Vec<_>>();
@@ -610,7 +618,7 @@ fn bookmark_range_in_paragraphs(
 }
 
 /// The runs of the bookmark `name` as the revision view shows them, one row
-/// per paragraph, when exactly one bookmark has that name.
+/// per paragraph, when exactly one bookmark has that name in any case.
 fn bookmark_value_runs(input: &LayoutInput, name: &str) -> Option<Vec<Vec<CT_R>>> {
     let stories = input_story_paragraphs(input);
     let block_bookmarks = input.block_bookmarks();
@@ -621,7 +629,12 @@ fn bookmark_value_runs(input: &LayoutInput, name: &str) -> Option<Vec<Vec<CT_R>>
             let (before, after) = block_bookmarks.markers(p);
             p.bookmark_markers.iter().chain(before).chain(after)
         })
-        .filter(|marker| marker.is_start() && marker.name() == Some(name))
+        .filter(|marker| {
+            marker.is_start()
+                && marker
+                    .name()
+                    .is_some_and(|marker| same_bookmark_name(marker, name))
+        })
         .count();
     if named_starts != 1 {
         return None;
@@ -656,27 +669,6 @@ pub(super) fn bookmark_exists(input: &LayoutInput, name: &str) -> bool {
     bookmark_value_runs(input, name).is_some()
 }
 
-/// The name of the one bookmark whose name folds to `folded`.
-fn folded_bookmark_name(input: &LayoutInput, folded: &str) -> Option<String> {
-    let block_bookmarks = input.block_bookmarks();
-    let mut names = input_story_paragraphs(input)
-        .into_iter()
-        .flatten()
-        .flat_map(|p| {
-            let (before, after) = block_bookmarks.markers(p);
-            p.bookmark_markers
-                .iter()
-                .chain(before)
-                .chain(after)
-                .filter_map(|marker| marker.name().map(str::to_owned))
-                .collect::<Vec<_>>()
-        })
-        .filter(|name| name.to_lowercase() == folded)
-        .collect::<BTreeSet<_>>();
-    let name = names.pop_first()?;
-    names.is_empty().then_some(name)
-}
-
 /// The folded REF targets of every field a reader sees in `rows`.
 fn rows_ref_targets(rows: &[Vec<CT_R>]) -> BTreeSet<String> {
     let mut targets = BTreeSet::new();
@@ -695,13 +687,12 @@ fn rows_ref_targets(rows: &[Vec<CT_R>]) -> BTreeSet<String> {
 pub(super) fn bookmark_text(input: &LayoutInput, name: &str) -> Option<String> {
     let rows = bookmark_value_runs(input, name)?;
     let own = rows_ref_targets(&rows);
-    let folded = name.to_lowercase();
+    let key = bookmark_name_key(name);
     let depending = bookmarks_depending_on(name, &mut |current| {
-        if current == folded {
+        if current == key {
             return own.clone();
         }
-        folded_bookmark_name(input, current)
-            .and_then(|other| bookmark_value_runs(input, &other))
+        bookmark_value_runs(input, current)
             .map(|other| rows_ref_targets(&other))
             .unwrap_or_default()
     });

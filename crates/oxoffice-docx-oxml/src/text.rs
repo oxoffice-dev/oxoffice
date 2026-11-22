@@ -147,7 +147,9 @@ pub(crate) use field_write::{write_mixed_field_run, write_published_run_field, w
 mod block_bookmarks;
 pub use block_bookmarks::BlockBookmarks;
 mod ref_cycles;
-pub use ref_cycles::{bookmarks_depending_on, field_ref_targets};
+pub use ref_cycles::{
+    bookmark_name_key, bookmarks_depending_on, field_ref_targets, same_bookmark_name,
+};
 mod paragraph_projection;
 mod paragraph_read;
 mod paragraph_write;

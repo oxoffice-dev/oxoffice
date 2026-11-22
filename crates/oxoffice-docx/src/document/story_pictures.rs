@@ -582,7 +582,7 @@ impl Document {
             .map(crate::StoryRangeRef::kind)
             .chain(&across)
             .filter(|kind| {
-                matches!(kind, crate::StoryRangeKind::Bookmark { name, .. } if name == bookmark)
+                matches!(kind, crate::StoryRangeKind::Bookmark { name, .. } if oxoffice_docx_oxml::text::same_bookmark_name(name, bookmark))
             })
             .count();
         if matching != 1 {

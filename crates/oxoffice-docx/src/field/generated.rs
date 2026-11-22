@@ -884,7 +884,7 @@ fn generated_source_targets(
             continue;
         }
         if let Some(name) = range {
-            let matching = original_ranges.iter().filter(|range| matches!(range.kind(), crate::StoryRangeKind::Bookmark { name: actual, .. } if actual == name)).collect::<Vec<_>>();
+            let matching = original_ranges.iter().filter(|range| matches!(range.kind(), crate::StoryRangeKind::Bookmark { name: actual, .. } if oxoffice_docx_oxml::text::same_bookmark_name(actual, name))).collect::<Vec<_>>();
             let [range] = matching.as_slice() else {
                 return Err(Error::Other(format!(
                     "generated range target {name} is missing or ambiguous"
@@ -987,7 +987,7 @@ fn generated_existing_target(
 fn generated_target_name(names: &mut HashSet<String>) -> Result<String> {
     for index in 0u32.. {
         let name = format!("GeneratedTable_{index}");
-        if names.insert(name.clone()) {
+        if names.insert(oxoffice_docx_oxml::text::bookmark_name_key(&name)) {
             return Ok(name);
         }
     }
@@ -1327,7 +1327,7 @@ fn generated_table_sources(
         let Some(name) = name else {
             continue;
         };
-        let matching = ranges.iter().filter(|range| matches!(range.kind(), crate::StoryRangeKind::Bookmark { name: actual, .. } if actual == name)).collect::<Vec<_>>();
+        let matching = ranges.iter().filter(|range| matches!(range.kind(), crate::StoryRangeKind::Bookmark { name: actual, .. } if oxoffice_docx_oxml::text::same_bookmark_name(actual, name))).collect::<Vec<_>>();
         let [range] = matching.as_slice() else {
             return Err(Error::Other(format!(
                 "generated range target {name} is missing or ambiguous"
