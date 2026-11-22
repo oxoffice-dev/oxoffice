@@ -1210,13 +1210,15 @@ impl Document {
             part_name,
             removed.iter().map(|relationship| relationship.id.clone()),
         );
-        self.remove_unreachable_image_parts(part_name, &removed);
+        self.remove_unreachable_parts(part_name, &removed);
     }
 
-    /// Drop image relationships of `owner` that the removed content named and
-    /// that no remaining attribute names. A part the owner did not name before
-    /// the edit stays, as does every non-image relationship.
-    pub(super) fn release_unreferenced_images(
+    /// Drop the content relationships of `owner` (pictures, charts, embedded
+    /// objects, links: [`is_content_relationship`]) that the removed content
+    /// named and that no remaining attribute names, with the parts nothing
+    /// reaches any more. A relationship the owner did not name before the
+    /// edit stays, as does every structural one (headers, notes, styles).
+    pub(super) fn release_unreferenced_relationships(
         &mut self,
         owner: &str,
         referenced_before: &HashSet<String>,
@@ -1227,8 +1229,7 @@ impl Document {
         };
         let mut removed = Vec::new();
         relationships.items.retain(|relationship| {
-            let released = relationship.rel_type == rel_types::IMAGE
-                && relationship_is_internal(relationship)
+            let released = is_content_relationship(&relationship.rel_type)
                 && referenced_before.contains(&relationship.id)
                 && !referenced_after.contains(&relationship.id);
             if released {
@@ -1255,7 +1256,10 @@ impl Document {
             owner,
             removed.iter().map(|relationship| relationship.id.clone()),
         );
-        for relationship in &removed {
+        for relationship in removed
+            .iter()
+            .filter(|relationship| relationship_is_internal(relationship))
+        {
             self.identifiers
                 .preserved_part_names
                 .remove(&part_name_identity(&OpcPackage::resolve_rel_target(
@@ -1263,39 +1267,54 @@ impl Document {
                     &relationship.target,
                 )));
         }
-        self.remove_unreachable_image_parts(owner, &removed);
+        self.remove_unreachable_parts(owner, &removed);
     }
 
-    /// Remove internal image targets that no remaining relationship reaches.
-    fn remove_unreachable_image_parts(
+    /// Remove the internal targets of `removed` that no remaining relationship
+    /// reaches, and then the parts only they reached (a chart's embedded
+    /// workbook, colours and style).
+    fn remove_unreachable_parts(
         &mut self,
         part_name: &str,
         removed: &[oxoffice_opc::relationship::Relationship],
     ) {
-        let mut image_parts = removed
+        let mut pending = removed
             .iter()
-            .filter(|relationship| {
-                relationship.rel_type == rel_types::IMAGE && relationship_is_internal(relationship)
-            })
+            .filter(|relationship| relationship_is_internal(relationship))
             .map(|relationship| OpcPackage::resolve_rel_target(part_name, &relationship.target))
-            .collect::<HashSet<_>>();
-        image_parts.retain(|candidate| {
-            !self.package.part_rels.iter().any(|(owner, relationships)| {
+            .collect::<Vec<_>>();
+        while let Some(candidate) = pending.pop() {
+            let reached = self.package.part_rels.iter().any(|(owner, relationships)| {
                 relationships.items.iter().any(|relationship| {
                     relationship_is_internal(relationship)
-                        && OpcPackage::resolve_rel_target(owner, &relationship.target) == *candidate
+                        && OpcPackage::resolve_rel_target(owner, &relationship.target) == candidate
                 })
-            })
-        });
-        for image_part in image_parts {
-            if self.identifiers.part_is_preserved(&image_part) {
+            });
+            if reached
+                || self.identifiers.part_is_preserved(&candidate)
+                || self.package.get_part(&candidate).is_none()
+            {
                 continue;
             }
-            self.package.remove_part(&image_part);
-            self.package.remove_part_rels(&image_part);
-            self.package.content_types.remove_override(&image_part);
-            self.identifiers.retire_authored_part(&image_part);
-            let Some((_, extension)) = image_part.rsplit_once('.') else {
+            // What the part reached goes too when nothing else reaches it.
+            if let Some(children) = self.package.get_part_rels(&candidate) {
+                for child in children
+                    .items
+                    .iter()
+                    .filter(|relationship| relationship_is_internal(relationship))
+                {
+                    let child = OpcPackage::resolve_rel_target(&candidate, &child.target);
+                    self.identifiers
+                        .preserved_part_names
+                        .remove(&part_name_identity(&child));
+                    pending.push(child);
+                }
+            }
+            self.package.remove_part(&candidate);
+            self.package.remove_part_rels(&candidate);
+            self.package.content_types.remove_override(&candidate);
+            self.identifiers.retire_authored_part(&candidate);
+            let Some((_, extension)) = candidate.rsplit_once('.') else {
                 continue;
             };
             let default_is_used = self.package.parts.keys().any(|part_name| {
@@ -1446,6 +1465,14 @@ impl Document {
         hdr_type: HdrFtrType,
     ) -> Result<()> {
         let (part_name, section) = self.reserve_hdr_ftr_target(is_header, hdr_type)?;
+        // The pictures and links only the replaced story showed go with it,
+        // those of the opened file too.
+        let referenced_before = self
+            .package
+            .get_part(&part_name)
+            .map(xml_attribute_values)
+            .transpose()?
+            .unwrap_or_default();
         let mut requested = HashSet::new();
         for &(rel_id, _, _) in images {
             if !requested.insert(rel_id) {
@@ -1455,6 +1482,13 @@ impl Document {
             }
         }
         self.clear_authored_story_relationships(&part_name);
+        // The new story keeps a relationship it names, unless it brings its
+        // own picture under that id.
+        let mut referenced_after = xml_attribute_values(&xml)?;
+        for &(rel_id, _, _) in images {
+            referenced_after.remove(rel_id);
+        }
+        self.release_unreferenced_relationships(&part_name, &referenced_before, &referenced_after);
         let mut relationship_remap = HashMap::new();
         for &(rel_id, _, _) in images {
             let allocated = self
@@ -1842,4 +1876,30 @@ pub(super) fn materialize_header_footer_inheritance(
     if let Some(section) = document.body.sect_pr.as_mut() {
         apply(section);
     }
+}
+
+/// Whether a relationship type names content a story shows by its id: a
+/// picture, a chart, an embedded object or workbook, a diagram, media, a
+/// control, an alternative-format chunk or a link. Structural relationships
+/// (headers, footers, notes, comments, styles) never go with content.
+pub(crate) fn is_content_relationship(rel_type: &str) -> bool {
+    const CONTENT: &[&str] = &[
+        "/image",
+        "/chart",
+        "/chartEx",
+        "/oleObject",
+        "/package",
+        "/hyperlink",
+        "/diagramData",
+        "/diagramLayout",
+        "/diagramQuickStyle",
+        "/diagramColors",
+        "/diagramDrawing",
+        "/video",
+        "/audio",
+        "/media",
+        "/control",
+        "/aFChunk",
+    ];
+    CONTENT.iter().any(|suffix| rel_type.ends_with(suffix))
 }

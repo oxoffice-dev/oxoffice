@@ -529,7 +529,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
-            freed_image_relationships: Vec::new(),
+            freed_relationships: Vec::new(),
             package_signatures_invalidated,
             source_path: None,
             glossary,
@@ -793,9 +793,9 @@ impl Document {
     ///
     /// Returns whether anything was released. A signed package that loses a
     /// relationship or a part has its signature marked invalid.
-    pub(super) fn release_freed_image_relationships(&mut self) -> Result<bool> {
+    pub(super) fn release_freed_relationships(&mut self) -> Result<bool> {
         let mut by_owner: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-        for (owner, id) in std::mem::take(&mut self.freed_image_relationships) {
+        for (owner, id) in std::mem::take(&mut self.freed_relationships) {
             by_owner.entry(owner).or_default().insert(id);
         }
         let mut released = false;
@@ -811,14 +811,56 @@ impl Document {
                 .package
                 .get_part_rels(&owner)
                 .map_or(0, |relationships| relationships.items.len());
-            self.release_unreferenced_images(&owner, &freed, &referenced);
+            self.release_unreferenced_relationships(&owner, &freed, &referenced);
             let after = self
                 .package
                 .get_part_rels(&owner)
                 .map_or(0, |relationships| relationships.items.len());
             released |= after < before;
         }
-        if released
+        // Content any other edit removed since the file was opened: a story
+        // part that changed no longer names a picture, chart or link it
+        // named then. No cut fragment can name it, so the copy stays
+        // installable.
+        let mut dropped = false;
+        if let Some(parsed) = self.parsed.clone() {
+            let owners = self
+                .package
+                .part_rels
+                .iter()
+                .filter(|(_, relationships)| {
+                    relationships
+                        .items
+                        .iter()
+                        .any(|relationship| is_content_relationship(&relationship.rel_type))
+                })
+                .map(|(owner, _)| owner.clone())
+                .collect::<Vec<_>>();
+            for owner in owners {
+                let (Some(now), Some(opened)) = (
+                    self.package.get_part(&owner),
+                    parsed.package.get_part(&owner),
+                ) else {
+                    continue;
+                };
+                if now == opened {
+                    continue;
+                }
+                let referenced_opened = xml_attribute_values(opened)?;
+                let referenced = xml_attribute_values(now)?;
+                let before = self
+                    .package
+                    .get_part_rels(&owner)
+                    .map_or(0, |relationships| relationships.items.len());
+                self.release_unreferenced_relationships(&owner, &referenced_opened, &referenced);
+                let after = self
+                    .package
+                    .get_part_rels(&owner)
+                    .map_or(0, |relationships| relationships.items.len());
+                dropped |= after < before;
+            }
+        }
+        if (released || dropped)
             && self
                 .package
                 .package_rels

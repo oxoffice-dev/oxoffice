@@ -518,6 +518,15 @@ pub(super) fn import_fragment_content_with_state(
         model_xml
     };
     prune_document_fragment_dependencies(&mut fragment, &dependency_source, true)?;
+    let edits = half_bookmark_edits(&fragment_xml, 0)?;
+    apply_fragment_xml_edits(
+        &mut fragment_xml,
+        &mut fragment_xml_source,
+        template
+            .as_mut()
+            .map(|(evaluation, _)| &mut evaluation.operation),
+        edits,
+    )?;
     let mut fragment_identity_values = body_identity_values(&fragment_xml)?;
     for companion in fragment_dependency_companions(&fragment, &dependency_source)? {
         for id in body_identity_values(&wrap_fragment_companion(&companion))?.comment_ids {
@@ -1294,7 +1303,19 @@ pub(super) fn import_fragment_content_with_state(
         crate::document::DocumentModel::unproved(CT_Document::from_xml(&fragment_xml)?)
     };
     let mut identity_xml = fragment_xml.clone();
-    for note in &note_copies {
+    for note in &mut note_copies {
+        let edits = half_bookmark_edits(
+            &wrap_fragment_companion(&note.xml),
+            FRAGMENT_COMPANION_OPEN.len(),
+        )?;
+        apply_fragment_xml_edits(
+            &mut note.xml,
+            &mut note.source,
+            template
+                .as_mut()
+                .map(|(evaluation, _)| &mut evaluation.operation),
+            edits,
+        )?;
         validate_fragment_identity_ownership(&body_identity_values(&wrap_fragment_companion(
             &note.xml,
         ))?)?;
@@ -3907,6 +3928,85 @@ pub(crate) fn freshen_content_fragment_identities(
         }
     }
     patch_body_identity_attributes(wrapped_fragment, &remap)
+}
+
+/// Edits leaving out the bookmark markers of `xml` whose other half it does
+/// not hold: a start that never ends (LibreOffice writes one for each
+/// legacy form field it copies), or the start or end of a bookmark the
+/// copied range cuts. Word pastes no half bookmark either. Offsets are
+/// shifted back by `offset`, the length of a wrapper added before `xml`.
+fn half_bookmark_edits(xml: &[u8], offset: usize) -> Result<Vec<FieldSourceEdit>> {
+    let mut reader = NsReader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut markers = Vec::new();
+    loop {
+        let before = usize::try_from(reader.buffer_position())
+            .map_err(|_| Error::Other("fragment XML is too large".to_owned()))?;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("invalid fragment bookmark XML: {error}")))?;
+        let word = namespace_is_word(&namespace);
+        match event {
+            Event::Start(ref element) | Event::Empty(ref element)
+                if word
+                    && matches!(
+                        element.local_name().as_ref(),
+                        b"bookmarkStart" | b"bookmarkEnd"
+                    ) =>
+            {
+                let start = element.local_name().as_ref() == b"bookmarkStart";
+                let id = resolved_element_attribute(
+                    element,
+                    reader.resolver(),
+                    b"id",
+                    AttributeNamespace::Word,
+                )?
+                .map(|(_, value)| value.trim().to_owned());
+                if matches!(event, Event::Start(_)) {
+                    let name = element.name().as_ref().to_vec();
+                    reader
+                        .read_to_end_into(quick_xml::name::QName(&name), &mut Vec::new())
+                        .map_err(|error| {
+                            Error::Other(format!("invalid fragment bookmark XML: {error}"))
+                        })?;
+                }
+                let after = usize::try_from(reader.buffer_position())
+                    .map_err(|_| Error::Other("fragment XML is too large".to_owned()))?;
+                if let Some(id) = id {
+                    markers.push((id, start, before..after));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let starts = markers
+        .iter()
+        .filter(|(_, start, _)| *start)
+        .map(|(id, _, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    let ends = markers
+        .iter()
+        .filter(|(_, start, _)| !*start)
+        .map(|(id, _, _)| id.as_str())
+        .collect::<HashSet<_>>();
+    Ok(markers
+        .iter()
+        .filter(|(id, start, _)| {
+            if *start {
+                !ends.contains(id.as_str())
+            } else {
+                !starts.contains(id.as_str())
+            }
+        })
+        .map(|(_, _, range)| FieldSourceEdit {
+            start: range.start - offset,
+            end: range.end - offset,
+            replacement: Vec::new(),
+        })
+        .collect())
 }
 
 fn validate_fragment_identity_ownership(values: &BodyIdentityValues) -> Result<()> {

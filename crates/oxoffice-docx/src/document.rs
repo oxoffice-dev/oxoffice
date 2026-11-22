@@ -160,7 +160,8 @@ mod tables;
 mod template;
 
 use headers_footers::{
-    header_footer_story_has_expected_root, header_type_index, materialize_header_footer_inheritance,
+    header_footer_story_has_expected_root, header_type_index, is_content_relationship,
+    materialize_header_footer_inheritance,
 };
 use media::chart_with_workbook_relationship;
 pub use numbering::{ListItemKind, NumberingJournal};
@@ -908,7 +909,7 @@ pub struct Document {
     /// unreferenced. They stay until the document is written, so a removed
     /// fragment can be inserted again; the output drops those still
     /// unreferenced then, with their media when nothing else reaches it.
-    pub(crate) freed_image_relationships: Vec<(String, String)>,
+    pub(crate) freed_relationships: Vec<(String, String)>,
     /// Whether retained package signature evidence is known invalid.
     pub(crate) package_signatures_invalidated: bool,
     /// The file this document was opened from, canonical, which `save`
@@ -1636,7 +1637,7 @@ impl Document {
             comments_owned: false,
             comments_extended_owned: false,
             embedded_invalidated_signatures: HashSet::new(),
-            freed_image_relationships: Vec::new(),
+            freed_relationships: Vec::new(),
             package_signatures_invalidated: false,
             source_path: None,
             glossary: None,

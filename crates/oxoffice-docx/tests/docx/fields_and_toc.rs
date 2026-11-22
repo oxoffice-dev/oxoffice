@@ -1546,11 +1546,11 @@ fn a_range_that_starts_at_a_google_heading_takes_its_bookmark_start() {
 }
 
 #[test]
-fn a_range_with_a_leading_bookmark_that_ends_outside_it_is_refused_on_import() {
+fn a_range_with_a_leading_bookmark_that_ends_outside_it_imports_without_the_half() {
     // `_Toc1` ends in the range and `Span` after it: the range keeps its
     // start, so its copy holds `_Toc1`'s end without its start (taking the
-    // starts would leave `Span` without its end), and the import refuses an
-    // incomplete bookmark rather than writing one.
+    // starts would leave `Span` without its end). The import leaves that
+    // half out, as Word pastes no half bookmark, rather than writing it.
     let doc = doc_with_body(
         r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="_Toc1"/><w:bookmarkStart w:id="5" w:name="Span"/><w:p><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p><w:p><w:r><w:t>After</w:t></w:r></w:p><w:p><w:r><w:t>Last</w:t></w:r><w:bookmarkEnd w:id="5"/></w:p>"#,
     );
@@ -1562,13 +1562,14 @@ fn a_range_with_a_leading_bookmark_that_ends_outside_it_is_refused_on_import() {
     )
     .unwrap();
     let mut target = doc_with(&["Target"]);
-    let error = target
+    target
         .import_fragment(
             &ContentLocation::end(body_story(&target)),
             &fragment,
             oxoffice_docx::FragmentConflictPolicy::default(),
         )
-        .unwrap_err();
-    assert!(error.to_string().contains("bookmark ownership"), "{error}");
-    assert_eq!(texts(&target), ["Target"]);
+        .unwrap();
+    let target = reopen(&mut target);
+    assert_eq!(texts(&target), ["Target", "Introduction"]);
+    assert!(target.bookmarks().is_empty());
 }

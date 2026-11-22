@@ -893,7 +893,7 @@ impl Document {
         let after = candidate.document.to_xml()?;
         let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
-        candidate.release_unreferenced_images(&owner, &referenced_before, &referenced_after);
+        candidate.release_unreferenced_relationships(&owner, &referenced_before, &referenced_after);
         candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -1026,7 +1026,11 @@ impl Document {
             // Pictures only the removed notes showed go with them.
             let referenced_before = xml_attribute_values(xml)?;
             let referenced_after = xml_attribute_values(&notes_xml)?;
-            self.release_unreferenced_images(&part_name, &referenced_before, &referenced_after);
+            self.release_unreferenced_relationships(
+                &part_name,
+                &referenced_before,
+                &referenced_after,
+            );
             set_story_source_xml(self, &part_name, notes_xml)?;
         }
         Ok(())
@@ -1071,7 +1075,7 @@ impl Document {
         let after = candidate.document.to_xml()?;
         let referenced_after = xml_attribute_values(&after)?;
         let owner = candidate.doc_part_name.clone();
-        candidate.release_unreferenced_images(&owner, &referenced_before, &referenced_after);
+        candidate.release_unreferenced_relationships(&owner, &referenced_before, &referenced_after);
         candidate.remove_unreferenced_notes(&before, &after)?;
         candidate.reconcile_comment_removal(self)?;
         let reopened = candidate.prepare_and_reopen_staged()?;

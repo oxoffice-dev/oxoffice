@@ -1011,6 +1011,114 @@ fn source_stories_with(doc: &mut Document, text: &str) -> Vec<String> {
 // ---- import_fragment ----
 
 #[test]
+fn an_import_leaves_out_the_half_bookmarks_it_would_copy() {
+    // LibreOffice writes a bookmark start that never ends for each legacy
+    // form field it copies (PaymentTerms starts twice, once for good).
+    let mut source = crate::support::corpus_doc("libreoffice/form.docx");
+    let source_before = saved(&mut source);
+    let fields = |doc: &Document| {
+        doc.legacy_form_fields()
+            .unwrap()
+            .into_iter()
+            .map(|field| {
+                (
+                    field.name,
+                    field.kind,
+                    field.value,
+                    field.choices,
+                    field.enabled,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let source_fields = fields(&source);
+    assert!(
+        ["PaymentTerms", "RemittanceEmail", "Declaration"]
+            .iter()
+            .all(|name| source_fields
+                .iter()
+                .any(|field| field.0.as_deref() == Some(*name))),
+        "{source_fields:?}"
+    );
+    let mut doc = doc_with(&["dest"]);
+    let start = item_at(&source, 0);
+    let end = ContentLocation::end(body(&source));
+    let fragment = DocumentFragment::from_range(&source, &start, &end, true).unwrap();
+    doc.import_fragment(
+        &ContentLocation::end(body(&doc)),
+        &fragment,
+        FragmentConflictPolicy::default(),
+    )
+    .expect("a source with a start that never ends imports");
+    let mut doc = reopen(&mut doc);
+    let starts = main_bookmark_values(&mut doc, "w:bookmarkStart");
+    let ends = main_bookmark_values(&mut doc, "w:bookmarkEnd");
+    let mut start_ids: Vec<_> = starts.iter().map(|(id, _)| id.clone()).collect();
+    start_ids.sort();
+    let mut end_ids: Vec<_> = ends.iter().map(|(id, _)| id.clone()).collect();
+    end_ids.sort();
+    assert_eq!(start_ids, end_ids, "every start ends: {starts:?} {ends:?}");
+    let names: Vec<_> = starts.iter().map(|(_, name)| name.as_str()).collect();
+    assert_eq!(
+        names.iter().filter(|name| **name == "PaymentTerms").count(),
+        1,
+        "{names:?}"
+    );
+    assert_eq!(
+        starts.len(),
+        9,
+        "the twelve starts but the three that never end: {names:?}"
+    );
+    // The form fields read as in the source, and the source is unchanged.
+    assert_eq!(fields(&doc), source_fields);
+    assert_eq!(saved(&mut source), source_before);
+
+    // A range that cuts a bookmark leaves both halves out.
+    let source = doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="3" w:name="Across"/><w:r><w:t>first</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>second</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p>"#,
+    ));
+    let fragment =
+        DocumentFragment::from_range(&source, &item_at(&source, 0), &item_at(&source, 1), false)
+            .unwrap();
+    let mut doc = doc_with(&["dest"]);
+    doc.import_fragment(
+        &ContentLocation::end(body(&doc)),
+        &fragment,
+        FragmentConflictPolicy::default(),
+    )
+    .expect("a range that cuts a bookmark imports");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["dest", "first"]);
+    assert!(main_bookmark_values(&mut doc, "w:bookmarkStart").is_empty());
+}
+
+/// The (`w:id`, `w:name`) of every `element` of the saved main part.
+fn main_bookmark_values(doc: &mut Document, element: &str) -> Vec<(String, String)> {
+    let xml = String::from_utf8(
+        crate::support::package_parts(&saved(doc))
+            .remove("word/document.xml")
+            .expect("a main part"),
+    )
+    .unwrap();
+    let value = |tag: &str, attribute: &str| {
+        tag.find(&format!(" {attribute}=\"")).map(|at| {
+            let rest = &tag[at + attribute.len() + 3..];
+            rest[..rest.find('"').unwrap()].to_owned()
+        })
+    };
+    xml.match_indices(&format!("<{element} "))
+        .map(|(at, _)| {
+            let tag = &xml[at..at + xml[at..].find('>').unwrap()];
+            (
+                value(tag, "w:id").unwrap_or_default(),
+                value(tag, "w:name").unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+#[test]
 fn importing_gives_taken_bookmarks_controls_and_revisions_new_identities() {
     let source = with_identities("src");
     let mut doc = with_identities("dst");

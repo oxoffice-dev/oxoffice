@@ -123,7 +123,7 @@ impl Document {
             comments_owned: self.comments_owned,
             comments_extended_owned: self.comments_extended_owned,
             embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
-            freed_image_relationships: self.freed_image_relationships.clone(),
+            freed_relationships: self.freed_relationships.clone(),
             package_signatures_invalidated: self.package_signatures_invalidated,
             source_path: self.source_path.clone(),
             glossary: self.glossary.clone(),

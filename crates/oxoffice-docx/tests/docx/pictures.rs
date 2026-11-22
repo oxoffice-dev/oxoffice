@@ -1772,3 +1772,161 @@ fn a_linked_picture_added_in_a_comparison_keeps_its_address() {
     );
     assert_eq!(resolved_picture_addresses(&mut doc, false), []);
 }
+
+/// The parts and relationship targets of the saved `doc`, by ZIP entry name.
+fn saved_entries(doc: &mut Document) -> BTreeMap<String, String> {
+    crate::support::package_parts(&doc.to_bytes().unwrap())
+        .into_iter()
+        .map(|(name, bytes)| (name, String::from_utf8_lossy(&bytes).into_owned()))
+        .collect()
+}
+
+#[test]
+fn removed_content_leaves_no_chart_link_or_note_link_behind() {
+    // A chart (and its embedded workbook) cut out of the body.
+    let mut doc = doc_with(&["kept"]);
+    let data = ChartData {
+        categories: vec!["Q1".into(), "Q2".into()],
+        series: vec![("s".into(), vec![1.0, 2.0])],
+        ..ChartData::default()
+    };
+    doc.add_chart(
+        ChartKind::Bar,
+        Length::inches(4.0),
+        Length::inches(3.0),
+        &data,
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.kind() == StoryKind::Body)
+        .unwrap();
+    let chart = doc.story_items(&body).unwrap()[1].location().clone();
+    doc.remove_content_at(&chart).unwrap();
+    let entries = saved_entries(&mut doc);
+    assert!(
+        !entries
+            .keys()
+            .any(|name| name.contains("chart") || name.contains("embeddings")),
+        "{:?}",
+        entries.keys().collect::<Vec<_>>()
+    );
+    // A link cut out of the body.
+    let mut doc = doc_with(&["kept", ""]);
+    doc.append_hyperlink("site", "https://gone.example/");
+    let mut doc = reopen(&mut doc);
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.kind() == StoryKind::Body)
+        .unwrap();
+    let linked = doc.story_items(&body).unwrap()[1].location().clone();
+    doc.remove_content_at(&linked).unwrap();
+    assert!(!saved_entries(&mut doc)["word/_rels/document.xml.rels"].contains("gone.example"));
+    // A footnote holding a link, removed.
+    let mut doc = doc_with(&["noted"]);
+    let id = doc.add_footnote("note");
+    let mut doc = reopen(&mut doc);
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let notes =
+        String::from_utf8(package.get_part("/word/footnotes.xml").unwrap().to_vec()).unwrap();
+    let at = notes.rfind("</w:p>").unwrap();
+    package.set_part(
+        "/word/footnotes.xml",
+        format!(
+            r#"{}<w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdNoteLink"><w:r><w:t>link</w:t></w:r></w:hyperlink>{}"#,
+            &notes[..at],
+            &notes[at..]
+        )
+        .into_bytes(),
+    );
+    package
+        .get_or_create_part_rels("/word/footnotes.xml")
+        .items
+        .push(Relationship {
+            id: "rIdNoteLink".into(),
+            rel_type:
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    .into(),
+            target: "https://note.example/".into(),
+            target_mode: Some("External".into()),
+        });
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.remove_footnote(id).unwrap();
+    let entries = saved_entries(&mut doc);
+    assert!(
+        !entries
+            .get("word/_rels/footnotes.xml.rels")
+            .is_some_and(|rels| rels.contains("note.example"))
+    );
+}
+
+#[test]
+fn a_raw_header_replaced_on_a_reopened_file_leaves_no_old_picture() {
+    let header = |rid: &str| {
+        format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:v="urn:schemas-microsoft-com:vml"><w:p><w:r><w:pict><v:shape style="width:10pt;height:10pt"><v:imagedata r:id="{rid}"/></v:shape></w:pict></w:r></w:p></w:hdr>"#
+        )
+        .into_bytes()
+    };
+    let mut doc = doc_with(&["body"]);
+    doc.set_raw_header_with_images(
+        header("rIdA"),
+        &[("rIdA", &png(2, 2, 10), "first.png")],
+        HdrFtrType::Default,
+    );
+    let mut doc = reopen(&mut doc);
+    doc.set_raw_header_with_images(
+        header("rIdB"),
+        &[("rIdB", &png(2, 2, 20), "second.png")],
+        HdrFtrType::Default,
+    );
+    let media: Vec<_> = saved_entries(&mut doc)
+        .into_keys()
+        .filter(|name| name.starts_with("word/media/"))
+        .collect();
+    assert_eq!(media.len(), 1, "{media:?}");
+}
+
+#[test]
+fn a_picture_or_link_removed_by_another_edit_leaves_the_saved_file() {
+    // A picture whose run goes.
+    let mut doc = doc_with(&["kept"]);
+    doc.add_picture(
+        &png(2, 2, 30),
+        "gone.png",
+        Length::inches(1.0),
+        Length::inches(1.0),
+    );
+    let mut doc = reopen(&mut doc);
+    {
+        let mut paragraph = doc.paragraph_mut(1).expect("the picture paragraph");
+        let runs = paragraph.runs().count();
+        for run in (0..runs).rev() {
+            paragraph.remove_run(run).unwrap();
+        }
+    }
+    let media: Vec<_> = saved_entries(&mut doc)
+        .into_keys()
+        .filter(|name| name.starts_with("word/media/"))
+        .collect();
+    assert!(media.is_empty(), "{media:?}");
+    // A link unwrapped by `remove_hyperlink`.
+    let mut doc = doc_with(&["kept", ""]);
+    doc.append_hyperlink("site", "https://gone.example/");
+    let mut doc = reopen(&mut doc);
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.kind() == StoryKind::Body)
+        .unwrap();
+    doc.remove_hyperlink(&body, 0).unwrap();
+    assert!(!saved_entries(&mut doc)["word/_rels/document.xml.rels"].contains("gone.example"));
+}
