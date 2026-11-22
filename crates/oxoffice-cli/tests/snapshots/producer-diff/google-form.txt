@@ -1,2 +1,3 @@
 changed body: " I confirm that the information in this " -> "☐ I confirm that the information in this"
+changed table_cell: "30 days" -> ""
 changed table_cell: " Yes" -> "☒ Yes"
