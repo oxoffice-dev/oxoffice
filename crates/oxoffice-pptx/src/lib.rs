@@ -244,6 +244,7 @@ use media::{
 pub use pictures::PictureImage;
 
 mod charts;
+mod shared_parts;
 mod smartart;
 
 use charts::chart_internal_part;

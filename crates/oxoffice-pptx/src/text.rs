@@ -24,6 +24,12 @@ impl Presentation {
         }
         // Stored as the run text setters store it, so it can be saved.
         let value = &oxoffice_drawing::text::escape_invalid_xml_characters(value);
+        // A slide whose notes change gets them for its own first.
+        for index in 0..self.slides.len() {
+            if notes_have_text(&self.slides[index], placeholder) {
+                self.own_notes_in_place(index);
+            }
+        }
         // A slide without a match keeps its record, so a shared one is not
         // copied and callers can tell the changed slides by pointer identity.
         self.slides
@@ -100,6 +106,7 @@ impl Presentation {
     ) -> Result<usize> {
         self.require_slide_index(slide_index)?;
         require_replacement_placeholder(placeholder)?;
+        let owns_notes = notes && notes_have_text(&self.slides[slide_index], placeholder);
         let mut candidate = SlideRecord::clone(&self.slides[slide_index]);
         let value = &oxoffice_drawing::text::escape_invalid_xml_characters(value);
         let count = replace_text_in_slide_record(&mut candidate, placeholder, value, notes);
@@ -121,6 +128,15 @@ impl Presentation {
                     part_name: record.part_name.clone(),
                     message: error.to_string(),
                 })?;
+        }
+        if owns_notes {
+            // The copy takes the part name of the notes the candidate edited.
+            self.own_notes_in_place(slide_index);
+            if let (Some(edited), Some(owned)) =
+                (&mut candidate.notes, &self.slides[slide_index].notes)
+            {
+                edited.part_name = owned.part_name.clone();
+            }
         }
         self.slides[slide_index] = Arc::new(candidate);
         Ok(count)
@@ -611,45 +627,57 @@ fn replace_text_in_slide_record(
 
 /// Whether `replace_text_in_slide_record` would replace anything in a slide
 /// or its notes: the same run segments, read without copying the record.
-fn slide_record_has_text(record: &SlideRecord, placeholder: &str) -> bool {
-    fn in_body(body: &CT_TextBody, placeholder: &str) -> bool {
-        body.paragraphs().iter().any(|paragraph| {
-            paragraph
-                .runs
-                .split(|run| !matches!(run, TextRun::Run(_)))
-                .any(|segment| {
-                    let text = segment
-                        .iter()
-                        .filter_map(|run| match run {
-                            TextRun::Run(run) => Some(run.text.value.as_str()),
-                            _ => None,
-                        })
-                        .collect::<String>();
-                    text.contains(placeholder)
-                })
-        })
-    }
-    fn in_children(children: &[ShapeTreeChild], placeholder: &str) -> bool {
-        children.iter().any(|child| match child {
-            ShapeTreeChild::Shape(shape) => shape
-                .text_body
-                .as_ref()
-                .is_some_and(|body| in_body(body, placeholder)),
-            ShapeTreeChild::GraphicFrame(frame) => match frame.graphic_data.payload() {
-                GraphicDataPayload::Table(table) => table
-                    .rows
+fn in_body(body: &CT_TextBody, placeholder: &str) -> bool {
+    body.paragraphs().iter().any(|paragraph| {
+        paragraph
+            .runs
+            .split(|run| !matches!(run, TextRun::Run(_)))
+            .any(|segment| {
+                let text = segment
                     .iter()
-                    .flat_map(|row| &row.cells)
-                    .filter_map(|cell| cell.text_body.as_ref())
-                    .any(|body| in_body(body, placeholder)),
-                _ => false,
-            },
-            ShapeTreeChild::GroupShape(group) => in_children(&group.children, placeholder),
-            ShapeTreeChild::Picture(_)
-            | ShapeTreeChild::Connector(_)
-            | ShapeTreeChild::AlternateContent(_) => false,
+                    .filter_map(|run| match run {
+                        TextRun::Run(run) => Some(run.text.value.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>();
+                text.contains(placeholder)
+            })
+    })
+}
+fn in_children(children: &[ShapeTreeChild], placeholder: &str) -> bool {
+    children.iter().any(|child| match child {
+        ShapeTreeChild::Shape(shape) => shape
+            .text_body
+            .as_ref()
+            .is_some_and(|body| in_body(body, placeholder)),
+        ShapeTreeChild::GraphicFrame(frame) => match frame.graphic_data.payload() {
+            GraphicDataPayload::Table(table) => table
+                .rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .filter_map(|cell| cell.text_body.as_ref())
+                .any(|body| in_body(body, placeholder)),
+            _ => false,
+        },
+        ShapeTreeChild::GroupShape(group) => in_children(&group.children, placeholder),
+        ShapeTreeChild::Picture(_)
+        | ShapeTreeChild::Connector(_)
+        | ShapeTreeChild::AlternateContent(_) => false,
+    })
+}
+
+/// Whether replacing `placeholder` would change a slide's notes.
+fn notes_have_text(record: &SlideRecord, placeholder: &str) -> bool {
+    !placeholder.is_empty()
+        && record.notes.as_ref().is_some_and(|notes| {
+            in_children(
+                &notes.notes.common_slide_data.shape_tree.children,
+                placeholder,
+            )
         })
-    }
+}
+
+fn slide_record_has_text(record: &SlideRecord, placeholder: &str) -> bool {
     !placeholder.is_empty()
         && (in_children(
             &record.slide.common_slide_data.shape_tree.children,
