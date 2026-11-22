@@ -17,11 +17,10 @@ How work lands in oxoffice. Short on purpose.
    shape.
 5. **Independent review**, posted on the pull request, then answer every
    finding (see [Independent review](#independent-review)).
-6. **CI green on the three platforms**, squash merge: `gh pr checks` lists
-   `Build and test (ubuntu-latest)`, `(macos-latest)` and
-   `(windows-latest)`. A pull request whose base was changed to `main` may
-   only have its Linux run: push a new commit, or close and reopen it,
-   first. A documentation-only pull request runs no build, so there is
+6. **CI all green**, squash merge: `gh pr checks` shows every check
+   passed, `Test (ubuntu-latest)`, `(macos-latest)` and `(windows-latest)`
+   among them. A pull request whose base was changed to `main` may have no
+   run on that base: push a new commit, or close and reopen it, first. A documentation-only pull request runs no build, so there is
    nothing to check. The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
@@ -181,8 +180,8 @@ with it.
 ```bash
 maturin build --profile scaling -m crates/oxoffice-py/Cargo.toml -o dist
 pip install --force-reinstall dist/*.whl
-OXOFFICE_SCALING=quick pytest crates/oxoffice-py/tests   # the QUICK sets
-OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call
+OXOFFICE_SCALING=quick pytest crates/oxoffice-py/tests   # the QUICK sets (ci.yml)
+OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call (nightly.yml)
 ```
 
 Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
@@ -268,71 +267,56 @@ merge variant).
   compiled with hashes: `uv pip compile --universal --python-version 3.12
   --generate-hashes X.in -o X.txt`, installed with `pip install
   --require-hashes -r X.txt`.
-- Which pull requests run what: one whose base is `main` and that is not a
-  draft builds and tests on Linux, macOS and Windows and times the QUICK
-  scaling sets on Linux, when it is opened, pushed, reopened or marked ready.
-  A draft, or one whose base is another branch, runs lint, WebAssembly and
-  the Linux build only. A push to `main` builds, tests and times every
-  scaling call on Linux only: its pull request ran the three platforms. The
-  nightly run (02:23 UTC) and `workflow_dispatch` run every job, every
-  scaling call included, on the three platforms.
-- The WebAssembly job also runs the PowerPoint integration tests without
-  the `render` feature, as the WebAssembly bindings build the facade: an
-  edit must not need the rendering crates.
-- **Loop step 6 is the only macOS and Windows check before the nightly
-  run.** `main` requires no status check, so nothing stops a merge whose
-  macOS or Windows build is red or still queued; such a break shows in the
-  nightly run, up to a day later, under the merges that came after. Merge
-  only once `gh pr checks` shows the three platforms green.
-- **Every push to `main` runs in full**, beside the runs of the pushes
-  before it: nothing waits and nothing is cancelled. Lint, WebAssembly and
-  the Linux build answer about 10 minutes after each merge, the scaling and
-  skill-examples jobs within about 30, so each commit of `main` has its own
-  verdict. Re-running a run of `main` touches no other run.
-- **A red nightly run is a red `main`.** Look at it with
-  `gh run list -w CI -e schedule -L 1`. Whoever sees it first opens an issue
-  (or fixes it) the same day; a release waits for a green nightly run (see
-  [RELEASE.md](RELEASE.md)). To find the commit, run `workflow_dispatch` on a
-  branch at each candidate commit.
+- **One CI for pull requests and main** (`ci.yml`): every pull request,
+  drafts and stacked ones included, and every push to `main` run the same
+  jobs on Linux, macOS and Windows, in about 10 minutes: lint (with the
+  WebAssembly check and the PowerPoint tests without the `render` feature:
+  the WebAssembly bindings build the facade, so an edit must not need the
+  rendering crates); `Test` on the three platforms, built without debug
+  assertions (`--profile scaling`); `Debug checks`, the Python suite under
+  debug assertions on Linux; `Timings` on Linux, the QUICK scaling sets. A
+  push to `main` runs in full, beside the runs before it, so every merge has
+  its own verdict. See
+  [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
+- **The full sets run every night** (`nightly.yml`, "Full checks", 02:23
+  UTC): the Rust and Python tests under debug assertions on the three
+  platforms with the whole render corpus and every producer's copy in the
+  workflow walks, and every scaling call on the three platforms. A failure opens or comments one issue
+  labelled `ci-nightly`, closed by the next green run; whoever sees it
+  fixes it the same day. Run it on a branch or a tag with
+  `gh workflow run nightly.yml --ref BRANCH`; to find the commit that broke
+  it, push a branch at each candidate commit and run it there. It reports to
+  the issue only from `main`, on schedule or with `-f report=true`. Another
+  workflow calls it with `workflow_call`, granting `issues: write`.
+- **Merge only once `gh pr checks` is all green**: `main` requires no status
+  check, so nothing stops a merge whose macOS or Windows run is red or still
+  queued.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
-  pull request when its base merges or the author changes it by hand. Before
-  merging, check the three platforms ran (loop step 6); if not, push a new
-  commit, or close and reopen the pull request.
-- The `scaling` job builds a second wheel with the `scaling` profile, beside
-  the `ci` one, and runs the scaling tests: the QUICK sets on Linux for ready
-  pull requests into `main`, every call on Linux on each push to `main`, and
-  every call on the three platforms in the nightly run (02:23 UTC) or on
-  `workflow_dispatch`. A platform-only growth shows in the nightly run.
-- The `skill-examples` job runs the examples of
-  [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) on
-  `main` only, against the Linux wheel of `build`
-  ([tests/skills/README.md](../tests/skills/README.md)). A change that breaks
-  one updates the skills too.
-- **Rust caches are saved by runs on `main` only** (pushes, the nightly run,
-  a dispatch on `main`), even when a test fails after the compile; pull
-  requests restore them and save nothing. A new pull request used to save
+  pull request when its base merges or the author changes it by hand. Push a
+  new commit, or close and reopen the pull request, so that its last run is
+  on its current base.
+- The examples of
+  [oxoffice-skills](https://github.com/oxoffice-dev/oxoffice-skills) are
+  tested by that repository, against the released package
+  ([tests/skills/README.md](../tests/skills/README.md) until they move
+  there). A change that breaks one updates the skills too.
+- **Rust caches are saved by runs on `main` only** (pushes, a dispatch on
+  `main`), even when a test fails after the compile; pull requests and the
+  nightly run restore them and save nothing. A new pull request used to save
   about 2.25 GB of caches that only its own later runs could read: five of
-  them filled the 10 GB of the Actions cache and evicted `main`'s. A push to
-  `main` builds on Linux only, so the macOS and Windows caches are refreshed
-  by the nightly run. After a runner image change or a `Cargo.lock` change
-  their key changes and pull requests build those platforms from scratch,
-  about 7 minutes more, until the next night: run
-  `gh workflow run ci.yml --ref main` to refresh them at once.
+  them filled the 10 GB of the Actions cache and evicted `main`'s.
 - **Lint runs clippy without debug assertions** too (`cargo clippy
   --workspace --all-targets --all-features --profile scaling -- -D
   warnings`), on every pull request, drafts and stacked ones included:
   every crate and target on Linux, all features on, warnings denied. The
-  first clippy, the WebAssembly check and the build job all compile with
-  debug assertions and pass code that compiles only with them (an item
-  under `#[cfg(debug_assertions)]` used or re-exported without the cfg) or
-  crate-private code that is dead without them; this step fails on it. Code behind a feature turned
-  off, or for Windows only, is still checked without debug assertions only
-  by the nightly run.
-- **Python tests run in parallel** in the build job (`pytest -n auto`,
-  pytest-xdist, one worker per CPU). A test writes only under `tmp_path`
-  (or `tmp_path_factory`). The scaling job stays sequential: its timings
-  need a quiet runner.
-- On macOS the build job sets `MACOSX_DEPLOYMENT_TARGET=11.0`, the value
+  test jobs build without debug assertions but only their own targets and
+  features: an item under `#[cfg(debug_assertions)]` used or re-exported
+  without the cfg, or crate-private code dead without it, fails here.
+- **Python tests run in parallel** (`pytest -n auto`, pytest-xdist, one
+  worker per CPU). A test writes only under `tmp_path` (or
+  `tmp_path_factory`). The scaling tests stay sequential: their timings need
+  a quiet runner.
+- On macOS the test jobs set `MACOSX_DEPLOYMENT_TARGET=11.0`, the value
   maturin builds the wheel with, meant to let `cargo test` share the units
   both builds have in common. On a warm run it did not: the workspace
   crates still compile twice (their features differ, and on macOS

@@ -52,9 +52,9 @@ dependency bumps and documentation.
 | 2026-11-20 | [Known limitations, readable from the CLI and Python](2026-11-20-known-limitations-in-the-cli.md) | shipped |
 | 2026-11-21 | [Corpus at scale and behaviour tests by area](2026-11-21-corpus-at-scale-and-behaviour-tests.md) | shipped |
 | 2026-11-21 | [An independent review before every merge](2026-11-21-independent-review-before-merge.md) | shipped |
-| 2026-11-21 | [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md) | shipped |
-| 2026-11-21 | [Nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md) | shipped |
-| 2026-11-21 | [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md) | shipped |
+| 2026-11-21 | [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md) | superseded |
+| 2026-11-21 | [Nightly scaling on macOS and Windows](2026-11-21-nightly-scaling-on-macos-and-windows.md) | superseded |
+| 2026-11-21 | [main builds on Linux, with one run waiting](2026-11-21-main-on-linux-with-one-waiting-run.md) | superseded |
 | 2026-11-21 | [A faster build job](2026-11-21-faster-build-job.md) | shipped |
 | 2026-11-21 | [A check without debug assertions on every pull request](2026-11-21-check-without-debug-assertions.md) | shipped |
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
@@ -73,3 +73,4 @@ dependency bumps and documentation.
 | 2026-11-21 | [Consumer workflows: the suite checks what a first user does](2026-11-21-consumer-workflows.md) | accepted |
 | 2026-11-21 | [One rule for every Python length argument](2026-11-21-one-rule-for-python-length-arguments.md) | accepted |
 | 2026-11-21 | [The release pushes main and the tag after every build is green](2026-11-21-release-pushes-after-the-builds.md) | shipped |
+| 2026-11-22 | [One CI for pull requests and main, the full sets at night](2026-11-22-one-ci-for-pull-requests-and-main.md) | accepted |

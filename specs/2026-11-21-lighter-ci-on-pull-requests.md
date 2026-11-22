@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: shipped
+status: superseded
 scope: ci
 ---
 
@@ -59,3 +59,4 @@ draft or a stacked one.
 
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#ci)
 - [CI and release from scratch](2026-11-20-ci-and-release.md)
+- Superseded by [one CI for pull requests and main](2026-11-22-one-ci-for-pull-requests-and-main.md).

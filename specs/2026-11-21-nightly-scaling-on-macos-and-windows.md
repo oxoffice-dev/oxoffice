@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: shipped
+status: superseded
 scope: ci
 ---
 
@@ -46,3 +46,4 @@ with their own spec (the second:
 - [Lighter CI on pull requests](2026-11-21-lighter-ci-on-pull-requests.md)
 - [A test suite from scratch](2026-11-20-test-suite-from-scratch.md)
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#ci)
+- Superseded by [one CI for pull requests and main](2026-11-22-one-ci-for-pull-requests-and-main.md).

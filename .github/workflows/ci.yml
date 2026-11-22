@@ -1,26 +1,17 @@
 name: CI
 
-# Every pull request that is ready and targets main builds and tests on
-# Linux, macOS and Windows: a platform-only failure (paths, line endings)
-# shows before the merge. The jobs run in parallel, so Windows, the slowest,
-# bounds the wait. A draft, or a pull request whose base is another branch,
-# runs lint, WebAssembly and Linux only. The full run needs both a base of
-# main and a ready pull request, on opened, synchronize, reopened or
-# ready_for_review. A change of base to main (GitHub's move of a stacked pull
-# request when its base merges, or by hand) runs nothing: push a new commit,
-# or close and reopen, before merging. A push to main runs on Linux only,
-# every scaling call included: its pull request ran the three platforms. The
-# nightly schedule and workflow_dispatch run everything on the three
-# platforms. See specs/2026-11-21-lighter-ci-on-pull-requests.md,
-# specs/2026-11-21-nightly-scaling-on-macos-and-windows.md and
-# specs/2026-11-21-main-on-linux-with-one-waiting-run.md.
-# Everything is built once, with the `ci` profile (no LTO, workspace crates
-# unoptimised, debug assertions on): the wheel carries both the Python package and the `oxoffice`
-# command, so one build serves the Python and the CLI checks. Fat LTO is only
-# for the release workflow. Only runs on main (pushes, the nightly run, a
-# dispatch on main) save the Rust caches, even when a test fails after the
-# compile; pull requests restore them. See
-# specs/2026-11-21-faster-build-job.md.
+# One set of jobs, the same on every pull request (drafts and stacked ones
+# included) and on every push to main: lint, the tests on Linux, macOS and
+# Windows, the Python suite under debug assertions, and the timings on Linux.
+# About 10 minutes, bounded by the slowest platform. The full sets (debug
+# assertions everywhere, the whole render corpus, every producer's copy in
+# the workflow walks, every scaling call) run every night in nightly.yml.
+# See specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
+# The tests build without debug assertions (the `scaling` profile): with
+# them every edit re-checks the whole document, which doubles the Rust tests
+# and quadruples the Python ones. The `Debug checks` job keeps them on the
+# Python suite. Only runs on main (pushes, a dispatch on main) save the Rust
+# caches; pull requests restore them (specs/2026-11-21-faster-build-job.md).
 
 # Changes that only touch documentation do not build anything.
 on:
@@ -28,18 +19,15 @@ on:
     branches: [main]
     paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # A draft runs the same jobs: marking it ready runs nothing more.
+    types: [opened, synchronize, reopened]
     paths-ignore: ["**.md", "docs/**", "specs/**", "assets/**", "LICENSE", "NOTICE"]
   workflow_dispatch:
-  # The full scaling set on macOS and Windows runs once a night instead of on
-  # every push to main (specs/2026-11-21-nightly-scaling-on-macos-and-windows.md).
-  schedule:
-    - cron: "23 2 * * *"
 
 # A pull request keeps only its latest run. Every other run is keyed by its
 # event and commit: each push to main runs in full, beside the runs of the
-# pushes before it, so every merge gets its verdict; the nightly run and a
-# dispatch never wait behind or cancel a push run, or each other.
+# pushes before it, so every merge gets its verdict; a dispatch never waits
+# behind or cancels a push run.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -54,16 +42,16 @@ env:
 
 jobs:
   lint:
-    name: Format, clippy, licences
+    name: Format, clippy, licences, WebAssembly
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # A key of its own since the check without debug assertions came:
-          # main saves only on a key miss, so it saves that check's artifacts.
-          key: scaling-check
+          # A key of its own, renamed whenever the job compiles something new
+          # (the WebAssembly steps last): main saves only on a key miss.
+          key: scaling-check-wasm
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
@@ -79,15 +67,14 @@ jobs:
       - name: Wheel licence files match the root ones
         run: cmp LICENSE crates/oxoffice-py/LICENSE && cmp NOTICE crates/oxoffice-py/NOTICE
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # Clippy above and the build job compile with debug assertions, and the
-      # scaling job builds only the wheel, only for ready pull requests into
-      # main. This lints every crate and target on Linux, all features on,
-      # without them, warnings denied, on every pull request, drafts and
-      # stacked ones included: an item under #[cfg(debug_assertions)] used
-      # without that cfg, or crate-private code dead without it, fails here
-      # (specs/2026-11-21-check-without-debug-assertions.md). It and
-      # cargo-deny run even when an earlier step failed, so one push shows
-      # every failure.
+      # Clippy above compiles with debug assertions, the test jobs without
+      # them but only their own targets and features. This lints every crate
+      # and target, all features on, without them, warnings denied: an item
+      # under #[cfg(debug_assertions)] used without that cfg, or
+      # crate-private code dead without it, fails here
+      # (specs/2026-11-21-check-without-debug-assertions.md). It and the
+      # steps after it run even when an earlier step failed, so one push
+      # shows every failure.
       - name: Clippy without debug assertions
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --workspace --all-targets --all-features --profile scaling -- -D warnings
@@ -95,31 +82,22 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           command: check advisories bans licenses sources
-
-  wasm:
-    name: WebAssembly
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
+      - name: WebAssembly
+        if: ${{ !cancelled() }}
+        run: cargo check --target wasm32-unknown-unknown -p oxoffice-docx-wasm -p oxoffice-pptx-wasm
+      # The WebAssembly bindings build the facade without rendering: an edit
+      # must not need the rendering crates.
       - name: PowerPoint tests without the render feature
+        if: ${{ !cancelled() }}
         run: cargo test --profile ci --locked -p oxoffice-pptx --no-default-features --features default-template --test pptx
 
-  build:
-    name: Build and test (${{ matrix.os }})
+
+  test:
+    name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        # Three platforms unless this is a push to main (its pull request
-        # built them), a draft, or a pull request stacked on another branch.
-        # Any other event, the nightly run and workflow_dispatch included,
-        # builds the three.
-        os: ${{ fromJSON((github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft))) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,13 +117,17 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # nightly.yml's full scaling job restores this cache (same profile).
+          shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
+      # The wheel carries both the Python package and the `oxoffice` command,
+      # so one build serves the Python and the CLI checks.
       - name: Build the wheel
         shell: bash
         run: |
           python -m pip install --require-hashes -r .github/requirements/ci.txt
-          maturin build --profile ci --locked -m crates/oxoffice-py/Cargo.toml -o dist
+          maturin build --profile scaling --locked -m crates/oxoffice-py/Cargo.toml -o dist
           python -m pip install dist/*.whl
       - name: Smoke test
         shell: bash
@@ -154,127 +136,80 @@ jobs:
           oxoffice --version
           oxoffice docx --help > /dev/null
           oxoffice pptx --help > /dev/null
-      - name: Keep the Linux wheel for the skill examples
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: wheel-linux
-          path: dist/*.whl
-          if-no-files-found: error
-          retention-days: 1
       # The render tests (specs/2026-11-21-render-fidelity.md) render the
-      # corpus without its long files on Linux; on macOS and Windows a pull
-      # request skips the corpus (the render is the same bytes on every
-      # platform). The nightly run and a dispatch render the whole corpus on
-      # the three. Under CI an unset OXOFFICE_RENDER fails the render tests.
+      # corpus without its long files on Linux and skip it on macOS and
+      # Windows (the render is the same bytes on every platform); the nightly
+      # run renders the whole corpus on the three. The workflow tests read one
+      # corpus file each (specs/2026-11-21-consumer-workflows.md), every
+      # producer's copy at night. Under CI an unset OXOFFICE_RENDER fails the
+      # render tests.
       - name: Rust integration tests
         shell: bash
         env:
-          OXOFFICE_RENDER: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'full' || matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
-          # The workflow tests read one corpus file each on a pull request, every
-          # producer's copy otherwise (specs/2026-11-21-consumer-workflows.md).
-          OXOFFICE_WORKFLOWS: ${{ github.event_name != 'pull_request' && 'full' || '' }}
-        run: |
-          if ls crates/*/tests/*.rs > /dev/null 2>&1; then
-            cargo test --profile ci --locked --workspace $PY_CRATES --test '*'
-          else
-            echo "no Rust integration tests yet"
-          fi
+          OXOFFICE_RENDER: ${{ matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
+        run: cargo test --profile scaling --locked --workspace $PY_CRATES --test '*'
       # One worker per CPU (pytest-xdist). Tests write only under tmp_path.
-      # The scaling job stays sequential: its timings need a quiet runner.
       - name: Python tests
+        if: ${{ !cancelled() }}
         shell: bash
-        env:
-          OXOFFICE_WORKFLOWS: ${{ github.event_name != 'pull_request' && 'full' || '' }}
-        run: |
-          if [ -d crates/oxoffice-py/tests ]; then python -m pytest crates/oxoffice-py/tests -q -n auto; else echo "no Python tests yet"; fi
+        run: python -m pytest crates/oxoffice-py/tests -q -n auto
 
-  # The scaling tests time every mutating call at N and 16N (docx) or 4N
-  # (pptx). They need a build without debug assertions (the `scaling`
-  # profile), built here beside the `ci` one so that pull requests wait no
-  # longer. A ready pull request into main times the QUICK set on Linux; a
-  # push to main times every call on Linux; the nightly run and
-  # workflow_dispatch time every call on the three platforms. Drafts and
-  # stacked pull requests skip it.
-  scaling:
-    name: Scaling (${{ matrix.os }})
-    if: github.event_name != 'pull_request' || (github.base_ref == 'main' && !github.event.pull_request.draft)
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
-    runs-on: ${{ matrix.os }}
+  # Debug builds check every edit against a copy of the whole document. The
+  # Python suite, the widest set of edits, runs under those checks on every
+  # change; the Rust tests and the other platforms run under them at night.
+  debug:
+    name: Debug checks (ubuntu-latest)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # nightly.yml's full test jobs restore this cache (same profile).
+          shared-key: debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the wheel with debug assertions
+        run: |
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          maturin build --profile ci --locked -m crates/oxoffice-py/Cargo.toml -o dist
+          python -m pip install dist/*.whl
+      - name: Python tests
+        run: python -m pytest crates/oxoffice-py/tests -q -n auto
+
+  # The QUICK scaling sets time one call of each area, the edits of #6
+  # among them, at N and 16N (docx) or 4N (pptx): a call made linear fails.
+  # Every call is timed at night. The untimed run-once test is left to the
+  # test jobs. Sequential: the timings need a quiet runner.
+  timings:
+    name: Timings (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: timings
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the wheel without debug assertions
-        shell: bash
         run: |
           python -m pip install --require-hashes -r .github/requirements/ci.txt
           maturin build --profile scaling --locked -m crates/oxoffice-py/Cargo.toml -o dist
           python -m pip install dist/*.whl
       - name: Scaling tests
-        shell: bash
         env:
-          OXOFFICE_SCALING: ${{ github.event_name == 'pull_request' && 'quick' || 'full' }}
-        run: python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py -q -rxX
-
-  # The examples of the oxoffice-skills skills are the contract between the
-  # two repositories (tests/skills/README.md). They run on main only, against
-  # the Linux wheel and command that `build` just made and tested, and read
-  # the skills' default branch: a change on either side shows on the next
-  # push to main. A `ci` build takes about 9 minutes locally, 18 on a runner.
-  skill-examples:
-    name: Skill examples
-    if: github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: oxoffice-dev/oxoffice-skills
-          path: oxoffice-skills
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wheel-linux
-          path: dist
-      - name: Install the wheel
-        id: install
+          OXOFFICE_SCALING: quick
         run: |
-          python -m pip install --require-hashes -r .github/requirements/ci.txt
-          python -m pip install dist/*.whl
-          oxoffice --version
-          git -C oxoffice-skills log -1 --format='oxoffice-skills %h %s'
-      - name: Run the examples
-        timeout-minutes: 30
-        run: |
-          python tests/skills/make_fixtures.py "$RUNNER_TEMP/skills/fixtures"
-          python tests/skills/run_examples.py --skills oxoffice-skills/plugin/skills \
-            --fixtures "$RUNNER_TEMP/skills/fixtures" --work "$RUNNER_TEMP/skills"
-      - name: Check what they wrote
-        run: python tests/skills/check_outputs.py "$RUNNER_TEMP/skills"
-      - name: Check the names the skills cite
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: python tests/skills/check_names.py oxoffice-skills/plugin/skills
-      - name: Keep the logs
-        if: failure() || cancelled()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: skill-examples-logs
-          path: ${{ runner.temp }}/skills
-          retention-days: 7
+          python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py \
+            -q -rxX -k "not test_every_timed_call_runs_once"

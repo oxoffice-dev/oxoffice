@@ -810,7 +810,7 @@ GROWING = {
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
-# Pull requests time these: the edits #6 names, and one call of each area.
+# ci.yml times these on every pull request and push to main: the edits #6 names, and one call of each area.
 QUICK = {
     "Run.text", "Run.bold", "Paragraph.text", "Paragraph.add_run", "ParagraphFormat.alignment", "Table.add_row",
     "Cell.text", "Document.add_paragraph", "Document.add_heading", "Document.add_table", "Document.remove_content",

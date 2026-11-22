@@ -626,7 +626,7 @@ def decks(tmp_path_factory):
             Deck(edit_cost_pptx(folder / "4n.pptx", 4 * N, picture_side=600)))
 
 
-# Pull requests time these: one call of each area.
+# ci.yml times these on every pull request and push to main: one call of each area.
 QUICK = {
     "SlideCollection.add_slide", "SlideCollection.remove", "ShapeCollection.add_textbox", "ShapeCollection.add_picture",
     "ShapeCollection.add_table", "Shape.left", "TextFrame.text", "Paragraph.text", "Font.bold", "Cell.merge",
