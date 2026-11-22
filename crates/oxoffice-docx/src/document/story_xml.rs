@@ -779,6 +779,9 @@ pub(super) fn comment_move_source_edits(
             Event::Text(text) if depth == 1 && !text.iter().all(u8::is_ascii_whitespace) => {
                 mixed = true;
             }
+            Event::GeneralRef(_) if depth == 1 => {
+                mixed = true;
+            }
             Event::Comment(_) | Event::PI(_) if depth == 1 => {
                 mixed = true;
             }

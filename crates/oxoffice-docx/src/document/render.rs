@@ -1628,6 +1628,7 @@ impl Document {
                         Event::End(_) => depth = depth.checked_sub(1)?,
                         Event::DocType(_) => return None,
                         Event::Text(text) if depth == 0 && !text.iter().all(u8::is_ascii_whitespace) => return None,
+                        Event::GeneralRef(_) if depth == 0 => return None,
                         Event::Eof => break,
                         _ => {}
                     }
