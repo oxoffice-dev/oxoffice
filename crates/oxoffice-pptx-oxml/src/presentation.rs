@@ -2251,6 +2251,7 @@ fn parse_section(xml: &[u8], inherited: &NamespaceBindings) -> Result<Section> {
             Event::End(element) if local_name(element.name().as_ref()) == b"section" => break,
             Event::Eof => return Err(OxmlError::MissingElement("closing p14:section".to_owned())),
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
@@ -2343,6 +2344,7 @@ fn parse_section_slide_ids(
             Event::End(element) if local_name(element.name().as_ref()) == b"sldIdLst" => break,
             Event::Eof => return Err(OxmlError::MissingElement("closing p14:sldIdLst".to_owned())),
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
@@ -2395,6 +2397,7 @@ fn parse_section_slide_id_sidecar(
             Event::End(element) if local_name(element.name().as_ref()) == b"sldId" => break,
             Event::Eof => return Err(OxmlError::MissingElement("closing p14:sldId".to_owned())),
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)
@@ -2602,6 +2605,7 @@ fn write_section_list_preserving_raw(
                 ));
             }
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)

@@ -7,8 +7,9 @@ use std::io::Cursor;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_pptx::{
-    Comment, CommentAuthor, Emu, Error, Fill, ImportSlideOptions, Presentation, Section, ShapeKind,
-    ShapeOwner, SlideRef, TransitionDirection, TransitionKind, ValidationIssue,
+    Comment, CommentAuthor, Emu, Error, Fill, HeaderFooter, HeaderFooterDate, ImportSlideOptions,
+    Presentation, Section, ShapeKind, ShapeOwner, SlideRef, TransitionDirection, TransitionKind,
+    ValidationIssue,
 };
 
 use crate::support::{corpus_deck, new_deck, reopen};
@@ -1225,6 +1226,67 @@ fn a_section_naming_an_unknown_slide_or_a_slide_twice_is_refused() {
     assert!(prs.set_sections(twice).is_err());
     assert_eq!(prs.to_bytes().unwrap(), before);
     assert!(prs.sections().is_empty());
+}
+
+#[test]
+fn an_entity_the_section_list_keeps_as_written_survives_a_section_edit() {
+    // Character data the section list, a section, its slide list and one
+    // of its slide ids keep as written, with an entity in each.
+    let bytes = deck_in_two_sections().to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = "/ppt/presentation.xml";
+    let mut xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let slide_id = xml.find("<p14:sldId ").unwrap();
+    let close = slide_id + xml[slide_id..].find("/>").unwrap();
+    xml.replace_range(close..close + 2, ">i&amp;s</p14:sldId>");
+    let xml = xml
+        .replacen("<p14:sldIdLst>", "s&amp;e<p14:sldIdLst>", 1)
+        .replacen("<p14:sldIdLst>", "<p14:sldIdLst>l&amp;s", 1)
+        .replacen("<p14:section ", "l&amp;t<p14:section ", 1);
+    package.set_part(part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut prs = Presentation::from_bytes(&out.into_inner()).unwrap();
+
+    prs.duplicate_slide(0).unwrap();
+    let xml = saved_part_text(&prs, part).unwrap();
+    assert_eq!(sections(&reopen(&prs))[0].1.len(), 3, "{xml}");
+    for kept in [
+        "i&amp;s</p14:sldId>",
+        "s&amp;e<p14:sldIdLst>",
+        "<p14:sldIdLst>l&amp;s",
+        "l&amp;t<p14:section ",
+    ] {
+        assert!(xml.contains(kept), "{kept}: {xml}");
+    }
+}
+
+#[test]
+fn an_entity_a_master_header_footer_keeps_as_written_survives_new_flags() {
+    let bytes = deck_with_titles(&["One"]).to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = "/ppt/slideMasters/slideMaster1.xml";
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let xml = xml.replacen(
+        "<p:txStyles>",
+        "<p:hf hdr=\"0\">h&amp;f</p:hf><p:txStyles>",
+        1,
+    );
+    package.set_part(part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut prs = Presentation::from_bytes(&out.into_inner()).unwrap();
+
+    let settings = HeaderFooter {
+        slide_number: true,
+        footer: None,
+        date: HeaderFooterDate::Off,
+    };
+    assert!(prs.set_header_footer(&settings, false).unwrap());
+    let xml = saved_part_text(&prs, part).unwrap();
+    let hf = &xml[xml.find("<p:hf").unwrap()..];
+    let hf = &hf[..hf.find("</p:hf>").unwrap_or(hf.len())];
+    assert!(hf.contains("h&amp;f"), "{hf}");
 }
 
 #[test]

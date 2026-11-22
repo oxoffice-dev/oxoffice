@@ -3115,6 +3115,9 @@ fn parse_element(raw: &[u8], inherited: &[(String, String)]) -> Result<ParsedEle
             Event::Text(text) if inside && !text.as_ref().iter().all(u8::is_ascii_whitespace) => {
                 children.push(capture_event(Event::Text(text.into_owned()))?)
             }
+            Event::GeneralRef(entity) if inside => {
+                children.push(capture_event(Event::GeneralRef(entity.into_owned()))?)
+            }
             Event::Comment(comment) if inside => {
                 children.push(capture_event(Event::Comment(comment.into_owned()))?)
             }

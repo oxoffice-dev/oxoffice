@@ -2090,3 +2090,39 @@ fn a_kept_click_attribute_holding_a_double_quote_stays_well_formed_when_the_addr
     let xml = saved_part(&saved, "/ppt/slides/slide1.xml");
     assert!(xml.contains(r#"x:note="say &quot;hi&quot;""#), "{xml}");
 }
+
+#[test]
+fn an_entity_in_a_text_body_container_survives_an_edit_of_its_text() {
+    // Character data a text body container keeps as written, with an entity
+    // in it: the edit writes it back whole.
+    let bytes = text_box_deck("Edit me").to_bytes().unwrap();
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = "/ppt/slides/slide1.xml";
+    let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+    let body_start = xml.find("<p:txBody").unwrap();
+    let body_end = xml.find("</p:txBody>").unwrap();
+    let body = &xml[body_start..body_end];
+    let paragraph = body.find("<a:p>").unwrap() + body_start;
+    let run = xml[paragraph..].find("<a:r>").unwrap() + paragraph;
+    // Inserted from the end, so the earlier offsets stay right.
+    let mut edited = xml.clone();
+    edited.insert_str(run + "<a:r>".len(), "<a:rPr>r&amp;r</a:rPr>");
+    edited.insert_str(paragraph + "<a:p>".len(), "<a:pPr>p&amp;p</a:pPr>");
+    edited.insert_str(paragraph, "b&amp;d");
+    let lst = body.find("<a:lstStyle/>").expect("a list style") + body_start;
+    edited.replace_range(
+        lst..lst + "<a:lstStyle/>".len(),
+        "<a:lstStyle>l&amp;s</a:lstStyle>",
+    );
+    package.set_part(part, edited.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+
+    let mut prs = Presentation::from_bytes(&out.into_inner()).unwrap();
+    assert_eq!(prs.replace_text("Edit", "Edited"), 1);
+    let xml = saved_part(&prs, part);
+    assert!(xml.contains("Edited me"), "{xml}");
+    for kept in ["l&amp;s", "b&amp;d", "p&amp;p", "r&amp;r"] {
+        assert!(xml.contains(kept), "{kept}: {xml}");
+    }
+}
