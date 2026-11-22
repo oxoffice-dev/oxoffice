@@ -1546,7 +1546,16 @@ impl Document {
                     .expect("compatible application properties exist"),
             )
         } else {
-            new_word_package(class)
+            // The main part is there from the start, as in the Word-compatible
+            // profile, so the package answers for its class before a save.
+            let mut package = new_word_package(class);
+            package.set_part(
+                "/word/document.xml",
+                document
+                    .to_xml()
+                    .expect("fresh Word document model must serialize"),
+            );
+            package
         };
         if compatible {
             validate_fresh_word_compatible_package(&package, class)

@@ -586,13 +586,7 @@ fn a_custom_property_without_a_name_or_with_a_taken_id_is_refused() {
     assert_eq!(custom_names(&doc), ["Approved"]);
 }
 
-// Fails today: a debug build panics, its edit check compares the properties
-// with == and NaN is not equal to itself. Issue: #179
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    should_panic(expected = "setting a NaN number property panicked")
-)]
 fn a_custom_number_property_may_be_nan() {
     let mut doc = doc_with(&["Body"]);
     let outcome = catch_unwind(AssertUnwindSafe(|| {

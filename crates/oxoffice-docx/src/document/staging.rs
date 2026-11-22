@@ -259,7 +259,11 @@ impl Document {
                     format!("{:?}", staged.application_properties),
                     format!("{:?}", self.application_properties)
                 );
-                assert_eq!(staged.custom_properties, self.custom_properties);
+                // Compared by their debug form: a NaN number is not == itself.
+                assert_eq!(
+                    format!("{:?}", staged.custom_properties),
+                    format!("{:?}", self.custom_properties)
+                );
                 assert_eq!(
                     (
                         &staged.core_properties_part_name,

@@ -38,6 +38,17 @@ pub enum CustomPropertyValue {
     Raw(Vec<u8>),
 }
 
+impl CustomPropertyValue {
+    /// Whether the two values are written the same. Unlike `==`, a NaN
+    /// number is the same as itself, and `-0` is not the same as `0`.
+    pub fn is_same_value(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::R8(left), Self::R8(right)) => r8_text(*left) == r8_text(*right),
+            _ => self == other,
+        }
+    }
+}
+
 /// One property in `docProps/custom.xml`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomProperty {
