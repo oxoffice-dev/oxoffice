@@ -1528,10 +1528,11 @@ fn a_toc_leaves_out_a_heading_deleted_with_tracked_changes_as_word_writes_it() {
 /// lists the headings to its depth, in the file's own TOC styles, with the
 /// pages of the layout; the header and footer parts keep the page caches
 /// Word left there; a second pass changes no byte; and the PDF has as many
-/// pages as the layout.
+/// pages as the layout. With every copy, it walks the record copies too.
 #[test]
 fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
-    crate::support::run_workflow("page-numbers", &crate::support::thesis_copies(), |path| {
+    let copies = crate::support::page_numbers_copies();
+    crate::support::run_workflow("page-numbers", &copies, |path| {
         let source = crate::support::workflow_source(path);
         let pass = |bytes: &[u8]| {
             let mut doc = Document::from_bytes(bytes).unwrap();
@@ -1674,7 +1675,11 @@ fn a_page_number_pass_on_a_thesis_is_stable_and_follows_the_layout() {
             }
             let mut distinct = pages[..headings].to_vec();
             distinct.dedup();
-            assert!(distinct.len() > 5, "{path}: {pages:?}");
+            // The record is three pages long.
+            assert!(
+                distinct.len() > 5 || path.ends_with("record.docx"),
+                "{path}: {pages:?}"
+            );
         }
 
         // The PDF on the copies the walks render.

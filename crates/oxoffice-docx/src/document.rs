@@ -634,8 +634,15 @@ fn story_reference_slot(references: &[HdrFtrRef], hdr_type: HdrFtrType) -> usize
         .unwrap_or(references.len())
 }
 
-/// Puts `reference` in `references`, in place of those of its type.
-fn place_story_reference(references: &mut Vec<HdrFtrRef>, reference: HdrFtrRef) {
+/// Puts `reference` in `references`, in place of those of its type, at the
+/// place among the section's references of the one it replaces.
+fn place_story_reference(references: &mut Vec<HdrFtrRef>, mut reference: HdrFtrRef) {
+    if let Some(replaced) = references
+        .iter()
+        .find(|existing| existing.hdr_ftr_type == reference.hdr_ftr_type)
+    {
+        reference.take_place_of(replaced);
+    }
     let slot = story_reference_slot(references, reference.hdr_ftr_type);
     references.retain(|existing| existing.hdr_ftr_type != reference.hdr_ftr_type);
     references.insert(slot, reference);
