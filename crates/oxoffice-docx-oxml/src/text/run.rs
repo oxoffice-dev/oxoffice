@@ -9,7 +9,9 @@ pub enum RunContent {
     /// Deleted text projected from `w:delText` inside a deletion wrapper.
     DeletedText(CT_Text),
     Tab,
-    Break(BreakType),
+    /// A `w:br`: its kind, and where the text after it restarts beside
+    /// floating objects (`w:clear`).
+    Break(BreakType, BreakClear),
     Drawing(CT_Drawing),
     /// A simple or complex Word field.
     Field(Field),
@@ -240,7 +242,7 @@ pub(crate) struct RunChildPlan {
 }
 pub(crate) enum RunLeafValue {
     Tab,
-    Break(BreakType),
+    Break(BreakType, BreakClear),
     Footnote {
         id: i32,
         custom_mark: Option<String>,
@@ -256,7 +258,7 @@ impl RunLeafValue {
     fn into_content(self, raw_before: usize) -> RunContent {
         match self {
             Self::Tab => RunContent::Tab,
-            Self::Break(kind) => RunContent::Break(kind),
+            Self::Break(kind, clear) => RunContent::Break(kind, clear),
             Self::Footnote { id, custom_mark } => RunContent::FootnoteRef { id, custom_mark },
             Self::Endnote { id, custom_mark } => RunContent::EndnoteRef { id, custom_mark },
             Self::Comment(id) => RunContent::CommentReference { id, raw_before },
@@ -281,6 +283,9 @@ impl RunChildPlan {
                         _ => BreakType::Line,
                     })
                     .unwrap_or(BreakType::Line),
+                optional_word_attribute(start, b"clear", prefixes)
+                    .map(|value| BreakClear::parse(&value))
+                    .unwrap_or_default(),
             )),
             A::FootnoteReference | A::EndnoteReference => {
                 let id = optional_word_attribute(start, b"id", prefixes)
@@ -570,6 +575,44 @@ pub enum BreakType {
     Line,
     Page,
     Column,
+}
+
+/// `ST_BrClear`: where the text after a break restarts beside the floating
+/// objects that wrap text. Only a line break uses it; a page or column break
+/// keeps it for the file's sake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BreakClear {
+    /// Absent or `none`: the text restarts on the next line.
+    #[default]
+    None,
+    /// Below the floats on the left.
+    Left,
+    /// Below the floats on the right.
+    Right,
+    /// Below every float.
+    All,
+}
+
+impl BreakClear {
+    /// Read a `w:clear` value; an unknown value reads as `None`.
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "left" => Self::Left,
+            "right" => Self::Right,
+            "all" => Self::All,
+            _ => Self::None,
+        }
+    }
+
+    /// The `w:clear` value to write, `None` for none (written as absent).
+    pub fn as_attribute(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Left => Some("left"),
+            Self::Right => Some("right"),
+            Self::All => Some("all"),
+        }
+    }
 }
 
 /// `CT_R` — A run of text with uniform formatting.
@@ -883,7 +926,7 @@ impl CT_R {
         match content {
             RunContent::Text(t) | RunContent::DeletedText(t) => &t.text,
             RunContent::Tab => "\t",
-            RunContent::Break(_) => "\n",
+            RunContent::Break(..) => "\n",
             RunContent::Drawing(_) => "", // Drawings have no text content
             RunContent::Field(field) => field.projected_text().unwrap_or(""),
             RunContent::FootnoteRef { custom_mark, .. }
@@ -906,7 +949,7 @@ impl CT_R {
         match content {
             RunContent::Text(text) | RunContent::DeletedText(text) => &text.text,
             RunContent::Tab
-            | RunContent::Break(_)
+            | RunContent::Break(..)
             | RunContent::Drawing(_)
             | RunContent::Field(_)
             | RunContent::FootnoteRef { .. }
@@ -1882,12 +1925,20 @@ impl CT_R {
                 RunContent::Tab => {
                     FieldXmlStart::word(&word_prefix, "tab", emission)?.write(writer, true)?;
                 }
-                RunContent::Break(bt) => {
+                RunContent::Break(bt, clear) => {
                     let mut e = FieldXmlStart::word(&word_prefix, "br", emission)?;
+                    let clear = clear.as_attribute();
                     match bt {
                         BreakType::Page => e.push_word(&word_prefix, "type", "page")?,
                         BreakType::Column => e.push_word(&word_prefix, "type", "column")?,
+                        // Word spells a clearing line break with its type.
+                        BreakType::Line if clear.is_some() => {
+                            e.push_word(&word_prefix, "type", "textWrapping")?
+                        }
                         BreakType::Line => {}
+                    }
+                    if let Some(clear) = clear {
+                        e.push_word(&word_prefix, "clear", clear)?;
                     }
                     e.write(writer, true)?;
                 }

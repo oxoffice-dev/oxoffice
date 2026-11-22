@@ -1604,10 +1604,10 @@ impl Field {
                 .flat_map(|run| {
                     run.content.iter().flat_map(|content| match content {
                         RunContent::Field(child) => child.cached_display_field_segments(),
-                        RunContent::Break(BreakType::Page) => {
+                        RunContent::Break(BreakType::Page, _) => {
                             vec![("\u{000c}", run.properties.as_ref(), self)]
                         }
-                        RunContent::Break(BreakType::Column) => {
+                        RunContent::Break(BreakType::Column, _) => {
                             vec![("\u{000b}", run.properties.as_ref(), self)]
                         }
                         _ => vec![(CT_R::content_text(content), run.properties.as_ref(), self)],
@@ -1645,10 +1645,10 @@ impl Field {
                     .flat_map(|run| {
                         run.content.iter().flat_map(|content| match content {
                             RunContent::Field(child) => child.cached_display_field_segments(),
-                            RunContent::Break(BreakType::Page) => {
+                            RunContent::Break(BreakType::Page, _) => {
                                 vec![("\u{000c}", run.properties.as_ref(), self)]
                             }
-                            RunContent::Break(BreakType::Column) => {
+                            RunContent::Break(BreakType::Column, _) => {
                                 vec![("\u{000b}", run.properties.as_ref(), self)]
                             }
                             _ => vec![(CT_R::content_text(content), run.properties.as_ref(), self)],
@@ -1992,12 +1992,12 @@ impl Field {
                         RunContent::Field(child) => {
                             segments.extend(child.effective_display_field_segments())
                         }
-                        RunContent::Break(BreakType::Page) => segments.push((
+                        RunContent::Break(BreakType::Page, _) => segments.push((
                             Cow::Borrowed("\u{000c}"),
                             run.properties.as_ref(),
                             self,
                         )),
-                        RunContent::Break(BreakType::Column) => segments.push((
+                        RunContent::Break(BreakType::Column, _) => segments.push((
                             Cow::Borrowed("\u{000b}"),
                             run.properties.as_ref(),
                             self,
@@ -2037,14 +2037,14 @@ impl Field {
                             RunContent::Field(child) => {
                                 segments.extend(child.effective_display_field_segments());
                             }
-                            RunContent::Break(BreakType::Page) => {
+                            RunContent::Break(BreakType::Page, _) => {
                                 segments.push((
                                     std::borrow::Cow::Borrowed("\u{000c}"),
                                     run.properties.as_ref(),
                                     self,
                                 ));
                             }
-                            RunContent::Break(BreakType::Column) => {
+                            RunContent::Break(BreakType::Column, _) => {
                                 segments.push((
                                     std::borrow::Cow::Borrowed("\u{000b}"),
                                     run.properties.as_ref(),
@@ -2346,8 +2346,8 @@ fn cached_runs_display_eq(runs: &[CT_R], expected: &str) -> bool {
     for content in runs.iter().flat_map(|run| &run.content) {
         let piece = match content {
             RunContent::Field(field) => field.cached_result.as_str(),
-            RunContent::Break(BreakType::Page) => "\u{000c}",
-            RunContent::Break(BreakType::Column) => "\u{000b}",
+            RunContent::Break(BreakType::Page, _) => "\u{000c}",
+            RunContent::Break(BreakType::Column, _) => "\u{000b}",
             _ => CT_R::content_text(content),
         };
         let Some(tail) = remaining.strip_prefix(piece) else {
@@ -2363,8 +2363,8 @@ pub(super) fn cached_run_display(run: &CT_R) -> String {
         .iter()
         .map(|content| match content {
             RunContent::Field(field) => field.cached_result.clone(),
-            RunContent::Break(BreakType::Page) => "\u{000c}".into(),
-            RunContent::Break(BreakType::Column) => "\u{000b}".into(),
+            RunContent::Break(BreakType::Page, _) => "\u{000c}".into(),
+            RunContent::Break(BreakType::Column, _) => "\u{000b}".into(),
             _ => CT_R::content_text(content).to_owned(),
         })
         .collect()

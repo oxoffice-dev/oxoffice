@@ -1326,8 +1326,10 @@ fn layout_paragraph_with_source_and_table(
                 }
                 // Word drops a page or column break inside a table cell, so
                 // the text on either side of it joins on one line.
-                RunContent::Break(bt) => match bt {
-                    BreakType::Line => inline_items.push(InlineItem::LineBreak),
+                RunContent::Break(bt, clear) => match bt {
+                    BreakType::Line => {
+                        inline_items.push(InlineItem::LineBreak(line_clear(*clear)));
+                    }
                     BreakType::Page | BreakType::Column if in_table_cell => {}
                     BreakType::Page => inline_items.push(InlineItem::PageBreak),
                     BreakType::Column => inline_items.push(InlineItem::ColumnBreak),
@@ -1553,7 +1555,7 @@ fn layout_paragraph_with_source_and_table(
                         {
                             let control = match character {
                                 '\t' => Some(InlineItem::Tab),
-                                '\n' => Some(InlineItem::LineBreak),
+                                '\n' => Some(InlineItem::LineBreak(LineClear::None)),
                                 '\u{000c}' => Some(InlineItem::PageBreak),
                                 '\u{000b}' => Some(InlineItem::ColumnBreak),
                                 '\0' if index == value.len() => None,
@@ -1800,7 +1802,7 @@ fn layout_paragraph_with_source_and_table(
                 }
                 RunContent::SpecialCharacter(character) => match character {
                     SpecialCharacter::CarriageReturn => {
-                        inline_items.push(InlineItem::LineBreak);
+                        inline_items.push(InlineItem::LineBreak(LineClear::None));
                     }
                     SpecialCharacter::NoBreakHyphen => {
                         // U+2011 carries Unicode line-break class GL, so the
@@ -2205,6 +2207,16 @@ fn layout_paragraph_with_source_and_table(
     Ok((result, paint))
 }
 
+/// The layout's clear for a line break's `w:clear`.
+fn line_clear(clear: BreakClear) -> LineClear {
+    match clear {
+        BreakClear::None => LineClear::None,
+        BreakClear::Left => LineClear::Left,
+        BreakClear::Right => LineClear::Right,
+        BreakClear::All => LineClear::All,
+    }
+}
+
 /// Remove the line break that closes a display equation when nothing that
 /// draws follows it in the paragraph.
 ///
@@ -2220,7 +2232,7 @@ fn drop_trailing_display_break(
     let Some(index) = display_break else {
         return;
     };
-    if !matches!(items.get(index), Some(InlineItem::LineBreak)) {
+    if !matches!(items.get(index), Some(InlineItem::LineBreak(_))) {
         return;
     }
     if !items[index + 1..].iter().all(draws_nothing) {

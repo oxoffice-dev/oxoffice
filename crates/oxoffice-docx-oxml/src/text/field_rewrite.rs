@@ -1641,7 +1641,7 @@ pub(super) fn cached_runs_need_typed_projection(runs: &[CT_R]) -> bool {
         run.properties.is_some()
             || run.content.iter().any(|content| match content {
                 RunContent::Tab
-                | RunContent::Break(_)
+                | RunContent::Break(..)
                 | RunContent::Symbol { .. }
                 | RunContent::Drawing(_)
                 | RunContent::DeletedText(_)

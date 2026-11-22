@@ -10,7 +10,7 @@ use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{BreakType, CT_P, CT_R, CT_Text, RunContent};
+use oxoffice_docx_oxml::text::{BreakClear, BreakType, CT_P, CT_R, CT_Text, RunContent};
 use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -1043,7 +1043,7 @@ fn value_content(value: &str) -> Vec<RunContent> {
                 if character == '\r' {
                     characters.next_if_eq(&'\n');
                 }
-                RunContent::Break(BreakType::Line)
+                RunContent::Break(BreakType::Line, BreakClear::None)
             }
             _ => {
                 text.push(character);

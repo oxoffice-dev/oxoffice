@@ -9,7 +9,7 @@ use oxoffice_docx_oxml::shared::{
     ST_Border, ST_Jc, ST_PageOrientation, ST_SectionType, ST_TabJc, ST_TabLeader, ST_Underline,
 };
 use oxoffice_docx_oxml::text::{
-    AcceptedRunPath, AcceptedRunPathSegment, BreakType, CT_P, CT_R, CommentRangeMarker,
+    AcceptedRunPath, AcceptedRunPathSegment, BreakClear, BreakType, CT_P, CT_R, CommentRangeMarker,
     HyperlinkSpan, RunContent, SpecialCharacter, hyperlink_revision_index,
 };
 use oxoffice_docx_oxml::units::{HalfPoint, Twips};
@@ -1333,7 +1333,7 @@ impl<'a> Paragraph<'a> {
     /// Add a line break in its own run.
     pub fn add_line_break(&mut self) {
         let mut run = CT_R::new("");
-        run.content = vec![RunContent::Break(BreakType::Line)];
+        run.content = vec![RunContent::Break(BreakType::Line, BreakClear::None)];
         self.inner.runs.push(run);
     }
 

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use oxoffice_layout::{
     Align, Color, FieldKind, FontManager, FontTraceEvent, GlyphRun, InlineItem, LayoutError,
-    LayoutLine, LineBreakParams, LineItem, LineSpacing, MultilingualGlyphRun, Paint, Point,
-    PositionedElement, Rect, TextSegment, Underline, break_multilingual_into_lines,
+    LayoutLine, LineBreakParams, LineClear, LineItem, LineSpacing, MultilingualGlyphRun, Paint,
+    Point, PositionedElement, Rect, TextSegment, Underline, break_multilingual_into_lines,
 };
 use oxoffice_pptx_layout::{
     ParagraphAlignment, ResolvedAutofit, ResolvedBullet, ResolvedBulletSize, ResolvedParagraph,
@@ -311,7 +311,7 @@ fn inline_items_with_caps(
                     Ok(segment)
                 })?;
             }
-            ResolvedTextRun::Break => items.push(InlineItem::LineBreak),
+            ResolvedTextRun::Break => items.push(InlineItem::LineBreak(LineClear::None)),
         }
         let style = match run {
             ResolvedTextRun::Text { style, .. } | ResolvedTextRun::Field { style, .. } => {
@@ -361,7 +361,7 @@ fn push_displayed_text(
     };
     for (index, line) in displayed.split(['\n', '\r']).enumerate() {
         if index > 0 {
-            items.push(InlineItem::LineBreak);
+            items.push(InlineItem::LineBreak(LineClear::None));
         }
         if !line.is_empty() {
             // Keep shaping context within each script. Common whitespace,

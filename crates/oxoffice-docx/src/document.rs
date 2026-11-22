@@ -1119,7 +1119,7 @@ fn paragraph_is_plain(paragraph: &CT_P) -> bool {
                         content,
                         RunContent::Text(_)
                             | RunContent::Tab
-                            | RunContent::Break(_)
+                            | RunContent::Break(..)
                             | RunContent::Symbol { .. }
                             | RunContent::SpecialCharacter(_)
                     )
