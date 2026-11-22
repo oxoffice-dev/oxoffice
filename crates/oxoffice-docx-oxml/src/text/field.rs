@@ -1832,6 +1832,33 @@ impl Field {
         Ok(())
     }
 
+    /// What a reader sees of the field: [`Self::effective_display`], or the
+    /// selected entry of a legacy drop-down that stores no result, as Word
+    /// shows it. Word saves drop-downs that way.
+    #[doc(hidden)]
+    pub fn reader_display(&self) -> std::borrow::Cow<'_, str> {
+        let display = self.effective_display();
+        if display.is_empty()
+            && let Some(entry) = self.unstored_dropdown_entry()
+        {
+            return std::borrow::Cow::Borrowed(entry);
+        }
+        display
+    }
+
+    /// The selected entry of a legacy drop-down whose result is empty.
+    #[doc(hidden)]
+    pub fn unstored_dropdown_entry(&self) -> Option<&str> {
+        let data = self.legacy_form.as_ref()?;
+        let LegacyFormFieldValue::SelectedIndex(index) = data.value else {
+            return None;
+        };
+        if !self.effective_display().is_empty() {
+            return None;
+        }
+        data.choices.get(index).map(String::as_str)
+    }
+
     /// Semantic display. An observable parent cache wins over nested children.
     pub fn effective_display(&self) -> std::borrow::Cow<'_, str> {
         let nested = self.nested_effective_segments();

@@ -936,6 +936,7 @@ pub(super) fn ref_comment_replacement_ids(
     let mut old = RefBookmarkCache {
         runs: Vec::new(),
         comment_ranges: Vec::new(),
+        rows: Vec::new(),
     };
     let mut run = CT_R::new("");
     run.content = vec![RunContent::Field(field.clone())];
@@ -1307,6 +1308,9 @@ fn append_ref_target_paragraph(
     let selected = projected
         .get(start..end)
         .ok_or_else(|| Error::Other("REF f target run range is stale".into()))?;
+    cache
+        .rows
+        .push(selected.iter().map(|run| (*run).clone()).collect());
     let mut boundaries = Vec::with_capacity(selected.len() + 1);
     for run in selected {
         boundaries.push(cache.runs.len());
@@ -1422,6 +1426,7 @@ pub(super) fn ref_bookmark_runs(
         let mut cache = RefBookmarkCache {
             runs: Vec::new(),
             comment_ranges: Vec::new(),
+            rows: Vec::new(),
         };
         for index in range.start.body_index..=range.end.body_index {
             let paragraph = paragraphs
@@ -1470,6 +1475,7 @@ pub(super) fn ref_bookmark_runs(
     let mut cache = RefBookmarkCache {
         runs: Vec::new(),
         comment_ranges: Vec::new(),
+        rows: Vec::new(),
     };
     for (location, xml) in document.story_range_paragraphs()? {
         if location == range.range().start.location {

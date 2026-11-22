@@ -1564,11 +1564,7 @@ fn a_dotx_template_filled_and_saved_as_docx_declares_a_document() {
     );
 }
 
-// Fails today: a new document of the minimal profile has no main part until
-// it is saved, so asking its class fails, where the Word-compatible profile
-// answers at once. Issue: #203
 #[test]
-#[should_panic(expected = "a new minimal template knows its class")]
 fn a_new_minimal_template_knows_its_class_before_a_save() {
     let profile = WordCreationProfile::Minimal(WordPackageClass::Template);
     let class = Document::new_with_profile(profile).package_class();

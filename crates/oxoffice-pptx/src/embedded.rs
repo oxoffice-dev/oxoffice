@@ -335,6 +335,7 @@ impl Presentation {
         let mut staged = Self::from_package(package)?;
         staged.embedded_invalidated_signatures = self.embedded_invalidated_signatures.clone();
         staged.package_signatures_invalidated = self.package_signatures_invalidated;
+        staged.signature_baseline = self.signature_baseline.clone();
         staged.source_path = self.source_path.clone();
         Ok(staged)
     }
@@ -555,7 +556,8 @@ impl Presentation {
 
     fn has_uncommitted_package_changes(&self) -> Result<bool> {
         let staged = self.staged_package(true)?;
-        Ok(package_bytes(&staged)? != package_bytes(&self.package)?)
+        let baseline = self.signature_baseline.as_deref().unwrap_or(&self.package);
+        Ok(package_bytes(&staged)? != package_bytes(baseline)?)
     }
 }
 
@@ -577,6 +579,14 @@ pub(crate) fn known_invalid_package_signature_on_open(package: &OpcPackage) -> b
         }) => true,
         Err(_) => signature_manifest_has_missing_reference(package),
     }
+}
+
+/// The package a later save is compared with, when it carries a package
+/// signature.
+pub(crate) fn signature_baseline(package: &OpcPackage) -> Option<Arc<OpcPackage>> {
+    has_package_signature(package)
+        .unwrap_or(false)
+        .then(|| Arc::new(package.clone()))
 }
 
 #[cfg(not(feature = "digital-signatures"))]

@@ -434,35 +434,46 @@ pub(super) fn generated_table_opcode(name: &str, policy: DynamicOwnerPolicy) -> 
         || policy == DynamicOwnerPolicy::Bibliography && matches!(name, "CITATION" | "BIBLIOGRAPHY")
 }
 
+/// The categories a table of authorities would list citations in: those of
+/// the TA fields `rebuild_generated_tables` reads, in the accepted view and
+/// outside an existing table. A TA deleted with tracked changes cites
+/// nothing, as in Word. Only `\c` is read: a TA that marks a later citation
+/// with its short form alone (`{ TA \s "Baldwin" }`, as Word's Mark All
+/// writes it) leaves the categories as they are.
 fn generated_authority_categories(document: &Document) -> Result<Vec<u8>> {
-    let snapshot =
-        oxoffice_docx_layout::engine::evaluate_sequence_fields(&document.build_layout_input()?)
-            .map_err(|error| {
-                Error::Other(format!("authority source evaluation failed: {error}"))
-            })?;
+    let mut candidate = document.clone_for_staging();
+    candidate.prepare_staged_package()?;
+    let stories = generated_story_inventory(&candidate, DynamicOwnerPolicy::GeneratedTables)?;
     let mut categories = BTreeSet::new();
-    for index in 1u32.. {
-        let Some(node) = oxoffice_docx_layout::SourceNodeId::new(index) else {
-            break;
-        };
-        if snapshot.source_node(node).is_none() {
-            break;
-        }
-        for index in 0u32.. {
-            let source = oxoffice_layout::FieldSource { node, index };
-            let Some((instruction, _, cached)) = snapshot.source_field_context(source) else {
-                break;
-            };
-            if cached {
-                continue;
-            }
-            let field = Field::new(instruction, "");
-            if field.instruction.name == "TA"
-                && let Some(category) =
-                    switch_text(&field.instruction, "c").and_then(|value| value.parse::<u8>().ok())
-            {
-                generated_category(category)?;
-                categories.insert(category);
+    for story in &stories {
+        let mut paragraphs = Vec::new();
+        collect_body_paragraphs(&story.body, &mut paragraphs, None);
+        for (paragraph_index, paragraph) in paragraphs.iter().enumerate() {
+            for accepted in accepted_toc_runs(paragraph) {
+                let position = TocOwnedPosition {
+                    paragraph: paragraph_index,
+                    run: TocRunPosition {
+                        run_boundary: accepted.run_boundary,
+                        raw_order: accepted.raw_order,
+                        nested_order: accepted.nested_order,
+                    },
+                };
+                if toc_source_position_is_owned(&story.spans, position) {
+                    continue;
+                }
+                for content in &accepted.run.content {
+                    let RunContent::Field(field) = content else {
+                        continue;
+                    };
+                    let instruction = field.effective_instruction();
+                    if instruction.name == "TA"
+                        && let Some(category) = switch_text(&instruction, "c")
+                            .and_then(|value| value.parse::<u8>().ok())
+                    {
+                        generated_category(category)?;
+                        categories.insert(category);
+                    }
+                }
             }
         }
     }

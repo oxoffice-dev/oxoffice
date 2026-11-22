@@ -262,6 +262,16 @@ pub fn thesis_copies() -> Vec<String> {
     copies
 }
 
+/// The copies the page-number pass walks: the small thesis on a pull
+/// request, every thesis and record copy with [`every_copy`].
+pub fn page_numbers_copies() -> Vec<String> {
+    if every_copy() {
+        every_page_numbers_copy()
+    } else {
+        thesis_copies()
+    }
+}
+
 /// The small thesis, then every producer's corpus copy of the thesis.
 pub fn every_thesis_copy() -> Vec<String> {
     std::iter::once(SMALL_THESIS.to_owned())

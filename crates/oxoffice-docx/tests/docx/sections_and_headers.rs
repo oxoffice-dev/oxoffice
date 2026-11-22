@@ -824,3 +824,184 @@ fn section_twips_measures_written_with_a_unit_open() {
         ])
     );
 }
+
+/// The header and footer references of every section of a saved package,
+/// each as its kind and type ("h:even", "f:default"), in the order written.
+fn section_references(bytes: &[u8]) -> Vec<Vec<String>> {
+    let xml = String::from_utf8(main_part(bytes)).unwrap();
+    xml.split("<w:sectPr")
+        .skip(1)
+        .filter(|section| !section.starts_with("Change"))
+        .map(|section| {
+            let section = &section[..section.find("</w:sectPr>").unwrap_or(section.len())];
+            let mut references = Vec::new();
+            for (kind, rest) in section.split("<w:").filter_map(|tag| {
+                tag.strip_prefix("headerReference ")
+                    .map(|rest| ("h", rest))
+                    .or_else(|| tag.strip_prefix("footerReference ").map(|rest| ("f", rest)))
+            }) {
+                let tag = &rest[..rest.find('>').unwrap()];
+                let hdr_type = tag
+                    .split("w:type=\"")
+                    .nth(1)
+                    .and_then(|value| value.split('"').next())
+                    .unwrap_or("default");
+                references.push(format!("{kind}:{hdr_type}"));
+            }
+            references
+        })
+        .collect()
+}
+
+#[test]
+fn an_edited_document_keeps_its_header_and_footer_references_in_the_order_it_read() {
+    // Word interleaves them: its even and default headers, their footers,
+    // then the first-page header and footer. The authored thesis mixes them
+    // its own way, LibreOffice and Google write the headers first.
+    for name in [
+        "word/thesis.docx",
+        "word/letter.docx",
+        "authored/thesis.docx",
+        "libreoffice/letter.docx",
+        "google/letter.docx",
+    ] {
+        let mut doc = corpus_doc(name);
+        let read = section_references(&doc.to_bytes().unwrap());
+        if name == "word/thesis.docx" {
+            assert_eq!(
+                read[0],
+                [
+                    "h:even",
+                    "h:default",
+                    "f:even",
+                    "f:default",
+                    "h:first",
+                    "f:first"
+                ]
+            );
+        }
+        doc.add_paragraph("Added.");
+        assert_eq!(section_references(&doc.to_bytes().unwrap()), read, "{name}");
+    }
+}
+
+#[test]
+fn new_header_and_footer_references_are_written_header_then_footer_per_type() {
+    // The order Word writes a default and a first-page header and footer in.
+    let mut doc = Document::new();
+    doc.add_paragraph("Body.");
+    doc.set_header("Header");
+    doc.set_first_page_header("First header");
+    doc.set_footer("Footer");
+    doc.set_first_page_footer("First footer");
+    assert_eq!(
+        section_references(&doc.to_bytes().unwrap()),
+        [["h:default", "f:default", "h:first", "f:first"]]
+    );
+}
+
+#[test]
+fn relinking_a_header_or_a_footer_of_a_word_file_keeps_its_place_among_the_others() {
+    let mut doc = corpus_doc("word/letter.docx");
+    let read = section_references(&doc.to_bytes().unwrap());
+    assert_eq!(read, [["h:default", "f:default", "h:first", "f:first"]]);
+    let story = |doc: &Document, kind, hdr_type| {
+        doc.section_story(0, kind, hdr_type)
+            .unwrap()
+            .expect("the section has this story")
+            .story()
+            .clone()
+    };
+    let first_header = story(&doc, HeaderFooterKind::Header, HdrFtrType::First);
+    let default_footer = story(&doc, HeaderFooterKind::Footer, HdrFtrType::Default);
+    doc.link_section_story(
+        0,
+        HeaderFooterKind::Header,
+        HdrFtrType::Default,
+        &first_header,
+    )
+    .unwrap();
+    doc.link_section_story(
+        0,
+        HeaderFooterKind::Footer,
+        HdrFtrType::First,
+        &default_footer,
+    )
+    .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(section_references(&doc.to_bytes().unwrap()), read);
+    assert_eq!(header(&doc, 0), first_page_header(&doc, 0));
+}
+
+#[test]
+fn references_inherited_from_a_removed_section_are_new_to_the_next_one() {
+    // The first section of the Word thesis has all six references, the
+    // second its own even and default headers only. Removing the first, the
+    // second inherits the four others, placed as new references: each just
+    // before the next one read in its list, else after those read.
+    let mut doc = corpus_doc("word/thesis.docx");
+    doc.remove_section(0).unwrap();
+    let saved = section_references(&doc.to_bytes().unwrap());
+    assert_eq!(
+        saved[0],
+        [
+            "h:first",
+            "h:even",
+            "h:default",
+            "f:default",
+            "f:first",
+            "f:even"
+        ]
+    );
+}
+
+#[test]
+fn a_header_set_over_one_read_keeps_its_place_among_the_others() {
+    // The Word letter has a default and a first-page header and footer.
+    // With its title page turned off, a new first-page header replaces the
+    // one read: it takes the place of the one it replaces.
+    let mut doc = corpus_doc("word/letter.docx");
+    let read = section_references(&doc.to_bytes().unwrap());
+    assert_eq!(read, [["h:default", "f:default", "h:first", "f:first"]]);
+    doc.set_different_first_page(false);
+    doc.set_first_page_header("New first page");
+    // A body edit, so that the save writes the section again.
+    doc.add_paragraph("Added.");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(section_references(&doc.to_bytes().unwrap()), read);
+    assert_eq!(
+        first_page_header(&doc, 0).as_deref(),
+        Some("New first page")
+    );
+}
+
+#[test]
+fn an_unknown_element_between_header_and_footer_references_keeps_its_place() {
+    let source = corpus_doc("word/letter.docx").to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(source)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let footer = r#"<w:footerReference w:type="default" r:id="rId12"/>"#;
+    let foreign = r#"<x:mark xmlns:x="urn:example"/>"#;
+    assert_eq!(xml.matches(footer).count(), 1);
+    package.set_part(
+        &part,
+        xml.replace(footer, &format!("{footer}{foreign}"))
+            .into_bytes(),
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    doc.add_paragraph("Added.");
+    let xml = String::from_utf8(main_part(&doc.to_bytes().unwrap())).unwrap();
+    let section = &xml[xml.rfind("<w:sectPr").unwrap()..];
+    let after_footer = &section[section
+        .find(r#"<w:footerReference w:type="default""#)
+        .unwrap()..];
+    let after_footer = &after_footer[after_footer.find("/>").unwrap() + 2..];
+    assert!(after_footer.starts_with(foreign), "{section}");
+    assert!(
+        after_footer[foreign.len()..].starts_with(r#"<w:headerReference w:type="first""#),
+        "{section}"
+    );
+}

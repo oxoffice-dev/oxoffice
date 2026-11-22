@@ -908,8 +908,16 @@ impl CT_R {
     /// as `CT_P::accepted_text` reads the run.
     #[doc(hidden)]
     pub fn accepted_text(&self) -> String {
+        self.accepted_text_keeping(&mut |_| true)
+    }
+
+    /// [`Self::accepted_text`] with the display of each field `keep` refuses
+    /// left out. `keep` sees every field a reader sees in the run, outermost
+    /// first, a simple field held by a tracked insertion included.
+    #[doc(hidden)]
+    pub fn accepted_text_keeping(&self, keep: &mut dyn FnMut(&Field) -> bool) -> String {
         let mut text = String::new();
-        super::append_current_run_text(self, &mut text);
+        super::append_current_run_text(self, &mut text, keep);
         text
     }
 

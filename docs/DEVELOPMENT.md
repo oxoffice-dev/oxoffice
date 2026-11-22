@@ -175,7 +175,8 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 
 `crates/oxoffice-py/tests/test_{docx,pptx}_scaling.py` time every public
 mutating call in a document of N paragraphs and in one of 16N (a deck of N
-slides and one of 4N). The bodies of the Word documents carry the
+slides and one of 4N, or 16N for the calls that insert or move a slide
+before the others). The bodies of the Word documents carry the
 identifiers Word writes on every paragraph, run and row, so that each call
 takes the route a saved body takes. They need a build without debug assertions: debug builds
 check every edit against a copy of the whole document, so every call grows
