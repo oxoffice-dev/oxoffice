@@ -1262,7 +1262,7 @@ fn an_entity_the_section_list_keeps_as_written_survives_a_section_edit() {
 
     // Clearing the sections would drop what the list itself holds as
     // written: it is refused, as it is for plain text there.
-    for direct in ["l&amp;t", "lt"] {
+    for direct in ["&amp;", "lt"] {
         let bytes = deck_in_two_sections().to_bytes().unwrap();
         let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
         let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
@@ -2523,7 +2523,8 @@ fn a_slide_name_holding_a_tab_and_line_ends_survives_an_odp_round_trip() {
 #[test]
 fn slide_text_with_markup_characters_reads_back_from_odp() {
     // ODP writes them as `&amp;`, `&lt;`, `&apos;`... and reads them back.
-    let text = r#"R&D <don't> "go""#;
+    // A tab is written as `&#9;`, a character reference.
+    let text = "R&D <don't> \"go\"\tnow";
     let mut deck = deck_with_titles(&["Plain"]);
     deck.slide_mut(0)
         .unwrap()

@@ -3,7 +3,10 @@
 //! it, so a reader that only takes text events would drop it or misjudge
 //! the content it stands in.
 
+use std::io::Cursor;
+
 use oxoffice_docx::{Document, Length};
+use oxoffice_opc::OpcPackage;
 
 use crate::support::{doc_with, doc_with_body, reopen, texts};
 
@@ -69,4 +72,47 @@ fn an_entity_an_equation_keeps_as_written_survives_an_edit_of_its_paragraph() {
     let doc = reopen(&mut doc);
     let xml = doc.part_xml("word/document.xml").unwrap();
     assert!(xml.contains("</m:r>a&amp;b</m:oMath>"), "{xml}");
+}
+
+#[test]
+fn an_entity_alone_outside_the_body_is_refused_as_text_there_is() {
+    for outside in ["x", "&amp;"] {
+        let bytes = Document::new().to_bytes().unwrap();
+        let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+        let part = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen("<w:body>", &format!("{outside}<w:body>"), 1);
+        package.set_part(&part, xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        assert!(
+            Document::from_bytes(&out.into_inner()).is_err(),
+            "{outside}"
+        );
+    }
+}
+
+#[test]
+fn a_ruby_holding_an_entity_alone_where_it_holds_no_text_stays_raw() {
+    // The ruby model cannot write character data back between its
+    // children: such a ruby is kept as written, as one holding text there.
+    for direct in ["x", "&amp;"] {
+        let body = format!(
+            concat!(
+                r#"<w:p><w:ruby>{}<w:rubyPr><w:hps w:val="10"/></w:rubyPr>"#,
+                r#"<w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt>"#,
+                r#"<w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:p>"#,
+            ),
+            direct
+        );
+        let mut doc = doc_with_body(&body);
+        assert!(doc.paragraph(0).unwrap().ruby(0).is_none(), "{direct}");
+        doc.paragraph_mut(0).unwrap().add_run(", edited");
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("word/document.xml").unwrap();
+        assert!(
+            xml.contains(&format!("<w:ruby>{direct}<w:rubyPr>")),
+            "{direct}: {xml}"
+        );
+    }
 }
