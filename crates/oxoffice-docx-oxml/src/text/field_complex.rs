@@ -2047,6 +2047,20 @@ pub(super) fn project_complex_fields(projection: ComplexFieldProjection<'_>) -> 
                 continue;
             }
         }
+        let leading_bookmarks = if fields.len() == 1 {
+            leading_field_bookmarks(
+                start,
+                end,
+                runs,
+                bookmark_markers,
+                comment_ranges,
+                content_controls,
+                revisions,
+                hyperlinks,
+            )
+        } else {
+            Vec::new()
+        };
         let needs_current_owner = fields.len() == 1
             && (content_controls
                 .iter()
@@ -2114,7 +2128,10 @@ pub(super) fn project_complex_fields(projection: ComplexFieldProjection<'_>) -> 
                 revisions,
                 hyperlinks,
             ) || bookmark_markers.iter().enumerate().any(|(index, marker)| {
-                marker.run_index > start && marker.run_index <= end && Some(index) != owned_bookmark
+                marker.run_index > start
+                    && marker.run_index <= end
+                    && Some(index) != owned_bookmark
+                    && !leading_bookmarks.contains(&index)
             }))
         {
             continue;
@@ -2239,6 +2256,31 @@ pub(super) fn project_complex_fields(projection: ComplexFieldProjection<'_>) -> 
             marker.run_index = start;
             marker.projected_run_index -= 1;
             marker.tracked_run_index -= 1;
+        }
+        for &index in leading_bookmarks.iter().filter(|_| !owns_current_result) {
+            if Some(index) == owned_bookmark {
+                continue;
+            }
+            // A marker before anything the field displays has no position of
+            // its own: it reads at the field's start, as Word shows it. Each
+            // physical run before it contributed one accepted and one
+            // tracked run, now part of the single field slot.
+            let marker = &mut bookmark_markers[index];
+            let consumed = marker.run_index - start;
+            marker.run_index = start;
+            marker.projected_run_index = marker
+                .projected_run_index
+                .checked_sub(consumed)
+                .ok_or_else(|| {
+                    OxmlError::InvalidValue("complex leading accepted bookmark origin".into())
+                })?;
+            marker.tracked_run_index =
+                marker
+                    .tracked_run_index
+                    .checked_sub(consumed)
+                    .ok_or_else(|| {
+                        OxmlError::InvalidValue("complex leading tracked bookmark origin".into())
+                    })?;
         }
         if owns_current_result {
             let (_, first_accepted, first_tracked) = run_projection_ends
@@ -2471,6 +2513,76 @@ fn legacy_form_own_bookmark_start(
         return None;
     }
     Some(index)
+}
+
+// Bookmark markers inside a complex field before any run it displays: among
+// its instruction runs, or at the start of its result, as LibreOffice writes
+// a form field's bookmarks. Only a span with no other typed boundary there
+// qualifies: each physical run before such a marker is then one accepted and
+// one tracked run.
+#[allow(clippy::too_many_arguments)]
+fn leading_field_bookmarks(
+    start: usize,
+    end: usize,
+    runs: &[CT_R],
+    bookmark_markers: &[BookmarkMarker],
+    comment_ranges: &[CommentRangeMarker],
+    content_controls: &[(usize, usize, usize, CT_Sdt)],
+    revisions: &[(usize, usize, CT_Revision)],
+    hyperlinks: &[HyperlinkSpan],
+) -> Vec<usize> {
+    let first_displayed = (start + 1..end)
+        .find(|index| runs.get(*index).is_none_or(|run| !run_shows_nothing(run)))
+        .unwrap_or(end);
+    let markers = bookmark_markers
+        .iter()
+        .enumerate()
+        .filter(|(_, marker)| {
+            marker.run_index > start
+                && marker.run_index <= first_displayed
+                && !marker.has_child_content
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if markers.is_empty()
+        || has_typed_boundary_inside(
+            start,
+            first_displayed,
+            comment_ranges,
+            &[],
+            content_controls,
+            revisions,
+            hyperlinks,
+        )
+    {
+        return Vec::new();
+    }
+    markers
+}
+
+// A run with no typed content, no drawing and no raw child but field
+// characters and instruction text: a field's own marker or instruction run,
+// or an empty run.
+fn run_shows_nothing(run: &CT_R) -> bool {
+    run.content.is_empty()
+        && run.alt_drawings.is_empty()
+        && run
+            .extra_xml
+            .iter()
+            .zip(&run.extra_xml_positions)
+            .all(|(raw, at)| {
+                CT_R::raw_child_is_root_attributes(*at) || {
+                    let mut reader = Reader::from_reader(raw.as_slice());
+                    matches!(
+                        reader.read_event(),
+                        Ok(Event::Start(element) | Event::Empty(element))
+                            if matches!(
+                                element.local_name().as_ref(),
+                                b"fldChar" | b"instrText" | b"delInstrText"
+                            )
+                    )
+                }
+            })
 }
 
 fn merge_field_dirty(current: &mut Option<bool>, next: Option<bool>) {
