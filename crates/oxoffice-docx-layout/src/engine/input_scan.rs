@@ -175,7 +175,7 @@ pub(super) fn visit_input_paragraphs<'a>(input: &'a LayoutInput, visit: &mut imp
 pub(super) fn field_text_argument(instruction: &FieldInstruction, index: usize) -> Option<&str> {
     match instruction.arguments.get(index) {
         Some(FieldArgument::Text(value)) => Some(value),
-        Some(FieldArgument::Nested(_)) | None => None,
+        Some(FieldArgument::Nested(_) | FieldArgument::Joined(_)) | None => None,
     }
 }
 

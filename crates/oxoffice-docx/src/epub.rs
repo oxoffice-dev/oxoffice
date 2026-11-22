@@ -3889,6 +3889,12 @@ fn measure_field_argument(
         oxoffice_docx_oxml::text::FieldArgument::Nested(field) => {
             measure_field(field, text_bytes, depth)
         }
+        oxoffice_docx_oxml::text::FieldArgument::Joined(pieces) => {
+            for piece in pieces {
+                measure_field_argument(piece, text_bytes, depth)?;
+            }
+            Ok(())
+        }
     }
 }
 

@@ -529,7 +529,7 @@ fn retain_field_source_identity(
             .iter()
             .zip(&mut current.instruction.arguments)
         {
-            if let (FieldArgument::Nested(old), FieldArgument::Nested(new)) = (old, new) {
+            for (old, new) in old.nested_fields().into_iter().zip(new.nested_fields_mut()) {
                 retain_field_source_identity(old, new, origins)?;
             }
         }
@@ -539,10 +539,10 @@ fn retain_field_source_identity(
             .iter()
             .zip(&mut current.instruction.switches)
         {
-            if let (Some(FieldArgument::Nested(old)), Some(FieldArgument::Nested(new))) =
-                (&old.argument, &mut new.argument)
-            {
-                retain_field_source_identity(old, new, origins)?;
+            if let (Some(old), Some(new)) = (&old.argument, &mut new.argument) {
+                for (old, new) in old.nested_fields().into_iter().zip(new.nested_fields_mut()) {
+                    retain_field_source_identity(old, new, origins)?;
+                }
             }
         }
     }

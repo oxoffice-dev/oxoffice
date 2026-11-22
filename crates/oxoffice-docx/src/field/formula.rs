@@ -555,7 +555,7 @@ pub(super) fn text_argument(instruction: &FieldInstruction, index: usize) -> Opt
 pub(super) fn argument_text(argument: &FieldArgument) -> Option<&str> {
     match argument {
         FieldArgument::Text(value) => Some(value),
-        FieldArgument::Nested(_) => None,
+        FieldArgument::Nested(_) | FieldArgument::Joined(_) => None,
     }
 }
 

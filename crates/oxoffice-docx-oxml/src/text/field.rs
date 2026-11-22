@@ -649,7 +649,7 @@ impl Field {
                 .iter()
                 .filter_map(|switch| switch.argument.as_ref()),
         ) {
-            if let FieldArgument::Nested(child) = argument {
+            for child in argument.nested_fields() {
                 result.add_child(
                     ParsedFieldSummary {
                         affine: child.normalization_work_summary()?,
@@ -716,9 +716,7 @@ impl Field {
                 .iter()
                 .filter_map(|switch| switch.argument.as_ref()),
         ) {
-            if let FieldArgument::Nested(child) = argument {
-                children.push((child.as_ref(), 0));
-            }
+            children.extend(argument.nested_fields().into_iter().map(|child| (child, 0)));
         }
         Ok(children)
     }
@@ -886,6 +884,24 @@ impl Field {
                     oxoffice_core::xml::reject_non_xml_characters("field argument", value)?
                 }
                 FieldArgument::Nested(child) => child.validate_for_attachment()?,
+                FieldArgument::Joined(pieces) => {
+                    for piece in pieces {
+                        match piece {
+                            FieldArgument::Text(value) => {
+                                oxoffice_core::xml::reject_non_xml_characters(
+                                    "field argument",
+                                    value,
+                                )?
+                            }
+                            FieldArgument::Nested(child) => child.validate_for_attachment()?,
+                            FieldArgument::Joined(_) => {
+                                return Err(OxmlError::InvalidValue(
+                                    "a joined field operand holds a joined operand".into(),
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         }
         let preserved = matches!(self.source.as_ref(), FieldSource::Parsed { original_instruction, .. }
@@ -1082,9 +1098,7 @@ impl Field {
                     .iter()
                     .filter_map(|s| s.argument.as_ref()),
             ) {
-                if let FieldArgument::Nested(field) = argument {
-                    children.push(WordOwner::Field(field));
-                }
+                children.extend(argument.nested_fields().into_iter().map(WordOwner::Field));
             }
         }
         if let FieldSource::New {
@@ -1338,7 +1352,14 @@ impl Field {
         } else {
             Vec::new()
         };
+        // A joined operand is listed once per nested piece: its first
+        // listing visits all of them, in source order.
+        let mut visited = Vec::new();
         for position in &ordered {
+            if visited.contains(position) {
+                continue;
+            }
+            visited.push(*position);
             let nested = match *position {
                 NestedFieldPosition::Argument(index) => self.instruction.arguments.get_mut(index),
                 NestedFieldPosition::Switch(index) => self
@@ -1347,42 +1368,50 @@ impl Field {
                     .get_mut(index)
                     .and_then(|field_switch| field_switch.argument.as_mut()),
             };
-            if let Some(FieldArgument::Nested(field)) = nested
-                && field.set_nth_legacy_form_value_with_work(
+            for field in nested
+                .map(FieldArgument::nested_fields_mut)
+                .unwrap_or_default()
+            {
+                if field.set_nth_legacy_form_value_with_work(
                     remaining,
                     value,
                     work.as_deref_mut(),
-                )?
-            {
-                return Ok(true);
+                )? {
+                    return Ok(true);
+                }
             }
         }
         for (index, argument) in self.instruction.arguments.iter_mut().enumerate() {
             if ordered.contains(&NestedFieldPosition::Argument(index)) {
                 continue;
             }
-            if let FieldArgument::Nested(field) = argument
-                && field.set_nth_legacy_form_value_with_work(
+            for field in argument.nested_fields_mut() {
+                if field.set_nth_legacy_form_value_with_work(
                     remaining,
                     value,
                     work.as_deref_mut(),
-                )?
-            {
-                return Ok(true);
+                )? {
+                    return Ok(true);
+                }
             }
         }
         for (index, field_switch) in self.instruction.switches.iter_mut().enumerate() {
             if ordered.contains(&NestedFieldPosition::Switch(index)) {
                 continue;
             }
-            if let Some(FieldArgument::Nested(field)) = &mut field_switch.argument
-                && field.set_nth_legacy_form_value_with_work(
+            for field in field_switch
+                .argument
+                .as_mut()
+                .map(FieldArgument::nested_fields_mut)
+                .unwrap_or_default()
+            {
+                if field.set_nth_legacy_form_value_with_work(
                     remaining,
                     value,
                     work.as_deref_mut(),
-                )?
-            {
-                return Ok(true);
+                )? {
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
@@ -1438,7 +1467,7 @@ impl Field {
         instruction: &'a FieldInstruction,
         preserve_source_order: bool,
     ) -> Vec<&'a Field> {
-        let mut fields = Vec::new();
+        let mut fields = Vec::<&'a Field>::new();
         if preserve_source_order {
             for position in &self.nested_order {
                 let argument = match *position {
@@ -1448,8 +1477,14 @@ impl Field {
                         .get(index)
                         .and_then(|switch| switch.argument.as_ref()),
                 };
-                if let Some(FieldArgument::Nested(field)) = argument {
-                    fields.push(field.as_ref());
+                // A joined operand is listed once per nested piece.
+                for field in argument
+                    .map(FieldArgument::nested_fields)
+                    .unwrap_or_default()
+                {
+                    if !fields.iter().any(|ordered| std::ptr::eq(*ordered, field)) {
+                        fields.push(field);
+                    }
                 }
             }
         }
@@ -1459,14 +1494,10 @@ impl Field {
                 .iter()
                 .filter_map(|switch| switch.argument.as_ref()),
         ) {
-            let FieldArgument::Nested(field) = argument else {
-                continue;
-            };
-            if !fields
-                .iter()
-                .any(|ordered| std::ptr::eq(*ordered, field.as_ref()))
-            {
-                fields.push(field.as_ref());
+            for field in argument.nested_fields() {
+                if !fields.iter().any(|ordered| std::ptr::eq(*ordered, field)) {
+                    fields.push(field);
+                }
             }
         }
         fields
@@ -2169,7 +2200,7 @@ impl FieldInstruction {
                 .iter()
                 .filter_map(|switch| switch.argument.as_ref()),
         ) {
-            if let FieldArgument::Nested(field) = argument {
+            for field in argument.nested_fields() {
                 field.validate_for_attachment()?;
             }
         }
@@ -2218,14 +2249,53 @@ fn validate_authored_instruction_parts(
                 )));
             }
         }
+        // A joined operand holds two pieces or more, a nested field among
+        // them, and no two text pieces side by side: anything else reads
+        // back as another operand.
         for argument in arguments.iter().chain(
             switches
                 .iter()
                 .filter_map(|switch| switch.argument.as_ref()),
         ) {
+            if let FieldArgument::Joined(pieces) = argument
+                && (pieces.len() < 2
+                    || !pieces
+                        .iter()
+                        .any(|piece| matches!(piece, FieldArgument::Nested(_)))
+                    || pieces.windows(2).any(|pair| {
+                        matches!(pair, [FieldArgument::Text(_), FieldArgument::Text(_)])
+                    })
+                    || pieces
+                        .iter()
+                        .any(|piece| matches!(piece, FieldArgument::Text(text) if text.is_empty())))
+            {
+                return Err(OxmlError::InvalidValue(
+                    "a joined field operand needs a nested field and no empty or adjacent text pieces"
+                        .into(),
+                ));
+            }
+        }
+        // A joined operand's pieces are checked as operands of their own.
+        let operands = arguments
+            .iter()
+            .chain(
+                switches
+                    .iter()
+                    .filter_map(|switch| switch.argument.as_ref()),
+            )
+            .flat_map(|argument| match argument {
+                FieldArgument::Joined(pieces) => pieces.iter().collect::<Vec<_>>(),
+                other => vec![other],
+            });
+        for argument in operands {
             match argument {
                 FieldArgument::Text(value) => {
                     oxoffice_core::xml::reject_non_xml_characters("field argument", value)?
+                }
+                FieldArgument::Joined(_) => {
+                    return Err(OxmlError::InvalidValue(
+                        "a joined field operand holds a joined operand".into(),
+                    ));
                 }
                 FieldArgument::Nested(field) => {
                     validate_raw_field_instruction(&field.effective_instruction_text())?;

@@ -330,7 +330,7 @@ impl Field {
                     .iter_mut()
                     .filter_map(|switch| switch.argument.as_mut()),
             ) {
-                if let FieldArgument::Nested(child) = argument {
+                for child in argument.nested_fields_mut() {
                     normalize_field(child, work)?;
                 }
             }
@@ -404,9 +404,7 @@ impl Field {
                 .iter()
                 .filter_map(|switch| switch.argument.as_ref()),
         ) {
-            if let FieldArgument::Nested(child) = argument {
-                children.push(child.as_ref());
-            }
+            children.extend(argument.nested_fields());
         }
         children.extend(self.cached_fields.iter().map(|(_, child)| child));
         for runs in [
@@ -510,6 +508,12 @@ fn clone_field_argument(
         FieldArgument::Nested(_) => FieldArgument::Nested(Box::new(
             children.next().expect("instruction field clone slot"),
         )),
+        FieldArgument::Joined(pieces) => FieldArgument::Joined(
+            pieces
+                .iter()
+                .map(|piece| clone_field_argument(piece, children))
+                .collect(),
+        ),
     }
 }
 
@@ -872,6 +876,35 @@ enum NestedFieldPosition {
 pub enum FieldArgument {
     Text(String),
     Nested(Box<Field>),
+    /// One operand made of several pieces in source order, each `Text` or
+    /// `Nested`, at least one of them `Nested`: `"Mr { MERGEFIELD Name }"`
+    /// or `{ MERGEFIELD Qty }*2`. Word reads it as the pieces' values joined.
+    Joined(Vec<FieldArgument>),
+}
+
+impl FieldArgument {
+    /// The fields nested in this operand, in source order.
+    #[doc(hidden)]
+    pub fn nested_fields(&self) -> Vec<&Field> {
+        match self {
+            Self::Text(_) => Vec::new(),
+            Self::Nested(field) => vec![field.as_ref()],
+            Self::Joined(pieces) => pieces.iter().flat_map(Self::nested_fields).collect(),
+        }
+    }
+
+    /// The fields nested in this operand, in source order.
+    #[doc(hidden)]
+    pub fn nested_fields_mut(&mut self) -> Vec<&mut Field> {
+        match self {
+            Self::Text(_) => Vec::new(),
+            Self::Nested(field) => vec![field.as_mut()],
+            Self::Joined(pieces) => pieces
+                .iter_mut()
+                .flat_map(Self::nested_fields_mut)
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

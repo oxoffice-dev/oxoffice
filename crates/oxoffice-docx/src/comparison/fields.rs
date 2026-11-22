@@ -136,13 +136,22 @@ pub(super) fn comparison_instruction_eq(
     right: &oxoffice_docx_oxml::text::FieldInstruction,
 ) -> bool {
     use oxoffice_docx_oxml::text::FieldArgument;
-    let same_operand = |left: &FieldArgument, right: &FieldArgument| match (left, right) {
-        (FieldArgument::Text(left), FieldArgument::Text(right)) => left == right,
-        (FieldArgument::Nested(left), FieldArgument::Nested(right)) => {
-            comparison_instruction_eq(&left.instruction, &right.instruction)
+    fn same_operand(left: &FieldArgument, right: &FieldArgument) -> bool {
+        match (left, right) {
+            (FieldArgument::Text(left), FieldArgument::Text(right)) => left == right,
+            (FieldArgument::Nested(left), FieldArgument::Nested(right)) => {
+                comparison_instruction_eq(&left.instruction, &right.instruction)
+            }
+            (FieldArgument::Joined(left), FieldArgument::Joined(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| same_operand(left, right))
+            }
+            _ => false,
         }
-        _ => false,
-    };
+    }
     left.name == right.name
         && left.arguments.len() == right.arguments.len()
         && left
@@ -1711,5 +1720,46 @@ pub(super) fn run_field(run: &CT_R) -> Option<&oxoffice_docx_oxml::text::Field> 
     match run.content.as_slice() {
         [RunContent::Field(field)] => Some(field),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_instruction_with_a_joined_operand_equals_its_copy_only() {
+        let paragraph = |name: &str| {
+            let xml = format!(
+                r#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "Mr </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD {name} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>x</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Mr Smith" "a" "b" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>b</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+            );
+            oxoffice_docx_oxml::text::CT_P::from_xml_fragment(xml.as_bytes()).unwrap()
+        };
+        let instruction = |paragraph: &oxoffice_docx_oxml::text::CT_P| {
+            paragraph
+                .runs
+                .iter()
+                .flat_map(|run| &run.content)
+                .find_map(|content| match content {
+                    oxoffice_docx_oxml::text::RunContent::Field(field) => {
+                        Some(field.effective_instruction())
+                    }
+                    _ => None,
+                })
+                .expect("one field")
+        };
+        let name = instruction(&paragraph("Name"));
+        assert!(matches!(
+            name.arguments.first(),
+            Some(oxoffice_docx_oxml::text::FieldArgument::Joined(_))
+        ));
+        assert!(comparison_instruction_eq(
+            &name,
+            &instruction(&paragraph("Name"))
+        ));
+        assert!(!comparison_instruction_eq(
+            &name,
+            &instruction(&paragraph("Other"))
+        ));
     }
 }
