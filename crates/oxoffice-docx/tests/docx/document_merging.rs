@@ -1136,6 +1136,154 @@ fn every_reference_to_a_renamed_bookmark_follows_it_whatever_its_kind_or_case() 
     assert_eq!(anchors, [Some(renamed)]);
 }
 
+/// The saved main story of `doc`.
+fn main_story_xml(doc: &mut Document) -> String {
+    String::from_utf8(crate::support::package_parts(&saved(doc))["word/document.xml"].clone())
+        .expect("main part is UTF-8")
+}
+
+/// A complex field whose code is written in `codes`, one run each:
+/// (element, text), the element being `instrText` or `delInstrText`.
+fn field_in_runs(codes: &[(&str, &str)]) -> String {
+    let mut xml = String::from(r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#);
+    for (element, text) in codes {
+        xml.push_str(&format!(
+            r#"<w:r><w:{element} xml:space="preserve">{text}</w:{element}></w:r>"#
+        ));
+    }
+    xml.push_str(concat!(
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>value</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+    ));
+    xml
+}
+
+#[test]
+fn formula_comparison_and_implicit_ref_operands_follow_a_renamed_bookmark() {
+    let nested_address = concat!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> MERGEFIELD Url </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>url</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> \l "Mark" </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>away</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    );
+    // A deleted field keeps its code in delInstrText.
+    let deleted = format!(
+        r#"<w:p><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z">{}</w:del></w:p>"#,
+        field_in_runs(&[("delInstrText", " REF Mark ")])
+            .trim_start_matches("<w:p>")
+            .trim_end_matches("</w:p>")
+    );
+    let source = doc_with_body(
+        &[
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#.to_owned(),
+            field_in_runs(&[("instrText", r#" = Mark * 2 + Other \# "0.00" "#)]),
+            field_in_runs(&[("instrText", r#" IF mark = "yes" "a" "b" "#)]),
+            field_in_runs(&[("instrText", " COMPARE 1 &lt; MARK ")]),
+            field_in_runs(&[("instrText", r#" REF &quot;mark&quot; \h "#)]),
+            field_in_runs(&[("instrText", r#" Mark \* MERGEFORMAT "#)]),
+            // A name written across two runs, as Word does after an edit.
+            field_in_runs(&[("instrText", " REF Ma"), ("instrText", r#"rk \h "#)]),
+            deleted,
+            // The address is a nested field: `\l` names a place in it.
+            nested_address.to_owned(),
+            // A field of Word's that names no bookmark.
+            field_in_runs(&[("instrText", " PAGE ")]),
+        ]
+        .concat(),
+    );
+    let mut doc = with_identities("dst");
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let mut doc = reopen(&mut doc);
+
+    let renamed = bookmark_list(&doc)
+        .into_iter()
+        .find(|(_, text)| text == "src marked")
+        .map(|(name, _)| name)
+        .unwrap();
+    assert!(!renamed.eq_ignore_ascii_case("Mark"));
+    // Quotes may be written escaped or not.
+    let xml = main_story_xml(&mut doc).replace("&quot;", "\"");
+    for expected in [
+        format!(r#"> = {renamed} * 2 + Other \# "0.00" <"#),
+        format!(r#"> IF {renamed} = "yes" "a" "b" <"#),
+        format!("> COMPARE 1 &lt; {renamed} <"),
+        format!(r#"> REF "{renamed}" \h <"#),
+        format!(r#"> {renamed} \* MERGEFORMAT <"#),
+        format!("<w:delInstrText xml:space=\"preserve\"> REF {renamed} </w:delInstrText>"),
+        // The split name: the new one in the first run, the rest of the
+        // code in the second.
+        format!(r#"<w:instrText xml:space="preserve"> REF {renamed}</w:instrText>"#),
+        r#"<w:instrText xml:space="preserve"> \h </w:instrText>"#.to_owned(),
+        r#"<w:instrText xml:space="preserve"> \l "Mark" </w:instrText>"#.to_owned(),
+        r#"<w:instrText xml:space="preserve"> PAGE </w:instrText>"#.to_owned(),
+    ] {
+        assert!(xml.contains(&expected), "{expected} in {xml}");
+    }
+}
+
+#[test]
+fn a_renamed_bookmark_never_takes_a_name_the_destination_compares_against() {
+    // The destination's IF compares with a bookmark of a name an import
+    // could give; its operator is written as an entity.
+    let mut doc = doc_with_body(&format!(
+        "{}{}",
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>dst marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+        field_in_runs(&[("instrText", r#" IF 1 &lt; MailMerge1 "a" "b" "#)])
+    ));
+    let source = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+    );
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let doc = reopen(&mut doc);
+    let renamed = bookmark_list(&doc)
+        .into_iter()
+        .find(|(_, text)| text == "src marked")
+        .map(|(name, _)| name)
+        .unwrap();
+    assert!(!renamed.eq_ignore_ascii_case("Mark"));
+    assert!(!renamed.eq_ignore_ascii_case("MailMerge1"), "{renamed}");
+}
+
+#[test]
+fn a_form_field_keeps_the_name_of_its_renamed_bookmark() {
+    let form = |name: &str, text: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:fldChar w:fldCharType="begin">"#,
+                r#"<w:ffData><w:name w:val="{name}"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/></w:ffData>"#,
+                r#"</w:fldChar></w:r><w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{text}</w:t></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkEnd w:id="0"/></w:p>"#
+            ),
+            name = name,
+            text = text
+        )
+    };
+    let source = doc_with_body(&form("Text1", "src"));
+    let mut doc = doc_with_body(&form("Text1", "dst"));
+    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
+    let mut doc = reopen(&mut doc);
+
+    let bookmarks = bookmark_list(&doc);
+    assert_eq!(bookmarks.len(), 2, "{bookmarks:?}");
+    let renamed = &bookmarks[1].0;
+    assert_ne!(renamed, "Text1");
+    let xml = main_story_xml(&mut doc);
+    let form_names: Vec<_> = xml
+        .match_indices(r#"<w:ffData><w:name w:val=""#)
+        .map(|(at, found)| {
+            let rest = &xml[at + found.len()..];
+            rest[..rest.find('"').unwrap()].to_owned()
+        })
+        .collect();
+    assert_eq!(form_names, ["Text1".to_owned(), renamed.clone()]);
+}
+
 #[test]
 fn an_imported_list_continues_an_equal_list_unless_numbering_reuse_is_off() {
     let source = list_doc(&["gamma", "delta"]);
