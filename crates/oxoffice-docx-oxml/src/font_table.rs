@@ -1178,13 +1178,8 @@ fn require_order(boundary: usize, slot: usize, element: &BytesStart<'_>) -> Resu
 }
 
 fn parse_bool(value: &str) -> Result<bool> {
-    match value {
-        "true" | "1" | "on" => Ok(true),
-        "false" | "0" | "off" => Ok(false),
-        _ => Err(OxmlError::InvalidValue(format!(
-            "invalid OOXML boolean {value}"
-        ))),
-    }
+    crate::shared::ST_OnOff::parse(value)
+        .ok_or_else(|| OxmlError::InvalidValue(format!("invalid OOXML boolean {value}")))
 }
 
 fn element_name(start: &BytesStart<'_>) -> String {

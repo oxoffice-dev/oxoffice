@@ -8,6 +8,7 @@ use crate::namespace::{W_NS, matches_local_name};
 use crate::numbering::{parse_scoped_ppr, parse_scoped_rpr, word_prefixes_at};
 use crate::properties::{CT_PPr, CT_RPr, is_word_attribute, is_word_element};
 use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::shared::ST_OnOff;
 use crate::table::{CT_TblPr, CT_TcPr, CT_TrPr};
 
 /// The type of a style.
@@ -267,8 +268,7 @@ impl CT_Style {
             } else if is_word_attribute(key, b"type", word_prefixes) {
                 style_type = StyleType::from_str(std::str::from_utf8(&attr.value)?)?;
             } else if is_word_attribute(key, b"default", word_prefixes) {
-                is_default = std::str::from_utf8(&attr.value)? == "1"
-                    || std::str::from_utf8(&attr.value)? == "true";
+                is_default = ST_OnOff::parse(std::str::from_utf8(&attr.value)?) == Some(true);
             }
         }
 
@@ -2413,11 +2413,10 @@ fn get_word_attr(e: &BytesStart, local: &[u8], word_prefixes: &[String]) -> Resu
 fn parse_style_toggle(e: &BytesStart, word_prefixes: &[String]) -> Result<Option<bool>> {
     let value = get_word_attr(e, b"val", word_prefixes)?;
     match value.as_deref() {
-        None | Some("1" | "true" | "on") => Ok(Some(true)),
-        Some("0" | "false" | "off") => Ok(Some(false)),
-        Some(value) => Err(OxmlError::InvalidValue(format!(
-            "invalid style toggle value: {value}"
-        ))),
+        None => Ok(Some(true)),
+        Some(value) => ST_OnOff::parse(value)
+            .map(Some)
+            .ok_or_else(|| OxmlError::InvalidValue(format!("invalid style toggle value: {value}"))),
     }
 }
 

@@ -54,11 +54,24 @@ pub enum ST_OnOff {
 }
 
 impl ST_OnOff {
+    /// Read one of the six spellings of the transitional schema (`true`,
+    /// `1`, `on`, `false`, `0`, `off`); `None` for any other value.
+    ///
+    /// Every on/off attribute of the Word model is read through this, so
+    /// that no reader takes `on` as off.
+    pub fn parse(value: &str) -> Option<bool> {
+        match value {
+            "true" | "1" | "on" => Some(true),
+            "false" | "0" | "off" => Some(false),
+            _ => None,
+        }
+    }
+
     pub fn from_str_or_default(s: Option<&str>) -> Self {
         match s {
             // If the attribute is absent or empty, the element presence means "on"
-            None | Some("") | Some("true") | Some("1") | Some("on") => ST_OnOff::On,
-            Some("false") | Some("0") | Some("off") => ST_OnOff::Off,
+            None | Some("") => ST_OnOff::On,
+            Some(value) if Self::parse(value) == Some(true) => ST_OnOff::On,
             Some(_) => ST_OnOff::Off,
         }
     }

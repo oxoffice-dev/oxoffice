@@ -13,11 +13,11 @@ use crate::numbering::{
     word_prefixes_at,
 };
 use crate::properties::{
-    get_word_val_attr, is_word_attribute, is_word_element, parse_twips_measure,
+    get_word_val_attr, is_word_attribute, is_word_element, parse_twips_measure, parse_word_toggle,
 };
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::revision::{CT_Revision, RevisionKind};
-use crate::shared::{ST_PageOrientation, ST_SectionType};
+use crate::shared::{ST_OnOff, ST_PageOrientation, ST_SectionType};
 use crate::table::{CT_Tbl, ST_VerticalJc};
 use crate::text::{
     CT_P, ROOT_MC_BINDING, ROOT_R_BINDING, ROOT_WP_BINDING, capture_root_attribute_record,
@@ -1467,8 +1467,7 @@ pub(crate) fn source_value_is_modeled(
         return HdrFtrType::from_str(value).to_str() == value;
     }
     if local == b"cols" && matches!(key, b"equalWidth" | b"sep") {
-        return crate::numbering::parse_on_off_token(value)
-            .is_some_and(|parsed| parsed == matches!(value, "1" | "true"));
+        return crate::shared::ST_OnOff::parse(value).is_some();
     }
     if local == b"pgSz" && key == b"orient" {
         return ST_PageOrientation::from_str(value).is_ok();
@@ -1480,7 +1479,7 @@ pub(crate) fn source_value_is_modeled(
         return ST_SectionType::from_str(value).is_ok();
     }
     if local == b"titlePg" && key == b"val" {
-        return crate::numbering::parse_on_off_token(value).is_some();
+        return crate::shared::ST_OnOff::parse(value).is_some();
     }
     if local == b"docGrid" {
         return match key {

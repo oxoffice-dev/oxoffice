@@ -130,7 +130,7 @@ fn complex_field_events(
                     && (is_word_element(name.as_ref(), b"footnoteReference", &prefixes)
                         || is_word_element(name.as_ref(), b"endnoteReference", &prefixes))
                     && optional_word_attribute(&root, b"customMarkFollows", &prefixes)
-                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "on"));
+                        .is_some_and(|value| crate::shared::ST_OnOff::parse(&value) == Some(true));
             }
             if !empty {
                 reader.read_to_end_into(root.name(), &mut Vec::new())?;
@@ -285,16 +285,16 @@ fn push_field_char_event(
     match optional_word_attribute(element, b"fldCharType", word_prefixes).as_deref() {
         Some("begin") => events.push(ComplexFieldEvent::Begin(
             optional_word_attribute(element, b"dirty", word_prefixes)
-                .and_then(|value| parse_field_bool(&value)),
+                .and_then(|value| crate::shared::ST_OnOff::parse(&value)),
             raw_slot,
         )),
         Some("separate") => events.push(ComplexFieldEvent::Separate(
             optional_word_attribute(element, b"dirty", word_prefixes)
-                .and_then(|value| parse_field_bool(&value)),
+                .and_then(|value| crate::shared::ST_OnOff::parse(&value)),
         )),
         Some("end") => events.push(ComplexFieldEvent::End(
             optional_word_attribute(element, b"dirty", word_prefixes)
-                .and_then(|value| parse_field_bool(&value)),
+                .and_then(|value| crate::shared::ST_OnOff::parse(&value)),
             raw_slot,
         )),
         _ => {}
