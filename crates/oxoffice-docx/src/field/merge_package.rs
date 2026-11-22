@@ -209,6 +209,11 @@ fn text_has_payload(text: &[u8]) -> bool {
     text.iter().any(|byte| !byte.is_ascii_whitespace())
 }
 
+/// Whether an entity stands for more than white space (`&#10;` does not).
+fn entity_has_payload(entity: &quick_xml::events::BytesRef<'_>) -> bool {
+    text_has_payload(oxoffice_core::xml_text::resolve_entity(entity).as_bytes())
+}
+
 fn content_type_base(content_type: &str) -> &str {
     content_type
         .split(';')
@@ -513,6 +518,13 @@ pub(super) fn decode_recipients(xml: &[u8]) -> Result<Vec<MailMergeRecipient>> {
             }
             Event::CData(text) => {
                 if text_has_payload(text.as_ref()) {
+                    return Err(Error::Other(
+                        "mail-merge recipients are malformed".to_owned(),
+                    ));
+                }
+            }
+            Event::GeneralRef(entity) => {
+                if entity_has_payload(entity) {
                     return Err(Error::Other(
                         "mail-merge recipients are malformed".to_owned(),
                     ));
@@ -1355,6 +1367,14 @@ pub(super) fn inspect_merge_xml(xml: &[u8]) -> Result<MergeInspection> {
             Event::CData(text) => {
                 if field_leaf_depth > 0 && text_has_payload(text.as_ref()) {
                     inspection.graph.unsafe_field_map = true;
+                }
+            }
+            Event::GeneralRef(entity) => {
+                if field_leaf_depth > 0 && entity_has_payload(entity) {
+                    inspection.graph.unsafe_field_map = true;
+                }
+                if source_leaf_depth > 0 && entity_has_payload(entity) {
+                    inspection.graph.unsafe_source = true;
                 }
             }
             Event::End(_) => {

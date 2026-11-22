@@ -274,12 +274,36 @@ fn parse_xml(part: &str, xml: &[u8]) -> Result<XmlNode> {
                     "DTD declarations are forbidden",
                 ));
             }
-            Event::GeneralRef(_) => {
-                return Err(odp_error(
-                    Some(part),
-                    offset,
-                    "unresolved XML entity is unsupported",
-                ));
+            // A character reference or one of the five predefined entities,
+            // as the ODT reader takes them.
+            Event::GeneralRef(reference) => {
+                let value = if let Some(character) =
+                    reference.resolve_char_ref().map_err(|error| {
+                        odp_error(
+                            Some(part),
+                            offset,
+                            format!("invalid XML reference: {error}"),
+                        )
+                    })? {
+                    character.to_string()
+                } else {
+                    let reference_bytes: &[u8] = &reference;
+                    match reference_bytes {
+                        b"amp" => "&".to_string(),
+                        b"lt" => "<".to_string(),
+                        b"gt" => ">".to_string(),
+                        b"apos" => "'".to_string(),
+                        b"quot" => "\"".to_string(),
+                        _ => {
+                            return Err(odp_error(
+                                Some(part),
+                                offset,
+                                "unresolved XML entity is unsupported",
+                            ));
+                        }
+                    }
+                };
+                append_text(&mut stack, value, &mut text_bytes, part, offset)?;
             }
             Event::Eof => break,
             Event::Decl(_) | Event::Comment(_) | Event::PI(_) => {}

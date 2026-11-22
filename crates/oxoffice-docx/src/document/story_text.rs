@@ -1577,6 +1577,8 @@ fn hyperlink_has_visible_content(source: &[u8], range: Range<usize>) -> Result<b
                     return Ok(true);
                 }
             }
+            // `&amp;` alone arrives as a reference, with no text around it.
+            Event::GeneralRef(_) if word_text_depth > 0 => return Ok(true),
             Event::Start(element) | Event::Empty(element)
                 if is_word
                     && matches!(

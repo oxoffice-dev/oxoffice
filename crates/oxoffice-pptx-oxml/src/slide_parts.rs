@@ -2587,6 +2587,7 @@ fn capture_shell_children(
             Event::Start(child) => children.push(0, capture_element(reader, &child)?),
             Event::Empty(child) => children.push(0, capture_empty_element(&child)?),
             event @ (Event::Text(_)
+            | Event::GeneralRef(_)
             | Event::CData(_)
             | Event::Comment(_)
             | Event::PI(_)

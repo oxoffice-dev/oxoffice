@@ -3543,6 +3543,9 @@ fn parse_fill_wrapper(xml: &[u8]) -> Result<Option<Fill>> {
             Event::Text(text) if !xml_text_is_whitespace(&text) => {
                 return Ok(None);
             }
+            Event::GeneralRef(_) => {
+                return Ok(None);
+            }
             _ => {}
         }
         buffer.clear();
@@ -3629,6 +3632,9 @@ fn parse_border_wrapper(xml: &[u8]) -> Result<Option<CT_LineProperties>> {
             Event::End(_) if root_seen => return Ok(line),
             Event::Eof => return Err(missing("closing table border wrapper")),
             Event::Text(text) if !xml_text_is_whitespace(&text) => {
+                return Ok(None);
+            }
+            Event::GeneralRef(_) => {
                 return Ok(None);
             }
             _ => {}

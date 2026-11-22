@@ -936,6 +936,52 @@ fn a_comment_saved_by_powerpoint_reads_back_and_keeps_its_position() {
     assert!(xml.contains("sldMkLst"), "{xml}");
 }
 
+#[test]
+fn an_entity_a_comment_keeps_as_written_survives_a_reply() {
+    // Character data a comment and its reply keep as written, with an
+    // entity in it: the edit that rewrites the part writes it back whole.
+    let modern = "/ppt/comments/modernComment_100_4F1B2C3D.xml";
+    let prs =
+        Presentation::from_bytes(&powerpoint_comment_deck("2026-11-16T09:30:00.503Z")).unwrap();
+    let mut package = package_of(&prs);
+    let xml = String::from_utf8(package.get_part(modern).unwrap().to_vec()).unwrap();
+    let xml = xml.replacen("<p188:pos ", "c&amp;m<p188:pos ", 1).replacen(
+        "<p188:txBody>",
+        "r&amp;y<p188:txBody>",
+        1,
+    );
+    package.set_part(modern, xml.into_bytes());
+    let mut prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
+    let thread_id = prs.comments(0).unwrap()[0].id.clone();
+
+    prs.add_comment_author(author(ADA, "Ada Lovelace", None))
+        .unwrap();
+    prs.reply_to_comment(0, &thread_id, reply(&guid(1), ADA, TUESDAY, "Source added"))
+        .unwrap();
+    let xml = part_xml(&reopen(&prs), modern);
+    assert!(xml.contains("Source added"), "{xml}");
+    for kept in ["c&amp;m<p188:pos ", "r&amp;y<p188:txBody>"] {
+        assert!(xml.contains(kept), "{kept}: {xml}");
+    }
+}
+
+#[test]
+fn an_entity_a_notes_slide_keeps_as_written_survives_a_notes_edit() {
+    let mut prs = blank_deck(1);
+    prs.set_notes_text(0, "First draft").unwrap();
+    let mut package = package_of(&prs);
+    let notes = "/ppt/notesSlides/notesSlide1.xml";
+    let xml = String::from_utf8(package.get_part(notes).unwrap().to_vec()).unwrap();
+    let xml = xml.replacen("<p:cSld", "n&amp;s<p:cSld", 1);
+    package.set_part(notes, xml.into_bytes());
+    let mut prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
+
+    prs.set_notes_text(0, "Second draft").unwrap();
+    let xml = part_xml(&reopen(&prs), notes);
+    assert!(xml.contains("Second draft"), "{xml}");
+    assert!(xml.contains("n&amp;s<p:cSld"), "{xml}");
+}
+
 // A comment date is an xsd:dateTime (MS-PPTX), whose time zone is optional.
 #[test]
 fn a_comment_dated_in_local_time_opens() {

@@ -1073,6 +1073,11 @@ impl CT_Document {
                         "text outside w:body".to_owned(),
                     ));
                 }
+                Ok(Event::GeneralRef(_)) => {
+                    return Err(OxmlError::UnexpectedElement(
+                        "text outside w:body".to_owned(),
+                    ));
+                }
                 Ok(Event::Eof) => {
                     if document_open || !document_closed {
                         return Err(OxmlError::MissingElement("w:document end".to_owned()));

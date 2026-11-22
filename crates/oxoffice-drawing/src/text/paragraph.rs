@@ -1812,7 +1812,11 @@ impl CT_TextCharacterProperties {
                     return Ok(properties);
                 }
                 Event::Eof => return Err(missing_end(&String::from_utf8_lossy(&expected))),
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     properties
                         .raw_children
                         .push(boundary, text_capture_opaque_event(event)?);
@@ -2940,7 +2944,11 @@ impl CT_TextParagraphProperties {
                     return Ok(properties);
                 }
                 Event::Eof => return Err(missing_end(&String::from_utf8_lossy(&expected))),
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     properties
                         .raw_children
                         .push(boundary, text_capture_opaque_event(event)?);
@@ -3454,7 +3462,11 @@ impl CT_RegularTextRun {
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"r") => break,
                 Event::Eof => return Err(missing_end("r")),
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     raw_children.push(boundary, text_capture_opaque_event(event)?);
                 }
                 _ => {}
@@ -3606,7 +3618,11 @@ impl CT_TextLineBreak {
                     return Ok(line_break);
                 }
                 Event::Eof => return Err(missing_end("br")),
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     line_break
                         .raw_children
                         .push(boundary, text_capture_opaque_event(event)?);
@@ -3813,7 +3829,11 @@ impl CT_TextField {
                     return Ok(field);
                 }
                 Event::Eof => return Err(missing_end("fld")),
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     field
                         .raw_children
                         .push(boundary, text_capture_opaque_event(event)?);
@@ -4195,7 +4215,11 @@ impl CT_TextParagraph {
                     return Ok(paragraph);
                 }
                 Event::Eof => return Err(missing_end("p")),
-                event @ (Event::Comment(_) | Event::PI(_) | Event::Text(_) | Event::CData(_)) => {
+                event @ (Event::Comment(_)
+                | Event::PI(_)
+                | Event::Text(_)
+                | Event::GeneralRef(_)
+                | Event::CData(_)) => {
                     paragraph
                         .raw_children
                         .push(boundary, text_capture_opaque_event(event)?);
@@ -4718,6 +4742,7 @@ pub(crate) fn text_inherit_property_xml(
                     event @ (Event::Comment(_)
                     | Event::PI(_)
                     | Event::Text(_)
+                    | Event::GeneralRef(_)
                     | Event::CData(_)) => text_capture_opaque_event(event)?,
                     _ => continue,
                 };

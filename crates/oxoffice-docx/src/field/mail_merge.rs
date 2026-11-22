@@ -1797,6 +1797,16 @@ fn collect_raw_merge_field_names(xml: &[u8], names: &mut HashSet<String>) -> Res
                         ));
                 }
             }
+            // An entity arrives on its own: `&quot;` quotes a name with a space.
+            Event::GeneralRef(entity) if in_instruction_text => {
+                if let Some(instruction) = complex.last_mut()
+                    && instruction.collecting
+                {
+                    instruction
+                        .text
+                        .push_str(&oxoffice_core::xml_text::resolve_entity(&entity));
+                }
+            }
             Event::End(element)
                 if word && matches_local_name(element.name().as_ref(), b"instrText") =>
             {
