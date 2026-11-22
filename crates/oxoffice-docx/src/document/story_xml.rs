@@ -967,3 +967,155 @@ pub(super) fn changed_story_namespace_scope(
     }
     Ok(None)
 }
+
+/// A bookmark marker written between blocks of a story source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceBlockMarker {
+    /// The offset of the marker element in the source.
+    pub(crate) offset: usize,
+    pub(crate) start: bool,
+    pub(crate) id: i32,
+    pub(crate) name: String,
+    /// The start offset of the paragraph it is read as.
+    pub(crate) paragraph: usize,
+    /// Whether it leads that paragraph, or closes it.
+    pub(crate) leading: bool,
+}
+
+/// The bookmark markers of a story source that sit between blocks, each
+/// with the paragraph it is read as.
+///
+/// A flow is the element whose blocks one story reads: the body, a header
+/// or footer, a note, a comment or a text box's content. A marker or a
+/// paragraph belongs to a flow when only tables, rows, cells and block
+/// content controls stand between them, as Word and Google Docs write
+/// block-level bookmarks. A marker under anything else, a paragraph, an
+/// `mc:AlternateContent` branch or a `w:customXml` element, is not read
+/// here: either a paragraph scan reads it, or no story does.
+///
+/// Within its flow, a marker is read as the paragraph it wraps, as
+/// `BlockBookmarks` reads it: a start leads the next paragraph, an end
+/// closes the previous one, an end whose start waits since the last
+/// paragraph leads the next one with it; the other side when there is no
+/// such paragraph. A table cell's paragraphs are a story of their own, so
+/// the paragraph, not the flow, tells which story reads a marker.
+pub(crate) fn source_block_bookmarks(xml: &[u8]) -> Result<Vec<SourceBlockMarker>> {
+    if !xml
+        .windows(b"bookmark".len())
+        .any(|window| window == b"bookmark")
+    {
+        return Ok(Vec::new());
+    }
+    // Each marker as (offset, start, id, name, flow).
+    let mut markers = Vec::<(usize, bool, i32, String, usize)>::new();
+    // The paragraph starts of each flow, in source order.
+    let mut flows = HashMap::<usize, Vec<usize>>::new();
+    let mut reader = NsReader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    // Each open element: whether it is a Word element, its local name and
+    // its start offset.
+    let mut stack = Vec::<(bool, Vec<u8>, usize)>::new();
+    let flow_of = |stack: &[(bool, Vec<u8>, usize)]| {
+        for (word, name, start) in stack.iter().rev() {
+            match (*word, name.as_slice()) {
+                (true, b"tbl" | b"tr" | b"tc" | b"sdt" | b"sdtContent") => {}
+                (
+                    true,
+                    b"body" | b"hdr" | b"ftr" | b"footnote" | b"endnote" | b"comment"
+                    | b"txbxContent",
+                ) => return Some(*start),
+                _ => return None,
+            }
+        }
+        None
+    };
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("block bookmark scan failed: {error}")))?;
+        let word = word_element(&namespace);
+        drop(namespace);
+        match &event {
+            Event::Start(element) | Event::Empty(element) => {
+                let local = element.local_name();
+                let local = local.as_ref();
+                if word && local == b"p" {
+                    if let Some(flow) = flow_of(&stack) {
+                        flows.entry(flow).or_default().push(before);
+                    }
+                } else if word
+                    && matches!(local, b"bookmarkStart" | b"bookmarkEnd")
+                    && let Some(flow) = flow_of(&stack)
+                {
+                    let mut id = None;
+                    let mut name = String::new();
+                    for attribute in element.attributes() {
+                        let attribute =
+                            attribute.map_err(|error| Error::Other(error.to_string()))?;
+                        let (attribute_namespace, attribute_local) =
+                            reader.resolver().resolve_attribute(attribute.key);
+                        if !word_element(&attribute_namespace) {
+                            continue;
+                        }
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Other(error.to_string()))?;
+                        match attribute_local.as_ref() {
+                            b"id" => id = value.trim().parse().ok(),
+                            b"name" => name = value.into_owned(),
+                            _ => {}
+                        }
+                    }
+                    if let Some(id) = id {
+                        markers.push((before, local == b"bookmarkStart", id, name, flow));
+                    }
+                }
+                if let Event::Start(_) = &event {
+                    stack.push((word, local.to_vec(), before));
+                }
+            }
+            Event::End(_) => {
+                stack.pop();
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let mut attributed = Vec::with_capacity(markers.len());
+    // The starts waiting in each flow, since how many of its paragraphs.
+    let mut waiting = HashMap::<usize, (usize, Vec<i32>)>::new();
+    for (offset, start, id, name, flow) in markers {
+        let Some(paragraphs) = flows.get(&flow) else {
+            continue;
+        };
+        let after = paragraphs.partition_point(|paragraph| *paragraph < offset);
+        let (since, starts) = waiting.entry(flow).or_default();
+        if *since != after {
+            *since = after;
+            starts.clear();
+        }
+        let collapsed = !start && starts.contains(&id);
+        if start {
+            starts.push(id);
+        }
+        let next = paragraphs.get(after).copied();
+        let previous = after.checked_sub(1).map(|at| paragraphs[at]);
+        let (paragraph, leading) = match (start || collapsed, next, previous) {
+            (true, Some(next), _) | (false, Some(next), None) => (next, true),
+            (_, _, Some(previous)) => (previous, false),
+            (_, None, None) => continue,
+        };
+        attributed.push(SourceBlockMarker {
+            offset,
+            start,
+            id,
+            name,
+            paragraph,
+            leading,
+        });
+    }
+    Ok(attributed)
+}

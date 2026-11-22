@@ -14,7 +14,7 @@ use oxoffice_docx::{
 };
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen};
+use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, text_box_run};
 
 /// A one-pixel PNG.
 const PNG: &[u8] = &[
@@ -610,29 +610,6 @@ fn report_lines(doc: &Document, label: &str) -> Vec<String> {
         .take_while(|line| !line.starts_with("--- "))
         .map(str::to_owned)
         .collect()
-}
-
-/// A floating text box holding `content`, as Word writes it: DrawingML in
-/// `mc:Choice` and a VML copy in `mc:Fallback`.
-fn text_box_run(id: u32, content: &str) -> String {
-    format!(
-        concat!(
-            r#"<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
-            r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
-            r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
-            r#"xmlns:v="urn:schemas-microsoft-com:vml"><mc:Choice Requires="wps"><w:drawing>"#,
-            r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/>"#,
-            r#"<wp:docPr id="{id}" name="Text Box {id}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
-            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>"#,
-            r#"<wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>"#,
-            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}"#,
-            r#"</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline>"#,
-            r#"</w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="tb{id}"><v:textbox><w:txbxContent>"#,
-            r#"{content}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>"#,
-        ),
-        id = id,
-        content = content,
-    )
 }
 
 fn line(text: &str) -> String {

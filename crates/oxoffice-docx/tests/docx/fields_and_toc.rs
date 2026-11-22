@@ -9,7 +9,7 @@ use oxoffice_docx::{
     TocRebuildReport,
 };
 
-use crate::support::{doc_with, doc_with_body, reopen, texts};
+use crate::support::{doc_with, doc_with_body, reopen, text_box_run, texts};
 
 /// Every field held by a body run, as (kind, instruction, cached result).
 fn field_list(doc: &Document) -> Vec<(FieldKind, String, String)> {
@@ -2379,4 +2379,315 @@ fn a_bookmark_between_cells_of_a_row_in_a_row_control_wraps_the_next_cell() {
     );
     assert_eq!(bookmark_list(&doc), pairs(&[("second", "B")]));
     assert_eq!(bookmark_list(&reopen(&mut doc)), pairs(&[("second", "B")]));
+}
+
+// A bookmark marker between blocks is a story range of the flow it sits in,
+// read as the paragraph it wraps reads it, and moves or goes away like one
+// written inside a paragraph.
+
+/// The story range of the bookmark named `name`.
+fn bookmark_range(doc: &Document, name: &str) -> oxoffice_docx::StoryRangeRef {
+    doc.story_ranges()
+        .unwrap()
+        .into_iter()
+        .find(|range| {
+            matches!(range.kind(), oxoffice_docx::StoryRangeKind::Bookmark { name: listed, .. } if listed == name)
+        })
+        .unwrap_or_else(|| panic!("no story range for bookmark {name}"))
+}
+
+/// The first run of the paragraph at `location`.
+fn first_run(location: &ContentLocation) -> StoryRunRange {
+    let at = |run_index| StoryRunPosition {
+        location: location.clone(),
+        run_index,
+    };
+    StoryRunRange {
+        start: at(0),
+        end: at(1),
+    }
+}
+
+#[test]
+fn a_google_heading_bookmark_is_removed_or_moved_like_any_story_range() {
+    let gone = |doc: &mut Document| {
+        let reopened = reopen(doc);
+        for doc in [&*doc, &reopened] {
+            assert_eq!(bookmark_list(doc), pairs(&[]));
+            assert_eq!(texts(doc), ["Before", "Introduction", "After"]);
+        }
+        assert!(!main_part_xml(&doc.to_bytes().unwrap()).contains("bookmarkStart"));
+    };
+    let mut doc = doc_with_body(LED_HEADING);
+    assert!(
+        doc.remove_story_range(&bookmark_range(&doc, "_Toc217000001"))
+            .unwrap()
+    );
+    gone(&mut doc);
+    let mut doc = doc_with_body(LED_HEADING);
+    assert!(doc.remove_story_bookmark(4).unwrap());
+    gone(&mut doc);
+
+    let mut doc = doc_with_body(LED_HEADING);
+    let after = paragraph_location(&doc, "After");
+    doc.move_story_range(&bookmark_range(&doc, "_Toc217000001"), first_run(&after))
+        .unwrap();
+    let reopened = reopen(&mut doc);
+    for doc in [&doc, &reopened] {
+        assert_eq!(bookmark_list(doc), pairs(&[("_Toc217000001", "After")]));
+        assert_eq!(texts(doc), ["Before", "Introduction", "After"]);
+    }
+}
+
+/// A one-cell table whose cell holds `cell`, raw markup.
+fn one_cell_table(cell: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>"#
+    )
+}
+
+/// A paragraph reading `text` that bookmark `id` named `name` wraps, its
+/// markers inside it.
+fn bookmarked_paragraph(text: &str, id: u32, name: &str) -> String {
+    format!(
+        r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>{text}</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
+    )
+}
+
+#[test]
+fn ranges_beside_a_bookmark_between_blocks_still_move_and_go_away() {
+    // A Google heading, then a table whose cell holds a bookmark of its
+    // own, then a body paragraph with another: the cell is a story of its
+    // own, the body paragraph shares the heading's story.
+    let body = format!(
+        "{LED_HEADING}{}{}",
+        one_cell_table(&format!(
+            "{}{}",
+            bookmarked_paragraph("In cell", 20, "cell"),
+            "<w:p><w:r><w:t>Cell two</w:t></w:r></w:p>"
+        )),
+        bookmarked_paragraph("Closing", 21, "closing")
+    );
+    for name in ["cell", "closing", "_Toc217000001"] {
+        let mut doc = doc_with_body(&body);
+        assert!(
+            doc.remove_story_range(&bookmark_range(&doc, name)).unwrap(),
+            "{name}"
+        );
+        let left = bookmark_list(&reopen(&mut doc));
+        assert_eq!(left.len(), 2, "{name}: {left:?}");
+        assert!(
+            left.iter().all(|(listed, _)| listed != name),
+            "{name}: {left:?}"
+        );
+    }
+    let mut doc = doc_with_body(&body);
+    let after = paragraph_location(&doc, "After");
+    doc.move_story_range(&bookmark_range(&doc, "closing"), first_run(&after))
+        .unwrap();
+    assert!(bookmark_list(&reopen(&mut doc)).contains(&("closing".to_owned(), "After".to_owned())));
+    let mut doc = doc_with_body(&body);
+    let cell_two = paragraph_at(&doc, StoryKind::TableCell, "Cell two");
+    doc.move_story_range(&bookmark_range(&doc, "cell"), first_run(&cell_two))
+        .unwrap();
+    assert!(bookmark_list(&reopen(&mut doc)).contains(&("cell".to_owned(), "Cell two".to_owned())));
+
+    // A heading bookmark between the blocks of a cell, then a body range
+    // after the table.
+    let body = format!(
+        "{}{}",
+        one_cell_table(
+            r#"<w:bookmarkStart w:id="4" w:name="_Toc217000001"/><w:p><w:r><w:t>Heading in cell</w:t></w:r><w:bookmarkEnd w:id="4"/></w:p>"#
+        ),
+        bookmarked_paragraph("Closing", 21, "closing")
+    );
+    for name in ["closing", "_Toc217000001"] {
+        let mut doc = doc_with_body(&body);
+        assert!(
+            doc.remove_story_range(&bookmark_range(&doc, name)).unwrap(),
+            "{name}"
+        );
+        assert_eq!(bookmark_list(&reopen(&mut doc)).len(), 1, "{name}");
+    }
+}
+
+#[test]
+fn a_bookmark_between_the_paragraphs_of_a_text_box_is_a_range_of_the_text_box() {
+    let content = concat!(
+        r#"<w:bookmarkStart w:id="7" w:name="boxed"/><w:p><w:r><w:t>Boxed</w:t></w:r></w:p>"#,
+        r#"<w:bookmarkEnd w:id="7"/><w:p><w:r><w:t>Second</w:t></w:r></w:p>"#,
+    );
+    let mut doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t>Host</w:t></w:r>{}</w:p>",
+        text_box_run(1, content)
+    ));
+    let range = bookmark_range(&doc, "boxed");
+    let (start, end) = (&range.range().start, &range.range().end);
+    assert_eq!(start.location.story().kind(), StoryKind::TextBox);
+    assert_eq!(
+        start.location, end.location,
+        "the bookmark wraps the first text box paragraph"
+    );
+    assert_eq!((start.run_index, end.run_index), (0, 1));
+
+    assert!(doc.remove_story_range(&range).unwrap());
+    let xml = main_part_xml(&doc.to_bytes().unwrap());
+    assert_eq!(
+        xml.matches("bookmarkStart").count(),
+        1,
+        "the text box's story range is its mc:Choice copy; the VML fallback keeps its own"
+    );
+    assert!(doc.story_ranges().unwrap().is_empty());
+}
+
+#[test]
+fn markup_hidden_from_every_story_holds_no_story_range() {
+    // A body-level mc:AlternateContent holds the same bookmark in each
+    // branch, and a body-level w:customXml one more: no story reads them.
+    let branch = r#"<w:p><w:bookmarkStart w:id="9" w:name="hidden"/><w:r><w:t>Branch</w:t></w:r><w:bookmarkEnd w:id="9"/></w:p>"#;
+    let doc = doc_with_body(&format!(
+        concat!(
+            r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>"#,
+            r#"<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">"#,
+            r#"<mc:Choice Requires="w14">{0}</mc:Choice><mc:Fallback>{0}</mc:Fallback></mc:AlternateContent>"#,
+            r#"<w:customXml w:element="part"><w:bookmarkStart w:id="10" w:name="custom"/>{0}<w:bookmarkEnd w:id="10"/></w:customXml>"#,
+            r#"<w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+        ),
+        branch
+    ));
+    assert!(doc.story_ranges().unwrap().is_empty());
+}
+
+/// A document with two footnotes, "First note" and "Second note", where
+/// `edit` rewrites the footnotes part.
+fn doc_with_notes(edit: impl Fn(&str) -> String) -> Document {
+    let mut doc = doc_with(&["Body"]);
+    for text in ["First note", "Second note"] {
+        let body = doc.paragraph_story_location(0).unwrap().unwrap();
+        doc.create_footnote(&body, text).unwrap();
+    }
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let xml = String::from_utf8(package.get_part("/word/footnotes.xml").unwrap().to_vec()).unwrap();
+    package.set_part("/word/footnotes.xml", edit(&xml).into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_bookmark_after_the_last_paragraph_of_a_note_belongs_to_that_note() {
+    // A collapsed bookmark after the first note's paragraph, before the
+    // second note starts, as a producer that keeps a note's trailing
+    // bookmark writes it.
+    let doc = doc_with_notes(|xml| {
+        let first = xml.find("First note").unwrap();
+        let end = first + xml[first..].find("</w:footnote>").unwrap();
+        format!(
+            r#"{}<w:bookmarkStart w:id="11" w:name="noted"/><w:bookmarkEnd w:id="11"/>{}"#,
+            &xml[..end],
+            &xml[end..]
+        )
+    });
+    let range = bookmark_range(&doc, "noted");
+    let note = doc
+        .story_items(range.range().start.location.story())
+        .unwrap()
+        .into_iter()
+        .find_map(|item| item.text().unwrap())
+        .unwrap();
+    assert!(note.contains("First note"), "{note:?}");
+    assert_eq!(
+        range.range().start,
+        range.range().end,
+        "a collapsed bookmark at the note's end"
+    );
+}
+
+/// `doc` with its header part edited by `edit`, reopened.
+fn with_header_xml(doc: &mut Document, edit: impl Fn(&str) -> String) -> Document {
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let header = package
+        .zip_entries()
+        .unwrap()
+        .into_iter()
+        .map(|(name, _)| format!("/{name}"))
+        .find(|name| name.contains("header"))
+        .expect("a header part");
+    let xml = String::from_utf8(package.get_part(&header).unwrap().to_vec()).unwrap();
+    let edited = edit(&xml);
+    assert_ne!(edited, xml, "the header was edited");
+    package.set_part(&header, edited.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_ref_reads_a_header_bookmark_that_starts_between_paragraphs() {
+    // As Google Docs writes a bookmark: its start before the paragraph,
+    // its end inside it.
+    let mut doc = doc_with(&["See "]);
+    doc.set_header("Header words");
+    doc.paragraph_mut(0)
+        .unwrap()
+        .add_run("")
+        .add_field(r"REF Head \h", "?")
+        .unwrap();
+    let mut doc = with_header_xml(&mut doc, |xml| {
+        let start = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+        let end = xml.rfind("</w:p>").unwrap();
+        format!(
+            r#"{}<w:bookmarkStart w:id="77" w:name="Head"/>{}<w:bookmarkEnd w:id="77"/>{}"#,
+            &xml[..start],
+            &xml[start..end],
+            &xml[end..]
+        )
+    });
+    doc.update_fields(&no_context()).unwrap();
+    assert_eq!(texts(&doc), ["See Header words"]);
+}
+
+#[test]
+fn a_ref_reads_a_header_bookmark_by_where_its_markers_sit() {
+    // `wrap(start, paragraph, end)` places both markers in or around the
+    // header paragraph; the REF reads what they wrap.
+    let header_ref = |wrap: fn(&str, &str, &str) -> String, expected: &str| {
+        let mut doc = doc_with(&["See "]);
+        doc.set_header("Header words");
+        doc.paragraph_mut(0)
+            .unwrap()
+            .add_run("")
+            .add_field(r"REF Head \h", "?")
+            .unwrap();
+        let mut doc = with_header_xml(&mut doc, |xml| {
+            let start = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+            let end = xml.rfind("</w:p>").unwrap() + "</w:p>".len();
+            format!(
+                "{}{}{}",
+                &xml[..start],
+                wrap(
+                    r#"<w:bookmarkStart w:id="77" w:name="Head"/>"#,
+                    &xml[start..end],
+                    r#"<w:bookmarkEnd w:id="77"/>"#
+                ),
+                &xml[end..]
+            )
+        });
+        doc.update_fields(&no_context()).unwrap();
+        assert_eq!(texts(&doc), [format!("See {expected}")]);
+    };
+    // Both markers between paragraphs, around the paragraph.
+    header_ref(
+        |start, paragraph, end| format!("{start}{paragraph}{end}"),
+        "Header words",
+    );
+    // A collapsed bookmark before the paragraph: both lead it, empty.
+    header_ref(
+        |start, paragraph, end| format!("{start}{end}{paragraph}"),
+        "",
+    );
 }
