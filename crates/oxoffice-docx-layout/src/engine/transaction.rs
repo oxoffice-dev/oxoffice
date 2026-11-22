@@ -597,6 +597,7 @@ impl Engine {
                                 prefix,
                                 para,
                                 &input.block_bookmarks(),
+                                &mut diagnostics,
                             )?,
                             None => para.accepted_view().into_owned(),
                         });
@@ -606,7 +607,12 @@ impl Engine {
                     let joined = carried
                         .take()
                         .map(|prefix| {
-                            join_accepted_layout_paragraphs(prefix, para, &input.block_bookmarks())
+                            join_accepted_layout_paragraphs(
+                                prefix,
+                                para,
+                                &input.block_bookmarks(),
+                                &mut diagnostics,
+                            )
                         })
                         .transpose()?;
                     let para = joined.as_ref().unwrap_or(para);

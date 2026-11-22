@@ -503,10 +503,16 @@ fn layout_table_inner(
     resolved_table.properties = Some(resolved_properties);
     // The copy's paragraphs have other addresses than those the block
     // bookmarks were read for: they carry the markers they take. A marker
-    // that cannot be written is left out, and the layout goes on.
-    let _ = input
+    // that cannot be written is left out, with a diagnostic, and the layout
+    // goes on.
+    if !input
         .block_bookmarks()
-        .carry_into_table_copy(tbl, &mut resolved_table);
+        .carry_into_table_copy(tbl, &mut resolved_table)
+    {
+        diagnostics.push(Diagnostic {
+            message: "a table's block bookmarks could not all be carried".to_owned(),
+        });
+    }
     let tbl = &resolved_table;
     let source_rows = accepted_table_rows(tbl, path, input);
     if let Some(sources) = sources {

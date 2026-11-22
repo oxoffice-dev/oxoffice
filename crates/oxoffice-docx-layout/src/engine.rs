@@ -249,16 +249,19 @@ fn join_accepted_layout_paragraphs(
     prefix: CT_P,
     paragraph: &CT_P,
     block_bookmarks: &BlockBookmarks,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<CT_P> {
     let mut result = paragraph.clone();
     // The copy has another address: the block markers the paragraph takes
     // go into it, at its start (after the prefix once it is inserted) and
     // its end.
-    // A marker that cannot be written is left out, as before: the layout
-    // goes on.
+    // A marker that cannot be written is left out, as before, with a
+    // diagnostic: the layout goes on.
     let (before, after) = block_bookmarks.markers(paragraph);
-    if !(before.is_empty() && after.is_empty()) {
-        let _ = result.take_block_markers(before, after);
+    if !(before.is_empty() && after.is_empty()) && !result.take_block_markers(before, after) {
+        diagnostics.push(Diagnostic {
+            message: "a joined paragraph's block bookmarks could not be carried".to_owned(),
+        });
     }
     for (index, run) in prefix.runs.into_iter().enumerate() {
         if !result.insert_unwrapped_run(index, run) {

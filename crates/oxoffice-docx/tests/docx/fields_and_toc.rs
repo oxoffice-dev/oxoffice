@@ -2269,6 +2269,21 @@ fn a_range_with_a_leading_bookmark_that_ends_outside_it_imports_without_the_half
 /// A paragraph ending page 1 with a page break, so that what follows is on page 2.
 const PAGE_ONE: &str = r#"<w:p><w:r><w:t>One</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>"#;
 
+/// Updates the layout-backed fields, every PAGEREF finding its bookmark: a
+/// PAGEREF whose bookmark is not found keeps its stored result, so an
+/// earlier update's result alone proves nothing.
+fn no_pageref_retained(doc: &mut Document) {
+    let report = doc.update_layout_backed_fields().unwrap();
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("PAGEREF")),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
 /// A paragraph holding `PAGEREF name` with the stale result 9.
 fn pageref(name: &str) -> String {
     format!(
@@ -2301,10 +2316,10 @@ fn a_bookmark_between_blocks_before_a_table_has_its_page_after_another_layout() 
             r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>{cell}<w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
             pageref("cell")
         ));
-        doc.update_layout_backed_fields().unwrap();
+        no_pageref_retained(&mut doc);
         assert_eq!(texts(&doc).last().unwrap(), "2", "{cell}");
         doc.add_paragraph("Added.");
-        doc.update_layout_backed_fields().unwrap();
+        no_pageref_retained(&mut doc);
         let texts = texts(&reopen(&mut doc));
         assert_eq!(texts[texts.len() - 2], "2", "{cell}");
     }
@@ -2318,11 +2333,11 @@ fn a_bookmark_start_that_comes_to_a_table_after_a_layout_has_its_page() {
         r#"{PAGE_ONE}<w:bookmarkStart w:id="2" w:name="cell"/><w:p><w:r><w:t>X</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p></w:tc></w:tr></w:tbl>{}"#,
         pageref("cell")
     ));
-    doc.update_layout_backed_fields().unwrap();
+    no_pageref_retained(&mut doc);
     assert_eq!(texts(&doc).last().unwrap(), "2");
     let x = paragraph_location(&doc, "X");
     doc.remove_content_at(&x).unwrap();
-    doc.update_layout_backed_fields().unwrap();
+    no_pageref_retained(&mut doc);
     assert_eq!(texts(&reopen(&mut doc)).last().unwrap(), "2");
 }
 

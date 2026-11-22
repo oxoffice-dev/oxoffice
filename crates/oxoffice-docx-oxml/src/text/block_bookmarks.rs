@@ -227,7 +227,8 @@ impl BlockBookmarks {
 impl CT_P {
     /// Write the block markers this paragraph takes ([`BlockBookmarks::markers`])
     /// into the paragraph itself: those before at its first run boundary,
-    /// those after at its last. For a copy whose address the markers
+    /// after the raw children already there (a tracked insertion that opens
+    /// the paragraph comes first), those after at its last. For a copy whose address the markers
     /// were not read for, such as the paragraph the accepted view joins.
     #[doc(hidden)]
     pub fn take_block_markers(
