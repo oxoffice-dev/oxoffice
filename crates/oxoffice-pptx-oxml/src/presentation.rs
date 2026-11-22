@@ -2536,7 +2536,11 @@ fn section_list_has_raw_content(
                     return Ok(true);
                 }
             }
-            Event::Comment(_) | Event::PI(_) | Event::CData(_) | Event::DocType(_) => {
+            Event::Comment(_)
+            | Event::PI(_)
+            | Event::CData(_)
+            | Event::GeneralRef(_)
+            | Event::DocType(_) => {
                 return Ok(true);
             }
             Event::End(element) if local_name(element.name().as_ref()) == b"sectionLst" => {

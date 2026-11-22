@@ -1259,6 +1259,20 @@ fn an_entity_the_section_list_keeps_as_written_survives_a_section_edit() {
     ] {
         assert!(xml.contains(kept), "{kept}: {xml}");
     }
+
+    // Clearing the sections would drop what the list itself holds as
+    // written: it is refused, as it is for plain text there.
+    for direct in ["l&amp;t", "lt"] {
+        let bytes = deck_in_two_sections().to_bytes().unwrap();
+        let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        let xml = xml.replacen("<p14:section ", &format!("{direct}<p14:section "), 1);
+        package.set_part(part, xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let mut prs = Presentation::from_bytes(&out.into_inner()).unwrap();
+        assert!(prs.set_sections(Vec::new()).is_err(), "{direct}");
+    }
 }
 
 #[test]
@@ -2504,4 +2518,21 @@ fn a_slide_name_holding_a_tab_and_line_ends_survives_an_odp_round_trip() {
     let odp = deck.to_odp_bytes().unwrap().bytes;
     let read = Presentation::from_odp_bytes(&odp).unwrap().presentation;
     assert_eq!(read.slide(0).unwrap().name(), Some(name));
+}
+
+#[test]
+fn slide_text_with_markup_characters_reads_back_from_odp() {
+    // ODP writes them as `&amp;`, `&lt;`, `&apos;`... and reads them back.
+    let text = r#"R&D <don't> "go""#;
+    let mut deck = deck_with_titles(&["Plain"]);
+    deck.slide_mut(0)
+        .unwrap()
+        .add_textbox(Emu(914_400), Emu(914_400), Emu(4_572_000), Emu(914_400))
+        .unwrap()
+        .set_text(text)
+        .unwrap();
+    let odp = deck.to_odp_bytes().unwrap().bytes;
+    let read = Presentation::from_odp_bytes(&odp).unwrap().presentation;
+    let slide = read.slide(0).unwrap().text();
+    assert!(slide.contains(text), "{slide}");
 }

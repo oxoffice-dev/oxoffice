@@ -2106,7 +2106,8 @@ fn an_entity_in_a_text_body_container_survives_an_edit_of_its_text() {
     let run = xml[paragraph..].find("<a:r>").unwrap() + paragraph;
     // Inserted from the end, so the earlier offsets stay right.
     let mut edited = xml.clone();
-    edited.insert_str(run + "<a:r>".len(), "<a:rPr>r&amp;r</a:rPr>");
+    edited.insert_str(run + "<a:r>".len(), "<a:rPr>r&amp;r</a:rPr>i&amp;r");
+    edited.insert_str(run, "i&amp;p");
     edited.insert_str(paragraph + "<a:p>".len(), "<a:pPr>p&amp;p</a:pPr>");
     edited.insert_str(paragraph, "b&amp;d");
     let lst = body.find("<a:lstStyle/>").expect("a list style") + body_start;
@@ -2122,7 +2123,9 @@ fn an_entity_in_a_text_body_container_survives_an_edit_of_its_text() {
     assert_eq!(prs.replace_text("Edit", "Edited"), 1);
     let xml = saved_part(&prs, part);
     assert!(xml.contains("Edited me"), "{xml}");
-    for kept in ["l&amp;s", "b&amp;d", "p&amp;p", "r&amp;r"] {
+    for kept in [
+        "l&amp;s", "b&amp;d", "p&amp;p", "r&amp;r", "i&amp;p", "i&amp;r",
+    ] {
         assert!(xml.contains(kept), "{kept}: {xml}");
     }
 }
