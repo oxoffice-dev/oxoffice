@@ -18,13 +18,17 @@ agent, so the step must be part of the workflow, not a habit.
 
 - The release workflow takes a required `highlights` input: a few Markdown
   bullets. The `Version` job refuses empty highlights before any build.
-- `scripts/release_highlights.py` puts them under a `### ✨ Highlights` heading
-  right after the version heading, in `CHANGELOG.md` (committed with the
-  version) and in the release notes. The text reaches the script through the
+- `scripts/release_highlights.py` stores them in
+  `changelog/highlights/X.Y.Z.md` (committed with the version) and puts them
+  under a `### ✨ Highlights` heading right after `## [X.Y.Z]`, in the release
+  notes and in `CHANGELOG.md`. git-cliff rewrites the whole changelog at each
+  release, so the script puts every stored release's highlights back under its
+  own version each time. The text reaches the script through the
   environment, never through a shell; a literal `\n` is a line break when the
   value has none (the Actions form is one line).
 - A re-run after the push keeps the committed changelog and adds the highlights
   to the regenerated notes again: the input is the run's own.
+- Only the `check` and `release` jobs get the highlights in their environment.
 - The lint job runs the script's self test, so a broken script fails a pull
   request, not a release.
 
