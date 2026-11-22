@@ -1,6 +1,6 @@
 ---
 date: 2026-11-22
-status: accepted
+status: shipped
 scope: docx
 ---
 
