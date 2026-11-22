@@ -1110,6 +1110,14 @@ fn a_checked_setter_refuses_a_character_xml_cannot_carry_and_changes_nothing() {
             .to_string();
         assert!(message.contains("U+0007"), "setter {index}: {message}");
     }
+    let font = doc
+        .add_style(oxoffice_docx::StyleBuilder::paragraph("Font", "Font").font(bad))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        font.contains("style Font") && font.contains("w:rFonts/@w:ascii"),
+        "the refusal names the value: {font}"
+    );
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 

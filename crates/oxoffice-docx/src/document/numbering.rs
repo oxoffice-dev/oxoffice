@@ -1596,7 +1596,15 @@ impl Document {
     /// that only learn a deeper level's format when content first reaches it.
     ///
     /// Returns `false` when `num_id` is unknown or `level` is out of range.
+    /// A character XML 1.0 cannot carry is dropped from the level text.
     pub fn set_list_level(&mut self, num_id: u32, level: u32, spec: ListLevel) -> bool {
+        let spec = match spec.level_text_value() {
+            Some(text) => {
+                let text = oxoffice_core::xml::without_non_xml_characters(text);
+                spec.level_text(text)
+            }
+            None => spec,
+        };
         if validate_list_level(level, &spec).is_err() {
             return false;
         }

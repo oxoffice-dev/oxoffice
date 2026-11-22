@@ -1295,17 +1295,42 @@ impl Document {
 }
 
 /// Refuses a style that would write a character XML 1.0 cannot carry, in any
-/// value the builder set: the style is serialized as it will be saved.
+/// value the builder set: the style is serialized as it will be saved, and
+/// the error names the style and the attribute or element that holds it.
 fn refuse_non_xml_style_values(style: &oxoffice_docx_oxml::styles::CT_Style) -> Result<()> {
     let mut writer = quick_xml::Writer::new(Vec::new());
     style.to_xml(&mut writer)?;
     let xml = String::from_utf8_lossy(writer.get_ref());
-    oxoffice_core::xml::reject_non_xml_characters(
-        &format!(
-            "style {}",
-            oxoffice_core::xml::strip_non_xml_characters(&style.style_id)
-        ),
-        &xml,
-    )?;
-    Ok(())
+    let Some((at, character)) = xml
+        .char_indices()
+        .find(|(_, character)| !oxoffice_core::xml::is_xml_1_0_character(*character))
+    else {
+        return Ok(());
+    };
+    // The value sits in the last attribute or element opened before it.
+    let before = &xml[..at];
+    let element = before[before.rfind('<').map_or(0, |start| start + 1)..]
+        .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .next()
+        .unwrap_or_default();
+    let attribute = before
+        .rfind('=')
+        .filter(|equals| {
+            before.rfind('<').is_some_and(|open| open < *equals) && !before[*equals..].contains('>')
+        })
+        .map(|equals| {
+            let name = before[..equals].trim_end();
+            &name[name.rfind(char::is_whitespace).map_or(0, |space| space + 1)..]
+        });
+    let place = match attribute {
+        Some(attribute) => format!("{element}/@{attribute}"),
+        None => element.to_owned(),
+    };
+    Err(oxoffice_core::OxmlError::InvalidValue(format!(
+        "style {} value {place} holds U+{:04X}, {}",
+        oxoffice_core::xml::strip_non_xml_characters(&style.style_id),
+        u32::from(character),
+        oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL
+    ))
+    .into())
 }

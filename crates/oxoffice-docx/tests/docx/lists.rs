@@ -1287,3 +1287,33 @@ fn a_paragraph_numbered_without_a_level_takes_the_indentation_of_level_zero() {
         expected
     );
 }
+
+#[test]
+fn a_level_text_the_file_holds_as_a_reference_xml_cannot_carry_still_lets_numbering_change() {
+    // Another producer wrote a character XML 1.0 cannot carry as a character
+    // reference in a level text. The file keeps it as read; only a level
+    // text the caller supplies is checked.
+    let mut doc = doc_with(&["item"]);
+    let num_id = doc.add_list_definition(&[ListLevel::decimal().level_text("%1.")]);
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/numbering.xml").unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"w:val="%1.""#), "{xml}");
+    package.set_part(
+        "/word/numbering.xml",
+        xml.replace(r#"w:val="%1.""#, r#"w:val="%1&#7;""#)
+            .into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    doc.add_numbering_definition(&[ListLevel::decimal().level_text("%1)")])
+        .expect("a new definition is accepted");
+    assert!(
+        doc.set_list_level(num_id, 0, ListLevel::decimal().level_text("%1\u{7}:")),
+        "the infallible setter drops the character"
+    );
+    let doc = Document::from_bytes(&doc.to_bytes().expect("the document saves")).unwrap();
+    let saved = doc.part_xml("word/numbering.xml").unwrap();
+    assert!(saved.contains(r#"w:val="%1:""#), "{saved}");
+}
