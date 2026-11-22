@@ -75,6 +75,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [The release pushes main and the tag after every build is green](2026-11-21-release-pushes-after-the-builds.md) | shipped |
 | 2026-11-22 | [One CI for pull requests and main, the full sets at night](2026-11-22-one-ci-for-pull-requests-and-main.md) | accepted |
 | 2026-11-22 | [A short release: build, check each package, publish](2026-11-22-a-short-release.md) | accepted |
+| 2026-11-22 | [Every release opens with its highlights](2026-11-22-release-highlights.md) | accepted |
 | 2026-11-22 | [A smaller test suite: the docx tests that run 99 % of the lines](2026-11-22-a-smaller-test-suite.md) | accepted |
 | 2026-11-22 | [PowerPoint binding: owners that do not depend on their slide position](2026-11-22-pptx-binding-owners-independent-of-slide-position.md) | shipped |
 | 2026-11-22 | [A field operand that joins text and nested fields](2026-11-22-joined-field-operands.md) | accepted |

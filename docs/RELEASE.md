@@ -13,8 +13,13 @@ One manual workflow, no manual tags, no hand-edited changelog.
    green run of the full checks: no test suite runs in the release. If it
    refused, run the full checks on the commit it names (a branch at that
    commit), then **Re-run failed jobs**.
-2. Actions, **Release**, **Run workflow** from `main`, the version (or
-   `gh workflow run release.yml -f version=X.Y.Z`). Once it has started,
+2. Write the highlights: three to six Markdown bullets on the big changes of
+   the release, for a reader in a hurry (what a user can now do, what got
+   faster, what breaks), each with its pull request. Then Actions,
+   **Release**, **Run workflow** from `main`, with the version and the
+   highlights (`\n` for a new line in the form), or
+   `gh workflow run release.yml -f version=X.Y.Z -f highlights="$(cat highlights.md)"`.
+   The release refuses empty highlights. Once it has started,
    merging into `main` is fine. Every build job checks out the commit the run was
    dispatched on and sets the version in its own workspace
    (`scripts/set_version.py`, then `cargo update --workspace`): the binaries,
@@ -102,7 +107,10 @@ channel is in [INSTALL.md](INSTALL.md).
 ## Changelog
 
 `CHANGELOG.md` is generated from the conventional commits of `main` by
-git-cliff (`cliff.toml`). Commit titles are the changelog, and pull requests
+git-cliff (`cliff.toml`), under the release's highlights: the
+`### ✨ Highlights` section that `scripts/release_highlights.py` puts first in
+the version's section of `CHANGELOG.md` and in the GitHub release notes, from
+the workflow's `highlights` input. Commit titles are the changelog, and pull requests
 are squash merged under their title, which is why pull request titles are
 checked. Preview it locally with
 `uvx git-cliff --unreleased`.
