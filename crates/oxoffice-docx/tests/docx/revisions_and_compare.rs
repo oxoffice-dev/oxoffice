@@ -4148,3 +4148,41 @@ fn a_list_item_without_a_level_reads_at_its_style_s_level() {
     let doc = redline(styled(""), &styled(r#"<w:ilvl w:val="0"/>"#));
     assert!(!kinds(&doc).is_empty());
 }
+
+#[test]
+fn a_list_item_without_a_level_keeps_that_form_through_a_tracked_mark_change() {
+    // The edited copy writes the level and makes the first item's mark bold:
+    // rejecting the change gives back the original, still without a `w:ilvl`.
+    let mut edited = numbered_items(r#"<w:ilvl w:val="0"/>"#);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(edited.to_bytes().unwrap()))
+            .unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    package.set_part(
+        &main,
+        xml.replacen("</w:numPr>", "</w:numPr><w:rPr><w:b/></w:rPr>", 1)
+            .into_bytes(),
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let edited = Document::from_bytes(&out.into_inner()).unwrap();
+    for granularity in [ComparisonGranularity::Word, ComparisonGranularity::Run] {
+        let mut doc = numbered_items("");
+        let options = ComparisonOptions {
+            granularity,
+            ..Default::default()
+        };
+        let diagnostics = doc
+            .compare_with_options(&edited, AUTHOR, DATE, &options)
+            .unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut doc = reopen(&mut doc);
+        assert!(!kinds(&doc).is_empty(), "{granularity:?}");
+        let mut back = rejected(&mut doc);
+        assert!(
+            !saved_main_xml(&mut back).contains("<w:ilvl"),
+            "{granularity:?}"
+        );
+    }
+}

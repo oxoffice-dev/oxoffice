@@ -73,10 +73,21 @@ fn paragraph_properties_xml_impl(
     let edited_modeled = modeled_paragraph_properties(edited.properties.as_ref());
     let changed = compared_paragraph_properties(original_modeled.clone())
         != compared_paragraph_properties(edited_modeled.clone());
-    let mut current = if changed {
+    let same_base = compared_paragraph_properties(split_paragraph_mark(original_modeled.clone()).0)
+        == compared_paragraph_properties(split_paragraph_mark(edited_modeled.clone()).0);
+    let mut current = if changed && !same_base {
         edited.properties.clone().unwrap_or_default()
     } else {
-        original.properties.clone().unwrap_or_default()
+        // A change of the mark alone keeps the original's own base, so that
+        // the level a `w:numId` without `w:ilvl` shows stays unwritten.
+        let mut current = original.properties.clone().unwrap_or_default();
+        if changed {
+            current.rpr = edited
+                .properties
+                .as_ref()
+                .and_then(|edited| edited.rpr.clone());
+        }
+        current
     };
     current.sect_pr = None;
     current.change = None;
