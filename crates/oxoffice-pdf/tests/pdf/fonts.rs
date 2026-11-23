@@ -131,6 +131,12 @@ fn a_cff_font_is_embedded_as_a_cff_program_and_a_truetype_font_as_truetype() {
             // OpenType font.
             let program = read.stream(file);
             assert_eq!(program[..3], [1, 0, 4], "{name}");
+            // CID-keyed: its Top DICT opens with the ROS operator (12 30),
+            // so the CIDs the content stream shows address its glyphs.
+            assert!(
+                top_dict(&program).windows(2).any(|op| op == [12, 30]),
+                "{name}"
+            );
         } else {
             assert_eq!(subtype, b"CIDFontType2", "{name}");
             assert!(cid.get(b"CIDToGIDMap").is_ok(), "{name}");
@@ -139,4 +145,25 @@ fn a_cff_font_is_embedded_as_a_cff_program_and_a_truetype_font_as_truetype() {
             assert_eq!(program[..4], [0, 1, 0, 0], "{name}: a TrueType font");
         }
     }
+}
+
+/// The Top DICT of a CFF program: the one entry of its Top DICT INDEX,
+/// after its header and its Name INDEX.
+fn top_dict(cff: &[u8]) -> &[u8] {
+    // An INDEX: a count, an offset size, count + 1 offsets, then the data.
+    let index = |at: usize| -> (usize, usize, usize) {
+        let count = usize::from(u16::from_be_bytes([cff[at], cff[at + 1]]));
+        let size = usize::from(cff[at + 2]);
+        let offset = |i: usize| {
+            cff[at + 3 + i * size..at + 3 + (i + 1) * size]
+                .iter()
+                .fold(0usize, |value, byte| value << 8 | usize::from(*byte))
+        };
+        let data = at + 3 + (count + 1) * size - 1;
+        (data + offset(0), data + offset(1), data + offset(count))
+    };
+    let header = usize::from(cff[2]);
+    let (_, _, names_end) = index(header);
+    let (start, end, _) = index(names_end);
+    &cff[start..end]
 }
