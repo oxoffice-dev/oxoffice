@@ -1,8 +1,8 @@
 {
   "file": "google/long-report.docx",
-  "reason": "a face picked for its glyphs no longer measures the line",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "54c765dc140ec983a2e648982e6f33765eff0b46db9ce9f837d3ee09d7e96580",
-  "outline_and_tags": "ea2e6886a06a50390264ce3912a6f70319899dd77b7bf8e12730eb16b8b39caf",
+  "outline_and_tags": "bc01dfe0158f098ad0152de95009fadda91747463876500a580a58306db79ff4",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "dd7282af8c53d60882f9272c155f0d6aa2d60cc252fb97406080de4fa338fc09", "content": "7c1b267432ca16b89725388401d9695e53582055da9452be1f6a8ce0f8f28a5f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

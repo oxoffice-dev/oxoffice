@@ -1660,6 +1660,7 @@ impl Document {
 
         let mut input = LayoutInput {
             block_bookmarks: Default::default(),
+            bookmark_names: Default::default(),
             form_fields: false,
             form_paragraphs: None,
             sequence_snapshot: None,

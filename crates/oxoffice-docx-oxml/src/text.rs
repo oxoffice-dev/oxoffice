@@ -64,6 +64,7 @@ pub(crate) use run::{
     RunChildAction, RunChildPlan, SpecialRunValue, comment_reference_has_payload_attributes,
     decode_run_text_span, field_run, hyperlink_revision_slot, parse_run_raw,
     parse_run_raw_with_input, parse_run_raw_with_observation, parse_typed_special_run_child,
+    started_reference_has_payload,
 };
 use work::{
     FieldOriginEntry, MappedFieldRange, OriginalFieldFacts, ParsedFieldCache, StoredSourceOrigin,

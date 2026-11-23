@@ -1331,6 +1331,305 @@ fn epub_reports_a_table_shading_colour_it_cannot_carry() {
 }
 
 #[test]
+fn a_shaded_epub_list_item_keeps_its_shading() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    doc.add_paragraph("Shaded")
+        .numbering(list, 0)
+        .shading("C6EFCE");
+    doc.add_paragraph("Plain").numbering(list, 0);
+    let chapters = epub_chapters(doc.to_epub_bytes().unwrap().bytes);
+    assert!(
+        chapters.contains(r##"<li style="background-color:#C6EFCE">Shaded"##),
+        "{chapters}"
+    );
+    assert!(chapters.contains("<li>Plain"), "{chapters}");
+}
+
+#[test]
+fn a_chicago_list_numbered_through_its_style_gets_its_marks_in_epub_and_legal_numbering_does_not() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
+            oxoffice_docx::ListNumberFormat::Chicago,
+        )])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    doc.link_style_to_numbering("Heading2", list, 0).unwrap();
+    for item in ["One", "Two"] {
+        doc.add_paragraph(item).style("Heading2");
+    }
+    let chapters = epub_chapters(doc.to_epub_bytes().unwrap().bytes);
+    let marks = html_elements(&chapters, "li[style]")
+        .into_iter()
+        .map(|(_, attributes)| attributes["style"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        marks,
+        ["list-style-type:'*. '", "list-style-type:'\u{2020}. '"],
+        "{chapters}"
+    );
+
+    // A legal level shows its numbers as decimal ones, as layout does.
+    let mut legal = Document::new();
+    let definition = legal
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
+            oxoffice_docx::ListNumberFormat::Chicago,
+        )
+        .level_text("%1)")
+        .legal_numbering(true)])
+        .unwrap();
+    let list = legal.add_numbering_instance(definition, &[]).unwrap();
+    legal.add_paragraph("One").numbering(list, 0);
+    let epub = legal.to_epub_bytes().unwrap();
+    // Its own marker text is not written, which is reported.
+    assert!(
+        epub.diagnostics.iter().any(|diagnostic| diagnostic.message
+            == "custom list marker text was replaced by EPUB list semantics"),
+        "{:?}",
+        epub.diagnostics
+    );
+    let chapters = epub_chapters(epub.bytes);
+    assert!(!chapters.contains("list-style-type:'"), "{chapters}");
+    assert!(chapters.contains("<ol>"), "{chapters}");
+}
+
+#[test]
+fn chicago_list_marks_are_written_as_the_pdf_draws_them() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
+            oxoffice_docx::ListNumberFormat::Chicago,
+        )])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    for item in ["One", "Two", "Three", "Four", "Five"] {
+        doc.add_paragraph(item).numbering(list, 0);
+    }
+    let marks = ["*.", "\u{2020}.", "\u{2021}.", "\u{a7}.", "**."];
+
+    // HTML and EPUB: an ordered list whose items each carry their mark.
+    let html = doc.to_html_fragment();
+    assert_eq!(html_elements(&html, "ol").len(), 1, "{html}");
+    let items = html_elements(&html, "li");
+    for ((_, attributes), mark) in items.iter().zip(marks) {
+        assert_eq!(
+            attributes["style"],
+            format!("list-style-type:'{mark} '"),
+            "{html}"
+        );
+    }
+    assert_eq!(items.len(), 5, "{html}");
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        !epub
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.path.ends_with("numbering/format")
+                || diagnostic.path.ends_with("numbering/marker")),
+        "{:?}",
+        epub.diagnostics
+    );
+    let chapters = epub_chapters(epub.bytes);
+    let items = html_elements(&chapters, "li[style]");
+    assert_eq!(items.len(), 5, "{chapters}");
+    for ((_, attributes), mark) in items.iter().zip(marks) {
+        assert_eq!(
+            attributes["style"],
+            format!("list-style-type:'{mark} '"),
+            "{chapters}"
+        );
+    }
+
+    // Markdown has no list for them: each item is a paragraph led by its
+    // mark, escaped where Markdown would read it as emphasis.
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        read_markdown(&markdown),
+        [
+            Read::Paragraph("*. One".to_owned()),
+            Read::Paragraph("\u{2020}. Two".to_owned()),
+            Read::Paragraph("\u{2021}. Three".to_owned()),
+            Read::Paragraph("\u{a7}. Four".to_owned()),
+            Read::Paragraph("**. Five".to_owned()),
+        ],
+        "{markdown}"
+    );
+}
+
+#[test]
+fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown_and_mhtml() {
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Intro </w:t></w:r><w:bookmarkStart w:id="2" w:name="_Toc12"/><w:r><w:t>Heading</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="goal"><w:r><w:t>the goal</w:t></w:r></w:hyperlink>"#,
+        r#"<w:r><w:t xml:space="preserve"> and </w:t></w:r><w:hyperlink w:anchor="_Toc12"><w:r><w:t>the heading</w:t></w:r></w:hyperlink></w:p>"#,
+        // A name another tool wrote, with a letter a Markdown link escapes.
+        r#"<w:p><w:bookmarkStart w:id="3" w:name="résultats"/><w:r><w:t>Results</w:t></w:r><w:bookmarkEnd w:id="3"/>"#,
+        r#"<w:r><w:t xml:space="preserve"> </w:t></w:r><w:hyperlink w:anchor="résultats"><w:r><w:t>the results</w:t></w:r></w:hyperlink></w:p>"#,
+    )));
+    let check = |read: &Document, format: &str| {
+        let mut links = read
+            .links()
+            .into_iter()
+            .map(|link| (link.text, link.anchor, link.rel_id))
+            .collect::<Vec<_>>();
+        links.sort();
+        assert_eq!(
+            links,
+            [
+                ("the goal".to_owned(), Some("goal".to_owned()), None),
+                ("the heading".to_owned(), Some("_Toc12".to_owned()), None),
+                ("the results".to_owned(), Some("résultats".to_owned()), None),
+            ],
+            "{format}"
+        );
+        let mut names = read
+            .bookmarks()
+            .iter()
+            .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["_Toc12", "goal", "résultats"], "{format}");
+        // Exported again, each anchor is back at its place (the read runs
+        // carry the template's font, written as spans).
+        let mut html = read
+            .to_html_fragment()
+            .replace("</span>", "")
+            .replace("<u>", "")
+            .replace("</u>", "");
+        while let Some(start) = html.find("<span") {
+            let end = start + html[start..].find('>').unwrap();
+            html.replace_range(start..=end, "");
+        }
+        for expected in [
+            r#"<a id="goal"></a>Goal"#,
+            r#"Intro <a id="_Toc12"></a>Heading"#,
+            r##"<a href="#goal">the goal</a>"##,
+        ] {
+            assert!(html.contains(expected), "{format}: {expected} in {html}");
+        }
+    };
+    let html = Document::from_html(&doc.to_html()).unwrap();
+    assert!(
+        !html
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("link")),
+        "{:?}",
+        html.diagnostics
+    );
+    check(&html.document, "HTML");
+    let markdown = Document::from_markdown(&doc.to_markdown()).unwrap();
+    assert!(
+        !markdown
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("raw Markdown HTML")),
+        "{:?}",
+        markdown.diagnostics
+    );
+    check(&markdown.document, "Markdown");
+    let mhtml = Document::from_mhtml_bytes(&doc.to_mhtml_bytes().unwrap().bytes).unwrap();
+    check(&mhtml.document, "MHTML");
+
+    // A heading, a list item or a legacy named anchor that a link targets is
+    // a bookmark, whatever tool named it (pandoc writes `getting-started`);
+    // an id no link targets is not. A link to an id no element has, or to
+    // one on a block the import does not keep, says so.
+    let read = Document::from_html(concat!(
+        r#"<h2 id="getting-started">Start</h2><p><a name="old"></a>Old</p><p id="unlinked">Plain</p>"#,
+        r#"<ul><li id="item">Item</li></ul><div id="block"><p>Block</p></div>"#,
+        r#"<p><a id="Dup"></a>One <a id="dup"></a>Two</p>"#,
+        r##"<p><a href="#getting-started">up</a> <a href="#old">old</a> <a href="#item">item</a>"##,
+        r##" <a href="#dup">dup</a> <a href="#top">top</a> <a href="#block">block</a></p>"##,
+    ))
+    .unwrap();
+    let mut names = read
+        .document
+        .bookmarks()
+        .iter()
+        .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+        .collect::<Vec<_>>();
+    names.sort();
+    // One bookmark per name, as Word compares them, the first one kept.
+    assert_eq!(names, ["Dup", "getting-started", "item", "old"]);
+    let links = read
+        .document
+        .links()
+        .into_iter()
+        .map(|link| (link.text, link.anchor, link.rel_id))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        links,
+        [
+            ("up".to_owned(), Some("getting-started".to_owned()), None),
+            ("old".to_owned(), Some("old".to_owned()), None),
+            ("item".to_owned(), Some("item".to_owned()), None),
+            ("dup".to_owned(), Some("dup".to_owned()), None),
+            ("block".to_owned(), Some("block".to_owned()), None),
+        ]
+    );
+    assert!(texts(&read.document).last().unwrap().contains(" top "));
+    let messages = read
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        messages.contains(
+            &"dropped HTML link to an id no element of the input has and retained anchor text"
+        ),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(
+            &"HTML link target `block` is on an element the import does not keep, so its links point to no bookmark"
+        ),
+        "{messages:?}"
+    );
+
+    // Raw HTML in an image's alternate text is not an anchor: the import
+    // goes on, with its diagnostic.
+    let read = Document::from_markdown(r#"![<a id="x"></a>](p.png) text"#).unwrap();
+    assert!(read.document.bookmarks().is_empty());
+
+    // A fragment inserted in a document keeps a name the document holds.
+    let mut doc = reopen(&mut doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Kept</w:t></w:r><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="Other"/><w:bookmarkEnd w:id="2"/></w:p>"#,
+    ));
+    let end = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.insert_html_fragment(
+        &end,
+        // A link to the document's own bookmark, which no element of the
+        // fragment carries, stays a link to it.
+        r##"<p><a id="kept"></a>Again <a id="fresh"></a>New</p><p><a href="#fresh">to new</a> <a href="#Other">back</a></p>"##,
+        &[],
+    )
+    .unwrap();
+    let mut names = doc
+        .bookmarks()
+        .iter()
+        .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["Kept", "Other", "fresh"]);
+    assert_eq!(
+        doc.links()
+            .into_iter()
+            .map(|link| (link.anchor, link.rel_id))
+            .collect::<Vec<_>>(),
+        [
+            (Some("fresh".to_owned()), None),
+            (Some("Other".to_owned()), None)
+        ]
+    );
+}
+
+#[test]
 fn a_link_anchor_lands_at_its_bookmark_after_wrappers_and_across_a_deleted_mark() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:p><w:hyperlink w:anchor="here"><w:r><w:t>here</w:t></w:r></w:hyperlink>"#,

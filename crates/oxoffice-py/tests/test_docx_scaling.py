@@ -820,6 +820,8 @@ GROWING = {
     "SectionHandle.set_note_policy", "SectionHandle.set_page_border", "SectionHandle.set_text_watermark",
     "Settings.odd_and_even_pages_header_footer", "Table.add_row", "Table.clone_row", "Table.delete_column",
     "Table.insert_column", "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
+    # The by-index font calls (#238) cost what their by-name siblings above cost.
+    "Document.embed_font_at", "Document.remove_embedded_font_at", "Document.remove_font_at", "Document.set_font_at",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 

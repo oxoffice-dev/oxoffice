@@ -4,7 +4,7 @@ use oxoffice_docx_oxml::borders::{CT_BorderEdge, CT_PBdr, CT_TabStop, CT_Tabs};
 use oxoffice_docx_oxml::document::CT_SectPr;
 use oxoffice_docx_oxml::math::OfficeMath;
 use oxoffice_docx_oxml::properties::{CT_FramePr, CT_PPr, CT_RPr, CT_Shd};
-use oxoffice_docx_oxml::ruby::CT_Ruby;
+use oxoffice_docx_oxml::ruby::{CT_Ruby, CT_RubyRun};
 use oxoffice_docx_oxml::shared::{
     ST_Border, ST_Jc, ST_PageOrientation, ST_SectionType, ST_TabJc, ST_TabLeader, ST_Underline,
 };
@@ -1192,30 +1192,33 @@ impl<'a> Paragraph<'a> {
         custom_mark: Option<String>,
         nth: usize,
     ) -> CT_R {
-        let properties = self
+        let is_mark = |item: &RunContent| match item {
+            RunContent::FootnoteRef { id: known, .. } => !endnote && *known == id,
+            RunContent::EndnoteRef { id: known, .. } => endnote && *known == id,
+            _ => false,
+        };
+        let source = self
             .inner
             .source_runs()
             .into_iter()
-            .filter(|run| {
-                run.content.iter().any(|item| match item {
-                    RunContent::FootnoteRef { id: known, .. } => !endnote && *known == id,
-                    RunContent::EndnoteRef { id: known, .. } => endnote && *known == id,
-                    _ => false,
-                })
+            .filter(|run| run.content.iter().any(is_mark))
+            .nth(nth);
+        // The symbol that holds the custom mark stays with its reference.
+        let mark_child = source.and_then(|run| {
+            let index = run.content.iter().position(is_mark)?;
+            Some(run.content[run.note_mark_child(index)?].clone())
+        });
+        let properties = source.map(|run| run.properties.clone()).unwrap_or_else(|| {
+            let style = if endnote {
+                "EndnoteReference"
+            } else {
+                "FootnoteReference"
+            };
+            Some(oxoffice_docx_oxml::properties::CT_RPr {
+                style_id: Some(style.into()),
+                ..Default::default()
             })
-            .nth(nth)
-            .map(|run| run.properties.clone())
-            .unwrap_or_else(|| {
-                let style = if endnote {
-                    "EndnoteReference"
-                } else {
-                    "FootnoteReference"
-                };
-                Some(oxoffice_docx_oxml::properties::CT_RPr {
-                    style_id: Some(style.into()),
-                    ..Default::default()
-                })
-            });
+        });
         let mut run = CT_R::new("");
         run.properties = properties;
         run.content = vec![if endnote {
@@ -1223,6 +1226,7 @@ impl<'a> Paragraph<'a> {
         } else {
             RunContent::FootnoteRef { id, custom_mark }
         }];
+        run.content.extend(mark_child);
         run
     }
 
@@ -1299,6 +1303,7 @@ impl<'a> Paragraph<'a> {
     /// returns it. The phonetic text stays inside the annotation and no text
     /// extraction returns it. Use [`Self::ruby_mut`] to set the geometry in
     /// `w:rubyPr`. A character XML 1.0 cannot carry is dropped from either.
+    /// The guide is written as Word writes it, inside a run (`w:r/w:ruby`).
     pub fn add_ruby(&mut self, base: &str, phonetic: &str) -> usize {
         let base_start = self.inner.runs.len();
         self.inner
@@ -1310,6 +1315,7 @@ impl<'a> Paragraph<'a> {
             base_start,
             base_end: base_start + 1,
             raw_xml: Vec::new(),
+            run: Some(CT_RubyRun::default()),
         });
         self.inner.rubies.len() - 1
     }
@@ -2966,6 +2972,12 @@ impl RangeAnchors {
                 }
             };
             let local = element.local_name().as_ref().to_vec();
+            // The run writer writes a text mark right after its reference;
+            // any other child there (a symbol or deleted text that holds
+            // the mark) leaves the mark text empty.
+            if local != b"t" {
+                pending_mark = None;
+            }
             match local.as_slice() {
                 b"commentRangeStart" => push(&mut anchors.comment_starts),
                 b"commentRangeEnd" => push(&mut anchors.comment_ends),

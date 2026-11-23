@@ -259,10 +259,10 @@ fn list_level<'a>(
     Some((num_id, ilvl, level))
 }
 
-/// How a list item's marker shows in HTML: a bullet, or a number in one of
-/// the formats CSS lists name. Legal numbering shows decimal numbers. Other
-/// formats layout draws (Chicago's `*`, `†`, `‡`, `§`) are not written as
-/// list items.
+/// How a list item's marker shows in HTML: a bullet, a number in one of
+/// the formats CSS lists name, or Chicago's `*`, `†`, `‡`, `§`, which CSS
+/// does not name and the exports write as the item's own marker text. Legal
+/// numbering shows decimal numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ListKind {
     Bullet,
@@ -271,6 +271,7 @@ enum ListKind {
     UpperLetter,
     LowerRoman,
     UpperRoman,
+    Chicago,
 }
 
 impl ListKind {
@@ -287,6 +288,7 @@ impl ListKind {
             Some(ST_NumberFormat::UpperLetter) => Self::UpperLetter,
             Some(ST_NumberFormat::LowerRoman) => Self::LowerRoman,
             Some(ST_NumberFormat::UpperRoman) => Self::UpperRoman,
+            Some(ST_NumberFormat::Chicago) => Self::Chicago,
             Some(_) => return None,
         })
     }
@@ -297,13 +299,15 @@ impl ListKind {
 }
 
 /// A list item as the exports write it: its level, kind, the
-/// definition that owns its count, and the number layout gives it.
-#[derive(Clone, Copy, Debug)]
+/// definition that owns its count, the number layout gives it, and, for a
+/// kind CSS does not name, the marker text layout draws.
+#[derive(Clone, Debug)]
 struct ListItem {
     level: u32,
     kind: ListKind,
     definition: u32,
     count: u32,
+    marker: Option<String>,
 }
 
 /// Counts list items in document order with layout's own counter, so that
@@ -392,7 +396,7 @@ impl<'a> ListCounter<'a> {
         else {
             return Counted::None;
         };
-        generate_marker(num_id, ilvl, numbering, &mut self.state);
+        let marker = generate_marker(num_id, ilvl, numbering, &mut self.state);
         let count = self.state.current(num_id, ilvl);
         match ListKind::of(level) {
             Some(kind) => Counted::Item(ListItem {
@@ -400,6 +404,9 @@ impl<'a> ListCounter<'a> {
                 kind,
                 definition,
                 count,
+                marker: marker
+                    .filter(|_| kind == ListKind::Chicago)
+                    .map(|marker| marker.marker_text),
             }),
             None => Counted::Unmarked {
                 level: ilvl,
