@@ -745,14 +745,15 @@ impl Document {
         }
     }
     /// Restart the list a direct body paragraph shows at `start`, as Word's
-    /// "Restart at 1": the paragraph and every later list item of its
-    /// instance move to a new instance, a copy of the old one whose level
-    /// starts at `start`.
+    /// "Restart at 1": the paragraph and the rest of its list at its level
+    /// move to a new instance, a copy of the old one whose level starts at
+    /// `start`.
     ///
     /// The paragraph's numbering is the one it shows: its own `w:numPr`, else
     /// its style chain's, as [`Self::effective_paragraph_properties`] reads
-    /// it. The later items are the body paragraphs after it, in tables and
-    /// content controls too, that show the same instance, at any level; each
+    /// it. The rest of its list is the body paragraphs after it, in tables
+    /// and content controls too, that show the same instance at its level or
+    /// deeper, up to the first one above its level; each
     /// keeps its level and gets a direct `w:numPr`, so an item numbered
     /// through its style keeps its style. Earlier items, and the items of
     /// other stories, keep the old instance. Returns the new instance's id.
@@ -811,15 +812,23 @@ impl Document {
             .expect("the staged copy holds the paragraph")
             .inner;
         let styles = &candidate.styles;
-        let mut started = false;
+        // The rest of the list at the restarted level: a later item of the
+        // instance above that level ends it, so that the copied overrides of
+        // the levels above never apply to items that did not have them.
+        let (mut started, mut ended) = (false, false);
         walkers::visit_body_paragraphs_mut(&mut candidate.document.body.content, &mut |item| {
-            started |= std::ptr::eq(item, target);
-            if !started {
+            let first = std::ptr::eq(item, target);
+            started |= first;
+            if !started || ended {
                 return;
             }
             if let Some((item_id, item_level)) = shown_numbering(styles, item)
                 && item_id == id
             {
+                if item_level < level && !first {
+                    ended = true;
+                    return;
+                }
                 Paragraph { inner: item }.set_numbering(new_id, item_level);
             }
         });

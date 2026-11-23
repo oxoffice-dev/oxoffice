@@ -262,6 +262,51 @@ fn restarting_an_item_moves_every_later_item_of_its_list_at_every_level() {
 }
 
 #[test]
+fn restarting_a_sub_item_moves_only_the_rest_of_its_sublist() {
+    // The instance restarts level 0, as Word's own restarted lists and
+    // `add_numbered_list_item(restart=True)` write it.
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[
+            ListLevel::decimal().level_text("%1."),
+            ListLevel::decimal().level_text("%2."),
+        ])
+        .unwrap();
+    let id = doc
+        .add_numbering_instance(definition, &[NumberingLevelOverride::new(0).start(1)])
+        .unwrap();
+    for (text, level) in [
+        ("one", 0),
+        ("one a", 1),
+        ("one b", 1),
+        ("two", 0),
+        ("two a", 1),
+        ("two b", 1),
+    ] {
+        doc.add_paragraph(text).numbering(id, level);
+    }
+    assert_eq!(markers(&doc), ["1.", "1.", "2.", "2.", "1.", "2."]);
+
+    let new = doc.restart_numbering(2, 5).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(markers(&doc), ["1.", "1.", "5.", "2.", "1.", "2."]);
+    let numbering: Vec<_> = (0..doc.paragraph_count())
+        .map(|index| doc.paragraph(index).unwrap().numbering())
+        .collect();
+    assert_eq!(
+        numbering,
+        [
+            Some((id, 0)),
+            Some((id, 1)),
+            Some((new, 1)),
+            Some((id, 0)),
+            Some((id, 1)),
+            Some((id, 1)),
+        ]
+    );
+}
+
+#[test]
 fn restart_numbering_refuses_bullets_plain_paragraphs_and_missing_ones() {
     let mut doc = Document::new();
     doc.add_bullet_list_item("bullet", 0);

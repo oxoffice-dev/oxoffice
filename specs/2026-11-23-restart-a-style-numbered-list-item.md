@@ -36,8 +36,11 @@ instance that starts at `start`.**
   gives). A paragraph that shows no list, a bullet or a `none` level is refused, as today.
 - **The new instance**: as today, a copy of the paragraph's instance, with a `w:startOverride` of `start` at its
   level. An instance whose data the copy would lose is refused, as today.
-- **The rest of the list**: every later body paragraph that shows the same instance, at any level, in tables and
-  content controls too (document order), moves to the new instance and keeps the level it shows. A paragraph numbered through its style gets a direct `w:numPr`
+- **The rest of the list**: every later body paragraph that shows the same instance at the restarted level or
+  deeper, in tables and content controls too (document order), moves to the new instance and keeps the level it
+  shows, up to the first later item of the instance above that level, which ends the restarted sublist. Moving the
+  items above it would apply the copied overrides of their levels to them again (a level-0 restart the old
+  instance already used), and the start of the restarted level to every later sublist. A paragraph numbered through its style gets a direct `w:numPr`
   (`w:numId` and `w:ilvl`) and keeps its style. Items before the restarted one keep the old instance.
 - **Return value**: the new instance's id, as today.
 - **Python and CLI**: no new call and no new argument; Python's `restart_numbering` follows. No CLI command
