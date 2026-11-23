@@ -2718,7 +2718,8 @@ impl<'a> XmlTree<'a> {
             )
         } else {
             self.validate_selected_descendants(index, state)?;
-            // Comments whose reference goes with the removed text go whole.
+            // Comments whose reference goes with the removed text go whole,
+            // when the removed text holds all of their range.
             let mut removed_references = HashSet::new();
             let mut pending = self.elements[index].children.clone();
             while let Some(descendant) = pending.pop() {
@@ -2728,19 +2729,23 @@ impl<'a> XmlTree<'a> {
                 }
                 pending.extend(node.children.iter().copied());
             }
+            removed_references.retain(|id| !self.comment_marked_outside(index, id));
             let mut kept = Vec::new();
             for &child in &self.elements[index].children {
                 let node = &self.elements[child];
                 // A comment range marker the removed text holds stays at the
                 // place the text collapses to, as Word keeps a comment on a
                 // tracked change it accepts or rejects, unless its reference
-                // goes too.
+                // goes too. So does the reference run of a comment whose range
+                // starts or ends outside, as LibreOffice writes one at the
+                // end of a deletion.
                 let range_marker = node.word
                     && matches!(node.local.as_str(), "commentRangeStart" | "commentRangeEnd")
                     && self
                         .element_id(child)
                         .is_none_or(|id| !removed_references.contains(&id));
                 if range_marker
+                    || self.is_kept_comment_reference_run(child, &removed_references)
                     || state
                         .custody_pairs
                         .iter()
@@ -2751,6 +2756,41 @@ impl<'a> XmlTree<'a> {
             }
             Ok(kept)
         }
+    }
+
+    /// Whether a range marker or reference of comment `id` sits outside the
+    /// element at `index`.
+    fn comment_marked_outside(&self, index: usize, id: &str) -> bool {
+        let (start, end) = (self.elements[index].start, self.elements[index].end);
+        self.elements.iter().enumerate().any(|(other, node)| {
+            node.word
+                && matches!(
+                    node.local.as_str(),
+                    "commentRangeStart" | "commentRangeEnd" | "commentReference"
+                )
+                && (node.start < start || node.start >= end)
+                && self.element_id(other).as_deref() == Some(id)
+        })
+    }
+
+    /// Whether `index` is a run holding nothing but run properties and the
+    /// reference of a comment that the removal keeps.
+    fn is_kept_comment_reference_run(&self, index: usize, removed: &HashSet<String>) -> bool {
+        let node = &self.elements[index];
+        let mut references = node.children.iter().filter(|&&child| {
+            let child = &self.elements[child];
+            child.word && child.local == "commentReference"
+        });
+        node.word
+            && node.local == "r"
+            && references
+                .next()
+                .and_then(|&reference| self.element_id(reference))
+                .is_some_and(|id| !removed.contains(&id))
+            && node.children.iter().all(|&child| {
+                let child = &self.elements[child];
+                child.word && matches!(child.local.as_str(), "rPr" | "commentReference")
+            })
     }
 
     /// The `id` attribute of an element's start tag.

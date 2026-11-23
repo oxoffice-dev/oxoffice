@@ -4533,3 +4533,96 @@ fn a_whole_paragraph_link_no_field_can_carry_is_refused() {
         assert_eq!(texts(&reopen(&mut doc)), texts(&doc_with_body(&original)));
     }
 }
+
+/// `Kept four tail` with a comment on `Kept four`, whose end and comment
+/// mark are then wrapped in a tracked `wrapper` (`del` or `ins`), as
+/// LibreOffice writes a comment that ends on changed text, with `four` in a
+/// second wrapper of the same kind.
+fn comment_ending_inside_a_revision(wrapper: &str) -> Document {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:r><w:t>four</w:t></w:r><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#,
+    );
+    let range = oxoffice_docx::RunRange {
+        start: oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index: 0,
+        },
+        end: oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index: 2,
+        },
+    };
+    doc.add_comment_with_date(
+        range,
+        "Reviewer",
+        None,
+        "Check",
+        oxoffice_docx::CommentDate::Undated,
+    )
+    .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let open = |id: u32| {
+        format!(r#"<w:{wrapper} w:id="{id}" w:author="A" w:date="2026-01-01T00:00:00Z">"#)
+    };
+    let text = if wrapper == "del" { "delText" } else { "t" };
+    let mark_start = xml.find("<w:commentRangeEnd").unwrap();
+    let mark_end = xml[mark_start..].find("</w:r>").unwrap() + mark_start + "</w:r>".len();
+    let four = xml.find("<w:r><w:t>four</w:t></w:r>").unwrap();
+    let xml = format!(
+        "{}{}<w:r><w:{text}>four</w:{text}></w:r></w:{wrapper}>{}{}</w:{wrapper}>{}",
+        &xml[..four],
+        open(90),
+        open(91),
+        &xml[mark_start..mark_end],
+        &xml[mark_end..],
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The text the only comment of `doc` covers, after `resolve`.
+fn comment_after(
+    doc: &mut Document,
+    resolve: fn(&mut Document) -> oxoffice_docx::Result<usize>,
+) -> String {
+    let mut doc = reopen(doc);
+    resolve(&mut doc).unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    let comments = doc.comments();
+    assert_eq!(comments.len(), 1);
+    comments[0].anchor_text().unwrap().unwrap_or_default()
+}
+
+#[test]
+fn a_comment_ending_inside_an_accepted_deletion_stays_on_the_text_left() {
+    let mut doc = comment_ending_inside_a_revision("del");
+    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept ");
+    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept four");
+}
+
+#[test]
+fn a_comment_ending_inside_a_rejected_insertion_stays_on_the_text_left() {
+    let mut doc = comment_ending_inside_a_revision("ins");
+    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept four");
+    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept ");
+}
+
+#[test]
+fn every_revision_of_libreoffices_record_is_accepted_with_its_comments_kept() {
+    // LibreOffice writes the end and the mark of a comment inside a deletion.
+    let mut doc = crate::support::corpus_doc("libreoffice/record.docx");
+    let before = doc.comments().len();
+    doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.comments().len(), before);
+    assert!(
+        doc.comments()
+            .iter()
+            .all(|comment| comment.anchor_text().is_ok_and(|text| text.is_some())),
+    );
+}
