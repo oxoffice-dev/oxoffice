@@ -1,12 +1,12 @@
 {
   "file": "word/paper.docx",
-  "reason": "equations draw their run formatting and a math fallback face",
-  "resources": "aad3152b1705568f8e37e5018ad2cbb72765b3604990b8b70f05de62a782111b",
+  "reason": "every OfficeMath construct is drawn",
+  "resources": "19297ba8ce1b5c074efa0890c3974a801eae73e23c246a46d6ec3bf38ebc40a9",
   "outline_and_tags": "f7123e132fe201d01523597a225d8287868fbbc66a3eee9f60a1b5ba55e71990",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "6c26a1a41e8f800d122fd505f5ccc0e40ffad09002e8978a1346135d244ca7a5", "content": "d1a8539f97062a55b8076a02358c939829816cdd3a08b90ff5d71fd4fdd9accb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "0336c67ace4b1ff2bbde0612df734fd46c31dcedc1d15d64ad0f4a73a43a35b8", "content": "232dbc2465d2ce726f98e452e1efb421565d9be64a910d45107f8a2310a1f69c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 2, "pixels": "20f168a51c00e4f81449de3d76375c937ecd7d4281a333d59f9cc11a59d4d704", "content": "67ec699b6e89e5078a8b1bb1415a43fb01fc7c25467769077ab84f87fe3b8abd", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "1fb33ec348b4ef197fdc04a7e3b4ab18cba8286cc0be1ae7c2b76305f95defd4", "content": "2be084d66abc076cb330571f27a042631a9c896e08fa2efa781db48e0ae5bb93", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
     {"page": 4, "pixels": "76e1b3fd8c2b323985402fed303cedc866216b5239eb20378f124b718ca689d4", "content": "a73ff154d6a79048f7de42bb2dd80330a5ad7996231ba3742278e219892de738", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
   ]

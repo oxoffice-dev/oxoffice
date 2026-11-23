@@ -1,7 +1,7 @@
 {
   "file": "google/thesis.docx",
-  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
-  "resources": "b9fd4f930d21f6037c6f0a2ca94835a84e0fd5942dbc24c93166afb9b725aa94",
+  "reason": "every OfficeMath construct is drawn",
+  "resources": "83c9b2973f5b081735081e4cb2c334d8c07eaa2ea0736dd15edc3e326f04f0dc",
   "outline_and_tags": "8ecf6685d7eeddfaadd81582744dc9302a4669dbfd98f6c1a45ba5bfb39c06cf",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
@@ -17,8 +17,8 @@
     {"page": 10, "pixels": "954cc30e16879af83270547d70d7d00c8ca1ccb47d12a4d9a748e4e61bf1eb7f", "content": "468d348729148e53d7be3d74231f5efd950cefde35fcf8f7bee5d836cd9be9fe", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5df531f3b9923138aa10cdfe5d30d42bf952a0b1c7c2839dfaa4ceab57f6e486"},
     {"page": 11, "pixels": "f781a80ea3318eb25fcf4b8344b9f7930fe92ffe223261137601803ee4026e77", "content": "d8d1b3ee8e8f6cdbacce04780487628864549b5c9d2058bbedb462c62ac380de", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "3ae5f6c4b41603b5ce6571a523472820f2c34379cf946bc5c1b1c348f2db75f2"},
     {"page": 12, "pixels": "aa24da0702ada2d7bb18ebad46105444f78a681e3641cf9ece1fa74314dcb3c5", "content": "9f316575c03e7752d638bcda44122e4ac58c9345f1d7a124bb0c9f1cfa7b46fd", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "96bccb178c22bd2359fd101c459652799d3ec638ab448dc35cacb05acf7dc01b"},
-    {"page": 13, "pixels": "2c078714832a75caa5ab3492b86d047bcd5e5a75845fd972629a8ceff0f52e9d", "content": "af0347985744c05af7eac45acfd347026670a2ac57fab4a601608b0c190f72ae", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "368761882bc0aa0f70ffba4758fc5a1050a19fab81a7908bd0fa1588e1e61964"},
-    {"page": 14, "pixels": "db09ed212866011df95e8dfb40ee9d368c3de4a1e55800e09b1517f5fb12148a", "content": "674183e22c98fc451a9da46a89a4d200fb3b3a877b94aaf1065b9048bb68d8de", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "6a2fb9030f50623af25963b64d4454c22fd949529ad9076c90bc1ec03c25182f"},
+    {"page": 13, "pixels": "0ae0fc5e460b959e32ef32a4d71e5694de333792e2a1e31c84b99ccfa3ec3690", "content": "ee60febb08e667067f8e2b78b1cc02535bf09c0bde403507865238efba10c0d1", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "368761882bc0aa0f70ffba4758fc5a1050a19fab81a7908bd0fa1588e1e61964"},
+    {"page": 14, "pixels": "db09ed212866011df95e8dfb40ee9d368c3de4a1e55800e09b1517f5fb12148a", "content": "02da4b421713bbf5da34b563becf9d656aa586384ccdcf0e074bebd613467d05", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "6a2fb9030f50623af25963b64d4454c22fd949529ad9076c90bc1ec03c25182f"},
     {"page": 15, "pixels": "e58c8a7146decfcb8e1bb982e364d26d998badd4ebe37ab77c286f6059b40d54", "content": "d6ccadd6972acd7e43cbc14b2bfaed76ce65eef86d67b831edfc15c3cf818c86", "annotations": "d4a4d3d91364993247bdf579eac51b2f326eae641602f267c27c95c0b1417dda", "dictionary": "675ad0e47d16b6e2b4acab99325846d2f5b7604c07c93c41f96fdd75e7b8e1f0"},
     {"page": 16, "pixels": "666a26a8796c4ceaac7fe183beea1ab7663ffba5ea7e0166a6bc889cce4727e7", "content": "7f0cf7750a7e0821298e11971b22862c63686de2c958ec8d33a0055bd181f8ed", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "167fd7ee4d57ac86251dafb9cd4404ef74e37ebea0d57c7c1b17efbaf84da3d8"},
     {"page": 17, "pixels": "8ca8ef1e4dd65b6f779a11a18504b4ce3e817041238078532981994b3c360bfc", "content": "ff8630e13ec45ae8d334fd576497767c064f054d76d75b6e1a184212d66d888e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "f83d4a66b7488239759a03f9b4e23cbd281f8dd4dd61e8b3d4190a33101990d0"},
