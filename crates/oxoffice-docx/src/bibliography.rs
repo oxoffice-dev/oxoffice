@@ -13,8 +13,11 @@ use crate::{Document, Error, Result};
 
 mod apa_language;
 mod citation;
+mod citation_anchor;
 mod citation_grammar;
+mod identity;
 mod locale;
+mod names;
 #[cfg(test)]
 mod oracle_tests;
 mod paragraph_properties;
@@ -577,9 +580,16 @@ impl Document {
 }
 
 impl Document {
-    /// Append one validated source while retaining all existing producer records.
-    pub fn add_bibliography_source(&mut self, source: &BibliographySource) -> Result<()> {
-        validate_source(source)?;
+    /// Append one validated source while retaining all existing producer records,
+    /// and return its GUID. An empty `guid` is derived from the source (see
+    /// `identity::derived_source_guid`), skipping values the collection holds.
+    pub fn add_bibliography_source(&mut self, source: &BibliographySource) -> Result<String> {
+        let derived = source.guid.is_empty();
+        let mut source = source.clone();
+        if derived {
+            source.guid = identity::derived_source_guid(&source, 0);
+        }
+        validate_source(&source)?;
         let mut candidate = self.clone_for_staging();
         candidate.prepare_staged_package()?;
         if bibliography_collection(&candidate.package, &candidate.doc_part_name)?.is_none() {
@@ -588,25 +598,38 @@ impl Document {
         let collection = bibliography_collection(&candidate.package, &candidate.doc_part_name)?
             .ok_or_else(|| bibliography_error("source collection creation failed"))?;
         unique_collection_identities(&collection)?;
-        if collection.sources.iter().any(|(_, existing)| {
-            existing.tag == source.tag
-                || existing.guid.as_ref().is_some_and(|guid| {
-                    crate::content_control::normalize_store_item_id(guid)
-                        == crate::content_control::normalize_store_item_id(&source.guid)
+        let guid_taken = |guid: &str| {
+            collection.sources.iter().any(|(_, existing)| {
+                existing.guid.as_ref().is_some_and(|existing| {
+                    crate::content_control::normalize_store_item_id(existing)
+                        == crate::content_control::normalize_store_item_id(guid)
                 })
-        }) {
+            })
+        };
+        let mut attempt = 0;
+        while derived && guid_taken(&source.guid) {
+            attempt += 1;
+            source.guid = identity::derived_source_guid(&source, attempt);
+        }
+        if guid_taken(&source.guid)
+            || collection
+                .sources
+                .iter()
+                .any(|(_, existing)| existing.tag == source.tag)
+        {
             return Err(bibliography_error("source identity already exists"));
         }
         let edit = append_to_source_node(
             &collection.xml,
             &collection.parsed.nodes[0],
-            authored_source_xml(source).as_bytes(),
+            authored_source_xml(&source).as_bytes(),
         )?;
         candidate.package.set_part(
             &collection.part,
             apply_source_edits(&collection.xml, vec![edit])?,
         );
-        publish_source_collection(self, candidate)
+        publish_source_collection(self, candidate)?;
+        Ok(source.guid)
     }
 
     /// Replace modeled members of one source, preserving its GUID and raw metadata.
@@ -622,9 +645,18 @@ impl Document {
             .iter()
             .find(|(_, existing)| existing.tag == source.tag)
             .ok_or_else(|| bibliography_error("source tag does not exist"))?;
-        if existing.guid.as_deref() != Some(source.guid.as_str()) {
+        // GUIDs compare as `add_bibliography_source` compares them; the saved
+        // spelling is kept.
+        let Some(guid) = existing.guid.as_ref().filter(|guid| {
+            crate::content_control::normalize_store_item_id(guid)
+                == crate::content_control::normalize_store_item_id(&source.guid)
+        }) else {
             return Err(bibliography_error("source GUID cannot change"));
-        }
+        };
+        let source = &BibliographySource {
+            guid: guid.clone(),
+            ..source.clone()
+        };
         let xml = replace_source_xml(&collection, *index, source)?;
         if xml == collection.xml {
             return Ok(());
@@ -837,6 +869,58 @@ fn bibliography_option_switches(
     Ok(switches)
 }
 
+/// The CITATION instruction of `options`: the first source as the argument,
+/// the others as `\m` switches, each followed by its own switches.
+fn citation_instruction(
+    options: &CitationOptions,
+) -> Result<oxoffice_docx_oxml::text::FieldInstruction> {
+    if let Some(locale) = options.locale {
+        validate_locale_number(locale)?;
+    }
+    let Some(first) = options.sources.first() else {
+        return Err(bibliography_error("citation requires at least one source"));
+    };
+    let mut switches = Vec::new();
+    if let Some(locale) = options.locale {
+        switches.push(option_switch("l", Some(locale.to_string())));
+    }
+    for (index, source) in options.sources.iter().enumerate() {
+        if source.tag.trim().is_empty() {
+            return Err(bibliography_error("empty citation source tag"));
+        }
+        if index != 0 {
+            switches.push(option_switch("m", Some(source.tag.clone())));
+        }
+        for (name, value) in [
+            ("p", &source.pages),
+            ("v", &source.volume),
+            ("f", &source.prefix),
+            ("s", &source.suffix),
+        ] {
+            if let Some(value) = value {
+                switches.push(option_switch(name, Some(value.clone())));
+            }
+        }
+        for (name, enabled) in [
+            ("n", source.suppress_author),
+            ("y", source.suppress_year),
+            ("t", source.suppress_title),
+        ] {
+            if enabled {
+                switches.push(option_switch(name, None));
+            }
+        }
+    }
+    oxoffice_docx_oxml::text::FieldInstruction::new(
+        "CITATION",
+        vec![oxoffice_docx_oxml::text::FieldArgument::Text(
+            first.tag.clone(),
+        )],
+        switches,
+    )
+    .map_err(Into::into)
+}
+
 impl Document {
     /// Inspect saved standard style metadata without inventing a root locale.
     pub fn bibliography_style(&self) -> Result<Option<BibliographyStyleInfo>> {
@@ -879,51 +963,7 @@ impl Document {
         position: &crate::StoryRunPosition,
         options: &CitationOptions,
     ) -> Result<()> {
-        if let Some(locale) = options.locale {
-            validate_locale_number(locale)?;
-        }
-        let Some(first) = options.sources.first() else {
-            return Err(bibliography_error("citation requires at least one source"));
-        };
-        let mut switches = Vec::new();
-        if let Some(locale) = options.locale {
-            switches.push(option_switch("l", Some(locale.to_string())));
-        }
-        for (index, source) in options.sources.iter().enumerate() {
-            if source.tag.trim().is_empty() {
-                return Err(bibliography_error("empty citation source tag"));
-            }
-            if index != 0 {
-                switches.push(option_switch("m", Some(source.tag.clone())));
-            }
-            for (name, value) in [
-                ("p", &source.pages),
-                ("v", &source.volume),
-                ("f", &source.prefix),
-                ("s", &source.suffix),
-            ] {
-                if let Some(value) = value {
-                    switches.push(option_switch(name, Some(value.clone())));
-                }
-            }
-            for (name, enabled) in [
-                ("n", source.suppress_author),
-                ("y", source.suppress_year),
-                ("t", source.suppress_title),
-            ] {
-                if enabled {
-                    switches.push(option_switch(name, None));
-                }
-            }
-        }
-        let instruction = oxoffice_docx_oxml::text::FieldInstruction::new(
-            "CITATION",
-            vec![oxoffice_docx_oxml::text::FieldArgument::Text(
-                first.tag.clone(),
-            )],
-            switches,
-        )?;
-        self.insert_checked_story_field(position, instruction)
+        self.insert_checked_story_field(position, citation_instruction(options)?)
     }
 
     /// Insert one bibliography owner with its own selectors and document style.

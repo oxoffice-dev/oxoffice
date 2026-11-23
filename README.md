@@ -172,7 +172,8 @@ pdf = Document("form.docx").to_pdf(fillable_forms=True)
 - **Signature field.** Tag a text or picture content control `signature`, or `signature:<name>` for several, in Word's control properties. It becomes an empty signature field, ready to sign in Acrobat Reader. A tag like `signature_date` stays a text field.
 - **Names.** A field takes the control's tag, else its title, or the legacy field's name. A `.` becomes `_`, and a name used again takes `_2`, `_3`... The `signature` tag ignores case.
 - **Values.** A control showing its placeholder exports empty, with the placeholder as the field's tooltip.
-- **What stays static.** Controls outside the main body (headers, footers, text boxes...) stay static. So do body controls split across pages or columns, in a rotated cell or a vertical section, or around a floating picture, each with a diagnostic. See `oxoffice limitations`.
+- **Notes.** Controls in footnotes and endnotes become fields too, named after those of the body: footnotes first, then endnotes, in the order of their references.
+- **What stays static.** Controls in headers, footers and text boxes stay static. So do controls split across pages or columns, in a rotated cell or a vertical section, or around a floating picture, each with a diagnostic. See `oxoffice limitations`.
 
 ## 🧭 How the library is meant to be used
 

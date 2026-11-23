@@ -299,10 +299,10 @@ pub struct LayoutInput {
     /// Checked physical embedded font bodies with every owned source alias.
     pub embedded_fonts: Vec<EmbeddedFontSource>,
     /// Lay out the content controls and legacy form fields of the main body
-    /// as fillable form fields: `LayoutResult::form_fields` and their
+    /// and the notes as fillable form fields: `LayoutResult::form_fields` and their
     /// fragments.
     pub form_fields: bool,
-    /// Result-local: the main-story paragraphs by source node, and whether
+    /// Result-local: the main-story and note paragraphs by source node, and whether
     /// a block control field encloses them. Only these paragraphs draw form
     /// marks. Full layout regenerates this member.
     #[doc(hidden)]
