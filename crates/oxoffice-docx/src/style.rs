@@ -1053,7 +1053,7 @@ pub fn resolve_run_properties(
     effective
 }
 
-fn character_style_id<'a>(style_id: &'a str, styles: &'a CT_Styles) -> Option<&'a str> {
+pub(crate) fn character_style_id<'a>(style_id: &'a str, styles: &'a CT_Styles) -> Option<&'a str> {
     let style = styles.get_by_id(style_id)?;
     match style.style_type {
         StyleType::Character => Some(style.style_id.as_str()),

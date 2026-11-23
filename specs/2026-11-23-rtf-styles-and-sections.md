@@ -35,13 +35,17 @@ Write and read RTF the way Word does.
   widow control (`\keepn`, `\keep`, `\pagebb`, `\widctlpar`) are written and
   read, since the heading styles carry them.
 - The reader builds a document style from each paragraph style of the
-  stylesheet: one with the name of an existing style (`Normal`,
-  `heading 1`...) replaces that style's formatting, another is added with an
-  id made from its name. A paragraph takes the style of its `\sN` (`\s0`
-  when it names none), and what it and its runs restate from that style stays
-  with the style instead of becoming direct formatting. A value the paragraph
-  does not state is inherited from the style; Word always states a value
-  that differs (`\b0` on a plain run of a bold heading).
+  stylesheet: `\s0` is the default paragraph style whatever its name, one
+  with the name of an existing style (`heading 1`...) replaces that style's
+  formatting, another is added with an id made from its name; every style
+  exists before any is based on or followed by another. A paragraph takes
+  the style of its `\sN` (`\s0` when it names none), and what it and its runs
+  restate from that style stays with the style instead of becoming direct
+  formatting. As in Word, a value a styled paragraph or run does not state is
+  RTF's default (left, no indent, not bold, auto colour...), so a value that
+  turns a style's setting off comes back as direct formatting.
+- A run's font is the one the most specific level names (defaults, paragraph
+  style, character style, run), its theme font first within a level.
 - Character, table and section styles of the stylesheet are not read; a
   character style is written as direct formatting on its runs.
 - **Sections (PR B).** The writer writes each section's page size,

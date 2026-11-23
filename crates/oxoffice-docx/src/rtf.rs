@@ -1136,15 +1136,20 @@ impl<'a> RtfWriter<'a> {
     /// Lists a paragraph style in the stylesheet after the styles it is based
     /// on, the default paragraph style first, as `\s0`.
     fn ensure_paragraph_style(&mut self, style_id: &str, location: &str) {
-        if self.paragraph_styles.is_empty()
-            && let Some(default) = self
+        if self.paragraph_styles.is_empty() {
+            match self
                 .document
                 .styles
                 .get_default(StyleType::Paragraph)
                 .map(|style| style.style_id.clone())
-            && default != style_id
-        {
-            self.ensure_paragraph_style(&default, location);
+            {
+                Some(default) if default != style_id => {
+                    self.ensure_paragraph_style(&default, location)
+                }
+                Some(_) => {}
+                // `\s0` is the default style: without one, it is left out.
+                None => self.paragraph_styles.push(String::new()),
+            }
         }
         // Walk the based-on chain up to a listed style (or a cycle), then
         // list it from its base down.
@@ -1182,6 +1187,41 @@ impl<'a> RtfWriter<'a> {
         );
         if let Some(direct) = direct {
             properties.merge_from(direct);
+        }
+        // The font is the one the most specific level names, its theme font
+        // first: merging attribute by attribute would let the defaults'
+        // theme font win over a style's or a run's named font.
+        let styles = &self.document.styles;
+        let chain = |style_id: Option<&str>| {
+            style_id
+                .map(|style_id| crate::style::collect_style_chain(style_id, styles))
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+                .filter_map(|style| style.rpr.as_ref())
+        };
+        let character_style = direct
+            .and_then(|properties| properties.style_id.as_deref())
+            .and_then(|style_id| crate::style::character_style_id(style_id, styles));
+        let font = styles
+            .doc_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.rpr.as_ref())
+            .into_iter()
+            .chain(chain(paragraph_style))
+            .chain(chain(character_style))
+            .chain(direct)
+            .filter_map(|level| {
+                level
+                    .font_ascii_theme
+                    .as_deref()
+                    .and_then(|reference| self.theme_font(reference))
+                    .or_else(|| level.font_ascii.clone())
+            })
+            .last();
+        if let Some(font) = font {
+            properties.font_ascii = Some(font);
+            properties.font_ascii_theme = None;
         }
         properties
     }
@@ -2384,6 +2424,8 @@ impl Default for ListLevelData {
 
 struct ParsedRtf {
     blocks: Vec<Block>,
+    /// `\deffN`, the font of what names none.
+    default_font: Option<i32>,
     styles: BTreeMap<i32, StyleEntry>,
     diagnostics: Vec<RtfDiagnostic>,
     fonts: HashMap<i32, FontEntry>,
@@ -2396,6 +2438,7 @@ impl ParsedRtf {
     fn project(self) -> Result<RtfReadResult> {
         let ParsedRtf {
             blocks,
+            default_font,
             styles,
             mut diagnostics,
             fonts,
@@ -2410,7 +2453,7 @@ impl ParsedRtf {
             match block {
                 Block::Paragraph(paragraph) => project_paragraph(
                     &mut document,
-                    styled(paragraph, &styles, &style_ids),
+                    styled(paragraph, &styles, &style_ids, default_font),
                     &fonts,
                     &colors,
                     &lists,
@@ -2467,7 +2510,7 @@ impl ParsedRtf {
                                 let StyledParagraph {
                                     paragraph,
                                     style_id,
-                                } = styled(paragraph, &styles, &style_ids);
+                                } = styled(paragraph, &styles, &style_ids, default_font);
                                 let mut target = cell.add_paragraph("");
                                 if let Some(style_id) = &style_id {
                                     target.set_style(style_id);
@@ -2524,63 +2567,85 @@ fn styled(
     mut paragraph: ParagraphData,
     styles: &BTreeMap<i32, StyleEntry>,
     style_ids: &BTreeMap<i32, String>,
+    default_font: Option<i32>,
 ) -> StyledParagraph {
     // A paragraph without `\sN` takes `\s0`.
     let number = paragraph.format.style.take().unwrap_or(0);
-    let Some(entry) = styles.get(&number) else {
+    let (Some(entry), Some(style_id)) = (styles.get(&number), style_ids.get(&number)) else {
         return StyledParagraph {
             paragraph,
             style_id: None,
         };
     };
-    fn clear<T: PartialEq>(value: &mut Option<T>, style: &Option<T>) {
-        if value.is_some() && value == style {
-            *value = None;
-        }
+    // As in Word, a value the paragraph or run does not state is RTF's
+    // default, not its style's: what equals the style's value is left to
+    // the style, what differs is kept, the default included.
+    fn settle<T: PartialEq + Clone>(value: &mut Option<T>, style: &Option<T>, default: T) {
+        let own = value.clone().unwrap_or_else(|| default.clone());
+        let styled = style.clone().unwrap_or(default);
+        *value = (own != styled).then_some(own);
     }
     let format = &mut paragraph.format;
     let defined = &entry.paragraph;
-    clear(&mut format.alignment, &defined.alignment);
-    clear(&mut format.indent_left, &defined.indent_left);
-    clear(&mut format.indent_right, &defined.indent_right);
-    clear(&mut format.first_line_indent, &defined.first_line_indent);
-    clear(&mut format.space_before, &defined.space_before);
-    clear(&mut format.space_after, &defined.space_after);
-    clear(&mut format.outline_level, &defined.outline_level);
-    clear(&mut format.keep_next, &defined.keep_next);
-    clear(&mut format.keep_lines, &defined.keep_lines);
-    clear(&mut format.page_break_before, &defined.page_break_before);
-    clear(&mut format.widow_control, &defined.widow_control);
-    if format.line_spacing.is_some()
-        && format.line_spacing == defined.line_spacing
-        && format.line_spacing_multiple == defined.line_spacing_multiple
-    {
+    settle(&mut format.alignment, &defined.alignment, Alignment::Left);
+    settle(&mut format.indent_left, &defined.indent_left, 0);
+    settle(&mut format.indent_right, &defined.indent_right, 0);
+    settle(&mut format.first_line_indent, &defined.first_line_indent, 0);
+    settle(&mut format.space_before, &defined.space_before, 0);
+    settle(&mut format.space_after, &defined.space_after, 0);
+    // Outline level 9 is body text.
+    settle(&mut format.outline_level, &defined.outline_level, 9);
+    settle(&mut format.keep_next, &defined.keep_next, false);
+    settle(&mut format.keep_lines, &defined.keep_lines, false);
+    settle(
+        &mut format.page_break_before,
+        &defined.page_break_before,
+        false,
+    );
+    settle(&mut format.widow_control, &defined.widow_control, false);
+    // `\sl0` and no `\sl` are single spacing, written back as 240 lines.
+    let spacing = |value: Option<i32>, multiple: bool| {
+        value
+            .filter(|value| *value != 0)
+            .map_or((240, true), |value| (value, multiple))
+    };
+    let own = spacing(format.line_spacing, format.line_spacing_multiple);
+    if own == spacing(defined.line_spacing, defined.line_spacing_multiple) {
         format.line_spacing = None;
+    } else {
+        (format.line_spacing, format.line_spacing_multiple) = (Some(own.0), own.1);
     }
     for item in &mut paragraph.items {
         if let ParagraphItem::Text(run) = item {
             let format = &mut run.format;
             let defined = &entry.format;
-            clear(&mut format.bold, &defined.bold);
-            clear(&mut format.italic, &defined.italic);
-            clear(&mut format.underline, &defined.underline);
-            clear(&mut format.strike, &defined.strike);
-            clear(&mut format.font, &defined.font);
-            clear(&mut format.size_points, &defined.size_points);
-            clear(&mut format.color, &defined.color);
-            clear(&mut format.highlight, &defined.highlight);
-            clear(&mut format.caps, &defined.caps);
-            clear(&mut format.small_caps, &defined.small_caps);
-            clear(&mut format.hidden, &defined.hidden);
-            clear(&mut format.vertical, &defined.vertical);
+            settle(&mut format.bold, &defined.bold, false);
+            settle(&mut format.italic, &defined.italic, false);
+            settle(&mut format.underline, &defined.underline, false);
+            settle(&mut format.strike, &defined.strike, false);
+            settle(&mut format.caps, &defined.caps, false);
+            settle(&mut format.small_caps, &defined.small_caps, false);
+            settle(&mut format.hidden, &defined.hidden, false);
+            // RTF's default size is 12 points, its default colour auto.
+            settle(&mut format.size_points, &defined.size_points, 12.0);
+            settle(&mut format.color, &defined.color, 0);
+            if let Some(default_font) = default_font {
+                settle(&mut format.font, &defined.font, default_font);
+            } else if format.font == defined.font {
+                format.font = None;
+            }
+            if format.highlight == defined.highlight {
+                format.highlight = None;
+            }
+            if format.vertical == defined.vertical {
+                format.vertical = None;
+            }
         }
     }
     StyledParagraph {
         paragraph,
         // `\s0` is the default paragraph style, which needs no `w:pStyle`.
-        style_id: (number != 0)
-            .then(|| style_ids.get(&number).cloned())
-            .flatten(),
+        style_id: (number != 0).then(|| style_id.clone()),
     }
 }
 
@@ -2600,19 +2665,31 @@ fn project_styles(
     diagnostics: &mut Vec<RtfDiagnostic>,
 ) -> Result<BTreeMap<i32, String>> {
     let mut ids = BTreeMap::new();
+    let default_style = document
+        .styles
+        .get_default(StyleType::Paragraph)
+        .map(|style| style.style_id.clone());
     for (number, entry) in styles {
-        let existing = document
-            .styles
-            .styles
-            .iter()
-            .find(|style| {
-                style.style_type == StyleType::Paragraph
-                    && style
-                        .name
-                        .as_deref()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(&entry.name))
-            })
-            .map(|style| style.style_id.clone());
+        // `\s0` is the default paragraph style, whatever its name.
+        let existing = if *number == 0 {
+            default_style.clone()
+        } else {
+            None
+        }
+        .or_else(|| {
+            document
+                .styles
+                .styles
+                .iter()
+                .find(|style| {
+                    style.style_type == StyleType::Paragraph
+                        && style
+                            .name
+                            .as_deref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&entry.name))
+                })
+                .map(|style| style.style_id.clone())
+        });
         let id = existing.unwrap_or_else(|| {
             let base = entry
                 .name
@@ -2641,8 +2718,32 @@ fn project_styles(
         });
         ids.insert(*number, id);
     }
+    // Every style exists before any is based on or followed by another,
+    // which may come later in the stylesheet.
     for (number, entry) in styles {
         let id = &ids[number];
+        if document.styles.get_by_id(id).is_none()
+            && let Err(error) = document.add_style(StyleBuilder::paragraph(id, &entry.name))
+        {
+            diagnostics.push(RtfDiagnostic {
+                offset: 0,
+                destination: Some("stylesheet".to_owned()),
+                message: format!("RTF style {:?} was dropped: {error}", entry.name),
+            });
+        }
+    }
+    ids.retain(|_, id| document.styles.get_by_id(id).is_some());
+    for (number, entry) in styles {
+        let Some(id) = ids.get(number) else {
+            continue;
+        };
+        // The default style keeps its name.
+        let name = document
+            .styles
+            .get_by_id(id)
+            .and_then(|style| style.name.clone())
+            .filter(|_| *number == 0)
+            .unwrap_or_else(|| entry.name.clone());
         // The entry's formatting, as a paragraph and a run would take it.
         let mut scratch = CT_P::default();
         let mut paragraph = crate::Paragraph {
@@ -2654,7 +2755,7 @@ fn project_styles(
             apply_run_format(&mut run, &entry.format, fonts, colors)?;
             run.inner.properties.clone()
         };
-        let mut builder = StyleBuilder::paragraph(id, &entry.name);
+        let mut builder = StyleBuilder::paragraph(id, &name);
         if let Some(properties) = scratch.properties.take() {
             builder = builder.paragraph_properties(properties);
         }
@@ -2671,18 +2772,12 @@ fn project_styles(
         if let Some(next) = entry.next.and_then(|next| ids.get(&next)) {
             builder = builder.next_style(next);
         }
-        let result = if document.styles.get_by_id(id).is_some() {
-            document.set_style(builder)
-        } else {
-            document.add_style(builder)
-        };
-        if let Err(error) = result {
+        if let Err(error) = document.set_style(builder) {
             diagnostics.push(RtfDiagnostic {
                 offset: 0,
                 destination: Some("stylesheet".to_owned()),
-                message: format!("RTF style {:?} was dropped: {error}", entry.name),
+                message: format!("RTF style {:?} lost its formatting: {error}", entry.name),
             });
-            ids.remove(number);
         }
     }
     Ok(ids)
@@ -2892,11 +2987,13 @@ fn apply_run_format(
         run.set_size(size);
     }
     if let Some(index) = format.color {
-        let color = colors
-            .get(index)
-            .ok_or_else(|| rtf_error(0, format!("RTF colour {index} is undefined")))?;
-        if let Some(color) = color {
-            run.set_color(color);
+        let color = colors.get(index);
+        match color {
+            Some(Some(color)) => run.set_color(color),
+            // `\cf0`, auto, against a style's colour.
+            Some(None) | None if index == 0 => run.set_color("auto"),
+            Some(None) => {}
+            None => return Err(rtf_error(0, format!("RTF colour {index} is undefined"))),
         }
     }
     if let Some(index) = format.highlight {
@@ -3019,6 +3116,7 @@ impl Parser {
         Ok(ParsedRtf {
             blocks: parser.blocks,
             styles: parser.styles,
+            default_font: parser.default_font,
             diagnostics: parser.diagnostics,
             fonts: parser.fonts,
             colors: parser.colors,
@@ -4331,10 +4429,17 @@ impl Parser {
             let name_text = std::mem::take(&mut state.style_name_text);
             // An entry without `\sN` is `\s0`, as Word writes Normal.
             let number = state.style_number.take().unwrap_or(0);
-            let name = decode(state.code_page, &name_bytes)
+            let Some(name) = decode(state.code_page, &name_bytes)
                 .map(|value| format!("{name_text}{}", value.0).trim().to_owned())
                 .filter(|name| !name.is_empty())
-                .ok_or_else(|| rtf_error(offset, "stylesheet entry has no valid name"))?;
+            else {
+                self.diagnostics.push(RtfDiagnostic {
+                    offset,
+                    destination: Some("stylesheet".to_owned()),
+                    message: format!("RTF style \\s{number} has no name and was dropped"),
+                });
+                continue;
+            };
             let entry = StyleEntry {
                 name,
                 paragraph: ParagraphFormat {

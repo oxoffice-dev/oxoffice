@@ -1477,3 +1477,135 @@ fn every_heading_of_the_word_paper_keeps_its_style_through_rtf() {
     let read = Document::from_rtf_bytes(&rtf).unwrap().document;
     assert_eq!(headings(&read), expected);
 }
+
+#[test]
+fn rtf_round_trip_keeps_what_turns_a_style_setting_off() {
+    let mut doc = Document::new();
+    doc.add_style(
+        StyleBuilder::paragraph("Banner", "Banner")
+            .based_on("Normal")
+            .alignment(Alignment::Center)
+            .color("2E74B5")
+            .bold(true),
+    )
+    .unwrap();
+    let mut heading = doc.add_paragraph("");
+    heading.set_style("Heading1");
+    heading.set_keep_with_next(false);
+    heading.add_run("kept apart");
+    let mut banner = doc.add_paragraph("");
+    banner.set_style("Banner");
+    banner.set_alignment(Alignment::Left);
+    let mut run = banner.add_run("plain");
+    run.set_bold(false);
+    run.set_color("auto");
+    let rtf = doc.to_rtf_bytes().unwrap().bytes;
+    let mut read = Document::from_rtf_bytes(&rtf).unwrap().document;
+    let heading = read.paragraph(0).unwrap();
+    assert_eq!(heading.style_id(), Some("Heading1"));
+    assert_eq!(
+        read.effective_paragraph_properties(&heading).keep_next,
+        Some(false)
+    );
+    let banner = read.paragraph(1).unwrap();
+    assert_eq!(banner.style_id(), Some("Banner"));
+    assert_eq!(banner.alignment(), Some(Alignment::Left));
+    let xml = reopen(&mut read).part_xml("word/document.xml").unwrap();
+    let run = &xml[xml.find("plain").unwrap() - 200..];
+    assert!(
+        run.contains(r#"<w:b w:val="false"/>"#) && run.contains(r#"<w:color w:val="auto"/>"#),
+        "{xml}"
+    );
+}
+
+#[test]
+fn rtf_export_writes_the_font_a_style_or_run_names_over_the_theme_font() {
+    // The paper's defaults name the theme's body font, its Normal style
+    // Times New Roman.
+    let mut doc = corpus_doc("word/paper.docx");
+    doc.add_paragraph("")
+        .add_run("code")
+        .set_font("Courier New");
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    let font = |name: &str| {
+        rtf.split(r"{\f")
+            .find(|entry| entry.contains(&format!("{name};")))
+            .and_then(|entry| entry.split(r"\fcharset").next())
+            .map(|id| format!(r"\f{id}"))
+            .unwrap_or_else(|| panic!("{name} in {rtf}"))
+    };
+    let times = font("Times New Roman");
+    assert!(
+        rtf.contains(&format!(r"{{\plain{times}\fs20 Intermittent demand")),
+        "{rtf}"
+    );
+    let courier = font("Courier New");
+    assert!(rtf.contains(&format!(r"{{\plain{courier}")), "{rtf}");
+    assert!(rtf.contains(" code}"), "{rtf}");
+    let code = rtf
+        .split(r"{\plain")
+        .find(|run| run.contains(" code}"))
+        .unwrap();
+    assert!(code.starts_with(&courier), "{code}");
+}
+
+#[test]
+fn rtf_import_reads_styles_that_name_a_later_style() {
+    // `\s0` named otherwise than Normal is still the default style; a style
+    // may be based on, or followed by, one listed after it; an entry without
+    // a name is reported and left out.
+    let rtf = br"{\rtf1\ansi\deff0{\fonttbl{\f0 Calibri;}}
+{\stylesheet{\fs20 Standard;}{\s1\b\fs20 \sbasedon2 \snext2 Lead;}{\s2\fs20 \sbasedon0 \snext2 Body Two;}{\s3 ;}}
+\pard\plain \s1\b\fs20 {lead}\par
+\pard\plain \fs20 {body}\par}";
+    let read = Document::from_rtf_bytes(rtf).unwrap();
+    assert!(
+        read.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == r"RTF style \s3 has no name and was dropped"),
+        "{:?}",
+        read.diagnostics
+    );
+    let mut doc = read.document;
+    assert_eq!(doc.paragraph(0).unwrap().style_id(), Some("Lead"));
+    let lead = doc.style("Lead").unwrap();
+    assert_eq!(lead.based_on(), Some("BodyTwo"));
+    assert_eq!(lead.next_style(), Some("BodyTwo"));
+    assert_eq!(doc.style("Normal").unwrap().name(), Some("Normal"));
+    assert!(doc.style("Standard").is_none());
+    let xml = reopen(&mut doc).part_xml("word/document.xml").unwrap();
+    for direct in ["<w:b/>", "<w:sz "] {
+        assert!(!xml.contains(direct), "{direct} in {xml}");
+    }
+}
+
+#[test]
+fn rtf_export_keeps_s0_for_the_default_style_when_there_is_none() {
+    // `\s0` is the default paragraph style to a reader: a document without
+    // one does not give that number to the first style it uses.
+    let mut doc = Document::new();
+    doc.add_style(StyleBuilder::paragraph("Lead", "Lead").bold(true))
+        .unwrap();
+    doc.add_paragraph("lead").set_style("Lead");
+    doc.add_paragraph("body");
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec())
+        .unwrap()
+        .replace(
+            r#"w:styleId="Normal" w:default="1""#,
+            r#"w:styleId="Normal""#,
+        );
+    package.set_part("/word/styles.xml", styles.into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    assert!(
+        doc.styles()
+            .iter()
+            .all(|style| !style.is_default() || style.style_type() != StyleType::Paragraph)
+    );
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(!rtf.contains(r"{\s0"), "{rtf}");
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+    assert_eq!(read.paragraph(0).unwrap().style_id(), Some("Lead"));
+}
