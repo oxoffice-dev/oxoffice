@@ -1979,3 +1979,276 @@ fn a_comparison_tracks_a_break_that_only_changes_where_its_text_restarts() {
     let xml = doc.part_xml("word/document.xml").unwrap();
     assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
 }
+
+// ---- Block content controls ----
+
+const INTRO: &str = "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>";
+const BODY: &str = "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>";
+
+/// A block content control named `alias` holding `content`.
+fn block_control(alias: &str, content: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:alias w:val="{alias}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A one-cell table holding `content`.
+fn one_cell_table(content: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{content}</w:tc></w:tr></w:tbl>"#
+    )
+}
+
+/// The body owners of `doc` in order: a paragraph's text, a block control
+/// as `alias{text}`, a table as `[text of its first cell]`.
+fn body_owners(doc: &Document) -> Vec<String> {
+    doc.body_items()
+        .map(|item| match item {
+            BodyItemRef::Paragraph(paragraph) => paragraph.text(),
+            BodyItemRef::Table(table) => format!("[{}]", table.cell(0, 0).unwrap().text()),
+            BodyItemRef::ContentControl(control) => {
+                format!("{}{{{}}}", control.alias().unwrap_or(""), control.text())
+            }
+            BodyItemRef::UnsupportedXml(_) => panic!("no opaque body node here"),
+        })
+        .collect()
+}
+
+/// Compare the body `original` with the body `edited` both ways, at word
+/// and character granularity: each redline resolves to the edited body
+/// once accepted and to the original once rejected, with the revisions
+/// `check` expects.
+fn check_bodies_both_ways(original: &str, edited: &str, check: impl Fn(&mut Document, bool)) {
+    for (from, to, forward) in [(original, edited, true), (edited, original, false)] {
+        for granularity in [
+            ComparisonGranularity::Word,
+            ComparisonGranularity::Character,
+        ] {
+            let mut doc = doc_with_body(from);
+            let options = ComparisonOptions {
+                granularity,
+                ..Default::default()
+            };
+            let diagnostics = doc
+                .compare_with_options(&doc_with_body(to), AUTHOR, DATE, &options)
+                .unwrap_or_else(|error| panic!("{granularity:?} {forward}: {error}"));
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let mut doc = reopen(&mut doc);
+            check(&mut doc, forward);
+            let context = format!("{granularity:?}, forward {forward}");
+            assert_eq!(
+                body_owners(&accepted(&mut doc)),
+                body_owners(&doc_with_body(to)),
+                "{context}"
+            );
+            assert_eq!(
+                body_owners(&rejected(&mut doc)),
+                body_owners(&doc_with_body(from)),
+                "{context}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_block_content_control_added_or_removed_whole_is_tracked_and_resolves_to_either_version() {
+    let control = block_control("Box", &plain("Inside"));
+    for (original, edited) in [
+        (format!("{INTRO}{control}{BODY}"), format!("{INTRO}{BODY}")),
+        (format!("{INTRO}{control}"), INTRO.to_owned()),
+        (control.clone(), INTRO.to_owned()),
+        (
+            format!("{INTRO}{control}{}", block_control("Two", &plain("Second"))),
+            INTRO.to_owned(),
+        ),
+    ] {
+        check_bodies_both_ways(&original, &edited, |doc, forward| {
+            let kind = if forward {
+                RevisionKind::Deletion
+            } else {
+                RevisionKind::Insertion
+            };
+            assert!(
+                revision_texts(doc, kind)
+                    .iter()
+                    .any(|text| text == "Inside"),
+                "{:?}",
+                revision_texts(doc, kind)
+            );
+            // The control and its properties stay in the redline.
+            assert!(main_xml(doc).contains(r#"<w:alias w:val="Box"/>"#));
+        });
+    }
+}
+
+#[test]
+fn a_block_content_control_holding_a_table_or_another_control_goes_whole() {
+    let nested = block_control(
+        "Outer",
+        &format!(
+            "{}{}",
+            one_cell_table(&plain("cell")),
+            block_control("Inner", &plain("Inside"))
+        ),
+    );
+    check_bodies_both_ways(
+        &format!("{INTRO}{nested}{BODY}"),
+        &format!("{INTRO}{BODY}"),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_paragraph_appended_after_a_final_block_content_control_is_compared() {
+    let control = block_control("Box", &plain("Inside"));
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}"),
+        &format!("{INTRO}{control}{BODY}"),
+        |doc, forward| {
+            let kind = if forward {
+                RevisionKind::Insertion
+            } else {
+                RevisionKind::Deletion
+            };
+            assert_eq!(revision_texts(doc, kind), ["Body."]);
+        },
+    );
+    // The control's own text changes too.
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}"),
+        &format!(
+            "{INTRO}{}{BODY}",
+            block_control("Box", &plain("Inside now"))
+        ),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_paragraph_removed_next_to_a_block_content_control_is_compared() {
+    let first = block_control("Box", &plain("Inside"));
+    let second = block_control("Two", &format!("{}{}", plain("Second"), plain("Third")));
+    let removed = plain("Removed");
+    for (original, edited) in [
+        // First in the body, before a control.
+        (format!("{removed}{first}{BODY}"), format!("{first}{BODY}")),
+        // Between two controls.
+        (
+            format!("{first}{removed}{second}{BODY}"),
+            format!("{first}{second}{BODY}"),
+        ),
+        // Before a control that ends the body.
+        (
+            format!("{INTRO}{removed}{first}"),
+            format!("{INTRO}{first}"),
+        ),
+        // With the control after it, ending the body.
+        (format!("{INTRO}{removed}{first}"), INTRO.to_owned()),
+    ] {
+        check_bodies_both_ways(&original, &edited, |_, _| {});
+    }
+}
+
+#[test]
+fn a_moved_block_content_control_is_tracked_as_a_move() {
+    let control = block_control("Box", &plain("Inside"));
+    check_bodies_both_ways(
+        &format!("{control}{INTRO}{BODY}"),
+        &format!("{INTRO}{BODY}{control}"),
+        |doc, _| {
+            assert_eq!(revision_texts(doc, RevisionKind::MoveFrom), ["Inside"]);
+            assert_eq!(revision_texts(doc, RevisionKind::MoveTo), ["Inside"]);
+        },
+    );
+}
+
+#[test]
+fn a_block_content_control_added_in_a_cell_or_in_another_control_is_compared() {
+    let control = block_control("Box", &plain("Inside"));
+    check_bodies_both_ways(
+        &format!("{INTRO}{}{BODY}", one_cell_table(INTRO)),
+        &format!(
+            "{INTRO}{}{BODY}",
+            one_cell_table(&format!("{control}{INTRO}"))
+        ),
+        |_, _| {},
+    );
+    check_bodies_both_ways(
+        &format!("{INTRO}{}{BODY}", block_control("Outer", INTRO)),
+        &format!(
+            "{INTRO}{}{BODY}",
+            block_control("Outer", &format!("{control}{INTRO}"))
+        ),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_word_table_of_contents_removed_whole_is_compared() {
+    // Word's References > Table of Contents: a gallery control holding a
+    // heading and a TOC field across paragraphs, with hyperlinked entries.
+    let toc = concat!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="-1"/><w:docPartObj><w:docPartGallery w:val="Table of Contents"/>"#,
+        r#"<w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="TOCHeading"/></w:pPr><w:r><w:t>Contents</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:hyperlink w:anchor="_Toc1" w:history="1"><w:r><w:t>Intro</w:t></w:r><w:r><w:tab/></w:r>"#,
+        r#"<w:r><w:t>1</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        r#"</w:sdtContent></w:sdt>"#,
+    );
+    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
+    check_bodies_both_ways(
+        &format!("{toc}{heading}{BODY}"),
+        &format!("{heading}{BODY}"),
+        |doc, forward| {
+            let kind = if forward {
+                RevisionKind::Deletion
+            } else {
+                RevisionKind::Insertion
+            };
+            assert!(revision_texts(doc, kind).contains(&"Contents".to_owned()));
+        },
+    );
+}
+
+#[test]
+fn a_block_content_control_whose_content_is_all_tracked_goes_with_that_content() {
+    // A control deleted or inserted under tracking: every run and
+    // paragraph mark inside it marked, not the control itself.
+    let marked = |kind: &str, text: &str| {
+        block_control(
+            "Box",
+            &format!(
+                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="1" w:author="Ada" w:date="{DATE}"/></w:rPr></w:pPr><w:{kind} w:id="2" w:author="Ada" w:date="{DATE}"><w:r>{text}</w:r></w:{kind}></w:p>"#
+            ),
+        )
+    };
+    let deleted = marked("del", "<w:delText>Inside</w:delText>");
+    let inserted = marked("ins", "<w:t>Inside</w:t>");
+    for (body, goes_on_accept) in [
+        (format!("{INTRO}{deleted}{BODY}"), true),
+        (format!("{INTRO}{deleted}"), true),
+        (format!("{INTRO}{inserted}{BODY}"), false),
+        (format!("{INTRO}{inserted}"), false),
+    ] {
+        let mut doc = doc_with_body(&body);
+        let kept = body_owners(&doc_with_body(
+            &body.replace(&deleted, "").replace(&inserted, ""),
+        ));
+        let with_control = {
+            let mut owners = kept.clone();
+            owners.insert(1, "Box{Inside}".to_owned());
+            owners
+        };
+        let (on_accept, on_reject) = if goes_on_accept {
+            (kept, with_control)
+        } else {
+            (with_control, kept)
+        };
+        assert_eq!(body_owners(&accepted(&mut doc)), on_accept, "{body}");
+        assert_eq!(body_owners(&rejected(&mut doc)), on_reject, "{body}");
+    }
+}

@@ -292,12 +292,19 @@ pub(super) fn compare_control_from_xml(
                     .or_else(|| left.and_then(|index| original_content.get(index).copied()))
             };
             let next_takes_mark = next_kept_owner(&aligned, position, |pair| {
-                matches!(item(pair), Some(SdtContent::Table(_)))
+                matches!(
+                    item(pair),
+                    Some(SdtContent::Table(_) | SdtContent::ContentControl(_))
+                )
             })
             .is_some_and(|pair| {
                 matches!(
                     item(pair),
-                    Some(SdtContent::Paragraph(_) | SdtContent::Table(_))
+                    Some(
+                        SdtContent::Paragraph(_)
+                            | SdtContent::Table(_)
+                            | SdtContent::ContentControl(_)
+                    )
                 )
             });
             let child_mark = metadata.leaf_publications.len();
@@ -1085,9 +1092,61 @@ fn marked_control_content(
                 .revision(kind, metadata.author, metadata.timestamp, &payload)
         }
         SdtContent::RawXml(raw) => String::from_utf8(raw.clone()).map_err(utf8_error),
-        SdtContent::Cell(_) | SdtContent::ContentControl(_) => Err(Error::Other(
-            "comparison cannot add or remove an unmatched cell or nested content control"
-                .to_owned(),
+        SdtContent::ContentControl(nested) => marked_control(nested, kind, None, carried, metadata),
+        SdtContent::Cell(_) => Err(Error::Other(
+            "comparison cannot add or remove an unmatched cell in a content control".to_owned(),
         )),
     }
+}
+
+/// A block content control added, removed or moved whole, as Word marks
+/// one: each paragraph and table inside marked as added, removed or moved
+/// whole (`kind`, under `move_id` for a move), nested controls alike, and
+/// its properties kept. The resolution that removes that content removes
+/// the control with it. `carried` is passed to its paragraphs (see
+/// [`deleted_paragraph`]).
+pub(super) fn marked_control(
+    control: &CT_Sdt,
+    kind: &str,
+    move_id: Option<i32>,
+    carried: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
+    let source = metadata
+        .control_source(control)
+        .map(str::to_owned)
+        .map_or_else(|| control_xml(control), Ok)?;
+    let mut content = String::new();
+    for child in &control.content {
+        content.push_str(&match (child, move_id) {
+            (SdtContent::Paragraph(paragraph), Some(id)) => {
+                moved_paragraph(paragraph, kind, id, metadata)?
+            }
+            (SdtContent::Paragraph(paragraph), None) if kind == "del" => {
+                deleted_paragraph(paragraph, carried, metadata)?
+            }
+            (SdtContent::Paragraph(paragraph), None) => {
+                inserted_paragraph(paragraph, carried, metadata)?
+            }
+            (SdtContent::Table(table), Some(id)) => moved_table(table, kind, id, metadata)?,
+            (SdtContent::Table(table), None) => marked_table(table, kind, metadata)?,
+            (SdtContent::ContentControl(nested), _) => {
+                marked_control(nested, kind, move_id, carried, metadata)?
+            }
+            _ => {
+                return Err(Error::Other(
+                    "comparison can add or remove whole only a content control that holds paragraphs, tables or content controls"
+                        .to_owned(),
+                ));
+            }
+        });
+    }
+    if content.is_empty() {
+        return Err(Error::Other(
+            "comparison cannot add or remove an empty content control".to_owned(),
+        ));
+    }
+    metadata
+        .ids
+        .generated(replace_element_inner(&source, "w:sdtContent", &content)?)
 }

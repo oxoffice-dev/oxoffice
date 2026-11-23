@@ -2533,6 +2533,13 @@ impl<'a> XmlTree<'a> {
             self.validate_selected_descendants(index, state)?;
             return Ok(Vec::new());
         }
+        // A block content control whose every owner the resolution removes
+        // goes whole, as a table whose every row it removes does: a control
+        // added or removed whole holds only marked paragraphs and tables.
+        if semantic && self.control_owners_all_remove(index, state) {
+            self.validate_removed_control(index, state)?;
+            return Ok(Vec::new());
+        }
         if let Some(metadata) = &element.revision
             && semantic
             && state.scope.matches(metadata)
@@ -2852,6 +2859,17 @@ impl<'a> XmlTree<'a> {
                         next_index += 1;
                         continue;
                     }
+                    // A block content control is crossed or stays as a table
+                    // is: whole.
+                    if self.story_owner(next) && next_element.local == "sdt" {
+                        if !self.control_owners_all_remove(next, state) {
+                            before_table = true;
+                            break;
+                        }
+                        siblings.push(next);
+                        next_index += 1;
+                        continue;
+                    }
                     if !self.semantic_element(next)
                         || !next_element.word
                         || next_element.local != "p"
@@ -2871,7 +2889,7 @@ impl<'a> XmlTree<'a> {
                 // has no place in the output.
                 if siblings.iter().any(|sibling| {
                     let sibling = &self.elements[*sibling];
-                    sibling.local == "tbl"
+                    matches!(sibling.local.as_str(), "tbl" | "sdt")
                         && state.leaf_elements.iter().any(|leaf| {
                             self.elements[*leaf].start >= sibling.start
                                 && self.elements[*leaf].end <= sibling.end
@@ -2885,7 +2903,7 @@ impl<'a> XmlTree<'a> {
                     output.extend_from_slice(
                         &self.source[self.elements[pair[0]].end..self.elements[pair[1]].start],
                     );
-                    if self.elements[pair[1]].local == "tbl" {
+                    if matches!(self.elements[pair[1]].local.as_str(), "tbl" | "sdt") {
                         self.render(pair[1], state, false)?;
                     }
                 }
@@ -3215,6 +3233,60 @@ impl<'a> XmlTree<'a> {
             })
     }
 
+    /// The paragraphs, tables and block controls a block content control
+    /// holds, in order. `None` for any other element, and for a control
+    /// that holds runs, rows, cells or other markup between its owners.
+    fn block_control_owners(&self, index: usize) -> Option<Vec<usize>> {
+        let element = &self.elements[index];
+        if !(element.word && element.local == "sdt") {
+            return None;
+        }
+        let content = element.children.iter().copied().find(|child| {
+            self.elements[*child].word && self.elements[*child].local == "sdtContent"
+        })?;
+        let mut owners = Vec::new();
+        for &child in &self.elements[content].children {
+            let child_element = &self.elements[child];
+            if self.story_owner(child) {
+                owners.push(child);
+            } else if !(child_element.word && child_element.local == "proofErr") {
+                return None;
+            }
+        }
+        Some(owners)
+    }
+
+    /// Whether the resolution removes every owner of a block content
+    /// control: the mark of each paragraph, every row of each table, and
+    /// each nested block control whole.
+    fn control_owners_all_remove(&self, index: usize, state: &RenderState<'_>) -> bool {
+        self.block_control_owners(index).is_some_and(|owners| {
+            !owners.is_empty()
+                && owners
+                    .iter()
+                    .all(|&owner| match self.elements[owner].local.as_str() {
+                        "p" => self.paragraph_mark_removes(owner, state),
+                        "tbl" => self.owned_rows_all_remove(owner, state),
+                        _ => self.control_owners_all_remove(owner, state),
+                    })
+        })
+    }
+
+    /// Resolve a block content control that goes whole: nothing of its
+    /// paragraphs but proofing marks may remain.
+    fn validate_removed_control(&self, index: usize, state: &mut RenderState<'_>) -> Result<()> {
+        for owner in self.block_control_owners(index).unwrap_or_default() {
+            match self.elements[owner].local.as_str() {
+                "p" => self.validate_removed_paragraphs(&[owner], state)?,
+                "tbl" => {
+                    self.render(owner, state, false)?;
+                }
+                _ => self.validate_removed_control(owner, state)?,
+            }
+        }
+        Ok(())
+    }
+
     /// Whether the resolution removes every child of a hyperlink, each a
     /// revision wrapper, which would leave the hyperlink empty. Word reads a
     /// hyperlink as a field, and an empty one shows nothing.
@@ -3388,10 +3460,10 @@ impl<'a> XmlTree<'a> {
     }
 
     /// Whether the paragraphs from child `position` of `parent` to the end
-    /// of the body can go: the owner before them, past the tables whose
-    /// every row this resolution removes, is a table it keeps, or such a
-    /// table was crossed, among them (`crossed`) or before them, so that
-    /// the body ends with whatever came before it.
+    /// of the body can go: the owner before them, past the tables and block
+    /// controls this resolution removes whole, is a table or control it
+    /// keeps, or such an owner was crossed, among them (`crossed`) or before
+    /// them, so that the body ends with whatever came before it.
     fn body_end_goes(
         &self,
         parent: &XmlElement,
@@ -3404,19 +3476,21 @@ impl<'a> XmlTree<'a> {
                 continue;
             }
             let element = &self.elements[child];
-            if element.local == "tbl" && self.owned_rows_all_remove(child, state) {
+            if element.local == "tbl" && self.owned_rows_all_remove(child, state)
+                || element.local == "sdt" && self.control_owners_all_remove(child, state)
+            {
                 crossed = true;
                 continue;
             }
-            return element.local == "tbl" || crossed;
+            return matches!(element.local.as_str(), "tbl" | "sdt") || crossed;
         }
         crossed
     }
 
-    /// Resolve paragraphs whose marks are removed next to a table that stays,
-    /// before it or ending the body after it, or ending the body after a
-    /// table that goes, and which go. Nothing of them but proofing marks may
-    /// remain.
+    /// Resolve paragraphs whose marks are removed next to a table or block
+    /// content control that stays, before it or ending the body after it,
+    /// ending the body after one that goes, or inside a control that goes
+    /// whole, and which go. Nothing of them but proofing marks may remain.
     fn validate_removed_paragraphs(
         &self,
         paragraphs: &[usize],
@@ -3432,7 +3506,7 @@ impl<'a> XmlTree<'a> {
                     .all(u8::is_ascii_whitespace)
                 {
                     return Err(Error::Other(
-                        "paragraph mark removal next to a table requires a paragraph with no content left".to_owned(),
+                        "paragraph mark removal next to a table or block content control requires a paragraph with no content left".to_owned(),
                     ));
                 }
                 cursor = element.end;
@@ -3442,7 +3516,7 @@ impl<'a> XmlTree<'a> {
                 .all(u8::is_ascii_whitespace)
             {
                 return Err(Error::Other(
-                    "paragraph mark removal next to a table requires a paragraph with no content left".to_owned(),
+                    "paragraph mark removal next to a table or block content control requires a paragraph with no content left".to_owned(),
                 ));
             }
             for child in &owner.children {
@@ -3453,7 +3527,7 @@ impl<'a> XmlTree<'a> {
                     && !(child_element.word && child_element.local == "proofErr")
                 {
                     return Err(Error::Other(
-                        "paragraph mark removal next to a table requires a paragraph with no \
+                        "paragraph mark removal next to a table or block content control requires a paragraph with no \
                          content left"
                             .to_owned(),
                     ));

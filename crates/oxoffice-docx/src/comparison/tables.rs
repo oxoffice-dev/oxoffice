@@ -982,8 +982,8 @@ fn marked_cell_child(
         }
         CellContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         CellContent::Table(table) => marked_table(table, kind, metadata),
-        CellContent::ContentControl(_) => Err(Error::Other(
-            "comparison cannot add or remove an unmatched content control in a cell".to_owned(),
-        )),
+        CellContent::ContentControl(control) => {
+            marked_control(control, kind, None, carried, metadata)
+        }
     }
 }

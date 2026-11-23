@@ -128,12 +128,19 @@ fn compare_body_impl(
                 .or_else(|| left.and_then(|index| original.body.content.get(index)))
         };
         let next_takes_mark = next_kept_owner(&aligned, position, |pair| {
-            matches!(item(pair), Some(BodyContent::Table(_)))
+            matches!(
+                item(pair),
+                Some(BodyContent::Table(_) | BodyContent::ContentControl(_))
+            )
         })
         .is_some_and(|pair| {
             matches!(
                 item(pair),
-                Some(BodyContent::Paragraph(_) | BodyContent::Table(_))
+                Some(
+                    BodyContent::Paragraph(_)
+                        | BodyContent::Table(_)
+                        | BodyContent::ContentControl(_)
+                )
             )
         });
         match (original_index, edited_index) {
@@ -275,7 +282,10 @@ fn compare_body_impl(
                     )?
                 };
                 let owner = match (original_content, edited_content) {
-                    (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
+                    (BodyContent::Table(_), BodyContent::Table(_))
+                    | (BodyContent::ContentControl(_), BodyContent::ContentControl(_)) => {
+                        EmittedOwner::KeptTable
+                    }
                     _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
                 };
                 output.push((owner, compared));
@@ -780,13 +790,16 @@ pub(super) fn moved_body_content(
     match content {
         BodyContent::Paragraph(paragraph) => moved_paragraph(paragraph, kind, id, metadata),
         BodyContent::Table(table) => moved_table(table, kind, id, metadata),
-        BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
-            "comparison cannot move a content-control or opaque body node".to_owned(),
+        BodyContent::ContentControl(control) => {
+            marked_control(control, kind, Some(id), false, metadata)
+        }
+        BodyContent::RawXml(_) => Err(Error::Other(
+            "comparison cannot move an opaque body node".to_owned(),
         )),
     }
 }
 
-fn moved_paragraph(
+pub(super) fn moved_paragraph(
     paragraph: &CT_P,
     kind: &str,
     id: i32,
@@ -840,7 +853,12 @@ fn refuse_moved_markers(paragraph: &CT_P) -> Result<()> {
     ))
 }
 
-fn moved_table(table: &CT_Tbl, kind: &str, id: i32, metadata: &Metadata<'_>) -> Result<String> {
+pub(super) fn moved_table(
+    table: &CT_Tbl,
+    kind: &str,
+    id: i32,
+    metadata: &Metadata<'_>,
+) -> Result<String> {
     let source = metadata
         .table_source(table)
         .map(str::to_owned)

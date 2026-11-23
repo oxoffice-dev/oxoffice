@@ -179,10 +179,10 @@ use attributed_runs::{
     ignored_run_content, run_is_ignored, validate_raw_attribution,
 };
 use body::{
-    compare_body, moved_body_content, restore_current_property_roots, restore_extracted_root,
-    retain_source_root_namespaces,
+    compare_body, moved_body_content, moved_paragraph, moved_table, restore_current_property_roots,
+    restore_extracted_root, retain_source_root_namespaces,
 };
-use controls::{compare_control, compare_control_from_xml};
+use controls::{compare_control, compare_control_from_xml, marked_control};
 use fields::{
     actual_field_is_complex, actual_field_result_range, actual_field_source_fragment,
     compared_run_xml, comparison_instruction_eq, containing_run, conversion_namespace_facts,

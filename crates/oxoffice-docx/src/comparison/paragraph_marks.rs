@@ -12,14 +12,15 @@ pub(super) enum EmittedOwner<'a> {
         rejected: PropertySide<'a>,
     },
     /// A table whose every row carries a marker of this kind (`ins`, `del`,
-    /// `moveFrom` or `moveTo`). A change that the same resolution removes
-    /// crosses it, because that resolution removes the table and leaves the
-    /// paragraphs on either side adjacent; the other resolution keeps it.
+    /// `moveFrom` or `moveTo`), or a block content control whose content
+    /// all does. A change that the same resolution removes crosses it,
+    /// because that resolution removes it whole and leaves the paragraphs
+    /// on either side adjacent; the other resolution keeps it.
     MarkedTable(&'static str),
     /// Source whitespace between owners, which every change crosses.
     Whitespace,
-    /// A table both versions hold, which resolving the comparison's
-    /// revisions keeps. A final paragraph after it carries its own change:
+    /// A table or block content control both versions hold, which
+    /// resolving the comparison's revisions keeps. A final paragraph after it carries its own change:
     /// the resolution removing its mark removes it, and the body ends with
     /// the table, as it did on that side. When existing revisions in the
     /// table remove it too, resolving them with the change, the paragraph
@@ -41,7 +42,9 @@ impl<'a> EmittedOwner<'a> {
             (BodyContent::Paragraph(original), BodyContent::Paragraph(edited), _) => {
                 Self::paragraph(original, edited, metadata)
             }
-            (_, BodyContent::Table(_), Some(kind)) => Ok(Self::MarkedTable(kind)),
+            (_, BodyContent::Table(_) | BodyContent::ContentControl(_), Some(kind)) => {
+                Ok(Self::MarkedTable(kind))
+            }
             _ => Ok(Self::Other),
         }
     }
@@ -56,7 +59,9 @@ impl<'a> EmittedOwner<'a> {
             (SdtContent::Paragraph(original), SdtContent::Paragraph(edited), _) => {
                 Self::paragraph(original, edited, metadata)
             }
-            (_, SdtContent::Table(_), Some(kind)) => Ok(Self::MarkedTable(kind)),
+            (_, SdtContent::Table(_) | SdtContent::ContentControl(_), Some(kind)) => {
+                Ok(Self::MarkedTable(kind))
+            }
             _ => Ok(Self::Other),
         }
     }
@@ -71,7 +76,9 @@ impl<'a> EmittedOwner<'a> {
             (CellContent::Paragraph(original), CellContent::Paragraph(edited), _) => {
                 Self::paragraph(original, edited, metadata)
             }
-            (_, CellContent::Table(_), Some(kind)) => Ok(Self::MarkedTable(kind)),
+            (_, CellContent::Table(_) | CellContent::ContentControl(_), Some(kind)) => {
+                Ok(Self::MarkedTable(kind))
+            }
             _ => Ok(Self::Other),
         }
     }
@@ -117,7 +124,7 @@ fn accept_removes(kind: &str) -> bool {
 
 /// The first and last positions of the paragraphs in the run of owners
 /// that one side alone holds (`one_sided` gives the owner) and that ends
-/// the body. The tables between them are crossed: the mark before the
+/// the body. The tables and block controls between them are crossed: the mark before the
 /// first paragraph carries the change of the last one, whose own mark ends
 /// the story.
 pub(super) fn trailing_paragraphs<'d>(
@@ -131,7 +138,12 @@ pub(super) fn trailing_paragraphs<'d>(
         .map_while(|(position, &pair)| {
             one_sided(pair)
                 .filter(|content| {
-                    matches!(content, BodyContent::Paragraph(_) | BodyContent::Table(_))
+                    matches!(
+                        content,
+                        BodyContent::Paragraph(_)
+                            | BodyContent::Table(_)
+                            | BodyContent::ContentControl(_)
+                    )
                 })
                 .map(|content| (position, content))
         })
