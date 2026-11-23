@@ -1290,7 +1290,7 @@ fn rtf_export_lists_paragraph_styles_and_restates_their_formatting() {
     );
     let rtf = String::from_utf8(written.bytes).unwrap();
     let sheet_start = rtf.find(r"{\stylesheet").unwrap_or_else(|| panic!("{rtf}"));
-    let sheet = &rtf[sheet_start..rtf[sheet_start..].find(r"}}\pard").unwrap() + sheet_start];
+    let sheet = &rtf[sheet_start..rtf[sheet_start..].find(";}}").unwrap() + sheet_start + 3];
     // Normal first as \s0, each style after the one it is based on, with
     // its formatting resolved and the heading's keep-with-next.
     assert!(sheet.starts_with(r"{\stylesheet{\s0"), "{sheet}");
@@ -1629,4 +1629,37 @@ fn rtf_import_keeps_a_style_whose_based_on_chain_loops() {
     assert_eq!(second.run_properties().unwrap().bold, Some(true));
     let xml = reopen(&mut doc).part_xml("word/document.xml").unwrap();
     assert!(!xml.contains("<w:b/>") && !xml.contains("<w:sz "), "{xml}");
+}
+
+#[test]
+fn rtf_export_gives_each_paragraph_its_mark_formatting_and_widow_control() {
+    // Word gives `\par` and the math runs, which restate only the math font,
+    // the character formatting in force at the paragraph; and controls widows
+    // in RTF only where `\widctlpar` says so.
+    let doc = corpus_doc("word/paper.docx");
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    let times = rtf
+        .split(r"{\f")
+        .find(|entry| entry.contains("Times New Roman;"))
+        .and_then(|entry| entry.split(r"\fcharset").next())
+        .map(|id| format!(r"\f{id}"))
+        .unwrap();
+    let paragraph = rtf
+        .split(r"\pard")
+        .find(|paragraph| paragraph.contains("Intermittent demand"))
+        .unwrap();
+    assert!(
+        paragraph.contains(&format!(r"\widctlpar\plain{times}\fs20{{\plain")),
+        "{paragraph}"
+    );
+    let equation = rtf
+        .split(r"\pard")
+        .find(|paragraph| paragraph.contains(r"{\mmath"))
+        .unwrap();
+    let (format, math) = equation.split_once(r"{\mmath").unwrap();
+    assert!(
+        format.ends_with(&format!(r"\plain{times}\fs20")),
+        "{format}"
+    );
+    assert!(!math.contains(r"\plain"), "{math}");
 }

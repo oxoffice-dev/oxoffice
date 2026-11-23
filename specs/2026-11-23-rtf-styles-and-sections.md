@@ -50,12 +50,22 @@ Write and read RTF the way Word does.
   based-on or next style (a cycle) is kept without them.
 - A run's font is the one the most specific level names (defaults, paragraph
   style, character style, run), its theme font first within a level.
+- Each paragraph also sets the character formatting of its mark (its style's
+  with the mark's own over it), which Word gives `\par` and the equations'
+  math runs, and `\widctlpar` unless widow control is off: Word controls
+  widows by default, RTF only where a paragraph says so (Word check of
+  word/paper.docx).
 - Character, table and section styles of the stylesheet are not read; a
   character style is written as direct formatting on its runs.
 - **Sections (PR B).** The writer writes each section's page size,
   orientation, margins, columns (`\cols`, `\colsx`) and break kind after
   `\sectd`, and `\sect` at each section's end; the reader reads them back,
-  document-level `\paperw`... included.
+  document-level `\paperw`... included. RTF has no word for portrait: a
+  section is landscape by its own `\lndscpsxn`, by a page it states wider
+  than tall, or by the document's `\landscape` when it states no page size
+  of its own. Export reports
+  what it drops of a section (headers and footers, first page, numbering
+  other than decimal, borders, line numbers, revisions...).
 
 Not done: table styles and conditional formatting, character styles as
 styles, the stylesheet entries of styles no paragraph uses (Word lists every
