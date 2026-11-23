@@ -2026,6 +2026,15 @@ fn every_equation_of_the_word_paper_survives_an_rtf_round_trip() {
     // starred.
     assert!(rtf.contains(r"{\mmath{\*\moMathPara "), "{rtf}");
     assert_eq!(rtf.matches(r"{\*\moMath ").count(), expected.len());
+    // Every math run says its script and style, as Word writes them: Word
+    // reads a run without a style as plain, not in the default italic.
+    let runs = rtf.matches(r"{\mr\").count() + rtf.matches(r"{\mr ").count();
+    assert_eq!(
+        rtf.matches(r"{\mr\mscr0\msty2 ").count() + rtf.matches(r"{\mr\mscr0\msty0 ").count(),
+        runs,
+        "{rtf}"
+    );
+    assert!(rtf.matches(r"{\mr\mscr0\msty2 ").count() > 60, "{rtf}");
     let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
     assert!(
         !read
@@ -2036,6 +2045,26 @@ fn every_equation_of_the_word_paper_survives_an_rtf_round_trip() {
         read.diagnostics
     );
     assert_eq!(equations_as_mathml(&read.document), expected);
+}
+
+#[test]
+fn a_math_run_without_a_style_reads_as_word_reads_it() {
+    let style = |run: &str| {
+        let rtf = format!(r"{{\rtf1\ansi {{\mmath{{\*\moMath {run}}}}}\par}}");
+        let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+        let equation = read
+            .paragraph(0)
+            .unwrap()
+            .equations()
+            .next()
+            .cloned()
+            .unwrap();
+        String::from_utf8(equation.to_xml().unwrap()).unwrap()
+    };
+    // No style is plain, `\msty2` Word's default (no `m:sty`), `\msty0` plain.
+    assert!(style(r"{\mr x}").contains(r#"<m:sty m:val="p"/>"#));
+    assert!(!style(r"{\mr\mscr0\msty2 x}").contains("m:sty"));
+    assert!(style(r"{\mr\mscr0\msty0 x}").contains(r#"<m:sty m:val="p"/>"#));
 }
 
 #[test]

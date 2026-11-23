@@ -249,6 +249,7 @@ impl Writer {
     /// A flag of the open math run, as Word spells it: `\mscr0` for the
     /// roman script, `\msty0` plain and `\msty2` italic. The other scripts
     /// and styles are left out: no Word file at hand shows their numbers.
+    /// A style left out is reported, and its run written without a style.
     fn run_flag(&mut self, local: &str, value: Option<&str>) {
         let flag = match (local, value) {
             ("sty", Some("p")) => "\\msty0",
@@ -259,6 +260,11 @@ impl Writer {
             (local, value) => {
                 self.lost
                     .push(format!("{local} {}", value.unwrap_or("(none)")));
+                if local == "sty"
+                    && let Some((flags, _)) = &mut self.run
+                {
+                    flags.push_str(STYLE_LEFT_OUT);
+                }
                 return;
             }
         };
@@ -268,7 +274,19 @@ impl Writer {
     }
 
     fn finish_run(&mut self) {
-        if let Some((flags, text)) = self.run.take() {
+        if let Some((mut flags, text)) = self.run.take() {
+            // Word writes every run with its script and style, the default
+            // one as `\mscr0\msty2`, and reads a run without `\msty` as
+            // plain: a run of the default style says so.
+            if !flags.contains("\\mnor") {
+                if !flags.contains("\\mscr") {
+                    flags.insert_str(0, "\\mscr0");
+                }
+                if !flags.contains("\\msty") && !flags.contains(STYLE_LEFT_OUT) {
+                    flags.push_str("\\msty2");
+                }
+            }
+            let flags = flags.replace(STYLE_LEFT_OUT, "");
             self.out.push_str(&format!("{{\\mr{flags} "));
             push_rtf_text(&mut self.out, &text);
             self.out.push('}');
@@ -394,7 +412,9 @@ impl MathBuilder {
         }
         match (frame, local, parameter) {
             (Frame::Run(flags, _), "sty", Some(0)) => flags.push_str(r#"<m:sty m:val="p"/>"#),
-            (Frame::Run(flags, _), "sty", Some(2)) => flags.push_str(r#"<m:sty m:val="i"/>"#),
+            // Word writes its default style, italic letters and upright
+            // digits and operators, as `\msty2` on every such run.
+            (Frame::Run(flags, _), "sty", Some(2)) => flags.push_str(DEFAULT_STYLE),
             (Frame::Run(flags, _), "scr", Some(0)) => flags.push_str(r#"<m:scr m:val="roman"/>"#),
             (Frame::Run(flags, _), "nor", _) => flags.push_str("<m:nor/>"),
             (Frame::Run(flags, _), "lit", _) => flags.push_str("<m:lit/>"),
@@ -436,7 +456,15 @@ impl MathBuilder {
                     escape_attribute(value.trim_start())
                 );
             }
-            Some(Frame::Run(flags, text)) => write_run(&mut self.xml, &flags, &text),
+            Some(Frame::Run(flags, text)) => {
+                // Word reads a run without `\msty` as plain.
+                let flags = if flags.contains("<m:sty") || flags.contains("<m:nor/>") {
+                    flags.replace(DEFAULT_STYLE, "")
+                } else {
+                    format!(r#"{flags}<m:sty m:val="p"/>"#)
+                };
+                write_run(&mut self.xml, &flags, &text)
+            }
             Some(Frame::Plain(text)) if !text.is_empty() => write_run(&mut self.xml, "", &text),
             _ => {}
         }
@@ -469,6 +497,12 @@ impl MathBuilder {
         Ok((equation, self.lost))
     }
 }
+
+/// The mark of a run's style the writer leaves out (reported).
+const STYLE_LEFT_OUT: &str = "\u{1}";
+
+/// The mark of `\msty2`, Word's default style: no `m:sty` in OMML.
+const DEFAULT_STYLE: &str = "<m:sty/>";
 
 fn write_run(xml: &mut String, flags: &str, text: &str) {
     let text = text.trim_start_matches(' ');
