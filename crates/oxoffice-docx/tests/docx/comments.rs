@@ -1174,7 +1174,7 @@ fn listed_ranges(doc: &Document) -> Vec<(String, usize, usize)> {
 #[test]
 fn overlapping_bookmarks_are_each_listed_with_their_own_edges() {
     // Word writes two overlapping bookmarks with crossing markers.
-    let doc = doc_with_body(
+    let mut doc = doc_with_body(
         r#"<w:p><w:bookmarkStart w:id="1" w:name="first"/><w:r><w:t>one </w:t></w:r><w:bookmarkStart w:id="2" w:name="second"/><w:r><w:t>two </w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t>three</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
     );
     let mut ranges = listed_ranges(&doc);
@@ -1183,6 +1183,16 @@ fn overlapping_bookmarks_are_each_listed_with_their_own_edges() {
         ranges,
         [("first".to_owned(), 0, 2), ("second".to_owned(), 1, 3)]
     );
+    // Removing one leaves the other on its own runs.
+    let first = doc
+        .story_ranges()
+        .unwrap()
+        .into_iter()
+        .find(|range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "first"))
+        .unwrap();
+    assert!(doc.remove_story_range(&first).unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(listed_ranges(&doc), [("second".to_owned(), 1, 3)]);
 }
 
 #[test]
@@ -1229,7 +1239,9 @@ fn overlapping_comments_leave_every_range_listed_and_editable() {
         assert!(labels.contains(&format!("comment {id}")), "{labels:?}");
     }
     // An edit that checks the ranges first still works on the document.
-    doc.add_bookmark("after", run_range(0, 0, 0, 1)).unwrap();
+    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.add_story_bookmark("after", story_range(&paragraph, 0, 1))
+        .unwrap();
     assert!(
         listed_ranges(&doc)
             .iter()
@@ -1240,12 +1252,8 @@ fn overlapping_comments_leave_every_range_listed_and_editable() {
 #[test]
 fn every_corpus_document_lists_its_story_ranges() {
     // Word, Google Docs and LibreOffice all write overlapping comments or
-    // bookmarks with crossing markers in some of these files. Known failure
-    // #595: LibreOffice's form has bookmark starts with no end.
-    let files = crate::support::corpus_files("docx")
-        .into_iter()
-        .filter(|file| file.path != "libreoffice/form.docx")
-        .collect::<Vec<_>>();
+    // bookmarks with crossing markers in some of these files.
+    let files = crate::support::corpus_files("docx");
     let outcomes = crate::support::map_in_parallel(&files, |file| {
         Document::from_bytes(&file.bytes())
             .and_then(|doc| doc.story_ranges().map(|_| ()))
@@ -1255,6 +1263,17 @@ fn every_corpus_document_lists_its_story_ranges() {
         .iter()
         .zip(outcomes)
         .filter_map(|(file, outcome)| match outcome {
+            // Known failure #595: LibreOffice's form has bookmark starts with
+            // no end. Once it lists its ranges, drop this arm.
+            Some(Err(error))
+                if file.path == "libreoffice/form.docx" && error.contains("unmatched start") =>
+            {
+                None
+            }
+            Some(Ok(())) if file.path == "libreoffice/form.docx" => Some(format!(
+                "{}: lists its ranges now, drop its known failure (#595)",
+                file.path
+            )),
             Some(Ok(())) => None,
             Some(Err(error)) => Some(format!("{}: {error}", file.path)),
             None => Some(format!("{}: panicked", file.path)),

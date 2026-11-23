@@ -1244,11 +1244,11 @@ impl Document {
     /// Each end closes the start of its own identifier, so overlapping
     /// ranges, whose markers cross as Word and Google write them, are listed
     /// each with its own start and end. Unmatched, reversed, duplicate and
-    /// cross-part markers are rejected. A unique
-    /// bookmark, comment or permission pair with one start and one end in two
-    /// owners of one part is omitted when its physical order and nesting are
-    /// valid. Its name and identifier still count as taken. Proofing is never
-    /// omitted across owners. [`Self::comment_anchor`] reads a comment on its own.
+    /// cross-part markers are rejected. A unique bookmark, comment or
+    /// permission pair with one start and one end in two owners of one part
+    /// is omitted when its physical order is valid. Its name and identifier
+    /// still count as taken. Proofing is never omitted across owners.
+    /// [`Self::comment_anchor`] reads a comment on its own.
     pub fn story_ranges(&self) -> Result<Vec<StoryRangeRef>> {
         Ok(self.story_range_inventory()?.0)
     }
