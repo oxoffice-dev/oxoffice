@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: draft
+status: accepted
 scope: pptx
 ---
 
