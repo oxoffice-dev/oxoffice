@@ -764,9 +764,15 @@ pub(crate) fn write_pdf_impl(
             .to_unicode(cmap_ref);
         type0.finish();
 
-        // CID font
+        // CID font: CFF outlines make a CIDFontType0, whose CIDs address the
+        // subset's CID-keyed glyphs; TrueType outlines a CIDFontType2.
+        let cff = font::cff_table(&prepared.subset_bytes);
         let mut cid = pdf.cid_font(cid_ref);
-        cid.subtype(CidFontType::Type2);
+        cid.subtype(if cff.is_some() {
+            CidFontType::Type0
+        } else {
+            CidFontType::Type2
+        });
         cid.base_font(Name(base_name.as_bytes()));
         cid.system_info(SystemInfo {
             registry: Str(b"Adobe"),
@@ -775,7 +781,9 @@ pub(crate) fn write_pdf_impl(
         });
         cid.font_descriptor(descriptor_ref);
         cid.default_width(0.0);
-        cid.cid_to_gid_map_predefined(Name(b"Identity"));
+        if cff.is_none() {
+            cid.cid_to_gid_map_predefined(Name(b"Identity"));
+        }
 
         // Write widths
         if !prepared.widths.is_empty() {
@@ -828,15 +836,24 @@ pub(crate) fn write_pdf_impl(
             desc.descent(metrics.descent as f32);
             desc.cap_height(metrics.cap_height as f32);
             desc.stem_v(metrics.stem_v as f32);
-            desc.font_file2(stream_ref);
+            if cff.is_some() {
+                desc.font_file3(stream_ref);
+            } else {
+                desc.font_file2(stream_ref);
+            }
             desc.finish();
         }
 
-        // Font stream (subset TrueType data)
-        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&prepared.subset_bytes, 6);
+        // Font stream: the subset's CFF table, or the subset TrueType font.
+        let program = cff.unwrap_or(&prepared.subset_bytes);
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(program, 6);
         let mut stream = pdf.stream(stream_ref, &compressed);
         stream.filter(Filter::FlateDecode);
-        stream.pair(Name(b"Length1"), prepared.subset_bytes.len() as i32);
+        if cff.is_some() {
+            stream.pair(Name(b"Subtype"), Name(b"CIDFontType0C"));
+        } else {
+            stream.pair(Name(b"Length1"), prepared.subset_bytes.len() as i32);
+        }
         stream.finish();
 
         // ToUnicode CMap stream

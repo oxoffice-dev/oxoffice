@@ -1309,6 +1309,17 @@ class Document:
         order. A footnote whose reference moved is deleted with its old
         reference and inserted again, under a new id, with the new one, as Word
         shows it.
+
+        No tracked change records a bookmark: a paragraph whose bookmarks
+        differ is deleted and inserted whole, the insertion first, and a
+        bookmark both documents hold is written once, outside the revision
+        marks, its start in the insertion and its end in the deletion, as Word
+        resolves them. Accepting leaves such an end just after the inserted
+        paragraph, and rejecting such a start at the restored paragraph's
+        start, over the same text. Such a paragraph is still refused when a
+        bookmark both documents hold starts or ends inside its text, or sits
+        under another id or inside a hyperlink or control, or when it holds a
+        complex field or a comment range both documents hold.
         """
     @property
     def comments(self) -> tuple[Comment, ...]: ...

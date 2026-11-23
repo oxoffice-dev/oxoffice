@@ -462,7 +462,10 @@ impl Pdf {
             let descendants = font.get(b"DescendantFonts").expect("DescendantFonts");
             let descendant = self.dict(&self.resolve(descendants).as_array().expect("array")[0]);
             let descriptor = self.dict(descendant.get(b"FontDescriptor").expect("descriptor"));
-            let embedded = descriptor.get(b"FontFile2").is_ok_and(|file| {
+            let file = descriptor
+                .get(b"FontFile2")
+                .or_else(|_| descriptor.get(b"FontFile3"));
+            let embedded = file.is_ok_and(|file| {
                 let program = self.resolve(file).as_stream().expect("font program");
                 !program
                     .decompressed_content()

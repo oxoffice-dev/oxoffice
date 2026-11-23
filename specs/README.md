@@ -88,4 +88,5 @@ dependency bumps and documentation.
 | 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | accepted |
 | 2026-11-23 | [A note's custom mark held by the child after its reference](2026-11-23-a-note-mark-held-by-its-child.md) | accepted |
 | 2026-11-23 | [A tagged link holds its text](2026-11-23-tagged-link-text.md) | accepted |
+| 2026-11-23 | [Comparison: a bookmark both versions hold, in a paragraph replaced whole](2026-11-23-comparison-shared-bookmarks-in-replaced-paragraphs.md) | accepted |
 | 2026-11-23 | [Every OfficeMath construct is drawn](2026-11-23-every-officemath-construct-drawn.md) | accepted |
