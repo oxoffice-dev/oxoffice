@@ -71,7 +71,8 @@ fn paragraph_properties_xml_impl(
 
     let original_modeled = modeled_paragraph_properties(original.properties.as_ref());
     let edited_modeled = modeled_paragraph_properties(edited.properties.as_ref());
-    let changed = original_modeled != edited_modeled;
+    let changed = compared_paragraph_properties(original_modeled.clone())
+        != compared_paragraph_properties(edited_modeled.clone());
     let mut current = if changed {
         edited.properties.clone().unwrap_or_default()
     } else {
@@ -147,7 +148,9 @@ fn paragraph_properties_xml_impl(
     if !tracked_section.is_empty() {
         current_xml = inject_before_close(&current_xml, "</w:pPr>", &tracked_section)?;
     }
-    if original_base != edited_base {
+    if compared_paragraph_properties(original_base.clone())
+        != compared_paragraph_properties(edited_base.clone())
+    {
         let previous = original_base
             .as_ref()
             .map(property_xml)
@@ -228,8 +231,10 @@ pub(super) fn final_paragraph_properties_xml(
     rejected: &PropertySide<'_>,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
-    let accepted_modeled = modeled_paragraph_properties(accepted.typed);
-    let rejected_modeled = modeled_paragraph_properties(rejected.typed);
+    let accepted_modeled =
+        compared_paragraph_properties(modeled_paragraph_properties(accepted.typed));
+    let rejected_modeled =
+        compared_paragraph_properties(modeled_paragraph_properties(rejected.typed));
     // Not skipped with `ignore_formatting`: the two sides are the properties
     // of two paragraphs that a resolution merges, not a formatting edit, and
     // Word's merged paragraph keeps this mark's unless the change says so.
@@ -308,10 +313,16 @@ pub(super) fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Optio
         properties.change = None;
         properties.revision_xml.clear();
         properties.revision_xml_positions.clear();
-        // Compared, never written: a `w:numId` without `w:ilvl` takes the
-        // level both inputs show.
-        super::numbering::normalize_numbering(&mut properties);
         nonempty_paragraph_properties(properties)
+    })
+}
+
+/// `properties` as two paragraphs' properties are compared, never written: a
+/// `w:numId` without `w:ilvl` takes the level both inputs show.
+pub(super) fn compared_paragraph_properties(properties: Option<CT_PPr>) -> Option<CT_PPr> {
+    properties.map(|mut properties| {
+        super::numbering::normalize_numbering(&mut properties);
+        properties
     })
 }
 

@@ -412,7 +412,9 @@ pub(super) fn postcondition_body(
         let mut properties = Vec::new();
         match content {
             BodyContent::Paragraph(paragraph) => {
-                properties.push(modeled_paragraph_properties(paragraph.properties.as_ref()));
+                properties.push(compared_paragraph_properties(modeled_paragraph_properties(
+                    paragraph.properties.as_ref(),
+                )));
             }
             BodyContent::Table(table) => table_paragraph_properties(table, &mut properties),
             BodyContent::ContentControl(control) => {
@@ -435,7 +437,9 @@ fn cell_paragraph_properties(cell: &CT_Tc, properties: &mut Vec<Option<CT_PPr>>)
     for content in &cell.content {
         match content {
             CellContent::Paragraph(paragraph) => {
-                properties.push(modeled_paragraph_properties(paragraph.properties.as_ref()));
+                properties.push(compared_paragraph_properties(modeled_paragraph_properties(
+                    paragraph.properties.as_ref(),
+                )));
             }
             CellContent::Table(table) => table_paragraph_properties(table, properties),
             CellContent::ContentControl(control) => {
@@ -449,7 +453,9 @@ fn control_paragraph_properties(control: &CT_Sdt, properties: &mut Vec<Option<CT
     for content in &control.content {
         match content {
             SdtContent::Paragraph(paragraph) => {
-                properties.push(modeled_paragraph_properties(paragraph.properties.as_ref()));
+                properties.push(compared_paragraph_properties(modeled_paragraph_properties(
+                    paragraph.properties.as_ref(),
+                )));
             }
             SdtContent::Table(table) => table_paragraph_properties(table, properties),
             SdtContent::Row(row) => {

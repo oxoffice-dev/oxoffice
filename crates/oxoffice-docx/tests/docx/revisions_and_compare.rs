@@ -4069,3 +4069,67 @@ fn a_copy_that_writes_the_list_level_its_items_show_is_no_change() {
     );
     assert!(!kinds(&doc).is_empty());
 }
+
+/// The main part of `doc` as saved.
+fn saved_main_xml(doc: &mut Document) -> String {
+    let package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let main = package.main_document_part().unwrap();
+    String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap()
+}
+
+#[test]
+fn a_list_item_without_a_level_keeps_that_form_through_a_tracked_property_change() {
+    // The edited copy writes the level and centres the first item: rejecting
+    // the change gives back the original, still without a `w:ilvl`.
+    let mut edited = numbered_items(r#"<w:ilvl w:val="0"/>"#);
+    edited
+        .paragraph_mut(0)
+        .unwrap()
+        .set_alignment(Alignment::Center);
+    let mut doc = redline(numbered_items(""), &edited);
+    assert_eq!(kinds(&doc), [RevisionKind::ParagraphPropertyChange]);
+    let mut back = rejected(&mut doc);
+    assert!(!saved_main_xml(&mut back).contains("<w:ilvl"));
+    assert_eq!(
+        accepted(&mut doc).paragraph(0).unwrap().alignment(),
+        Some(Alignment::Center)
+    );
+}
+
+#[test]
+fn a_list_item_without_a_level_reads_at_its_style_s_level() {
+    // The items' style holds `w:ilvl 1`: a copy that writes level 1 is no
+    // change, one that writes level 0 is one.
+    let styled = |level: &str| {
+        let mut doc = numbered_items(level);
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+                .unwrap();
+        let main = package.main_document_part().unwrap();
+        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+        package.set_part(
+            &main,
+            xml.replace("<w:pPr>", r#"<w:pPr><w:pStyle w:val="Deep"/>"#)
+                .into_bytes(),
+        );
+        let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec())
+            .unwrap()
+            .replace(
+                "</w:styles>",
+                concat!(
+                    r#"<w:style w:type="paragraph" w:styleId="Deep"><w:name w:val="Deep"/>"#,
+                    r#"<w:pPr><w:numPr><w:ilvl w:val="1"/></w:numPr></w:pPr></w:style></w:styles>"#
+                ),
+            );
+        package.set_part("/word/styles.xml", styles.into_bytes());
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        Document::from_bytes(&out.into_inner()).unwrap()
+    };
+    let doc = redline(styled(""), &styled(r#"<w:ilvl w:val="1"/>"#));
+    assert_eq!(kinds(&doc), []);
+    let doc = redline(styled(""), &styled(r#"<w:ilvl w:val="0"/>"#));
+    assert!(!kinds(&doc).is_empty());
+}
