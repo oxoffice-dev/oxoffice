@@ -71,88 +71,106 @@ fn remap_equivalent_owner_relationships(
         .unwrap_or_default();
     let mut used = HashSet::new();
     let mut remap = HashMap::new();
+    let mut kept = HashSet::new();
     let mut unmatched_links = Vec::new();
     let mut unmatched_images = Vec::new();
     let mut unmatched_charts = Vec::new();
-    let mut original_charts = HashMap::new();
-    for relationship in &original_relationships.items {
-        if relationship.rel_type == rel_types::CHART {
-            original_charts.insert(
-                relationship.id.clone(),
-                chart_relationship_signature(original, original_owner, relationship)?.0,
-            );
-        }
-    }
+    let original_keys = original_relationships
+        .items
+        .iter()
+        .map(|left| relationship_key(original, original_owner, left))
+        .collect::<Result<Vec<_>>>()?;
+    let mut chart_parts = HashMap::new();
+    let mut edited_keys = Vec::with_capacity(edited_relationships.items.len());
     for right in &edited_relationships.items {
         if right.rel_type == rel_types::CHART {
             let (signature, parts) = chart_relationship_signature(edited, edited_owner, right)?;
-            if let Some((index, left)) =
-                original_relationships
-                    .items
-                    .iter()
-                    .enumerate()
-                    .find(|(index, left)| {
-                        !used.contains(index) && original_charts.get(&left.id) == Some(&signature)
-                    })
-            {
-                used.insert(index);
-                if left.id != right.id {
-                    remap.insert(right.id.clone(), left.id.clone());
-                }
-            } else {
-                let source_part = OpcPackage::resolve_rel_target(edited_owner, &right.target)
-                    .to_ascii_lowercase();
-                reserve_comparison_chart_parts(original, edited, parts, reserved_media, charts)?;
-                unmatched_charts.push((right.clone(), source_part));
-            }
-            continue;
+            chart_parts.insert(right.id.clone(), parts);
+            edited_keys.push(Some(RelationshipKey::of(right, Some(signature.as_bytes()))));
+        } else {
+            edited_keys.push(relationship_key(edited, edited_owner, right)?);
         }
-        if right.rel_type != rel_types::IMAGE && right.rel_type != rel_types::HYPERLINK {
-            continue;
-        }
-        let right_payload = relationship_payload(edited, edited_owner, right);
-        let Some((index, left)) =
-            original_relationships
+    }
+    // An edited relationship takes an unused original relationship with the
+    // same payload, or else a used one: several edited pictures or links can
+    // name what one original relationship names. A chart takes only an
+    // unused one: two drawings on one chart part would edit together.
+    // A relationship both versions hold under one id keeps it first, so the
+    // order of the edited relationships never decides which chart is the copy.
+    let mut matches = vec![None; edited_relationships.items.len()];
+    for (slot, right) in edited_relationships.items.iter().enumerate() {
+        if let Some(key) = &edited_keys[slot]
+            && let Some(index) = original_relationships
                 .items
                 .iter()
-                .enumerate()
-                .find(|(index, left)| {
-                    !used.contains(index)
-                        && left.rel_type == right.rel_type
-                        && left.target_mode == right.target_mode
-                        && relationship_payload(original, original_owner, left) == right_payload
-                })
-        else {
-            // A linked picture's image relationship is an address, carried
-            // as a hyperlink's is.
-            if right.rel_type == rel_types::HYPERLINK
-                || !crate::document::relationship_is_internal(right)
-            {
-                unmatched_links.push(right.clone());
-            } else {
-                let target = OpcPackage::resolve_rel_target(edited_owner, &right.target);
-                let bytes = edited.package.get_part(&target).ok_or_else(|| {
-                    Error::Other(format!("comparison image target is missing: {target}"))
-                })?;
-                let content_type = edited
-                    .package
-                    .content_types
-                    .content_type_for(&target)
-                    .ok_or_else(|| {
-                        Error::Other(format!("comparison image has no content type: {target}"))
-                    })?;
-                unmatched_images.push((
-                    right.clone(),
-                    target,
-                    bytes.to_vec(),
-                    content_type.to_owned(),
-                ));
-            }
+                .position(|left| left.id == right.id)
+            && original_keys[index].as_ref() == Some(key)
+            && used.insert(index)
+        {
+            matches[slot] = Some(index);
+        }
+    }
+    for (slot, key) in edited_keys.iter().enumerate() {
+        let Some(key) = key else {
             continue;
         };
-        used.insert(index);
-        if left.id != right.id {
-            remap.insert(right.id.clone(), left.id.clone());
+        if matches[slot].is_some() {
+            continue;
+        }
+        let same = |index: &usize| original_keys[*index].as_ref() == Some(key);
+        let unused = (0..original_keys.len()).find(|index| !used.contains(index) && same(index));
+        matches[slot] = unused.or_else(|| {
+            (key.rel_type != rel_types::CHART)
+                .then(|| (0..original_keys.len()).find(same))
+                .flatten()
+        });
+        if let Some(index) = unused {
+            used.insert(index);
+        }
+    }
+    for (slot, right) in edited_relationships.items.iter().enumerate() {
+        if edited_keys[slot].is_none() {
+            continue;
+        }
+        if let Some(index) = matches[slot] {
+            let left = &original_relationships.items[index];
+            if left.id == right.id {
+                kept.insert(right.id.clone());
+            } else {
+                remap.insert(right.id.clone(), left.id.clone());
+            }
+            continue;
+        }
+        if right.rel_type == rel_types::CHART {
+            let source_part =
+                OpcPackage::resolve_rel_target(edited_owner, &right.target).to_ascii_lowercase();
+            let parts = chart_parts.remove(&right.id).unwrap_or_default();
+            reserve_comparison_chart_parts(original, edited, parts, reserved_media, charts)?;
+            unmatched_charts.push((right.clone(), source_part));
+        } else if right.rel_type == rel_types::HYPERLINK
+            || !crate::document::relationship_is_internal(right)
+        {
+            // A linked picture's image relationship is an address, carried
+            // as a hyperlink's is.
+            unmatched_links.push(right.clone());
+        } else {
+            let target = OpcPackage::resolve_rel_target(edited_owner, &right.target);
+            let bytes = edited.package.get_part(&target).ok_or_else(|| {
+                Error::Other(format!("comparison image target is missing: {target}"))
+            })?;
+            let content_type = edited
+                .package
+                .content_types
+                .content_type_for(&target)
+                .ok_or_else(|| {
+                    Error::Other(format!("comparison image has no content type: {target}"))
+                })?;
+            unmatched_images.push((
+                right.clone(),
+                target,
+                bytes.to_vec(),
+                content_type.to_owned(),
+            ));
         }
     }
     let mut occupied = edited_relationships
@@ -283,7 +301,11 @@ fn remap_equivalent_owner_relationships(
     let mut collision_remap = HashMap::new();
     let remapped_sources = remap.keys().cloned().collect::<HashSet<_>>();
     for target in remap.values() {
+        // An edited relationship kept under this id names what the remapped
+        // one names: they share it.
         if remapped_sources.contains(target)
+            || kept.contains(target)
+            || collision_remap.contains_key(target)
             || edited_relationships
                 .items
                 .iter()
@@ -318,6 +340,11 @@ fn remap_equivalent_owner_relationships(
                 relationship.id.clone_from(updated);
             }
         }
+        // Relationships that now share an id name the same payload.
+        let mut ids = HashSet::new();
+        relationships
+            .items
+            .retain(|relationship| ids.insert(relationship.id.clone()));
         relationships.to_xml()?;
     }
     Ok(carried)
@@ -499,6 +526,78 @@ pub(super) fn chart_relationship_signature(
             .collect(),
         nodes,
     ))
+}
+
+/// What a relationship names, for the relationships a comparison matches:
+/// its type, target mode and payload (an image's bytes, an address, a
+/// chart's graph signature).
+#[derive(PartialEq, Eq, Hash)]
+struct RelationshipKey {
+    rel_type: String,
+    target_mode: Option<String>,
+    /// The payload's SHA-256.
+    payload: Option<[u8; 32]>,
+}
+
+impl RelationshipKey {
+    fn of(relationship: &Relationship, payload: Option<&[u8]>) -> Self {
+        Self {
+            rel_type: relationship.rel_type.clone(),
+            target_mode: relationship.target_mode.clone(),
+            payload: payload.map(|bytes| Sha256::digest(bytes).into()),
+        }
+    }
+}
+
+/// The key of an image, hyperlink or chart relationship, `None` for others.
+fn relationship_key(
+    document: &Document,
+    owner: &str,
+    relationship: &Relationship,
+) -> Result<Option<RelationshipKey>> {
+    Ok(if relationship.rel_type == rel_types::CHART {
+        let (signature, _) = chart_relationship_signature(document, owner, relationship)?;
+        Some(RelationshipKey::of(
+            relationship,
+            Some(signature.as_bytes()),
+        ))
+    } else if relationship.rel_type == rel_types::IMAGE
+        || relationship.rel_type == rel_types::HYPERLINK
+    {
+        Some(RelationshipKey::of(
+            relationship,
+            relationship_payload(document, owner, relationship).as_deref(),
+        ))
+    } else {
+        None
+    })
+}
+
+/// The image, hyperlink and chart relationships of `owner` that name what
+/// an earlier one names, each id to the first id of its class. Two versions
+/// that reach one picture, chart or address through other relationships
+/// then sign alike (see `RelationshipClassScope`).
+pub(super) fn relationship_classes(
+    document: &Document,
+    owner: &str,
+) -> Result<HashMap<String, String>> {
+    let mut first = HashMap::new();
+    let mut classes = HashMap::new();
+    for relationship in document
+        .package
+        .get_part_rels(owner)
+        .into_iter()
+        .flat_map(|relationships| &relationships.items)
+    {
+        let Some(key) = relationship_key(document, owner, relationship)? else {
+            continue;
+        };
+        let representative = first.entry(key).or_insert_with(|| relationship.id.clone());
+        if *representative != relationship.id {
+            classes.insert(relationship.id.clone(), representative.clone());
+        }
+    }
+    Ok(classes)
 }
 
 fn relationship_payload(

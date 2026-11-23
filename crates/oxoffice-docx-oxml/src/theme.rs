@@ -231,9 +231,15 @@ pub fn apply_tint_shade(hex: &str, tint_val: Option<u8>, shade_val: Option<u8>) 
         return hex.to_string();
     }
 
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f64 / 255.0;
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f64 / 255.0;
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f64 / 255.0;
+    // The value comes from the file unchecked: read by bytes, never sliced
+    // inside a character.
+    let channel = |start: usize| {
+        hex.get(start..start + 2)
+            .and_then(|digits| u8::from_str_radix(digits, 16).ok())
+            .unwrap_or(0) as f64
+            / 255.0
+    };
+    let (r, g, b) = (channel(0), channel(2), channel(4));
 
     let (r, g, b) = if let Some(tint) = tint_val {
         // Tint: mix with white. tint=0 means no change, tint=255 means pure white
@@ -315,5 +321,17 @@ fn legacy_colour(colour: &oxoffice_drawing::color::ColorChoice) -> Option<String
         ),
         oxoffice_drawing::color::ColorChoice::Scheme { .. }
         | oxoffice_drawing::color::ColorChoice::Preset { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_tint_shade;
+
+    #[test]
+    fn a_tint_of_a_colour_that_is_not_hex_digits_never_panics() {
+        // A character of more than one byte where a digit belongs reads as 0.
+        assert_eq!(apply_tint_shade("Aé0000", None, Some(255)), "000000");
+        assert_eq!(apply_tint_shade("FF0000", None, Some(255)), "FF0000");
     }
 }

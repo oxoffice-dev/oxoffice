@@ -85,7 +85,9 @@ use postconditions::{
     NormalizedPackage, comparison_postcondition_error, normalized_package,
     refuse_changed_existing_revisions, resolved_candidate,
 };
-use relationships::{chart_relationship_signature, remap_equivalent_story_relationships};
+use relationships::{
+    chart_relationship_signature, relationship_classes, remap_equivalent_story_relationships,
+};
 use source_metadata::{
     ContentMetadata, field_source_metadata, source_root_metadata,
     source_without_run_root_attributes, source_without_text_properties,
@@ -143,13 +145,13 @@ use run_properties::{
     unmodeled_run_properties_differ,
 };
 use signatures::{
-    body_signature, body_signature_with_options, cell_formatting, coalesced_postcondition_body,
-    control_content_signature_with_options, control_metadata_diagnostics,
-    control_property_signature, control_signature_with_options, control_whitespace_slots,
-    has_edge_whitespace, modeled_control_content, normalized_body_with_options,
-    paragraph_formatting, paragraph_signature_with_options, postcondition_body, row_formatting,
-    row_signature_with_options, run_content_signature, run_signature, run_signature_with_options,
-    semantic_run_raw, table_signature_with_options,
+    RelationshipClassScope, body_signature, body_signature_with_options, cell_formatting,
+    coalesced_postcondition_body, control_content_signature_with_options,
+    control_metadata_diagnostics, control_property_signature, control_signature_with_options,
+    control_whitespace_slots, has_edge_whitespace, modeled_control_content,
+    normalized_body_with_options, paragraph_formatting, paragraph_signature_with_options,
+    postcondition_body, row_formatting, row_signature_with_options, run_content_signature,
+    run_signature, run_signature_with_options, semantic_run_raw, table_signature_with_options,
 };
 use xml::{
     append_word_child, body_content_xml, cell_child_spans, cell_xml, control_xml, deleted_run,
@@ -774,6 +776,10 @@ impl Document {
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
         let mut diagnostics = Vec::new();
+        let main_classes = RelationshipClassScope::enter(relationship_classes(
+            &original,
+            &original.doc_part_name,
+        )?);
         let tracked_body = if !added_reply_ids.is_empty() {
             extract_body_inner(edited_xml)?.to_owned()
         } else if story_ignored(options, ComparisonStoryKind::Main) {
@@ -833,6 +839,7 @@ impl Document {
                 &mut diagnostics,
             )?
         };
+        drop(main_classes);
         let mut tracked_xml = replace_body_inner(original_xml, &tracked_body)?.into_bytes();
         // Generated fragments use the canonical Word prefix. A valid source
         // may declare only an alias. Add the missing binding without changing
@@ -860,6 +867,10 @@ impl Document {
             let tracked_story = if !added_reply_ids.is_empty() {
                 story_xml(&edited, story)?.to_vec()
             } else {
+                let _classes = RelationshipClassScope::enter(relationship_classes(
+                    &original,
+                    &story.part_name,
+                )?);
                 compare_story_part(
                     story_xml(&original, story)?,
                     story_xml(&edited, story)?,
@@ -868,6 +879,9 @@ impl Document {
                     &mut diagnostics,
                 )?
             };
+            // A picture deleted and inserted again keeps its drawing id on
+            // both sides, as in the body.
+            let tracked_story = crate::document::uniquify_drawing_ids_in_xml(&tracked_story)?;
             candidate.package.set_part(&story.part_name, tracked_story);
         }
         let moved = compare_footnote_parts(
