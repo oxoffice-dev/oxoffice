@@ -15,6 +15,8 @@ use oxoffice_docx_oxml::table::{
 use oxoffice_docx_oxml::text::{BreakClear, BreakType, CT_P, CT_R, RunContent, SpecialCharacter};
 
 use crate::document::{ExportItem, body_export_items};
+
+mod math;
 use crate::revision::{raw_is_typed_revision, revision_removes_text};
 use crate::{Alignment, Document, Error, Length, ListLevel, ListNumberFormat, Result};
 
@@ -179,6 +181,8 @@ struct RtfWriter<'a> {
     list_indexes: BTreeMap<u32, usize>,
     diagnostics: Vec<RtfDiagnostic>,
     output_limit: usize,
+    /// The equations written so far, which number them in the messages.
+    equations: usize,
 }
 
 impl<'a> RtfWriter<'a> {
@@ -197,6 +201,7 @@ impl<'a> RtfWriter<'a> {
             list_indexes: BTreeMap::new(),
             diagnostics: Vec::new(),
             output_limit,
+            equations: 0,
         }
     }
 
@@ -608,11 +613,8 @@ impl<'a> RtfWriter<'a> {
                 );
                 continue;
             }
+            // An equation is written in place (`write_view`).
             if crate::math::raw_is_equation(paragraph, raw_index) {
-                self.diagnose(
-                    &format!("{location}/raw[{index}]"),
-                    "Word equation was dropped during RTF export",
-                );
                 continue;
             }
             self.diagnose(
@@ -1063,7 +1065,7 @@ impl<'a> RtfWriter<'a> {
     ) -> Result<()> {
         write!(output, "\\pard")?;
         self.write_paragraph_format(output, paragraph.properties.as_ref(), paragraph)?;
-        self.write_runs(output, &paragraph.accepted_view().runs, location)?;
+        self.write_view(output, &paragraph.accepted_view(), location)?;
         writeln!(output, "\\par")?;
         Ok(())
     }
@@ -1076,7 +1078,7 @@ impl<'a> RtfWriter<'a> {
     ) -> Result<()> {
         write!(output, "\\pard\\intbl")?;
         self.write_paragraph_format(output, paragraph.properties.as_ref(), paragraph)?;
-        self.write_runs(output, &paragraph.accepted_view().runs, location)
+        self.write_view(output, &paragraph.accepted_view(), location)
     }
 
     fn write_paragraph_format(
@@ -1132,25 +1134,69 @@ impl<'a> RtfWriter<'a> {
         Ok(())
     }
 
-    fn write_runs(
+    /// Write the runs of a paragraph's accepted view, each equation at its
+    /// run boundary as OMML-in-RTF.
+    fn write_view(
         &mut self,
         output: &mut BoundedOutput,
-        runs: &[CT_R],
+        view: &CT_P,
         location: &str,
     ) -> Result<()> {
-        for (run_index, run) in runs.iter().enumerate() {
-            write!(output, "{{\\plain")?;
-            self.write_run_format(output, run.properties.as_ref())?;
-            output.push(b' ')?;
-            for (content_index, content) in run.content.iter().enumerate() {
-                self.write_run_content(
-                    output,
-                    content,
-                    &format!("{location}/run[{run_index}]/content[{content_index}]"),
-                )?;
+        for boundary in 0..=view.runs.len() {
+            for (_, _, equation) in view.equations.iter().filter(|(at, _, _)| *at == boundary) {
+                self.write_equation(output, equation, location)?;
             }
-            write!(output, "}}")?;
+            if let Some(run) = view.runs.get(boundary) {
+                self.write_run(output, run, boundary, location)?;
+            }
         }
+        Ok(())
+    }
+
+    fn write_equation(
+        &mut self,
+        output: &mut BoundedOutput,
+        equation: &oxoffice_docx_oxml::math::OfficeMath,
+        location: &str,
+    ) -> Result<()> {
+        self.equations += 1;
+        let number = self.equations;
+        match math::write_equation(equation) {
+            Ok(written) => {
+                for lost in written.lost {
+                    self.diagnose(
+                        &format!("{location}/equation[{number}]"),
+                        &format!("equation {number} written in RTF without its {lost}"),
+                    );
+                }
+                output.write_all(written.rtf.as_bytes())?;
+            }
+            Err(error) => self.diagnose(
+                &format!("{location}/equation[{number}]"),
+                &format!("equation {number} was left out of the RTF: {error}"),
+            ),
+        }
+        Ok(())
+    }
+
+    fn write_run(
+        &mut self,
+        output: &mut BoundedOutput,
+        run: &CT_R,
+        run_index: usize,
+        location: &str,
+    ) -> Result<()> {
+        write!(output, "{{\\plain")?;
+        self.write_run_format(output, run.properties.as_ref())?;
+        output.push(b' ')?;
+        for (content_index, content) in run.content.iter().enumerate() {
+            self.write_run_content(
+                output,
+                content,
+                &format!("{location}/run[{run_index}]/content[{content_index}]"),
+            )?;
+        }
+        write!(output, "}}")?;
         Ok(())
     }
 
@@ -1882,6 +1928,8 @@ enum Destination {
     Picture,
     Container,
     UnicodeAlternatives,
+    /// An equation: `\mmath` and its groups, read by `Parser::active_math`.
+    Math,
     Skip(String),
 }
 
@@ -2021,7 +2069,10 @@ impl ParagraphData {
     fn has_content(&self) -> bool {
         self.items.iter().any(|item| match item {
             ParagraphItem::Text(run) => !run.text.is_empty(),
-            ParagraphItem::Picture(_) | ParagraphItem::Break | ParagraphItem::Tab => true,
+            ParagraphItem::Picture(_)
+            | ParagraphItem::Break
+            | ParagraphItem::Tab
+            | ParagraphItem::Equation(_) => true,
         })
     }
 }
@@ -2032,6 +2083,7 @@ enum ParagraphItem {
     Picture(PictureData),
     Break,
     Tab,
+    Equation(Box<oxoffice_docx_oxml::math::OfficeMath>),
 }
 
 #[derive(Clone, Debug)]
@@ -2300,7 +2352,10 @@ fn prepare_pictures(
         .iter()
         .filter_map(|item| match item {
             ParagraphItem::Picture(picture) => Some(picture),
-            ParagraphItem::Text(_) | ParagraphItem::Break | ParagraphItem::Tab => None,
+            ParagraphItem::Text(_)
+            | ParagraphItem::Break
+            | ParagraphItem::Tab
+            | ParagraphItem::Equation(_) => None,
         })
         .map(|picture| {
             let filename = match picture.kind {
@@ -2363,6 +2418,7 @@ fn project_items(
             }
             ParagraphItem::Break => target.add_line_break(),
             ParagraphItem::Tab => target.add_tab(),
+            ParagraphItem::Equation(equation) => target.add_equation(*equation)?,
         }
     }
     Ok(())
@@ -2461,6 +2517,8 @@ fn apply_run_format(
 
 struct Parser {
     states: Vec<State>,
+    /// The equation being read, inside a `\mmath` group.
+    active_math: Option<math::MathBuilder>,
     blocks: Vec<Block>,
     current_paragraph: ParagraphData,
     table_rows: Vec<TableRowData>,
@@ -2502,6 +2560,7 @@ impl Parser {
             states: Vec::new(),
             blocks: Vec::new(),
             current_paragraph: ParagraphData::default(),
+            active_math: None,
             table_rows: Vec::new(),
             current_row: Vec::new(),
             current_cell: Vec::new(),
@@ -2627,6 +2686,11 @@ impl Parser {
                 };
             }
             parent.at_group_start = false;
+            if child.destination == Destination::Math
+                && let Some(math) = &mut self.active_math
+            {
+                math.open();
+            }
             self.states.push(parent);
             self.states.push(child);
         } else {
@@ -2669,6 +2733,15 @@ impl Parser {
             ));
         }
         let parent_destination = self.states.last().map(|state| state.destination.clone());
+        if state.destination == Destination::Math {
+            if parent_destination == Some(Destination::Math) {
+                if let Some(math) = &mut self.active_math {
+                    math.close();
+                }
+            } else {
+                self.finish_math(offset)?;
+            }
+        }
         if state.destination == Destination::Picture
             && parent_destination != Some(Destination::Picture)
         {
@@ -2800,7 +2873,19 @@ impl Parser {
         let was_starred = std::mem::take(&mut state.starred);
         let at_group_start = state.at_group_start;
         state.at_group_start = false;
+        let destination = state.destination.clone();
         self.states.push(state);
+        if destination == Destination::Math && !matches!(name, "u" | "uc") {
+            if let Some(math) = &mut self.active_math {
+                math.word(name, parameter, at_group_start);
+            }
+            return Ok(());
+        }
+        if name == "mmath" && at_group_start && destination == Destination::Body {
+            self.states.last_mut().unwrap().destination = Destination::Math;
+            self.active_math = Some(math::MathBuilder::default());
+            return Ok(());
+        }
         let is_destination =
             is_supported_destination(name) || is_unsupported_destination(name) || was_starred;
         if is_destination && !at_group_start {
@@ -3307,7 +3392,7 @@ impl Parser {
                 self.active_list_marker.push(byte);
                 Ok(())
             }
-            Destination::Body => {
+            Destination::Body | Destination::Math => {
                 self.retain_output(offset, 3)?;
                 let state = self.states.last_mut().unwrap();
                 if state.text_bytes.is_empty() {
@@ -3325,7 +3410,7 @@ impl Parser {
             self.states.last_mut().unwrap().at_group_start = false;
         }
         match self.states.last().unwrap().destination.clone() {
-            Destination::Body => {
+            Destination::Body | Destination::Math => {
                 self.retain_output(offset, bytes.len().saturating_mul(3))?;
                 let state = self.states.last_mut().unwrap();
                 if state.pending_high_surrogate.is_some() && !bytes.is_empty() {
@@ -3425,6 +3510,17 @@ impl Parser {
             }
             Destination::FontTable => state.font_name.extend(bytes),
             Destination::ListText => self.active_list_marker.extend(bytes),
+            Destination::Math => {
+                let text = decode(state.code_page, &bytes).ok_or_else(|| {
+                    rtf_error(
+                        state.text_offset,
+                        format!("unsupported RTF code page {}", state.code_page),
+                    )
+                })?;
+                if let Some(math) = &mut self.active_math {
+                    math.text(&text.0);
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -3447,6 +3543,12 @@ impl Parser {
             Destination::ListText => {
                 self.retain_output(offset, character.len_utf8())?;
                 self.active_list_marker_unicode.push(character);
+            }
+            Destination::Math => {
+                self.retain_output(offset, character.len_utf8())?;
+                if let Some(math) = &mut self.active_math {
+                    math.text(&character.to_string());
+                }
             }
             // A font named outside the code page, such as LibreOffice's
             // "ＭＳ ゴシック", comes as \u characters between its bytes.
@@ -3500,6 +3602,34 @@ impl Parser {
                 }));
         }
         Ok(())
+    }
+
+    /// The `\mmath` group closed: its equation goes in the paragraph, or,
+    /// when it cannot be read, is reported and left out.
+    fn finish_math(&mut self, offset: usize) -> Result<()> {
+        let Some(math) = self.active_math.take() else {
+            return Ok(());
+        };
+        match math.finish() {
+            Ok((equation, lost)) => {
+                for lost in lost {
+                    self.diagnostics.push(RtfDiagnostic {
+                        offset,
+                        destination: Some("mmath".to_owned()),
+                        message: format!("equation content {lost} was left out"),
+                    });
+                }
+                self.append_special(ParagraphItem::Equation(Box::new(equation)))
+            }
+            Err(error) => {
+                self.diagnostics.push(RtfDiagnostic {
+                    offset,
+                    destination: Some("mmath".to_owned()),
+                    message: format!("equation could not be read and was left out: {error}"),
+                });
+                Ok(())
+            }
+        }
     }
 
     fn append_special(&mut self, item: ParagraphItem) -> Result<()> {
@@ -4259,6 +4389,7 @@ fn destination_name(destination: &Destination) -> String {
         Destination::Picture => "pict".to_owned(),
         Destination::Container => "container".to_owned(),
         Destination::UnicodeAlternatives => "upr".to_owned(),
+        Destination::Math => "mmath".to_owned(),
         Destination::Skip(name) => name.clone(),
     }
 }

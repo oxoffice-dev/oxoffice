@@ -1686,6 +1686,82 @@ fn every_equation_of_the_word_paper_reaches_both_exports() {
     assert_eq!(dollars, 2 * inline + 4 * display, "{markdown}");
 }
 
+/// Each equation of a document as MathML, one per `m:oMath`, in order.
+fn equations_as_mathml(doc: &Document) -> Vec<String> {
+    use oxoffice_docx_oxml::math::{MathArgument, OfficeMath};
+    doc.paragraphs()
+        .iter()
+        .flat_map(|paragraph| paragraph.equations().cloned().collect::<Vec<_>>())
+        .flat_map(|equation| match equation {
+            OfficeMath::Inline(math) => vec![math],
+            OfficeMath::Display(display) => display.equations,
+        })
+        .map(|math| {
+            // Two neighbouring runs that differ only in their character
+            // formatting (the math font), which RTF does not carry, are one
+            // identifier.
+            oxoffice_docx::equation_to_mathml(&MathArgument::new(math.expressions))
+                .value
+                .replace("</mi><mi>", "")
+        })
+        .collect()
+}
+
+#[test]
+fn every_equation_of_the_word_paper_survives_an_rtf_round_trip() {
+    let doc = corpus_doc("word/paper.docx");
+    let expected = equations_as_mathml(&doc);
+    assert!(expected.len() >= 11, "{}", expected.len());
+    let written = doc.to_rtf_bytes().unwrap();
+    assert!(
+        !written
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("equation")),
+        "{:?}",
+        written.diagnostics
+    );
+    let rtf = String::from_utf8(written.bytes).unwrap();
+    // As Word writes it: a display group inside `\mmath`, its equations
+    // starred.
+    assert!(rtf.contains(r"{\mmath{\*\moMathPara "), "{rtf}");
+    assert_eq!(rtf.matches(r"{\*\moMath ").count(), expected.len());
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
+    assert!(
+        !read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("equation")),
+        "{:?}",
+        read.diagnostics
+    );
+    assert_eq!(equations_as_mathml(&read.document), expected);
+}
+
+#[test]
+fn text_around_an_equation_keeps_its_place_in_rtf() {
+    let mut doc = Document::new();
+    let mut paragraph = doc.add_paragraph("Let ");
+    paragraph
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            oxoffice_docx::equation_from_latex(r"x=\frac{1}{2}")
+                .unwrap()
+                .value
+                .expressions,
+        ))
+        .unwrap();
+    paragraph.add_run(" hold.");
+    let rtf = doc.to_rtf_bytes().unwrap().bytes;
+    let read = Document::from_rtf_bytes(&rtf).unwrap().document;
+    let paragraph = read.paragraph(0).unwrap();
+    assert_eq!(paragraph.equations().count(), 1);
+    assert_eq!(equations_as_mathml(&read), equations_as_mathml(&doc));
+    // The equation sits between the two texts.
+    let markdown = read.to_markdown();
+    assert!(markdown.starts_with("Let $"), "{markdown}");
+    assert!(markdown.trim_end().ends_with("$ hold."), "{markdown}");
+}
+
 #[test]
 fn equation_content_outside_the_supported_subset_is_reported() {
     // m:func (sin x) is kept as preserved XML, not as a typed expression.
