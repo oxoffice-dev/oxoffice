@@ -1337,6 +1337,9 @@ fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown
         r#"<w:p><w:r><w:t xml:space="preserve">Intro </w:t></w:r><w:bookmarkStart w:id="2" w:name="_Toc12"/><w:r><w:t>Heading</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
         r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="goal"><w:r><w:t>the goal</w:t></w:r></w:hyperlink>"#,
         r#"<w:r><w:t xml:space="preserve"> and </w:t></w:r><w:hyperlink w:anchor="_Toc12"><w:r><w:t>the heading</w:t></w:r></w:hyperlink></w:p>"#,
+        // A name another tool wrote, with a letter a Markdown link escapes.
+        r#"<w:p><w:bookmarkStart w:id="3" w:name="résultats"/><w:r><w:t>Results</w:t></w:r><w:bookmarkEnd w:id="3"/>"#,
+        r#"<w:r><w:t xml:space="preserve"> </w:t></w:r><w:hyperlink w:anchor="résultats"><w:r><w:t>the results</w:t></w:r></w:hyperlink></w:p>"#,
     )));
     let check = |read: &Document, format: &str| {
         let mut links = read
@@ -1350,6 +1353,7 @@ fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown
             [
                 ("the goal".to_owned(), Some("goal".to_owned()), None),
                 ("the heading".to_owned(), Some("_Toc12".to_owned()), None),
+                ("the results".to_owned(), Some("résultats".to_owned()), None),
             ],
             "{format}"
         );
@@ -1359,7 +1363,7 @@ fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown
             .filter_map(|bookmark| bookmark.name().map(str::to_owned))
             .collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, ["_Toc12", "goal"], "{format}");
+        assert_eq!(names, ["_Toc12", "goal", "résultats"], "{format}");
         // Exported again, each anchor is back at its place (the read runs
         // carry the template's font, written as spans).
         let mut html = read
@@ -1465,12 +1469,14 @@ fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown
 
     // A fragment inserted in a document keeps a name the document holds.
     let mut doc = reopen(&mut doc_with_body(
-        r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Kept</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Kept</w:t></w:r><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="Other"/><w:bookmarkEnd w:id="2"/></w:p>"#,
     ));
     let end = doc.paragraph_story_location(0).unwrap().unwrap();
     doc.insert_html_fragment(
         &end,
-        r##"<p><a id="kept"></a>Again <a id="fresh"></a>New</p><p><a href="#fresh">to new</a></p>"##,
+        // A link to the document's own bookmark, which no element of the
+        // fragment carries, stays a link to it.
+        r##"<p><a id="kept"></a>Again <a id="fresh"></a>New</p><p><a href="#fresh">to new</a> <a href="#Other">back</a></p>"##,
         &[],
     )
     .unwrap();
@@ -1480,13 +1486,16 @@ fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown
         .filter_map(|bookmark| bookmark.name().map(str::to_owned))
         .collect::<Vec<_>>();
     names.sort();
-    assert_eq!(names, ["Kept", "fresh"]);
+    assert_eq!(names, ["Kept", "Other", "fresh"]);
     assert_eq!(
         doc.links()
             .into_iter()
             .map(|link| (link.anchor, link.rel_id))
             .collect::<Vec<_>>(),
-        [(Some("fresh".to_owned()), None)]
+        [
+            (Some("fresh".to_owned()), None),
+            (Some("Other".to_owned()), None)
+        ]
     );
 }
 

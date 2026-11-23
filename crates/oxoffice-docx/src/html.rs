@@ -2980,20 +2980,49 @@ fn dom_link_targets(dom: &Html) -> HashSet<String> {
         .collect::<HashSet<_>>();
     let links = Selector::parse("a[href]").expect("static selector");
     dom.select(&links)
-        .filter_map(|anchor| anchor_name(anchor.attr("href")?.trim().strip_prefix('#')?))
-        .map(bookmark_name_key)
+        .filter_map(|anchor| link_fragment(anchor.attr("href")?))
+        .map(|name| bookmark_name_key(&name))
         .filter(|name| ids.contains(name))
         .collect()
 }
 
+/// The name a `#name` link targets, percent-decoded: a Markdown renderer
+/// writes `#r%C3%A9sultats` for the anchor `résultats`.
+fn link_fragment(href: &str) -> Option<String> {
+    let fragment = href.trim().strip_prefix('#')?;
+    let bytes = fragment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = match (bytes[index], bytes.get(index + 1..index + 3)) {
+            (b'%', Some(hex)) => std::str::from_utf8(hex)
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok()),
+            _ => None,
+        };
+        match byte {
+            Some(byte) => {
+                decoded.push(byte);
+                index += 3;
+            }
+            None => {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    let decoded = String::from_utf8(decoded).unwrap_or_else(|_| fragment.to_owned());
+    anchor_name(&decoded).map(str::to_owned)
+}
+
 impl Importer<'_> {
     /// The bookmark an `href` links to, when it is `#name` and an element
-    /// of the input carries `name`.
-    fn internal_target<'h>(&self, href: &'h str) -> Option<&'h str> {
-        let name = anchor_name(href.trim().strip_prefix('#')?)?;
-        self.link_targets
-            .contains(&oxoffice_docx_oxml::text::bookmark_name_key(name))
-            .then_some(name)
+    /// of the input carries `name`, or the document already holds a
+    /// bookmark of that name (a fragment linking into it).
+    fn internal_target(&self, href: &str) -> Option<String> {
+        let name = link_fragment(href)?;
+        let key = oxoffice_docx_oxml::text::bookmark_name_key(&name);
+        (self.link_targets.contains(&key) || self.bookmark_names.contains(&key)).then_some(name)
     }
 
     /// Report each link target whose element the import did not keep as a
