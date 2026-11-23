@@ -7,6 +7,7 @@ use std::process;
 
 use clap::{Args, Parser, Subcommand};
 
+mod bibliography;
 mod commands;
 
 #[derive(Parser)]
@@ -443,6 +444,11 @@ enum Command {
     Toc {
         #[command(subcommand)]
         command: TocCommand,
+    },
+    /// Bibliography sources, style, citations and bibliographies
+    Bibliography {
+        #[command(subcommand)]
+        command: bibliography::BibliographyCommand,
     },
     /// Update field results
     Fields {
@@ -1200,6 +1206,7 @@ pub fn run(cli: Cli) {
             &output,
             json,
         ),
+        Command::Bibliography { command } => bibliography::run(command),
         Command::Fields { command } => match command {
             FieldsCommand::Update {
                 file,

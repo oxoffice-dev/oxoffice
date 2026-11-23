@@ -3,6 +3,7 @@
 
 mod attribute_strings;
 mod bibliography;
+mod bibliography_authoring;
 mod body_savability;
 mod checked_replacement;
 mod comment_dates;
