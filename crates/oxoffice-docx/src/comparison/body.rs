@@ -129,12 +129,19 @@ fn compare_body_impl(
                 .or_else(|| left.and_then(|index| original.body.content.get(index)))
         };
         let next_takes_mark = next_kept_owner(&aligned, position, |pair| {
-            matches!(item(pair), Some(BodyContent::Table(_)))
+            matches!(
+                item(pair),
+                Some(BodyContent::Table(_) | BodyContent::ContentControl(_))
+            )
         })
         .is_some_and(|pair| {
             matches!(
                 item(pair),
-                Some(BodyContent::Paragraph(_) | BodyContent::Table(_))
+                Some(
+                    BodyContent::Paragraph(_)
+                        | BodyContent::Table(_)
+                        | BodyContent::ContentControl(_)
+                )
             )
         });
         match (original_index, edited_index) {
@@ -277,6 +284,9 @@ fn compare_body_impl(
                 };
                 let owner = match (original_content, edited_content) {
                     (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
+                    (BodyContent::ContentControl(left), BodyContent::ContentControl(right)) => {
+                        EmittedOwner::kept_control(left, right, metadata)?
+                    }
                     _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
                 };
                 output.push((owner, compared));
@@ -339,6 +349,21 @@ fn compare_body_impl(
                     output.push(final_paragraph(
                         paragraph, kind, move_id, whole, merged, metadata,
                     )?);
+                } else if let BodyContent::ContentControl(control) = content
+                    && final_control_takes_previous_mark(control, position, &aligned, &output, kind)
+                {
+                    refuse_held_mark(previous_mark_position(&output, kind))?;
+                    let merged = mark_before_final_paragraph(
+                        &mut output,
+                        kind,
+                        move_id,
+                        source_bindings,
+                        metadata,
+                    )?;
+                    output.push((
+                        EmittedOwner::of(content, content, Some(kind), metadata)?,
+                        marked_control(control, kind, move_id, whole, Some(merged), metadata)?,
+                    ));
                 } else {
                     output.push(unmatched_body_owner(
                         content, kind, move_id, whole, metadata,
@@ -398,6 +423,21 @@ fn compare_body_impl(
                     output.push(final_paragraph(
                         paragraph, kind, move_id, whole, merged, metadata,
                     )?);
+                } else if let BodyContent::ContentControl(control) = content
+                    && final_control_takes_previous_mark(control, position, &aligned, &output, kind)
+                {
+                    refuse_held_mark(previous_mark_position(&output, kind))?;
+                    let merged = mark_before_final_paragraph(
+                        &mut output,
+                        kind,
+                        move_id,
+                        source_bindings,
+                        metadata,
+                    )?;
+                    output.push((
+                        EmittedOwner::of(content, content, Some(kind), metadata)?,
+                        marked_control(control, kind, move_id, whole, Some(merged), metadata)?,
+                    ));
                 } else {
                     output.push(unmatched_body_owner(
                         content, kind, move_id, whole, metadata,
@@ -772,6 +812,27 @@ fn direct_word_child_start(
     }
 }
 
+/// Whether a block control one side alone holds, `position` in `aligned`,
+/// ends the story after an emitted paragraph whose mark can carry its
+/// change (not a kept control's last paragraph: resolving it would need a
+/// paragraph after that control). Its own last mark is then the story's, which Word cannot
+/// resolve, so the paragraph before it carries the change instead, as for
+/// a final paragraph (see [`marked_control`]).
+fn final_control_takes_previous_mark(
+    control: &CT_Sdt,
+    position: usize,
+    aligned: &[(Option<usize>, Option<usize>)],
+    output: &[(EmittedOwner<'_>, String)],
+    kind: &str,
+) -> bool {
+    position + 1 == aligned.len()
+        && matches!(control.content.last(), Some(SdtContent::Paragraph(_)))
+        && matches!(
+            previous_mark_position(output, kind).map(|position| &output[position].0),
+            Some(EmittedOwner::Paragraph { .. })
+        )
+}
+
 pub(super) fn moved_body_content(
     content: &BodyContent,
     kind: &str,
@@ -781,13 +842,16 @@ pub(super) fn moved_body_content(
     match content {
         BodyContent::Paragraph(paragraph) => moved_paragraph(paragraph, kind, id, metadata),
         BodyContent::Table(table) => moved_table(table, kind, id, metadata),
-        BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
-            "comparison cannot move a content-control or opaque body node".to_owned(),
+        BodyContent::ContentControl(control) => {
+            marked_control(control, kind, Some(id), false, None, metadata)
+        }
+        BodyContent::RawXml(_) => Err(Error::Other(
+            "comparison cannot move an opaque body node".to_owned(),
         )),
     }
 }
 
-fn moved_paragraph(
+pub(super) fn moved_paragraph(
     paragraph: &CT_P,
     kind: &str,
     id: i32,
@@ -841,7 +905,12 @@ fn refuse_moved_markers(paragraph: &CT_P) -> Result<()> {
     ))
 }
 
-fn moved_table(table: &CT_Tbl, kind: &str, id: i32, metadata: &Metadata<'_>) -> Result<String> {
+pub(super) fn moved_table(
+    table: &CT_Tbl,
+    kind: &str,
+    id: i32,
+    metadata: &Metadata<'_>,
+) -> Result<String> {
     let source = metadata
         .table_source(table)
         .map(str::to_owned)

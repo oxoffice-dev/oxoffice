@@ -857,12 +857,19 @@ fn compare_aligned_cell_children(
                 .or_else(|| left.and_then(|index| original.content.get(index)))
         };
         let next_takes_mark = next_kept_owner(&aligned, position, |pair| {
-            matches!(item(pair), Some(CellContent::Table(_)))
+            matches!(
+                item(pair),
+                Some(CellContent::Table(_) | CellContent::ContentControl(_))
+            )
         })
         .is_some_and(|pair| {
             matches!(
                 item(pair),
-                Some(CellContent::Paragraph(_) | CellContent::Table(_))
+                Some(
+                    CellContent::Paragraph(_)
+                        | CellContent::Table(_)
+                        | CellContent::ContentControl(_)
+                )
             )
         });
         let child_mark = metadata.leaf_publications.len();
@@ -983,8 +990,8 @@ fn marked_cell_child(
         }
         CellContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         CellContent::Table(table) => marked_table(table, kind, metadata),
-        CellContent::ContentControl(_) => Err(Error::Other(
-            "comparison cannot add or remove an unmatched content control in a cell".to_owned(),
-        )),
+        CellContent::ContentControl(control) => {
+            marked_control(control, kind, None, carried, None, metadata)
+        }
     }
 }

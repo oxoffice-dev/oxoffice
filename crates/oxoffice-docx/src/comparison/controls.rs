@@ -293,12 +293,19 @@ pub(super) fn compare_control_from_xml(
                     .or_else(|| left.and_then(|index| original_content.get(index).copied()))
             };
             let next_takes_mark = next_kept_owner(&aligned, position, |pair| {
-                matches!(item(pair), Some(SdtContent::Table(_)))
+                matches!(
+                    item(pair),
+                    Some(SdtContent::Table(_) | SdtContent::ContentControl(_))
+                )
             })
             .is_some_and(|pair| {
                 matches!(
                     item(pair),
-                    Some(SdtContent::Paragraph(_) | SdtContent::Table(_))
+                    Some(
+                        SdtContent::Paragraph(_)
+                            | SdtContent::Table(_)
+                            | SdtContent::ContentControl(_)
+                    )
                 )
             });
             let child_mark = metadata.leaf_publications.len();
@@ -1086,9 +1093,116 @@ fn marked_control_content(
                 .revision(kind, metadata.author, metadata.timestamp, &payload)
         }
         SdtContent::RawXml(raw) => String::from_utf8(raw.clone()).map_err(utf8_error),
-        SdtContent::Cell(_) | SdtContent::ContentControl(_) => Err(Error::Other(
-            "comparison cannot add or remove an unmatched cell or nested content control"
-                .to_owned(),
+        SdtContent::ContentControl(nested) => {
+            marked_control(nested, kind, None, carried, None, metadata)
+        }
+        SdtContent::Cell(_) => Err(Error::Other(
+            "comparison cannot add or remove an unmatched cell in a content control".to_owned(),
         )),
     }
+}
+
+/// A block content control added, removed or moved whole, as Word marks
+/// one: each paragraph and table inside marked as added, removed or moved
+/// whole (`kind`, under `move_id` for a move), nested controls alike, and
+/// its properties kept. The resolution that removes that content removes
+/// the control with it. `carried` is passed to its paragraphs (see
+/// [`deleted_paragraph`]).
+///
+/// With `last_merged`, the control ends the body and its last paragraph is
+/// written as a [`final_paragraph`] that merges those properties: its mark,
+/// the body's last, stays untracked, which Word needs to resolve it, and the
+/// mark of the paragraph before the control carries the change.
+pub(super) fn marked_control<'a>(
+    control: &'a CT_Sdt,
+    kind: &str,
+    move_id: Option<i32>,
+    carried: bool,
+    last_merged: Option<PropertySide<'a>>,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
+    let source = metadata
+        .control_source(control)
+        .map(str::to_owned)
+        .map_or_else(|| control_xml(control), Ok)?;
+    let mut content = String::new();
+    let mut last_merged = last_merged;
+    for (index, child) in control.content.iter().enumerate() {
+        if index + 1 == control.content.len()
+            && let SdtContent::Paragraph(paragraph) = child
+            && let Some(merged) = last_merged.take()
+        {
+            content
+                .push_str(&final_paragraph(paragraph, kind, move_id, carried, merged, metadata)?.1);
+            continue;
+        }
+        content.push_str(&match (child, move_id) {
+            (SdtContent::Paragraph(paragraph), Some(id)) => {
+                moved_paragraph(paragraph, kind, id, metadata)?
+            }
+            (SdtContent::Paragraph(paragraph), None) if kind == "del" => {
+                deleted_paragraph(paragraph, carried, metadata)?
+            }
+            (SdtContent::Paragraph(paragraph), None) => {
+                inserted_paragraph(paragraph, carried, metadata)?
+            }
+            (SdtContent::Table(table), Some(id)) => moved_table(table, kind, id, metadata)?,
+            (SdtContent::Table(table), None) => marked_table(table, kind, metadata)?,
+            (SdtContent::ContentControl(nested), _) => {
+                marked_control(nested, kind, move_id, carried, None, metadata)?
+            }
+            (SdtContent::RawXml(raw), _) if block_markup_between_owners(raw) => {
+                String::from_utf8(raw.clone()).map_err(utf8_error)?
+            }
+            _ => {
+                return Err(Error::Other(
+                    "comparison can add or remove whole only a content control that holds paragraphs, tables or content controls"
+                        .to_owned(),
+                ));
+            }
+        });
+    }
+    if !control.content.iter().any(|child| {
+        matches!(
+            child,
+            SdtContent::Paragraph(_) | SdtContent::Table(_) | SdtContent::ContentControl(_)
+        )
+    }) {
+        return Err(Error::Other(
+            "comparison cannot add or remove an empty content control".to_owned(),
+        ));
+    }
+    metadata
+        .ids
+        .generated(replace_element_inner(&source, "w:sdtContent", &content)?)
+}
+
+/// Whether unmodelled XML between the owners of a block content control is
+/// whitespace, a proofing mark or a bookmark, comment or permission range
+/// marker: markup that resolving the control's content keeps or drops as
+/// it stands, and that a control added or removed whole carries verbatim.
+fn block_markup_between_owners(raw: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(raw);
+    let text = text.trim();
+    if text.is_empty() {
+        return true;
+    }
+    let Some(tag) = text.strip_prefix('<') else {
+        return false;
+    };
+    let name = tag
+        .split(|character: char| character.is_whitespace() || matches!(character, '/' | '>'))
+        .next()
+        .unwrap_or_default();
+    matches!(
+        name.rsplit(':').next().unwrap_or_default(),
+        "proofErr"
+            | "bookmarkStart"
+            | "bookmarkEnd"
+            | "commentRangeStart"
+            | "commentRangeEnd"
+            | "permStart"
+            | "permEnd"
+    ) && text.ends_with("/>")
+        && text.matches('<').count() == 1
 }
