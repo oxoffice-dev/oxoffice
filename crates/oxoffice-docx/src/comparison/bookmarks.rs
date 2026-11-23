@@ -394,6 +394,297 @@ pub(super) fn reconcile_body_bookmarks(
     Ok(())
 }
 
+/// The main story, the header, footer and comment stories and the footnotes
+/// part of a document, each once.
+fn bookmark_parts(document: &Document) -> Result<Vec<String>> {
+    let mut parts = vec![document.doc_part_name.clone()];
+    parts.extend(
+        story_parts(document)?
+            .into_iter()
+            .map(|story| story.part_name),
+    );
+    parts.extend(FootnotePart::name_of(document)?);
+    let mut seen = HashSet::new();
+    parts.retain(|part| seen.insert(part.clone()));
+    Ok(parts)
+}
+
+/// The ids of the bookmarks both inputs hold under one name, in any story.
+///
+/// [`reconcile_body_bookmarks`] gave the edited main story the original's id
+/// for each name both hold, so one id names one bookmark on both sides. No
+/// tracked change records a bookmark, so the emitters write such a bookmark
+/// once, where the edited input has it. An id that names two bookmarks in
+/// one input, and the note custody markers, are left out.
+pub(super) fn shared_bookmark_ids(original: &Document, edited: &Document) -> Result<HashSet<i32>> {
+    let names = |document: &Document| -> Result<HashMap<i32, String>> {
+        let mut names = HashMap::new();
+        let mut ambiguous = HashSet::new();
+        for part in bookmark_parts(document)? {
+            let Some(xml) = document.package.get_part(&part) else {
+                continue;
+            };
+            for bookmark in body_bookmarks(xml)? {
+                let (Some(id), Some(name)) = (bookmark.id, bookmark.name) else {
+                    continue;
+                };
+                if name.starts_with("_rdocxCmp") || names.insert(id, name).is_some() {
+                    ambiguous.insert(id);
+                }
+            }
+        }
+        names.retain(|id, _| !ambiguous.contains(id));
+        Ok(names)
+    };
+    let edited = names(edited)?;
+    Ok(names(original)?
+        .into_iter()
+        .filter(|(id, name)| edited.get(id) == Some(name))
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// Those of these bookmarks that `document` holds as a point: the start is
+/// followed, among its siblings, by other bookmark markers only, then by its
+/// end. A whole inserted paragraph writes such a bookmark whole.
+pub(super) fn zero_width_bookmark_ids(
+    document: &Document,
+    ids: &HashSet<i32>,
+) -> Result<HashSet<i32>> {
+    let mut points = HashSet::new();
+    if ids.is_empty() {
+        return Ok(points);
+    }
+    for part in bookmark_parts(document)? {
+        let Some(xml) = document.package.get_part(&part) else {
+            continue;
+        };
+        let tree = crate::revision::XmlTree::parse(xml)?;
+        let id_of = |index: usize| -> Result<Option<i32>> {
+            Ok(word_attributes(&tree, xml, index)?
+                .get("id")
+                .and_then(|id| id.parse::<i32>().ok())
+                .filter(|id| ids.contains(id)))
+        };
+        for (index, node) in tree.elements.iter().enumerate() {
+            if !node.word || node.local != "bookmarkStart" || in_fallback(&tree, index) {
+                continue;
+            }
+            let (Some(id), Some(parent)) = (id_of(index)?, node.parent) else {
+                continue;
+            };
+            let siblings = &tree.elements[parent].children;
+            let Some(at) = siblings.iter().position(|&child| child == index) else {
+                continue;
+            };
+            for &sibling in &siblings[at + 1..] {
+                let element = &tree.elements[sibling];
+                if !element.word
+                    || !matches!(element.local.as_str(), "bookmarkStart" | "bookmarkEnd")
+                {
+                    break;
+                }
+                if element.local == "bookmarkEnd" && id_of(sibling)? == Some(id) {
+                    points.insert(id);
+                    break;
+                }
+            }
+        }
+    }
+    Ok(points)
+}
+
+/// The text each of these bookmarks covers in `document`, in the stories the
+/// comparison checks: the `w:t` and `w:tab` it holds, and a line feed for
+/// each paragraph mark, without a last one. `None` for a bookmark whose end
+/// comes first or is missing. Whole paragraphs that a comparison deletes and
+/// inserts move a shared bookmark's start or end to a paragraph edge (see
+/// `place_shared_bookmarks`); the text it covers must not change.
+pub(super) fn bookmark_coverage(
+    document: &Document,
+    ids: &HashSet<i32>,
+) -> Result<HashMap<i32, Option<String>>> {
+    let mut covered: HashMap<i32, Option<String>> = HashMap::new();
+    for part in bookmark_parts(document)? {
+        let Some(xml) = document.package.get_part(&part) else {
+            continue;
+        };
+        let tree = crate::revision::XmlTree::parse(xml)?;
+        // (position, event): 0 start, 1 end, 2 text, 3 paragraph mark.
+        let mut events: Vec<(usize, u8, usize, Option<i32>)> = Vec::new();
+        for (index, node) in tree.elements.iter().enumerate() {
+            if !node.word || in_fallback(&tree, index) {
+                continue;
+            }
+            match node.local.as_str() {
+                "bookmarkStart" | "bookmarkEnd" => {
+                    let id = word_attributes(&tree, xml, index)?
+                        .get("id")
+                        .and_then(|id| id.parse::<i32>().ok())
+                        .filter(|id| ids.contains(id));
+                    if id.is_some() {
+                        let kind = u8::from(node.local == "bookmarkEnd");
+                        events.push((node.start, kind, index, id));
+                    }
+                }
+                "t" | "tab"
+                    if node
+                        .parent
+                        .is_some_and(|parent| tree.elements[parent].local == "r") =>
+                {
+                    events.push((node.start, 2, index, None))
+                }
+                "p" => events.push((node.close_start, 3, index, None)),
+                _ => {}
+            }
+        }
+        events.sort_by_key(|event| event.0);
+        let mut open: HashMap<i32, String> = HashMap::new();
+        for (_, kind, index, id) in events {
+            match (kind, id) {
+                (0, Some(id)) => {
+                    if covered.contains_key(&id) || open.insert(id, String::new()).is_some() {
+                        covered.insert(id, None);
+                    }
+                }
+                (1, Some(id)) => {
+                    let text = open
+                        .remove(&id)
+                        .map(|text| text.strip_suffix('\n').map(str::to_owned).unwrap_or(text));
+                    if covered.insert(id, text).is_some() {
+                        covered.insert(id, None);
+                    }
+                }
+                (2, _) => {
+                    let node = &tree.elements[index];
+                    let text = if node.local == "tab" {
+                        "\t".to_owned()
+                    } else if node.empty {
+                        String::new()
+                    } else {
+                        String::from_utf8_lossy(&xml[node.open_end..node.close_start]).into_owned()
+                    };
+                    for covering in open.values_mut() {
+                        covering.push_str(&text);
+                    }
+                }
+                (3, _) => {
+                    for covering in open.values_mut() {
+                        covering.push('\n');
+                    }
+                }
+                _ => {}
+            }
+        }
+        for id in open.into_keys() {
+            covered.insert(id, None);
+        }
+    }
+    for id in ids {
+        covered.entry(*id).or_insert(None);
+    }
+    Ok(covered)
+}
+
+/// `document` without the bookmarks of these ids, in every story the
+/// comparison checks, as the postconditions read it.
+pub(super) fn without_bookmarks(document: &Document, ids: &HashSet<i32>) -> Result<Document> {
+    let mut copy = document.clone_for_staging();
+    for part in bookmark_parts(document)? {
+        let Some(xml) = document.package.get_part(&part) else {
+            continue;
+        };
+        let ranges = bookmark_marker_ranges(xml, ids)?;
+        if ranges.is_empty() {
+            continue;
+        }
+        let mut xml = xml.to_vec();
+        for (range, _) in ranges.into_iter().rev() {
+            xml.drain(range);
+        }
+        copy.package.set_part(&part, xml);
+    }
+    Ok(copy)
+}
+
+/// Whether `document` holds each of these bookmarks once, in the stories the
+/// comparison checks: one start, under the name `original` gives it, and one
+/// end. Rejecting a paragraph inserted whole leaves its untracked bookmarks
+/// beside the restored text, where the original may not have them.
+pub(super) fn holds_bookmarks_once(
+    document: &Document,
+    original: &Document,
+    ids: &HashSet<i32>,
+) -> Result<bool> {
+    // How many markers each document holds by id, and by name for a start.
+    let markers = |document: &Document| -> Result<HashMap<(i32, Option<String>), usize>> {
+        let mut counts = HashMap::new();
+        for part in bookmark_parts(document)? {
+            let Some(xml) = document.package.get_part(&part) else {
+                continue;
+            };
+            let tree = crate::revision::XmlTree::parse(xml)?;
+            for (index, node) in tree.elements.iter().enumerate() {
+                let start = match node.local.as_str() {
+                    "bookmarkStart" => true,
+                    "bookmarkEnd" => false,
+                    _ => continue,
+                };
+                if !node.word || in_fallback(&tree, index) {
+                    continue;
+                }
+                let attributes = word_attributes(&tree, xml, index)?;
+                let Some(id) = attributes
+                    .get("id")
+                    .and_then(|id| id.parse::<i32>().ok())
+                    .filter(|id| ids.contains(id))
+                else {
+                    continue;
+                };
+                let name = start.then(|| attributes.get("name").cloned().unwrap_or_default());
+                *counts.entry((id, name)).or_default() += 1;
+            }
+        }
+        Ok(counts)
+    };
+    let held = markers(document)?;
+    let wanted = markers(original)?;
+    Ok(ids.iter().all(|&id| {
+        let name = wanted
+            .keys()
+            .find_map(|(key, name)| (*key == id).then(|| name.clone()).flatten());
+        name.is_some_and(|name| held.get(&(id, Some(name))) == Some(&1))
+            && held.get(&(id, None)) == Some(&1)
+            && held.keys().filter(|(key, _)| *key == id).count() == 2
+    }))
+}
+
+/// Each `w:bookmarkStart` and `w:bookmarkEnd` of these ids in a part, as
+/// its byte range and whether it starts, in document order.
+pub(super) fn bookmark_marker_ranges(
+    xml: &[u8],
+    ids: &HashSet<i32>,
+) -> Result<Vec<(Range<usize>, bool)>> {
+    let tree = crate::revision::XmlTree::parse(xml)?;
+    let mut ranges = Vec::new();
+    for (index, node) in tree.elements.iter().enumerate() {
+        let start = match node.local.as_str() {
+            "bookmarkStart" => true,
+            "bookmarkEnd" => false,
+            _ => continue,
+        };
+        if node.word
+            && word_attributes(&tree, xml, index)?
+                .get("id")
+                .and_then(|id| id.parse::<i32>().ok())
+                .is_some_and(|id| ids.contains(&id))
+        {
+            ranges.push((node.start..node.end, start));
+        }
+    }
+    Ok(ranges)
+}
+
 /// The bookmark starts of a main story, in document order. Copies in an
 /// `mc:Fallback` repeat their `mc:Choice` and are left out.
 fn body_bookmarks(xml: &[u8]) -> Result<Vec<BodyBookmark>> {
@@ -771,6 +1062,40 @@ pub(super) fn rewritten_opening(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_body(body: &str) -> Document {
+        let mut document = Document::new();
+        let name = document.doc_part_name.clone();
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
+        );
+        document.package.set_part(&name, xml.into_bytes());
+        document
+    }
+
+    fn marked(id: i32, name: &str) -> String {
+        format!(
+            r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>Text</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
+        )
+    }
+
+    #[test]
+    fn a_rejection_holds_each_moved_bookmark_once_under_its_name() {
+        let original = with_body(&marked(1, "Kept"));
+        let ids = HashSet::from([1]);
+        let holds = |body: &str| holds_bookmarks_once(&with_body(body), &original, &ids).unwrap();
+        assert!(holds(&marked(1, "Kept")));
+        assert!(!holds(&format!(
+            "{}{}",
+            marked(1, "Kept"),
+            marked(1, "Kept")
+        )));
+        assert!(!holds("<w:p/>"));
+        assert!(!holds(&marked(1, "Renamed")));
+        assert!(!holds(
+            r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Text</w:t></w:r></w:p>"#
+        ));
+    }
 
     #[test]
     fn a_rewritten_opening_keeps_a_single_quoted_attribute_well_formed() {

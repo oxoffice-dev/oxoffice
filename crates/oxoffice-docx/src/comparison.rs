@@ -69,7 +69,10 @@ mod source_scopes;
 mod stories;
 mod text_boxes;
 
-use bookmarks::{reconcile_body_bookmarks, rewritten_opening, word_attributes};
+use bookmarks::{
+    bookmark_coverage, holds_bookmarks_once, reconcile_body_bookmarks, rewritten_opening,
+    shared_bookmark_ids, without_bookmarks, word_attributes, zero_width_bookmark_ids,
+};
 use field_conversions::validate_field_conversion_role;
 use guard::{
     guard_mask_coordinates, guard_source_body_at, guard_story_owners, guard_story_part,
@@ -210,7 +213,7 @@ use paragraph_properties::{
     clear_default_orientation, deleted_paragraph, final_paragraph_properties_xml,
     inserted_paragraph, modeled_paragraph_properties, nonempty_paragraph_properties,
     paragraph_children_xml, paragraph_properties_differ, paragraph_properties_xml,
-    section_properties_xml,
+    place_shared_bookmarks, section_properties_xml, shared_bookmark_markers,
 };
 use paragraphs::{
     coalesced_held_owner_equal, coalesced_paragraphs_equal, compare_body_content,
@@ -313,6 +316,17 @@ struct Metadata<'a> {
     leaf_publications: Vec<LeafPublication>,
     field_conversions: Vec<FieldConversionWitness>,
     whole_field_conversions: Vec<WholeFieldWitness>,
+    /// The ids of the bookmarks both inputs hold (see
+    /// [`shared_bookmark_ids`]), which a whole deleted or inserted paragraph
+    /// writes once, untracked, where the edited input has them.
+    shared_bookmarks: HashSet<i32>,
+    /// Those of them the edited input holds as a point (see
+    /// [`zero_width_bookmark_ids`]), which a whole inserted paragraph writes
+    /// whole.
+    point_bookmarks: HashSet<i32>,
+    /// Those of them a whole paragraph wrote that way, whose start or end
+    /// the acceptance or the rejection leaves at a paragraph edge.
+    relocated_bookmarks: HashSet<i32>,
 }
 
 #[derive(Clone)]
@@ -480,6 +494,17 @@ impl Document {
     /// renumbers, take this document's, the notes paired in reference order. A
     /// footnote whose reference moved is deleted with its old reference and
     /// inserted again, under a new id, with the new one, as Word shows it.
+    ///
+    /// No tracked change records a bookmark: a paragraph whose bookmarks
+    /// differ is deleted and inserted whole, the insertion first, and a
+    /// bookmark both documents hold is written once, outside the revision
+    /// marks, its start in the insertion and its end in the deletion, as Word
+    /// resolves them. Accepting leaves such an end just after the inserted
+    /// paragraph, and rejecting such a start at the restored paragraph's
+    /// start, over the same text. Such a paragraph is still refused when a
+    /// bookmark both documents hold starts or ends inside its text, or sits
+    /// under another id or inside a hyperlink or control, or when it holds a
+    /// complex field or a comment range both documents hold.
     pub fn compare(
         &mut self,
         edited: &Document,
@@ -630,6 +655,9 @@ impl Document {
                     leaf_publications: Vec::new(),
                     field_conversions: Vec::new(),
                     whole_field_conversions: Vec::new(),
+                    shared_bookmarks: HashSet::new(),
+                    point_bookmarks: HashSet::new(),
+                    relocated_bookmarks: HashSet::new(),
                 },
                 &mut Vec::new(),
             )
@@ -757,6 +785,8 @@ impl Document {
             used_ids.extend(footnote_custody_reserved_ids(document)?);
         }
         let input_ids = used_ids.clone();
+        let shared_bookmarks = shared_bookmark_ids(&original, &edited)?;
+        let point_bookmarks = zero_width_bookmark_ids(&edited, &shared_bookmarks)?;
         let mut metadata = Metadata {
             author,
             timestamp,
@@ -770,6 +800,9 @@ impl Document {
             leaf_publications: Vec::new(),
             field_conversions: Vec::new(),
             whole_field_conversions: Vec::new(),
+            shared_bookmarks,
+            point_bookmarks,
+            relocated_bookmarks: HashSet::new(),
         };
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
@@ -1047,10 +1080,42 @@ impl Document {
             |document| document.accept_revision_ids(&new_ids),
             Some(&new_ids),
         )?;
-        let mut accepted_body =
-            normalized_package(&accepted, &original_stories, options, &text_box_markers)?;
-        let mut edited_package =
-            normalized_package(&edited, &edited_stories, options, &text_box_markers)?;
+        // A bookmark both inputs hold that a whole paragraph wrote once (see
+        // `place_shared_bookmarks`) is held once under its name and covers
+        // the same text after either resolution; its start or end may sit at
+        // the paragraph edge the resolution leaves it on, so the rest of the
+        // stories is compared without it.
+        let relocated = &metadata.relocated_bookmarks;
+        let relocated_views = |resolved: &Document, input: &Document, outcome: &str| {
+            if relocated.is_empty() {
+                return Ok((None, None));
+            }
+            if !holds_bookmarks_once(resolved, input, relocated)?
+                || bookmark_coverage(resolved, relocated)? != bookmark_coverage(input, relocated)?
+            {
+                return Err(Error::Other(format!(
+                    "comparison {outcome} does not keep each bookmark both inputs hold once over the same text: \
+                     a paragraph replaced whole holds one that starts or ends inside its text"
+                )));
+            }
+            Ok((
+                Some(without_bookmarks(resolved, relocated)?),
+                Some(without_bookmarks(input, relocated)?),
+            ))
+        };
+        let (accepted_view, edited_view) = relocated_views(&accepted, &edited, "acceptance")?;
+        let mut accepted_body = normalized_package(
+            accepted_view.as_ref().unwrap_or(&accepted),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
+        let mut edited_package = normalized_package(
+            edited_view.as_ref().unwrap_or(&edited),
+            &edited_stories,
+            options,
+            &text_box_markers,
+        )?;
         let main_ignored = story_ignored(options, ComparisonStoryKind::Main);
         if main_ignored {
             edited_package.0 = accepted_body.0.clone();
@@ -1088,10 +1153,19 @@ impl Document {
             |document| document.reject_revision_ids(&new_ids),
             Some(&new_ids),
         )?;
-        let mut rejected_package =
-            normalized_package(&rejected, &original_stories, options, &text_box_markers)?;
-        let mut original_package =
-            normalized_package(&original, &original_stories, options, &text_box_markers)?;
+        let (rejected_view, original_view) = relocated_views(&rejected, &original, "rejection")?;
+        let mut rejected_package = normalized_package(
+            rejected_view.as_ref().unwrap_or(&rejected),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
+        let mut original_package = normalized_package(
+            original_view.as_ref().unwrap_or(&original),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
         if main_ignored {
             original_package.0 = rejected_package.0.clone();
         }
