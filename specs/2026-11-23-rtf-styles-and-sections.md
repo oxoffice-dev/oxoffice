@@ -43,7 +43,11 @@ Write and read RTF the way Word does.
   restate from that style stays with the style instead of becoming direct
   formatting. As in Word, a value a styled paragraph or run does not state is
   RTF's default (left, no indent, not bold, auto colour...), so a value that
-  turns a style's setting off comes back as direct formatting.
+  turns a style's setting off comes back as direct formatting. Two
+  exceptions: an unstated highlight or vertical position (superscript,
+  subscript) is still the style's, since no direct value says "none" or
+  "baseline" through the run API. A style the document refuses with its
+  based-on or next style (a cycle) is kept without them.
 - A run's font is the one the most specific level names (defaults, paragraph
   style, character style, run), its theme font first within a level.
 - Character, table and section styles of the stylesheet are not read; a
