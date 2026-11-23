@@ -2763,3 +2763,30 @@ fn a_paragraph_merged_on_rejection_keeps_its_properties_when_formatting_is_ignor
         .unwrap()..];
     assert!(!body.contains("Heading2"), "{xml}");
 }
+
+#[test]
+fn a_last_paragraph_deleted_after_a_restyled_one_keeps_the_original_formatting_when_it_is_ignored()
+{
+    // The paragraph before carries the deletion on its mark, and accepting
+    // merges the last one into it: with formatting ignored, it keeps the
+    // original's properties on both sides, as the paragraph itself does.
+    let original = doc_with_body(&format!("{}{}", plain("Intro"), plain("Gone")));
+    let edited = doc_with_body(
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+    );
+    let options = ComparisonOptions {
+        ignore_formatting: true,
+        ..Default::default()
+    };
+    let mut doc = original;
+    doc.compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap();
+    let xml = main_part_xml(&mut doc);
+    assert!(
+        !xml.contains("center") && !xml.contains("pPrChange"),
+        "{xml}"
+    );
+    let mut copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Intro"]);
+    assert!(!main_part_xml(&mut copy).contains("center"));
+}
