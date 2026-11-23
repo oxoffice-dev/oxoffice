@@ -1,8 +1,8 @@
 {
   "file": "google/contract.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "1931efd323be29f23f19e5bd64bbc7301bbb5216aa7b21fb705780be29fb1dce",
-  "outline_and_tags": "e0374b7dff34306074d2448178f25ef7b2d0982498f69bedcec88973c37d5d3e",
+  "outline_and_tags": "de9cdb6d42a5fa2bd4dd5bcd7650e432f060613148218dd7ca246c9c14ee9f24",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "e355e519ac5ac6afe642ed0eaafb7e65044a44e4de071eb72edaa726913e64d2", "content": "03132f66764a525a77708f28bb6ee3214520cdceaea2667b2af17a6b2b79598c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
