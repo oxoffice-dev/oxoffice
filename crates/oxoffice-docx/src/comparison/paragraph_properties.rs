@@ -230,10 +230,12 @@ pub(super) fn final_paragraph_properties_xml(
 ) -> Result<String> {
     let accepted_modeled = modeled_paragraph_properties(accepted.typed);
     let rejected_modeled = modeled_paragraph_properties(rejected.typed);
-    if metadata.options.ignore_formatting
-        || (accepted_modeled == rejected_modeled
-            && without_empty_mark(accepted.xml.as_deref())?
-                == without_empty_mark(rejected.xml.as_deref())?)
+    // Not skipped with `ignore_formatting`: the two sides are the properties
+    // of two paragraphs that a resolution merges, not a formatting edit, and
+    // Word's merged paragraph keeps this mark's unless the change says so.
+    if accepted_modeled == rejected_modeled
+        && without_empty_mark(accepted.xml.as_deref())?
+            == without_empty_mark(rejected.xml.as_deref())?
     {
         return Ok(own.xml.clone().unwrap_or_default());
     }

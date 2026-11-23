@@ -3492,3 +3492,75 @@ fn a_simple_field_nested_through_a_control_in_another_keeps_a_refusal_when_its_p
         assert!(doc.revisions().is_empty());
     }
 }
+
+#[test]
+fn a_paragraph_merged_on_rejection_keeps_its_properties_when_formatting_is_ignored() {
+    // A bookmark start between the paragraphs makes the paragraph before the
+    // inserted heading carry the insertion on its mark. Rejecting it in Word
+    // merges that paragraph into the heading's mark, so the heading records
+    // the paragraph's own properties in a change, formatting ignored or not.
+    let before =
+        r#"<w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t>Body text.</w:t></w:r></w:p>"#;
+    let next = r#"<w:bookmarkStart w:id="54" w:name="_Toc23"/><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Future work</w:t></w:r><w:bookmarkEnd w:id="54"/></w:p>"#;
+    let inserted = r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Limitations</w:t></w:r></w:p>"#;
+    let original = || doc_with_body(&format!("{before}{next}"));
+    let edited = doc_with_body(&format!("{before}{inserted}{next}"));
+    let options = ComparisonOptions {
+        ignore_formatting: true,
+        ..Default::default()
+    };
+    let mut doc = original();
+    doc.compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap();
+    let xml = main_part_xml(&mut doc);
+    let heading = &xml[..xml.find("Limitations").unwrap()];
+    let heading = &heading[heading
+        .rfind("<w:p>")
+        .into_iter()
+        .chain(heading.rfind("<w:p "))
+        .max()
+        .unwrap()..];
+    assert!(
+        heading.contains("<w:pPrChange") && heading.contains(r#"<w:jc w:val="both"/>"#),
+        "{xml}"
+    );
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    let mut copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original()));
+    let xml = main_part_xml(&mut copy);
+    let body = &xml[..xml.find("Body text.").unwrap()];
+    let body = &body[body
+        .rfind("<w:p>")
+        .into_iter()
+        .chain(body.rfind("<w:p "))
+        .max()
+        .unwrap()..];
+    assert!(!body.contains("Heading2"), "{xml}");
+}
+
+#[test]
+fn a_last_paragraph_deleted_after_a_restyled_one_keeps_the_original_formatting_when_it_is_ignored()
+{
+    // The paragraph before carries the deletion on its mark, and accepting
+    // merges the last one into it: with formatting ignored, it keeps the
+    // original's properties on both sides, as the paragraph itself does.
+    let original = doc_with_body(&format!("{}{}", plain("Intro"), plain("Gone")));
+    let edited = doc_with_body(
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+    );
+    let options = ComparisonOptions {
+        ignore_formatting: true,
+        ..Default::default()
+    };
+    let mut doc = original;
+    doc.compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap();
+    let xml = main_part_xml(&mut doc);
+    assert!(
+        !xml.contains("center") && !xml.contains("pPrChange"),
+        "{xml}"
+    );
+    let mut copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Intro"]);
+    assert!(!main_part_xml(&mut copy).contains("center"));
+}
