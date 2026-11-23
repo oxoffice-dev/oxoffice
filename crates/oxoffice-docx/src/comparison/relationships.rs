@@ -86,43 +86,27 @@ fn remap_equivalent_owner_relationships(
         if right.rel_type == rel_types::CHART {
             let (signature, parts) = chart_relationship_signature(edited, edited_owner, right)?;
             chart_parts.insert(right.id.clone(), parts);
-            edited_keys.push(Some(RelationshipKey::of(
-                right,
-                Some(signature.into_bytes()),
-            )));
+            edited_keys.push(Some(RelationshipKey::of(right, Some(signature.as_bytes()))));
         } else {
             edited_keys.push(relationship_key(edited, edited_owner, right)?);
         }
     }
-    // A relationship both versions hold under one id keeps it. The others
-    // take an unused original relationship with the same payload, or else a
-    // used one: several edited relationships can name what one original
-    // relationship names.
+    // An edited relationship takes an unused original relationship with the
+    // same payload, or else a used one: several edited pictures or links can
+    // name what one original relationship names. A chart takes only an
+    // unused one: two drawings on one chart part would edit together.
     let mut matches = vec![None; edited_relationships.items.len()];
-    for (slot, right) in edited_relationships.items.iter().enumerate() {
-        let Some(key) = &edited_keys[slot] else {
-            continue;
-        };
-        if let Some(index) = original_relationships
-            .items
-            .iter()
-            .position(|left| left.id == right.id)
-            && original_keys[index].as_ref() == Some(key)
-            && used.insert(index)
-        {
-            matches[slot] = Some(index);
-        }
-    }
     for (slot, key) in edited_keys.iter().enumerate() {
         let Some(key) = key else {
             continue;
         };
-        if matches[slot].is_some() {
-            continue;
-        }
         let same = |index: &usize| original_keys[*index].as_ref() == Some(key);
         let unused = (0..original_keys.len()).find(|index| !used.contains(index) && same(index));
-        matches[slot] = unused.or_else(|| (0..original_keys.len()).find(same));
+        matches[slot] = unused.or_else(|| {
+            (key.rel_type != rel_types::CHART)
+                .then(|| (0..original_keys.len()).find(same))
+                .flatten()
+        });
         if let Some(index) = unused {
             used.insert(index);
         }
@@ -534,15 +518,16 @@ pub(super) fn chart_relationship_signature(
 struct RelationshipKey {
     rel_type: String,
     target_mode: Option<String>,
-    payload: Option<Vec<u8>>,
+    /// The payload's SHA-256.
+    payload: Option<[u8; 32]>,
 }
 
 impl RelationshipKey {
-    fn of(relationship: &Relationship, payload: Option<Vec<u8>>) -> Self {
+    fn of(relationship: &Relationship, payload: Option<&[u8]>) -> Self {
         Self {
             rel_type: relationship.rel_type.clone(),
             target_mode: relationship.target_mode.clone(),
-            payload,
+            payload: payload.map(|bytes| Sha256::digest(bytes).into()),
         }
     }
 }
@@ -557,14 +542,14 @@ fn relationship_key(
         let (signature, _) = chart_relationship_signature(document, owner, relationship)?;
         Some(RelationshipKey::of(
             relationship,
-            Some(signature.into_bytes()),
+            Some(signature.as_bytes()),
         ))
     } else if relationship.rel_type == rel_types::IMAGE
         || relationship.rel_type == rel_types::HYPERLINK
     {
         Some(RelationshipKey::of(
             relationship,
-            relationship_payload(document, owner, relationship),
+            relationship_payload(document, owner, relationship).as_deref(),
         ))
     } else {
         None

@@ -408,14 +408,20 @@ fn rtl_and_cjk_text_compare_by_character() {
 }
 
 /// A document with one paragraph per id of `links`, each a hyperlink through
-/// that relationship id, and one relationship to `address` per distinct id.
-fn doc_with_links(links: &[&str], address: &str) -> Document {
+/// that relationship id, the last one followed by the text `tail`, and one
+/// relationship to `address` per distinct id.
+fn doc_with_links(links: &[&str], address: &str, tail: &str) -> Document {
     let body = links
         .iter()
         .enumerate()
         .map(|(index, id)| {
             format!(
-                r#"<w:p><w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{id}"><w:r><w:t>site {index}</w:t></w:r></w:hyperlink></w:p>"#
+                r#"<w:p><w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{id}"><w:r><w:t>site {index}</w:t></w:r></w:hyperlink>{}</w:p>"#,
+                if index + 1 == links.len() && !tail.is_empty() {
+                    format!(r#"<w:r><w:t xml:space="preserve">{tail}</w:t></w:r>"#)
+                } else {
+                    String::new()
+                }
             )
         })
         .collect::<String>();
@@ -452,8 +458,8 @@ fn links_reaching_one_address_through_other_relationships_are_no_change() {
         (&["rIdA", "rIdB"][..], &["rIdC", "rIdC"][..]),
     ] {
         let mut doc = redline(
-            doc_with_links(original, SITE),
-            &doc_with_links(edited, SITE),
+            doc_with_links(original, SITE, ""),
+            &doc_with_links(edited, SITE, ""),
         );
         assert_eq!(kinds(&doc), [], "{original:?} against {edited:?}");
         let urls = |doc: &Document| {
@@ -464,6 +470,50 @@ fn links_reaching_one_address_through_other_relationships_are_no_change() {
         };
         assert_eq!(urls(&doc), [Some(SITE.to_owned()), Some(SITE.to_owned())]);
         assert_eq!(urls(&accepted(&mut doc)), urls(&rejected(&mut doc)));
+    }
+}
+
+#[test]
+fn text_added_after_a_link_reaching_its_address_through_another_relationship_is_the_only_change() {
+    const SITE: &str = "https://example.com/";
+    let changes = |doc: &Document| {
+        (
+            kinds(doc),
+            revision_texts(doc, RevisionKind::Deletion),
+            revision_texts(doc, RevisionKind::Insertion),
+        )
+    };
+    for (original, edited) in [
+        (
+            &["rIdShared", "rIdShared"][..],
+            &["rIdShared", "rIdOther"][..],
+        ),
+        (&["rIdA", "rIdB"][..], &["rIdC", "rIdC"][..]),
+    ] {
+        // The same edit with the relationships unchanged.
+        let wanted = redline(
+            doc_with_links(original, SITE, " end"),
+            &doc_with_links(original, SITE, " end and more"),
+        );
+        let mut doc = redline(
+            doc_with_links(original, SITE, " end"),
+            &doc_with_links(edited, SITE, " end and more"),
+        );
+        assert_eq!(
+            changes(&doc),
+            changes(&wanted),
+            "{original:?} against {edited:?}"
+        );
+        assert!(
+            !revision_texts(&doc, RevisionKind::Insertion)
+                .concat()
+                .contains("site")
+        );
+        assert_eq!(
+            texts(&accepted(&mut doc)),
+            ["site 0", "site 1 end and more"]
+        );
+        assert_eq!(texts(&rejected(&mut doc)), ["site 0", "site 1 end"]);
     }
 }
 

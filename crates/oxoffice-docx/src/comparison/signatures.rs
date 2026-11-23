@@ -43,7 +43,8 @@ fn classify_relationship(id: &mut String) {
     });
 }
 
-fn classified_hyperlink(
+/// A copy of `link` that names its relationship by its class.
+pub(super) fn classified_hyperlink(
     link: &oxoffice_docx_oxml::text::HyperlinkSpan,
 ) -> oxoffice_docx_oxml::text::HyperlinkSpan {
     let mut link = link.clone();

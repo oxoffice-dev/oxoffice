@@ -2205,6 +2205,43 @@ fn only_the_relinked_one_of_two_pictures_sharing_an_image_is_changed() {
     }
 }
 
+#[test]
+fn a_copied_chart_keeps_its_own_chart_part_once_accepted() {
+    let data = ChartData {
+        categories: vec!["Q1".into(), "Q2".into()],
+        series: vec![("s".into(), vec![1.0, 2.0])],
+        ..ChartData::default()
+    };
+    let with_charts = |count: usize| {
+        let mut doc = doc_with(&["sales"]);
+        for _ in 0..count {
+            doc.add_chart(
+                ChartKind::Bar,
+                Length::inches(4.0),
+                Length::inches(3.0),
+                &data,
+            )
+            .unwrap();
+        }
+        reopen(&mut doc)
+    };
+    let mut doc = compared(with_charts(1), &with_charts(2));
+    let mut accepted = reopen(&mut doc);
+    accepted.accept_all().unwrap();
+    let package =
+        OpcPackage::from_reader(Cursor::new(reopen(&mut accepted).to_bytes().unwrap())).unwrap();
+    let mut targets = package
+        .get_part_rels("/word/document.xml")
+        .unwrap()
+        .get_all_by_type(CHART)
+        .into_iter()
+        .map(|relationship| relationship.target.clone())
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    assert_eq!(targets.len(), 2, "{targets:?}");
+}
+
 /// The parts and relationship targets of the saved `doc`, by ZIP entry name.
 fn saved_entries(doc: &mut Document) -> BTreeMap<String, String> {
     crate::support::package_parts(&doc.to_bytes().unwrap())
