@@ -1259,6 +1259,42 @@ fn a_solid_or_percentage_shading_paints_its_pattern_colour() {
     assert!(pixels_in_text_box(&doc, "Styled", [0x00, 0xFF, 0xFF]) > 20);
 }
 
+#[test]
+fn a_dark_highlight_paints_words_palette() {
+    // Word's dark highlights are half intensity, not the CSS colours of the
+    // same names (dark blue is 000080, not 00008B), and its greys are
+    // 808080 and C0C0C0.
+    let run = |value: &str| {
+        format!(
+            r#"<w:p><w:r><w:rPr><w:highlight w:val="{value}"/></w:rPr><w:t>{value}</w:t></w:r></w:p>"#
+        )
+    };
+    let doc = doc_with_body(&[run("darkBlue"), run("darkGray"), run("lightGray")].concat());
+    assert!(pixels_in_text_box(&doc, "darkBlue", [0x00, 0x00, 0x80]) > 20);
+    assert!(pixels_in_text_box(&doc, "darkGray", [0x80, 0x80, 0x80]) > 20);
+    assert!(pixels_in_text_box(&doc, "lightGray", [0xC0, 0xC0, 0xC0]) > 20);
+}
+
+#[test]
+fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_render() {
+    // A shading or a text colour read from the file unchecked, with a
+    // character of more than one byte where a digit belongs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:shd w:val="clear" w:fill="Aé0000"/></w:rPr><w:t>Fill</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:color w:val="Aé0000"/></w:rPr><w:t>Colour</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="00FF00;x" w:fill="FF0000"/></w:rPr><w:t>Pattern</w:t></w:r></w:p>"#,
+    ));
+    // The page stays white behind the fill that is not a colour.
+    assert_eq!(pixels_in_text_box(&doc, "Fill", [0xA0, 0x00, 0x00]), 0);
+    assert!(pixels_in_text_box(&doc, "Fill", [0xFF, 0xFF, 0xFF]) > 20);
+    // A foreground that is not a colour is automatic: black under a
+    // pattern, so 25 % of it over red is BF0000 (not BF4000, a quarter of
+    // the green the value starts with).
+    assert!(pixels_in_text_box(&doc, "Pattern", [0xBF, 0x00, 0x00]) > 20);
+    let html = doc.to_html_fragment();
+    assert!(!html.contains("background-color:#A0"), "{html}");
+}
+
 // ---- Corpus ----
 
 // Fails today: the number of a caption made with a SEQ field is drawn, and

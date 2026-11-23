@@ -9,7 +9,7 @@ use std::path::Path;
 use oxoffice_docx_oxml::document::BodyContent;
 use oxoffice_docx_oxml::numbering::{CT_Lvl, ST_NumberFormat};
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
-use oxoffice_docx_oxml::shared::{ST_HighlightColor, ST_Jc, ST_Underline};
+use oxoffice_docx_oxml::shared::{ST_Jc, ST_Underline};
 use oxoffice_docx_oxml::table::{
     CT_Row, CT_Tbl, CT_TblGrid, CT_TblGridCol, CT_TblPr, CT_TblWidth, CT_Tc, CT_TcPr, CellContent,
     VMerge,
@@ -846,48 +846,19 @@ impl<'a> OdtWriter<'a> {
                     "unsupported run color was dropped during ODT export",
                 )?;
             }
-            if let Some(shading) = properties.shading.as_ref() {
-                if !matches!(shading.val.as_str(), "clear" | "nil") {
-                    self.diagnose(
-                        &format!("{path}/rPr/shading-pattern"),
-                        "run shading pattern was simplified during ODT export",
-                    )?;
-                }
-                if shading
-                    .color
-                    .as_deref()
-                    .is_some_and(|color| color != "auto")
-                {
-                    self.diagnose(
-                        &format!("{path}/rPr/shading-color"),
-                        "run shading foreground color was dropped during ODT export",
-                    )?;
-                }
-                let valid_fill = shading
-                    .fill
-                    .as_deref()
-                    .is_some_and(|fill| normalized_color(fill).is_some());
-                if shading
-                    .fill
-                    .as_deref()
-                    .is_some_and(|fill| normalized_color(fill).is_none())
-                {
-                    self.diagnose(
-                        &format!("{path}/rPr/shading-fill"),
-                        "unsupported run shading fill was dropped during ODT export",
-                    )?;
-                }
-                if valid_fill
-                    && properties
-                        .highlight
-                        .as_ref()
-                        .is_some_and(|highlight| highlight != &ST_HighlightColor::None)
-                {
-                    self.diagnose(
-                        &format!("{path}/rPr/highlight"),
-                        "run highlight was replaced by shading fill during ODT export",
-                    )?;
-                }
+            // The fill is the one layout paints (a pattern as its mixed
+            // colour, a highlight over a shading): only a fill that is not a
+            // colour is lost.
+            if properties
+                .shading
+                .as_ref()
+                .and_then(|shading| shading.fill.as_deref())
+                .is_some_and(|fill| fill != "auto" && normalized_color(fill).is_none())
+            {
+                self.diagnose(
+                    &format!("{path}/rPr/shading-fill"),
+                    "unsupported run shading fill was dropped during ODT export",
+                )?;
             }
         }
         for (index, content) in run.content.iter().enumerate() {
@@ -2257,14 +2228,9 @@ fn text_style_xml(properties: &CT_RPr) -> String {
     if let Some(color) = properties.color.as_deref().and_then(normalized_color) {
         write!(output, " fo:color=\"#{color}\"").unwrap();
     }
-    let background = properties
-        .shading
-        .as_ref()
-        .and_then(|shading| shading.fill.as_deref())
-        .and_then(normalized_color)
-        .or_else(|| properties.highlight.and_then(highlight_color));
-    if let Some(background) = background {
-        write!(output, " fo:background-color=\"#{background}\"").unwrap();
+    // The fill layout paints behind the text.
+    if let Some(background) = oxoffice_docx_layout::engine::run_fill(properties) {
+        write!(output, " fo:background-color=\"#{}\"", background.to_hex()).unwrap();
     }
     match properties.vert_align.as_deref() {
         Some("superscript") => output.push_str(" style:text-position=\"super\""),
@@ -2287,29 +2253,6 @@ fn normalized_color(value: &str) -> Option<String> {
     let value = value.trim_start_matches('#');
     (value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .then(|| value.to_ascii_uppercase())
-}
-
-fn highlight_color(value: ST_HighlightColor) -> Option<String> {
-    let value = match value {
-        ST_HighlightColor::Black => "000000",
-        ST_HighlightColor::Blue => "0000FF",
-        ST_HighlightColor::Cyan => "00FFFF",
-        ST_HighlightColor::DarkBlue => "000080",
-        ST_HighlightColor::DarkCyan => "008080",
-        ST_HighlightColor::DarkGray => "808080",
-        ST_HighlightColor::DarkGreen => "008000",
-        ST_HighlightColor::DarkMagenta => "800080",
-        ST_HighlightColor::DarkRed => "800000",
-        ST_HighlightColor::DarkYellow => "808000",
-        ST_HighlightColor::Green => "00FF00",
-        ST_HighlightColor::LightGray => "C0C0C0",
-        ST_HighlightColor::Magenta => "FF00FF",
-        ST_HighlightColor::None => return None,
-        ST_HighlightColor::Red => "FF0000",
-        ST_HighlightColor::White => "FFFFFF",
-        ST_HighlightColor::Yellow => "FFFF00",
-    };
-    Some(value.to_owned())
 }
 
 fn heading_level_from_style(style: Option<&str>) -> Option<u32> {

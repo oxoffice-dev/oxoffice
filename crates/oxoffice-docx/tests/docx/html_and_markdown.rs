@@ -1151,6 +1151,120 @@ fn an_odt_list_runs_on_through_a_bookmark_between_its_items() {
     assert_eq!(odt_lists(false), 1);
 }
 
+/// The XHTML of every chapter of an EPUB, joined.
+fn epub_chapters(bytes: Vec<u8>) -> String {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut chapters = String::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        if entry.name().unwrap().ends_with(".xhtml") {
+            std::io::Read::read_to_string(&mut entry, &mut chapters).unwrap();
+        }
+    }
+    chapters
+}
+
+#[test]
+fn shading_and_highlight_export_as_the_pdf_paints_them() {
+    let doc = doc_with_body(concat!(
+        // A percentage pattern mixes its colour into the fill: 25 % black
+        // over white is BFBFBF.
+        r#"<w:p><w:pPr><w:shd w:val="pct25" w:color="000000" w:fill="FFFFFF"/></w:pPr>"#,
+        r#"<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="C6EFCE"/></w:rPr><w:t xml:space="preserve">Done </w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve">Marked </w:t></w:r>"#,
+        // The highlight is drawn over the shading, in Word's dark blue, and
+        // automatic text turns white on it.
+        r#"<w:r><w:rPr><w:highlight w:val="darkBlue"/><w:shd w:val="clear" w:fill="FFC7CE"/></w:rPr><w:t xml:space="preserve">Both </w:t></w:r>"#,
+        // A solid pattern paints its foreground colour.
+        r#"<w:r><w:rPr><w:shd w:val="solid" w:color="1F3864" w:fill="FFFFFF"/></w:rPr><w:t>Solid</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr><w:shd w:val="clear" w:fill="E7E6E6"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>Table</w:t></w:r></w:p></w:tc>"#,
+        r#"<w:tc><w:tcPr><w:shd w:val="pct25" w:color="FF0000" w:fill="FFFFFF"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:fill="1F3864"/></w:tcPr><w:p><w:r><w:t>Dark</w:t></w:r></w:p></w:tc>"#,
+        r#"<w:tc><w:p><w:r><w:t>Plain</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+    ));
+    let styles = |html: &str, selector: &str| -> HashMap<String, String> {
+        html_elements(html, selector)
+            .into_iter()
+            .map(|(text, attributes)| {
+                (
+                    text.trim().to_owned(),
+                    attributes.get("style").cloned().unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
+    let (html, diagnostics) = doc.to_html_fragment_with_diagnostics();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        !epub
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("shading")
+                || diagnostic.message.contains("highlight")),
+        "{:?}",
+        epub.diagnostics
+    );
+    for html in [html, epub_chapters(epub.bytes)] {
+        let paragraph = &html_elements(&html, "p")[0].1["style"];
+        assert!(paragraph.contains("background-color:#BFBFBF"), "{html}");
+        let runs = styles(&html, "span");
+        assert_eq!(runs["Done"], "background-color:#C6EFCE", "{html}");
+        assert_eq!(runs["Marked"], "background-color:#FFFF00", "{html}");
+        assert_eq!(
+            runs["Both"], "color:#FFFFFF;background-color:#000080",
+            "{html}"
+        );
+        assert_eq!(
+            runs["Solid"], "color:#FFFFFF;background-color:#1F3864",
+            "{html}"
+        );
+        let table = &html_elements(&html, "table")[0].1["style"];
+        assert!(table.contains("background-color:#E7E6E6"), "{html}");
+        let cells = styles(&html, "td");
+        assert!(cells["Cell"].contains("background-color:#FFBFBF"), "{html}");
+        // Automatic text on a dark cell is white, on the table's light
+        // shading it stays black.
+        let cell_runs = styles(&html, "td span");
+        assert_eq!(cell_runs["Dark"], "color:#FFFFFF", "{html}");
+        assert!(!cell_runs.contains_key("Plain"), "{html}");
+    }
+
+    // RTF writes the fill drawn behind each run as its highlight colour,
+    // ODT as its background.
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    for colour in [
+        r"\red198\green239\blue206",
+        r"\red255\green255\blue0",
+        r"\red0\green0\blue128",
+        r"\red31\green56\blue100",
+    ] {
+        assert!(rtf.contains(colour), "{colour} in {rtf}");
+    }
+    assert!(!rtf.contains(r"\red255\green199\blue206"), "{rtf}");
+    let odt = doc.to_odt_bytes().unwrap();
+    assert!(
+        !odt.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("shading")
+                || diagnostic.message.contains("highlight")),
+        "{:?}",
+        odt.diagnostics
+    );
+    let mut archive = zip::ZipArchive::new(Cursor::new(odt.bytes)).unwrap();
+    let mut content = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("content.xml").unwrap(), &mut content)
+        .unwrap();
+    for colour in ["#C6EFCE", "#FFFF00", "#000080", "#1F3864"] {
+        assert!(
+            content.contains(&format!("fo:background-color=\"{colour}\"")),
+            "{colour} in {content}"
+        );
+    }
+    assert!(!content.contains("#FFC7CE"), "{content}");
+}
+
 #[test]
 fn internal_links_reach_their_bookmark_in_both_exports() {
     let doc = reopen(&mut doc_with_body(concat!(

@@ -775,11 +775,6 @@ impl<'a> EpubWriter<'a> {
                 "table indent was dropped during EPUB export",
             ),
             (
-                properties.shading.is_some(),
-                "shading",
-                "table shading was dropped during EPUB export",
-            ),
-            (
                 properties.look.is_some(),
                 "look",
                 "table conditional look was dropped during EPUB export",
@@ -875,7 +870,7 @@ impl<'a> EpubWriter<'a> {
         {
             self.diagnose(
                 format!("{path}/properties/shading"),
-                "table-cell shading pattern, foreground, or invalid colour was simplified during EPUB export"
+                "table-cell shading theme colour or invalid colour was simplified during EPUB export"
                     .to_owned(),
             )?;
         }
@@ -934,7 +929,7 @@ impl<'a> EpubWriter<'a> {
             {
                 self.diagnose(
                     format!("{path}/properties/shading"),
-                    "paragraph shading pattern, foreground, or invalid colour was simplified during EPUB export"
+                    "paragraph shading theme colour or invalid colour was simplified during EPUB export"
                         .to_owned(),
                 )?;
             }
@@ -1463,11 +1458,6 @@ impl<'a> EpubWriter<'a> {
                 "theme run colour was dropped during EPUB export",
             ),
             (
-                properties.highlight.is_some(),
-                "highlight",
-                "keyword highlight colour was dropped during EPUB export",
-            ),
-            (
                 properties.width_scale.is_some(),
                 "width-scale",
                 "run width scale was dropped during EPUB export",
@@ -1518,7 +1508,7 @@ impl<'a> EpubWriter<'a> {
         {
             self.diagnose(
                 format!("{path}/properties/shading"),
-                "run shading pattern, foreground, or invalid colour was simplified during EPUB export"
+                "run shading theme colour or invalid colour was simplified during EPUB export"
                     .to_owned(),
             )?;
         }
@@ -2649,6 +2639,7 @@ fn render_run_properties(
         dstrike: source.dstrike,
         sz: source.sz,
         color: source.color.clone(),
+        highlight: source.highlight,
         caps: source.caps,
         small_caps: source.small_caps,
         vert_align: source.vert_align.clone(),
@@ -2664,8 +2655,11 @@ fn render_run_properties(
 fn render_shading_projection(
     source: &oxoffice_docx_oxml::properties::CT_Shd,
 ) -> oxoffice_docx_oxml::properties::CT_Shd {
+    // The pattern and both colours: the HTML writer paints what layout
+    // paints from them.
     oxoffice_docx_oxml::properties::CT_Shd {
-        val: "clear".to_owned(),
+        val: source.val.clone(),
+        color: source.color.clone(),
         fill: source.fill.clone(),
         ..Default::default()
     }
@@ -2775,6 +2769,7 @@ fn render_table_projection(table: &CT_Tbl) -> CT_Tbl {
             .map(|source| oxoffice_docx_oxml::table::CT_TblPr {
                 jc: source.jc,
                 borders: source.borders.clone(),
+                shading: source.shading.as_ref().map(render_shading_projection),
                 ..Default::default()
             }),
         grid: None,
@@ -3826,17 +3821,18 @@ fn measure_shading(
 }
 
 fn shading_is_simplified(shading: &oxoffice_docx_oxml::properties::CT_Shd) -> bool {
-    !shading.val.eq_ignore_ascii_case("clear")
-        || shading
-            .color
-            .as_deref()
-            .is_some_and(|color| !color.eq_ignore_ascii_case("auto"))
-        || shading
-            .fill
-            .as_deref()
-            .is_some_and(|fill| !is_word_hex_color(fill))
-        // The projection keeps only the literal fill, so any theme reference
-        // on the source shading is information the EPUB does not carry.
+    // Layout reads `auto` or six hex digits, anything else as automatic.
+    let invalid = |value: Option<&str>| {
+        value.is_some_and(|value| {
+            !value.eq_ignore_ascii_case("auto")
+                && !(value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        })
+    };
+    invalid(shading.color.as_deref())
+        || invalid(shading.fill.as_deref())
+        // The projection keeps only the literal colours, so any theme
+        // reference on the source shading is information the EPUB does not
+        // carry.
         || shading.theme_color.is_some()
         || shading.theme_tint.is_some()
         || shading.theme_shade.is_some()
@@ -3844,11 +3840,6 @@ fn shading_is_simplified(shading: &oxoffice_docx_oxml::properties::CT_Shd) -> bo
         || shading.theme_fill_tint.is_some()
         || shading.theme_fill_shade.is_some()
         || !shading.extra_attributes.is_empty()
-}
-
-fn is_word_hex_color(value: &str) -> bool {
-    let digits = value.strip_prefix('#').unwrap_or(value);
-    matches!(digits.len(), 3 | 6 | 8) && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn measure_table_borders(
