@@ -34,8 +34,8 @@ pub(super) fn remap_equivalent_story_relationships(
             &mut charts,
         )?);
     }
-    if let Some(right) = FootnotePart::of(edited)? {
-        let left = FootnotePart::of(original)?;
+    if let Some(right) = NotePart::of(edited, NoteKind::Footnote)? {
+        let left = NotePart::of(original, NoteKind::Footnote)?;
         let owner = left
             .as_ref()
             .map_or(right.name.as_str(), |part| part.name.as_str());

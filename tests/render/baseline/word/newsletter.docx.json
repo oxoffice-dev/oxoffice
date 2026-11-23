@@ -1,12 +1,12 @@
 {
   "file": "word/newsletter.docx",
-  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
-  "resources": "f82f6fe0514680391435b80cefc21d53562f792c015693b2cf6e8be0ae7d9ee4",
+  "reason": "a fixed-size text box hides the lines that do not fit, and its text keeps its insets and paragraph spacing (newsletter)",
+  "resources": "0522baf33b0c317536f926d0fe7e5b503b13fb12b9ca427d74c023b09d98f31d",
   "outline_and_tags": "c47235a872b7c7a7874eaea75ebf90e4953d49f6581890a055c8e568b4b287b4",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "86c044186a7d5db03954c5c004ffaeb130fc958798d0442a3d13768a537000f2", "content": "9d9077355f3bfa5140b4c73e9b89efc0e08f6fea54c3b4c4f6733a8b63e953c9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "694aa82b9b8f770fca8df0793068702d3c711158c59f45c77207982ee78de3ab", "content": "9250f35db62ae895a9b294d9c5f407bddfe66dc81987f20a8450f93e650335a5", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "3a94f4f47d13588c36f4379f631aca441c4c593b02b3d966223748553f5e27f8", "content": "bc1c7868fad31924ae0a7cd73c812292767acd02f17a60f8ed417cc2141f3df3", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 1, "pixels": "9fc90d6237d748d8d52a438ad75bc6cd15963c4e1d618cbaeacba46ef805d926", "content": "675717dc86406a3c0c71347aa1128341fbb6da732382d8e148ece4ae72930430", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "d0c0dbf586621e8603cd11fe4ffa9d115cb861bede4da9280cf891bae0d25269", "content": "c22c5f27f004a50978a3cbe19907a4c02ababdcb98c921bec8dc5c06571a8d9d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "5b9e6af15982a40181ee44837d152bd8a2bc97cabd1601650e27044cb18e8c4f", "content": "aa8c968f00c9a7bbe28759acd44257ead9aeb9c74899e4005af007de0e3d528b", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }

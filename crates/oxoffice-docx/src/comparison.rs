@@ -47,14 +47,14 @@ use comments::{
     extended_comment_snapshots_match, remap_comment_targets,
 };
 pub(crate) use footnotes::{
-    RawNoteType, raw_note_attribute_in_scope, raw_note_type_in_scope,
-    remove_selected_footnote_definitions, settle_footnote_custody, validate_footnote_custody,
+    NoteKind, RawNoteType, raw_note_attribute_in_scope, raw_note_type_in_scope,
+    remove_selected_note_definitions, settle_note_custody, validate_note_custody,
 };
 use footnotes::{
-    compare_footnote_parts, footnote_custody_reserved_ids, normal_note_owner, note_markers,
-    preflight_footnote_inputs, reconcile_footnote_custody_inputs, reconcile_footnote_ids,
-    refuse_shared_note_references, renumbered_footnotes, retire_completed_footnote_inputs,
-    retire_note_markers, verify_footnote_destination,
+    compare_note_parts, normal_note_owner, note_custody_reserved_ids, note_markers,
+    preflight_note_inputs, reconcile_note_custody_inputs, reconcile_note_ids,
+    refuse_shared_note_references, renumbered_notes, retire_completed_note_inputs,
+    retire_note_markers, verify_note_destination,
 };
 
 mod bookmarks;
@@ -564,16 +564,18 @@ impl Document {
         let mut edited = comparison_input(edited)?;
         let mut footnote_ids = HashMap::new();
         if !story_ignored(options, ComparisonStoryKind::Footnote) {
-            retire_completed_footnote_inputs(&mut original, &mut edited)?;
-            reconcile_footnote_custody_inputs(&original, &mut edited)?;
-            footnote_ids = reconcile_footnote_ids(&original, &mut edited, renumbered)?;
+            retire_completed_note_inputs(&mut original, &mut edited, NoteKind::Footnote)?;
+            reconcile_note_custody_inputs(&original, &mut edited, NoteKind::Footnote)?;
+            footnote_ids =
+                reconcile_note_ids(&original, &mut edited, NoteKind::Footnote, renumbered)?;
         }
         if !story_ignored(options, ComparisonStoryKind::Main) {
             reconcile_body_bookmarks(&original, &mut edited, options)?;
         }
-        preflight_footnote_inputs(
+        preflight_note_inputs(
             &original,
             &edited,
+            NoteKind::Footnote,
             story_ignored(options, ComparisonStoryKind::Footnote),
         )?;
         if original.package.contains_part(COMMENT_COMPARISON_PART)
@@ -757,8 +759,8 @@ impl Document {
             }
             if stories_unchanged
                 && !snapshot_comments
-                && FootnotePart::of(&original)?.map(|part| part.xml)
-                    == FootnotePart::of(&edited)?.map(|part| part.xml)
+                && NotePart::of(&original, NoteKind::Footnote)?.map(|part| part.xml)
+                    == NotePart::of(&edited, NoteKind::Footnote)?.map(|part| part.xml)
             {
                 return Ok(Vec::new());
             }
@@ -781,10 +783,10 @@ impl Document {
             used_ids.extend(word_ids_with_options(story_xml(&edited, story)?, options)?);
         }
         for document in [&original, &edited] {
-            if let Some(part) = FootnotePart::of(document)? {
+            if let Some(part) = NotePart::of(document, NoteKind::Footnote)? {
                 used_ids.extend(word_ids_with_options(part.xml.as_bytes(), options)?);
             }
-            used_ids.extend(footnote_custody_reserved_ids(document)?);
+            used_ids.extend(note_custody_reserved_ids(document, NoteKind::Footnote)?);
         }
         let input_ids = used_ids.clone();
         let shared_bookmarks = shared_bookmark_ids(&original, &edited)?;
@@ -917,9 +919,10 @@ impl Document {
             let tracked_story = crate::document::uniquify_drawing_ids_in_xml(&tracked_story)?;
             candidate.package.set_part(&story.part_name, tracked_story);
         }
-        let moved = compare_footnote_parts(
+        let moved = compare_note_parts(
             &original,
             &edited,
+            NoteKind::Footnote,
             &mut candidate,
             &mut metadata,
             &mut diagnostics,
@@ -942,7 +945,9 @@ impl Document {
                         .map_or(id, |(&from, _)| from)
                 })
                 .collect::<Vec<_>>();
-            let Some((next, ids)) = renumbered_footnotes(&original, edited_input, &moved)? else {
+            let Some((next, ids)) =
+                renumbered_notes(&original, edited_input, NoteKind::Footnote, &moved)?
+            else {
                 return Err(Error::Other(format!(
                     "comparison would give footnote {} more physical references than either input: its reference moved to another site",
                     moved[0]
@@ -1063,7 +1068,8 @@ impl Document {
             .collect::<HashSet<_>>();
         let mut field_stories = original_stories.clone();
         if !story_ignored(options, ComparisonStoryKind::Footnote)
-            && let Some(part) = FootnotePart::of(&original)?.or(FootnotePart::of(&edited)?)
+            && let Some(part) = NotePart::of(&original, NoteKind::Footnote)?
+                .or(NotePart::of(&edited, NoteKind::Footnote)?)
         {
             field_stories.push(StoryPart {
                 kind: ComparisonStoryKind::Footnote,
@@ -1074,7 +1080,7 @@ impl Document {
         if existing_revisions {
             let mut prior_stories = original_stories.clone();
             if !story_ignored(options, ComparisonStoryKind::Footnote)
-                && let Some(part) = FootnotePart::of(&original)?
+                && let Some(part) = NotePart::of(&original, NoteKind::Footnote)?
             {
                 prior_stories.push(StoryPart {
                     kind: ComparisonStoryKind::Footnote,
@@ -1144,7 +1150,7 @@ impl Document {
             1,
             &new_ids,
         )?;
-        verify_footnote_destination(&accepted, &edited, true, options)?;
+        verify_note_destination(&accepted, &edited, NoteKind::Footnote, true, options)?;
         if accepted_body != edited_package {
             return Err(comparison_postcondition_error(
                 "acceptance",
@@ -1193,7 +1199,7 @@ impl Document {
             0,
             &new_ids,
         )?;
-        verify_footnote_destination(&rejected, &original, false, options)?;
+        verify_note_destination(&rejected, &original, NoteKind::Footnote, false, options)?;
         if rejected_package != original_package {
             return Err(comparison_postcondition_error(
                 "rejection",
@@ -1271,7 +1277,7 @@ struct HeldRevisions {
 }
 
 #[derive(Clone)]
-struct FootnoteOwner {
+struct NoteOwner {
     id: Option<i32>,
     kind: RawNoteType,
     span: Range<usize>,
@@ -1280,10 +1286,11 @@ struct FootnoteOwner {
 }
 
 #[derive(Clone)]
-struct FootnotePart {
+struct NotePart {
     name: String,
     xml: String,
-    owners: Vec<FootnoteOwner>,
+    owners: Vec<NoteOwner>,
+    kind: NoteKind,
 }
 
 #[derive(Clone)]

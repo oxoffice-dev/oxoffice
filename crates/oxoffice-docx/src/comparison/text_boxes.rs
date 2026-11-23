@@ -330,8 +330,8 @@ pub(super) fn comparison_text_box_markers(
         );
     }
     if !story_ignored(options, ComparisonStoryKind::Footnote) {
-        let left = FootnotePart::of(original)?;
-        let right = FootnotePart::of(edited)?;
+        let left = NotePart::of(original, NoteKind::Footnote)?;
+        let right = NotePart::of(edited, NoteKind::Footnote)?;
         if let Some(part) = left.as_ref().or(right.as_ref()) {
             let prefix = root_prefix(&part.xml, "footnotes")?;
             let marker = text_box_marker_local(

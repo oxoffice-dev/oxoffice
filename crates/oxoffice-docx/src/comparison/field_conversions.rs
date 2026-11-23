@@ -204,7 +204,7 @@ pub(super) fn validate_field_conversion_role(
         } else {
             crate::revision::Resolution::Accept
         };
-        let (transported, mapped) = if FootnotePart::of(candidate)?
+        let (transported, mapped) = if NotePart::of(candidate, NoteKind::Footnote)?
             .is_some_and(|notes| notes.name == part)
         {
             let mut trace = crate::revision::NotePublication::new(part, side.revision_id, &roots);
