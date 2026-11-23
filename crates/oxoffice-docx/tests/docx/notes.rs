@@ -842,6 +842,27 @@ fn a_document_note_policy_survives_a_save() {
 }
 
 #[test]
+fn a_chicago_note_policy_writes_words_marks() {
+    let mut doc = doc_with(&["Body"]);
+    create_note(&mut doc, Footnote, 0, "Starred note");
+    doc.set_note_policy(
+        Footnote,
+        NotePolicy {
+            format: NoteNumberFormat::Chicago,
+            start: 1,
+            restart: NoteRestart::EachPage,
+            placement: NotePlacement::PageBottom,
+        },
+    )
+    .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        policy_of(doc.note_properties(Footnote)),
+        Some(("pageBottom", "chicago", 1, "eachPage"))
+    );
+}
+
+#[test]
 fn an_invalid_note_policy_is_refused_and_changes_nothing() {
     let mut doc = doc_with(&["Body"]);
     create_note(&mut doc, Footnote, 0, "Note");

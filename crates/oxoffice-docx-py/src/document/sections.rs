@@ -685,6 +685,7 @@ pub(super) fn checked_note_policy(
             "lowerRoman" => oxoffice_docx::NoteNumberFormat::LowerRoman,
             "upperLetter" => oxoffice_docx::NoteNumberFormat::UpperLetter,
             "lowerLetter" => oxoffice_docx::NoteNumberFormat::LowerLetter,
+            "chicago" => oxoffice_docx::NoteNumberFormat::Chicago,
             _ => return Err(PyValueError::new_err("unsupported note number format")),
         },
     };

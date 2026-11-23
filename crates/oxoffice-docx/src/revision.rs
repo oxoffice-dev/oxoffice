@@ -1739,7 +1739,14 @@ impl<'a> XmlTree<'a> {
                 local,
                 "r" | "hyperlink" | "sdt" | "ins" | "del" | "moveFrom" | "moveTo"
             ),
-            "r" => matches!(local, "t" | "delText" | "tab" | "br" | "cr" | "fldChar"),
+            // A phonetic guide in its run, as Word writes it: its base text
+            // is the run's, its phonetic line (`w:rt`) is not.
+            "r" => matches!(
+                local,
+                "t" | "delText" | "tab" | "br" | "cr" | "fldChar" | "ruby"
+            ),
+            "ruby" => local == "rubyBase",
+            "rubyBase" => local == "r",
             _ => false,
         };
         admitted.then_some(if matches!(local, "p" | "tc" | "tbl") {
