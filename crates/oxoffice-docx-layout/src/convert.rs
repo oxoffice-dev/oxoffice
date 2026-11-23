@@ -330,7 +330,9 @@ enum WordLineExtent {
 /// The extent of one line item on a Word line, or `None` when it takes none.
 ///
 /// A text run takes the Word metrics of its font, with the external leading
-/// counted into its ascent, which is where Word puts it. A run the engine
+/// counted into its ascent, which is where Word puts it. That font is the face
+/// of the run's requested family: a face picked only because it has glyphs
+/// that family's face lacks draws them without measuring the line. A run the engine
 /// gave no extent, such as a bookmark target, stays without one, and a run
 /// whose font the manager does not hold keeps the extent it was shaped
 /// with. An equation keeps the extent it was measured with, as an equation.
@@ -370,7 +372,10 @@ fn word_line_extent(item: &LineItem, fm: &FontManager) -> Option<WordLineExtent>
         return None;
     }
     let (ascent, descent) = fm
-        .word_line_metrics(segment.font_id, segment.font_size)
+        .word_line_metrics(
+            segment.measure_font.unwrap_or(segment.font_id),
+            segment.font_size,
+        )
         .map_or((segment.ascent, segment.descent), |metrics| {
             (metrics.line_gap + metrics.ascent, metrics.descent)
         });
