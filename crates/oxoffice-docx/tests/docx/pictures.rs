@@ -2225,21 +2225,49 @@ fn a_copied_chart_keeps_its_own_chart_part_once_accepted() {
         }
         reopen(&mut doc)
     };
-    let mut doc = compared(with_charts(1), &with_charts(2));
-    let mut accepted = reopen(&mut doc);
-    accepted.accept_all().unwrap();
-    let package =
-        OpcPackage::from_reader(Cursor::new(reopen(&mut accepted).to_bytes().unwrap())).unwrap();
-    let mut targets = package
-        .get_part_rels("/word/document.xml")
-        .unwrap()
-        .get_all_by_type(CHART)
-        .into_iter()
-        .map(|relationship| relationship.target.clone())
-        .collect::<Vec<_>>();
-    targets.sort();
-    targets.dedup();
-    assert_eq!(targets.len(), 2, "{targets:?}");
+    // The copy's relationship listed after the chart's, and before it.
+    for copy_first in [false, true] {
+        let mut edited = with_charts(2);
+        if copy_first {
+            let mut package =
+                OpcPackage::from_reader(Cursor::new(edited.to_bytes().unwrap())).unwrap();
+            let relationships = package.get_part_rels_mut("/word/document.xml").unwrap();
+            let charts = relationships
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, relationship)| relationship.rel_type == CHART)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            relationships.items.swap(charts[0], charts[1]);
+            let mut out = Cursor::new(Vec::new());
+            package.write_to(&mut out).unwrap();
+            edited = Document::from_bytes(&out.into_inner()).unwrap();
+        }
+        let mut doc = compared(with_charts(1), &edited);
+        assert!(
+            story_revision_kinds(&doc)
+                .iter()
+                .all(|(_, kind)| *kind == RevisionKind::Insertion),
+            "copy first {copy_first}: {:?}",
+            story_revision_kinds(&doc)
+        );
+        let mut accepted = reopen(&mut doc);
+        accepted.accept_all().unwrap();
+        let package =
+            OpcPackage::from_reader(Cursor::new(reopen(&mut accepted).to_bytes().unwrap()))
+                .unwrap();
+        let mut targets = package
+            .get_part_rels("/word/document.xml")
+            .unwrap()
+            .get_all_by_type(CHART)
+            .into_iter()
+            .map(|relationship| relationship.target.clone())
+            .collect::<Vec<_>>();
+        targets.sort();
+        targets.dedup();
+        assert_eq!(targets.len(), 2, "copy first {copy_first}: {targets:?}");
+    }
 }
 
 /// The parts and relationship targets of the saved `doc`, by ZIP entry name.

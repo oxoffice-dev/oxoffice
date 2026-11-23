@@ -95,11 +95,28 @@ fn remap_equivalent_owner_relationships(
     // same payload, or else a used one: several edited pictures or links can
     // name what one original relationship names. A chart takes only an
     // unused one: two drawings on one chart part would edit together.
+    // A relationship both versions hold under one id keeps it first, so the
+    // order of the edited relationships never decides which chart is the copy.
     let mut matches = vec![None; edited_relationships.items.len()];
+    for (slot, right) in edited_relationships.items.iter().enumerate() {
+        if let Some(key) = &edited_keys[slot]
+            && let Some(index) = original_relationships
+                .items
+                .iter()
+                .position(|left| left.id == right.id)
+            && original_keys[index].as_ref() == Some(key)
+            && used.insert(index)
+        {
+            matches[slot] = Some(index);
+        }
+    }
     for (slot, key) in edited_keys.iter().enumerate() {
         let Some(key) = key else {
             continue;
         };
+        if matches[slot].is_some() {
+            continue;
+        }
         let same = |index: &usize| original_keys[*index].as_ref() == Some(key);
         let unused = (0..original_keys.len()).find(|index| !used.contains(index) && same(index));
         matches[slot] = unused.or_else(|| {
