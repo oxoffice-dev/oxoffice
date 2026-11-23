@@ -189,6 +189,8 @@ impl BibliographyUpdateState {
             } else {
                 0
             };
+            // The entry first: an uncovered source is refused before its sort key.
+            let paragraph = self.entry_paragraph(style, &source, reference, locale.clone())?;
             let key = if !numeric && tags.is_empty() && collection.sources.len() > 1 {
                 bibliography_sort_key(&source, style, &locale)?
             } else {
@@ -256,7 +258,7 @@ impl BibliographyUpdateState {
             entries.push((
                 order,
                 key,
-                self.entry_paragraph(style, &source, reference, locale)?,
+                paragraph,
                 (
                     rtl_paragraph_mark,
                     complex_paragraph_mark,

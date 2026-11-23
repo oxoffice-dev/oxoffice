@@ -35,6 +35,9 @@ const KNOWN: &[(&str, &str)] = &[
     // Word ends this entry with a space after the italic patent number. One
     // sample does not say which field brings it, so it is not guessed.
     ("apa6", "entry Patent"),
+    // Word puts the case "Price v. Quinn" before "Price, P.": it compares
+    // more than the last name, where our sort key stops at it.
+    ("apa6", "order"),
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -76,8 +79,8 @@ fn shown(segments: &Segments) -> String {
                 }
             }
             match format.vert_align.as_deref() {
-                Some(align) if align != "baseline" => format!("{{{align}:{text}}}"),
-                _ => text,
+                Some(align) => format!("{{{align}:{text}}}"),
+                None => text,
             }
         })
         .collect()
@@ -120,6 +123,8 @@ fn word_fields(xml: &[u8]) -> Vec<WordField> {
     let mut paragraph = Segments::new();
     let mut format = Format::default();
     let (mut in_properties, mut in_text, mut in_instruction) = (false, false, false);
+    // Tab stops in paragraph properties are no text.
+    let mut in_paragraph_properties = false;
     let mut buffer = Vec::new();
     loop {
         let event = reader
@@ -130,15 +135,20 @@ fn word_fields(xml: &[u8]) -> Vec<WordField> {
                 let empty = matches!(event, Event::Empty(_));
                 match element.local_name().as_ref() {
                     b"r" if !empty => format = Format::default(),
+                    b"pPr" if !empty => in_paragraph_properties = true,
                     b"rPr" if !empty => in_properties = true,
                     b"i" if in_properties => format.italic = toggle(element),
                     b"b" if in_properties => format.bold = toggle(element),
                     b"u" if in_properties => format.underline = toggle(element),
                     b"smallCaps" if in_properties => format.small_caps = toggle(element),
-                    b"vertAlign" if in_properties => format.vert_align = value(element),
+                    b"vertAlign" if in_properties => {
+                        format.vert_align = value(element).filter(|align| align != "baseline")
+                    }
                     b"t" if !empty => in_text = true,
                     b"instrText" if !empty => in_instruction = true,
-                    b"tab" if phase == Phase::Result && !in_properties => {
+                    b"tab"
+                        if phase == Phase::Result && !in_properties && !in_paragraph_properties =>
+                    {
                         push(&mut paragraph, "\t", &format)
                     }
                     b"fldChar" => {
@@ -168,6 +178,7 @@ fn word_fields(xml: &[u8]) -> Vec<WordField> {
             }
             Event::End(element) => match element.local_name().as_ref() {
                 b"rPr" => in_properties = false,
+                b"pPr" => in_paragraph_properties = false,
                 b"t" => in_text = false,
                 b"instrText" => in_instruction = false,
                 b"p" if phase == Phase::Result && !paragraph.is_empty() => {
@@ -226,7 +237,10 @@ fn run_segments(runs: &[oxoffice_docx_oxml::text::CT_R]) -> Segments {
                     underline != oxoffice_docx_oxml::shared::ST_Underline::None
                 }),
                 small_caps: properties.small_caps == Some(true),
-                vert_align: properties.vert_align.clone(),
+                vert_align: properties
+                    .vert_align
+                    .clone()
+                    .filter(|align| align != "baseline"),
             })
             .unwrap_or_default();
         for content in &run.content {
@@ -303,6 +317,7 @@ fn differences(style: &str) -> BTreeSet<String> {
                 differ.insert(key);
             }
         };
+    let mut order_differs = false;
     for field in word_fields(&xml) {
         let instruction =
             oxoffice_docx_oxml::text::Field::new(&field.instruction, "").effective_instruction();
@@ -318,6 +333,7 @@ fn differences(style: &str) -> BTreeSet<String> {
             }
             "BIBLIOGRAPHY" => {
                 let mut shown_tags = BTreeSet::new();
+                let mut word_order = Vec::new();
                 for paragraph in &field.paragraphs {
                     let text = paragraph
                         .iter()
@@ -328,6 +344,7 @@ fn differences(style: &str) -> BTreeSet<String> {
                         shown_tags.insert(tag),
                         "{style}: two Word entries for {tag}"
                     );
+                    word_order.push(tag);
                     let ours = state
                         .source_entry_for_test(tag, Some("1033"))
                         .map_err(|error| error.to_string())
@@ -339,9 +356,40 @@ fn differences(style: &str) -> BTreeSet<String> {
                     sources.len(),
                     "{style}: an entry per source"
                 );
+                // The order of the entries, from our whole bibliography.
+                let ours = state.bibliography_blocks(&instruction, None).map(|blocks| {
+                    blocks
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|block| match block {
+                            oxoffice_docx_oxml::document::BodyContent::Paragraph(paragraph) => {
+                                let text = run_segments(&paragraph.runs)
+                                    .into_iter()
+                                    .map(|(text, _)| text)
+                                    .collect::<String>();
+                                (!text.trim().is_empty()).then(|| entry_source(&text, &sources))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                });
+                match ours {
+                    Ok(ours) if ours == word_order => {}
+                    Ok(ours) => {
+                        eprintln!("{style} order\n  word: {word_order:?}\n  ours: {ours:?}");
+                        order_differs = true;
+                    }
+                    Err(error) => {
+                        eprintln!("{style} order\n  ours: {error}");
+                        order_differs = true;
+                    }
+                }
             }
             _ => {}
         }
+    }
+    if order_differs {
+        differ.insert("order".to_owned());
     }
     differ
 }
