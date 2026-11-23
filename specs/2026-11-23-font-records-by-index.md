@@ -19,7 +19,9 @@ record") and nothing can change or remove either record (#238).
 - **An index in `try_fonts()` order** addresses one record, the index
   `font_part_metadata` already takes. Rust: `set_font_at(index, font)`,
   `remove_font_at(index)`, `embed_font_at(index, face)`,
-  `remove_embedded_font_at(index, kind)`. Python: the same four methods.
+  `remove_embedded_font_at(index, kind)`, and `font_record_count()`, the
+  bound of the index. Python: the same four methods; an index out of range
+  raises `IndexError`, as the other indexed calls do.
   CLI: `font remove` and `font embed` take `--index N` in place of `--name`;
   `font list --json` gives each record its `index` (the text listing shows
   it too). There is no CLI command for `set_font` today, none is added.
