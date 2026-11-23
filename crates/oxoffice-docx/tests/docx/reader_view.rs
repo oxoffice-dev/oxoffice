@@ -207,3 +207,28 @@ fn an_equation_in_an_inline_control_is_exported_in_place() {
         assert!(markdown.contains("AB$x=1$C"), "{markdown}");
     }
 }
+
+#[test]
+fn removing_a_run_of_an_insertion_counts_its_simple_field_as_one_run() {
+    let body = format!(r#"<w:p><w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}</w:p>"#);
+    for (index, text, kept, removed) in [
+        (
+            2,
+            "B12",
+            r#"<w:fldSimple w:instr=" QUOTE a ">"#,
+            "<w:t>C</w:t>",
+        ),
+        (1, "BC", "<w:t>C</w:t>", "w:fldSimple"),
+    ] {
+        let mut doc = doc_with_body(&body);
+        doc.paragraph_mut(0).unwrap().remove_run(index).unwrap();
+        assert_eq!(doc.paragraph(0).unwrap().text(), text);
+        let mut reopened = crate::support::reopen(&mut doc);
+        assert_eq!(reopened.paragraph(0).unwrap().text(), text);
+        let bytes = reopened.to_bytes().unwrap();
+        let xml =
+            String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
+                .unwrap();
+        assert!(xml.contains(kept) && !xml.contains(removed), "{xml}");
+    }
+}
