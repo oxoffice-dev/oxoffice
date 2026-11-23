@@ -2554,6 +2554,20 @@ fn a_positional_tab_aligns_the_text_after_it_where_word_does() {
                     run("NextLine"),
                 ],
             ),
+            // A right-to-left paragraph measures from its start, the right
+            // margin: the middle of the margins is the same.
+            paragraph(
+                r#"<w:pPr><w:bidi/><w:ind w:end="1440"/></w:pPr>"#,
+                &[tab("center", "margin", "none"), run("RtlCentre")],
+            ),
+            paragraph(
+                "",
+                &[
+                    run("A long sentence that runs well beyond the middle of this line"),
+                    tab("center", "margin", "none"),
+                    run("CentreBelow"),
+                ],
+            ),
         ]
         .concat(),
     );
@@ -2586,6 +2600,11 @@ fn a_positional_tab_aligns_the_text_after_it_where_word_does() {
     let next = piece("NextLine");
     assert!(near(next.x, 72.0), "{next:?}");
     assert!(next.y < piece("past").y - 1.0);
+    let rtl = piece("RtlCentre");
+    assert!(near((rtl.x + rtl.end) / 2.0, 306.0), "{rtl:?}");
+    let below = piece("CentreBelow");
+    assert!(near((below.x + below.end) / 2.0, 306.0), "{below:?}");
+    assert!(below.y < piece("beyond").y - 1.0);
 }
 
 // ---- Corpus ----

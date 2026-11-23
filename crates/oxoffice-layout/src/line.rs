@@ -18,13 +18,14 @@ pub struct TabStop {
 }
 
 /// A positional tab, Word's alignment tab: the text after it is aligned on
-/// the left edge, the centre or the right edge of the margins or of the
-/// paragraph's indents, whatever the paragraph's own stops.
+/// the left margin (the left indent when relative to the indents), on the
+/// right margin, or halfway between the two, whatever the paragraph's own
+/// stops. The text never passes the right indent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionalTab {
     /// [`TabAlign::Left`], [`TabAlign::Center`] or [`TabAlign::Right`].
     pub align: TabAlign,
-    /// Measured between the indents rather than the margins.
+    /// Starts from the left indent rather than the left margin.
     pub relative_to_indent: bool,
     pub leader: Option<TabLeader>,
 }
@@ -1131,25 +1132,33 @@ impl LineState {
     /// Text after it never passes the end of its line, the right indent, and
     /// a tab its line has already passed moves to the next line.
     fn positional_tab(&self, tab: PositionalTab, params: &LineBreakParams) -> ResolvedTab {
+        // Measured from the start margin, then put on the line, as in
+        // `next_tab`: a right-to-left line takes its stops from the right.
         let margin = params.available_width;
-        let line_end = self.start + self.available;
-        let left = if tab.relative_to_indent {
-            params.ind_left
+        let gap = if params.first_line_at_right {
+            margin - (self.start + self.available)
         } else {
-            0.0
+            self.start
+        };
+        let on_line = |distance: f64| distance - gap + self.start;
+        let line_end = gap + self.available;
+        let start = match (tab.relative_to_indent, params.first_line_at_right) {
+            (false, _) => 0.0,
+            (true, false) => params.ind_left,
+            (true, true) => params.ind_right,
         };
         let stop = match tab.align {
-            TabAlign::Center => (left + margin) / 2.0,
+            TabAlign::Center => (start + margin) / 2.0,
             TabAlign::Right => margin,
-            _ => left,
+            _ => start,
         };
         ResolvedTab {
-            stop,
+            stop: on_line(stop),
             align: tab.align,
             leader: leader_char(tab.leader),
-            wraps: self.start + self.width > stop + 0.01,
-            reach: line_end,
-            shift_limit: Some(line_end),
+            wraps: gap + self.width > stop + 0.01,
+            reach: on_line(line_end),
+            shift_limit: Some(on_line(line_end)),
             mirrored: params.first_line_at_right,
         }
     }
