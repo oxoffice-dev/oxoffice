@@ -403,7 +403,7 @@ fn bookmark_parts(document: &Document) -> Result<Vec<String>> {
             .into_iter()
             .map(|story| story.part_name),
     );
-    parts.extend(FootnotePart::name_of(document)?);
+    parts.extend(NotePart::name_of(document, NoteKind::Footnote)?);
     let mut seen = HashSet::new();
     parts.retain(|part| seen.insert(part.clone()));
     Ok(parts)

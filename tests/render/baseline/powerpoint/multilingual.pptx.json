@@ -1,7 +1,7 @@
 {
   "file": "powerpoint/multilingual.pptx",
-  "reason": "a deck's PDF names the language of its default text (#159)",
-  "resources": "b4a7b1ce0b33f5f877c1790fdefe29aa75bc59fe2cd1174d94d0c2a980db0b49",
+  "reason": "a math fallback face renumbers the PDF font resources",
+  "resources": "3966018ccb1962695926a7723194194878c221243eb1e0aeb88fdfd797e6e811",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "b27a9b5434eefbc2920ba3c5e96c5d930939a9e48f6b570df1ff3419747be10b",
   "pages": [
@@ -11,6 +11,6 @@
     {"page": 4, "pixels": "ece00f1745200821ea509d683baca13096bcce59d19bb064eaf0444f627918bb", "content": "9ba3f80cabab6aafdb2a10664f9c93e243afa49d88a358ec80cf58f8178c7f66", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 5, "pixels": "1d6bbadf1506d194b819eec943e610bd9e09ca2fe3fdf092f34123d6047cb283", "content": "c7c1831f1041a1c149ac90f0e3903ab2d0d91b994e683d0c83548ecf49dc4dbf", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 6, "pixels": "3ae5c30d303e4058ea162b7d0e2b75f4dc86e7c0c88c052aa8f62d11c55bfca6", "content": "dd10624f901726386a870c014a980f4490716a6eadad50fffc4ee9dce39d1a48", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
-    {"page": 7, "pixels": "105f3cee4350b48e7e8736ed6202a6a01e3cb2e5d3d34743e1019c1155f0b827", "content": "080e01a54ef27d9f7c890248785960435fd9169c1e41c63aba6358ed29f1dd6e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"}
+    {"page": 7, "pixels": "105f3cee4350b48e7e8736ed6202a6a01e3cb2e5d3d34743e1019c1155f0b827", "content": "f311f0c3bc449f9a4833c05bd3e9841e84d31b9dd16872d66e192b1a37910122", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"}
   ]
 }

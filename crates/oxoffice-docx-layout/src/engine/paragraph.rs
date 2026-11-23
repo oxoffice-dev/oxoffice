@@ -959,6 +959,10 @@ fn layout_paragraph_with_source_and_table(
             fm,
             effective_rpr.sz.map(|hp| hp.to_pt()).unwrap_or(11.0),
             resolve_run_color(&effective_rpr, input.theme.as_ref(), automatic_color),
+            crate::math::RunFormatting {
+                theme: input.theme.as_ref(),
+                automatic: automatic_color,
+            },
             available_width,
             input.math_properties.as_ref(),
             &mut display_break,
@@ -1961,6 +1965,10 @@ fn layout_paragraph_with_source_and_table(
         fm,
         equation_rpr.sz.map(|hp| hp.to_pt()).unwrap_or(11.0),
         resolve_run_color(&equation_rpr, input.theme.as_ref(), automatic_color),
+        crate::math::RunFormatting {
+            theme: input.theme.as_ref(),
+            automatic: automatic_color,
+        },
         available_width,
         input.math_properties.as_ref(),
         &mut display_break,

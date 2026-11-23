@@ -227,8 +227,8 @@ use unsupported_xml::{
     inherited_namespace, typed_numbering_leaf_has_unmodeled, xml_bytes_are_whitespace,
 };
 pub(crate) use xml_ids::{
-    apply_template_source_edits, remap_xml_relationship_ids, unique_drawing_id_edits,
-    uniquify_drawing_ids_in_xml, xml_relationship_ids_in_order,
+    apply_template_source_edits, drawing_id_spans, remap_xml_relationship_ids,
+    unique_drawing_id_edits, uniquify_drawing_ids_in_xml, xml_relationship_ids_in_order,
 };
 use xml_ids::{
     authored_doc_pr_edits, authored_relationship_ids_in_source_order, drawing_ids_in_xml,

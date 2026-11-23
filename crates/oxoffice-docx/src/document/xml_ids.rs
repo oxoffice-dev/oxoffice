@@ -460,7 +460,8 @@ pub(crate) fn uniquify_drawing_ids_in_xml(xml: &[u8]) -> Result<Vec<u8>> {
     Ok(updated)
 }
 
-pub(crate) fn unique_drawing_id_edits(xml: &[u8]) -> Result<Vec<(usize, usize, Vec<u8>)>> {
+/// The byte range and value of each drawing's `wp:docPr` id in `xml`.
+pub(crate) fn drawing_id_spans(xml: &[u8]) -> Result<Vec<(usize, usize, u32)>> {
     let mut reader = NsReader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut occurrences = Vec::new();
@@ -513,6 +514,11 @@ pub(crate) fn unique_drawing_id_edits(xml: &[u8]) -> Result<Vec<(usize, usize, V
         buffer.clear();
     }
 
+    Ok(occurrences)
+}
+
+pub(crate) fn unique_drawing_id_edits(xml: &[u8]) -> Result<Vec<(usize, usize, Vec<u8>)>> {
+    let occurrences = drawing_id_spans(xml)?;
     let mut next = occurrences
         .iter()
         .map(|(_, _, value)| *value)
