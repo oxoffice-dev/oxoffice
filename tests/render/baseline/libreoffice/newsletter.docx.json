@@ -1,8 +1,8 @@
 {
   "file": "libreoffice/newsletter.docx",
-  "reason": "text box paragraphs keep their spacing (newsletter)",
+  "reason": "a fixed-size text box hides the lines that do not fit, and its text keeps its insets and paragraph spacing (newsletter)",
   "resources": "a055065f9fd16a0bf255cc06b1ed805a6e4937976a367e25925e20e693b76a57",
-  "outline_and_tags": "2c0c8b41b01261e1381c7a2cc60537b4332a8c6cedfe05b656323f34ddd91906",
+  "outline_and_tags": "f85e11c523e2faa5353a9f4d6704ab87dd269d5051df4d0a20ae11c2da1c5c24",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "6d0f6055d431df5a28e4d2b2110f38b36758e0b8173b8a584bcbc9ff6cf32db9", "content": "7f73154fd249626a85ee889675b18ecab0cb55ebb1346ce8b3a2d29df86b61c8", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

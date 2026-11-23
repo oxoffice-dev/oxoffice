@@ -1,6 +1,6 @@
 //! PDF document writer: assembles pages, fonts, images, metadata, and outlines.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use oxoffice_layout::{
@@ -568,10 +568,23 @@ pub(crate) fn write_pdf_impl(
 
     // ── Outline item refs ────────────────────────────────────────────
     let outline_item_ids: Vec<Ref> = layout.outlines.iter().map(|_| alloc()).collect();
-    let tagged = layout
-        .structure
-        .as_ref()
-        .and_then(|structure| PreparedStructure::new(structure, &layout.pages, &mut alloc));
+    // The links that get an annotation, by page and rank among the page's
+    // link annotations, as the structure numbers them.
+    let mut annotated = HashSet::new();
+    for (page_idx, page) in layout.pages.iter().enumerate() {
+        let mut ordinal = 0;
+        walk_leaves(&page.elements, &mut |current_idx, element, _| {
+            if let PositionedElement::LinkAnnotation { .. } = element {
+                if annotation_refs.contains_key(&(page_idx, current_idx)) {
+                    annotated.insert((page_idx, ordinal));
+                }
+                ordinal += 1;
+            }
+        });
+    }
+    let tagged = layout.structure.as_ref().and_then(|structure| {
+        PreparedStructure::new(structure, &layout.pages, &annotated, &mut alloc)
+    });
     let declares_pdfua = tagged.is_some() && !layout_uses_notdef(layout);
     let metadata_id = (declares_pdfua || profile.is_some()).then(&mut alloc);
     let icc_profile_id = profile.map(|_| alloc());
@@ -584,7 +597,11 @@ pub(crate) fn write_pdf_impl(
     // Tagged links take the parent tree keys after the pages' and widgets'.
     let mut tagged_links = Vec::new();
     let mut link_keys: HashMap<(usize, usize), i32> = HashMap::new();
-    if tagged.is_some() {
+    // What a tagged link shows, for its annotations' `/Contents`.
+    let mut link_texts: HashMap<(usize, usize), String> = HashMap::new();
+    if let Some(prepared) = tagged.as_ref() {
+        // The pieces of one link share its element.
+        let mut group_elements: HashMap<usize, Ref> = HashMap::new();
         let widget_count = forms
             .as_ref()
             .map_or(0, |forms| forms.tagged_widgets().len());
@@ -594,13 +611,20 @@ pub(crate) fn write_pdf_impl(
             walk_leaves(&page.elements, &mut |current_idx, element, _| {
                 if let PositionedElement::LinkAnnotation { .. } = element {
                     if let Some(&annotation) = annotation_refs.get(&(page_idx, current_idx)) {
+                        let element = match prepared.link_group(page_idx, ordinal) {
+                            Some(group) => *group_elements.entry(group).or_insert_with(&mut alloc),
+                            None => alloc(),
+                        };
                         tagged_links.push(TaggedLink {
                             page_index: page_idx,
                             ordinal,
                             annotation,
-                            element: alloc(),
+                            element,
                             key: next_key,
                         });
+                        if let Some(text) = prepared.link_text(page_idx, ordinal) {
+                            link_texts.insert((page_idx, current_idx), text.to_owned());
+                        }
                         link_keys.insert((page_idx, current_idx), next_key);
                         next_key += 1;
                     }
@@ -970,10 +994,12 @@ pub(crate) fn write_pdf_impl(
                 if profile.is_some() {
                     annot.flags(AnnotationFlags::PRINT);
                 }
-                // A tagged link is described for assistive technology.
+                // A tagged link is described by the text it shows, else by
+                // its target.
                 if let Some(&key) = link_keys.get(&(page_idx, current_idx)) {
                     annot.struct_parent(key);
-                    annot.contents(TextStr(url));
+                    let text = link_texts.get(&(page_idx, current_idx));
+                    annot.contents(TextStr(text.map_or(url.as_str(), String::as_str)));
                 }
                 match url
                     .strip_prefix('#')

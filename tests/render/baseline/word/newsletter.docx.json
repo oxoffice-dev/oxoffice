@@ -1,8 +1,8 @@
 {
   "file": "word/newsletter.docx",
-  "reason": "text box paragraphs keep their spacing (newsletter)",
+  "reason": "a fixed-size text box hides the lines that do not fit, and its text keeps its insets and paragraph spacing (newsletter)",
   "resources": "0522baf33b0c317536f926d0fe7e5b503b13fb12b9ca427d74c023b09d98f31d",
-  "outline_and_tags": "b129d2b8bc6bd5168f47df86cdef1c6589fa4241d97d0a5adf39fd36b51414bc",
+  "outline_and_tags": "c47235a872b7c7a7874eaea75ebf90e4953d49f6581890a055c8e568b4b287b4",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "9fc90d6237d748d8d52a438ad75bc6cd15963c4e1d618cbaeacba46ef805d926", "content": "675717dc86406a3c0c71347aa1128341fbb6da732382d8e148ece4ae72930430", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
