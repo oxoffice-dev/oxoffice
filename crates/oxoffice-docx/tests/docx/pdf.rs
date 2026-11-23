@@ -760,6 +760,102 @@ fn a_glyph_drawn_by_a_fallback_face_leaves_its_line_as_tall_as_the_requested_fon
     }
 }
 
+/// The baseline steps into and out of the line holding `middle`, between the
+/// lines holding `before` and `after`.
+fn steps_around(pdf: &Pdf, before: &str, middle: &str, after: &str) -> (f64, f64) {
+    (
+        baseline_step(pdf, before, middle),
+        baseline_step(pdf, middle, after),
+    )
+}
+
+// Word draws a run's Han characters from its `w:eastAsia` family even when
+// its Latin text gives the run the ASCII slot, so a mixed run measures its
+// Han on SimSun's stand-in (Carlito), as a run of Han alone does, and not on
+// the Latin family (Times New Roman, standing in as Liberation Serif).
+#[test]
+fn han_in_a_mixed_run_measures_on_the_runs_east_asian_family() {
+    let mixed = r#"w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="SimSun""#;
+    let times = r#"w:ascii="Times New Roman" w:hAnsi="Times New Roman""#;
+    let body = [
+        tight_runs(&[run_in(times, "Lead one")]),
+        tight_runs(&[run_in(mixed, "Q3 \u{4e2d} Mixed")]),
+        tight_runs(&[run_in(times, "Middle")]),
+        tight_runs(&[
+            run_in(times, "Q3 "),
+            run_in(mixed, "\u{4e2d}"),
+            run_in(times, " Split"),
+        ]),
+        tight_runs(&[run_in(times, "Tail")]),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    let mixed_steps = steps_around(&pdf, "Lead one", "Mixed", "Middle");
+    let split_steps = steps_around(&pdf, "Middle", "Split", "Tail");
+    assert!(
+        (mixed_steps.0 - split_steps.0).abs() < 0.01
+            && (mixed_steps.1 - split_steps.1).abs() < 0.01,
+        "a mixed run steps {mixed_steps:.2?}, its Han in a run of its own {split_steps:.2?}"
+    );
+}
+
+// An emphasis mark or a ruby over Han drawn by a fallback face stands on a
+// line measured on the run's requested family, as the same annotation over
+// Latin text of that family's stand-in does.
+#[test]
+fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
+    let simsun = r#"w:ascii="SimSun" w:hAnsi="SimSun" w:eastAsia="SimSun""#;
+    let calibri = r#"w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri""#;
+    let emphasis = |fonts: &str, text: &str, label: &str| {
+        tight_runs(&[
+            format!(
+                r#"<w:r><w:rPr><w:rFonts {fonts}/><w:em w:val="dot"/></w:rPr><w:t>{text}</w:t></w:r>"#
+            ),
+            run_in(fonts, label),
+        ])
+    };
+    let ruby = |fonts: &str, text: &str, label: &str| {
+        tight_runs(&[
+            format!(
+                r#"<w:ruby><w:rubyPr><w:rubyAlign w:val="center"/><w:hps w:val="10"/><w:hpsRaise w:val="20"/><w:hpsBaseText w:val="22"/><w:lid w:val="zh-CN"/></w:rubyPr><w:rt><w:r><w:rPr><w:sz w:val="10"/></w:rPr><w:t>ab</w:t></w:r></w:rt><w:rubyBase><w:r><w:rPr><w:rFonts {fonts}/></w:rPr><w:t>{text}</w:t></w:r></w:rubyBase></w:ruby>"#
+            ),
+            run_in(fonts, label),
+        ])
+    };
+    let body = [
+        tight_runs(&[run_in(calibri, "First")]),
+        emphasis(simsun, "\u{4e2d}", " Dotted han"),
+        tight_runs(&[run_in(calibri, "Second")]),
+        emphasis(calibri, "Q", " Dotted latin"),
+        tight_runs(&[run_in(calibri, "Third")]),
+        ruby(simsun, "\u{4e2d}", " Ruby han"),
+        tight_runs(&[run_in(calibri, "Fourth")]),
+        ruby(calibri, "Q", " Ruby latin"),
+        tight_runs(&[run_in(calibri, "Fifth")]),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    for (han, latin) in [
+        (
+            ("First", "Dotted han", "Second"),
+            ("Second", "Dotted latin", "Third"),
+        ),
+        (
+            ("Third", "Ruby han", "Fourth"),
+            ("Fourth", "Ruby latin", "Fifth"),
+        ),
+    ] {
+        let han_steps = steps_around(&pdf, han.0, han.1, han.2);
+        let latin_steps = steps_around(&pdf, latin.0, latin.1, latin.2);
+        assert!(
+            (han_steps.0 - latin_steps.0).abs() < 0.01
+                && (han_steps.1 - latin_steps.1).abs() < 0.01,
+            "{}: {han_steps:.2?}, over Latin {latin_steps:.2?}",
+            han.1
+        );
+    }
+}
+
 // ---- Headers, footers and notes ----
 
 // Fails today: endnotes are drawn over a table that ends the document, at

@@ -227,6 +227,11 @@ pub(super) fn shape_word_multilingual_items(
             for (byte_start, byte_end, slot) in word_language_ranges(&segment.text) {
                 let mut slice = word_multilingual_segment_slice(segment, byte_start, byte_end)?;
                 slice.direction = style.direction;
+                if slot == WordLanguageSlot::EastAsia
+                    && let Some(face) = style.east_asian_measure_font
+                {
+                    slice.measure_font = Some(face);
+                }
                 styled.push((slice, word_language_for_slot(style, slot)));
                 kern.push(style.kern);
             }

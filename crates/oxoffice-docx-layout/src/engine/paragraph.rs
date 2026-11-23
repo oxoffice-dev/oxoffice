@@ -1312,6 +1312,12 @@ fn layout_paragraph_with_source_and_table(
                                 &mut requested_context_bytes,
                                 &mut requested_context_entries,
                             ),
+                            east_asian_measure_font: east_asian_measure_font(
+                                fm,
+                                &effective_rpr,
+                                input.theme.as_ref(),
+                                &segment.text,
+                            )?,
                             language: effective_rpr.language.clone(),
                             language_east_asia: effective_rpr.language_east_asia.clone(),
                             language_bidi: effective_rpr.language_bidi.clone(),
@@ -1616,6 +1622,12 @@ fn layout_paragraph_with_source_and_table(
                                             &mut requested_context_bytes,
                                             &mut requested_context_entries,
                                         ),
+                                        east_asian_measure_font: east_asian_measure_font(
+                                            fm,
+                                            &segment_rpr,
+                                            input.theme.as_ref(),
+                                            value,
+                                        )?,
                                         language: segment_rpr.language.clone(),
                                         language_east_asia: segment_rpr.language_east_asia.clone(),
                                         language_bidi: segment_rpr.language_bidi.clone(),
@@ -2335,6 +2347,31 @@ fn push_targeted_bookmark_markers(
         }
     }
     Ok(())
+}
+
+/// The face the East Asian characters of `text` measure on, `None` when it
+/// has none. Word draws them from the run's `w:eastAsia` family even when the
+/// run's other text gives it another slot, so a mixed run's Han measures on
+/// that family's face and its Latin on the run's.
+fn east_asian_measure_font(
+    fm: &mut FontManager,
+    rpr: &CT_RPr,
+    theme: Option<&oxoffice_docx_oxml::theme::Theme>,
+    text: &str,
+) -> Result<Option<oxoffice_layout::FontId>> {
+    if !text
+        .chars()
+        .any(|character| is_east_asian(character as u32))
+    {
+        return Ok(None);
+    }
+    let family = resolve_font_family(rpr, theme, WordFontSlot::EastAsia);
+    fm.resolve_font(
+        family.as_deref(),
+        rpr.bold.unwrap_or(false),
+        rpr.italic.unwrap_or(false),
+    )
+    .map(Some)
 }
 
 fn push_sequence_context_markers(
