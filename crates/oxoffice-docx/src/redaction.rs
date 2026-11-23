@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::Cursor;
 
+use oxoffice_core::xml::is_xml_1_0_character;
 use oxoffice_opc::relationship::rel_types;
 use oxoffice_opc::{OpcPackage, PackageReadLimits};
 use quick_xml::events::{BytesDecl, BytesRef, BytesStart, BytesText, Event};
@@ -1414,12 +1415,7 @@ fn validate_xml_characters(value: &str, version: XmlVersion) -> Result<()> {
                 || (0xe000..=0xfffd).contains(&value)
                 || (0x10000..=0x10ffff).contains(&value)
         }
-        XmlVersion::Implicit1_0 | XmlVersion::Explicit1_0 => {
-            matches!(character, '\t' | '\n' | '\r')
-                || ('\u{20}'..='\u{d7ff}').contains(&character)
-                || ('\u{e000}'..='\u{fffd}').contains(&character)
-                || ('\u{10000}'..='\u{10ffff}').contains(&character)
-        }
+        XmlVersion::Implicit1_0 | XmlVersion::Explicit1_0 => is_xml_1_0_character(character),
     });
     if !valid {
         return Err(Error::Other(

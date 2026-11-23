@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+use oxoffice_core::xml::is_xml_1_0_character;
 use oxoffice_docx_oxml::math::{
     FractionType, MathAccent, MathArgument, MathBar, MathBorderBox, MathDelimiter,
     MathEquationArray, MathExpression, MathFraction, MathFunction, MathGroupCharacter, MathLimit,
@@ -2503,12 +2504,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn is_xml_1_0_text(value: &str) -> bool {
-    value.chars().all(|character| {
-        matches!(character, '\u{9}' | '\u{a}' | '\u{d}')
-            || ('\u{20}'..='\u{d7ff}').contains(&character)
-            || ('\u{e000}'..='\u{fffd}').contains(&character)
-            || ('\u{10000}'..='\u{10ffff}').contains(&character)
-    })
+    value.chars().all(is_xml_1_0_character)
 }
 
 fn is_nary_operator(value: &str) -> bool {

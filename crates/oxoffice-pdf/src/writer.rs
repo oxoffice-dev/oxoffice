@@ -1644,7 +1644,7 @@ fn emit_elements<'a>(
                     // Give ActualText page-oriented geometry, then restore the
                     // current transform before painting the unchanged run.
                     let corrected_actual_text =
-                        if let Some(current_inverse) = inverse_transform(current_pdf_transform) {
+                        if let Some(current_inverse) = current_pdf_transform.inverse() {
                             content.transform(transform_array(current_inverse));
                             true
                         } else {
@@ -2193,27 +2193,6 @@ fn transform_array(transform: Transform) -> [f32; 6] {
         transform.e as f32,
         transform.f as f32,
     ]
-}
-
-fn inverse_transform(transform: Transform) -> Option<Transform> {
-    let determinant = transform.a * transform.d - transform.b * transform.c;
-    if !determinant.is_finite() || determinant == 0.0 {
-        return None;
-    }
-    let inverse = Transform {
-        a: transform.d / determinant,
-        b: -transform.b / determinant,
-        c: -transform.c / determinant,
-        d: transform.a / determinant,
-        e: (transform.c * transform.f - transform.d * transform.e) / determinant,
-        f: (transform.b * transform.e - transform.a * transform.f) / determinant,
-    };
-    [
-        inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f,
-    ]
-    .into_iter()
-    .all(f64::is_finite)
-    .then_some(inverse)
 }
 
 /// Emit a rich run at its shaped per-glyph positions.
