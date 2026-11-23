@@ -483,7 +483,11 @@ impl Document {
     ) -> Result<usize> {
         let mut candidate = self.clone_for_staging();
         candidate.prepare_staged_package()?;
-        let footnote_custody = crate::comparison::validate_footnote_custody(&candidate, &scope)?;
+        let footnote_custody = crate::comparison::validate_note_custody(
+            &candidate,
+            crate::comparison::NoteKind::Footnote,
+            &scope,
+        )?;
         if let Some(trace) = publication.as_deref_mut() {
             if candidate.footnotes_part_name.as_deref() != Some(trace.part_name.as_str()) {
                 return Err(Error::Other(
@@ -554,8 +558,9 @@ impl Document {
             candidate.package.set_part(&candidate.doc_part_name, output);
         }
 
-        let removed_note_revisions = crate::comparison::remove_selected_footnote_definitions(
+        let removed_note_revisions = crate::comparison::remove_selected_note_definitions(
             &mut candidate,
+            crate::comparison::NoteKind::Footnote,
             &footnote_custody,
             matches!(resolution, Resolution::Accept),
             publication.as_deref_mut(),
@@ -669,8 +674,9 @@ impl Document {
         if resolved == 0 {
             return Ok(0);
         }
-        crate::comparison::settle_footnote_custody(
+        crate::comparison::settle_note_custody(
             &mut candidate,
+            crate::comparison::NoteKind::Footnote,
             &footnote_custody,
             matches!(resolution, Resolution::Accept),
             note_part_resolved,
@@ -1118,9 +1124,10 @@ impl RevisionScope<'_> {
 /// the caller's paragraph root and canonical writer binding, not a new resolver root.
 ///
 /// `published` holds the byte ranges in `source` of paragraph children the
-/// caller already wrapped, each a whole field in a wrapper of its own: they
-/// are written as they are, and the markers next to them stay in the
-/// wrappers of their other neighbours.
+/// caller already wrapped, each a whole field in a wrapper of its own, a
+/// child of the paragraph or of a hyperlink in it: they are written as they
+/// are, and the markers next to them stay in the wrappers of their other
+/// neighbours.
 pub(crate) fn tracked_paragraph_children(
     source: &str,
     deleted: bool,
@@ -1229,7 +1236,7 @@ pub(crate) fn tracked_paragraph_children(
                 .push((input[frame.cursor..child.start].to_owned(), false));
         }
         frame.cursor = child.end;
-        if frame.owner == *paragraph
+        if (frame.owner == *paragraph || owner.word && owner.local == "hyperlink")
             && published.contains(&(child.start - opening.len()..child.end - opening.len()))
         {
             flush(&mut frame.groups, &mut output, wrap)?;

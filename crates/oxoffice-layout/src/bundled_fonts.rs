@@ -12,6 +12,9 @@
 //!   italic faces, licensed under the SIL Open Font License 1.1
 //! - **Noto Sans Symbols 2** approved monochrome bullet and checkbox subset,
 //!   licensed under the SIL Open Font License 1.1
+//! - **Noto Sans Math** subset of the mathematical symbol blocks, the fallback
+//!   for operators, arrows and letterlike symbols the text faces lack,
+//!   licensed under the SIL Open Font License 1.1
 //! - **Liberation Sans** — metric-compatible with Arial, licensed under the
 //!   SIL Open Font License 1.1
 //! - **Liberation Serif** — metric-compatible with Times New Roman, licensed
@@ -23,9 +26,9 @@
 //!   JP** — deterministic complex-script fallbacks licensed under the SIL Open
 //!   Font License 1.1
 //!
-//! The Noto Sans SC, Hebrew, KR and JP faces are deterministic subsets, not
-//! the full families. Each ships only its approved fixture repertoire, which
-//! its `fonts/SUBSET-*.md` record names and reproduces.
+//! The Noto Sans SC, Hebrew, KR, JP and Math faces are deterministic subsets,
+//! not the full families. Each ships only its approved repertoire, which its
+//! `fonts/SUBSET-*.md` record names and reproduces.
 
 /// Liberation Sans Regular, the face PDF form fields type with.
 pub const LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../fonts/LiberationSans-Regular.ttf");
@@ -35,7 +38,8 @@ pub const LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../fonts/LiberationSa
 /// Returns Carlito, Caladea, Liberation Sans, Liberation Serif, and Liberation
 /// Mono, each with Regular, Bold, Italic, and BoldItalic variants. Gelasio keeps
 /// its original upright and italic variable faces. Selawik supplies Regular and
-/// Bold. Noto Sans Symbols 2 supplies only the approved subset repertoire.
+/// Bold. Noto Sans Symbols 2 and Noto Sans Math supply only their approved
+/// subset repertoires.
 pub fn bundled_font_data() -> Vec<(&'static str, &'static [u8])> {
     vec![
         // Carlito — metric-compatible replacement for Calibri
@@ -169,6 +173,11 @@ pub fn bundled_font_data() -> Vec<(&'static str, &'static [u8])> {
         (
             "Noto Sans JP",
             include_bytes!("../fonts/NotoSansJP-F266a-subset.ttf").as_slice(),
+        ),
+        // Last, so that adding it moved no other face.
+        (
+            "Noto Sans Math",
+            include_bytes!("../fonts/NotoSansMath-operators-subset.ttf").as_slice(),
         ),
     ]
 }

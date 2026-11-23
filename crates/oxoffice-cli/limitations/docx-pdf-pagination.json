@@ -1,9 +1,0 @@
-{
-  "id": "docx-pdf-pagination",
-  "format": "docx",
-  "area": "pdf",
-  "title": "PDF pages: a blank page beside a floating picture before a section break",
-  "symptom": "a page break beside a wrapping floating picture just before a next-page section break still leaves a blank page",
-  "workaround": "remove the page break before such a section break",
-  "issue": 156
-}

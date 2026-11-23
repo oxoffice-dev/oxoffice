@@ -1997,47 +1997,110 @@ fn a_simple_field_the_reader_keeps_raw_keeps_a_refusal_when_its_paragraph_goes_w
 }
 
 #[test]
-fn a_simple_field_inside_a_hyperlink_keeps_the_whole_paragraph_refusal() {
-    let linked = r#"<w:p><w:hyperlink w:anchor="_Top"><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:hyperlink></w:p>"#;
+fn a_simple_field_inside_a_hyperlink_is_tracked_whole_with_its_paragraph() {
+    let linked = r#"<w:p><w:hyperlink w:anchor="_Top"><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:hyperlink></w:p>"#;
     let after = plain("After.");
-    let refused = |original: &str, edited: &str| {
-        let mut doc = doc_with_body(original);
-        let error = doc
-            .compare(&doc_with_body(edited), AUTHOR, DATE)
-            .expect_err("refused");
-        assert!(
-            error
-                .to_string()
-                .contains("cannot track a whole paragraph's simple field"),
-            "{error}"
-        );
-    };
-    // Inserted and deleted whole.
-    refused(&after, &format!("{linked}{after}"));
-    refused(&format!("{linked}{after}"), &after);
+    // Inserted and deleted whole, before a paragraph and as the last one.
+    check_both_ways(
+        || doc_with_body(&after),
+        || doc_with_body(&format!("{linked}{after}")),
+        "document.xml",
+        [false, true],
+    );
+    check_both_ways(
+        || doc_with_body(&plain("Before.")),
+        || doc_with_body(&format!("{}{linked}", plain("Before."))),
+        "document.xml",
+        [false, true],
+    );
     // Paired, its hyperlink pointing elsewhere: written as a deleted and an
-    // inserted paragraph, refused the same way.
+    // inserted paragraph.
     let relinked = linked.replace("_Top", "_Bottom");
-    refused(&format!("{linked}{after}"), &format!("{relinked}{after}"));
+    check_both_ways(
+        || doc_with_body(&format!("{linked}{after}")),
+        || doc_with_body(&format!("{relinked}{after}")),
+        "document.xml",
+        [true, true],
+    );
+    // The field, from begin to end, in one wrapper inside the hyperlink.
+    let mut doc = redline(
+        doc_with_body(&after),
+        &doc_with_body(&format!("{linked}{after}")),
+    );
+    let xml = main_part_xml(&mut doc);
+    assert!(!xml.contains("fldSimple"), "{xml}");
+    let link = &xml[xml.find("<w:hyperlink").unwrap()..xml.find("</w:hyperlink>").unwrap()];
+    let field = &link
+        [link.find(r#"fldCharType="begin""#).unwrap()..link.rfind(r#"fldCharType="end""#).unwrap()];
+    assert!(
+        !field.contains("<w:ins ") && !field.contains("</w:ins>"),
+        "{xml}"
+    );
 }
 
 #[test]
-fn a_simple_field_nested_in_another_keeps_a_refusal_when_its_paragraph_goes_whole() {
-    // The conversion writes one complex field; a simple field in its result
-    // has no qualified place there, and the comparison says so.
-    let nested = r#"<w:p><w:fldSimple w:instr=" IF 1 = 1 "><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:fldSimple></w:p>"#;
+fn a_simple_field_nested_in_another_is_tracked_whole_with_its_paragraph() {
+    // The nested field is written as a complex field too, in the result of
+    // the outer one: Word nests complex fields only.
+    let nested = r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" IF 1 = 1 "><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:fldSimple></w:p>"#;
     let after = plain("After.");
-    for (original, edited) in [
-        (after.clone(), format!("{nested}{after}")),
-        (format!("{nested}{after}"), after.clone()),
-    ] {
-        let mut doc = doc_with_body(&original);
-        let error = doc
-            .compare(&doc_with_body(&edited), AUTHOR, DATE)
-            .expect_err("refused");
-        assert!(error.to_string().contains("fldSimple"), "{error}");
-        assert!(doc.revisions().is_empty());
-    }
+    // Inserted before a paragraph, and as the last paragraph of the body.
+    check_both_ways(
+        || doc_with_body(&after),
+        || doc_with_body(&format!("{nested}{after}")),
+        "document.xml",
+        [false, true],
+    );
+    check_both_ways(
+        || doc_with_body(&plain("Before.")),
+        || doc_with_body(&format!("{}{nested}", plain("Before."))),
+        "document.xml",
+        [false, true],
+    );
+    // Paired, its text now linked: written as a deleted and an inserted
+    // paragraph.
+    let linked = nested.replace(
+        r#"<w:r><w:t xml:space="preserve">Page </w:t></w:r>"#,
+        r#"<w:hyperlink w:anchor="_Top"><w:r><w:t xml:space="preserve">Page </w:t></w:r></w:hyperlink>"#,
+    );
+    check_both_ways(
+        || doc_with_body(&format!("{nested}{after}")),
+        || doc_with_body(&format!("{linked}{after}")),
+        "document.xml",
+        [true, true],
+    );
+    // Both fields from the first begin to the last end in one wrapper.
+    let mut doc = redline(
+        doc_with_body(&after),
+        &doc_with_body(&format!("{nested}{after}")),
+    );
+    let xml = main_part_xml(&mut doc);
+    assert!(!xml.contains("fldSimple"), "{xml}");
+    let field = &xml
+        [xml.find(r#"fldCharType="begin""#).unwrap()..xml.rfind(r#"fldCharType="end""#).unwrap()];
+    assert!(
+        !field.contains("<w:ins ") && !field.contains("</w:ins>"),
+        "{xml}"
+    );
+    assert_eq!(field.matches(r#"fldCharType="begin""#).count(), 2, "{xml}");
+    assert!(
+        field.find(" IF 1 = 1 ").unwrap() < field.find(" PAGE ").unwrap(),
+        "{xml}"
+    );
+    // Deleted, every text of both fields is deleted text, which Word
+    // requires.
+    let mut doc = redline(
+        doc_with_body(&format!("{nested}{after}")),
+        &doc_with_body(&after),
+    );
+    let xml = main_part_xml(&mut doc);
+    let field = &xml
+        [xml.find(r#"fldCharType="begin""#).unwrap()..xml.rfind(r#"fldCharType="end""#).unwrap()];
+    assert_eq!(field.matches("<w:delInstrText").count(), 2, "{xml}");
+    assert!(
+        !field.contains("<w:instrText") && !field.contains("<w:t>") && !field.contains("<w:t "),
+        "{xml}"
+    );
 }
 
 /// A document of these Heading 1 paragraphs under a table of contents that
@@ -2717,4 +2780,103 @@ fn a_bookmark_both_versions_hold_ending_inside_a_replaced_paragraph_is_refused()
         .compare(&edited, AUTHOR, DATE)
         .expect_err("the end cannot be kept inside the text");
     assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
+#[test]
+fn a_changed_field_holding_a_nested_field_is_deleted_as_deleted_text() {
+    // The outer instruction changes: the field is deleted and inserted
+    // whole, and the deletion holds the nested field's text too.
+    let field = |known: &str| {
+        format!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Smith</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Smith" "{known}" "Unknown" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{known}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let edited = doc_with_body(&field("Yes"));
+    let mut doc = redline(doc_with_body(&field("Known")), &edited);
+    let xml = main_part_xml(&mut doc);
+    let deletions = xml
+        .split("<w:del ")
+        .skip(1)
+        .map(|tail| &tail[..tail.find("</w:del>").unwrap()])
+        .collect::<Vec<_>>();
+    assert!(
+        deletions
+            .iter()
+            .any(|deletion| deletion.matches("<w:delInstrText").count() == 3),
+        "the deletion holds both instructions: {xml}"
+    );
+    for deletion in deletions {
+        assert!(
+            !deletion.contains("<w:instrText")
+                && !deletion.contains("<w:t>")
+                && !deletion.contains("<w:t "),
+            "{xml}"
+        );
+    }
+    assert!(xml.contains("MERGEFIELD"), "{xml}");
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    assert_eq!(
+        texts(&rejected(&mut doc)),
+        texts(&doc_with_body(&field("Known")))
+    );
+}
+
+#[test]
+fn a_field_whose_result_changes_beside_a_nested_field_is_compared() {
+    // The result of the outer field starts after its own separate, not
+    // after the one of a field nested in its instruction, and ends at its
+    // own end, not at the one of a field nested in its result.
+    let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#;
+    let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+    let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let instruction = |text: &str| {
+        format!(r#"<w:r><w:instrText xml:space="preserve">{text}</w:instrText></w:r>"#)
+    };
+    let text = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+    let merge = format!(
+        "{begin}{}{separate}{}{end}",
+        instruction(" MERGEFIELD Name "),
+        text("Smith")
+    );
+    let in_instruction = |shown: &str| {
+        format!(
+            "<w:p>{begin}{}{merge}{}{separate}{}{end}</w:p>",
+            instruction(r#" IF ""#),
+            instruction(r#"" = "Smith" "Known" "Unknown" "#),
+            text(shown)
+        )
+    };
+    let in_result = |shown: &str| {
+        format!(
+            "<w:p>{begin}{}{separate}{}{merge}{end}</w:p>",
+            instruction(" QUOTE "),
+            text(shown)
+        )
+    };
+    for field in [&in_instruction as &dyn Fn(&str) -> String, &in_result] {
+        let (original, edited) = (field("Unknown"), field("Known"));
+        let mut doc = redline(doc_with_body(&original), &doc_with_body(&edited));
+        assert_eq!(texts(&accepted(&mut doc)), texts(&doc_with_body(&edited)));
+        assert_eq!(texts(&rejected(&mut doc)), texts(&doc_with_body(&original)));
+    }
+}
+
+#[test]
+fn a_simple_field_nested_through_a_control_in_another_keeps_a_refusal_when_its_paragraph_goes_whole()
+ {
+    // Nested through an inline content control, it would stay a simple
+    // field inside the deletion, whose text Word requires as deleted text.
+    let nested = r#"<w:p><w:fldSimple w:instr=" IF 1 = 1 "><w:sdt><w:sdtPr/><w:sdtContent><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:sdtContent></w:sdt></w:fldSimple></w:p>"#;
+    let after = plain("After.");
+    for (original, edited) in [
+        (after.clone(), format!("{nested}{after}")),
+        (format!("{nested}{after}"), after.clone()),
+    ] {
+        let mut doc = doc_with_body(&original);
+        let error = doc
+            .compare(&doc_with_body(&edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(error.to_string().contains("simple field nested"), "{error}");
+        assert!(doc.revisions().is_empty());
+    }
 }

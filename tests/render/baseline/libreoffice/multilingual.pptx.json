@@ -1,6 +1,6 @@
 {
   "file": "libreoffice/multilingual.pptx",
-  "reason": "only characters that draw a glyph choose a run's face",
+  "reason": "a run keeps its family's face, only characters that draw a glyph choose another; merged with main",
   "resources": "a08259bcc27e3cffe785f5e59207b480abffe58b837ae1dd518b732bd5dfbc9c",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",

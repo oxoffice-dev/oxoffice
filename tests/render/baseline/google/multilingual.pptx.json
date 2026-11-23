@@ -1,7 +1,7 @@
 {
   "file": "google/multilingual.pptx",
-  "reason": "only characters that draw a glyph choose a run's face",
-  "resources": "e8b3c457ba0705d12c0b290006aa4c275c6fb0ec588706f6e72431a09b43dfec",
+  "reason": "a run keeps its family's face, only characters that draw a glyph choose another; merged with main",
+  "resources": "f271ed7961cd5d78569aae92cc4af9877d697b3e5042d87ca35dc6b94904a8fd",
   "outline_and_tags": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "catalog": "0a263cb3208612613319204293e2d84a3431d4d2e09c0fffc4e9c2aa96ff870b",
   "pages": [
@@ -11,6 +11,6 @@
     {"page": 4, "pixels": "e5d27151c60b49987ab99a7b04fa643b89394c634db799d5a3018acd2f56ac31", "content": "f052479fa5f510cd7f3c72d5d7a052afdde38879555ade939e9ecc1ccca68324", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 5, "pixels": "89c8ba76b1443ab2f4761085464c4a45464e5c08a3107a2f93f05bddb9b70e16", "content": "50c6cea18bfe156964309070c569c78e90f2083d391d0945c0efa90544737f70", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
     {"page": 6, "pixels": "ad08c969dfa86b27bfe4820f8f7061a8aba1259d3b0e3875d866b073fd16eeb2", "content": "cfe0dba39487c9ca2ff6d7ea38f8aa0073c48ec13a27dec74cf9e41e2301dd68", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"},
-    {"page": 7, "pixels": "072fb0a47a8630fc1d29a111c6fde393162b1acb9c7b577f6ddc0b56774cbbc4", "content": "b307026a1eae7769be9ea9cf89667f1af02954ce94b69b2127e8f8efd08da076", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"}
+    {"page": 7, "pixels": "072fb0a47a8630fc1d29a111c6fde393162b1acb9c7b577f6ddc0b56774cbbc4", "content": "dada4e0c23c48d54c10911a94fc3878f9ebe3a0d6afd56c2b827b8e229bcdcb0", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5f99f6637a54c4c4291fc1e0622f89aceb463757a9245821b7f3f94390774ddb"}
   ]
 }

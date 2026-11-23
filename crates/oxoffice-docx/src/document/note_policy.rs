@@ -28,14 +28,19 @@ impl NoteSpecialRecord {
     }
 }
 
-/// Marker formats the native renderer can reproduce.
+/// Marker formats the native renderer can reproduce. More may come, so a
+/// `match` on it needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NoteNumberFormat {
     Decimal,
     UpperRoman,
     LowerRoman,
     UpperLetter,
     LowerLetter,
+    /// Word's "*, †, ‡, §" marks (Chicago Manual of Style), then each mark
+    /// doubled, tripled and so on.
+    Chicago,
 }
 
 impl NoteNumberFormat {
@@ -46,6 +51,7 @@ impl NoteNumberFormat {
             Self::LowerRoman => "lowerRoman",
             Self::UpperLetter => "upperLetter",
             Self::LowerLetter => "lowerLetter",
+            Self::Chicago => "chicago",
         }
     }
 }
