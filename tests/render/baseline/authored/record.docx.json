@@ -1,8 +1,8 @@
 {
   "file": "authored/record.docx",
-  "reason": "a face picked for its glyphs no longer measures the line",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "5eb1f32f9b57988c96ec972dbf3046d34adac5392139027048eab9ce3ce725e4",
-  "outline_and_tags": "327dbd19da9ac17ade639506d71eb2ef944dff6471845aae21f970132cc189e1",
+  "outline_and_tags": "11269779996840b2e0b1264aeb7a53a84470d16ae93c4ce645184852193abaa6",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "57c165946cb8450f7a5af2eb3616a6b95bb650e25578cc845f29de9ee82c8dbd", "content": "5be11182a011978e52b448560403e73a464e43f699812186e0e838ee8078dcc5", "annotations": "1b312550782ebb7c56608784b9392721517c09545612738e022f463545dbd1da", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},

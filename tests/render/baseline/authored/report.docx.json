@@ -1,8 +1,8 @@
 {
   "file": "authored/report.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "012d2710a5c66402d5457bce0d6d47f99b58d924a597e895504e1f3f79032115",
-  "outline_and_tags": "4ab3aaafe21d1c492a1d9c18c684e5e8c0f2d93d462f3b34524d52523da51aac",
+  "outline_and_tags": "84c299e4ab3537373fbcbfc42af2d57d5083407ea25b386d3e57ccdf2ebc547b",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "707100859bb444a5c0aa0a776e08550d9a6bbe10fdbf47b60534d5e7b37d13cb", "content": "a417f4fcdadd9a43f98efadc4df4b140f15de87de28cc35dbcf9e4a4d7aa96d7", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},

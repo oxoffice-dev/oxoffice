@@ -19,12 +19,19 @@ pub enum RunContent {
     FootnoteRef {
         id: i32,
         /// Custom mark displayed by this reference instead of a numeric label.
+        ///
+        /// Word takes the child right after the reference as its mark. A
+        /// mark read from a `w:t` is this text. An empty mark directly
+        /// followed by a symbol or deleted text is a mark held by that item,
+        /// as [`CT_R::note_mark_child`] finds it; an empty text in between
+        /// is the mark, and leaves that item body content.
         custom_mark: Option<String>,
     },
     /// An endnote reference (`<w:endnoteReference w:id="..."/>`).
     EndnoteRef {
         id: i32,
-        /// Custom mark displayed by this reference instead of a numeric label.
+        /// Custom mark displayed by this reference instead of a numeric label,
+        /// read as for [`RunContent::FootnoteRef`].
         custom_mark: Option<String>,
     },
     /// A comment reference (`<w:commentReference w:id="..."/>`).
@@ -198,6 +205,8 @@ impl RunChildAction {
                 b"delText" => A::DeletedText,
                 b"drawing" => A::Drawing,
                 b"commentReference" => A::CommentReference,
+                b"footnoteReference" => A::FootnoteReference,
+                b"endnoteReference" => A::EndnoteReference,
                 b"pict" => A::Pict,
                 _ => A::Raw,
             }
@@ -881,6 +890,57 @@ impl CT_R {
             }
     }
 
+    /// Whether `item` holds the custom mark of an empty-marked note
+    /// reference right before it: a symbol or deleted text.
+    fn holds_note_mark(item: Option<&RunContent>) -> bool {
+        matches!(
+            item,
+            Some(RunContent::Symbol { .. } | RunContent::DeletedText(_))
+        )
+    }
+
+    /// The index of the item that holds the custom mark of the note
+    /// reference at `index`, when it is not the reference's own text: the
+    /// symbol or deleted text right after a reference whose custom mark is
+    /// empty, with nothing in between Word does not pass over (whitespace,
+    /// an XML comment, a processing instruction or a rendered page break).
+    /// Word shows that item as the mark. An empty text read right after the
+    /// reference holds an empty mark, and leaves what follows body content.
+    pub fn note_mark_child(&self, index: usize) -> Option<usize> {
+        let empty_mark = match self.content.get(index)? {
+            RunContent::FootnoteRef { custom_mark, .. }
+            | RunContent::EndnoteRef { custom_mark, .. } => {
+                custom_mark.as_deref().is_some_and(str::is_empty)
+            }
+            _ => false,
+        };
+        if !empty_mark || !Self::holds_note_mark(self.content.get(index + 1)) {
+            return None;
+        }
+        // The run reader counts a text mark's `w:t` as a child of its own.
+        let text_marks = self.content[..index]
+            .iter()
+            .filter(|item| match item {
+                RunContent::FootnoteRef { custom_mark, .. }
+                | RunContent::EndnoteRef { custom_mark, .. } => {
+                    custom_mark.as_deref().is_some_and(|mark| !mark.is_empty())
+                }
+                _ => false,
+            })
+            .count();
+        let boundary = usize::from(self.properties.is_some()) + index + 1 + text_marks;
+        let passed = self
+            .extra_xml_positions
+            .iter()
+            .zip(&self.extra_xml)
+            .filter(|(position, _)| {
+                !Self::raw_child_is_root_attributes(**position)
+                    && Self::raw_child_position(**position) == boundary
+            })
+            .all(|(_, raw)| raw_passed_before_note_mark(raw));
+        (passed && self.extra_xml_positions.len() == self.extra_xml.len()).then_some(index + 1)
+    }
+
     /// Get the combined text of all text content in this run, as stored.
     ///
     /// A raw reader: it reads text, tabs, breaks and the result of a complex
@@ -1345,6 +1405,10 @@ impl CT_R {
         // rendered page break may come between them, as the note removal
         // reads it.
         let mut mark_open = false;
+        // An empty `w:t` that took the mark slot, with its `xml:space` and
+        // source span: the item that holds the mark when the next child is
+        // a symbol or deleted text, nothing otherwise.
+        let mut empty_mark: Option<(bool, std::ops::Range<usize>)> = None;
         let mut buf = Vec::new();
         loop {
             let event_start = ordinary.as_ref().map(|_| reader.buffer_position());
@@ -1359,6 +1423,20 @@ impl CT_R {
                         RunChildAction::for_element(e, &prefixes, false),
                     )?;
                     let action = plan.action;
+                    // A child kept raw leaves the empty mark pending: only the
+                    // next modelled child says whether it holds the mark.
+                    let modelled = !action.retains_raw(false)
+                        && action != RunChildAction::Properties
+                        && !(matches!(
+                            action,
+                            RunChildAction::FootnoteReference | RunChildAction::EndnoteReference
+                        ) && started_reference_has_payload(*reader.get_ref())?);
+                    if modelled
+                        && let Some((preserve, encoded)) = empty_mark.take()
+                        && action == RunChildAction::DeletedText
+                    {
+                        push_empty_mark_text(&mut content, &mut text_facts, preserve, encoded);
+                    }
                     if action == RunChildAction::Properties {
                         let (raw, mapped) =
                             if let (Some(cursor), Some(start)) = (cursor, event_start) {
@@ -1408,7 +1486,16 @@ impl CT_R {
                             | Some(RunContent::EndnoteRef {
                                 custom_mark: Some(mark),
                                 ..
-                            }) if mark_was_open => *mark = text,
+                            }) if mark_was_open => {
+                                if text.is_empty() {
+                                    // Kept as text only when a symbol or
+                                    // deleted text follows, which it leaves
+                                    // body content.
+                                    empty_mark = Some((preserve, encoded_range));
+                                } else {
+                                    *mark = text;
+                                }
+                            }
                             _ => {
                                 if let Some(facts) = &mut text_facts {
                                     facts.push(ParsedWordText {
@@ -1470,6 +1557,39 @@ impl CT_R {
                                 .into_content(extra_xml.len()),
                         );
                         modeled_children += 1;
+                    } else if matches!(
+                        action,
+                        RunChildAction::FootnoteReference | RunChildAction::EndnoteReference
+                    ) {
+                        // A started reference with nothing inside reads as the
+                        // empty one Word writes, with its custom mark after it.
+                        // One that holds anything stays verbatim.
+                        let raw = capture_element(reader, e)?;
+                        let mut source = Reader::from_reader(raw.as_slice());
+                        source.read_event()?;
+                        let after_start = source.buffer_position() as usize;
+                        if !started_reference_has_payload(&raw[after_start..])? {
+                            let leaf = plan.leaf.expect("note reference primitive");
+                            mark_open = matches!(
+                                leaf,
+                                RunLeafValue::Footnote {
+                                    custom_mark: Some(_),
+                                    ..
+                                } | RunLeafValue::Endnote {
+                                    custom_mark: Some(_),
+                                    ..
+                                }
+                            );
+                            content.push(leaf.into_content(extra_xml.len()));
+                            modeled_children += 1;
+                        } else {
+                            extra_xml.push(raw);
+                            extra_xml_positions.push(Self::encode_raw_child_position(
+                                modeled_children,
+                                false,
+                                false,
+                            ));
+                        }
                     } else if action == RunChildAction::AlternateContent {
                         // Keep the block verbatim so the VML fallback survives
                         // a write, and separately read the DrawingML out of it
@@ -1511,6 +1631,15 @@ impl CT_R {
                         &prefixes,
                         RunChildAction::for_element(e, &prefixes, true),
                     )?;
+                    if (plan.leaf.is_some() || plan.action == RunChildAction::CommentReference)
+                        && let Some((preserve, encoded)) = empty_mark.take()
+                        && matches!(
+                            plan.leaf,
+                            Some(RunLeafValue::Special(SpecialRunValue::Symbol { .. }))
+                        )
+                    {
+                        push_empty_mark_text(&mut content, &mut text_facts, preserve, encoded);
+                    }
                     if plan.action == RunChildAction::CommentReference
                         && comment_reference_has_payload_attributes(e, &prefixes)
                     {
@@ -1871,13 +2000,12 @@ impl CT_R {
 
         let mut raw_written = 0;
         for (index, item) in self.content.iter().enumerate() {
-            // An empty custom mark before a symbol or deleted text is not
-            // written: that child is the mark Word reads, and an empty
-            // `w:t` written before it would take its place.
-            let mark_follows = matches!(
-                self.content.get(index + 1),
-                Some(RunContent::Symbol { .. } | RunContent::DeletedText(_))
-            );
+            // An empty custom mark before a symbol, deleted text or an empty
+            // text is not written: that child is the mark Word reads, and an
+            // empty `w:t` written before it would take its place.
+            let mark_follows = Self::holds_note_mark(self.content.get(index + 1))
+                || (matches!(self.content.get(index + 1), Some(RunContent::Text(text)) if text.text.is_empty())
+                    && Self::holds_note_mark(self.content.get(index + 2)));
             match item {
                 RunContent::Text(t) => {
                     let mut e = FieldXmlStart::word(&word_prefix, "t", emission)?;
@@ -2439,6 +2567,58 @@ pub(super) fn write_run_raw_source<W: std::io::Write>(
     )
 }
 
+/// Whether a started note reference holds anything but whitespace, which
+/// keeps it verbatim. `input` starts right after the reference's start tag.
+pub(crate) fn started_reference_has_payload(input: impl std::io::BufRead) -> Result<bool> {
+    let mut reader = Reader::from_reader(input);
+    reader.config_mut().allow_unmatched_ends = true;
+    reader.config_mut().check_end_names = false;
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match reader.read_event_into(&mut buffer)? {
+            Event::Text(text) if text.iter().all(u8::is_ascii_whitespace) => {}
+            Event::End(_) => return Ok(false),
+            _ => return Ok(true),
+        }
+    }
+}
+
+/// Push the empty `w:t` that holds a note's custom mark, as the run reader
+/// reads any other text.
+fn push_empty_mark_text(
+    content: &mut Vec<RunContent>,
+    text_facts: &mut Option<&mut Vec<ParsedWordText>>,
+    preserve_space: bool,
+    encoded: std::ops::Range<usize>,
+) {
+    if let Some(facts) = text_facts {
+        facts.push(ParsedWordText {
+            drawing: None,
+            content: content.len(),
+            encoded,
+        });
+    }
+    content.push(RunContent::Text(CT_Text {
+        text: String::new(),
+        preserve_space,
+    }));
+}
+
+/// Whether Word passes over a raw run child between a note reference and
+/// its custom mark: an XML comment, a processing instruction or a rendered
+/// page break.
+fn raw_passed_before_note_mark(raw: &[u8]) -> bool {
+    let mut reader = Reader::from_reader(raw);
+    match reader.read_event() {
+        Ok(Event::Comment(_) | Event::PI(_)) => true,
+        Ok(Event::Empty(element) | Event::Start(element)) => {
+            element.local_name().as_ref() == b"lastRenderedPageBreak"
+        }
+        _ => false,
+    }
+}
+
 fn write_run_raw_boundary<W: std::io::Write>(
     writer: &mut Writer<W>,
     run: &CT_R,
@@ -2653,14 +2833,107 @@ mod custom_mark_tests {
             let xml = written(&read(&source));
             assert_eq!(xml, format!("<w:r>{source}</w:r>"), "{mark}");
         }
-        // A text mark that is empty still writes its `w:t`, so the text after
-        // it stays body text.
-        let run = read(&format!(r#"{reference}<w:t></w:t><w:t>x</w:t>"#));
-        assert_eq!(mark(&run), Some(""));
-        let xml = written(&run);
-        assert!(
-            xml.contains(r#"<w:t xml:space="preserve"></w:t><w:t>x</w:t>"#),
-            "{xml}"
+        // A text mark that is empty still writes its `w:t`, so the text,
+        // symbol or deleted text after it stays body text.
+        for after in [
+            "<w:t>x</w:t>",
+            r#"<w:sym w:font="Symbol" w:char="F0A7"/>"#,
+            "<w:delText>x</w:delText>",
+        ] {
+            let source = format!("{reference}<w:t></w:t>{after}");
+            let run = read(&source);
+            assert_eq!(mark(&run), Some(""), "{after}");
+            assert_eq!(run.note_mark_child(0), None, "{after}");
+            let xml = written(&run);
+            // One empty `w:t`, the mark, right before what follows it.
+            assert!(
+                xml.ends_with(&format!("></w:t>{after}</w:r>")),
+                "{after}: {xml}"
+            );
+            assert_eq!(
+                xml.matches("</w:t>").count(),
+                1 + usize::from(after.contains("</w:t>")),
+                "{after}: {xml}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_symbol_or_deleted_text_right_after_an_empty_mark_holds_the_mark() {
+        let reference = r#"<w:footnoteReference w:id="2" w:customMarkFollows="1"/>"#;
+        let symbol = r#"<w:sym w:font="Symbol" w:char="F0A7"/>"#;
+        for (between, held) in [
+            ("", true),
+            ("<w:lastRenderedPageBreak/><!-- c -->", true),
+            (r#"<w:fldChar w:fldCharType="begin"/>"#, false),
+            ("<w:tab/>", false),
+        ] {
+            let run = read(&format!("{reference}{between}{symbol}"));
+            let child = run.note_mark_child(0);
+            assert_eq!(child.is_some(), held, "{between}");
+            if let Some(child) = child {
+                assert!(
+                    matches!(run.content[child], RunContent::Symbol { .. }),
+                    "{between}"
+                );
+            }
+        }
+        // An empty text mark stays the mark past children kept raw.
+        for between in [
+            "<w:lastRenderedPageBreak/>",
+            "<w:lastRenderedPageBreak></w:lastRenderedPageBreak>",
+            r#"<w:fldChar w:fldCharType="begin"/>"#,
+            r#"<w:footnoteReference w:id="3"><!-- c --></w:footnoteReference>"#,
+        ] {
+            let source = format!("{reference}<w:t></w:t>{between}{symbol}");
+            let run = read(&source);
+            assert_eq!(run.note_mark_child(0), None, "{between}");
+            let xml = written(&run);
+            assert!(
+                xml.contains(&format!("></w:t>{between}{symbol}")),
+                "{between}: {xml}"
+            );
+        }
+        // After a text-marked reference of the same run, a child between the
+        // next reference and its symbol is found where the reader put it.
+        let run = read(&format!(
+            r#"<w:footnoteReference w:customMarkFollows="1" w:id="1"/><w:t>*</w:t>{reference}<w:fldChar w:fldCharType="begin"/>{symbol}"#
+        ));
+        assert_eq!(run.note_mark_child(1), None);
+        // A mark read as text is held by the reference itself.
+        let run = read(&format!("{reference}<w:t>*</w:t>{symbol}"));
+        assert_eq!(mark(&run), Some("*"));
+        assert_eq!(run.note_mark_child(0), None);
+    }
+
+    #[test]
+    fn a_started_note_reference_reads_as_the_empty_one_unless_it_holds_content() {
+        let run = read(
+            r#"<w:footnoteReference w:customMarkFollows="1" w:id="2"></w:footnoteReference><w:t>*</w:t>"#,
         );
+        assert_eq!(mark(&run), Some("*"));
+        assert_eq!(run.text(), "*");
+        assert_eq!(
+            written(&run),
+            r#"<w:r><w:footnoteReference w:id="2" w:customMarkFollows="1"/><w:t xml:space="preserve">*</w:t></w:r>"#
+        );
+        let run = read(r#"<w:endnoteReference w:id="3"></w:endnoteReference>"#);
+        assert!(matches!(
+            run.content[..],
+            [RunContent::EndnoteRef { id: 3, .. }]
+        ));
+        let run = read(r#"<w:endnoteReference w:id="3"> </w:endnoteReference>"#);
+        assert!(matches!(
+            run.content[..],
+            [RunContent::EndnoteRef { id: 3, .. }]
+        ));
+        for held in [
+            r#"<w:footnoteReference w:id="2"><x:y xmlns:x="urn:x"/></w:footnoteReference>"#,
+            r#"<w:footnoteReference w:id="2"><!-- c --></w:footnoteReference>"#,
+        ] {
+            let run = read(held);
+            assert!(run.content.is_empty(), "{held}");
+            assert_eq!(written(&run), format!("<w:r>{held}</w:r>"));
+        }
     }
 }
