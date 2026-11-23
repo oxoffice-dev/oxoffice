@@ -401,6 +401,112 @@ impl<'a> FormPlan<'a> {
     }
 }
 
+/// One message per field a user can type into whose text the typing font
+/// cannot encode, naming the field as the PDF does and the text's scripts.
+///
+/// Viewers rebuild a field's appearance with the typing font once it is
+/// edited: text in those scripts may then show nothing, or be saved without
+/// an appearance that other viewers draw.
+pub fn untypable_form_text(layout: &oxoffice_layout::LayoutResult) -> Vec<String> {
+    if layout.form_fields.is_empty() {
+        return Vec::new();
+    }
+    let mut next = 0;
+    let Some(plan) = FormPlan::new(&layout.pages, &layout.form_fields, false, &mut || {
+        next += 1;
+        Ref::new(next)
+    }) else {
+        return Vec::new();
+    };
+    let mut messages: Vec<String> = Vec::new();
+    for placed in &plan.fields {
+        if placed.field.read_only {
+            continue;
+        }
+        let texts: Vec<&str> = match &placed.field.kind {
+            FormFieldKind::Text { value, .. } if !placed.field.placeholder => vec![value],
+            // A chosen option shows its label; a value no option holds is
+            // text typed into an editable list.
+            FormFieldKind::Choice { options, value, .. } => options
+                .iter()
+                .map(|option| option.display.as_str())
+                .chain(value.as_deref().filter(|value| {
+                    !placed.field.placeholder
+                        && !options.iter().any(|option| option.value == *value)
+                }))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let characters: BTreeSet<char> = texts
+            .iter()
+            .flat_map(|text| text.chars())
+            .filter(|ch| !typing_font_encodes(*ch))
+            .collect();
+        if characters.is_empty() {
+            continue;
+        }
+        let scripts: BTreeSet<&str> = characters.iter().map(|ch| script_name(*ch)).collect();
+        let sample = sample_of(&characters);
+        let count = match characters.len() {
+            1 => "1 character".to_owned(),
+            count => format!("{count} distinct characters"),
+        };
+        let message = format!(
+            "form field \"{}\" holds {} text its typing font (Liberation Sans, WinAnsi) cannot \
+             encode ({count}, such as {sample}): once the field is edited, a PDF viewer may \
+             show nothing or save it without an appearance",
+            placed.name,
+            scripts.into_iter().collect::<Vec<_>>().join(", "),
+        );
+        if !messages.contains(&message) {
+            messages.push(message);
+        }
+    }
+    messages
+}
+
+/// Whether the typing font encodes `ch`: a WinAnsi character, or a line
+/// break or tab a multiline field holds.
+fn typing_font_encodes(ch: char) -> bool {
+    matches!(ch, '\n' | '\r' | '\t') || (32u8..=255).any(|code| win_ansi_char(code) == Some(ch))
+}
+
+/// A character's Unicode script name, or what it is when it has none.
+fn script_name(ch: char) -> &'static str {
+    use unicode_script::{Script, UnicodeScript};
+    match ch.script() {
+        Script::Common => "symbol",
+        Script::Inherited => "combining mark",
+        Script::Unknown => "unassigned",
+        script => script.full_name(),
+    }
+}
+
+/// Up to eight of `characters`, the visible ones quoted, the others as
+/// `U+XXXX` so that a space or a combining mark is not quoted blank.
+fn sample_of(characters: &BTreeSet<char>) -> String {
+    use unicode_script::{Script, UnicodeScript};
+    let mut visible = String::new();
+    let mut named = Vec::new();
+    for &ch in characters.iter().take(8) {
+        let invisible = ch.is_whitespace()
+            || ch.is_control()
+            || ch.script() == Script::Inherited
+            || matches!(ch, '\u{200B}'..='\u{200F}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}');
+        if invisible {
+            named.push(format!("U+{:04X}", u32::from(ch)));
+        } else {
+            visible.push(ch);
+        }
+    }
+    let mut parts = Vec::new();
+    if !visible.is_empty() {
+        parts.push(format!("\"{visible}\""));
+    }
+    parts.extend(named);
+    parts.join(", ")
+}
+
 fn write_appearance(
     pdf: &mut Pdf,
     id: Ref,
@@ -563,5 +669,26 @@ mod tests {
         assert_eq!(win_ansi_char(0x81), None);
         assert_eq!(win_ansi_char(0x41), Some('A'));
         assert_eq!(win_ansi_char(0xE9), Some('é'));
+    }
+
+    #[test]
+    fn the_typing_font_encodes_win_ansi_and_line_breaks_only() {
+        for ch in ['A', 'é', '€', 'œ', '\u{2013}', '\n', '\t'] {
+            assert!(typing_font_encodes(ch), "{ch:?}");
+        }
+        for ch in ['Ł', 'č', 'Ж', 'Ω', 'ש', '中', '\u{81}', '\u{7}'] {
+            assert!(!typing_font_encodes(ch), "{ch:?}");
+        }
+        assert_eq!(script_name('Ж'), "Cyrillic");
+        assert_eq!(script_name('→'), "symbol");
+        assert_eq!(script_name('\u{0301}'), "combining mark");
+    }
+
+    #[test]
+    fn a_sample_names_invisible_characters_by_code_point() {
+        let characters: BTreeSet<char> = ['Ж', '\u{202F}', '\u{200B}', '\u{0301}'].into();
+        assert_eq!(sample_of(&characters), "\"Ж\", U+0301, U+200B, U+202F");
+        let visible: BTreeSet<char> = ['中', 'Ж'].into();
+        assert_eq!(sample_of(&visible), "\"Ж中\"");
     }
 }

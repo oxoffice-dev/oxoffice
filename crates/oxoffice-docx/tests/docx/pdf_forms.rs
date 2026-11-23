@@ -1061,6 +1061,110 @@ fn an_empty_control_after_a_tracked_insertion_in_a_container_takes_the_later_nam
     );
 }
 
+fn typing_diagnostics(layout: &oxoffice_layout::LayoutResult) -> Vec<String> {
+    layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .filter(|message| message.contains("typing font"))
+        .collect()
+}
+
+/// Text controls holding `values`, tagged `field0`, `field1`...
+fn text_controls(values: &[&str]) -> Document {
+    doc_with_body(
+        &values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                format!(
+                    r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="field{index}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">{value}</w:t></w:r></w:sdtContent></w:sdt></w:p>"#
+                )
+            })
+            .collect::<String>(),
+    )
+}
+
+#[test]
+fn a_field_holding_text_the_typing_font_cannot_encode_names_its_scripts() {
+    let doc = text_controls(&["Москва", "Łódź 東京", "Crème brûlée, 5 € – œuvre"]);
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = typing_diagnostics(&layout.layout);
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(
+        said[0].contains("\"field0\" holds Cyrillic text"),
+        "{said:?}"
+    );
+    assert!(said[0].contains("6 distinct characters"), "{said:?}");
+    // Ł and ź are Latin letters WinAnsi lacks; ó is in WinAnsi.
+    assert!(
+        said[1].contains("\"field1\" holds Han, Latin text"),
+        "{said:?}"
+    );
+    // The sample is in code point order, like the glyph coverage ones.
+    assert!(said[1].contains("such as \"Łź京東\""), "{said:?}");
+
+    let (_, diagnostics) = doc.to_pdf_with_diagnostics(&[], fillable()).unwrap();
+    let from_pdf: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("typing font"))
+        .collect();
+    assert_eq!(from_pdf.len(), 2, "{diagnostics:?}");
+
+    let static_export = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert!(typing_diagnostics(&static_export.layout).is_empty());
+}
+
+#[test]
+fn a_field_names_the_typing_font_gap_under_its_pdf_name() {
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="a.b"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Ωμέγα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = typing_diagnostics(&layout.layout);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("\"a_b\" holds Greek text"), "{said:?}");
+}
+
+#[test]
+fn list_options_the_typing_font_cannot_encode_are_named_even_when_not_chosen() {
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="country"/><w:dropDownList><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="Ελλάδα" w:value="gr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>France</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = typing_diagnostics(&layout.layout);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("\"country\" holds Greek text"), "{said:?}");
+}
+
+#[test]
+fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="locked"/><w:lock w:val="sdtContentLocked"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Москва</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="prompt"/><w:showingPlcHdr/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>点击这里</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="notes"/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:t>one</w:t><w:br/><w:t>two</w:t><w:tab/><w:t>three</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(field_names(&layout.layout).len(), 3);
+    assert!(
+        typing_diagnostics(&layout.layout).is_empty(),
+        "{:?}",
+        typing_diagnostics(&layout.layout)
+    );
+}
+
+#[test]
+fn a_list_value_counts_only_when_typed_not_when_it_is_an_option_export_value() {
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="Ελλάδα"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>Αθήνα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = typing_diagnostics(&layout.layout);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("\"typed\" holds Greek text"), "{said:?}");
+}
+
 /// A text control tagged `tag` showing `value`.
 fn text_control(tag: &str, value: &str) -> String {
     format!(

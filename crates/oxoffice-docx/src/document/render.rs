@@ -62,6 +62,7 @@ impl Document {
         let mut layout =
             oxoffice_docx_layout::layout_document_with_reusable_engine(engine, &input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         let layout = Arc::new(layout);
         *cache = Some((tier, Arc::clone(&layout)));
         Ok(layout)
@@ -101,6 +102,7 @@ impl Document {
         let mut layout =
             oxoffice_docx_layout::layout_document_deterministic_with_provenance(&input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         let layout = Arc::new(layout);
         *cache = Some(Arc::clone(&layout));
         Ok(layout)
@@ -184,6 +186,7 @@ impl Document {
             oxoffice_docx_layout::layout_document_with_reusable_engine(engine, &input)?
         };
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         Ok(Arc::new(layout))
     }
 }
@@ -430,6 +433,7 @@ impl Document {
         let mut layout =
             oxoffice_docx_layout::layout_document_with_caller_fonts_and_provenance(&input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         Ok(layout)
     }
 
@@ -468,6 +472,7 @@ impl Document {
         let mut layout =
             oxoffice_docx_layout::layout_document_with_reusable_engine(engine, &input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         Ok(layout)
     }
 
@@ -499,6 +504,7 @@ impl Document {
         let mut layout =
             oxoffice_docx_layout::layout_document_with_system_fallback_and_provenance(&input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         Ok(layout)
     }
 
@@ -539,6 +545,7 @@ impl Document {
         let mut layout =
             oxoffice_docx_layout::layout_document_with_reusable_engine(engine, &input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         Ok(layout)
     }
 
@@ -669,6 +676,7 @@ impl Document {
         let input = self.build_layout_input_with_fonts(font_files, options)?;
         let mut layout = oxoffice_docx_layout::layout_document_with_provenance(&input)?;
         annotate_undrawable_images(&mut layout, &input);
+        annotate_untypable_form_text(&mut layout);
         Ok(layout)
     }
 
@@ -1896,6 +1904,24 @@ fn annotate_undrawable_images(
         }
     }
     for message in messages {
+        if !layout
+            .layout
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == message)
+        {
+            layout
+                .layout
+                .diagnostics
+                .push(oxoffice_layout::Diagnostic { message });
+        }
+    }
+}
+
+/// Say which fillable form fields hold text the PDF typing font cannot
+/// encode; a layout without form fields has none.
+fn annotate_untypable_form_text(layout: &mut oxoffice_docx_layout::WordLayoutResult) {
+    for message in oxoffice_pdf::untypable_form_text(&layout.layout) {
         if !layout
             .layout
             .diagnostics
