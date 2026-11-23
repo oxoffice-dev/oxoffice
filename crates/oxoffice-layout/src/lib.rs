@@ -18,8 +18,8 @@ pub use font::{
 pub use glyph_coverage::{draws_a_glyph, glyph_coverage_diagnostics, missing_glyph_diagnostics};
 pub use line::{
     Align, ForcedBreakKind, FormMark, InlineItem, LayoutLine, LineBreakParams, LineClear, LineItem,
-    LineSpacing, NoteRef, NoteStream, TabAlign, TabLeader, TabStop, TextSegment, Underline,
-    break_into_lines, break_multilingual_into_lines,
+    LineSpacing, NoteRef, NoteStream, PositionalTab, TabAlign, TabLeader, TabStop, TextSegment,
+    Underline, break_into_lines, break_multilingual_into_lines,
 };
 pub use output::{
     ChoiceOption, Color, Diagnostic, DocumentMetadata, DocumentStructure, Effect, FieldAlignment,
