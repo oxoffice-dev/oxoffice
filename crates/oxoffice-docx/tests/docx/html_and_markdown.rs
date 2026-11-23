@@ -2797,9 +2797,9 @@ fn without_space_preserve(xml: &str) -> String {
 }
 
 #[test]
-fn an_alignment_point_or_break_of_a_math_run_is_reported_not_misplaced_in_rtf() {
+fn a_break_of_a_math_run_survives_rtf_and_its_alignment_point_is_reported() {
     // A display group aligned on `=`, its second line broken before `+`
-    // and aligned at the first alignment point.
+    // and aligned at the first operator.
     let lines = |equals: &str, plus: &str| {
         format!(
             concat!(
@@ -2813,22 +2813,33 @@ fn an_alignment_point_or_break_of_a_math_run_is_reported_not_misplaced_in_rtf() 
             plus = plus,
         )
     };
-    let aligned = lines(
-        "<m:rPr><m:aln/></m:rPr>",
-        r#"<m:rPr><m:brk m:alnAt="1"/></m:rPr>"#,
-    );
+    let aligned_break = r#"<m:rPr><m:brk m:alnAt="1"/></m:rPr>"#;
+    let aligned = lines("<m:rPr><m:aln/></m:rPr>", aligned_break);
     let (rtf, reported, xml) = equation_through_rtf(&aligned);
-    // No Word file shows how Word spells them inside a run: reported,
-    // not written as groups of their own.
-    assert!(!rtf.contains(r"\maln") && !rtf.contains(r"\mbrk"), "{rtf}");
-    for property in ["m:aln of a math run", "m:brk of a math run"] {
+    // The break in its run, as Word writes it; the alignment point, which
+    // Word neither draws nor writes in a Word file at hand, reported.
+    assert!(rtf.contains(r"{\mr\mscr0\msty2\mbrk0 +}"), "{rtf}");
+    assert!(!rtf.contains(r"\maln"), "{rtf}");
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(reported[0].contains("m:aln of a math run"), "{reported:?}");
+    assert_eq!(
+        without_space_preserve(&xml),
+        omml(&lines("", aligned_break))
+    );
+    // A break with no alignment, or aligned elsewhere: no Word file shows
+    // its number, reported.
+    for other in ["<m:brk/>", r#"<m:brk m:alnAt="2"/>"#] {
+        let (rtf, reported, xml) =
+            equation_through_rtf(&lines("", &format!("<m:rPr>{other}</m:rPr>")));
+        assert!(!rtf.contains(r"\mbrk"), "{rtf}");
         assert!(
-            reported.iter().any(|message| message.contains(property)),
-            "{property}: {reported:?}"
+            reported
+                .iter()
+                .any(|message| message.contains("m:brk of a math run")),
+            "{other}: {reported:?}"
         );
+        assert_eq!(without_space_preserve(&xml), omml(&lines("", "")));
     }
-    // The rest reads back whole, as valid OMML.
-    assert_eq!(without_space_preserve(&xml), omml(&lines("", "")));
     // Written as a group of its own before the run, they are reported and
     // left out by the reader, not read as an element of the equation.
     let rtf = r"{\rtf1\ansi {\mmath{\*\moMath {\mr\mscr0\msty2 x}{\maln on}{\mr\mscr0\msty2 =}{\mbrk}{\mr\mscr0\msty2 1}}}\par}";
@@ -2852,6 +2863,48 @@ fn an_alignment_point_or_break_of_a_math_run_is_reported_not_misplaced_in_rtf() 
             read.diagnostics
         );
     }
+}
+
+#[test]
+fn a_break_word_writes_in_a_math_run_reads_back_as_word_saves_it() {
+    // Word 16.115's RTF of `f(x)=a+b+c+d+e` broken before the second `+`
+    // with `m:alnAt="1"`, its character formatting shortened.
+    let word = concat!(
+        r"{\rtf1\ansi {\fonttbl{\f34\fcharset0 Cambria Math;}}",
+        r"{\mmath{\*\moMathPara {\*\moMath ",
+        r"{\i\f34 {\mr\mscr0\msty2 f}}{\i\f34 {\mr\mscr0\msty2 (}}{\i\f34 {\mr\mscr0\msty2 x}}",
+        r"{\i\f34 {\mr\mscr0\msty2 )=}}{\i\f34 {\mr\mscr0\msty2 a}}{\i\f34 {\mr\mscr0\msty2 +}}",
+        r"{\i\f34 {\mr\mscr0\msty2 b}}{\i\f34 {\mr\mscr0\msty2 +}}{\i\f34 {\mr\mscr0\msty2 c}}",
+        "{\\i\\f34 {\\mr\\mscr0\\msty2 \\mbrk0 +}}{\\i\\f34 {\\mr\\mscr0\\msty2 d}}",
+        r"{\i\f34 {\mr\mscr0\msty2 +}}{\i\f34 {\mr\mscr0\msty2 e}}}}}\par}",
+    );
+    let read = Document::from_rtf_bytes(word.as_bytes()).unwrap();
+    assert!(read.diagnostics.is_empty(), "{:?}", read.diagnostics);
+    let equation = read
+        .document
+        .paragraph(0)
+        .unwrap()
+        .equations()
+        .next()
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
+    // The OMML of Word's .docx of the same equation, its `w:rPr` aside.
+    let run = |text: &str| format!("<m:r><m:t>{text}</m:t></m:r>");
+    let runs = ["f", "(", "x", ")=", "a", "+", "b", "+", "c"]
+        .map(run)
+        .concat();
+    let saved = format!(
+        concat!(
+            r#"<m:oMathPara xmlns:m="{m}" xmlns:w="{w}"><m:oMath>{runs}"#,
+            r#"<m:r><m:rPr><m:brk m:alnAt="1"/></m:rPr><m:t>+</m:t></m:r>{rest}</m:oMath></m:oMathPara>"#
+        ),
+        m = M_NS,
+        w = W_NS,
+        runs = runs,
+        rest = ["d", "+", "e"].map(run).concat(),
+    );
+    assert_eq!(without_space_preserve(&xml), omml(&saved));
 }
 
 #[test]
@@ -2934,6 +2987,11 @@ fn built_equations_keep_their_omml_through_rtf() {
             r#"<m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>n</m:t></m:r></m:sup>"#,
             r#"<m:e><m:r><m:t>i</m:t></m:r></m:e></m:nary>"#,
             r#"<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>y</m:t></m:r></m:e></m:rad>"#
+        ),
+        // A box that is an alignment point and a break of its own.
+        concat!(
+            r#"<m:box><m:boxPr><m:brk/><m:aln/></m:boxPr><m:e><m:r><m:t>=</m:t></m:r></m:e></m:box>"#,
+            r#"<m:r><m:t>1</m:t></m:r>"#
         ),
     ];
     for body in equations {
@@ -3033,4 +3091,43 @@ fn an_equation_with_the_run_formatting_word_writes_survives_rtf_and_odt_round_tr
         equations_as_mathml(&read.document),
         equations_as_mathml(&doc)
     );
+}
+
+#[test]
+fn a_formula_whose_mathml_cannot_be_read_is_reported_once() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Let ")
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            oxoffice_docx::equation_from_latex("x=1")
+                .unwrap()
+                .value
+                .expressions,
+        ))
+        .unwrap();
+    let odt = doc.to_odt_bytes().unwrap().bytes;
+    // A formula object whose MathML is not well formed, and no replacement
+    // image in its frame.
+    let broken = odt_edited(
+        &odt,
+        |name, bytes| {
+            if name == "Object 1/content.xml" {
+                br#"<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</math>"#.to_vec()
+            } else {
+                bytes
+            }
+        },
+        &[],
+    );
+    let read = Document::from_odt_bytes(&broken).unwrap();
+    let frame: Vec<_> = read
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| format!("{diagnostic:?}").contains("draw:frame"))
+        .collect();
+    assert_eq!(frame.len(), 1, "{:?}", read.diagnostics);
+    assert!(
+        format!("{:?}", frame[0]).contains("is not a formula this reader reads"),
+        "{frame:?}"
+    );
+    assert_eq!(read.document.paragraph(0).unwrap().equations().count(), 0);
 }

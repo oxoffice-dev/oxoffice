@@ -3964,15 +3964,21 @@ impl<'a> Importer<'a> {
                     *index += 1;
                     let child_path = format!("{path}/draw:frame[{}]", *index);
                     // A formula object reads as an equation; any other
-                    // object (a chart, an OLE object) as its replacement
-                    // image, as before formulas were read.
-                    let formula = if element.elements().any(|node| node.is(DRAW_NS, "object")) {
-                        self.project_formula(element, &child_path)?
-                    } else {
-                        None
-                    };
+                    // object (a chart, an OLE object), or a formula that
+                    // cannot be read, as its replacement image, as before
+                    // formulas were read.
+                    let (formula, reported) =
+                        if element.elements().any(|node| node.is(DRAW_NS, "object")) {
+                            self.project_formula(element, &child_path)?
+                        } else {
+                            (None, false)
+                        };
+                    let has_image = element.elements().any(|node| node.is(DRAW_NS, "image"));
                     let piece = match formula {
                         Some(formula) => Some(formula),
+                        // A formula already reported is not reported again
+                        // for having no image.
+                        None if reported && !has_image => None,
                         None => self.project_image(element, &child_path)?,
                     };
                     if let Some(image) = piece {
@@ -3998,16 +4004,21 @@ impl<'a> Importer<'a> {
     }
 
     /// Read a formula object (`draw:object` whose sub-document is MathML)
-    /// back as an equation; a formula it cannot read is reported and left
-    /// out. `None`, and no report, for any other object: the caller reads
-    /// its replacement image.
-    fn project_formula(&mut self, frame: &XmlNode, path: &str) -> Result<Option<InlinePiece>> {
+    /// back as an equation. A formula whose MathML it cannot read is
+    /// reported (`true`) and gives `None`; any other object gives `None`
+    /// with no report. Either way the caller reads the frame's replacement
+    /// image, when it has one.
+    fn project_formula(
+        &mut self,
+        frame: &XmlNode,
+        path: &str,
+    ) -> Result<(Option<InlinePiece>, bool)> {
         let Some(href) = frame
             .elements()
             .find(|node| node.is(DRAW_NS, "object"))
             .and_then(|object| object.attr(Some(XLINK_NS), "href"))
         else {
-            return Ok(None);
+            return Ok((None, false));
         };
         // An object outside the package, or one whose content is encrypted
         // or missing, is not a formula this reader can read.
@@ -4019,19 +4030,19 @@ impl<'a> Importer<'a> {
                 .to_owned()
                 + "/content.xml"),
         ) else {
-            return Ok(None);
+            return Ok((None, false));
         };
         if self.encrypted.contains(&target) {
-            return Ok(None);
+            return Ok((None, false));
         }
         let Some(bytes) = self.archive.read_optional(&target)? else {
-            return Ok(None);
+            return Ok((None, false));
         };
         if !bytes
             .windows(MATHML_NS.len())
             .any(|window| window == MATHML_NS.as_bytes())
         {
-            return Ok(None);
+            return Ok((None, false));
         }
         let read = std::str::from_utf8(&bytes)
             .map_err(|_| crate::math::math_error("formula object is not UTF-8"))
@@ -4043,7 +4054,7 @@ impl<'a> Importer<'a> {
                     path,
                     format!("ODT object {target} is not a formula this reader reads: {error}"),
                 )?;
-                return Ok(None);
+                return Ok((None, true));
             }
         };
         for diagnostic in &read.diagnostics {
@@ -4052,9 +4063,12 @@ impl<'a> Importer<'a> {
                 format!("formula at {}: {}", diagnostic.path, diagnostic.message),
             )?;
         }
-        Ok(Some(InlinePiece::Equation(Box::new(
-            oxoffice_docx_oxml::math::CT_OMath::new(read.value.expressions),
-        ))))
+        Ok((
+            Some(InlinePiece::Equation(Box::new(
+                oxoffice_docx_oxml::math::CT_OMath::new(read.value.expressions),
+            ))),
+            false,
+        ))
     }
 
     fn project_image(&mut self, frame: &XmlNode, path: &str) -> Result<Option<InlinePiece>> {

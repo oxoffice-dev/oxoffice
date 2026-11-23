@@ -32,8 +32,11 @@ Both formats have a native carrier:
 - **RTF writer**: an equation is written from its OMML (`OfficeMath::to_xml`, so the content outside the typed
   subset is kept too) by one generic walk: an element `m:X` with children is `{\mX children}`; an element whose only
   content is `m:val` is `{\mX value}`; a math run `m:r` is `{\mr flags text}`, its `m:rPr` written as the run's
-  flags. A run's alignment point and break (`m:aln`, `m:brk`) have no Word file showing their spelling inside a
-  run: they are reported, not written. Each run is wrapped in the character formatting Word writes around it
+  flags. A run's break is a flag of the run as Word writes it (`aligned-eq.rtf`, Word 16.115): `m:brk
+  m:alnAt="1"` is `{\mr\mscr0\msty2 \mbrk0 +}`, and reads back so; a break without `m:alnAt` or aligned elsewhere
+  has no Word file showing its number and is reported. A run's alignment point (`m:aln`) is reported: Word aligns
+  on a `&` in the run text, draws no alignment from `m:aln` and drops it on save. In a box's properties
+  (`m:boxPr`) both are elements of their own, written and read by the generic rule. Each run is wrapped in the character formatting Word writes around it
   (Word reads a run without it as plain): the math font (Cambria Math, added to the font table) and `\i` on a run
   of the default style (`\msty2`: letters, Greek, digits and operators alike), `{\i\f34 {\mr\mscr0\msty2 y}}`.
   The run's own `w:rPr` is not carried: its other formatting (bold, colour) is reported. The
@@ -56,8 +59,10 @@ Both formats have a native carrier:
   separated by line breaks. The frame has no size: LibreOffice sizes a formula object from its content when it
   opens it.
 - **ODT reader**: a `draw:object` whose sub-document is a formula is read back through the MathML reader, its root
-  `display` attribute accepted (LibreOffice writes `display="block"` on every formula, wherever it stands); an
-  object it cannot read is reported and left out. A paragraph that holds only formulas (and line breaks) reads
+  `display` attribute accepted (LibreOffice writes `display="block"` on every formula, wherever it stands). Any
+  other object (a chart, an OLE object, a link outside the package) reads as its replacement image, with no report,
+  as before. A formula whose MathML the reader cannot read is reported, and its replacement image is read when the
+  frame has one (one report when it has none). A paragraph that holds only formulas (and line breaks) reads
   as a display group, as Word shows an equation alone on its line; a formula among text is inline.
 - **Diagnostics**: `Word equation was dropped during RTF/ODT export` goes; what the conversion loses is reported per
   equation as the HTML export reports it.

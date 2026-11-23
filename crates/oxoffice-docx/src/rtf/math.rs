@@ -81,12 +81,12 @@ pub(super) fn write_equation(
         match event {
             (ResolveResult::Bound(namespace), Event::Start(start)) => {
                 let local = String::from_utf8_lossy(start.local_name().as_ref()).into_owned();
-                let value = math_value(&start);
+                let value = math_value(&start, &local);
                 writer.start(namespace.as_ref(), &local, value, false);
             }
             (ResolveResult::Bound(namespace), Event::Empty(start)) => {
                 let local = String::from_utf8_lossy(start.local_name().as_ref()).into_owned();
-                let value = math_value(&start);
+                let value = math_value(&start, &local);
                 writer.start(namespace.as_ref(), &local, value, true);
             }
             (_, Event::End(_)) => writer.end(),
@@ -122,9 +122,11 @@ pub(super) fn write_equation(
     })
 }
 
-fn math_value(start: &quick_xml::events::BytesStart<'_>) -> Option<String> {
+/// The value of an element: its `m:val`, a break's `m:alnAt`.
+fn math_value(start: &quick_xml::events::BytesStart<'_>, local: &str) -> Option<String> {
+    let name: &[u8] = if local == "brk" { b"alnAt" } else { b"val" };
     start.attributes().flatten().find_map(|attribute| {
-        (attribute.key.local_name().as_ref() == b"val")
+        (attribute.key.local_name().as_ref() == name)
             .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
     })
 }
@@ -228,10 +230,23 @@ impl Writer {
                 self.run_flag(local, value.as_deref());
                 Open::Nothing
             }
-            // The other run properties (`m:aln`, `m:brk` and its `m:alnAt`):
-            // no Word file at hand shows how Word spells them inside a run,
-            // so they are reported rather than written where no reader
-            // looks for them.
+            // A break, as Word writes it in the run: `m:alnAt="1"` is
+            // `\mbrk0` (Word 16.115). No Word file shows the number of a break
+            // without `m:alnAt` or aligned elsewhere: reported.
+            "brk" if self.run.is_some() => {
+                match (value.as_deref(), &mut self.run) {
+                    (Some("1"), Some((flags, _))) => flags.push_str(RUN_BREAK),
+                    (other, _) => self.lost.push(format!(
+                        "m:brk of a math run (alnAt {})",
+                        other.unwrap_or("none")
+                    )),
+                }
+                Open::Nothing
+            }
+            // The other run properties (`m:aln`): Word draws no alignment
+            // from it (it aligns on `&` in the text) and no Word file shows
+            // its spelling, so it is reported rather than written where no
+            // reader looks for it.
             local if self.run.is_some() => {
                 self.lost.push(format!("m:{local} of a math run"));
                 Open::Nothing
@@ -300,7 +315,10 @@ impl Writer {
     }
 
     fn finish_run(&mut self) {
-        if let Some((mut flags, text)) = self.run.take() {
+        if let Some((flags, text)) = self.run.take() {
+            // The break comes after the script and style, as Word writes it.
+            let has_break = flags.contains(RUN_BREAK);
+            let mut flags = flags.replace(RUN_BREAK, "");
             // Word writes every run with its script and style, the default
             // one as `\mscr0\msty2`, and reads a run without `\msty` as
             // plain: a run of the default style says so.
@@ -312,7 +330,10 @@ impl Writer {
                     flags.push_str("\\msty2");
                 }
             }
-            let flags = flags.replace(STYLE_LEFT_OUT, "");
+            let mut flags = flags.replace(STYLE_LEFT_OUT, "");
+            if has_break {
+                flags.push_str(RUN_BREAK);
+            }
             // Word wraps each math run in its character formatting: the
             // math font, and italic on a run of the default style (`\msty2`,
             // letters, Greek, digits and operators alike). Word reads a run
@@ -441,12 +462,16 @@ impl MathBuilder {
             return;
         };
         if at_start && matches!(frame, Frame::Plain(text) if text.is_empty()) {
+            // OMML allows an alignment point and a break as elements of their
+            // own only in a box's properties; a run's are flags of the run
+            // (`\mbrk0`). Elsewhere they would make the OMML invalid.
+            let misplaced = matches!(local, "aln" | "brk") && !self.in_box_properties();
+            let Some(frame) = self.frames.last_mut() else {
+                return;
+            };
             *frame = match local {
                 "mathPict" | "ctrlPr" | "mathPr" => Frame::Skipped,
-                // A math run's alignment point and break: their spelling in
-                // Word's RTF is not known here, and as an element of their
-                // own they would make the OMML invalid.
-                "aln" | "brk" => {
+                _ if misplaced => {
                     self.lost.push(format!("\\m{local}"));
                     Frame::Skipped
                 }
@@ -474,6 +499,8 @@ impl MathBuilder {
             (Frame::Run(..), "scr", Some(0)) => {}
             (Frame::Run(flags, _), "nor", _) => flags.push_str("<m:nor/>"),
             (Frame::Run(flags, _), "lit", _) => flags.push_str("<m:lit/>"),
+            // Word writes a break aligned at the first operator as `\mbrk0`.
+            (Frame::Run(flags, _), "brk", Some(0)) => flags.push_str(READ_BREAK),
             (_, "jc", Some(1)) => self.xml.push_str(r#"<m:jc m:val="centerGroup"/>"#),
             (_, "jc", Some(2)) => self.xml.push_str(r#"<m:jc m:val="center"/>"#),
             (_, "mathFont" | "brkBin" | "brkBinSub", _) => {}
@@ -482,6 +509,17 @@ impl MathBuilder {
                 None => format!("\\m{local}"),
             }),
         }
+    }
+
+    /// Whether the group being named is in a box's properties (`m:boxPr`),
+    /// past any formatting group around it.
+    fn in_box_properties(&self) -> bool {
+        let parents = &self.frames[..self.frames.len().saturating_sub(1)];
+        parents
+            .iter()
+            .rev()
+            .find(|frame| !matches!(frame, Frame::Plain(text) if text.is_empty()))
+            .is_some_and(|frame| matches!(frame, Frame::Element(local) if local == "boxPr"))
     }
 
     /// Text inside the destination.
@@ -504,22 +542,42 @@ impl MathBuilder {
     pub(super) fn close(&mut self) {
         match self.frames.pop() {
             Some(Frame::Element(local)) => {
-                let _ = write!(self.xml, "</m:{local}>");
+                // An element with no content is written empty (`<m:deg/>`).
+                let open = format!("<m:{local}>");
+                if self.xml.ends_with(&open) {
+                    self.xml.truncate(self.xml.len() - open.len());
+                    let _ = write!(self.xml, "<m:{local}/>");
+                } else {
+                    let _ = write!(self.xml, "</m:{local}>");
+                }
             }
             Some(Frame::Valued(local, value)) => {
-                let _ = write!(
-                    self.xml,
-                    r#"<m:{local} m:val="{}"/>"#,
-                    escape_attribute(value.trim_start())
-                );
+                let value = value.trim_start();
+                // An on-off property that is on is written as OMML writes it
+                // by default, with no value (`<m:aln/>`).
+                if value == "on" && ON_OFF.contains(&local.as_str()) {
+                    let _ = write!(self.xml, "<m:{local}/>");
+                } else {
+                    let _ = write!(
+                        self.xml,
+                        r#"<m:{local} m:val="{}"/>"#,
+                        escape_attribute(value)
+                    );
+                }
             }
             Some(Frame::Run(flags, text)) => {
+                // The break follows the style in OMML.
+                let has_break = flags.contains(READ_BREAK);
+                let flags = flags.replace(READ_BREAK, "");
                 // Word reads a run without `\msty` as plain.
-                let flags = if flags.contains("<m:sty") || flags.contains("<m:nor/>") {
+                let mut flags = if flags.contains("<m:sty") || flags.contains("<m:nor/>") {
                     flags.replace(DEFAULT_STYLE, "")
                 } else {
                     format!(r#"{flags}<m:sty m:val="p"/>"#)
                 };
+                if has_break {
+                    flags.push_str(READ_BREAK);
+                }
                 write_run(&mut self.xml, &flags, &text);
                 self.text.push_str(&text);
             }
@@ -558,6 +616,12 @@ impl MathBuilder {
         Ok((equation, self.lost))
     }
 }
+
+/// A math run's break aligned at the first operator, as Word writes it.
+const RUN_BREAK: &str = "\\mbrk0";
+
+/// [`RUN_BREAK`] read back as OMML.
+const READ_BREAK: &str = r#"<m:brk m:alnAt="1"/>"#;
 
 /// The mark of a run's style the writer leaves out (reported).
 const STYLE_LEFT_OUT: &str = "\u{1}";
