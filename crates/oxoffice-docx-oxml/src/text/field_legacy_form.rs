@@ -328,6 +328,80 @@ pub(super) fn parse_legacy_form_data(
     )))
 }
 
+/// The `w:name` of a legacy form field read without checking the rest of
+/// its form data: a field whose form data does not read can still be named
+/// in a diagnostic. `None` when no begin `w:ffData` holds a readable name.
+pub(super) fn lenient_legacy_form_name(
+    raw: crate::document::WordXmlInput<'_>,
+    word_prefixes: &[String],
+) -> Option<String> {
+    let mut reader = Reader::from_reader(raw);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut depth = 0usize;
+    let mut prefixes = word_prefixes.to_vec();
+    let mut prefix_scopes = Vec::new();
+    let mut begin_depth = None;
+    let mut ff_data_depth = None;
+    loop {
+        let event = reader.read_event_into(&mut buffer).ok()?;
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => {
+                depth = depth.checked_sub(1)?;
+                prefixes = prefix_scopes.pop()?;
+                if ff_data_depth == Some(depth) {
+                    ff_data_depth = None;
+                }
+                if begin_depth == Some(depth) {
+                    return None;
+                }
+                buffer.clear();
+                continue;
+            }
+            Event::Eof => return None,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        let local_prefixes = word_prefixes_at(element, &prefixes).ok()?.into_owned();
+        let name = element.name();
+        let local = is_word_element(name.as_ref(), local_name(name.as_ref()), &local_prefixes)
+            .then(|| local_name(name.as_ref()));
+        match local {
+            Some(b"fldChar")
+                if begin_depth.is_none()
+                    && optional_word_attribute(element, b"fldCharType", &local_prefixes)
+                        .as_deref()
+                        == Some("begin") =>
+            {
+                begin_depth = Some(depth);
+            }
+            Some(b"ffData") if begin_depth.is_some() && begin_depth == depth.checked_sub(1) => {
+                ff_data_depth = Some(depth);
+            }
+            Some(b"name") if ff_data_depth.is_some() && ff_data_depth == depth.checked_sub(1) => {
+                return legacy_form_value_attribute(element, &local_prefixes)
+                    .ok()
+                    .flatten()
+                    .filter(|name| !name.is_empty());
+            }
+            _ => {}
+        }
+        if empty {
+            if begin_depth == Some(depth) {
+                return None;
+            }
+        } else {
+            prefix_scopes.push(std::mem::replace(&mut prefixes, local_prefixes));
+            depth += 1;
+        }
+        buffer.clear();
+    }
+}
+
 pub(super) fn complex_outer_result_present(raw: crate::document::WordXmlInput<'_>) -> bool {
     let mut reader = Reader::from_reader(raw);
     reader.config_mut().trim_text(false);

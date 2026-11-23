@@ -110,8 +110,9 @@ pub use field_instruction::{
 use field_legacy_form::{
     InlineFieldParagraph, NestedEffectiveSegment, PhysicalRunSources, complex_outer_result_present,
     field_publication_bytes, legacy_form_author_parts, legacy_form_canonical_display,
-    legacy_text_value_only_change, parse_legacy_form_data, rewrite_legacy_form_source,
-    validate_legacy_form_authoring, write_legacy_form_ff_data, write_missing_legacy_result_region,
+    legacy_text_value_only_change, lenient_legacy_form_name, parse_legacy_form_data,
+    rewrite_legacy_form_source, validate_legacy_form_authoring, write_legacy_form_ff_data,
+    write_missing_legacy_result_region,
 };
 use field_rewrite::{
     CachedFieldSource, FieldSourcePiece, cached_field_source, cached_runs_need_typed_projection,
@@ -2017,50 +2018,65 @@ fn append_accepted_cell_runs<'a>(cell: &'a CT_Tc, output: &mut Vec<&'a CT_R>) {
     }
 }
 
+/// The runs of a tracked walk, and where each content control starts among
+/// them when the caller asks for it.
+#[derive(Default)]
+struct TrackedRuns<'a> {
+    runs: Vec<&'a CT_R>,
+    starts: Option<Vec<(&'a CT_Sdt, usize)>>,
+}
+
 fn tracked_paragraph_runs(paragraph: &CT_P) -> Vec<&CT_R> {
-    let mut output = Vec::new();
+    let mut output = TrackedRuns::default();
+    walk_tracked_paragraph(paragraph, &mut output);
+    output.runs
+}
+
+fn walk_tracked_paragraph<'a>(paragraph: &'a CT_P, output: &mut TrackedRuns<'a>) {
     for boundary in 0..=paragraph.runs.len() {
         for owner in boundary_owners(paragraph, boundary) {
             match owner {
                 BoundaryOwner::ContentControl(index) => {
-                    append_tracked_control_runs(&paragraph.content_controls[index].3, &mut output);
+                    walk_tracked_control(&paragraph.content_controls[index].3, output);
                 }
                 BoundaryOwner::Revision(index) => {
-                    append_tracked_revision_runs(&paragraph.revisions[index].2, &mut output);
+                    walk_tracked_revision(&paragraph.revisions[index].2, output);
                 }
                 BoundaryOwner::Wrapper(_) => {}
             }
         }
         if let Some(run) = paragraph.runs.get(boundary) {
-            output.push(run);
+            output.runs.push(run);
         }
     }
-    output
 }
 
-fn append_tracked_control_runs<'a>(control: &'a CT_Sdt, output: &mut Vec<&'a CT_R>) {
+fn walk_tracked_control<'a>(control: &'a CT_Sdt, output: &mut TrackedRuns<'a>) {
+    if let Some(starts) = output.starts.as_mut() {
+        starts.push((control, output.runs.len()));
+    }
     for boundary in 0..=control.content.len() {
         for (_, revision) in control.revisions().iter().filter(|(at, _)| *at == boundary) {
-            append_tracked_revision_runs(revision, output);
+            walk_tracked_revision(revision, output);
         }
         let Some(content) = control.content.get(boundary) else {
             continue;
         };
         match content {
-            SdtContent::Run(run) => output.push(run),
-            SdtContent::ContentControl(control) => append_tracked_control_runs(control, output),
-            SdtContent::Paragraph(paragraph) => output.extend(tracked_paragraph_runs(paragraph)),
-            SdtContent::Table(table) => append_tracked_table_runs(table, output),
-            SdtContent::Row(row) => append_tracked_row_runs(row, output),
-            SdtContent::Cell(cell) => append_tracked_cell_runs(cell, output),
+            SdtContent::Run(run) => output.runs.push(run),
+            SdtContent::ContentControl(control) => walk_tracked_control(control, output),
+            SdtContent::Paragraph(paragraph) => walk_tracked_paragraph(paragraph, output),
+            SdtContent::Table(table) => walk_tracked_table(table, output),
+            SdtContent::Row(row) => walk_tracked_row(row, output),
+            SdtContent::Cell(cell) => walk_tracked_cell(cell, output),
             SdtContent::RawXml(_) => {}
         }
     }
 }
 
-fn append_tracked_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec<&'a CT_R>) {
+fn walk_tracked_revision<'a>(revision: &'a CT_Revision, output: &mut TrackedRuns<'a>) {
     if let Some(paragraph) = revision.content_paragraph() {
-        output.extend(tracked_paragraph_runs(paragraph));
+        walk_tracked_paragraph(paragraph, output);
         return;
     }
     let crate::revision::RevisionContent::Runs(runs) = revision.content() else {
@@ -2072,50 +2088,56 @@ fn append_tracked_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec<
             .iter()
             .filter(|(at, _)| *at == boundary)
         {
-            append_tracked_revision_runs(nested, output);
+            walk_tracked_revision(nested, output);
         }
         if let Some(run) = runs.get(boundary) {
-            output.push(run);
+            output.runs.push(run);
         }
     }
 }
 
-fn append_tracked_table_runs<'a>(table: &'a CT_Tbl, output: &mut Vec<&'a CT_R>) {
+fn append_tracked_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec<&'a CT_R>) {
+    let mut walk = TrackedRuns::default();
+    walk_tracked_revision(revision, &mut walk);
+    output.append(&mut walk.runs);
+}
+
+fn walk_tracked_table<'a>(table: &'a CT_Tbl, output: &mut TrackedRuns<'a>) {
     for boundary in 0..=table.rows.len() {
         for (_, _, control) in table
             .content_controls
             .iter()
             .filter(|(at, _, _)| *at == boundary)
         {
-            append_tracked_control_runs(control, output);
+            walk_tracked_control(control, output);
         }
         if let Some(row) = table.rows.get(boundary) {
-            append_tracked_row_runs(row, output);
+            walk_tracked_row(row, output);
         }
     }
 }
 
-fn append_tracked_row_runs<'a>(row: &'a CT_Row, output: &mut Vec<&'a CT_R>) {
+fn walk_tracked_row<'a>(row: &'a CT_Row, output: &mut TrackedRuns<'a>) {
     for boundary in 0..=row.cells.len() {
         for (_, _, control) in row
             .content_controls
             .iter()
             .filter(|(at, _, _)| *at == boundary)
         {
-            append_tracked_control_runs(control, output);
+            walk_tracked_control(control, output);
         }
         if let Some(cell) = row.cells.get(boundary) {
-            append_tracked_cell_runs(cell, output);
+            walk_tracked_cell(cell, output);
         }
     }
 }
 
-fn append_tracked_cell_runs<'a>(cell: &'a CT_Tc, output: &mut Vec<&'a CT_R>) {
+fn walk_tracked_cell<'a>(cell: &'a CT_Tc, output: &mut TrackedRuns<'a>) {
     for content in &cell.content {
         match content {
-            CellContent::Paragraph(paragraph) => output.extend(tracked_paragraph_runs(paragraph)),
-            CellContent::Table(table) => append_tracked_table_runs(table, output),
-            CellContent::ContentControl(control) => append_tracked_control_runs(control, output),
+            CellContent::Paragraph(paragraph) => walk_tracked_paragraph(paragraph, output),
+            CellContent::Table(table) => walk_tracked_table(table, output),
+            CellContent::ContentControl(control) => walk_tracked_control(control, output),
         }
     }
 }
@@ -2397,6 +2419,20 @@ impl CT_P {
     #[doc(hidden)]
     pub fn source_runs(&self) -> Vec<&CT_R> {
         tracked_paragraph_runs(self)
+    }
+
+    /// Where each content control starts among [`Self::source_runs`]: the
+    /// number of source runs before it, nested controls included, in the
+    /// order the walk meets them. A control with no run starts where the
+    /// next run would sit, so it still has a place.
+    #[doc(hidden)]
+    pub fn source_control_starts(&self) -> Vec<(&CT_Sdt, usize)> {
+        let mut output = TrackedRuns {
+            runs: Vec::new(),
+            starts: Some(Vec::new()),
+        };
+        walk_tracked_paragraph(self, &mut output);
+        output.starts.unwrap_or_default()
     }
 
     /// Return the text of the accepted view, as `Paragraph::text` reads it:
