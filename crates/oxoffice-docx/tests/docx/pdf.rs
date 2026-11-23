@@ -1290,6 +1290,28 @@ fn a_caption_number_is_read_after_its_label() {
 }
 
 #[test]
+fn a_caption_number_drawn_from_its_stored_result_is_read_after_its_label() {
+    // A SEQ whose format the layout cannot apply keeps its stored result,
+    // drawn from the field's own runs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Table </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> SEQ Table \* Bogus </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve">: Notation</w:t></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .position(|element| element.0 == "P")
+        .unwrap();
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(read, "Table 7: Notation", "the caption reads {read:?}");
+}
+
+#[test]
 fn a_field_result_after_a_page_referenced_bookmark_is_read_in_place() {
     // A bookmark a PAGEREF points at records where it starts; the field
     // result right after that start is read after the text before it.
