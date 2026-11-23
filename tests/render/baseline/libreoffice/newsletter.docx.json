@@ -1,12 +1,12 @@
 {
   "file": "libreoffice/newsletter.docx",
-  "reason": "a fixed-size text box hides the lines that do not fit, and its text keeps its insets (newsletter)",
+  "reason": "text box paragraphs keep their spacing (newsletter)",
   "resources": "a055065f9fd16a0bf255cc06b1ed805a6e4937976a367e25925e20e693b76a57",
   "outline_and_tags": "2c0c8b41b01261e1381c7a2cc60537b4332a8c6cedfe05b656323f34ddd91906",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "6d0f6055d431df5a28e4d2b2110f38b36758e0b8173b8a584bcbc9ff6cf32db9", "content": "7f73154fd249626a85ee889675b18ecab0cb55ebb1346ce8b3a2d29df86b61c8", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "274735c80ca9dae894f2eafa8f0579ca2d23a896c2fe729a8e6846dfee3487b4", "content": "cebacb94f0dcc623c23f0900a120f5205ea232e6a64e1e50a9cbedb3e7788d0c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "ab9489d1adea2a19d48ac14ab808ff512589b59a62e186ace420732bcc64badc", "content": "84fd9041b8c5ff781ab521150611a2164458151f4cafa8b9c4f9395cd88869c2", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 2, "pixels": "7019c3bbc062962e511671cdfc01c7dac36222a9b71a78e6c9401382ffd52dfb", "content": "fde9d2cf3031be38a6e4a8c5445bae16edf7d05a0105615f7d8971ba673ea69d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "45d4f6bede1ecf9b3d2569596f94089f72629f6a9c8615f8eb1467d58b0bad8f", "content": "2c5c1dea8e3b79f9a7dc3f4982875cac5b8eb6c8eb787d1b2744f90f73fc2cd6", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }

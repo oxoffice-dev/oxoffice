@@ -1,12 +1,12 @@
 {
   "file": "google/newsletter.docx",
-  "reason": "a fixed-size text box hides the lines that do not fit, and its text keeps its insets (newsletter)",
+  "reason": "text box paragraphs keep their spacing (newsletter)",
   "resources": "d93415d8ac8ada48f01e2b9f04befbd0fd0cfa44701f8497aa316d7df9d57c11",
   "outline_and_tags": "f8487f591c7e1e6edfd6f436c3e961652cdd61e64731d6703fe68e082a3def6d",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "e4ca06da049dda885070cb8344bca22bd393e538fed430e2c527f2fc0beb0193", "content": "c4ca573a3ca5559322c3020d562e55b5d781b60f784cdfcac87b614c0ad3b047", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "67ac24406af853e22d1b5e64581284670ed79cdf45410619ac666870d0e82823", "content": "c133744a52fe0032f87f40780a49ea0f819c03c11be9d1c61a4de6ba46dde909", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "e6b0263e312e04f268b87be344e6f2a467235847b03178d9be32f86457cfe8db", "content": "23c74e6eba09080bf5eb2c12cc86e97fadbecd4faf863b8103aefab8b1f4cb75", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 2, "pixels": "6de473134b13446d6bc0bef9b28b025c6bd078489b3d28bef9c14740d961c9d6", "content": "6731ff509c893bec54e1924b63d3515ef2336fa65e8a7563d9c51cd5b364414e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "327f3c70f557cbe1bf67a4560366d00ca2d48c082bf19aa298167440cb513456", "content": "146c05a648e59e665961058837914758de91d16a86c556ae6abd0706657036ec", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }
