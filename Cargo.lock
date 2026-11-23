@@ -1320,6 +1320,7 @@ dependencies = [
  "tiff",
  "tiny-skia",
  "ttf-parser",
+ "unicode-script",
  "zune-jpeg",
 ]
 
