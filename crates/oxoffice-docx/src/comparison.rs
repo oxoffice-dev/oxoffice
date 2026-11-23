@@ -174,6 +174,7 @@ mod controls;
 mod fields;
 mod granular;
 mod granular_units;
+mod numbering;
 mod paragraph_marks;
 mod paragraph_properties;
 mod paragraphs;
@@ -213,10 +214,11 @@ use paragraph_marks::{
     unmatched_body_owner,
 };
 use paragraph_properties::{
-    clear_default_orientation, deleted_paragraph, final_paragraph_properties_xml,
-    inserted_paragraph, modeled_paragraph_properties, nonempty_paragraph_properties,
-    paragraph_children_xml, paragraph_properties_differ, paragraph_properties_xml,
-    place_shared_bookmarks, section_properties_xml, shared_bookmark_markers,
+    clear_default_orientation, compared_paragraph_properties, deleted_paragraph,
+    final_paragraph_properties_xml, inserted_paragraph, modeled_paragraph_properties,
+    nonempty_paragraph_properties, paragraph_children_xml, paragraph_properties_differ,
+    paragraph_properties_xml, place_shared_bookmarks, section_properties_xml,
+    shared_bookmark_markers,
 };
 use paragraphs::{
     coalesced_held_owner_equal, coalesced_paragraphs_equal, compare_body_content,
@@ -652,6 +654,11 @@ impl Document {
                     .iter()
                     .find(|story| story.kind == ComparisonStoryKind::Comment),
             );
+        // The inputs' list levels, for every signature and check of this pass;
+        // entered again below once the edited input may have been replayed.
+        let _input_numbering = numbering::NumberingLevelsScope::enter(
+            numbering::NumberingLevels::new(&original.styles, &edited.styles),
+        );
         let compare_comment_story = |left: &StoryPart, right: &StoryPart| {
             compare_story_part(
                 story_xml(&original, left).unwrap_or_default(),
@@ -802,6 +809,10 @@ impl Document {
             }
         }
         let input_ids = used_ids.clone();
+        let _numbering = numbering::NumberingLevelsScope::enter(numbering::NumberingLevels::new(
+            &original.styles,
+            &edited.styles,
+        ));
         let shared_bookmarks = shared_bookmark_ids(&original, &edited)?;
         let point_bookmarks = zero_width_bookmark_ids(&edited, &shared_bookmarks)?;
         let mut metadata = Metadata {
