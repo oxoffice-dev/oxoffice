@@ -45,7 +45,8 @@ content no reader understands.**
   first. The layout draws a math run in its colour (`w:color`, a theme colour, a text fill) and its size (`w:sz`,
   scaled by the run's script level: a 16 pt superscript is to a plain one what 16 pt is to the equation's size).
   When every run of an equation sets one size or one colour, as Word writes a whole equation set to 16 pt or red,
-  the equation takes it: its rules, signs and delimiters too.
+  the equation takes it: its rules, signs and delimiters too. Each equation of a display group (`m:oMathPara`)
+  is read on its own.
   Bold and italic stay `m:sty`'s, the font stays the math font. `m:ctrlPr` styles the construct's own characters (a
   delimiter, a bar, a fraction rule): the layout draws them with the equation's formatting, as before. A `w:rPr`
   or `m:ctrlPr` holding anything else (a tracked change, an attribute) is still reported.

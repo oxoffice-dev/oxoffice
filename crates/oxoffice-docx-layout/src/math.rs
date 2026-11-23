@@ -133,14 +133,17 @@ pub(crate) fn layout_officemath(
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(MeasuredMath, bool)> {
+    let paragraph_size = finite_positive(font_size).unwrap_or(DEFAULT_MATH_SIZE);
     // An equation whose runs all carry one size or colour, as Word writes a
     // whole equation set to 16 pt or red, takes it for its rules, signs and
-    // delimiters too.
-    let (uniform_size, uniform_color) = uniform_run_formatting(equation, runs);
-    let color = uniform_color.unwrap_or(color);
-    let size = uniform_size
-        .or(finite_positive(font_size))
-        .unwrap_or(DEFAULT_MATH_SIZE);
+    // delimiters too; each equation of a display group on its own.
+    let formatting = |expressions: &[MathExpression]| {
+        let (size, uniform_color) = uniform_run_formatting(expressions, runs);
+        (
+            size.unwrap_or(paragraph_size),
+            uniform_color.unwrap_or(color),
+        )
+    };
     let font_family = math_properties
         .and_then(|properties| properties.math_font.as_deref())
         .filter(|family| !family.is_empty())
@@ -156,33 +159,41 @@ pub(crate) fn layout_officemath(
     }
 
     match &equation {
-        OfficeMath::Inline(value) => Ok((
-            layout_expressions(
-                &value.expressions,
-                fm,
-                font_family,
-                MathLayoutStyle::new(size, false, runs),
-                color,
-                size * EQUATION_SPACING_EM,
-                source_path,
-                diagnostics,
-            )?,
-            false,
-        )),
+        OfficeMath::Inline(value) => {
+            let (size, color) = formatting(&value.expressions);
+            Ok((
+                layout_expressions(
+                    &value.expressions,
+                    fm,
+                    font_family,
+                    MathLayoutStyle::new(size, false, runs),
+                    color,
+                    size * EQUATION_SPACING_EM,
+                    source_path,
+                    diagnostics,
+                )?,
+                false,
+            ))
+        }
         OfficeMath::Display(value) => {
             let mut equations = Vec::with_capacity(value.equations.len());
+            // The group's frame follows its largest equation.
+            let mut size = 0.0_f64;
             for (index, equation) in value.equations.iter().enumerate() {
+                let (equation_size, color) = formatting(&equation.expressions);
+                size = size.max(equation_size);
                 equations.push(layout_expressions(
                     &equation.expressions,
                     fm,
                     font_family,
-                    MathLayoutStyle::new(size, true, runs),
+                    MathLayoutStyle::new(equation_size, true, runs),
                     color,
-                    size * EQUATION_SPACING_EM,
+                    equation_size * EQUATION_SPACING_EM,
                     &format!("{source_path}/equation/{index}"),
                     diagnostics,
                 )?);
             }
+            let size = if size > 0.0 { size } else { paragraph_size };
             let inter_spacing = math_properties
                 .and_then(|properties| properties.inter_spacing)
                 .map_or(0.0, twips_to_points);
@@ -255,20 +266,13 @@ pub(crate) fn layout_officemath(
     }
 }
 
-/// The size and colour every run of `equation` sets in its own `w:rPr`,
+/// The size and colour every run of an equation sets in its own `w:rPr`,
 /// each when all runs set the same.
 fn uniform_run_formatting(
-    equation: &OfficeMath,
+    expressions: &[MathExpression],
     runs: RunFormatting<'_>,
 ) -> (Option<f64>, Option<Color>) {
-    let mut pending: Vec<&MathExpression> = match equation {
-        OfficeMath::Inline(value) => value.expressions.iter().collect(),
-        OfficeMath::Display(value) => value
-            .equations
-            .iter()
-            .flat_map(|equation| &equation.expressions)
-            .collect(),
-    };
+    let mut pending: Vec<&MathExpression> = expressions.iter().collect();
     let mut sizes = Vec::new();
     let mut colors = Vec::new();
     while let Some(expression) = pending.pop() {

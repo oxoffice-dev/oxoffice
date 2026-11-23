@@ -790,6 +790,20 @@ fn an_equation_whose_runs_all_carry_one_size_and_colour_draws_its_rules_so() {
         (rules[0].1 - plain_width * 16.0 / 11.0).abs() < 1e-6,
         "{rules:?} against {plain_width}"
     );
+    // In a display group, each equation on its own: a red one beside a
+    // plain one draws its rule red and the other black.
+    let group = doc_with_body(&format!(
+        r#"<w:p><m:oMathPara xmlns:m="{MATH}"><m:oMath><m:f><m:num><m:r>{red}<m:t>a</m:t></m:r></m:num><m:den><m:r>{red}<m:t>b</m:t></m:r></m:den></m:f></m:oMath><m:oMath><m:f><m:num><m:r><m:t>c</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>"#,
+        red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#
+    ));
+    let group = group.layout_deterministic().expect("the document lays out");
+    let mut group_rules = Vec::new();
+    oxoffice_layout::walk(&group.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Line { color, .. } = element {
+            group_rules.push(red(*color));
+        }
+    });
+    assert_eq!(group_rules, [true, false]);
     let (runs, _) = laid_out_runs(&doc);
     let green = runs
         .iter()
