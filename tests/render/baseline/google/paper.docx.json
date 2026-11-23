@@ -1,13 +1,13 @@
 {
   "file": "google/paper.docx",
-  "reason": "equations draw their run formatting and a math fallback face",
-  "resources": "f332074f8c8cd2ee06f6b57168873736031c129ec117b6161d38ebaf5ad9c0bf",
-  "outline_and_tags": "c3ee544aaa0d7ef93a46b366e7f27d2dac9b7cd80ccc1b3963214385b9d795b5",
+  "reason": "equation constructs take Word's sizes",
+  "resources": "c921129eb1b8782bb728750f23317f4fadc8017ca653570a3216fc287188742c",
+  "outline_and_tags": "15189d8a6d01c5d11ff7126c5cd82316a32fcdc9258cfcfcdb3cb0c5b05d725b",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "cf8a1189191dd805764ea3aacda7e81dee923d1e71f95dc9e1a6b44caaec9c2d", "content": "0b583e52aabe118c95005e7db5107defc63828f2d3f362b96f8f4f1e449525a9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "a5d721bcac9c02290701221805785d66693617939254beaa197ecdd8f6002ed2", "content": "c2258e21a5659748c2455bdbdbe61b182a444b703d7fdefad8a7b3a89153ff28", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "af17ac9e8171981146e2f614aa2c2d198508ff70ec20e7d0f61dcb765e85b36a", "content": "cfd7073a161f21860f1a8913c83404cacc9a0c01af79566d188c423d9c46bcde", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
-    {"page": 4, "pixels": "f6b28d92f264fa8df5c1e50ea8dea4b09ece659a280014d20696280478b47913", "content": "8f6d58b7ea7d741342cf9ef4c3a0c3b27ca33a9c6867c101b2d01a13f35b595f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
+    {"page": 2, "pixels": "d95f1aeb776293d0eb2a55a3e9dd056fc7d8e7713f1b1e7ecdd325bc95bd5622", "content": "d0acb2ea27cc1bb4d2838b7c5bc10e903478421ad7a1aa801a9caf3314310c3b", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "91f5cd8d1b9ee4d2cbe31f1e9c9a3239161c665a0509d7f189793cb37774ad30", "content": "4da9e51726e402702dfced89fdbf9ed753125f765469c1a90742834dffde5029", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
+    {"page": 4, "pixels": "69f9d6b989c6a0e1a3278e00a02cc73dd3d41252ba23fd134e91019633bf1eb3", "content": "5510cf2d4706e5cd065c45c8c178a96f9291b2828f9ae7c7905ecbeee37e7302", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
   ]
 }
