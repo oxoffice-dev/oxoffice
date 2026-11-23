@@ -515,7 +515,9 @@ fn layout_paragraph_with_source_and_table(
                         .is_some_and(|threshold| threshold.to_pt() <= marker_font_size),
                 )
             {
-                let metrics = fm.metrics(font_id, marker_font_size)?;
+                let marker_measure_font =
+                    fm.resolve_font_for_metrics(marker_font_family, marker_bold, marker_italic)?;
+                let metrics = fm.metrics(marker_measure_font, marker_font_size)?;
                 for message in fm.unknown_word_symbol_diagnostics(
                     font_id,
                     marker_font_family,
@@ -561,6 +563,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source: None,
                         font_id,
+                        measure_font: Some(marker_measure_font),
                         font_size: marker_font_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -610,6 +613,7 @@ fn layout_paragraph_with_source_and_table(
                             direction: TextDirection::Auto,
                             source: None,
                             font_id,
+                            measure_font: Some(marker_measure_font),
                             font_size: marker_font_size,
                             glyph_ids: shaped.glyph_ids,
                             advances: shaped.advances,
@@ -857,6 +861,7 @@ fn layout_paragraph_with_source_and_table(
                 input,
                 fm,
                 source_node,
+                projected_run_start,
             )?;
         }
 
@@ -1021,7 +1026,11 @@ fn layout_paragraph_with_source_and_table(
         // this script is replaced by one that has them.
         let font_id =
             fm.resolve_font_for_split_text(font_family.as_deref(), bold, italic, &run_text)?;
-        let metrics = fm.metrics(font_id, font_size)?;
+        // The face of the requested family measures the run, also where a
+        // face picked for glyphs it lacks draws it: Word measures the line on
+        // the run's font, not on the font that rescued a glyph.
+        let measure_font = fm.resolve_font_for_metrics(font_family.as_deref(), bold, italic)?;
+        let metrics = fm.metrics(measure_font, font_size)?;
 
         // Stored-display expansion replaces the sole Field run with its
         // cache runs. Its instruction events still belong before that display.
@@ -1037,6 +1046,7 @@ fn layout_paragraph_with_source_and_table(
                     font_id,
                     &mut inline_items,
                     &mut multilingual_styles,
+                    projected_run_start,
                 );
             }
         }
@@ -1105,13 +1115,14 @@ fn layout_paragraph_with_source_and_table(
                         size,
                         style_resolver::word_kerning_enabled(&effective_rpr),
                     )?;
-                    let marker_metrics = fm.metrics(marker_font, size)?;
+                    let marker_metrics = fm.metrics(measure_font, size)?;
                     inline_items.push(InlineItem::Text(TextSegment {
                         form_mark: current_form_mark,
                         text,
                         direction: TextDirection::Auto,
                         source: None,
                         font_id: marker_font,
+                        measure_font: Some(measure_font),
                         font_size: size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1264,6 +1275,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source,
                         font_id,
+                        measure_font: Some(measure_font),
                         font_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1302,6 +1314,12 @@ fn layout_paragraph_with_source_and_table(
                                 &mut requested_context_bytes,
                                 &mut requested_context_entries,
                             ),
+                            east_asian_measure_font: east_asian_measure_font(
+                                fm,
+                                &effective_rpr,
+                                input.theme.as_ref(),
+                                &segment.text,
+                            )?,
                             language: effective_rpr.language.clone(),
                             language_east_asia: effective_rpr.language_east_asia.clone(),
                             language_bidi: effective_rpr.language_bidi.clone(),
@@ -1390,6 +1408,7 @@ fn layout_paragraph_with_source_and_table(
                         font_id,
                         &mut inline_items,
                         &mut multilingual_styles,
+                        content_char_start,
                     );
                     let (computed_value, field_kind) = computed_fields
                         .get(&std::ptr::from_ref(field))
@@ -1547,7 +1566,13 @@ fn layout_paragraph_with_source_and_table(
                             segment_italic,
                             value,
                         )?;
-                        let segment_metrics = fm.metrics(segment_font_id, segment_font_size)?;
+                        let segment_measure_font = fm.resolve_font_for_metrics(
+                            segment_font_family.as_deref(),
+                            segment_bold,
+                            segment_italic,
+                        )?;
+                        let segment_metrics =
+                            fm.metrics(segment_measure_font, segment_font_size)?;
 
                         let mut start = 0usize;
                         for (index, character) in value
@@ -1603,6 +1628,12 @@ fn layout_paragraph_with_source_and_table(
                                             &mut requested_context_bytes,
                                             &mut requested_context_entries,
                                         ),
+                                        east_asian_measure_font: east_asian_measure_font(
+                                            fm,
+                                            &segment_rpr,
+                                            input.theme.as_ref(),
+                                            value,
+                                        )?,
                                         language: segment_rpr.language.clone(),
                                         language_east_asia: segment_rpr.language_east_asia.clone(),
                                         language_bidi: segment_rpr.language_bidi.clone(),
@@ -1619,6 +1650,7 @@ fn layout_paragraph_with_source_and_table(
                                     direction: word_text_direction(segment_rpr.rtl),
                                     source: None,
                                     font_id: segment_font_id,
+                                    measure_font: Some(segment_measure_font),
                                     font_size: segment_font_size,
                                     glyph_ids: shaped.glyph_ids,
                                     advances: shaped.advances,
@@ -1683,7 +1715,7 @@ fn layout_paragraph_with_source_and_table(
                         sup_size,
                         style_resolver::word_kerning_enabled(&effective_rpr),
                     )?;
-                    let sup_metrics = fm.metrics(font_id, sup_size)?;
+                    let sup_metrics = fm.metrics(measure_font, sup_size)?;
                     let revision_marker = input.revision_view == RevisionView::Tracked
                         && projected.ordinary_run_index.is_none();
                     inline_items.push(InlineItem::Text(TextSegment {
@@ -1692,6 +1724,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source: None,
                         font_id,
+                        measure_font: Some(measure_font),
                         font_size: sup_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1741,7 +1774,9 @@ fn layout_paragraph_with_source_and_table(
                         &symbol.to_string(),
                         false,
                     )?;
-                    let symbol_metrics = fm.metrics(symbol_font_id, font_size)?;
+                    let symbol_measure_font =
+                        fm.resolve_font_for_metrics(Some(font.as_str()), bold, italic)?;
+                    let symbol_metrics = fm.metrics(symbol_measure_font, font_size)?;
                     let shaped = fm.shape_text_with_kerning(
                         symbol_font_id,
                         &text,
@@ -1781,6 +1816,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source: None,
                         font_id: symbol_font_id,
+                        measure_font: Some(symbol_measure_font),
                         font_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1824,6 +1860,7 @@ fn layout_paragraph_with_source_and_table(
                             direction: TextDirection::Auto,
                             source: None,
                             font_id,
+                            measure_font: Some(measure_font),
                             font_size,
                             glyph_ids: shaped.glyph_ids,
                             advances: shaped.advances,
@@ -1902,6 +1939,7 @@ fn layout_paragraph_with_source_and_table(
         input,
         fm,
         source_node,
+        projection_char_offset,
     )?;
     drop_trailing_display_break(&mut inline_items, &mut multilingual_styles, display_break);
 
@@ -1949,6 +1987,7 @@ fn layout_paragraph_with_source_and_table(
                     char_end: 0,
                 }),
                 font_id,
+                measure_font: None,
                 font_size,
                 glyph_ids: Vec::new(),
                 advances: Vec::new(),
@@ -2282,6 +2321,7 @@ fn push_targeted_bookmark_markers(
     input: &LayoutInput,
     fm: &mut FontManager,
     source_node: Option<SourceNodeId>,
+    char_offset: usize,
 ) -> Result<()> {
     let mut font_id = None;
     for marker in markers.iter().filter(|marker| {
@@ -2311,10 +2351,36 @@ fn push_targeted_bookmark_markers(
                 resolved_font,
                 source_node,
                 None,
+                char_offset,
             );
         }
     }
     Ok(())
+}
+
+/// The face the East Asian characters of `text` measure on, `None` when it
+/// has none. Word draws them from the run's `w:eastAsia` family even when the
+/// run's other text gives it another slot, so a mixed run's Han measures on
+/// that family's face and its Latin on the run's.
+fn east_asian_measure_font(
+    fm: &mut FontManager,
+    rpr: &CT_RPr,
+    theme: Option<&oxoffice_docx_oxml::theme::Theme>,
+    text: &str,
+) -> Result<Option<oxoffice_layout::FontId>> {
+    if !text
+        .chars()
+        .any(|character| is_east_asian(character as u32))
+    {
+        return Ok(None);
+    }
+    let family = resolve_font_family(rpr, theme, WordFontSlot::EastAsia);
+    fm.resolve_font(
+        family.as_deref(),
+        rpr.bold.unwrap_or(false),
+        rpr.italic.unwrap_or(false),
+    )
+    .map(Some)
 }
 
 fn push_sequence_context_markers(
@@ -2324,6 +2390,7 @@ fn push_sequence_context_markers(
     font_id: oxoffice_layout::FontId,
     items: &mut Vec<InlineItem>,
     styles: &mut HashMap<usize, WordMultilingualStyle>,
+    char_offset: usize,
 ) {
     let Some((snapshot, node)) = source else {
         return;
@@ -2340,6 +2407,7 @@ fn push_sequence_context_markers(
                     font_id,
                     Some(node),
                     Some(source),
+                    char_offset,
                 );
             }
         }
@@ -2347,6 +2415,10 @@ fn push_sequence_context_markers(
     }
 }
 
+/// Push a zero-width marker recording a structural field event at
+/// `char_offset`, the paragraph character the text after it starts at. Its
+/// source is an empty span there, so the paint keeps it, and any field
+/// result drawn after it, in reading order behind the text before it.
 fn push_structural_field_marker(
     items: &mut Vec<InlineItem>,
     styles: &mut HashMap<usize, WordMultilingualStyle>,
@@ -2354,6 +2426,7 @@ fn push_structural_field_marker(
     font_id: oxoffice_layout::FontId,
     source_node: Option<SourceNodeId>,
     field_source: Option<FieldSource>,
+    char_offset: usize,
 ) {
     styles.insert(
         items.len(),
@@ -2366,12 +2439,15 @@ fn push_structural_field_marker(
         form_mark: None,
         text: "\u{2060}".to_owned(),
         direction: TextDirection::Auto,
-        source: source_node.map(|node| oxoffice_layout::SourceSpan {
-            node,
-            char_start: 0,
-            char_end: 0,
-        }),
+        source: source_node
+            .zip(u32::try_from(char_offset).ok())
+            .map(|(node, offset)| oxoffice_layout::SourceSpan {
+                node,
+                char_start: offset,
+                char_end: offset,
+            }),
         font_id,
+        measure_font: None,
         font_size: 1.0,
         glyph_ids: vec![0],
         advances: vec![0.0],

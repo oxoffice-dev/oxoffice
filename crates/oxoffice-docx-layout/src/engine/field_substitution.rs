@@ -548,6 +548,7 @@ fn field_replacement(
                 direction: run.direction,
                 source: run.source,
                 font_id: run.font_id,
+                measure_font: None,
                 font_size: run.font_size,
                 glyph_ids: Vec::new(),
                 advances: Vec::new(),

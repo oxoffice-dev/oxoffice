@@ -164,6 +164,10 @@ struct WordMultilingualStyle {
     kern: bool,
     origin: WordInputOrigin,
     requested_family: Option<String>,
+    /// The face the run's East Asian characters measure on, when the run
+    /// holds any: Word draws them from `w:eastAsia` whatever slot the rest
+    /// of the run takes.
+    east_asian_measure_font: Option<FontId>,
     language: Option<String>,
     language_east_asia: Option<String>,
     language_bidi: Option<String>,

@@ -483,6 +483,7 @@ fn shape_marker(text: &str, fm: &mut FontManager) -> Result<Option<TextSegment>>
         direction: oxoffice_layout::TextDirection::Auto,
         source: None,
         font_id,
+        measure_font: None,
         font_size: size,
         glyph_ids: shaped.glyph_ids,
         advances: shaped.advances,
