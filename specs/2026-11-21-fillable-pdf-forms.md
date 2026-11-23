@@ -210,19 +210,20 @@ the static output of Word-saved legacy checkboxes on purpose, switch or not.
   `alternate`.
 - **Typing font.** The default resources (`/DR`) embed Liberation Sans
   Regular (bundled, with its OFL licence beside it, metric-compatible with
-  Arial and Helvetica) as a simple TrueType font with WinAnsi encoding.
-  - The whole font is embedded, since the `subsetter` crate drops the
-    `cmap` a simple font needs.
-  - That adds about 190 KB compressed to a PDF with fields, and covers every
-    WinAnsi character a user may type.
-- **What will not display.** Text typed in a character WinAnsi lacks
-  (Chinese, Japanese, Korean, Arabic, Hebrew, Devanagari, Thai, but also
-  Cyrillic, Greek and Latin letters such as Ł, č or ğ) depends on the
-  viewer: some substitute a font, some draw nothing or save no appearance.
-  Values already in the document in those scripts display correctly, since
-  their appearance comes from the layout, until the field is edited. This
-  is a known limitation, with its `limitations.json` entry and issue, and a
-  diagnostic per field (see the amendment of 2026-11-23).
+  Arial and Helvetica) as a Type0 font with Identity-H encoding (amended
+  2026-11-23; it was a simple TrueType font with WinAnsi encoding).
+  - The whole font is embedded, with every glyph's width and a ToUnicode
+    map of every character it has, so a viewer can encode anything a user
+    types in Latin, Greek, Cyrillic or Hebrew. A subset could not type new
+    characters.
+  - That adds about 220 KB compressed to a PDF with fields.
+- **What will not display.** Text typed in a script Liberation Sans lacks
+  (Chinese, Japanese, Korean, Arabic, Devanagari, Thai...) depends on the
+  viewer: each one substitutes a font of its own, and some do not shape
+  Arabic. Values already in the document in those scripts display
+  correctly, since their appearance comes from the layout, until the field
+  is edited. This is a known limitation, with its `limitations.json` entry
+  and issue, and a diagnostic per field (see the amendment of 2026-11-23).
 - **No JavaScript.** No `/A` or `/AA` on fields or widgets: PDF/A forbids
   them and many viewers ignore them. So date formats are not enforced, and
   nothing is calculated.
@@ -418,8 +419,8 @@ pub struct FormFieldFragment {
   like typing in non-Latin scripts.
 - Rich text values (`/RV`), radio groups (Word has none), list boxes,
   shared values for data-bound controls.
-- A WinAnsi subset of the typing font with an added `cmap`, if 190 KB
-  matters.
+- A subset of the typing font, if 220 KB matters: it could not type
+  characters the document does not hold.
 - Importing a filled PDF back into the Word document.
 - PowerPoint.
 
@@ -585,35 +586,46 @@ The orchestration session decided the open questions on 2026-11-21:
 
 ## Amendment 2026-11-23: what the typing font cannot encode (#132)
 
-- **Measured.** Two hand-built PDFs with four empty text fields, filled
-  through pdf.js 5.4 (Firefox's engine) and saved, then drawn by poppler
-  26.01 (Evince, Okular), which rebuilds a missing appearance from `/DA`:
-  - With today's font (Liberation Sans, simple TrueType, WinAnsi), pdf.js
-    saves every value holding a character WinAnsi lacks without an
-    appearance, Polish, Czech, Cyrillic and Greek included, although
-    Liberation Sans has their glyphs. Poppler then drops those characters:
-    `Łódź čeřŽ Жизнь Ωμέγα` shows `ód eŽ`; Chinese, Hebrew and Arabic show
-    nothing.
+- **Measured on Linux.** Two hand-built PDFs with four empty text fields,
+  filled through pdf.js 5.4 (Firefox's engine) and saved, then drawn by
+  poppler 26.01 (Evince, Okular), which rebuilds a missing appearance from
+  `/DA`:
+  - With the WinAnsi font, pdf.js saves every value holding a character
+    WinAnsi lacks without an appearance, Polish, Czech, Cyrillic and Greek
+    included, although Liberation Sans has their glyphs. Poppler then drops
+    those characters: `Łódź čeřŽ Жизнь Ωμέγα` shows `ód eŽ`; Chinese,
+    Hebrew and Arabic show nothing.
   - With a Type0 / Identity-H font embedded whole, with a full ToUnicode,
     pdf.js writes the appearance with it: Chinese and Japanese, Hebrew
     (right to left) and those Latin, Cyrillic and Greek letters are right.
-    Arabic is drawn unjoined, left to right: the viewer does not shape.
-    A value with one character the font lacks still gets no appearance.
-  - Acrobat Reader, Preview and Chrome are not measured yet (Mac check
-    pending).
+    Arabic is drawn unjoined, left to right: pdf.js does not shape. A value
+    with one character the font lacks still gets no appearance.
+- **Measured on macOS** (Chrome 157 driven as a GUI; Acrobat Reader DC
+  filled through its JavaScript API; Preview's PDFKit through its API).
+  As writers, no viewer draws non-Latin text with the `/DA` font, Type0 or
+  not: Chrome substitutes non-embedded system fonts (Arabic unjoined, a
+  character its fallback lacks not drawn), Acrobat embeds subsets of its
+  own fonts (Arabic joined), PDFKit embeds subsets of system fonts and
+  redraws filled widgets from `/V`. `/V` holds the exact typed text
+  everywhere. The two fonts give the same result per viewer, except
+  Acrobat's Chinese, boxes with WinAnsi and readable with Type0. Not
+  measured: Chrome and Acrobat reading a file saved with `/V` but no
+  appearance, the case pdf.js wrote with the WinAnsi font.
+- **Decision.** The typing font is Liberation Sans as Type0 / Identity-H
+  (see What the fields look like): it fixes pdf.js and poppler for Latin,
+  Greek, Cyrillic and Hebrew, at the same size, and changes nothing for the
+  macOS viewers. A field in a script Liberation Sans lacks does not embed
+  another face: only pdf.js would use it, for Chinese, Japanese or Korean,
+  at 4 to 19 MB per PDF.
 - **Diagnostic.** A render with fillable forms says, once per field a user
   can type into (not read-only), which scripts of its text the typing font
-  cannot encode: a text field's value, a list's option labels and value.
-  It names the field as the PDF does, counts the characters and quotes a
-  sample. A placeholder is not a value, so it says nothing. The check is
-  `oxoffice_pdf::untypable_form_text`, run by every docx layout that
+  has no glyph for: a text field's value, a list's option labels, and its
+  value when it is text typed into an editable list. It names the field as
+  the PDF does, counts the characters and quotes a sample, invisible ones
+  as `U+XXXX`. A placeholder is not a value, so it says nothing. The check
+  is `oxoffice_pdf::untypable_form_text`, run by every docx layout that
   carries form fields, so the Rust diagnostics, the CLI warnings and the
   Python diagnostics all carry it.
-- **Open, for the user.** Whether the typing font becomes Liberation Sans
-  as Type0 / Identity-H (same size, covers Latin, Greek, Cyrillic and
-  Hebrew), and whether a field in another script embeds the whole face the
-  layout used for it (Chinese, Japanese, Korean: several MB per PDF). The
-  diagnostic follows whichever font is chosen.
 
 ## Links
 

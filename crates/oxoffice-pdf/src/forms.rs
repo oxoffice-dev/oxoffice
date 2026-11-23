@@ -12,7 +12,10 @@ use oxoffice_layout::{
     FieldAlignment, FormField, FormFieldFragment, FormFieldId, FormFieldKind, PositionedElement,
     Rect, Transform,
 };
-use pdf_writer::types::{AnnotationFlags, CheckBoxState, FieldFlags, FieldType, FontFlags};
+use pdf_writer::types::{
+    AnnotationFlags, CheckBoxState, CidFontType, FieldFlags, FieldType, FontFlags, SystemInfo,
+    UnicodeCmap,
+};
 use pdf_writer::{Filter, Finish, Name, Pdf, Ref, Str, TextStr};
 
 /// The `/DR` font key that `/DA` strings name.
@@ -88,6 +91,8 @@ pub(crate) struct FormPlan<'a> {
     pub(crate) fields: Vec<PlacedField<'a>>,
     by_id: BTreeMap<FormFieldId, usize>,
     font: Ref,
+    cid_font: Ref,
+    to_unicode: Ref,
     font_descriptor: Ref,
     font_file: Ref,
 }
@@ -124,6 +129,8 @@ impl<'a> FormPlan<'a> {
 
         let names = unique_names(placements.keys().map(|id| &fields[id.0 as usize].name));
         let font = alloc();
+        let cid_font = alloc();
+        let to_unicode = alloc();
         let font_descriptor = alloc();
         let font_file = alloc();
         let mut by_id = BTreeMap::new();
@@ -156,6 +163,8 @@ impl<'a> FormPlan<'a> {
             fields: placed,
             by_id,
             font,
+            cid_font,
+            to_unicode,
             font_descriptor,
             font_file,
         })
@@ -347,33 +356,72 @@ impl<'a> FormPlan<'a> {
         self.write_font(pdf);
     }
 
-    /// Liberation Sans Regular as a simple TrueType font with WinAnsi
-    /// encoding, the whole file embedded: a subset would drop the `cmap` a
-    /// simple font needs to draw what a user types.
+    /// Liberation Sans Regular as a Type0 font, Identity-H, the whole file
+    /// embedded with every glyph's width and Unicode value: a viewer types any
+    /// character the font has, and a subset could not type new ones.
     fn write_font(&self, pdf: &mut Pdf) {
-        let face = ttf_parser::Face::parse(LIBERATION_SANS_REGULAR, 0)
-            .expect("the bundled Liberation Sans parses");
+        let face = typing_face();
         let scale = 1000.0 / f32::from(face.units_per_em());
         let to_pdf = |value: i16| f32::from(value) * scale;
-        let widths: Vec<f32> = (32u8..=255)
-            .map(|code| {
-                win_ansi_char(code)
-                    .and_then(|ch| face.glyph_index(ch))
-                    .and_then(|glyph| face.glyph_hor_advance(glyph))
-                    .map_or(0.0, |advance| f32::from(advance) * scale)
-            })
-            .collect();
 
-        let mut font = pdf.indirect(self.font).dict();
-        font.pair(Name(b"Type"), Name(b"Font"));
-        font.pair(Name(b"Subtype"), Name(b"TrueType"));
-        font.pair(Name(b"BaseFont"), Name(b"LiberationSans"));
-        font.pair(Name(b"FirstChar"), 32);
-        font.pair(Name(b"LastChar"), 255);
-        font.insert(Name(b"Widths")).array().items(widths);
-        font.pair(Name(b"Encoding"), Name(b"WinAnsiEncoding"));
-        font.pair(Name(b"FontDescriptor"), self.font_descriptor);
-        font.finish();
+        pdf.type0_font(self.font)
+            .base_font(Name(b"LiberationSans"))
+            .encoding_predefined(Name(b"Identity-H"))
+            .descendant_font(self.cid_font)
+            .to_unicode(self.to_unicode);
+
+        let system_info = SystemInfo {
+            registry: Str(b"Adobe"),
+            ordering: Str(b"Identity"),
+            supplement: 0,
+        };
+        let mut cid = pdf.cid_font(self.cid_font);
+        cid.subtype(CidFontType::Type2);
+        cid.base_font(Name(b"LiberationSans"));
+        cid.system_info(system_info);
+        cid.font_descriptor(self.font_descriptor);
+        cid.default_width(0.0);
+        cid.cid_to_gid_map_predefined(Name(b"Identity"));
+        cid.widths().consecutive(
+            0,
+            (0..face.number_of_glyphs()).map(|glyph| {
+                face.glyph_hor_advance(ttf_parser::GlyphId(glyph))
+                    .map_or(0.0, |advance| f32::from(advance) * scale)
+            }),
+        );
+        cid.finish();
+
+        // Each glyph's lowest code point, so a viewer reverses the map to
+        // encode what a user types.
+        let mut unicode: BTreeMap<u16, char> = BTreeMap::new();
+        if let Some(cmap) = face.tables().cmap {
+            for subtable in cmap
+                .subtables
+                .into_iter()
+                .filter(|table| table.is_unicode())
+            {
+                subtable.codepoints(|codepoint| {
+                    let (Some(ch), Some(glyph)) =
+                        (char::from_u32(codepoint), subtable.glyph_index(codepoint))
+                    else {
+                        return;
+                    };
+                    if glyph.0 != 0 {
+                        unicode
+                            .entry(glyph.0)
+                            .and_modify(|held| *held = (*held).min(ch))
+                            .or_insert(ch);
+                    }
+                });
+            }
+        }
+        let mut cmap = UnicodeCmap::new(Name(b"Adobe-Identity-UCS"), system_info);
+        for (glyph, ch) in unicode {
+            cmap.pair(glyph, ch);
+        }
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&cmap.finish(), 6);
+        pdf.stream(self.to_unicode, &compressed)
+            .filter(Filter::FlateDecode);
 
         let bbox = face.global_bounding_box();
         let mut descriptor = pdf.font_descriptor(self.font_descriptor);
@@ -452,8 +500,8 @@ pub fn untypable_form_text(layout: &oxoffice_layout::LayoutResult) -> Vec<String
             count => format!("{count} distinct characters"),
         };
         let message = format!(
-            "form field \"{}\" holds {} text its typing font (Liberation Sans, WinAnsi) cannot \
-             encode ({count}, such as {sample}): once the field is edited, a PDF viewer may \
+            "form field \"{}\" holds {} text its typing font (Liberation Sans) has no \
+             glyph for ({count}, such as {sample}): once the field is edited, a PDF viewer may \
              show nothing or save it without an appearance",
             placed.name,
             scripts.into_iter().collect::<Vec<_>>().join(", "),
@@ -465,10 +513,22 @@ pub fn untypable_form_text(layout: &oxoffice_layout::LayoutResult) -> Vec<String
     messages
 }
 
-/// Whether the typing font encodes `ch`: a WinAnsi character, or a line
-/// break or tab a multiline field holds.
+/// Whether the typing font encodes `ch`: a character it has a glyph for,
+/// or a line break or tab a multiline field holds.
 fn typing_font_encodes(ch: char) -> bool {
-    matches!(ch, '\n' | '\r' | '\t') || (32u8..=255).any(|code| win_ansi_char(code) == Some(ch))
+    matches!(ch, '\n' | '\r' | '\t')
+        || typing_face()
+            .glyph_index(ch)
+            .is_some_and(|glyph| glyph.0 != 0)
+}
+
+/// The typing font, Liberation Sans Regular, parsed once.
+fn typing_face() -> &'static ttf_parser::Face<'static> {
+    static FACE: std::sync::OnceLock<ttf_parser::Face<'static>> = std::sync::OnceLock::new();
+    FACE.get_or_init(|| {
+        ttf_parser::Face::parse(LIBERATION_SANS_REGULAR, 0)
+            .expect("the bundled Liberation Sans parses")
+    })
 }
 
 /// A character's Unicode script name, or what it is when it has none.
@@ -626,23 +686,6 @@ pub(crate) fn pdf_rect(rect: Rect, page_height: f64) -> pdf_writer::Rect {
     )
 }
 
-/// The character a WinAnsi code stands for, `None` for its five holes.
-fn win_ansi_char(code: u8) -> Option<char> {
-    const HIGH: [u16; 32] = [
-        0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039,
-        0x0152, 0, 0x017D, 0, 0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC,
-        0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
-    ];
-    match code {
-        0x80..=0x9F => match HIGH[usize::from(code - 0x80)] {
-            0 => None,
-            unicode => char::from_u32(u32::from(unicode)),
-        },
-        0x7F => None,
-        _ => Some(char::from(code)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,19 +707,13 @@ mod tests {
     }
 
     #[test]
-    fn win_ansi_maps_its_high_codes_and_leaves_its_holes() {
-        assert_eq!(win_ansi_char(0x80), Some('€'));
-        assert_eq!(win_ansi_char(0x81), None);
-        assert_eq!(win_ansi_char(0x41), Some('A'));
-        assert_eq!(win_ansi_char(0xE9), Some('é'));
-    }
-
-    #[test]
-    fn the_typing_font_encodes_win_ansi_and_line_breaks_only() {
-        for ch in ['A', 'é', '€', 'œ', '\u{2013}', '\n', '\t'] {
+    fn the_typing_font_encodes_what_liberation_sans_draws_and_line_breaks() {
+        for ch in [
+            'A', 'é', '€', 'Ł', 'č', 'ğ', 'Ж', 'Ω', 'ש', '\u{2013}', '\n', '\t',
+        ] {
             assert!(typing_font_encodes(ch), "{ch:?}");
         }
-        for ch in ['Ł', 'č', 'Ж', 'Ω', 'ש', '中', '\u{81}', '\u{7}'] {
+        for ch in ['中', 'م', 'क', 'ก', '\u{7}'] {
             assert!(!typing_font_encodes(ch), "{ch:?}");
         }
         assert_eq!(script_name('Ж'), "Cyrillic");
