@@ -2,8 +2,8 @@
   "id": "docx-date-control-names",
   "format": "docx",
   "area": "forms",
-  "title": "A date content control whose format shows month or day names cannot be set in most languages",
-  "symptom": "a date control whose format holds a full month or day name (MMMM, dddd) in a language other than English, French, German, Spanish, Italian, Portuguese or Dutch, a short name (MMM, ddd) in a language other than English, a day period (AM/PM) outside United States English, or a token Word's date list does not offer, is refused with \"unsupported date format\"; validate_form reports \"unsupported date metadata\" and protect_form refuses rules naming it",
+  "title": "A date content control whose format shows month or day names cannot be set in most languages, nor on another calendar",
+  "symptom": "a date control whose format holds a full month or day name (MMMM, dddd) in a language other than English, French, German, Spanish, Italian, Portuguese or Dutch, a short name (MMM, ddd) in a language other than English, a day period (AM/PM) outside United States English, or a token Word's date list does not offer, is refused with \"unsupported date format\"; a control on a calendar other than the Gregorian ones (gregorian, gregorianUs) is refused with \"unsupported date calendar\"; validate_form reports \"unsupported date metadata\" and protect_form refuses rules naming such a control. Refused on purpose: these names and calendars come from Windows locale data that differs between versions",
   "workaround": "give the control a numeric date format first (set_content_control_type, same name in Python, for example dd/MM/yyyy), then set the value; none through the CLI",
   "issue": 149
 }
