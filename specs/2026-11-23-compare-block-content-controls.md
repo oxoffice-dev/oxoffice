@@ -63,7 +63,7 @@ We deliberately do not:
   block controls, or there is nothing to mark. Refused with a message that says so. Whitespace, proofing marks
   and range markers between its paragraphs are carried as they are.
 - Give the copy of a moved control new properties: until the move is resolved, the redline holds both copies with
-  the same `w:id`, tag and gallery (Word check, step 3).
+  the same `w:id`, tag and gallery; not part of the Word check.
 - Change how a control both versions hold is compared inside.
 
 ## Plan
