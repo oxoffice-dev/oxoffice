@@ -2242,23 +2242,42 @@ fn an_inline_group_of_shapes_is_not_drawn_as_one_text_box() {
 }
 
 // Text boxes nested in text boxes weigh 16 each against the limit of 256 on
-// nested Word owners, placed in line as when floating: a file that nests
-// more is refused when it opens, never read until the stack runs out.
+// nested Word owners, placed in line as when floating, wherever the inline
+// reader finds them: a file that nests more is refused when it opens, never
+// read until the stack runs out.
 #[test]
 fn inline_text_boxes_nested_past_the_owner_limit_are_refused_on_open() {
-    let nested = |depth: u32| {
+    let nested = |depth: u32, wrapper: Option<&str>| {
         let mut content = "<w:p><w:r><w:t>Core</w:t></w:r></w:p>".to_owned();
         for id in 0..depth {
-            content = format!(
-                "<w:p>{}</w:p>",
-                inline_drawing_run(id + 1, &text_box_graphic(&content, "FFFFFF"))
+            let graphic = text_box_graphic(&content, "FFFFFF");
+            let mut run = inline_drawing_run(id + 1, &graphic);
+            if let Some(wrapper) = wrapper {
+                // The box's graphic inside an element only an anchor reads.
+                run = run
+                    .replace("<a:graphic ", &format!("<wp:{wrapper}><a:graphic "))
+                    .replace("</a:graphic>", &format!("</a:graphic></wp:{wrapper}>"));
+            }
+            content = format!("<w:p>{run}</w:p>");
+        }
+        Document::from_bytes(&crate::support::docx_with_body(&content))
+    };
+    for (wrapper, depths) in [
+        (None, &[17, 400][..]),
+        (Some("wrapSquare"), &[17]),
+        (Some("positionH"), &[17]),
+    ] {
+        assert!(nested(15, wrapper).is_ok(), "{wrapper:?}");
+        for &depth in depths {
+            let refused = nested(depth, wrapper).err().map(|error| error.to_string());
+            assert!(
+                refused
+                    .as_deref()
+                    .is_some_and(|message| message.contains("weighted limit 256")),
+                "{wrapper:?} {depth}: {refused:?}"
             );
         }
-        crate::support::docx_with_body(&content)
-    };
-    assert!(Document::from_bytes(&nested(15)).is_ok());
-    assert!(Document::from_bytes(&nested(17)).is_err());
-    assert!(Document::from_bytes(&nested(400)).is_err());
+    }
 }
 
 /// A paragraph that starts with a text box it must clear, Word's "top and

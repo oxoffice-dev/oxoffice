@@ -572,23 +572,29 @@ pub(super) fn admit_word_input_classified(
                     // The actual anchor reader traverses unknown wrappers and
                     // any graphicData URI. These captured branches are the
                     // exceptions it skips without constructing a Word body.
-                    admitted = !matches!(
-                        local.as_ref(),
-                        b"srcRect"
-                            | b"positionH"
-                            | b"positionV"
-                            | b"spPr"
-                            | b"blip"
-                            | b"wrapNone"
-                            | b"wrapSquare"
-                            | b"wrapTight"
-                            | b"wrapThrough"
-                            | b"wrapTopAndBottom"
-                    ) && !(captured_namespace_is(
-                        binding,
-                        parent_anchor,
-                        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
-                    ) && local.as_ref() == b"docPr");
+                    // The inline reader walks into the position and wrap
+                    // elements only an anchor has, so it may build a body
+                    // there: only the anchor reader skips them.
+                    let anchor_owner = stack
+                        .get(parent_anchor)
+                        .is_some_and(|frame| frame.local.as_ref() == b"anchor");
+                    admitted = !matches!(local.as_ref(), b"srcRect" | b"spPr" | b"blip")
+                        && !(anchor_owner
+                            && matches!(
+                                local.as_ref(),
+                                b"positionH"
+                                    | b"positionV"
+                                    | b"wrapNone"
+                                    | b"wrapSquare"
+                                    | b"wrapTight"
+                                    | b"wrapThrough"
+                                    | b"wrapTopAndBottom"
+                            ))
+                        && !(captured_namespace_is(
+                            binding,
+                            parent_anchor,
+                            "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+                        ) && local.as_ref() == b"docPr");
                     anchor_depth = (admitted && !typed_anchor_body).then_some(parent_anchor);
                 }
                 if fact_start.checked_sub(source_start).is_some_and(|start| {
