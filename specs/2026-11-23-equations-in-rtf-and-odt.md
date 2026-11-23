@@ -33,8 +33,10 @@ Both formats have a native carrier:
   subset is kept too) by one generic walk: an element `m:X` with children is `{\mX children}`; an element whose only
   content is `m:val` is `{\mX value}`; a math run `m:r` is `{\mr flags text}`, its `m:rPr` written as the run's
   flags. A run's alignment point and break (`m:aln`, `m:brk`) have no Word file showing their spelling inside a
-  run: they are reported, not written. Its `w:rPr` is not carried: the math font and italic are the reader's own,
-  other formatting (bold, colour) is reported. The
+  run: they are reported, not written. Each run is wrapped in the character formatting Word writes around it
+  (Word reads a run without it as plain): the math font (Cambria Math, added to the font table) and `\i` on a run
+  of the default style (`\msty2`: letters, Greek, digits and operators alike), `{\i\f34 {\mr\mscr0\msty2 y}}`.
+  The run's own `w:rPr` is not carried: its other formatting (bold, colour) is reported. The
   first element is starred (`{\mmath{\*\moMath ...}}`, `{\mmath{\*\moMathPara ...}}` for a display group), as Word
   and LibreOffice write it. The spelling of what the generic rule does not cover (`m:sty`, `m:scr` and the other
   run flags, the `\mmathPr` header) is taken from an RTF that Word saves (Word 16.115 on the Mac,

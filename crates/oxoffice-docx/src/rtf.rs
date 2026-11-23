@@ -657,8 +657,13 @@ impl<'a> RtfWriter<'a> {
             );
         }
         // The runs of the accepted view are exported, see `write_runs`.
-        for (index, run) in paragraph.accepted_view().runs.iter().enumerate() {
+        let view = paragraph.accepted_view();
+        for (index, run) in view.runs.iter().enumerate() {
             self.scan_run(run, format!("{location}/run[{index}]"));
+        }
+        // Math runs are written in the math font, as Word writes them.
+        if !view.equations.is_empty() {
+            self.ensure_font(math::MATH_FONT);
         }
     }
 
@@ -1161,7 +1166,8 @@ impl<'a> RtfWriter<'a> {
     ) -> Result<()> {
         self.equations += 1;
         let number = self.equations;
-        match math::write_equation(equation) {
+        let math_font = self.fonts.get(math::MATH_FONT).copied();
+        match math::write_equation(equation, math_font) {
             Ok(written) => {
                 for lost in written.lost {
                     self.diagnose(

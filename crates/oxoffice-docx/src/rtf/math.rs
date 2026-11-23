@@ -57,12 +57,22 @@ pub(super) struct RtfEquation {
     pub(super) lost: Vec<String>,
 }
 
-/// Write `equation` as a `\mmath` group.
-pub(super) fn write_equation(equation: &OfficeMath) -> Result<RtfEquation, String> {
+/// The font Word writes math runs in.
+pub(super) const MATH_FONT: &str = "Cambria Math";
+
+/// Write `equation` as a `\mmath` group, its math runs in the font
+/// `math_font` of the font table.
+pub(super) fn write_equation(
+    equation: &OfficeMath,
+    math_font: Option<usize>,
+) -> Result<RtfEquation, String> {
     let xml = equation.to_xml().map_err(|error| error.to_string())?;
     let mut reader = NsReader::from_reader(xml.as_slice());
     reader.config_mut().trim_text(false);
-    let mut writer = Writer::default();
+    let mut writer = Writer {
+        math_font,
+        ..Writer::default()
+    };
     let mut buffer = Vec::new();
     loop {
         let event = reader
@@ -141,6 +151,8 @@ struct Writer {
     skipping_formatting: bool,
     /// The flags and text of the open math run.
     run: Option<(String, String)>,
+    /// The math font's number in the font table.
+    math_font: Option<usize>,
     lost: Vec<String>,
 }
 
@@ -301,9 +313,27 @@ impl Writer {
                 }
             }
             let flags = flags.replace(STYLE_LEFT_OUT, "");
+            // Word wraps each math run in its character formatting: the
+            // math font, and italic on a run of the default style (`\msty2`,
+            // letters, Greek, digits and operators alike). Word reads a run
+            // without it as plain. A normal-text run (`\mnor`) keeps the
+            // body font.
+            let formatting = match self.math_font {
+                Some(font) if !flags.contains("\\mnor") => Some(format!(
+                    "{{{}\\f{font} ",
+                    if flags.contains("\\msty2") { "\\i" } else { "" }
+                )),
+                _ => None,
+            };
+            if let Some(formatting) = &formatting {
+                self.out.push_str(formatting);
+            }
             self.out.push_str(&format!("{{\\mr{flags} "));
             push_rtf_text(&mut self.out, &text);
             self.out.push('}');
+            if formatting.is_some() {
+                self.out.push('}');
+            }
         }
     }
 

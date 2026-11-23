@@ -2943,3 +2943,36 @@ fn built_equations_keep_their_omml_through_rtf() {
         assert_eq!(without_space_preserve(&xml), omml(&math), "{body}");
     }
 }
+
+#[test]
+fn math_runs_are_written_in_the_math_font_and_italic_as_word_writes_them() {
+    let doc = corpus_doc("word/paper.docx");
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    let font = rtf
+        .split(r"{\f")
+        .find_map(|entry| {
+            let (number, rest) = entry.split_once(r"\fcharset0 ")?;
+            rest.starts_with("Cambria Math;").then(|| number.to_owned())
+        })
+        .unwrap_or_else(|| panic!("no Cambria Math in the font table: {rtf}"));
+    // Every run of Word's default style is italic, Greek letters, digits and
+    // operators too; a plain run is not.
+    let italic = format!(r"{{\i\f{font} {{\mr\mscr0\msty2 ");
+    let plain = format!(r"{{\f{font} {{\mr\mscr0\msty0 ");
+    assert_eq!(
+        rtf.matches(&italic).count(),
+        rtf.matches(r"{\mr\mscr0\msty2 ").count(),
+        "{rtf}"
+    );
+    assert_eq!(
+        rtf.matches(&plain).count(),
+        rtf.matches(r"{\mr\mscr0\msty0 ").count(),
+        "{rtf}"
+    );
+    assert!(rtf.contains(&format!(r"{italic}\u955?}}}}")), "{rtf}");
+    assert!(rtf.contains(&format!(r"{italic}2}}}}")), "{rtf}");
+    // The reader takes the formatting as the math font's own: the
+    // equations read back as written.
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+    assert_eq!(equations_as_mathml(&read), equations_as_mathml(&doc));
+}
