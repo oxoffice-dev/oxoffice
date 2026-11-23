@@ -120,10 +120,9 @@ nothing in the PDF to read, so it reads the renderer's diagnostics.
    drawn) and the numbers in the results of the fields the render computes
    (`PAGE`, `NUMPAGES`, `SECTION`, `SECTIONPAGES`, `PAGEREF`, `SEQ`, `REF`,
    `STYLEREF`) are left out, every other number is checked, and words are
-   compared over the whole
-   document. For pptx, the text of each
-   slide's own shapes, notes left out, found on that slide's page. Words are
-   compared as a multiset; CJK text one character at a time.
+   compared over the whole document. For pptx, the text of each slide's own
+   shapes, notes left out, found on that slide's page. Words are compared as
+   a multiset; CJK text one character at a time.
 4. The text is inside its page: no glyph box crosses the page edge (0.5 pt).
 5. No glyph is missing: no `.notdef` glyph (the empty box), and every drawn
    glyph maps back to text.
