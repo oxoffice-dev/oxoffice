@@ -4658,7 +4658,7 @@ pub(crate) fn control_has_property_measurement_failure_in(
     verdict.map_err(|failure| record_word_source_failure(failure, registry))
 }
 
-fn original_reference_has_payload(input: WordXmlInput<'_>) -> Result<bool> {
+fn original_comment_reference_has_payload(input: WordXmlInput<'_>) -> Result<bool> {
     let mut reader = Reader::from_reader(input);
     reader.config_mut().allow_unmatched_ends = true;
     reader.config_mut().check_end_names = false;
@@ -7927,7 +7927,7 @@ fn plan_capture_with_context(
                 {
                     let aliases = constructor_attribute_prefixes(start, namespace_state, pool)?;
                     crate::text::comment_reference_has_payload_attributes(start, &aliases)
-                        || (!empty && original_reference_has_payload(*reader.get_ref())?)
+                        || (!empty && original_comment_reference_has_payload(*reader.get_ref())?)
                 } else {
                     false
                 };
@@ -7940,7 +7940,7 @@ fn plan_capture_with_context(
                         crate::text::RunChildAction::FootnoteReference
                             | crate::text::RunChildAction::EndnoteReference
                     )
-                    && original_reference_has_payload(*reader.get_ref())?;
+                    && crate::text::started_reference_has_payload(*reader.get_ref())?;
                 let modeled = direct_run_child
                     && !action.retains_raw(special_typed)
                     && !comment_raw

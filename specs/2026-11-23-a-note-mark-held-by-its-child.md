@@ -47,8 +47,10 @@ Not done: a hidden raw copy of the mark child (the option recorded on #164):
 it would take the symbol out of the typed content that layout draws and that
 labels the note.
 
-A mark Word splits into the next run waits for Word's answer (probes in the
-pull request); if Word does not take it as the mark, the model already agrees.
+A mark in the next run is no mark: checked in Word on 2026-11-23, Word shows
+an empty mark, the next run's text stays body text and deleting the note
+leaves it, as the model reads it. Word itself cuts a mark at the run end
+when part of it is formatted otherwise.
 
 ## Plan
 
