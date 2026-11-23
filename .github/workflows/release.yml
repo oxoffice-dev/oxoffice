@@ -50,7 +50,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
     env:
       # Read by scripts/release_highlights.py from the environment, never through a shell.
       HIGHLIGHTS: ${{ inputs.highlights }}

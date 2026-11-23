@@ -28,7 +28,8 @@ One manual workflow, no manual tags, no hand-edited changelog.
    about a minute), and each conda package is built and tested into a local
    channel. The stack a script needs is measured every night, not here.
 3. Only once all of that is green, the last job sets the version again on
-   the dispatched commit, regenerates `CHANGELOG.md` with git-cliff, commits
+   the dispatched commit, prepends the release's section to `CHANGELOG.md`
+   with git-cliff, commits
    `chore(release): vX.Y.Z` on top of that commit and tags it: the tag holds
    exactly the tree every job built, plus the version and the changelog. It
    builds the remaining assets and the release notes, then pushes `main` and

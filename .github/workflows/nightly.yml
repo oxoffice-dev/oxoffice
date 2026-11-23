@@ -6,7 +6,7 @@ name: Full checks
 # workflow walks; every scaling call on the three platforms; the stack a
 # release-profile wheel needs on the whole corpus. Nobody waits for it: a
 # failure opens or updates one issue, labelled `ci-nightly`, which the next
-# green run closes. A release needs a green run on its commit.
+# green run closes. Run it on a commit before releasing it (docs/RELEASE.md).
 # `workflow_dispatch` runs it on any branch or tag (it reports to the issue
 # only on main, when asked); `workflow_call` lets another workflow run it,
 # which must grant `issues: write`: the report job asks for it even when it
