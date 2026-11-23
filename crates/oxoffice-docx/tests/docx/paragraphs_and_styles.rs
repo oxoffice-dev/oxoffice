@@ -1342,6 +1342,25 @@ fn rtf_export_lists_paragraph_styles_and_restates_their_formatting() {
 }
 
 #[test]
+fn rtf_export_asks_for_the_paragraph_spacing_of_a_docx_file() {
+    // Without \htmautsp Word reads an RTF file with the HTML auto spacing of
+    // older versions, which adds space around every heading.
+    let doc = doc_with_rtf_styles();
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    let header_end = rtf.find(r"\pard").unwrap_or(rtf.len());
+    assert!(rtf[..header_end].contains(r"\htmautsp"), "{rtf}");
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
+    assert!(
+        !read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("htmautsp")),
+        "{:?}",
+        read.diagnostics
+    );
+}
+
+#[test]
 fn rtf_round_trip_keeps_paragraph_styles_without_direct_formatting() {
     let doc = doc_with_rtf_styles();
     let rtf = doc.to_rtf_bytes().unwrap().bytes;
