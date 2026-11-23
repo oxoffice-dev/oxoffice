@@ -96,4 +96,4 @@ dependency bumps and documentation.
 | 2026-11-23 | [Equation constructs as tall as Word draws them](2026-11-23-equation-sizes-as-word.md) | shipped |
 | 2026-11-23 | [Equations in the RTF and ODT exports](2026-11-23-equations-in-rtf-and-odt.md) | shipped |
 | 2026-11-23 | [A link in a paragraph added or removed whole is tracked as a HYPERLINK field](2026-11-23-whole-paragraph-hyperlink-as-field.md) | shipped |
-| 2026-11-23 | [RTF keeps paragraph styles and section layout](2026-11-23-rtf-styles-and-sections.md) | accepted |
+| 2026-11-23 | [RTF keeps paragraph styles and section layout](2026-11-23-rtf-styles-and-sections.md) | shipped |
