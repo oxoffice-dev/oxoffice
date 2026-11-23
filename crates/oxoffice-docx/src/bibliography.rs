@@ -15,6 +15,8 @@ mod apa_language;
 mod citation;
 mod citation_grammar;
 mod locale;
+#[cfg(test)]
+mod oracle_tests;
 mod paragraph_properties;
 mod render;
 mod render_rtl;
