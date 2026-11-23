@@ -46,17 +46,34 @@ impl Color {
         a: 1.0,
     };
 
-    /// Parse a hex color string like "FF0000" to Color.
+    /// Parse a hex color string like "FF0000" to Color. A channel that is not
+    /// two hex digits reads as 0; the value comes from the file unchecked, so
+    /// it is read by bytes and never sliced inside a character.
     pub fn from_hex(hex: &str) -> Self {
         let hex = hex.trim_start_matches('#');
         if hex.len() >= 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f64 / 255.0;
-            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f64 / 255.0;
-            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f64 / 255.0;
+            let channel = |start: usize| {
+                hex.get(start..start + 2)
+                    .and_then(|digits| u8::from_str_radix(digits, 16).ok())
+                    .unwrap_or(0) as f64
+                    / 255.0
+            };
+            let (r, g, b) = (channel(0), channel(2), channel(4));
             Color { r, g, b, a: 1.0 }
         } else {
             Color::BLACK
         }
+    }
+
+    /// The colour as `RRGGBB`, its alpha left out.
+    pub fn to_hex(self) -> String {
+        let byte = |channel: f64| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
+        format!(
+            "{:02X}{:02X}{:02X}",
+            byte(self.r),
+            byte(self.g),
+            byte(self.b)
+        )
     }
 }
 

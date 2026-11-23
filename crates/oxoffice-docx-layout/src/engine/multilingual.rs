@@ -356,105 +356,28 @@ pub(super) fn shape_word_multilingual_items(
     })
 }
 
-/// Convert a highlight color enum to an RGBA Color.
+/// The colour of a `w:highlight`: Word's highlight palette, as LibreOffice
+/// imports it too. The dark colours are half intensity (`000080`), not the
+/// CSS colours of the same names, and the greys are `808080` and `C0C0C0`.
 pub(super) fn highlight_to_color(h: ST_HighlightColor) -> Option<Color> {
-    match h {
-        ST_HighlightColor::None => None,
-        ST_HighlightColor::Black => Some(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::Blue => Some(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 1.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::Cyan => Some(Color {
-            r: 0.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkBlue => Some(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.545,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkCyan => Some(Color {
-            r: 0.0,
-            g: 0.545,
-            b: 0.545,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkGray => Some(Color {
-            r: 0.663,
-            g: 0.663,
-            b: 0.663,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkGreen => Some(Color {
-            r: 0.0,
-            g: 0.392,
-            b: 0.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkMagenta => Some(Color {
-            r: 0.545,
-            g: 0.0,
-            b: 0.545,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkRed => Some(Color {
-            r: 0.545,
-            g: 0.0,
-            b: 0.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::DarkYellow => Some(Color {
-            r: 0.545,
-            g: 0.545,
-            b: 0.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::Green => Some(Color {
-            r: 0.0,
-            g: 1.0,
-            b: 0.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::LightGray => Some(Color {
-            r: 0.827,
-            g: 0.827,
-            b: 0.827,
-            a: 1.0,
-        }),
-        ST_HighlightColor::Magenta => Some(Color {
-            r: 1.0,
-            g: 0.0,
-            b: 1.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::Red => Some(Color {
-            r: 1.0,
-            g: 0.0,
-            b: 0.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::White => Some(Color {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        }),
-        ST_HighlightColor::Yellow => Some(Color {
-            r: 1.0,
-            g: 1.0,
-            b: 0.0,
-            a: 1.0,
-        }),
-    }
+    let hex = match h {
+        ST_HighlightColor::None => return None,
+        ST_HighlightColor::Black => "000000",
+        ST_HighlightColor::Blue => "0000FF",
+        ST_HighlightColor::Cyan => "00FFFF",
+        ST_HighlightColor::DarkBlue => "000080",
+        ST_HighlightColor::DarkCyan => "008080",
+        ST_HighlightColor::DarkGray => "808080",
+        ST_HighlightColor::DarkGreen => "008000",
+        ST_HighlightColor::DarkMagenta => "800080",
+        ST_HighlightColor::DarkRed => "800000",
+        ST_HighlightColor::DarkYellow => "808000",
+        ST_HighlightColor::Green => "00FF00",
+        ST_HighlightColor::LightGray => "C0C0C0",
+        ST_HighlightColor::Magenta => "FF00FF",
+        ST_HighlightColor::Red => "FF0000",
+        ST_HighlightColor::White => "FFFFFF",
+        ST_HighlightColor::Yellow => "FFFF00",
+    };
+    Some(Color::from_hex(hex))
 }
