@@ -1,6 +1,8 @@
 //! CSS generation from OXML properties.
 
-use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
+use oxoffice_docx_layout::Color;
+use oxoffice_docx_layout::engine::{automatic_text_color, run_fill, shading_color};
+use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr, CT_Shd};
 use oxoffice_docx_oxml::shared::{ST_Jc, ST_Underline};
 
 use crate::sanitize::{font_family, hex_color};
@@ -84,13 +86,9 @@ pub(crate) fn paragraph_style(ppr: Option<&CT_PPr>) -> String {
         }
     }
 
-    // Background shading
-    if let Some(shd) = &ppr.shading
-        && let Some(fill) = &shd.fill
-        && fill != "FFFFFF"
-        && let Some(color) = hex_color(fill)
-    {
-        styles.push(format!("background-color:{color}"));
+    // Background shading, as layout paints it.
+    if let Some(color) = ppr.shading.as_deref().and_then(shading_color) {
+        styles.push(format!("background-color:{}", css_color(color)));
     }
 
     // Line spacing
@@ -118,10 +116,35 @@ pub(crate) fn paragraph_style(ppr: Option<&CT_PPr>) -> String {
     }
 }
 
-/// Generate inline CSS style string from run properties.
-pub(crate) fn run_style(rpr: Option<&CT_RPr>) -> String {
+/// The background a `w:shd` paints, as layout paints it, as a CSS colour.
+pub(crate) fn shading_background(shading: Option<&CT_Shd>) -> Option<String> {
+    shading.and_then(shading_color).map(css_color)
+}
+
+/// The fill a paragraph paints behind its runs: its own shading, or else
+/// `behind`, the fill of the cell it is in.
+pub(crate) fn paragraph_fill(ppr: Option<&CT_PPr>, behind: Option<Color>) -> Option<Color> {
+    ppr.and_then(|ppr| ppr.shading.as_deref())
+        .and_then(shading_color)
+        .or(behind)
+}
+
+/// A colour as `#RRGGBB`.
+fn css_color(color: Color) -> String {
+    format!("#{}", color.to_hex())
+}
+
+/// Generate inline CSS style string from run properties. `behind` is the
+/// fill of the paragraph or cell the run is in: automatic text is white on
+/// a dark fill, as layout draws it.
+pub(crate) fn run_style(rpr: Option<&CT_RPr>, behind: Option<Color>) -> String {
+    let automatic_white = |fill: Option<Color>| automatic_text_color(fill) == Color::WHITE;
     let Some(rpr) = rpr else {
-        return String::new();
+        return if automatic_white(behind) {
+            "color:#FFFFFF".to_owned()
+        } else {
+            String::new()
+        };
     };
 
     let mut styles = Vec::new();
@@ -137,21 +160,27 @@ pub(crate) fn run_style(rpr: Option<&CT_RPr>) -> String {
         styles.push(format!("font-size:{pt}pt"));
     }
 
+    // The fill behind the text: the highlight, which Word draws over the
+    // shading, or else the shading, as layout paints them.
+    let fill = run_fill(rpr);
+
     // Color
+    let automatic = rpr.color_theme.is_none()
+        && rpr
+            .color
+            .as_deref()
+            .is_none_or(|raw| raw.eq_ignore_ascii_case("auto"));
     if let Some(raw) = &rpr.color
         && raw != "000000"
         && let Some(color) = hex_color(raw)
     {
         styles.push(format!("color:{color}"));
+    } else if automatic && automatic_white(fill.or(behind)) {
+        styles.push("color:#FFFFFF".to_owned());
     }
 
-    // Background/highlight via shading
-    if let Some(shd) = &rpr.shading
-        && let Some(fill) = &shd.fill
-        && fill != "FFFFFF"
-        && let Some(color) = hex_color(fill)
-    {
-        styles.push(format!("background-color:{color}"));
+    if let Some(fill) = fill {
+        styles.push(format!("background-color:{}", css_color(fill)));
     }
 
     // Character spacing

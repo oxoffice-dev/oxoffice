@@ -1,6 +1,6 @@
 {
   "file": "google/thesis.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "a face picked for its glyphs no longer measures the line",
   "resources": "b9fd4f930d21f6037c6f0a2ca94835a84e0fd5942dbc24c93166afb9b725aa94",
   "outline_and_tags": "7915fea2ddf7532ede2fe245c81bc897d77e5e95b10b48c38da75273ff933ff2",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
@@ -11,7 +11,7 @@
     {"page": 4, "pixels": "c28998b0c5190b932068b7f5da13cf32daf57cbcf6dbcbc071a3c26749ff6cc1", "content": "f7028714c927791bf55f66876a85871cc7f3c0a3a68bf60d3e46419339253822", "annotations": "74d8cceab27aa757f7ab666cc3a893b2cd861a2e6e3eb9febedb2df284b19a33", "dictionary": "49a40423bff47515a391e5b86ec888439850fe595b2c1feccc04ff37ec9cee02"},
     {"page": 5, "pixels": "0b7f2a27ff0d57c4aed9187cb36e50723ef13aca0cf0d643cc63d0edaf1e344a", "content": "24658572adcb4ba70e943fc9b3583d7496fa32444d7ee475f309eeabc283fa2b", "annotations": "f020262dfe13bc19fb65eacd1de62524a219d063cd2fdc19f3fb44e2c3d3a0d4", "dictionary": "96eb4964ff5fc45a83d65199dd55b7adc9b5ee5bc75dcd05f5a0aa67279ad54f"},
     {"page": 6, "pixels": "7019091b7e6257ce278254d65648f2e9fdd206f0f41c323bfff4f0280952957b", "content": "57b22f97225a86e1e2116e72a81235d5427cf9ecbcdff4345805bd67986a22a6", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "d3f81dcf0d8e54cca31cf48bc72ea048625b9743e56b3dbd51ef5b2ffda43e20"},
-    {"page": 7, "pixels": "29cb14561dadb5c396f2f0d5d4634c621120c259c4715dc8cfcd177cc2d388e5", "content": "7bd77155bad0b519900adc1a0dccd3df78d279843c36fc08229001228053e7fd", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "1bee3ce9f54c1c948a88deea14ab40623541ccd46104217658e63752c21e083b"},
+    {"page": 7, "pixels": "90b7cd4b3b5cd100b94b17b42ba0ae54d92f3459185df4e88e2a6bd6ab551791", "content": "d80d44131a38721cee71cff6c2b5d7437625b472475fec8000425cd60bbbb6dc", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "1bee3ce9f54c1c948a88deea14ab40623541ccd46104217658e63752c21e083b"},
     {"page": 8, "pixels": "7ca152c73ba8a538109d4bfe236a3e46cd44ce473cf18af698366c7300398366", "content": "0688554d3eeb6a81498b188f134d53964163c995672a318868506be3c8f3534d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "9859c138ecd5c581ffe1548d7968ac232860792b6c3c08de0a88771f88019402"},
     {"page": 9, "pixels": "9318ddba99c56bf092a3dd5b5e40efa1c4871ba3805b77b57f284366a483fa3a", "content": "8dfafc25c1e3e59b3dcd15b9d391d6726e4546733bb45794364d03d91622fcc4", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "eff427da15cc5bc9131d576fbc7a34ac6954a691bcff01384f439ce850e8c598"},
     {"page": 10, "pixels": "954cc30e16879af83270547d70d7d00c8ca1ccb47d12a4d9a748e4e61bf1eb7f", "content": "468d348729148e53d7be3d74231f5efd950cefde35fcf8f7bee5d836cd9be9fe", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5df531f3b9923138aa10cdfe5d30d42bf952a0b1c7c2839dfaa4ceab57f6e486"},
