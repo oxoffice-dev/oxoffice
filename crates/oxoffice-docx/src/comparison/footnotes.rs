@@ -1,69 +1,175 @@
-//! Footnote custody: note references, markers, ids and parts across a comparison.
+//! Note custody: note references, markers, ids and parts across a comparison,
+//! for footnotes or endnotes as a [`NoteKind`] says.
 
 use super::*;
 
-const FOOTNOTE_CONTENT_TYPE: &str =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
+/// The notes the comparison holds in custody: footnotes or endnotes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum NoteKind {
+    Footnote,
+    Endnote,
+}
+
+impl NoteKind {
+    /// The local name of the notes part's root.
+    pub(crate) const fn part_root(self) -> &'static str {
+        match self {
+            Self::Footnote => "footnotes",
+            Self::Endnote => "endnotes",
+        }
+    }
+
+    /// The local name of one note owner in the notes part.
+    pub(crate) const fn owner(self) -> &'static str {
+        match self {
+            Self::Footnote => "footnote",
+            Self::Endnote => "endnote",
+        }
+    }
+
+    /// The local name of a reference to a note in a story.
+    pub(crate) const fn reference(self) -> &'static str {
+        match self {
+            Self::Footnote => "footnoteReference",
+            Self::Endnote => "endnoteReference",
+        }
+    }
+
+    /// The local name of the reference mark inside a note.
+    pub(crate) const fn reference_mark(self) -> &'static str {
+        match self {
+            Self::Footnote => "footnoteRef",
+            Self::Endnote => "endnoteRef",
+        }
+    }
+
+    /// The local name of the note properties element.
+    pub(crate) const fn properties(self) -> &'static str {
+        match self {
+            Self::Footnote => "footnotePr",
+            Self::Endnote => "endnotePr",
+        }
+    }
+
+    /// The type of the main part's relationship to the notes part.
+    pub(crate) const fn relationship_type(self) -> &'static str {
+        match self {
+            Self::Footnote => rel_types::FOOTNOTES,
+            Self::Endnote => rel_types::ENDNOTES,
+        }
+    }
+
+    /// The content type of the notes part.
+    pub(crate) const fn content_type(self) -> &'static str {
+        match self {
+            Self::Footnote => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
+            }
+            Self::Endnote => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"
+            }
+        }
+    }
+
+    /// The comparison story kind of the notes part, which options may ignore.
+    pub(crate) const fn story_kind(self) -> ComparisonStoryKind {
+        match self {
+            Self::Footnote => ComparisonStoryKind::Footnote,
+            Self::Endnote => ComparisonStoryKind::Endnote,
+        }
+    }
+
+    /// The story kind of a note's content.
+    pub(crate) const fn note_story(self) -> StoryKind {
+        match self {
+            Self::Footnote => StoryKind::Footnote,
+            Self::Endnote => StoryKind::Endnote,
+        }
+    }
+
+    /// The letter after `_rdocxCmpNote` in the custody bookmark names.
+    pub(crate) const fn marker_letter(self) -> char {
+        match self {
+            Self::Footnote => 'F',
+            Self::Endnote => 'E',
+        }
+    }
+
+    /// The word for one note, in messages.
+    pub(crate) const fn word(self) -> &'static str {
+        self.owner()
+    }
+
+    /// The word for the notes, in messages.
+    pub(crate) const fn plural(self) -> &'static str {
+        self.part_root()
+    }
+}
 
 #[derive(PartialEq, Eq)]
-enum FootnoteRootAnchor {
+enum NoteRootAnchor {
     Normal(i32),
     Retained(usize),
 }
 
-impl FootnotePart {
-    pub(super) fn of(document: &Document) -> Result<Option<Self>> {
-        let Some(name) = Self::name_of(document)? else {
+impl NotePart {
+    pub(super) fn of(document: &Document, kind: NoteKind) -> Result<Option<Self>> {
+        let Some(name) = Self::name_of(document, kind)? else {
             return Ok(None);
         };
         let xml = std::str::from_utf8(
             document
                 .package
                 .get_part(&name)
-                .ok_or_else(|| Error::Other(format!("missing footnotes part {name}")))?,
+                .ok_or_else(|| Error::Other(format!("missing {} part {name}", kind.plural())))?,
         )
         .map_err(utf8_error)?
         .to_owned();
-        Self::parse(name, xml).map(Some)
+        Self::parse(name, xml, kind).map(Some)
     }
 
-    /// The footnotes part name, from the one internal relationship and its
+    /// The notes part name, from the one internal relationship and its
     /// content type, without reading the part.
-    fn name_of(document: &Document) -> Result<Option<String>> {
+    fn name_of(document: &Document, kind: NoteKind) -> Result<Option<String>> {
         let relationships = document.package.get_part_rels(&document.doc_part_name);
         let links = relationships
             .into_iter()
             .flat_map(|rels| &rels.items)
-            .filter(|rel| rel.rel_type == rel_types::FOOTNOTES)
+            .filter(|rel| rel.rel_type == kind.relationship_type())
             .collect::<Vec<_>>();
         if links.is_empty() {
             return Ok(None);
         }
         if links.len() != 1 || !crate::document::relationship_is_internal(links[0]) {
-            return Err(Error::Other(
-                "footnotes require exactly one internal relationship".into(),
-            ));
+            return Err(Error::Other(format!(
+                "{} require exactly one internal relationship",
+                kind.plural()
+            )));
         }
         let name = OpcPackage::resolve_rel_target(&document.doc_part_name, &links[0].target);
-        if document.package.content_types.content_type_for(&name) != Some(FOOTNOTE_CONTENT_TYPE) {
+        if document.package.content_types.content_type_for(&name) != Some(kind.content_type()) {
             return Err(Error::Other(format!(
-                "footnotes content type is invalid in {name}"
+                "{} content type is invalid in {name}",
+                kind.plural()
             )));
         }
         if !document.package.contains_part(&name) {
-            return Err(Error::Other(format!("missing footnotes part {name}")));
+            return Err(Error::Other(format!(
+                "missing {} part {name}",
+                kind.plural()
+            )));
         }
         Ok(Some(name))
     }
 
-    pub(super) fn parse(name: String, xml: String) -> Result<Self> {
-        let bindings = root_namespace_bindings(&xml, "footnotes", &[])?;
+    pub(super) fn parse(name: String, xml: String, kind: NoteKind) -> Result<Self> {
+        let bindings = root_namespace_bindings(&xml, kind.part_root(), &[])?;
         let tree = crate::revision::XmlTree::parse(xml.as_bytes())?;
         let mut owners = Vec::new();
         let mut ids = HashSet::new();
         for &index in &tree.elements[tree.root].children {
             let element = &tree.elements[index];
-            if !element.word || element.local != "footnote" {
+            if !element.word || element.local != kind.owner() {
                 continue;
             }
             let id = tree
@@ -73,24 +179,30 @@ impl FootnotePart {
                 && !ids.insert(id)
             {
                 return Err(Error::Other(format!(
-                    "ambiguous duplicate footnote owner {id} in {name}"
+                    "ambiguous duplicate {} owner {id} in {name}",
+                    kind.word()
                 )));
             }
             let span = element.start..element.end;
             let owner_xml = &xml[span.clone()];
-            owners.push(FootnoteOwner {
+            owners.push(NoteOwner {
                 id,
                 kind: raw_note_type_in_scope(owner_xml, &bindings)?,
                 inner: element.open_end..element.close_start,
-                bindings: root_namespace_bindings(owner_xml, "footnote", &bindings)?,
+                bindings: root_namespace_bindings(owner_xml, kind.owner(), &bindings)?,
                 span,
             });
         }
         drop(tree);
-        Ok(Self { name, xml, owners })
+        Ok(Self {
+            name,
+            xml,
+            owners,
+            kind,
+        })
     }
 
-    pub(super) fn normal(&self) -> BTreeMap<i32, &FootnoteOwner> {
+    pub(super) fn normal(&self) -> BTreeMap<i32, &NoteOwner> {
         self.owners
             .iter()
             .filter(|owner| {
@@ -174,12 +286,12 @@ impl FootnotePart {
         }) {
             xml.replace_range(owner.span.clone(), "");
         }
-        canonical_owned_story(&xml, "footnote")
+        canonical_owned_story(&xml, self.kind.owner())
     }
 }
 
 #[derive(Clone)]
-struct FootnoteReferenceSite {
+struct NoteReferenceSite {
     part: String,
     id: i32,
     run: Range<usize>,
@@ -189,7 +301,7 @@ struct FootnoteReferenceSite {
     metadata: Option<crate::revision::RevisionMetadata>,
 }
 
-fn footnote_reference_sites(document: &Document) -> Result<Vec<FootnoteReferenceSite>> {
+fn note_reference_sites(document: &Document, note: NoteKind) -> Result<Vec<NoteReferenceSite>> {
     let mut parts = vec![(StoryKind::Body, document.doc_part_name.clone())];
     parts.extend(
         revision_story_parts(document)?
@@ -207,7 +319,7 @@ fn footnote_reference_sites(document: &Document) -> Result<Vec<FootnoteReference
         let tree = crate::revision::XmlTree::parse(bytes)?;
         let admitted = tree.admitted_story_elements(kind)?;
         for (index, element) in tree.elements.iter().enumerate() {
-            if !element.word || element.local != "footnoteReference" {
+            if !element.word || element.local != note.reference() {
                 continue;
             }
             let Some(run_index) = element.parent.filter(|&parent| {
@@ -232,15 +344,19 @@ fn footnote_reference_sites(document: &Document) -> Result<Vec<FootnoteReference
                 }
                 parent = ancestor.parent;
             }
-            let paragraph = paragraph
-                .ok_or_else(|| Error::Other("footnote reference has no paragraph owner".into()))?;
+            let paragraph = paragraph.ok_or_else(|| {
+                Error::Other(format!("{} reference has no paragraph owner", note.word()))
+            })?;
             let id = tree
                 .word_attribute(index, "id")?
                 .and_then(|value| value.parse::<i32>().ok())
                 .ok_or_else(|| {
-                    Error::Other(format!("invalid footnote reference identity in {part}"))
+                    Error::Other(format!(
+                        "invalid {} reference identity in {part}",
+                        note.word()
+                    ))
                 })?;
-            sites.push(FootnoteReferenceSite {
+            sites.push(NoteReferenceSite {
                 part: part.clone(),
                 id,
                 run: run.start..run.end,
@@ -256,10 +372,11 @@ fn footnote_reference_sites(document: &Document) -> Result<Vec<FootnoteReference
 fn note_references_have_same_owners(
     original: &Document,
     edited: &Document,
+    kind: NoteKind,
     id: i32,
 ) -> Result<bool> {
-    let left = footnote_reference_sites(original)?;
-    let right = footnote_reference_sites(edited)?;
+    let left = note_reference_sites(original, kind)?;
+    let right = note_reference_sites(edited, kind)?;
     let parts = left
         .iter()
         .chain(&right)
@@ -307,9 +424,9 @@ fn note_references_have_same_owners(
                 paired.insert(l[a].0.start, r[b].0.start);
             }
         }
-        let key = |site: &FootnoteReferenceSite,
+        let key = |site: &NoteReferenceSite,
                    tree: &crate::revision::XmlTree<'_>,
-                   sites: &[FootnoteReferenceSite],
+                   sites: &[NoteReferenceSite],
                    at: usize| {
             let run = tree
                 .elements
@@ -354,17 +471,20 @@ fn note_references_have_same_owners(
     Ok(true)
 }
 
-fn validate_footnote_reference_owners(
-    part: Option<&FootnotePart>,
-    sites: &[FootnoteReferenceSite],
+fn validate_note_reference_owners(
+    kind: NoteKind,
+    part: Option<&NotePart>,
+    sites: &[NoteReferenceSite],
 ) -> Result<()> {
     for site in sites {
         let owner = part
             .and_then(|part| part.owners.iter().find(|owner| owner.id == Some(site.id)))
             .ok_or_else(|| {
                 Error::Other(format!(
-                    "footnote reference {} in {} has no owner",
-                    site.id, site.part
+                    "{} reference {} in {} has no owner",
+                    kind.word(),
+                    site.id,
+                    site.part
                 ))
             })?;
         if matches!(
@@ -374,7 +494,8 @@ fn validate_footnote_reference_owners(
                 | RawNoteType::ContinuationNotice
         ) {
             return Err(Error::Other(format!(
-                "footnote reference {} targets a special owner",
+                "{} reference {} targets a special owner",
+                kind.word(),
                 site.id
             )));
         }
@@ -382,29 +503,32 @@ fn validate_footnote_reference_owners(
     Ok(())
 }
 
-pub(super) fn preflight_footnote_inputs(
+pub(super) fn preflight_note_inputs(
     original: &Document,
     edited: &Document,
+    kind: NoteKind,
     ignored: bool,
 ) -> Result<()> {
-    let left = FootnotePart::of(original)?;
-    let right = FootnotePart::of(edited)?;
-    let left_refs = footnote_reference_sites(original)?;
-    let right_refs = footnote_reference_sites(edited)?;
+    let left = NotePart::of(original, kind)?;
+    let right = NotePart::of(edited, kind)?;
+    let left_refs = note_reference_sites(original, kind)?;
+    let right_refs = note_reference_sites(edited, kind)?;
     for document in [original, edited] {
-        if let Some(part) = FootnotePart::of(document)?
+        if let Some(part) = NotePart::of(document, kind)?
             && part.normal().is_empty()
             && part.retained_records()?.is_empty()
-            && validate_footnote_custody(document, &crate::revision::RevisionScope::All)?.is_empty()
+            && validate_note_custody(document, kind, &crate::revision::RevisionScope::All)?
+                .is_empty()
         {
             return Err(Error::Other(format!(
-                "empty footnotes part {} has no custody or retained records",
+                "empty {} part {} has no custody or retained records",
+                kind.plural(),
                 part.name
             )));
         }
     }
     for (part, sites) in [(&left, &left_refs), (&right, &right_refs)] {
-        validate_footnote_reference_owners(part.as_ref(), sites)?;
+        validate_note_reference_owners(kind, part.as_ref(), sites)?;
     }
     for (part, other) in [(&left, &right), (&right, &left)] {
         if let Some(part) = part {
@@ -421,12 +545,13 @@ pub(super) fn preflight_footnote_inputs(
                 }) == Some(&part.xml[owner.span.clone()]);
                 let references_same = owner
                     .id
-                    .map(|id| note_references_have_same_owners(original, edited, id))
+                    .map(|id| note_references_have_same_owners(original, edited, kind, id))
                     .transpose()?
                     .unwrap_or(true);
                 if !same || !references_same {
                     return Err(Error::Other(format!(
-                        "changed invalid footnote owner or reference {:?}",
+                        "changed invalid {} owner or reference {:?}",
+                        kind.word(),
                         owner.id
                     )));
                 }
@@ -440,7 +565,8 @@ pub(super) fn preflight_footnote_inputs(
                 .is_some_and(|part| part.normal().contains_key(&site.id))
             {
                 return Err(Error::Other(format!(
-                    "ignored footnotes cannot supply reference {}",
+                    "ignored {} cannot supply reference {}",
+                    kind.plural(),
                     site.id
                 )));
             }
@@ -449,8 +575,12 @@ pub(super) fn preflight_footnote_inputs(
     Ok(())
 }
 
-fn note_marker_name(name: &str) -> Option<(i32, bool, bool, char)> {
-    let tail = name.strip_prefix("_rdocxCmpNoteF")?;
+/// The token, presence bits and family of a custody bookmark name of this
+/// kind's letter.
+fn note_marker_name(name: &str, kind: NoteKind) -> Option<(i32, bool, bool, char)> {
+    let tail = name
+        .strip_prefix("_rdocxCmpNote")?
+        .strip_prefix(kind.marker_letter())?;
     let (digits, bits) = tail.split_once('P')?;
     if digits.is_empty()
         || digits.len() > 9
@@ -475,8 +605,8 @@ fn note_marker_name(name: &str) -> Option<(i32, bool, bool, char)> {
     ))
 }
 
-pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
-    let note_part = FootnotePart::of(document)?;
+pub(super) fn note_markers(document: &Document, note: NoteKind) -> Result<Vec<NoteMarker>> {
+    let note_part = NotePart::of(document, note)?;
     let mut parts = vec![(document.doc_part_name.clone(), StoryKind::Body)];
     parts.extend(story_parts(document)?.into_iter().map(|part| {
         let kind = match part.kind {
@@ -528,7 +658,7 @@ pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
             let Some(name) = tree.word_attribute(index, "name")? else {
                 continue;
             };
-            let Some((token, original, edited, family)) = note_marker_name(&name) else {
+            let Some((token, original, edited, family)) = note_marker_name(&name, note) else {
                 continue;
             };
             let Some(parent) = node.parent else {
@@ -599,7 +729,7 @@ pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
             // insertion. Admit only that position: an insertion directly in a
             // main-story paragraph whose next child after the pair is the
             // reference run, the same next-sibling proof as for a direct pair.
-            // validate_footnote_custody also requires the note pair there.
+            // validate_note_custody also requires the note pair there.
             let wrapped = family == 'B' && paragraph != parent;
             if wrapped {
                 let wrapper = &tree.elements[parent];
@@ -615,7 +745,7 @@ pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
                             && run.local == "r"
                             && run.children.iter().any(|&leaf| {
                                 tree.elements[leaf].word
-                                    && tree.elements[leaf].local == "footnoteReference"
+                                    && tree.elements[leaf].local == note.reference()
                             })
                     });
                 if !own_reference {
@@ -628,7 +758,7 @@ pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
             let mut owner_index = None;
             let mut ancestor = Some(paragraph);
             while let Some(at) = ancestor {
-                if tree.elements[at].word && tree.elements[at].local == "footnote" {
+                if tree.elements[at].word && tree.elements[at].local == note.owner() {
                     owner = tree
                         .word_attribute(at, "id")?
                         .and_then(|value| value.parse().ok());
@@ -682,7 +812,7 @@ pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
                 for (at, child) in tree.elements.iter().enumerate().filter(|(_, e)| {
                     eligible && e.start >= following.start && e.end <= following.end
                 }) {
-                    if child.word && child.local == "footnoteReference" {
+                    if child.word && child.local == note.reference() {
                         reference = tree
                             .word_attribute(at, "id")?
                             .and_then(|value| value.parse().ok());
@@ -709,21 +839,28 @@ pub(super) fn note_markers(document: &Document) -> Result<Vec<NoteMarker>> {
     Ok(markers)
 }
 
-pub(super) fn footnote_custody_reserved_ids(document: &Document) -> Result<HashSet<i32>> {
-    Ok(note_markers(document)?
+pub(super) fn note_custody_reserved_ids(
+    document: &Document,
+    kind: NoteKind,
+) -> Result<HashSet<i32>> {
+    Ok(note_markers(document, kind)?
         .iter()
         .flat_map(|marker| [marker.token, marker.pair_id])
         .collect())
 }
 
-pub(crate) fn validate_footnote_custody(
+pub(crate) fn validate_note_custody(
     document: &Document,
+    kind: NoteKind,
     scope: &crate::revision::RevisionScope<'_>,
 ) -> Result<Vec<FootnoteCustody>> {
-    let markers = note_markers(document)?;
-    let Some(part) = FootnotePart::of(document)? else {
+    let markers = note_markers(document, kind)?;
+    let Some(part) = NotePart::of(document, kind)? else {
         if markers.iter().any(|marker| marker.family == 'N') {
-            return Err(Error::Other("custody marker has no footnotes part".into()));
+            return Err(Error::Other(format!(
+                "custody marker has no {} part",
+                kind.plural()
+            )));
         }
         // Without its note pair, a body pair inside a revision has no proof.
         if markers.iter().any(|marker| marker.wrapped) {
@@ -732,7 +869,7 @@ pub(crate) fn validate_footnote_custody(
             ));
         }
         // Physical reference coherence is independent of the orphan bookmark.
-        validate_footnote_reference_owners(None, &footnote_reference_sites(document)?)?;
+        validate_note_reference_owners(kind, None, &note_reference_sites(document, kind)?)?;
         return Ok(markers
             .iter()
             .filter(|marker| marker.family == 'B')
@@ -749,7 +886,7 @@ pub(crate) fn validate_footnote_custody(
             .collect());
     };
     let normal = part.normal();
-    let sites = footnote_reference_sites(document)?;
+    let sites = note_reference_sites(document, kind)?;
     let mut note_tree = crate::revision::XmlTree::parse(part.xml.as_bytes())?;
     note_tree.qualify_note_revisions()?;
     let mut units = Vec::new();
@@ -863,7 +1000,8 @@ pub(crate) fn validate_footnote_custody(
             .count();
         if selected > 0 && selected != revisions.len() {
             return Err(Error::Other(format!(
-                "partial footnote custody selection for token {}",
+                "partial {} custody selection for token {}",
+                kind.word(),
                 body.token
             )));
         }
@@ -907,16 +1045,16 @@ pub(crate) fn validate_footnote_custody(
 /// without an owner (Q-A430-29). A normal owner that no marker binds is still
 /// a unit when its own bytes prove that the whole definition and its only
 /// reference are tracked as one insertion or one deletion. The proof reads the
-/// owner and binds the reference by its footnote id. It never reads a marker
+/// owner and binds the reference by its note id. It never reads a marker
 /// or an adjacent element, so an unmatched body pair stays unassociated.
 fn tracked_note_units(
-    part: &FootnotePart,
+    part: &NotePart,
     note_tree: &crate::revision::XmlTree<'_>,
-    sites: &[FootnoteReferenceSite],
+    sites: &[NoteReferenceSite],
     owned: &HashSet<Option<i32>>,
     scope: &crate::revision::RevisionScope<'_>,
 ) -> Vec<FootnoteCustody> {
-    let mut references = BTreeMap::<i32, Vec<&FootnoteReferenceSite>>::new();
+    let mut references = BTreeMap::<i32, Vec<&NoteReferenceSite>>::new();
     for site in sites {
         references.entry(site.id).or_default().push(site);
     }
@@ -930,7 +1068,7 @@ fn tracked_note_units(
         if sites.len() > 1 {
             continue;
         }
-        let Some((kind, mut revisions)) = tracked_note_owner(note_tree, owner) else {
+        let Some((kind, mut revisions)) = tracked_note_owner(note_tree, part.kind, owner) else {
             continue;
         };
         if let Some(site) = sites.first() {
@@ -964,7 +1102,8 @@ fn tracked_note_units(
 /// children are all wrappers of that kind or zero-width range markers.
 fn tracked_note_owner(
     tree: &crate::revision::XmlTree<'_>,
-    owner: &FootnoteOwner,
+    note: NoteKind,
+    owner: &NoteOwner,
 ) -> Option<(
     crate::revision::RevisionKind,
     Vec<crate::revision::RevisionMetadata>,
@@ -974,7 +1113,7 @@ fn tracked_note_owner(
         .elements
         .partition_point(|node| node.start < owner.span.start);
     let node = tree.elements.get(first)?;
-    if node.start != owner.span.start || !node.word || node.local != "footnote" {
+    if node.start != owner.span.start || !node.word || node.local != note.owner() {
         return None;
     }
     let mut kind = None;
@@ -1049,13 +1188,14 @@ fn tracked_note_owner(
 
 /// Selected definition retirement precedes the ordinary story renderer, whose
 /// final-paragraph rule applies to retained owners, not a removed note owner.
-pub(crate) fn remove_selected_footnote_definitions(
+pub(crate) fn remove_selected_note_definitions(
     document: &mut Document,
+    kind: NoteKind,
     units: &[FootnoteCustody],
     accept: bool,
     publication: Option<&mut crate::revision::NotePublication>,
 ) -> Result<usize> {
-    let Some(mut part) = FootnotePart::of(document)? else {
+    let Some(mut part) = NotePart::of(document, kind)? else {
         return Ok(0);
     };
     let mut tree = crate::revision::XmlTree::parse(part.xml.as_bytes())?;
@@ -1109,8 +1249,9 @@ pub(crate) fn remove_selected_footnote_definitions(
     Ok(count)
 }
 
-pub(crate) fn settle_footnote_custody(
+pub(crate) fn settle_note_custody(
     document: &mut Document,
+    kind: NoteKind,
     units: &[FootnoteCustody],
     accept: bool,
     note_part_resolved: bool,
@@ -1122,8 +1263,9 @@ pub(crate) fn settle_footnote_custody(
         // reference, and leaves no note revision pending, still settles the
         // part, and settlement retires its remaining custody pairs. A pair in
         // an untouched part stays.
-        if note_part_resolved && !units.is_empty() && !note_revisions_pending(document, true)? {
-            retire_note_markers(document, units, publication)?;
+        if note_part_resolved && !units.is_empty() && !note_revisions_pending(document, kind, true)?
+        {
+            retire_note_markers(document, kind, units, publication)?;
         }
         return Ok(());
     }
@@ -1143,23 +1285,25 @@ pub(crate) fn settle_footnote_custody(
         && publication.is_none()
         && (unit_pending || !units.iter().any(|unit| unit.token.is_some()))
     {
-        return if FootnotePart::name_of(document)?.is_some() {
+        return if NotePart::name_of(document, kind)?.is_some() {
             Ok(())
         } else {
-            Err(Error::Other(
-                "footnotes part disappeared before custody settlement".into(),
-            ))
+            Err(Error::Other(format!(
+                "{} part disappeared before custody settlement",
+                kind.plural()
+            )))
         };
     }
-    let Some(mut part) = FootnotePart::of(document)? else {
-        return Err(Error::Other(
-            "footnotes part disappeared before custody settlement".into(),
-        ));
+    let Some(mut part) = NotePart::of(document, kind)? else {
+        return Err(Error::Other(format!(
+            "{} part disappeared before custody settlement",
+            kind.plural()
+        )));
     };
     let refs = if removed.is_empty() {
         Vec::new()
     } else {
-        footnote_reference_sites(document)?
+        note_reference_sites(document, kind)?
     };
     let mut removals = Vec::new();
     for id in removed {
@@ -1182,7 +1326,7 @@ pub(crate) fn settle_footnote_custody(
             part.xml.replace_range(range, "");
         }
         crate::document::set_story_source_xml(document, &part.name, part.xml.into_bytes())?;
-        part = FootnotePart::of(document)?.expect("installed notes");
+        part = NotePart::of(document, kind)?.expect("installed notes");
     }
     // A tracked note that settles here leaves the pairs in place while a note
     // owner outside every recognized unit still holds a revision, the rule of
@@ -1192,7 +1336,7 @@ pub(crate) fn settle_footnote_custody(
             .iter()
             .any(|unit| unit.token.is_none() && unit.selected)
             && units.iter().any(|unit| unit.token.is_some())
-            && note_revisions_pending(document, false)?);
+            && note_revisions_pending(document, kind, false)?);
     if pending {
         return Ok(());
     }
@@ -1202,24 +1346,24 @@ pub(crate) fn settle_footnote_custody(
         && part.normal().is_empty()
         && marked.any(|unit| !unit.original || !unit.edited)
         && part.unowned_record_count()? == 0;
-    retire_note_markers(document, units, publication)?;
+    retire_note_markers(document, kind, units, publication)?;
     if absent {
-        remove_footnotes_part(document, &part.name)?;
+        remove_note_part(document, kind, &part.name)?;
     }
     Ok(())
 }
 
 /// Whether a normal note owner, or with `references` a note reference, still
 /// carries a revision.
-fn note_revisions_pending(document: &Document, references: bool) -> Result<bool> {
+fn note_revisions_pending(document: &Document, kind: NoteKind, references: bool) -> Result<bool> {
     if references
-        && footnote_reference_sites(document)?
+        && note_reference_sites(document, kind)?
             .iter()
             .any(|site| site.revision.is_some())
     {
         return Ok(true);
     }
-    let Some(part) = FootnotePart::of(document)? else {
+    let Some(part) = NotePart::of(document, kind)? else {
         return Ok(false);
     };
     let mut tree = crate::revision::XmlTree::parse(part.xml.as_bytes())?;
@@ -1235,6 +1379,7 @@ fn note_revisions_pending(document: &Document, references: bool) -> Result<bool>
 
 pub(super) fn retire_note_markers(
     document: &mut Document,
+    kind: NoteKind,
     units: &[FootnoteCustody],
     mut publication: Option<&mut crate::revision::NotePublication>,
 ) -> Result<()> {
@@ -1246,7 +1391,7 @@ pub(super) fn retire_note_markers(
         return Ok(());
     }
     let mut by_part = BTreeMap::<String, Vec<Range<usize>>>::new();
-    for marker in note_markers(document)?
+    for marker in note_markers(document, kind)?
         .into_iter()
         .filter(|marker| tokens.contains(&marker.token))
     {
@@ -1295,7 +1440,7 @@ fn remove_note_owned_relationships(
 fn remove_unshared_note_targets(
     document: &mut Document,
     mut targets: Vec<String>,
-    required_absent: Option<&str>,
+    required_absent: Option<(NoteKind, &str)>,
 ) -> Result<()> {
     // Sharing is tested outside the complete retiring closure. Internal edges,
     // including cycles, do not make an otherwise unshared closure live.
@@ -1356,10 +1501,13 @@ fn remove_unshared_note_targets(
             );
         }
     }
-    if required_absent.is_some_and(|owner| live.contains(&owner.to_ascii_lowercase())) {
-        return Err(Error::Other(
-            "footnotes part is shared by a retained package relationship".into(),
-        ));
+    if let Some((kind, owner)) = required_absent
+        && live.contains(&owner.to_ascii_lowercase())
+    {
+        return Err(Error::Other(format!(
+            "{} part is shared by a retained package relationship",
+            kind.plural()
+        )));
     }
     for (key, target) in candidates {
         if live.contains(&key) {
@@ -1372,15 +1520,15 @@ fn remove_unshared_note_targets(
     Ok(())
 }
 
-fn remove_footnotes_part(document: &mut Document, name: &str) -> Result<()> {
+fn remove_note_part(document: &mut Document, kind: NoteKind, name: &str) -> Result<()> {
     if let Some(relationships) = document.package.get_part_rels_mut(&document.doc_part_name) {
         relationships.items.retain(|relationship| {
-            relationship.rel_type != rel_types::FOOTNOTES
+            relationship.rel_type != kind.relationship_type()
                 || OpcPackage::resolve_rel_target(&document.doc_part_name, &relationship.target)
                     != name
         });
     }
-    remove_unshared_note_targets(document, vec![name.to_owned()], Some(name))?;
+    remove_unshared_note_targets(document, vec![name.to_owned()], Some((kind, name)))?;
     let settings_part = document
         .package
         .get_part_rels(&document.doc_part_name)
@@ -1407,11 +1555,11 @@ fn remove_footnotes_part(document: &mut Document, name: &str) -> Result<()> {
                 root.word
                     && root.local == "settings"
                     && node.word
-                    && node.local == "footnote"
+                    && node.local == kind.owner()
                     && node.parent.is_some_and(|parent| {
                         let properties = &tree.elements[parent];
                         properties.word
-                            && properties.local == "footnotePr"
+                            && properties.local == kind.properties()
                             && properties.parent == Some(tree.root)
                     })
             })
@@ -1428,14 +1576,19 @@ fn remove_footnotes_part(document: &mut Document, name: &str) -> Result<()> {
             document.settings = Some(settings);
         }
     }
-    document.footnotes = oxoffice_docx_oxml::footnotes::CT_Footnotes::new();
-    document.footnotes_part_name = None;
-    document.footnotes_dirty = false;
+    // Only footnotes are modelled on the document. An endnotes part is found
+    // through its relationship, which is gone.
+    if kind == NoteKind::Footnote {
+        document.footnotes = oxoffice_docx_oxml::footnotes::CT_Footnotes::new();
+        document.footnotes_part_name = None;
+        document.footnotes_dirty = false;
+    }
     Ok(())
 }
 
 fn rewrite_note_marker_pair(
     document: &mut Document,
+    kind: NoteKind,
     marker: &NoteMarker,
     token: i32,
     pair_id: i32,
@@ -1447,7 +1600,8 @@ fn rewrite_note_marker_pair(
         .to_vec();
     let tree = crate::revision::XmlTree::parse(&bytes)?;
     let name = format!(
-        "_rdocxCmpNoteF{token}P{}{}{}",
+        "_rdocxCmpNote{}{token}P{}{}{}",
+        kind.marker_letter(),
         u8::from(marker.original),
         u8::from(marker.edited),
         marker.family
@@ -1505,10 +1659,11 @@ fn rewrite_note_marker_pair(
 }
 
 /// Input collisions change only the positively associated bookmark identities.
-/// Numeric footnote and current revision identities remain untouched.
-pub(super) fn reconcile_footnote_custody_inputs(
+/// Numeric note and current revision identities remain untouched.
+pub(super) fn reconcile_note_custody_inputs(
     original: &Document,
     edited: &mut Document,
+    kind: NoteKind,
 ) -> Result<()> {
     let marked = |units: Vec<FootnoteCustody>| {
         units
@@ -1516,20 +1671,22 @@ pub(super) fn reconcile_footnote_custody_inputs(
             .filter(|unit| unit.token.is_some())
             .collect::<Vec<_>>()
     };
-    let left = marked(validate_footnote_custody(
+    let left = marked(validate_note_custody(
         original,
+        kind,
         &crate::revision::RevisionScope::All,
     )?);
-    let right = marked(validate_footnote_custody(
+    let right = marked(validate_note_custody(
         edited,
+        kind,
         &crate::revision::RevisionScope::All,
     )?);
-    let left_markers = note_markers(original)?;
+    let left_markers = note_markers(original, kind)?;
     if left_markers.is_empty() {
         return Ok(());
     }
-    let mut occupied = footnote_custody_reserved_ids(original)?;
-    occupied.extend(footnote_custody_reserved_ids(edited)?);
+    let mut occupied = note_custody_reserved_ids(original, kind)?;
+    occupied.extend(note_custody_reserved_ids(edited, kind)?);
     for document in [original, &*edited] {
         let mut parts = vec![document.doc_part_name.clone()];
         parts.extend(
@@ -1555,13 +1712,13 @@ pub(super) fn reconcile_footnote_custody_inputs(
                     "ambiguous imported custody owner association".into(),
                 ));
             }
-            if note_references_have_same_owners(original, edited, owner)? {
+            if note_references_have_same_owners(original, edited, kind, owner)? {
                 candidates.first().copied()
             } else {
                 None
             }
         } else {
-            let right_marker = note_markers(edited)?
+            let right_marker = note_markers(edited, kind)?
                 .into_iter()
                 .find(|marker| Some(marker.token) == unit.token && marker.family == 'B');
             left.iter().find(|other| {
@@ -1599,15 +1756,15 @@ pub(super) fn reconcile_footnote_custody_inputs(
                 let left = left_markers
                     .iter()
                     .find(|marker| Some(marker.token) == other.token && marker.family == family);
-                let right = note_markers(edited)?
+                let right = note_markers(edited, kind)?
                     .into_iter()
                     .find(|marker| Some(marker.token) == unit.token && marker.family == family);
                 if let (Some(left), Some(right)) = (left, right) {
-                    rewrite_note_marker_pair(edited, &right, left.token, left.pair_id)?;
+                    rewrite_note_marker_pair(edited, kind, &right, left.token, left.pair_id)?;
                 }
             }
         } else {
-            let markers = note_markers(edited)?
+            let markers = note_markers(edited, kind)?
                 .into_iter()
                 .filter(|marker| Some(marker.token) == unit.token)
                 .collect::<Vec<_>>();
@@ -1621,36 +1778,45 @@ pub(super) fn reconcile_footnote_custody_inputs(
                 let token = ids.allocate_note_token()?;
                 for marker in markers {
                     let pair_id = ids.allocate()?;
-                    rewrite_note_marker_pair(edited, &marker, token, pair_id)?;
+                    rewrite_note_marker_pair(edited, kind, &marker, token, pair_id)?;
                 }
             }
         }
     }
-    validate_footnote_custody(edited, &crate::revision::RevisionScope::All)?;
+    validate_note_custody(edited, kind, &crate::revision::RevisionScope::All)?;
     Ok(())
 }
 
-pub(super) fn retire_completed_footnote_inputs(
+pub(super) fn retire_completed_note_inputs(
     original: &mut Document,
     edited: &mut Document,
+    kind: NoteKind,
 ) -> Result<()> {
-    let left = FootnotePart::of(original)?;
-    let right = FootnotePart::of(edited)?;
+    let left = NotePart::of(original, kind)?;
+    let right = NotePart::of(edited, kind)?;
     if left.as_ref().map(|part| &part.xml) == right.as_ref().map(|part| &part.xml) {
         return Ok(());
     }
     for document in [original, edited] {
-        let units = validate_footnote_custody(document, &crate::revision::RevisionScope::All)?;
+        let units = validate_note_custody(document, kind, &crate::revision::RevisionScope::All)?;
         if !units.iter().any(|unit| !unit.revisions.is_empty()) {
-            retire_note_markers(document, &units, None)?;
+            retire_note_markers(document, kind, &units, None)?;
         }
     }
     Ok(())
 }
 
-fn note_bookmark(token: i32, original: bool, edited: bool, family: char, id: i32) -> String {
+fn note_bookmark(
+    kind: NoteKind,
+    token: i32,
+    original: bool,
+    edited: bool,
+    family: char,
+    id: i32,
+) -> String {
     format!(
-        r#"<w:bookmarkStart xmlns:w="{W_NS}" w:id="{id}" w:name="_rdocxCmpNoteF{token}P{}{}{family}"/><w:bookmarkEnd xmlns:w="{W_NS}" w:id="{id}"/>"#,
+        r#"<w:bookmarkStart xmlns:w="{W_NS}" w:id="{id}" w:name="_rdocxCmpNote{}{token}P{}{}{family}"/><w:bookmarkEnd xmlns:w="{W_NS}" w:id="{id}"/>"#,
+        kind.marker_letter(),
         u8::from(original),
         u8::from(edited)
     )
@@ -1675,9 +1841,14 @@ fn close_note_fragment(xml: &str, bindings: &NamespaceBindings) -> Result<String
     .map_err(utf8_error)
 }
 
-// Temporary read grammar carries the inherited context on its own wrapper.
-// Retained child bytes, especially an opaque first child, remain untouched.
-fn note_fragment_envelope(xml: &str, bindings: &NamespaceBindings, note: bool) -> Result<String> {
+// Temporary read grammar carries the inherited context on its own wrapper:
+// a note of that kind in its notes root, or else a table cell. Retained child
+// bytes, especially an opaque first child, remain untouched.
+fn note_fragment_envelope(
+    xml: &str,
+    bindings: &NamespaceBindings,
+    note: Option<NoteKind>,
+) -> Result<String> {
     let scoped = close_note_fragment(xml, bindings)?;
     let mut reader = NsReader::from_str(&scoped);
     let modeled_root = loop {
@@ -1696,10 +1867,9 @@ fn note_fragment_envelope(xml: &str, bindings: &NamespaceBindings, note: bool) -
     // Preserve the established modeled-root namespace publication. An opaque
     // first child instead receives context from the temporary wrapper alone.
     if modeled_root {
-        return Ok(if note {
-            format!(
-                "<w:footnotes xmlns:w=\"{W_NS}\"><w:footnote>{scoped}</w:footnote></w:footnotes>"
-            )
+        return Ok(if let Some(kind) = note {
+            let (root, owner) = (kind.part_root(), kind.owner());
+            format!("<w:{root} xmlns:w=\"{W_NS}\"><w:{owner}>{scoped}</w:{owner}></w:{root}>")
         } else {
             format!("<w:tc xmlns:w=\"{W_NS}\">{scoped}</w:tc>")
         });
@@ -1715,8 +1885,8 @@ fn note_fragment_envelope(xml: &str, bindings: &NamespaceBindings, note: bool) -
         }
         suffix += 1;
     };
-    let name = format!("{prefix}:{}", if note { "footnotes" } else { "tc" });
-    let note_name = format!("{prefix}:footnote");
+    let name = format!("{prefix}:{}", note.map_or("tc", NoteKind::part_root));
+    let note_name = format!("{prefix}:{}", note.map_or("", NoteKind::owner));
     let binding = format!("xmlns:{prefix}");
     let mut root = BytesStart::new(name.as_str());
     root.push_attribute((binding.as_str(), W_NS));
@@ -1725,18 +1895,18 @@ fn note_fragment_envelope(xml: &str, bindings: &NamespaceBindings, note: bool) -
     }
     let mut writer = Writer::new(Vec::new());
     writer.write_event(Event::Start(root))?;
-    if note {
+    if note.is_some() {
         writer.write_event(Event::Start(BytesStart::new(note_name.as_str())))?;
     }
     writer.get_mut().extend_from_slice(xml.as_bytes());
-    if note {
+    if note.is_some() {
         writer.write_event(Event::End(BytesEnd::new(note_name.as_str())))?;
     }
     writer.write_event(Event::End(BytesEnd::new(name.as_str())))?;
     String::from_utf8(writer.into_inner()).map_err(utf8_error)
 }
 
-/// The footnotes both inputs reference that would reach the pending result
+/// The notes both inputs reference that would reach the pending result
 /// with more physical references than either input gives them. That happens
 /// when a reference moves to another site, for example a new note inserted
 /// before it takes its id in the edited input: the deleted original reference
@@ -1745,14 +1915,14 @@ fn note_fragment_envelope(xml: &str, bindings: &NamespaceBindings, note: bool) -
 /// different notes. Found before any note custody is written.
 fn moved_pending_references(
     candidate: &Document,
-    left_refs: &[FootnoteReferenceSite],
-    right_refs: &[FootnoteReferenceSite],
-    left_normal: &BTreeMap<i32, &FootnoteOwner>,
-    right_normal: &BTreeMap<i32, &FootnoteOwner>,
+    kind: NoteKind,
+    left_refs: &[NoteReferenceSite],
+    right_refs: &[NoteReferenceSite],
+    left_normal: &BTreeMap<i32, &NoteOwner>,
+    right_normal: &BTreeMap<i32, &NoteOwner>,
 ) -> Result<Vec<i32>> {
-    let count = |sites: &[FootnoteReferenceSite], id: i32| {
-        sites.iter().filter(|site| site.id == id).count()
-    };
+    let count =
+        |sites: &[NoteReferenceSite], id: i32| sites.iter().filter(|site| site.id == id).count();
     let common = left_normal
         .keys()
         .filter(|id| right_normal.contains_key(id))
@@ -1762,14 +1932,14 @@ fn moved_pending_references(
     if common.is_empty() {
         return Ok(Vec::new());
     }
-    let pending = footnote_reference_sites(candidate)?;
+    let pending = note_reference_sites(candidate, kind)?;
     Ok(common
         .into_iter()
         .filter(|&id| count(&pending, id) > count(left_refs, id).max(count(right_refs, id)))
         .collect())
 }
 
-/// Word numbers footnotes by position when it saves, so one note added near
+/// Word numbers notes by position when it saves, so one note added near
 /// the top gives every later note a new id, and the comparison would pair
 /// different notes by id. Before comparing, the edited notes take the ids of
 /// the original's: the notes referenced in the main story are paired in
@@ -1786,24 +1956,25 @@ fn moved_pending_references(
 /// referenced twice or outside the main story, when a reference sits in a
 /// tracked change, or while note custody of an earlier comparison is
 /// pending. Returns each edited id it changed, mapped to the id it gave.
-pub(super) fn reconcile_footnote_ids(
+pub(super) fn reconcile_note_ids(
     original: &Document,
     edited: &mut Document,
+    kind: NoteKind,
     renumbered: &[i32],
 ) -> Result<HashMap<i32, i32>> {
     let (Some(left_part), Some(right_part)) =
-        (FootnotePart::of(original)?, FootnotePart::of(edited)?)
+        (NotePart::of(original, kind)?, NotePart::of(edited, kind)?)
     else {
         return Ok(HashMap::new());
     };
     if left_part.xml == right_part.xml
-        || !note_markers(original)?.is_empty()
-        || !note_markers(edited)?.is_empty()
+        || !note_markers(original, kind)?.is_empty()
+        || !note_markers(edited, kind)?.is_empty()
     {
         return Ok(HashMap::new());
     }
     let references = |document: &Document| -> Result<Option<Vec<i32>>> {
-        let sites = footnote_reference_sites(document)?;
+        let sites = note_reference_sites(document, kind)?;
         if sites
             .iter()
             .any(|site| site.part != document.doc_part_name || site.revision.is_some())
@@ -1817,11 +1988,11 @@ pub(super) fn reconcile_footnote_ids(
     let (Some(left_ids), Some(right_ids)) = (references(original)?, references(edited)?) else {
         return Ok(HashMap::new());
     };
-    let texts = |part: &FootnotePart| -> Result<HashMap<i32, String>> {
+    let texts = |part: &NotePart| -> Result<HashMap<i32, String>> {
         let tree = crate::revision::XmlTree::parse(part.xml.as_bytes())?;
         let mut texts = HashMap::new();
         for (index, node) in tree.elements.iter().enumerate() {
-            if node.word && node.local == "footnote" && node.parent == Some(tree.root) {
+            if node.word && node.local == kind.owner() && node.parent == Some(tree.root) {
                 let id = word_attributes(&tree, part.xml.as_bytes(), index)?
                     .get("id")
                     .and_then(|id| id.parse::<i32>().ok());
@@ -1836,7 +2007,7 @@ pub(super) fn reconcile_footnote_ids(
     let left_normal = left_part.normal();
     let right_normal = right_part.normal();
     let sequence =
-        |ids: &[i32], texts: &HashMap<i32, String>, normal: &BTreeMap<i32, &FootnoteOwner>| {
+        |ids: &[i32], texts: &HashMap<i32, String>, normal: &BTreeMap<i32, &NoteOwner>| {
             ids.iter()
                 .filter(|id| normal.contains_key(id))
                 .map(|id| (*id, texts.get(id).cloned().unwrap_or_default()))
@@ -1858,7 +2029,7 @@ pub(super) fn reconcile_footnote_ids(
     // A note one version does not reference keeps its id and is revised in
     // place, so a pair is dropped when it would take the id of such an
     // edited note, or leave the id of such an original note to nothing.
-    let unreferenced = |normal: &BTreeMap<i32, &FootnoteOwner>, referenced: &[i32]| {
+    let unreferenced = |normal: &BTreeMap<i32, &NoteOwner>, referenced: &[i32]| {
         normal
             .keys()
             .filter(|id| !referenced.contains(id))
@@ -1888,9 +2059,9 @@ pub(super) fn reconcile_footnote_ids(
             && (targets.contains(&id)
                 || (right_referenced.contains(&id) && left_referenced.contains(&id)))
         {
-            next = next
-                .checked_add(1)
-                .ok_or_else(|| Error::Other("comparison footnote ids are exhausted".into()))?;
+            next = next.checked_add(1).ok_or_else(|| {
+                Error::Other(format!("comparison {} ids are exhausted", kind.word()))
+            })?;
             ids.insert(id, next);
         }
     }
@@ -1898,7 +2069,7 @@ pub(super) fn reconcile_footnote_ids(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let notes = rewrite_word_ids(right_part.xml.as_bytes(), "footnote", &ids)?;
+    let notes = rewrite_word_ids(right_part.xml.as_bytes(), kind.owner(), &ids)?;
     crate::document::set_story_source_xml(edited, &right_part.name, notes)?;
     let main = edited.doc_part_name.clone();
     let body = rewrite_word_ids(
@@ -1906,7 +2077,7 @@ pub(super) fn reconcile_footnote_ids(
             .package
             .get_part(&main)
             .ok_or_else(|| Error::Other("comparison input has no main part".into()))?,
-        "footnoteReference",
+        kind.reference(),
         &ids,
     )?;
     crate::document::set_story_source_xml(edited, &main, body)?;
@@ -2035,7 +2206,7 @@ pub(super) fn refuse_shared_note_references(
     pending.sort();
     for ((element, id), count) in pending {
         let key = (element, id);
-        if endnotes_ignored && key.0 == "endnoteReference" {
+        if endnotes_ignored && key.0 == NoteKind::Endnote.reference() {
             if held_endnotes.is_none() {
                 held_endnotes = Some(original.normal_endnote_ids()?);
             }
@@ -2053,10 +2224,10 @@ pub(super) fn refuse_shared_note_references(
         };
         let most = left.max(right);
         if count > most {
-            let note = if key.0 == "endnoteReference" {
-                "endnote"
+            let note = if key.0 == NoteKind::Endnote.reference() {
+                NoteKind::Endnote.word()
             } else {
-                "footnote"
+                NoteKind::Footnote.word()
             };
             return Err(Error::Other(format!(
                 "comparison would give {note} {id} {count} references where each input has at most {most}: its reference moved to another site, or what holds it was deleted and inserted again"
@@ -2066,27 +2237,28 @@ pub(super) fn refuse_shared_note_references(
     Ok(())
 }
 
-/// A copy of the edited input with each of these footnotes under a new id,
-/// in its footnotes part and at its references, and the new ids; or None
+/// A copy of the edited input with each of these notes under a new id,
+/// in its notes part and at its references, and the new ids; or None
 /// when that cannot be done faithfully: a reference outside the main story,
 /// or the pending note custody of an earlier comparison, which keeps its
 /// notes' ids.
-pub(super) fn renumbered_footnotes(
+pub(super) fn renumbered_notes(
     original: &Document,
     edited: &Document,
+    kind: NoteKind,
     moved: &[i32],
 ) -> Result<Option<(Document, Vec<i32>)>> {
     let mut renumbered = comparison_input(edited)?;
     // Completed custody is retired as the first pass retired it.
-    let units = validate_footnote_custody(&renumbered, &crate::revision::RevisionScope::All)?;
+    let units = validate_note_custody(&renumbered, kind, &crate::revision::RevisionScope::All)?;
     if !units.iter().any(|unit| !unit.revisions.is_empty()) {
-        retire_note_markers(&mut renumbered, &units, None)?;
+        retire_note_markers(&mut renumbered, kind, &units, None)?;
     }
-    let Some(part) = FootnotePart::of(&renumbered)? else {
+    let Some(part) = NotePart::of(&renumbered, kind)? else {
         return Ok(None);
     };
-    if !note_markers(&renumbered)?.is_empty()
-        || footnote_reference_sites(&renumbered)?
+    if !note_markers(&renumbered, kind)?.is_empty()
+        || note_reference_sites(&renumbered, kind)?
             .iter()
             .any(|site| moved.contains(&site.id) && site.part != renumbered.doc_part_name)
     {
@@ -2101,7 +2273,7 @@ pub(super) fn renumbered_footnotes(
     if moved.is_empty() {
         return Ok(None);
     }
-    let mut next = FootnotePart::of(original)?
+    let mut next = NotePart::of(original, kind)?
         .iter()
         .chain([&part])
         .flat_map(|part| part.owners.iter().filter_map(|owner| owner.id))
@@ -2111,10 +2283,10 @@ pub(super) fn renumbered_footnotes(
     for id in moved {
         next = next
             .checked_add(1)
-            .ok_or_else(|| Error::Other("comparison footnote ids are exhausted".into()))?;
+            .ok_or_else(|| Error::Other(format!("comparison {} ids are exhausted", kind.word())))?;
         ids.insert(id, next);
     }
-    let notes = rewrite_word_ids(part.xml.as_bytes(), "footnote", &ids)?;
+    let notes = rewrite_word_ids(part.xml.as_bytes(), kind.owner(), &ids)?;
     crate::document::set_story_source_xml(&mut renumbered, &part.name, notes)?;
     let main = renumbered.doc_part_name.clone();
     let body = rewrite_word_ids(
@@ -2122,7 +2294,7 @@ pub(super) fn renumbered_footnotes(
             .package
             .get_part(&main)
             .ok_or_else(|| Error::Other("comparison input has no main part".into()))?,
-        "footnoteReference",
+        kind.reference(),
         &ids,
     )?;
     crate::document::set_story_source_xml(&mut renumbered, &main, body)?;
@@ -2155,18 +2327,19 @@ fn rewrite_word_ids(xml: &[u8], local: &str, ids: &HashMap<i32, i32>) -> Result<
     Ok(updated)
 }
 
-pub(super) fn compare_footnote_parts(
+pub(super) fn compare_note_parts(
     original: &Document,
     edited: &Document,
+    kind: NoteKind,
     candidate: &mut Document,
     metadata: &mut Metadata<'_>,
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<Vec<i32>> {
-    if story_ignored(metadata.options, ComparisonStoryKind::Footnote) {
+    if story_ignored(metadata.options, kind.story_kind()) {
         return Ok(Vec::new());
     }
-    let left = FootnotePart::of(original)?;
-    let right = FootnotePart::of(edited)?;
+    let left = NotePart::of(original, kind)?;
+    let right = NotePart::of(edited, kind)?;
     if left.is_none() && right.is_none() {
         return Ok(Vec::new());
     }
@@ -2178,24 +2351,26 @@ pub(super) fn compare_footnote_parts(
             || left.retained_shell()? != right.retained_shell()?
             || left.retained_records()? != right.retained_records()?)
     {
-        return Err(Error::Other(
-            "footnotes retained root/special/opaque shell changed".into(),
-        ));
+        return Err(Error::Other(format!(
+            "{} retained root/special/opaque shell changed",
+            kind.plural()
+        )));
     }
 
     let empty = BTreeMap::new();
     let left_normal = left
         .as_ref()
-        .map(FootnotePart::normal)
+        .map(NotePart::normal)
         .unwrap_or_else(|| empty.clone());
     let right_normal = right
         .as_ref()
-        .map(FootnotePart::normal)
+        .map(NotePart::normal)
         .unwrap_or_else(|| empty.clone());
-    let left_refs = footnote_reference_sites(original)?;
-    let right_refs = footnote_reference_sites(edited)?;
+    let left_refs = note_reference_sites(original, kind)?;
+    let right_refs = note_reference_sites(edited, kind)?;
     let moved = moved_pending_references(
         candidate,
+        kind,
         &left_refs,
         &right_refs,
         &left_normal,
@@ -2233,21 +2408,24 @@ pub(super) fn compare_footnote_parts(
     for id in &added {
         if !right_refs.iter().any(|site| site.id == *id) {
             return Err(Error::Other(format!(
-                "new unused footnote {id} cannot be compared"
+                "new unused {} {id} cannot be compared",
+                kind.word()
             )));
         }
     }
     for id in &removed {
         if !left_refs.iter().any(|site| site.id == *id) {
             return Err(Error::Other(format!(
-                "comparison cannot remove original unused footnote {id}"
+                "comparison cannot remove original unused {} {id}",
+                kind.word()
             )));
         }
     }
     if (left.is_none() || right.is_none()) && added.is_empty() && removed.is_empty() {
-        return Err(Error::Other(
-            "footnote part presence changed without a referenced normal owner".into(),
-        ));
+        return Err(Error::Other(format!(
+            "{} part presence changed without a referenced normal owner",
+            kind.word()
+        )));
     }
 
     let mut part = left
@@ -2262,7 +2440,7 @@ pub(super) fn compare_footnote_parts(
         .filter(|id| right_normal.contains_key(id))
         .copied()
         .collect::<HashSet<_>>();
-    let anchors = |part: &FootnotePart| -> Result<Vec<(FootnoteRootAnchor, Range<usize>)>> {
+    let anchors = |part: &NotePart| -> Result<Vec<(NoteRootAnchor, Range<usize>)>> {
         let mut retained = 0usize;
         Ok(part
             .root_items()?
@@ -2271,9 +2449,9 @@ pub(super) fn compare_footnote_parts(
                 if let Some(id) = id {
                     common
                         .contains(&id)
-                        .then_some((FootnoteRootAnchor::Normal(id), range))
+                        .then_some((NoteRootAnchor::Normal(id), range))
                 } else {
-                    let key = FootnoteRootAnchor::Retained(retained);
+                    let key = NoteRootAnchor::Retained(retained);
                     retained += 1;
                     Some((key, range))
                 }
@@ -2287,7 +2465,10 @@ pub(super) fn compare_footnote_parts(
         && left_anchors.iter().map(|(key, _)| key).collect::<Vec<_>>()
             != right_anchors.iter().map(|(key, _)| key).collect::<Vec<_>>()
     {
-        return Err(Error::Other("footnote retained owner order changed".into()));
+        return Err(Error::Other(format!(
+            "{} retained owner order changed",
+            kind.word()
+        )));
     }
     let _classes = left
         .as_ref()
@@ -2302,9 +2483,10 @@ pub(super) fn compare_footnote_parts(
                 &l.xml[left_owner.inner.clone()],
                 &r.xml[right_owner.inner.clone()],
                 &format!(
-                    "{}:{}/footnote-id[{id}]",
-                    ComparisonStoryKind::Footnote.label(),
-                    l.name
+                    "{}:{}/{}-id[{id}]",
+                    kind.story_kind().label(),
+                    l.name,
+                    kind.owner()
                 ),
                 "w",
                 &left_owner.bindings,
@@ -2330,13 +2512,14 @@ pub(super) fn compare_footnote_parts(
             let body_id = metadata.ids.allocate()?;
             let note_id = metadata.ids.allocate()?;
             let inner = &source.xml[owner.inner.clone()];
-            let envelope = note_fragment_envelope(inner, &owner.bindings, false)?;
+            let envelope = note_fragment_envelope(inner, &owner.bindings, None)?;
             let marked =
                 marked_cell_xml(&envelope, if addition { "ins" } else { "del" }, metadata)?;
             let mut tracked = marked[element_inner_range_any_prefix(&marked, "tc")?].to_owned();
-            tracked = close_note_revision_headers(&tracked, &owner.bindings)?;
-            let note_mark = note_bookmark(token, left.is_some(), right.is_some(), 'N', note_id);
-            tracked = insert_note_marker(&tracked, &owner.bindings, &note_mark, addition)?;
+            tracked = close_note_revision_headers(&tracked, kind, &owner.bindings)?;
+            let note_mark =
+                note_bookmark(kind, token, left.is_some(), right.is_some(), 'N', note_id);
+            tracked = insert_note_marker(&tracked, kind, &owner.bindings, &note_mark, addition)?;
             let mut owner_xml = source.xml[owner.span.clone()].to_owned();
             owner_xml.replace_range(
                 owner.inner.start - owner.span.start..owner.inner.end - owner.span.start,
@@ -2355,14 +2538,15 @@ pub(super) fn compare_footnote_parts(
                         .1
                         .start
                 } else {
-                    root_inner_range(&part.xml, "footnotes")?.end
+                    root_inner_range(&part.xml, kind.part_root())?.end
                 };
                 insertions.entry(at).or_default().push_str(&owner_xml);
             } else {
                 replacements.push((owner.span.clone(), owner_xml));
             }
-            let body_mark = note_bookmark(token, left.is_some(), right.is_some(), 'B', body_id);
-            bind_note_reference_revisions(candidate, id, addition, &body_mark, metadata)?;
+            let body_mark =
+                note_bookmark(kind, token, left.is_some(), right.is_some(), 'B', body_id);
+            bind_note_reference_revisions(candidate, kind, id, addition, &body_mark, metadata)?;
             emitted = true;
         }
     }
@@ -2375,25 +2559,34 @@ pub(super) fn compare_footnote_parts(
         let name = candidate.reserve_document_part_bundle(
             None,
             &part.name,
-            rel_types::FOOTNOTES,
-            FOOTNOTE_CONTENT_TYPE,
+            kind.relationship_type(),
+            kind.content_type(),
         )?;
         if name != part.name {
-            return Err(Error::Other(
-                "created footnotes part name changed destination identity".into(),
-            ));
+            return Err(Error::Other(format!(
+                "created {} part name changed destination identity",
+                kind.plural()
+            )));
         }
-        candidate.footnotes_part_name = Some(name);
+        // Only footnotes are modelled on the document; an endnotes part is
+        // found through its relationship.
+        if kind == NoteKind::Footnote {
+            candidate.footnotes_part_name = Some(name);
+        }
     }
     crate::document::set_story_source_xml(candidate, &part.name, part.xml.into_bytes())?;
     if emitted {
-        validate_footnote_custody(candidate, &crate::revision::RevisionScope::All)?;
+        validate_note_custody(candidate, kind, &crate::revision::RevisionScope::All)?;
     }
     Ok(Vec::new())
 }
 
-fn close_note_revision_headers(xml: &str, bindings: &NamespaceBindings) -> Result<String> {
-    let wrapped = note_fragment_envelope(xml, bindings, true)?;
+fn close_note_revision_headers(
+    xml: &str,
+    kind: NoteKind,
+    bindings: &NamespaceBindings,
+) -> Result<String> {
+    let wrapped = note_fragment_envelope(xml, bindings, Some(kind))?;
     let mut tree = crate::revision::XmlTree::parse(wrapped.as_bytes())?;
     tree.qualify_note_revisions()?;
     let root = &tree.elements[tree.elements[tree.root].children[0]];
@@ -2469,16 +2662,17 @@ fn note_revision_opening(
 
 fn insert_note_marker(
     xml: &str,
+    kind: NoteKind,
     bindings: &NamespaceBindings,
     marker: &str,
     addition: bool,
 ) -> Result<String> {
-    let wrapped = note_fragment_envelope(xml, bindings, true)?;
+    let wrapped = note_fragment_envelope(xml, bindings, Some(kind))?;
     let mut tree = crate::revision::XmlTree::parse(wrapped.as_bytes())?;
     tree.qualify_note_revisions()?;
     let root = &tree.elements[tree.elements[tree.root].children[0]];
     let paragraphs =
-        crate::document::admitted_story_paragraph_spans(wrapped.as_bytes(), StoryKind::Footnote)?;
+        crate::document::admitted_story_paragraph_spans(wrapped.as_bytes(), kind.note_story())?;
     let first = paragraphs
         .first()
         .ok_or_else(|| Error::Other("note custody requires its first note paragraph".into()))?;
@@ -2506,7 +2700,8 @@ fn insert_note_marker(
                 run_node.word
                     && run_node.local == "r"
                     && run_node.children.iter().any(|&leaf| {
-                        tree.elements[leaf].word && tree.elements[leaf].local == "footnoteRef"
+                        tree.elements[leaf].word
+                            && tree.elements[leaf].local == kind.reference_mark()
                     })
             });
             if let Some(run) = mark {
@@ -2553,21 +2748,23 @@ fn insert_note_marker(
 
 fn bind_note_reference_revisions(
     document: &mut Document,
+    kind: NoteKind,
     id: i32,
     addition: bool,
     marker: &str,
     metadata: &mut Metadata<'_>,
 ) -> Result<()> {
-    let sites = footnote_reference_sites(document)?
+    let sites = note_reference_sites(document, kind)?
         .into_iter()
         .filter(|site| site.id == id)
         .collect::<Vec<_>>();
     if sites.is_empty() {
         return Err(Error::Other(format!(
-            "missing tracked physical reference for footnote {id}"
+            "missing tracked physical reference for {} {id}",
+            kind.word()
         )));
     }
-    let mut parts = BTreeMap::<String, Vec<FootnoteReferenceSite>>::new();
+    let mut parts = BTreeMap::<String, Vec<NoteReferenceSite>>::new();
     for site in sites {
         parts.entry(site.part.clone()).or_default().push(site);
     }
@@ -2596,7 +2793,8 @@ fn bind_note_reference_revisions(
                     .is_none_or(|parent| tree.elements[parent].start != site.paragraph.start)
             {
                 return Err(Error::Other(format!(
-                    "footnote {id} has an ambiguous reference revision owner"
+                    "{} {id} has an ambiguous reference revision owner",
+                    kind.word()
                 )));
             }
             grouped
@@ -2665,24 +2863,25 @@ fn bind_note_reference_revisions(
     Ok(())
 }
 
-/// Check the footnote part of `actual`, a [`resolved_candidate`], against the
-/// input that resolution must reproduce.
-pub(super) fn verify_footnote_destination(
+/// Check the notes part of this kind in `actual`, a [`resolved_candidate`],
+/// against the input that resolution must reproduce.
+pub(super) fn verify_note_destination(
     actual: &Document,
     wanted: &Document,
+    kind: NoteKind,
     accept: bool,
     options: &ComparisonOptions,
 ) -> Result<()> {
-    if story_ignored(options, ComparisonStoryKind::Footnote) {
+    if story_ignored(options, kind.story_kind()) {
         return Ok(());
     }
-    let left = FootnotePart::of(actual)?;
-    let right = FootnotePart::of(wanted)?;
+    let left = NotePart::of(actual, kind)?;
+    let right = NotePart::of(wanted, kind)?;
     match (&left, &right) {
         (None, None) => Ok(()),
         (Some(left), Some(right)) if left.name == right.name => {
-            let (left_root, left_owners) = canonical_owned_story(&left.xml, "footnote")?;
-            let (right_root, right_owners) = canonical_owned_story(&right.xml, "footnote")?;
+            let (left_root, left_owners) = canonical_owned_story(&left.xml, kind.owner())?;
+            let (right_root, right_owners) = canonical_owned_story(&right.xml, kind.owner())?;
             // The grouped package guard proves each normal body, including
             // its source residuals and established empty-property equivalence.
             // Root owner tokens independently retain exact note identities/types.
@@ -2698,15 +2897,17 @@ pub(super) fn verify_footnote_destination(
                 || left.retained_records()? != right.retained_records()?
             {
                 return Err(Error::Other(format!(
-                    "comparison {} does not reproduce exact footnote destination",
-                    if accept { "acceptance" } else { "rejection" }
+                    "comparison {} does not reproduce exact {} destination",
+                    if accept { "acceptance" } else { "rejection" },
+                    kind.word()
                 )));
             }
             Ok(())
         }
-        _ => Err(Error::Other(
-            "comparison does not reproduce footnote destination part identity/presence".into(),
-        )),
+        _ => Err(Error::Other(format!(
+            "comparison does not reproduce {} destination part identity/presence",
+            kind.word()
+        ))),
     }
 }
 

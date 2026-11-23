@@ -114,7 +114,13 @@ pub(super) fn resolved_candidate(
 ) -> Result<Document> {
     let mut resolved = candidate.clone_for_staging();
     let units = custody_ids
-        .map(|ids| validate_footnote_custody(candidate, &crate::revision::RevisionScope::Ids(ids)))
+        .map(|ids| {
+            validate_note_custody(
+                candidate,
+                NoteKind::Footnote,
+                &crate::revision::RevisionScope::Ids(ids),
+            )
+        })
         .transpose()?;
     resolve(&mut resolved)?;
     if let Some(units) = units {
@@ -130,7 +136,11 @@ fn project_resolved_note_tombstones(
     after: &mut Document,
     units: &[FootnoteCustody],
 ) -> Result<()> {
-    let current = validate_footnote_custody(after, &crate::revision::RevisionScope::All)?;
+    let current = validate_note_custody(
+        after,
+        NoteKind::Footnote,
+        &crate::revision::RevisionScope::All,
+    )?;
     if !current.iter().any(|unit| !unit.revisions.is_empty()) {
         return Ok(());
     }
@@ -148,11 +158,11 @@ fn project_resolved_note_tombstones(
     {
         return Ok(());
     }
-    let prior = note_markers(before)?
+    let prior = note_markers(before, NoteKind::Footnote)?
         .into_iter()
         .filter(|marker| retained.contains(&marker.token))
         .collect::<Vec<_>>();
-    let actual = note_markers(after)?;
+    let actual = note_markers(after, NoteKind::Footnote)?;
     for marker in prior {
         let found = actual
             .iter()
@@ -198,7 +208,7 @@ fn project_resolved_note_tombstones(
             ));
         }
     }
-    retire_note_markers(after, &projected, None)
+    retire_note_markers(after, NoteKind::Footnote, &projected, None)
 }
 
 pub(super) fn normalized_package(
@@ -229,7 +239,7 @@ pub(super) fn normalized_package(
         && !stories
             .iter()
             .any(|story| story.kind == ComparisonStoryKind::Footnote)
-        && let Some(part) = FootnotePart::of(document)?
+        && let Some(part) = NotePart::of(document, NoteKind::Footnote)?
     {
         let groups = guard_story_owners(
             document,
