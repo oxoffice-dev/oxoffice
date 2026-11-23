@@ -28,8 +28,12 @@ enum FontCommand {
     Embed {
         file: PathBuf,
         /// Exact font record/typeface name
+        #[arg(long, required_unless_present = "index", conflicts_with = "index")]
+        name: Option<String>,
+        /// The record at this index of `font list`: one of several records
+        /// with the same name
         #[arg(long)]
-        name: String,
+        index: Option<usize>,
         /// Local TrueType or OpenType font file
         #[arg(long)]
         font: PathBuf,
@@ -51,11 +55,15 @@ enum FontCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Remove a named font record, or only the selected embedded face
+    /// Remove a font record, by name or by index, or only the selected embedded face
     Remove {
         file: PathBuf,
+        #[arg(long, required_unless_present = "index", conflicts_with = "index")]
+        name: Option<String>,
+        /// The record at this index of `font list`: one of several records
+        /// with the same name
         #[arg(long)]
-        name: String,
+        index: Option<usize>,
         #[arg(long, value_parser = ["regular", "bold", "italic", "bold-italic"])]
         kind: Option<String>,
         #[arg(long, short = 'o')]
@@ -844,6 +852,7 @@ pub fn run(cli: Cli) {
             FontCommand::Embed {
                 file,
                 name,
+                index,
                 font,
                 kind,
                 license_authorized,
@@ -855,7 +864,7 @@ pub fn run(cli: Cli) {
             } => commands::font_embed(
                 &file,
                 &commands::FontEmbedOptions {
-                    name: &name,
+                    record: commands::font_record(name.as_deref(), index),
                     font: &font,
                     kind: &kind,
                     license_authorized,
@@ -869,10 +878,17 @@ pub fn run(cli: Cli) {
             FontCommand::Remove {
                 file,
                 name,
+                index,
                 kind,
                 output,
                 json,
-            } => commands::font_remove(&file, &name, kind.as_deref(), &output, json),
+            } => commands::font_remove(
+                &file,
+                commands::font_record(name.as_deref(), index),
+                kind.as_deref(),
+                &output,
+                json,
+            ),
             FontCommand::Settings {
                 file,
                 embed_true_type_fonts,

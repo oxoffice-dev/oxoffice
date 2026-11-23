@@ -517,14 +517,23 @@ impl<'a> Run<'a> {
     /// so its note or comment keeps it. A custom mark reads as part of the
     /// run's text, so the mark goes back where the new text has it; a mark
     /// that came before any text stays first, and the others follow the text.
-    /// A character XML 1.0 cannot carry is dropped.
+    /// A mark held by a symbol or deleted text stays with it, after its
+    /// reference. A character XML 1.0 cannot carry is dropped.
     pub fn set_text(&mut self, text: &str) {
         let text = &*strip_non_xml_characters(text);
         let mut content = Vec::new();
         let mut trailing = Vec::new();
         let mut rest = text;
         let mut text_before = false;
-        for item in &self.inner.content {
+        // The items that hold the custom mark of the reference before them
+        // stay with that reference.
+        let held = (0..self.inner.content.len())
+            .filter_map(|index| self.inner.note_mark_child(index))
+            .collect::<Vec<_>>();
+        for (index, item) in self.inner.content.iter().enumerate() {
+            if held.contains(&index) {
+                continue;
+            }
             let custom = match item {
                 RunContent::FootnoteRef { custom_mark, .. }
                 | RunContent::EndnoteRef { custom_mark, .. } => custom_mark.as_deref(),
@@ -534,20 +543,25 @@ impl<'a> Run<'a> {
                     continue;
                 }
             };
-            let mut kept = item.clone();
-            if let RunContent::CommentReference { raw_before, .. } = &mut kept {
+            let mut kept = vec![item.clone()];
+            if let RunContent::CommentReference { raw_before, .. } = &mut kept[0] {
                 *raw_before = 0;
             }
+            kept.extend(
+                self.inner
+                    .note_mark_child(index)
+                    .map(|child| self.inner.content[child].clone()),
+            );
             match custom.and_then(|mark| Some((rest.find(mark)?, mark.len()))) {
                 Some((at, length)) => {
                     if at > 0 {
                         content.push(RunContent::Text(CT_Text::new(&rest[..at])));
                     }
-                    content.push(kept);
+                    content.extend(kept);
                     rest = &rest[at + length..];
                 }
-                None if !text_before && rest.len() == text.len() => content.push(kept),
-                None => trailing.push(kept),
+                None if !text_before && rest.len() == text.len() => content.extend(kept),
+                None => trailing.extend(kept),
             }
             if custom.is_some() {
                 text_before = true;

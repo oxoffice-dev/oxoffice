@@ -1,8 +1,8 @@
 {
   "file": "word/minutes.docx",
-  "reason": "a face picked for its glyphs no longer measures the line",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "ea06cf1a6609bff51fd9cc60bd795c6ef98e2ead1478c51262e50a72cc1d740a",
-  "outline_and_tags": "5c9dfca870af91d052bf90ee1b10a34ad2028689160de97461c78311bb4dba6a",
+  "outline_and_tags": "f1f5a61e3be2499ee1ca55cc6031b64ca28fe1f2f5f626976d6acb6846a62486",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "036c18de5f945e6151c4b28f4fb970cacdd2b9110f6d4c9c555d9e5c2e744316", "content": "0f36a1e220e26f61c2d98db1500d937bbc4a64a452815c53259feab607b70699", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

@@ -54,7 +54,16 @@ impl Document {
     ) -> Result<T> {
         let mut table = self.story_table_model(location)?;
         let result = edit(&mut Table { inner: &mut table })?;
-        self.replace_story_content(location, ContentFragment::table(table)?)?;
+        // `Paragraph`'s adders name built-in styles by their English id; a
+        // localized file names them otherwise.
+        let mut content = [BodyContent::Table(Box::new(table))];
+        walkers::visit_body_paragraphs_mut(&mut content, &mut |paragraph| {
+            self.localize_run_styles(paragraph)
+        });
+        let [BodyContent::Table(table)] = content else {
+            unreachable!("the table was wrapped above")
+        };
+        self.replace_story_content(location, ContentFragment::table(*table)?)?;
         Ok(result)
     }
 
