@@ -5078,6 +5078,7 @@ impl PyDocument {
         font: PyRef<'_, PyFontDefinition>,
     ) -> PyResult<()> {
         let native = descriptive_font(py, &font, "set_font_at")?;
+        self.check_font_index(py, index)?;
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_font_at(index, native)
@@ -5099,6 +5100,7 @@ impl PyDocument {
         Ok(removed)
     }
     fn remove_font_at(&mut self, py: Python<'_>, index: usize) -> PyResult<Py<PyFontDefinition>> {
+        self.check_font_index(py, index)?;
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_font_at(index)
@@ -5132,6 +5134,7 @@ impl PyDocument {
         kind: &str,
     ) -> PyResult<Option<Py<PyEmbeddedFont>>> {
         let kind = checked_font_kind(kind)?;
+        self.check_font_index(py, index)?;
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_embedded_font_at(index, kind)
@@ -5173,6 +5176,7 @@ impl PyDocument {
         subsetted: bool,
     ) -> PyResult<()> {
         let font = embedded_face(py, font, kind, &license, font_key, subsetted)?;
+        self.check_font_index(py, index)?;
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .embed_font_at(index, font)

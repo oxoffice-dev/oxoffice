@@ -354,6 +354,14 @@ impl Document {
         self.set_font_record(Some(index), font)
     }
 
+    /// The number of font-table records, the bound of the indexes the `_at`
+    /// calls take, without copying any embedded face.
+    pub fn font_record_count(&self) -> Result<usize> {
+        Ok(self
+            .modeled_font_table()?
+            .map_or(0, |table| table.fonts().len()))
+    }
+
     /// The record at `index` in `try_fonts()` order.
     fn font_record_at(&self, index: usize) -> Result<&FontRecord> {
         match self.modeled_font_table()? {

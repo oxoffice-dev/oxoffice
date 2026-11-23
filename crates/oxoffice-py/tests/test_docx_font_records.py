@@ -23,8 +23,11 @@ def test_a_font_name_written_twice_is_changed_and_removed_by_its_index():
             call()
     with pytest.raises(oxdocx.DocxError, match="does not rename"):
         doc.set_font_at(8, oxdocx.FontDefinition("Wingdings"))
-    with pytest.raises(oxdocx.DocxError, match="out of range"):
-        doc.remove_font_at(9)
+    for call in (lambda: doc.remove_font_at(9), lambda: doc.set_font_at(9, oxdocx.FontDefinition("Symbol")),
+                 lambda: doc.embed_font_at(9, FACE.read_bytes(), license=LICENSE),
+                 lambda: doc.remove_embedded_font_at(9)):
+        with pytest.raises(IndexError, match="out of range"):
+            call()
 
     doc.set_font_at(8, oxdocx.FontDefinition("Symbol", family="decorative"))
     doc.embed_font_at(8, FACE.read_bytes(), license=LICENSE)

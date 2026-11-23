@@ -122,10 +122,28 @@ fn a_font_name_written_twice_is_embedded_and_removed_by_its_index() {
         .collect();
     assert_eq!(faces, [0, 1]);
 
-    let removed = dir.join("removed.docx");
+    // Only the face of record 8, then the record itself.
+    let unembedded = dir.join("unembedded.docx");
     let record = json(&font(&[
         "remove",
         embedded.to_str().unwrap(),
+        "--index",
+        "8",
+        "--kind",
+        "regular",
+        "-o",
+        unembedded.to_str().unwrap(),
+        "--json",
+    ]));
+    assert_eq!(record["removed"], true);
+    let listed_after = records(&unembedded);
+    assert_eq!(listed_after.len(), listed.len());
+    assert!(listed_after.iter().all(|(_, _, faces)| *faces == 0));
+
+    let removed = dir.join("removed.docx");
+    let record = json(&font(&[
+        "remove",
+        unembedded.to_str().unwrap(),
         "--index",
         "8",
         "-o",

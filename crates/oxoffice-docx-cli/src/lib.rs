@@ -55,7 +55,7 @@ enum FontCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Remove a named font record, or only the selected embedded face
+    /// Remove a font record, by name or by index, or only the selected embedded face
     Remove {
         file: PathBuf,
         #[arg(long, required_unless_present = "index", conflicts_with = "index")]

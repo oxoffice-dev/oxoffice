@@ -204,3 +204,20 @@ impl PyFontDefinition {
         )
     }
 }
+
+impl PyDocument {
+    /// Refuse an index outside `fonts` with `IndexError`, as the other
+    /// indexed calls do.
+    pub(super) fn check_font_index(&self, py: Python<'_>, index: usize) -> PyResult<()> {
+        let count = self
+            .inner
+            .font_record_count()
+            .map_err(|e| docx_to_pyerr(py, e))?;
+        if index >= count {
+            return Err(PyIndexError::new_err(format!(
+                "font record index {index} is out of range: the font table has {count} records"
+            )));
+        }
+        Ok(())
+    }
+}
