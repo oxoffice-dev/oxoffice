@@ -721,6 +721,31 @@ mod tests {
         assert_eq!(script_name('\u{0301}'), "combining mark");
     }
 
+    /// The ToUnicode map keeps one character per glyph, so the diagnostic,
+    /// which accepts any character the face maps, holds only while no two
+    /// characters share a glyph.
+    #[test]
+    fn the_typing_font_maps_each_glyph_from_one_character() {
+        let face = typing_face();
+        let mut glyphs: BTreeMap<u16, u32> = BTreeMap::new();
+        let mut shared = Vec::new();
+        for subtable in face.tables().cmap.unwrap().subtables {
+            if !subtable.is_unicode() {
+                continue;
+            }
+            subtable.codepoints(|codepoint| {
+                if let Some(glyph) = subtable.glyph_index(codepoint).filter(|glyph| glyph.0 != 0)
+                    && let Some(held) = glyphs.insert(glyph.0, codepoint)
+                    && held != codepoint
+                {
+                    shared.push((held, codepoint));
+                }
+            });
+        }
+        assert!(glyphs.len() > 2000);
+        assert!(shared.is_empty(), "{shared:x?}");
+    }
+
     #[test]
     fn a_sample_names_invisible_characters_by_code_point() {
         let characters: BTreeSet<char> = ['Ж', '\u{202F}', '\u{200B}', '\u{0301}'].into();

@@ -219,8 +219,9 @@ the static output of Word-saved legacy checkboxes on purpose, switch or not.
   - That adds about 220 KB compressed to a PDF with fields.
 - **What will not display.** Text typed in a script Liberation Sans lacks
   (Chinese, Japanese, Korean, Arabic, Devanagari, Thai...) depends on the
-  viewer: each one substitutes a font of its own, and some do not shape
-  Arabic. Values already in the document in those scripts display
+  viewer: most substitute a font of its own, and some do not shape Arabic;
+  pdf.js saves such a value without an appearance, which poppler then
+  draws without those characters. Values already in the document in those scripts display
   correctly, since their appearance comes from the layout, until the field
   is edited. This is a known limitation, with its `limitations.json` entry
   and issue, and a diagnostic per field (see the amendment of 2026-11-23).
@@ -606,7 +607,7 @@ The orchestration session decided the open questions on 2026-11-21:
   not: Chrome substitutes non-embedded system fonts (Arabic unjoined, a
   character its fallback lacks not drawn), Acrobat embeds subsets of its
   own fonts (Arabic joined), PDFKit embeds subsets of system fonts and
-  redraws filled widgets from `/V`. `/V` holds the exact typed text
+  redraws filled widgets from `/V` (Arabic joined). `/V` holds the exact typed text
   everywhere. The two fonts give the same result per viewer, except
   Acrobat's Chinese, boxes with WinAnsi and readable with Type0. Not
   measured: Chrome and Acrobat reading a file saved with `/V` but no
