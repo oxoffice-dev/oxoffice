@@ -2,6 +2,31 @@
 
 use super::*;
 
+fn drawing_metadata_after_capture((input, length): (WordXmlInput<'_>, usize)) -> Result<u32> {
+    let mut reader = Reader::from_reader(std::io::Read::take(input, length as u64));
+    let mut buffer = Vec::new();
+    match reader.read_event_into(&mut buffer)? {
+        Event::Start(start) | Event::Empty(start) => first_drawing_metadata_id(&start),
+        _ => Err(OxmlError::MissingElement("wp:docPr".into())),
+    }
+}
+
+fn first_drawing_metadata_id(start: &BytesStart<'_>) -> Result<u32> {
+    for attribute in start.attributes() {
+        let attribute = attribute?;
+        if let Some(value) = crate::drawing::drawing_id_value(
+            &attribute,
+            attribute.key.as_ref() == b"id",
+            start.decoder(),
+        )? {
+            return Ok(value);
+        }
+    }
+    Err(OxmlError::InvalidValue(
+        "wp:docPr requires an unqualified id attribute".into(),
+    ))
+}
+
 fn paragraph_constructor_kind(local: &[u8], empty: bool) -> ConstructorKind {
     use ConstructorKind as K;
     match local {

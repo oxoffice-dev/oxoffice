@@ -2,6 +2,43 @@
 
 use super::*;
 
+fn restore_namespace_depths(
+    depths: &mut std::collections::HashMap<Vec<u8>, WordNamespaceBinding>,
+    undo: Vec<(Vec<u8>, Option<WordNamespaceBinding>)>,
+    copy_scope_weight: &mut Option<usize>,
+) {
+    for (prefix, previous) in undo.into_iter().rev() {
+        *copy_scope_weight = None;
+        if let Some(previous) = previous {
+            depths.insert(prefix, previous);
+        } else {
+            depths.remove(&prefix);
+        }
+    }
+}
+
+fn decoded_namespace_is(uri: &[u8], expected: &str) -> bool {
+    uri == expected.as_bytes()
+        || std::str::from_utf8(uri)
+            .ok()
+            .and_then(|uri| quick_xml::escape::unescape(uri).ok())
+            .is_some_and(|uri| uri == expected)
+}
+
+fn captured_namespace_is(
+    binding: Option<&WordNamespaceBinding>,
+    capture_depth: usize,
+    expected: &str,
+) -> bool {
+    binding.is_some_and(|binding| {
+        if binding.depth < capture_depth {
+            decoded_namespace_is(&binding.uri, expected)
+        } else {
+            binding.uri == expected.as_bytes()
+        }
+    })
+}
+
 /// Admit each independent input before recursive construction. Internal parser
 /// routes consume only bytes derived from that admitted input, without ambient
 /// thread state or a second whole-source scan at each nested owner.

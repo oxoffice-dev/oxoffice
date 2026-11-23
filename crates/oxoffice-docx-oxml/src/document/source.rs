@@ -29,9 +29,9 @@ use capture_namespaces::{
     CaptureDeclarations, CaptureNamespaceState, capture_index_push,
     capture_non_namespace_attribute, capture_revision_opens_runs, charge_original_capture_binding,
     classify_original_capture, constructor_attribute_prefixes, constructor_namespace_name,
-    drawing_metadata_after_capture, finish_original_capture_owner, original_capture_binding,
-    original_capture_event_prefixes, original_capture_root_attributes, original_capture_word_name,
-    reduce_inherited_bindings, root_attribute_plan_failed, simple_field_header_projection_stable,
+    finish_original_capture_owner, original_capture_binding, original_capture_event_prefixes,
+    original_capture_root_attributes, original_capture_word_name, reduce_inherited_bindings,
+    root_attribute_plan_failed, simple_field_header_projection_stable,
 };
 use capture_plan::{
     admit_original_capture_records, inherited_capture_declarations, plan_capture_with_context,
@@ -44,7 +44,6 @@ pub(crate) use model_guard::{
     WordOwner, admit_word_model, admitted_word_child, word_model_children_maxima,
     word_model_maxima, word_owner_cost,
 };
-use model_guard::{captured_namespace_is, decoded_namespace_is, restore_namespace_depths};
 pub(crate) use qualification::control_has_property_measurement_failure_in;
 use qualification::{original_comment_reference_has_payload, qualify_constructor_failures};
 use returned::returned_body_owner;
