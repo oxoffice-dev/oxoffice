@@ -1,8 +1,8 @@
 {
   "file": "google/long-report.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "6d415ebba2b8a5bc6f48edb82244cdfc388be96a65b8daf1585e7c56a8bae10c",
-  "outline_and_tags": "1b67c182746690a37190ca6f74eb089f1b43d4ea23a5950aab050fa7740277ae",
+  "outline_and_tags": "bea3a4d5a5f62f586f7d2f5cd02b3eadbbd606908af67a95fe2a0af94ae1f9c0",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "97793e127f205617fd263e161a6e3b1f2b0bf9ffc889b9578767c240bea55da0", "content": "7fa4751bf4b7682b5e031d972b3505236270d19a8051f363c39193bb1f7ab379", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

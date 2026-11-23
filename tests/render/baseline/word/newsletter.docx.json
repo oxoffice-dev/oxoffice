@@ -1,8 +1,8 @@
 {
   "file": "word/newsletter.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "f82f6fe0514680391435b80cefc21d53562f792c015693b2cf6e8be0ae7d9ee4",
-  "outline_and_tags": "b129d2b8bc6bd5168f47df86cdef1c6589fa4241d97d0a5adf39fd36b51414bc",
+  "outline_and_tags": "c47235a872b7c7a7874eaea75ebf90e4953d49f6581890a055c8e568b4b287b4",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "86c044186a7d5db03954c5c004ffaeb130fc958798d0442a3d13768a537000f2", "content": "9d9077355f3bfa5140b4c73e9b89efc0e08f6fea54c3b4c4f6733a8b63e953c9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

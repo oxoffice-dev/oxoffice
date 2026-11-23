@@ -1,8 +1,8 @@
 {
   "file": "word/minutes.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "ea06cf1a6609bff51fd9cc60bd795c6ef98e2ead1478c51262e50a72cc1d740a",
-  "outline_and_tags": "febe6a8865fc96904b044e0d505b0daf22688afe69b87473008375f9dd40b129",
+  "outline_and_tags": "f9ae4d8275aa2a789a7c385df71d7ec171d25bc9a4dc59db8e093b82e9841ab1",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "1b143366ce00fe855061607e74cbfe95c06bcebb19bdd0a37f5f9481ea59825f", "content": "1f46e03b3a8faacd09834b1724e063328c9c4fb07792d1a9cf96098fc431670a", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

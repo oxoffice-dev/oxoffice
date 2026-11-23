@@ -1,8 +1,8 @@
 {
   "file": "google/report.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "f9f5591680b26d0404d6c142685940904d6cb39511ebe2e683d3822d6be4cbf0",
-  "outline_and_tags": "68268de1c02416e5b8aa2585cae58047ea717a896c802bf7f77823e6b1d71608",
+  "outline_and_tags": "f9aab2405598cccfff2534a1a31a98d854de0693d82c5384ee649f648daa382c",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "91fd3e67749dfa4c1797c6f8babf25f9f71d674a6ab4748e712362bdbc18ea58", "content": "2bb126ea539ef9fd2c8da3e48640da3ce2b8d8772a2ffe5b032f9eed4e829e2c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},

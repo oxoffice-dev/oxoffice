@@ -1,8 +1,8 @@
 {
   "file": "libreoffice/minutes.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "4479de7d28c4393f7ac84f41a12c43bc205030c2c78e8fe4543a4d6f20a49d61",
-  "outline_and_tags": "ee8ba2e0e1b2900839341a4febbcb4b34d68cd01c4db8561c7440995ec36d398",
+  "outline_and_tags": "4dda7abcc6a98a53e63867d82ef9573e9e603a3655ac5ebf585a8e0ae273cc89",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "e7066bd3d69a5fcf69f5778e15de06065ac43b6c6008d896101abeb8cdd0ba50", "content": "ddac3ad2cca92c984a6b7b5c4436b540013272bfe5329b5a73b59838d5aa6d29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

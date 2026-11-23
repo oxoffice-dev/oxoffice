@@ -1,8 +1,8 @@
 {
   "file": "libreoffice/newsletter.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "49a71d2fbab1dfc44c8a8de475d66fe3ecf7198d4d3c9842dd3977307e99aaa8",
-  "outline_and_tags": "2c0c8b41b01261e1381c7a2cc60537b4332a8c6cedfe05b656323f34ddd91906",
+  "outline_and_tags": "f85e11c523e2faa5353a9f4d6704ab87dd269d5051df4d0a20ae11c2da1c5c24",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "21f5ad5abb275608fcd30a61132929b91e846f5ea9757bf48e18a876619889bc", "content": "30b2e97d9972adbc9acd04b802896edc564d78bf5afcd9b974f0b7c1bc46146c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

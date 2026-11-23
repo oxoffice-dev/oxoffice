@@ -1,8 +1,8 @@
 {
   "file": "word/record.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "5eb1f32f9b57988c96ec972dbf3046d34adac5392139027048eab9ce3ce725e4",
-  "outline_and_tags": "9197fe504b587d5aa9284ad4381f28938004d67f60b3eead065c7cb2866b9b03",
+  "outline_and_tags": "bb6cf44481fa7367f4643ed50074263cc0a921c520edeb95a4389a32c3ec68db",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "b52100189ac34f4b1d89a94a236b561c6a97a059e083a60a4065b64b3faa7c67", "content": "df0ab18938dba2f0f583b0a610c43a89dc9f45e916dbba8e14b47115bd6f5003", "annotations": "1d7fc938e46e7cb53ea468e54826e0b8b87f8a27d1daa30a6b89757a828558c2", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
