@@ -694,7 +694,7 @@ struct Inventory<'a> {
     /// fields that stay static, said once each.
     faults: Vec<String>,
     faulted: std::collections::HashSet<*const CT_Sdt>,
-    /// Every main-story paragraph visited, by source node.
+    /// Every main-story and note paragraph visited, by source node.
     paragraphs: HashMap<oxoffice_layout::SourceNodeId, FormParagraph>,
     /// Controls already said to stay static for their place.
     said: std::collections::HashSet<*const CT_Sdt>,
@@ -1187,7 +1187,7 @@ fn legacy_name(field: &Field) -> String {
         .unwrap_or_else(|| "untitled".to_owned())
 }
 
-/// A main-story paragraph as the form marks see it: the source node marks
+/// A main-story or note paragraph as the form marks see it: the source node marks
 /// name, and whether a block control field encloses it.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1196,7 +1196,7 @@ pub struct FormParagraph {
     pub block: bool,
 }
 
-/// The main-story paragraphs of one layout, by source node in the registry
+/// The main-story and note paragraphs of one layout, by source node in the registry
 /// the inventory used.
 #[doc(hidden)]
 #[derive(Clone, Debug, Default)]
@@ -1207,7 +1207,7 @@ pub struct FormParagraphs {
     nodes: HashMap<oxoffice_layout::SourceNodeId, FormParagraph>,
 }
 
-/// The main-story paragraphs of an input, by source node.
+/// The main-story and note paragraphs of an input, by source node.
 pub(crate) fn form_paragraphs(
     input: &crate::input::LayoutInput,
     sources: &crate::engine::SourceRegistry,

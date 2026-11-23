@@ -1057,14 +1057,19 @@ fn text_control(tag: &str, value: &str) -> String {
 /// each holding a text control after its own text, and whose second
 /// paragraph holds a control of the body. All three are tagged `name`.
 fn doc_with_note_controls() -> Document {
-    doc_with_notes(|marker, value| format!("{marker} </w:t></w:r>{}", text_control("name", value)))
+    doc_with_notes(|xml, marker, value| {
+        xml.replace(
+            &format!("{marker}</w:t></w:r>"),
+            &format!("{marker} </w:t></w:r>{}", text_control("name", value)),
+        )
+    })
 }
 
 /// A document whose first paragraph references an endnote, then a footnote,
 /// and whose second paragraph holds a control of the body tagged `name`.
-/// `note` writes what follows each note's text run, given its text and the
-/// value its control shows.
-fn doc_with_notes(note: impl Fn(&str, &str) -> String) -> Document {
+/// `note` rewrites each notes part, given the part, the text of its note
+/// and the value a control there shows.
+fn doc_with_notes(note: impl Fn(&str, &str, &str) -> String) -> Document {
     let mut doc = doc_with_body(&format!(
         r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:p>{}</w:p>"#,
         text_control("name", "Body value")
@@ -1081,9 +1086,8 @@ fn doc_with_notes(note: impl Fn(&str, &str) -> String) -> Document {
         ("/word/endnotes.xml", "ENDNOTE", "End value"),
     ] {
         let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
-        let old = format!("{marker}</w:t></w:r>");
-        assert!(xml.contains(&old), "{xml}");
-        let xml = xml.replace(&old, &note(marker, value));
+        assert!(xml.contains(&format!("{marker}</w:t></w:r>")), "{xml}");
+        let xml = note(&xml, marker, value);
         package.set_part(part, xml.into_bytes());
     }
     let mut out = std::io::Cursor::new(Vec::new());
@@ -1131,11 +1135,12 @@ fn controls_in_notes_become_fields_after_the_body_footnotes_first() {
 #[test]
 fn a_control_in_a_table_of_a_note_becomes_a_field() {
     // The table follows the note's paragraph, inside the note.
-    let doc = doc_with_notes(|marker, value| {
-        format!(
+    let doc = doc_with_notes(|xml, marker, value| {
+        let table = format!(
             r#"{marker}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t></w:t></w:r>"#,
             text_control("name", value)
-        )
+        );
+        xml.replace(&format!("{marker}</w:t></w:r>"), &table)
     });
     assert_eq!(
         named_values(&doc),
@@ -1152,4 +1157,67 @@ fn a_control_in_a_table_of_a_note_becomes_a_field() {
         .collect();
     texts.sort();
     assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+}
+
+#[test]
+fn a_block_control_around_a_note_leaves_the_note_number_on_the_page() {
+    // Word wraps the whole note text, its number included, when the whole
+    // note is selected. The endnote holds a legacy text field instead.
+    let doc = doc_with_notes(|xml, marker, value| {
+        if marker == "ENDNOTE" {
+            let field = legacy(
+                9,
+                "Legacy",
+                r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+                "FORMTEXT",
+                Some(value),
+            );
+            return xml.replace(
+                &format!("{marker}</w:t></w:r>"),
+                &format!("{marker} </w:t></w:r>{field}"),
+            );
+        }
+        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
+        let start = xml[..end]
+            .rfind("<w:p>")
+            .or_else(|| xml[..end].rfind("<w:p "))
+            .unwrap();
+        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
+        let paragraph = xml[start..close].replace(marker, value);
+        format!(
+            r#"{}<w:sdt><w:sdtPr><w:tag w:val="name"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
+            &xml[..start],
+            &xml[close..]
+        )
+    });
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    let mut texts: Vec<String> = fragment_texts(&layout.pages)
+        .into_iter()
+        .map(|(_, text)| text.trim().to_owned())
+        .collect();
+    texts.sort();
+    // The space after the number is the note's text, inside the control.
+    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+    let named: Vec<(String, String)> = names_and_values(&doc)
+        .into_iter()
+        .map(|(name, value)| (name, value.trim().to_owned()))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("name".to_owned(), "Body value".to_owned()),
+            ("name_2".to_owned(), "Foot value".to_owned()),
+            ("Legacy".to_owned(), "End value".to_owned()),
+        ]
+    );
+    assert!(page_text(&layout.pages).contains('1'));
+    assert!(
+        layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.diagnostics
+    );
 }

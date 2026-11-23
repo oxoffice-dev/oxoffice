@@ -302,7 +302,7 @@ pub struct LayoutInput {
     /// and the notes as fillable form fields: `LayoutResult::form_fields` and their
     /// fragments.
     pub form_fields: bool,
-    /// Result-local: the main-story paragraphs by source node, and whether
+    /// Result-local: the main-story and note paragraphs by source node, and whether
     /// a block control field encloses them. Only these paragraphs draw form
     /// marks. Full layout regenerates this member.
     #[doc(hidden)]

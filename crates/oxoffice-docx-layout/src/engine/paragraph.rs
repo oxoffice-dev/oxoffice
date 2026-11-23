@@ -1152,8 +1152,10 @@ fn layout_paragraph_with_source_and_table(
                         style_resolver::word_kerning_enabled(&effective_rpr),
                     )?;
                     let marker_metrics = fm.metrics(measure_font, size)?;
+                    // The note's own number stays on the page, as a list
+                    // number does: a field's value never holds it.
                     inline_items.push(InlineItem::Text(TextSegment {
-                        form_mark: current_form_mark,
+                        form_mark: None,
                         text,
                         direction: TextDirection::Auto,
                         source: None,
