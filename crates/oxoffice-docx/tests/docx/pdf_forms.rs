@@ -1378,3 +1378,112 @@ fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
         layout.layout.diagnostics
     );
 }
+
+/// A floating text box holding `content`, as Word writes it, with extra
+/// attributes on its `a:xfrm` (a turn) and its `wps:bodyPr` (vertical text).
+fn floating_text_box(id: u32, content: &str, xfrm: &str, body: &str) -> String {
+    format!(
+        r#"<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>2743200</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="{id}" name="Text Box {id}"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm{xfrm}><a:off x="0" y="0"/><a:ext cx="1828800" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}</w:txbxContent></wps:txbx><wps:bodyPr{body}/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice></mc:AlternateContent></w:r>"#
+    )
+}
+
+#[test]
+fn controls_in_a_text_box_become_fields_where_the_box_is_anchored() {
+    let boxed = floating_text_box(
+        70,
+        &format!("<w:p>{}</w:p>", text_control("name", "Box value")),
+        "",
+        "",
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{boxed}<w:r><w:t xml:space="preserve">First and </w:t></w:r>{}</w:p><w:p>{}</w:p>"#,
+        text_control("name", "First value"),
+        text_control("name", "Body value"),
+    ));
+    // The box is anchored before the paragraph's own control.
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Box value".to_owned()),
+            ("name_2".to_owned(), "First value".to_owned()),
+            ("name_3".to_owned(), "Body value".to_owned()),
+        ]
+    );
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    let mut texts: Vec<String> = fragment_texts(&layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Body value", "Box value", "First value"]);
+    assert!(page_text(&layout.pages).contains("and"));
+    assert!(
+        layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.diagnostics
+    );
+    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(exported.len(), 3);
+    // Tagged output too, where the box's marked content has a structure.
+    let tagged = doc
+        .to_pdfa_deterministic_with_options(oxoffice_docx::PdfConformance::PdfA2b, fillable())
+        .unwrap();
+    assert_eq!(fields(&tagged).1.len(), 3);
+}
+
+#[test]
+fn controls_in_turned_vertical_or_nested_text_boxes_stay_static_and_say_so() {
+    let control = |tag: &str| format!("<w:p>{}</w:p>", text_control(tag, "Value"));
+    let turned = floating_text_box(71, &control("turned"), r#" rot="1800000""#, "");
+    let vertical = floating_text_box(72, &control("vertical"), "", r#" vert="vert""#);
+    let inner = floating_text_box(74, &control("nested"), "", "");
+    let outer = floating_text_box(73, &format!("<w:p>{inner}</w:p>"), "", "");
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{turned}</w:p><w:p>{vertical}</w:p><w:p>{outer}</w:p><w:p>{}</w:p>"#,
+        text_control("plain", "Value")
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(field_names(&layout.layout), ["plain"]);
+    let said: Vec<&str> = layout
+        .layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .filter(|message| message.contains("stays static"))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "form control \"turned\" stays static: its text box is turned",
+            "form control \"vertical\" stays static: its text box's text is vertical",
+            "form control \"nested\" stays static: its text box sits in another text box",
+        ]
+    );
+}
+
+#[test]
+fn a_text_box_in_a_block_control_or_with_a_description_still_gives_its_controls_fields() {
+    let control = |tag: &str| format!("<w:p>{}</w:p>", text_control(tag, "Value"));
+    let in_block = floating_text_box(75, &control("in_block"), "", "");
+    let described = floating_text_box(76, &control("described"), "", "").replace(
+        r#"name="Text Box 76""#,
+        r#"name="Text Box 76" descr="A stamp""#,
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="block"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Block text</w:t></w:r>{in_block}</w:p></w:sdtContent></w:sdt><w:p>{described}</w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    // The block around the box stays static, as any control holding a
+    // floating drawing; the box's own control is still a field.
+    assert_eq!(field_names(&layout.layout), ["in_block", "described"]);
+    let mut texts: Vec<String> = fragment_texts(&layout.layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Value", "Value"]);
+}

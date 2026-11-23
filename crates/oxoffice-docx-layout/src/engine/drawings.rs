@@ -136,6 +136,59 @@ pub(super) fn render_word_chart(
 /// A shape's text box is laid out here rather than later, because breaking it
 /// into lines needs the font manager.
 #[allow(clippy::too_many_arguments)]
+/// One drawing a paragraph anchors, as layout anchors it.
+pub(crate) struct ParagraphAnchor<'a> {
+    /// The run's index among the paragraph's projected runs.
+    pub run_index: usize,
+    /// The drawing's index among the run's drawings, plain ones first.
+    pub drawing_index: usize,
+    pub run: &'a CT_R,
+    pub anchor: &'a oxoffice_docx_oxml::drawing::CT_Anchor,
+    /// The shape, for a drawing that is neither a chart nor a picture.
+    pub shape: Option<&'a oxoffice_docx_oxml::drawing::CT_Shape>,
+}
+
+/// The drawings a paragraph anchors in its view, in order: charts,
+/// pictures and shapes. A drawing without an anchor, or an anchor that is
+/// none of the three, anchors nothing.
+pub(crate) fn paragraph_anchors(para: &CT_P, view: RevisionView) -> Vec<ParagraphAnchor<'_>> {
+    let mut anchors = Vec::new();
+    // Drawings written plainly, and drawings recovered from an
+    // mc:AlternateContent block, are both anchored the same way.
+    for (run_index, projected) in project_paragraph_runs(para, view).into_iter().enumerate() {
+        let run = projected.run;
+        let plain = run.content.iter().filter_map(|rc| match rc {
+            RunContent::Drawing(d) => Some(d),
+            _ => None,
+        });
+        for (drawing_index, drawing) in plain.chain(run.alt_drawings.iter()).enumerate() {
+            let Some(anchor) = drawing.anchor.as_ref() else {
+                continue;
+            };
+            // A picture also carries a pic:spPr, so a parsed shape alone does
+            // not mean this is a shape. An embed id is what makes it a
+            // picture, and that takes precedence.
+            let picture_or_chart = !anchor.embed_id.is_empty() || anchor.chart_rel_id.is_some();
+            let shape = if picture_or_chart {
+                None
+            } else {
+                anchor.shape.as_ref()
+            };
+            if !picture_or_chart && shape.is_none() {
+                continue;
+            }
+            anchors.push(ParagraphAnchor {
+                run_index,
+                drawing_index,
+                run,
+                anchor,
+                shape,
+            });
+        }
+    }
+    anchors
+}
+
 pub(super) fn collect_anchored_drawings(
     para: &CT_P,
     styles: &CT_Styles,
@@ -149,256 +202,236 @@ pub(super) fn collect_anchored_drawings(
     let mut out = Vec::new();
     let mut paints = Vec::new();
 
-    // Drawings written plainly, and drawings recovered from an
-    // mc:AlternateContent block, are both anchored the same way.
-    for (run_index, projected) in project_paragraph_runs(para, input.revision_view)
-        .into_iter()
-        .enumerate()
+    for ParagraphAnchor {
+        run_index,
+        drawing_index,
+        anchor,
+        shape,
+        ..
+    } in paragraph_anchors(para, input.revision_view)
     {
-        let run = projected.run;
-        let plain = run.content.iter().filter_map(|rc| match rc {
-            RunContent::Drawing(d) => Some(d),
-            _ => None,
-        });
-        for (drawing_index, drawing) in plain.chain(run.alt_drawings.iter()).enumerate() {
-            let Some(anchor) = drawing.anchor.as_ref() else {
-                continue;
+        let mut content_paint = WordAnchorPaint::Image;
+        let content = if let Some(relationship_id) = anchor.chart_rel_id.as_deref() {
+            content_paint = WordAnchorPaint::Group {
+                policies: Default::default(),
             };
-
-            // A picture also carries a pic:spPr, so a parsed shape alone does
-            // not mean this is a shape. An embed id is what makes it a
-            // picture, and that takes precedence.
-            let shape = if anchor.embed_id.is_empty() && anchor.chart_rel_id.is_none() {
-                anchor.shape.as_ref()
-            } else {
-                None
-            };
-
-            let mut content_paint = WordAnchorPaint::Image;
-            let content = if let Some(relationship_id) = anchor.chart_rel_id.as_deref() {
-                content_paint = WordAnchorPaint::Group {
-                    policies: Default::default(),
-                };
-                block::AnchoredContent::Group(render_word_chart(
-                    relationship_id,
-                    anchor.extent_cx.to_pt(),
-                    anchor.extent_cy.to_pt(),
-                    input,
-                    fm,
-                    diagnostics,
-                )?)
-            } else {
-                match shape {
-                    Some(shape) => {
-                        // A shape's text box wraps at the shape width less
-                        // the insets between its edges and its text.
-                        let insets = shape.text_insets;
-                        let text_width =
-                            (anchor.extent_cx.to_pt() - insets.left.to_pt() - insets.right.to_pt())
-                                .max(0.0);
-                        let text_height =
-                            (anchor.extent_cy.to_pt() - insets.top.to_pt() - insets.bottom.to_pt())
-                                .max(0.0);
-                        let mut text = Vec::new();
-                        let mut paragraph_paints = Vec::new();
-                        if let Some(body) = &shape.text_body {
-                            let mut local_sources = source_node
-                                .map(|_| SourceRegistry::for_body(input, body))
-                                .transpose()?;
-                            let mut inverse = None;
-                            if input.sequence_snapshot.is_some()
-                                && let Some(parent) = source_node
-                                && let Some(sources) = &mut local_sources
-                            {
-                                match sources.bind_sequence_shape_sources(
-                                    input,
-                                    parent,
-                                    run_index,
-                                    drawing_index,
-                                    shape.source_text_box_owner,
-                                ) {
-                                    Ok(map) => inverse = Some(map),
-                                    Err(message) => {
-                                        diagnostics.push(Diagnostic { message });
-                                        local_sources = None;
-                                    }
+            block::AnchoredContent::Group(render_word_chart(
+                relationship_id,
+                anchor.extent_cx.to_pt(),
+                anchor.extent_cy.to_pt(),
+                input,
+                fm,
+                diagnostics,
+            )?)
+        } else {
+            match shape {
+                Some(shape) => {
+                    // A shape's text box wraps at the shape width less
+                    // the insets between its edges and its text.
+                    let insets = shape.text_insets;
+                    let text_width =
+                        (anchor.extent_cx.to_pt() - insets.left.to_pt() - insets.right.to_pt())
+                            .max(0.0);
+                    let text_height =
+                        (anchor.extent_cy.to_pt() - insets.top.to_pt() - insets.bottom.to_pt())
+                            .max(0.0);
+                    let mut text = Vec::new();
+                    let mut paragraph_paints = Vec::new();
+                    if let Some(body) = &shape.text_body {
+                        let mut local_sources = source_node
+                            .map(|_| SourceRegistry::for_body(input, body))
+                            .transpose()?;
+                        let mut inverse = None;
+                        if input.sequence_snapshot.is_some()
+                            && let Some(parent) = source_node
+                            && let Some(sources) = &mut local_sources
+                        {
+                            match sources.bind_sequence_shape_sources(
+                                input,
+                                parent,
+                                run_index,
+                                drawing_index,
+                                shape.source_text_box_owner,
+                            ) {
+                                Ok(map) => inverse = Some(map),
+                                Err(message) => {
+                                    diagnostics.push(Diagnostic { message });
+                                    local_sources = None;
                                 }
                             }
-                            for item in body_layout_items(body) {
-                                match item {
-                                    MainStoryLayoutItem::Paragraph(paragraph, path) => {
-                                        let node = local_sources.as_ref().and_then(|sources| {
-                                            sources.id(&WordStory::Document, &path)
-                                        });
-                                        let (mut block, _, mut paint) =
-                                            layout_paragraph_with_source_and_direction(
-                                                paragraph,
-                                                text_width,
-                                                styles,
+                        }
+                        for item in body_layout_items(body) {
+                            match item {
+                                MainStoryLayoutItem::Paragraph(paragraph, path) => {
+                                    let node = local_sources.as_ref().and_then(|sources| {
+                                        sources.id(&WordStory::Document, &path)
+                                    });
+                                    let (mut block, _, mut paint) =
+                                        layout_paragraph_with_source_and_direction(
+                                            paragraph,
+                                            text_width,
+                                            styles,
+                                            input,
+                                            media,
+                                            fm,
+                                            num_state,
+                                            diagnostics,
+                                            node,
+                                            node,
+                                            None,
+                                            crate::forms::text_box_form_paragraph(
                                                 input,
-                                                media,
-                                                fm,
-                                                num_state,
-                                                diagnostics,
+                                                source_node,
+                                                body,
+                                                &path,
                                                 node,
-                                                node,
-                                                None,
-                                                None,
-                                            )?;
-                                        if let Some(sources) = &local_sources {
-                                            sources
-                                                .bind_text_boxes(&mut block, &mut paint, node)?;
-                                        }
+                                            ),
+                                        )?;
+                                    if let Some(sources) = &local_sources {
+                                        sources.bind_text_boxes(&mut block, &mut paint, node)?;
+                                    }
+                                    text.push(block);
+                                    paragraph_paints.push(paint);
+                                }
+                                MainStoryLayoutItem::Table(table, path) => {
+                                    let (table, semantics) = table::layout_table_with_provenance(
+                                        table,
+                                        text_width,
+                                        styles,
+                                        input,
+                                        media,
+                                        fm,
+                                        num_state,
+                                        diagnostics,
+                                        local_sources.as_ref(),
+                                        &WordStory::Document,
+                                        &path,
+                                        None,
+                                    )?;
+                                    let geometry = PageGeometry {
+                                        page_width: text_width,
+                                        page_height: text_height,
+                                        ..PageGeometry::default()
+                                    };
+                                    for (block, paint) in paginator::story_table_rows(
+                                        &table,
+                                        &semantics,
+                                        &geometry,
+                                        media.media(),
+                                    )? {
                                         text.push(block);
                                         paragraph_paints.push(paint);
                                     }
-                                    MainStoryLayoutItem::Table(table, path) => {
-                                        let (table, semantics) =
-                                            table::layout_table_with_provenance(
-                                                table,
-                                                text_width,
-                                                styles,
-                                                input,
-                                                media,
-                                                fm,
-                                                num_state,
-                                                diagnostics,
-                                                local_sources.as_ref(),
-                                                &WordStory::Document,
-                                                &path,
-                                                None,
-                                            )?;
-                                        let geometry = PageGeometry {
-                                            page_width: text_width,
-                                            page_height: text_height,
-                                            ..PageGeometry::default()
-                                        };
-                                        for (block, paint) in paginator::story_table_rows(
-                                            &table,
-                                            &semantics,
-                                            &geometry,
-                                            media.media(),
-                                        )? {
-                                            text.push(block);
-                                            paragraph_paints.push(paint);
-                                        }
-                                    }
                                 }
-                            }
-                            if let Some(inverse) = &inverse {
-                                for (paragraph, paint) in text.iter_mut().zip(&mut paragraph_paints)
-                                {
-                                    remap_text_box_sources(paragraph, inverse)?;
-                                    paint.remap_sources(inverse)?;
-                                }
-                            }
-                        } else {
-                            for p in &shape.text {
-                                let (block, _, paint) = layout_paragraph_with_source_and_direction(
-                                    p,
-                                    text_width,
-                                    styles,
-                                    input,
-                                    media,
-                                    fm,
-                                    num_state,
-                                    diagnostics,
-                                    source_node.map(|_| CACHE_SOURCE_NODE),
-                                    source_node.map(|_| CACHE_SOURCE_NODE),
-                                    None,
-                                    None,
-                                )?;
-                                text.push(block);
-                                paragraph_paints.push(paint);
                             }
                         }
-                        content_paint = WordAnchorPaint::Shape {
-                            paragraphs: paragraph_paints,
-                        };
-                        block::AnchoredContent::Shape {
-                            preset: block::ShapePreset::from_prst(shape.preset.as_deref()),
-                            fill: shape.solid_fill.as_deref().map(Color::from_hex),
-                            text,
-                            // Vertical text is still laid out across the
-                            // box, so its lines are not measured against the
-                            // box's height.
-                            fixed_height: !shape.grows_to_fit_text && !shape.vertical_text,
-                            insets: [
-                                insets.left.to_pt(),
-                                insets.top.to_pt(),
-                                insets.right.to_pt(),
-                                insets.bottom.to_pt(),
-                            ],
+                        if let Some(inverse) = &inverse {
+                            for (paragraph, paint) in text.iter_mut().zip(&mut paragraph_paints) {
+                                remap_text_box_sources(paragraph, inverse)?;
+                                paint.remap_sources(inverse)?;
+                            }
+                        }
+                    } else {
+                        for p in &shape.text {
+                            let (block, _, paint) = layout_paragraph_with_source_and_direction(
+                                p,
+                                text_width,
+                                styles,
+                                input,
+                                media,
+                                fm,
+                                num_state,
+                                diagnostics,
+                                source_node.map(|_| CACHE_SOURCE_NODE),
+                                source_node.map(|_| CACHE_SOURCE_NODE),
+                                None,
+                                None,
+                            )?;
+                            text.push(block);
+                            paragraph_paints.push(paint);
                         }
                     }
-                    None if anchor.embed_id.is_empty() => continue,
-                    None => {
-                        media.record_picture_draw_owner(&anchor.embed_id);
-                        let media_id = media
-                            .id_for_relationship_with_diagnostic(&anchor.embed_id, diagnostics);
-                        if let Some((opacity, rotation)) = anchor.picture_effects() {
-                            let width = anchor.extent_cx.to_pt();
-                            let height = anchor.extent_cy.to_pt();
-                            let image = media.media().get(&media_id);
-                            content_paint = WordAnchorPaint::Group {
-                                policies: Default::default(),
-                            };
-                            block::AnchoredContent::Group(GroupElement {
-                                transform: Transform::rotate_about(
-                                    rotation,
-                                    width / 2.0,
-                                    height / 2.0,
-                                ),
-                                clip: None,
-                                opacity,
-                                effects: Vec::new(),
-                                children: vec![PositionedElement::Image {
-                                    rect: Rect {
-                                        x: 0.0,
-                                        y: 0.0,
-                                        width,
-                                        height,
-                                    },
-                                    data: image.map_or_else(Vec::new, |image| image.data.clone()),
-                                    content_type: image.map_or_else(String::new, |image| {
-                                        image.content_type.clone()
-                                    }),
-                                    media_id,
-                                }],
-                            })
-                        } else {
-                            block::AnchoredContent::Image { media_id }
-                        }
+                    content_paint = WordAnchorPaint::Shape {
+                        paragraphs: paragraph_paints,
+                    };
+                    block::AnchoredContent::Shape {
+                        preset: block::ShapePreset::from_prst(shape.preset.as_deref()),
+                        fill: shape.solid_fill.as_deref().map(Color::from_hex),
+                        text,
+                        // Vertical text is still laid out across the
+                        // box, so its lines are not measured against the
+                        // box's height.
+                        fixed_height: !shape.grows_to_fit_text && !shape.vertical_text,
+                        insets: [
+                            insets.left.to_pt(),
+                            insets.top.to_pt(),
+                            insets.right.to_pt(),
+                            insets.bottom.to_pt(),
+                        ],
                     }
                 }
-            };
+                None if anchor.embed_id.is_empty() => continue,
+                None => {
+                    media.record_picture_draw_owner(&anchor.embed_id);
+                    let media_id =
+                        media.id_for_relationship_with_diagnostic(&anchor.embed_id, diagnostics);
+                    if let Some((opacity, rotation)) = anchor.picture_effects() {
+                        let width = anchor.extent_cx.to_pt();
+                        let height = anchor.extent_cy.to_pt();
+                        let image = media.media().get(&media_id);
+                        content_paint = WordAnchorPaint::Group {
+                            policies: Default::default(),
+                        };
+                        block::AnchoredContent::Group(GroupElement {
+                            transform: Transform::rotate_about(rotation, width / 2.0, height / 2.0),
+                            clip: None,
+                            opacity,
+                            effects: Vec::new(),
+                            children: vec![PositionedElement::Image {
+                                rect: Rect {
+                                    x: 0.0,
+                                    y: 0.0,
+                                    width,
+                                    height,
+                                },
+                                data: image.map_or_else(Vec::new, |image| image.data.clone()),
+                                content_type: image
+                                    .map_or_else(String::new, |image| image.content_type.clone()),
+                                media_id,
+                            }],
+                        })
+                    } else {
+                        block::AnchoredContent::Image { media_id }
+                    }
+                }
+            }
+        };
 
-            paints.push(content_paint);
-            out.push(block::AnchoredDrawing {
-                rotation_degrees: if shape.is_some() {
-                    anchor.shape_rotation_degrees().unwrap_or(0.0)
-                } else {
-                    0.0
-                },
-                behind_doc: anchor.behind_doc,
-                rel_h: anchor.pos_h_relative_from,
-                off_h: anchor.pos_h_offset.to_pt(),
-                rel_v: anchor.pos_v_relative_from,
-                off_v: anchor.pos_v_offset.to_pt(),
-                width: anchor.extent_cx.to_pt(),
-                height: anchor.extent_cy.to_pt(),
-                alternate_text: anchor.description.clone(),
-                structure_id: None,
-                wrap: anchor.wrap,
-                dist_top: anchor.dist_t.to_pt(),
-                dist_bottom: anchor.dist_b.to_pt(),
-                dist_left: anchor.dist_l.to_pt(),
-                dist_right: anchor.dist_r.to_pt(),
-                align_h: anchor.pos_h_align,
-                align_v: anchor.pos_v_align,
-                content,
-            });
-        }
+        paints.push(content_paint);
+        out.push(block::AnchoredDrawing {
+            rotation_degrees: if shape.is_some() {
+                anchor.shape_rotation_degrees().unwrap_or(0.0)
+            } else {
+                0.0
+            },
+            behind_doc: anchor.behind_doc,
+            rel_h: anchor.pos_h_relative_from,
+            off_h: anchor.pos_h_offset.to_pt(),
+            rel_v: anchor.pos_v_relative_from,
+            off_v: anchor.pos_v_offset.to_pt(),
+            width: anchor.extent_cx.to_pt(),
+            height: anchor.extent_cy.to_pt(),
+            alternate_text: anchor.description.clone(),
+            structure_id: None,
+            wrap: anchor.wrap,
+            dist_top: anchor.dist_t.to_pt(),
+            dist_bottom: anchor.dist_b.to_pt(),
+            dist_left: anchor.dist_l.to_pt(),
+            dist_right: anchor.dist_r.to_pt(),
+            align_h: anchor.pos_h_align,
+            align_v: anchor.pos_v_align,
+            content,
+        });
     }
     Ok((out, paints))
 }

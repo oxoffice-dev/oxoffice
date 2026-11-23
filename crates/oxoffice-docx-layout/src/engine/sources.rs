@@ -25,6 +25,7 @@ impl SourceRegistry {
             story_owner_children: HashMap::new(),
             revision_view: input.revision_view,
             text_box_sources: HashMap::new(),
+            text_box_stories: HashMap::new(),
             preparation_error: None,
         };
         registry.collect_story_body(body, &WordStory::Document);
@@ -227,6 +228,7 @@ impl SourceRegistry {
             story_owner_children: HashMap::new(),
             revision_view: input.revision_view,
             text_box_sources: HashMap::new(),
+            text_box_stories: HashMap::new(),
             preparation_error: None,
         };
 
@@ -632,6 +634,7 @@ impl SourceRegistry {
             return;
         };
         let mut children = Vec::new();
+        let mut stories = Vec::new();
         // Logical projected paths include accepted revisions. Physical cache
         // ownership comes from the independently bound source owner, not this index.
         for (run_index, projected) in project_paragraph_runs(paragraph, self.revision_view)
@@ -653,6 +656,7 @@ impl SourceRegistry {
                 };
                 if anchor.chart_rel_id.is_some() || !anchor.embed_id.is_empty() {
                     children.push(TextBoxSourceBinding::Paragraphs(Vec::new()));
+                    stories.push(None);
                     continue;
                 }
                 let Some(shape) = anchor.shape.as_ref() else {
@@ -682,6 +686,7 @@ impl SourceRegistry {
                 if let Some(owner) = shape.source_text_box_owner {
                     self.text_box_owner_indices.insert(story.clone(), owner);
                 }
+                stories.push(Some(story.clone()));
                 if let Some(body) = &shape.text_body {
                     let start = self.nodes.len();
                     self.collect_story_body(body, &story);
@@ -706,6 +711,14 @@ impl SourceRegistry {
             }
         }
         self.text_box_sources.insert(owner, children);
+        self.text_box_stories.insert(owner, stories);
+    }
+
+    /// The story of a paragraph's text box: the `drawing`-th anchored
+    /// drawing of the paragraph `owner` names, counted as layout anchors
+    /// them. `None` for a chart, a picture or no such drawing.
+    pub(crate) fn text_box_story(&self, owner: SourceNodeId, drawing: usize) -> Option<&WordStory> {
+        self.text_box_stories.get(&owner)?.get(drawing)?.as_ref()
     }
 
     fn insert(&mut self, path: WordSourcePath, paragraph: &CT_P) {

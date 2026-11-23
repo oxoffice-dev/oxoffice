@@ -52,6 +52,7 @@ use oxoffice_layout::{
 };
 
 mod drawings;
+pub(crate) use drawings::paragraph_anchors;
 mod field_format;
 mod fonts_annotations;
 mod multilingual;
@@ -345,6 +346,9 @@ pub(crate) struct SourceRegistry {
     story_owner_children: HashMap<WordStory, Vec<usize>>,
     revision_view: RevisionView,
     text_box_sources: HashMap<SourceNodeId, Vec<TextBoxSourceBinding>>,
+    /// The story of each anchored drawing of a paragraph, aligned with its
+    /// `text_box_sources`: `None` for a chart or a picture.
+    text_box_stories: HashMap<SourceNodeId, Vec<Option<WordStory>>>,
     preparation_error: Option<String>,
 }
 
