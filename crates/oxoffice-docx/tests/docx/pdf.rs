@@ -1084,8 +1084,9 @@ fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
                 for next year and the notes of the finance committee";
     let mut doc = Document::new();
     let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
-    doc.add_paragraph("Read ")
-        .add_hyperlink(text, &relationship);
+    let mut paragraph = doc.add_paragraph("Read ");
+    paragraph.add_hyperlink(text, &relationship);
+    paragraph.add_run(" before the meeting.");
     let pdf = pdf_of(&reopen(&mut doc));
     let links: Vec<Element> = pdf
         .structure()

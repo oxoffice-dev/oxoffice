@@ -254,14 +254,14 @@ fn an_internal_link_goes_to_the_first_destination_of_its_name() {
     assert_eq!(object_ref(&read, parent_tree_entry(&read, key)).0, id);
 }
 
-/// A link's rectangle on the line whose top is `top`: 60 points wide, a
+/// A link's rectangle `width` wide on the line whose top is `top`, a
 /// 14-point line.
-fn link_at(x: f64, top: f64, url: &str) -> PositionedElement {
+fn link_at(x: f64, top: f64, width: f64, url: &str) -> PositionedElement {
     PositionedElement::LinkAnnotation {
         rect: Rect {
             x,
             y: top,
-            width: 60.0,
+            width,
             height: 14.0,
         },
         url: url.to_owned(),
@@ -330,13 +330,16 @@ fn element_of_mcid(read: &Pdf, page: usize, mcid: usize) -> &Dictionary {
     read.resolve(&array[mcid]).as_dict().unwrap()
 }
 
+// The layout starts the run after a link where the link's rectangle ends,
+// so each test puts it there.
+
 #[test]
 fn a_tagged_link_holds_its_text_which_leaves_the_paragraph() {
     let layout = tagged(layout(vec![vec![
         marked(word("Read ", 72.0, 100.0)),
         marked(word("the report", 100.0, 100.0)),
-        marked(link_at(100.0, 100.0, URL)),
-        marked(word(" today", 165.0, 100.0)),
+        marked(link_at(100.0, 100.0, 60.0, URL)),
+        marked(word(" today", 160.0, 100.0)),
     ]]));
     let read = pdf(&layout);
     assert_eq!(paragraph_kids(&read), ["MCR", "Link", "MCR"]);
@@ -348,27 +351,23 @@ fn a_tagged_link_holds_its_text_which_leaves_the_paragraph() {
     let of_text = element_of_mcid(&read, 0, 1);
     assert_eq!(of_text.get(b"S").unwrap().as_name().unwrap(), b"Link");
     assert!(std::ptr::eq(of_text, *element));
-    assert_eq!(
-        element_of_mcid(&read, 0, 0)
-            .get(b"S")
-            .unwrap()
-            .as_name()
-            .unwrap(),
-        b"P"
-    );
+    for mcid in [0, 2] {
+        let element = element_of_mcid(&read, 0, mcid);
+        assert_eq!(element.get(b"S").unwrap().as_name().unwrap(), b"P");
+    }
 }
 
 #[test]
 fn a_link_over_two_runs_and_two_lines_is_one_link_element() {
     let layout = tagged(layout(vec![vec![
-        marked(word("Read", 72.0, 100.0)),
+        marked(word("Read ", 72.0, 100.0)),
         marked(word("the ", 100.0, 100.0)),
-        marked(link_at(100.0, 100.0, URL)),
+        marked(link_at(100.0, 100.0, 30.0, URL)),
         marked(word("annual", 130.0, 100.0)),
-        marked(link_at(130.0, 100.0, URL)),
+        marked(link_at(130.0, 100.0, 40.0, URL)),
         marked(word("report", 72.0, 114.0)),
-        marked(link_at(72.0, 114.0, URL)),
-        marked(word("now", 140.0, 114.0)),
+        marked(link_at(72.0, 114.0, 40.0, URL)),
+        marked(word(" now", 112.0, 114.0)),
     ]]));
     let read = pdf(&layout);
     assert_eq!(paragraph_kids(&read), ["MCR", "Link", "MCR"]);
@@ -385,17 +384,32 @@ fn a_link_over_two_runs_and_two_lines_is_one_link_element() {
 }
 
 #[test]
-fn links_to_two_targets_or_apart_in_the_text_stay_two_links() {
+fn a_subscript_inside_a_link_reads_without_a_space() {
+    let layout = tagged(layout(vec![vec![
+        marked(word("H", 100.0, 100.0)),
+        marked(run("2", Point { x: 108.0, y: 113.5 }, 7.0)),
+        marked(word("O", 112.0, 100.0)),
+        marked(link_at(100.0, 100.0, 20.0, URL)),
+    ]]));
+    let read = pdf(&layout);
+    assert_eq!(tagged_links(&read, 0)[0].1, "H2O");
+}
+
+#[test]
+fn links_side_by_side_to_two_targets_or_apart_in_the_text_stay_two_links() {
     for (second, between) in [("https://example.com/other", false), (URL, true)] {
         let mut elements = vec![
             marked(word("the report", 100.0, 100.0)),
-            marked(link_at(100.0, 100.0, URL)),
+            marked(link_at(100.0, 100.0, 60.0, URL)),
         ];
-        if between {
-            elements.push(marked(word("and", 165.0, 100.0)));
-        }
-        elements.push(marked(word("the annex", 200.0, 100.0)));
-        elements.push(marked(link_at(200.0, 100.0, second)));
+        let annex = if between {
+            elements.push(marked(word(" and ", 160.0, 100.0)));
+            200.0
+        } else {
+            160.0
+        };
+        elements.push(marked(word("the annex", annex, 100.0)));
+        elements.push(marked(link_at(annex, 100.0, 60.0, second)));
         let read = pdf(&tagged(layout(vec![elements])));
         let links = tagged_links(&read, 0);
         assert_eq!(links.len(), 2);
@@ -412,15 +426,30 @@ fn links_to_two_targets_or_apart_in_the_text_stay_two_links() {
 }
 
 #[test]
+fn links_outside_any_structure_element_stay_one_link_each() {
+    // A footer link repeated on every page: no paragraph element holds it.
+    let footer = || link_at(72.0, 760.0, 60.0, URL);
+    let layout = tagged(layout(vec![
+        vec![paragraph(vec![word("Body", 72.0, 100.0)]), footer()],
+        vec![footer()],
+    ]));
+    let read = pdf(&layout);
+    let first = tagged_links(&read, 0);
+    let second = tagged_links(&read, 1);
+    assert!(!std::ptr::eq(first[0].0, second[0].0));
+    assert_eq!(kinds(&read, first[0].0), ["OBJR"]);
+}
+
+#[test]
 fn a_run_that_starts_outside_the_link_stays_in_the_paragraph() {
     // One marked sequence with a run inside the link and one outside: its
     // identifier cannot be split, so it stays the paragraph's.
     let layout = tagged(layout(vec![vec![
         paragraph(vec![
             word("the report", 100.0, 100.0),
-            word("today", 300.0, 100.0),
+            word(" today", 160.0, 100.0),
         ]),
-        marked(link_at(100.0, 100.0, URL)),
+        marked(link_at(100.0, 100.0, 60.0, URL)),
     ]]));
     let read = pdf(&layout);
     assert_eq!(paragraph_kids(&read), ["MCR", "Link"]);

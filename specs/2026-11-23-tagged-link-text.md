@@ -31,18 +31,22 @@ holding the marked content of its text and the object reference of each of its a
 `oxoffice-pdf`; the layout's output types do not change.
 
 - **A link's text**: a marked content sequence of the same structure parent as the annotation, on the same page,
-  whose text runs all start inside the annotation's rectangle (their origin, in page coordinates, within the
-  rectangle with half a point of slack). A sequence that holds runs both inside and outside a link stays the
-  paragraph's: a marked content identifier cannot be split.
+  whose text runs all start inside the annotation's rectangle: their origin, in page coordinates, from the left edge
+  (half a point of slack) to before the right edge, where the layout starts the next run. A sequence that holds runs
+  both inside and outside a link stays the paragraph's: a marked content identifier cannot be split.
 - **One link**: consecutive annotations (in page order, then across a page break) with the same parent and the same
   target, with no other text sequence of that parent between their texts, form one link. Two adjacent hyperlinks to
-  the same target merge into one; that reads the same.
+  the same target merge into one; that reads the same. A link outside any structure element (a header or footer
+  link) stays one link per annotation.
 - **The element**: one `/Link` per link, under the paragraph where its first piece was; its kids, in reading order,
   are the marked content of its text and one `OBJR` per annotation. The parent tree gives the `/Link` element for
   those marked content identifiers and for each annotation's `StructParent`. The text's sequences leave the
   paragraph's kids, which keep the `/Link` element at the place of the first one.
-- **`/Contents`** of each annotation of a tagged link: the link's text, its pieces joined (a space between two lines
-  unless one is there), or the target when the link has no text (a linked picture).
+- **`/Contents`** of each annotation of a tagged link: the link's text, its pieces joined (a space between two of
+  its lines, told by its annotations' rectangles, unless one is there), or the target when the link has no text (a
+  linked picture).
+- The writer reads run text only when the document has a link, and looks for a link's text among the sequences of
+  its parent only.
 - Untagged output does not change.
 
 Not done here: Word cross-references (`REF`/`PAGEREF` `\h`, `HYPERLINK \l`) as links and a destination at the line

@@ -166,6 +166,8 @@ impl<'a> PreparedStructure<'a> {
         let mut fragments = Vec::new();
         let mut links = HashMap::new();
         let mut texts = Vec::new();
+        // The text of the runs is only read to find the text of links.
+        let read_texts = !annotated.is_empty();
         for (page_index, page) in pages.iter().enumerate() {
             let mut marks = Marks {
                 page_index,
@@ -176,6 +178,7 @@ impl<'a> PreparedStructure<'a> {
                 fragments: &mut fragments,
                 links: &mut links,
                 texts: &mut texts,
+                read_texts,
             };
             marks.collect(&page.elements, None, Transform::IDENTITY);
         }
@@ -707,6 +710,7 @@ struct Marks<'m> {
     fragments: &'m mut Vec<FragmentMark>,
     links: &'m mut HashMap<(usize, usize), LinkMark>,
     texts: &'m mut Vec<TextMark>,
+    read_texts: bool,
 }
 
 impl Marks<'_> {
@@ -728,6 +732,10 @@ impl Marks<'_> {
                     };
                     self.occurrences.entry(*id).or_default().push(occurrence);
                     self.next_mcid += 1;
+                    if !self.read_texts {
+                        self.collect(children, Some(*id), transform);
+                        continue;
+                    }
                     let mut text = TextMark {
                         occurrence,
                         parent: *id,
@@ -807,47 +815,58 @@ impl Marks<'_> {
 
 /// The tagged links, each with its pieces and its text. A link's text is
 /// each marked content sequence of the link's parent, on its page, whose runs
-/// all start inside its rectangle. Consecutive annotations with one parent and
-/// one target, with no other text of that parent between their texts, are
-/// one link. Only links that get an annotation are grouped.
+/// all start inside its rectangle: from its left edge (with [`LINK_SLACK`]) to
+/// before its right edge, where the next run starts. Consecutive annotations
+/// with one parent and one target, with no other text of that parent between
+/// their texts, are one link. Only links that get an annotation and sit in a
+/// structure element are grouped.
 fn group_links(
     links: &HashMap<(usize, usize), LinkMark>,
     texts: &[TextMark],
     annotated: &HashSet<(usize, usize)>,
 ) -> Vec<LinkGroup> {
-    let mut order: Vec<&(usize, usize)> =
-        links.keys().filter(|key| annotated.contains(key)).collect();
+    let mut order: Vec<&(usize, usize)> = links
+        .keys()
+        .filter(|key| annotated.contains(key) && links[key].parent.is_some())
+        .collect();
+    if order.is_empty() {
+        return Vec::new();
+    }
     order.sort_unstable();
+    let position = |mark: &MarkOccurrence| (mark.page_index, mark.mcid);
+    // The text sequences of each parent, in reading order.
+    let mut by_parent: HashMap<StructureId, Vec<usize>> = HashMap::new();
+    for (index, text) in texts.iter().enumerate() {
+        by_parent.entry(text.parent).or_default().push(index);
+    }
+    for indices in by_parent.values_mut() {
+        indices.sort_unstable_by_key(|index| position(&texts[*index].occurrence));
+    }
     let inside = |rect: &Rect, point: &Point| {
         point.x >= rect.x - LINK_SLACK
-            && point.x <= rect.x + rect.width + LINK_SLACK
+            && point.x < rect.x + rect.width - LINK_SLACK.min(rect.width / 2.0)
             && point.y >= rect.y - LINK_SLACK
             && point.y <= rect.y + rect.height + LINK_SLACK
     };
     // Each text sequence goes to the first link it lies in.
     let mut owner: HashMap<usize, (usize, usize)> = HashMap::new();
+    let mut owned: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     for key in &order {
         let link = &links[key];
-        for (index, text) in texts.iter().enumerate() {
+        let Some(candidates) = link.parent.and_then(|parent| by_parent.get(&parent)) else {
+            continue;
+        };
+        for index in candidates {
+            let text = &texts[*index];
             if text.occurrence.page_index == key.0
-                && Some(text.parent) == link.parent
-                && !owner.contains_key(&index)
+                && !owner.contains_key(index)
                 && text.origins.iter().all(|origin| inside(&link.rect, origin))
             {
-                owner.insert(index, **key);
+                owner.insert(*index, **key);
+                owned.entry(**key).or_default().push(*index);
             }
         }
     }
-    let position = |mark: &MarkOccurrence| (mark.page_index, mark.mcid);
-    let own_texts = |key: &(usize, usize)| -> Vec<usize> {
-        let mut own: Vec<usize> = owner
-            .iter()
-            .filter(|(_, link)| *link == key)
-            .map(|(index, _)| *index)
-            .collect();
-        own.sort_unstable_by_key(|index| position(&texts[*index].occurrence));
-        own
-    };
     // Where a link starts and ends among the page's marked content: its
     // text, or else the place of its annotation.
     let span = |key: &(usize, usize), own: &[usize]| {
@@ -860,23 +879,32 @@ fn group_links(
             _ => ((key.0, link.mcid_before), (key.0, link.mcid_before - 1)),
         }
     };
+    // Whether a text of `parent` that no link owns stands strictly between
+    // two places.
+    let foreign_between = |parent: StructureId, after: (usize, i32), before: (usize, i32)| {
+        let Some(indices) = by_parent.get(&parent) else {
+            return false;
+        };
+        let from = indices.partition_point(|index| position(&texts[*index].occurrence) <= after);
+        indices[from..]
+            .iter()
+            .take_while(|index| position(&texts[**index].occurrence) < before)
+            .any(|index| !owner.contains_key(index))
+    };
     let mut groups: Vec<LinkGroup> = Vec::new();
     let mut texts_of: Vec<Vec<usize>> = Vec::new();
     let mut last: Option<((usize, usize), (usize, i32))> = None;
     for key in order {
         let link = &links[key];
-        let own = own_texts(key);
+        let own = owned.remove(key).unwrap_or_default();
         let (start, end) = span(key, &own);
         let joins = last.is_some_and(|(previous, previous_end)| {
             let before = &links[&previous];
             before.parent == link.parent
                 && before.url == link.url
-                && !texts.iter().enumerate().any(|(index, text)| {
-                    Some(text.parent) == link.parent
-                        && !owner.contains_key(&index)
-                        && previous_end < position(&text.occurrence)
-                        && position(&text.occurrence) < start
-                })
+                && link
+                    .parent
+                    .is_some_and(|parent| !foreign_between(parent, previous_end, start))
         });
         if !joins {
             groups.push(LinkGroup::default());
@@ -888,20 +916,22 @@ fn group_links(
         last = Some((*key, end));
     }
     for (group, own) in groups.iter_mut().zip(texts_of) {
-        let mut previous: Option<&TextMark> = None;
+        // The top of the line of a text: its link's rectangle.
+        let line = |index: usize| links[&owner[&index]].rect.y;
+        let mut previous: Option<usize> = None;
         for index in own {
             let text = &texts[index];
             group.marks.push(text.occurrence);
             // Two lines of one link read with a space between them.
             if let Some(previous) = previous
-                && (previous.origins[0].y - text.origins[0].y).abs() > LINK_SLACK
-                && !previous.text.ends_with(char::is_whitespace)
+                && (line(previous) - line(index)).abs() > LINK_SLACK
+                && !texts[previous].text.ends_with(char::is_whitespace)
                 && !text.text.starts_with(char::is_whitespace)
             {
                 group.text.push(' ');
             }
             group.text.push_str(&text.text);
-            previous = Some(text);
+            previous = Some(index);
         }
     }
     groups
