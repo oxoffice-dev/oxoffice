@@ -7,7 +7,7 @@ use oxoffice_layout::{
     PositionedElement, Rect, Stroke, TextDirection, TextScript,
 };
 
-use crate::support::{FONT, Pdf, layout, run};
+use crate::support::{FONT, Pdf, contains, layout, run};
 
 const ORIGIN: Point = Point { x: 72.0, y: 72.0 };
 
@@ -118,10 +118,12 @@ fn resource_names(read: &Pdf, kind: &[u8]) -> Vec<Vec<u8>> {
         .unwrap_or_default()
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+/// How many times `needle` occurs in `haystack`.
+fn occurrences(haystack: &[u8], needle: &[u8]) -> usize {
     haystack
         .windows(needle.len())
-        .any(|window| window == needle)
+        .filter(|window| *window == needle)
+        .count()
 }
 
 #[test]
@@ -185,11 +187,16 @@ fn images_and_gradients_after_runs_links_and_groups_are_each_drawn_once() {
         picture(),
     ]])));
     let content = read.page_content(0);
-    for image in resource_names(&read, b"XObject") {
+    let images = resource_names(&read, b"XObject");
+    assert_eq!(images.len(), 2, "{images:?}");
+    for image in images {
         let drawn = [b"/".as_slice(), &image, b" Do"].concat();
-        assert!(contains(&content, &drawn), "{image:?} is not drawn");
+        assert_eq!(occurrences(&content, &drawn), 1, "{image:?}");
     }
-    assert_eq!(resource_names(&read, b"XObject").len(), 2);
-    assert_eq!(resource_names(&read, b"Pattern").len(), 2);
-    assert!(contains(&content, b" scn") && contains(&content, b" SCN"));
+    let patterns = resource_names(&read, b"Pattern");
+    assert_eq!(patterns.len(), 2, "{patterns:?}");
+    let fill = [b"/".as_slice(), &patterns[0], b" scn"].concat();
+    let stroke = [b"/".as_slice(), &patterns[1], b" SCN"].concat();
+    assert_eq!(occurrences(&content, &fill), 1);
+    assert_eq!(occurrences(&content, &stroke), 1);
 }
