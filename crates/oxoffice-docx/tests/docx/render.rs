@@ -348,12 +348,16 @@ fn check_tables(
         );
         return;
     }
+    // A table that draws no text cannot be placed: it is not compared.
     let short: Vec<String> = drawn
         .iter()
         .zip(&wanted)
         .enumerate()
-        .filter(|(_, (drawn, wanted))| drawn < wanted)
-        .map(|(index, (drawn, wanted))| format!("table {} ({drawn} of {wanted})", index + 1))
+        .filter_map(|(index, (drawn, wanted))| {
+            drawn
+                .filter(|drawn| drawn < wanted)
+                .map(|drawn| format!("table {} ({drawn} of {wanted})", index + 1))
+        })
         .collect();
     if !short.is_empty() {
         find(
@@ -432,34 +436,51 @@ fn check_dropped(diagnostics: &[String], find: &mut impl FnMut(Check, usize, Str
 
 // ---- The package around the render ----
 
-/// The parts of a Word package the checks read: which headers and footers
-/// a reader sees, which pictures the shown stories hold, and the borders of
-/// the table styles.
-/// The text of each outermost field result of a story part: the content of
-/// a simple field, or what stands between a complex field's `separate` and
-/// `end` characters, a nested field's result included.
-fn field_results(xml: &str) -> Vec<String> {
-    #[derive(PartialEq)]
-    enum Part {
-        Code,
-        Result,
+/// The fields whose results the render computes: page numbers and counts,
+/// section numbers, page references and sequence numbers. Their cached
+/// results are not what the page draws.
+const COMPUTED_FIELDS: [&str; 6] = [
+    "PAGE",
+    "NUMPAGES",
+    "SECTION",
+    "SECTIONPAGES",
+    "PAGEREF",
+    "SEQ",
+];
+
+/// Each field of a story part with its result: its code (a simple field's
+/// `w:instr`, a complex field's instruction text) and the text of its
+/// result, a nested field's result going to the nested field.
+fn field_results(xml: &str) -> Vec<(String, String)> {
+    struct Open {
+        code: String,
+        result: Option<String>,
+        simple: bool,
     }
-    let mut fields: Vec<Part> = Vec::new();
-    let mut simple = 0usize;
-    let mut in_text = false;
-    let mut results = Vec::new();
-    let mut current = String::new();
+    let mut open: Vec<Open> = Vec::new();
+    let mut done = Vec::new();
+    let mut inside: Option<&str> = None;
     let mut rest = xml;
-    while let Some(open) = rest.find('<') {
-        let in_result = simple > 0 || fields.contains(&Part::Result);
-        if in_text && in_result {
-            current.push_str(&rest[..open]);
+    while let Some(start) = rest.find('<') {
+        let text = &rest[..start];
+        match inside {
+            Some("w:t") => {
+                if let Some(result) = open.last_mut().and_then(|field| field.result.as_mut()) {
+                    result.push_str(text);
+                }
+            }
+            Some("w:instrText") => {
+                if let Some(field) = open.last_mut().filter(|field| field.result.is_none()) {
+                    field.code.push_str(text);
+                }
+            }
+            _ => {}
         }
-        let Some(length) = rest[open..].find('>') else {
+        let Some(length) = rest[start..].find('>') else {
             break;
         };
-        let tag = &rest[open + 1..open + length];
-        rest = &rest[open + length + 1..];
+        let tag = &rest[start + 1..start + length];
+        rest = &rest[start + length + 1..];
         let closing = tag.starts_with('/');
         let empty = tag.ends_with('/');
         let name = tag
@@ -467,38 +488,62 @@ fn field_results(xml: &str) -> Vec<String> {
             .split([' ', '/', '\t', '\n', '\r'])
             .next()
             .unwrap_or_default();
+        let finish = |open: &mut Vec<Open>, done: &mut Vec<(String, String)>| {
+            if let Some(field) = open.pop() {
+                done.push((
+                    field.code.trim().to_owned(),
+                    field.result.unwrap_or_default(),
+                ));
+            }
+        };
         match name {
-            "w:t" => in_text = !closing && !empty,
-            "w:tab" | "w:br" | "w:cr" | "w:p" if in_result => current.push(' '),
-            "w:fldSimple" if !empty => {
-                if closing {
-                    simple = simple.saturating_sub(1);
+            "w:t" | "w:instrText" => {
+                inside = (!closing && !empty).then_some(if name == "w:t" {
+                    "w:t"
                 } else {
-                    simple += 1;
+                    "w:instrText"
+                });
+            }
+            "w:tab" | "w:br" | "w:cr" | "w:p" => {
+                if let Some(result) = open.last_mut().and_then(|field| field.result.as_mut()) {
+                    result.push(' ');
                 }
             }
+            "w:fldSimple" if closing => {
+                if open.last().is_some_and(|field| field.simple) {
+                    finish(&mut open, &mut done);
+                }
+            }
+            "w:fldSimple" if !empty => open.push(Open {
+                code: attribute(tag, "w:instr").unwrap_or_default().to_owned(),
+                result: Some(String::new()),
+                simple: true,
+            }),
             "w:fldChar" => match attribute(tag, "w:fldCharType") {
-                Some("begin") => fields.push(Part::Code),
+                Some("begin") => open.push(Open {
+                    code: String::new(),
+                    result: None,
+                    simple: false,
+                }),
                 Some("separate") => {
-                    if let Some(part) = fields.last_mut() {
-                        *part = Part::Result;
+                    if let Some(field) = open.last_mut().filter(|field| !field.simple) {
+                        field.result = Some(String::new());
                     }
                 }
-                Some("end") => {
-                    fields.pop();
+                Some("end") if open.last().is_some_and(|field| !field.simple) => {
+                    finish(&mut open, &mut done);
                 }
                 _ => {}
             },
             _ => {}
         }
-        let still = simple > 0 || fields.contains(&Part::Result);
-        if in_result && !still && !current.is_empty() {
-            results.push(std::mem::take(&mut current));
-        }
     }
-    results
+    done
 }
 
+/// The parts of a Word package the checks read: which headers and footers
+/// a reader sees, which pictures the shown stories hold, and the borders of
+/// the table styles.
 struct Package {
     parts: BTreeMap<String, String>,
     media: BTreeMap<String, Vec<u8>>,
@@ -606,16 +651,26 @@ impl Package {
         stories
     }
 
-    /// The numbers the field results of the shown stories hold, with how
-    /// often: in digits, or in Roman numerals as a page number field writes
-    /// front matter.
+    /// The numbers the results of the computed fields of the shown stories
+    /// hold (see [`COMPUTED_FIELDS`]), with how often: in digits, or in Roman
+    /// numerals as a page number field writes front matter.
     fn field_result_numbers(&self) -> HashMap<String, usize> {
         let mut numbers = HashMap::new();
         for story in self.shown_stories() {
             let Some(xml) = self.parts.get(&story) else {
                 continue;
             };
-            for result in field_results(xml) {
+            // The render draws the choice of an alternate content, never its
+            // fallback, which repeats the fields of a text box.
+            let xml = without(xml, "mc:Fallback");
+            for (code, result) in field_results(&xml) {
+                let name = code.split_whitespace().next().unwrap_or_default();
+                if !COMPUTED_FIELDS
+                    .iter()
+                    .any(|computed| computed.eq_ignore_ascii_case(name))
+                {
+                    continue;
+                }
                 for word in all_words(&result) {
                     let digits = word.chars().all(|ch| ch.is_ascii_digit());
                     let roman = word.chars().all(|ch| "ivxlcdmIVXLCDM".contains(ch));
@@ -859,21 +914,40 @@ fn field_results_are_read_from_simple_complex_and_nested_fields() {
         r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
         "<w:r><w:t>see</w:t></w:r><w:r><w:tab/></w:r>",
         r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-        "<w:r><w:instrText> PAGEREF total </w:instrText></w:r>",
+        "<w:r><w:instrText xml:space=\"preserve\"> PAGEREF total </w:instrText></w:r>",
         r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
         "<w:r><w:t>12</w:t></w:r>",
         r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
         r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
         "<w:r><w:t>1402</w:t></w:r></w:p>",
     );
-    assert_eq!(field_results(xml), ["7", "see 12"]);
+    assert_eq!(
+        field_results(xml),
+        [
+            ("PAGE".to_owned(), "7".to_owned()),
+            ("PAGEREF total".to_owned(), "12".to_owned()),
+            ("REF total".to_owned(), "see ".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_field_in_a_text_box_counts_once_not_again_in_its_fallback() {
+    let field = r#"<w:p><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#;
+    let mut doc = crate::support::doc_with_body(&format!(
+        "<w:p>{}</w:p>",
+        crate::support::text_box_run(1, field)
+    ));
+    let package = Package::read(&doc.to_bytes().expect("document saves"));
+    assert_eq!(package.field_result_numbers().get("1"), Some(&1));
 }
 
 #[test]
 fn a_number_outside_fields_must_be_drawn_and_one_in_a_field_need_not() {
     let mut doc = crate::support::doc_with_body(concat!(
         "<w:p><w:r><w:t xml:space=\"preserve\">Revenue 2024 was 1402 on page </w:t></w:r>",
-        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>99</w:t></w:r></w:fldSimple>"#,
+        r#"<w:fldSimple w:instr=" MERGEFIELD Units "><w:r><w:t> 315</w:t></w:r></w:fldSimple></w:p>"#,
     ));
     let package = Package::read(&doc.to_bytes().expect("document saves"));
     let findings = |line: &str| {
@@ -886,10 +960,16 @@ fn a_number_outside_fields_must_be_drawn_and_one_in_a_field_need_not() {
         );
         found
     };
-    assert!(findings("Revenue 2024 was 1402 on page 1").is_empty());
-    let found = findings("Revenue 2024 was 1420 on page 1");
+    assert!(findings("Revenue 2024 was 1402 on page 1 315").is_empty());
+    // A number of plain text, or of a field the render does not compute,
+    // must be drawn.
+    let found = findings("Revenue 2024 was 1420 on page 1 351");
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].1.contains("1402 (0 of 1)"), "{}", found[0].1);
+    assert!(
+        found[0].1.contains("1402 (0 of 1)") && found[0].1.contains("315 (0 of 1)"),
+        "{}",
+        found[0].1
+    );
 }
 
 /// A piece of text as the PDF reader reads it back.
@@ -963,7 +1043,7 @@ fn a_bordered_table_needs_a_rule_a_row_and_a_borderless_one_none() {
         // above each row and one below the last.
         let rules = if wanted == 0 { 0 } else { wanted + 1 };
         assert_eq!(horizontal_rules(&pdf, 0), rules, "{border} borders");
-        assert_eq!(table_rules(&pdf), [rules], "{border} borders");
+        assert_eq!(table_rules(&pdf), [Some(rules)], "{border} borders");
     }
 }
 
@@ -1000,7 +1080,7 @@ fn a_table_that_lost_its_borders_is_caught_though_another_draws_more() {
     let drawn = draw(&tables(&[("none", 4), ("single", 8)]))
         .expect("the tables draw")
         .pdf;
-    assert_eq!(table_rules(&drawn), [0, 9]);
+    assert_eq!(table_rules(&drawn), [Some(0), Some(9)]);
     let mut found = Vec::new();
     check_tables(&wanted, &package, &drawn, &mut |check, _, why| {
         found.push((check, why))
@@ -1010,6 +1090,110 @@ fn a_table_that_lost_its_borders_is_caught_though_another_draws_more() {
     let mut found = Vec::new();
     let own = draw(&wanted).expect("the tables draw").pdf;
     check_tables(&wanted, &package, &own, &mut |check, _, why| {
+        found.push((check, why))
+    });
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn text_beside_a_table_does_not_hide_its_borders() {
+    use std::sync::Arc;
+
+    use oxoffice_layout::{
+        Color, DocumentStructure, FontData, FontId, GlyphRun, LayoutResult, PageFrame, Point,
+        PositionedElement, StructureId, StructureNode, StructureRole,
+    };
+    let id = |value| StructureId::new(value).expect("an identity");
+    let node = |value, role, children: Vec<u32>| StructureNode {
+        id: id(value),
+        role,
+        children: children.into_iter().map(id).collect(),
+        alternate_text: None,
+    };
+    let text = |text: &str, x: f64, y: f64, structure: u32| PositionedElement::MarkedContent {
+        structure: Some(id(structure)),
+        children: vec![PositionedElement::Text(GlyphRun {
+            origin: Point { x, y },
+            font_id: FontId(1),
+            font_size: 11.0,
+            glyph_ids: (36..).take(text.chars().count()).collect(),
+            advances: vec![6.0; text.chars().count()],
+            text: text.to_owned(),
+            source: None,
+            color: Color::BLACK,
+            bold: false,
+            italic: false,
+            field_kind: None,
+            field_source: None,
+            note: None,
+            note_reference_source: None,
+            tab_aligned: None,
+        })],
+    };
+    let rule = |y: f64| PositionedElement::Line {
+        start: Point { x: 72.0, y },
+        end: Point { x: 222.0, y },
+        width: 0.5,
+        color: Color::BLACK,
+        dash_pattern: None,
+    };
+    // A table with a top and a bottom border in the first column; the line
+    // of the second column stands between its top border and its first row.
+    let page = PageFrame::new(
+        1,
+        612.0,
+        792.0,
+        vec![
+            rule(100.0),
+            text("Second column", 320.0, 112.0, 5),
+            text("Row 1", 76.0, 125.0, 4),
+            text("Row 2", 76.0, 150.0, 4),
+            text("Row 3", 76.0, 175.0, 4),
+            rule(185.0),
+        ],
+    );
+    let font = FontData {
+        id: FontId(1),
+        family: "Liberation Sans".to_owned(),
+        data: Arc::from(oxoffice_layout::bundled_fonts::LIBERATION_SANS_REGULAR),
+        face_index: 0,
+        bold: false,
+        italic: false,
+        variations: Vec::new(),
+        synthetic_bold: false,
+        synthetic_italic: false,
+    };
+    let mut layout = LayoutResult::new(vec![Arc::new(page)], vec![font], None, Vec::new());
+    layout.structure = Some(DocumentStructure {
+        root: id(1),
+        nodes: vec![
+            node(1, StructureRole::Document, vec![2, 5]),
+            node(2, StructureRole::Table, vec![3]),
+            node(3, StructureRole::TableRow, vec![4]),
+            node(4, StructureRole::TableCell, Vec::new()),
+            node(5, StructureRole::Paragraph, Vec::new()),
+        ],
+    });
+    let pdf = Pdf::read(&oxoffice_pdf::render_to_pdf(&layout));
+    assert_eq!(table_rules(&pdf), [Some(2)]);
+}
+
+#[test]
+fn a_table_without_text_is_not_compared() {
+    let rows =
+        "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc></w:tr>"
+            .repeat(3);
+    let mut doc = crate::support::doc_with_body(&format!(
+        "<w:tbl><w:tblPr><w:tblBorders>\
+         <w:top w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/>\
+         <w:insideH w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>{rows}</w:tbl><w:p/>"
+    ));
+    let package = Package::read(&doc.to_bytes().expect("document saves"));
+    let pdf = draw(&doc).expect("the table draws").pdf;
+    assert_eq!(table_rules(&pdf), [None]);
+    let mut found = Vec::new();
+    check_tables(&doc, &package, &pdf, &mut |check, _, why| {
         found.push((check, why))
     });
     assert!(found.is_empty(), "{found:?}");

@@ -327,17 +327,21 @@ pub fn drawn_pictures(pdf: &Pdf) -> HashSet<String> {
 /// underline under a short word is not counted.
 pub const RULE: f64 = 36.0;
 
-/// How many horizontal rules a page draws: see [`horizontal_rule_heights`].
+/// How many horizontal rules a page draws: see [`horizontal_rule_spans`].
 pub fn horizontal_rules(pdf: &Pdf, page: usize) -> usize {
-    horizontal_rule_heights(pdf, page).len()
+    horizontal_rule_spans(pdf, page).len()
 }
 
-/// The height of each horizontal rule a page draws, in default user space:
+/// A horizontal rule: its height, its left and its right end.
+pub type Rule = (f64, f64, f64);
+
+/// Each horizontal rule a page draws, as its height, left and right ends in
+/// default user space:
 /// its stroked horizontal segments and rectangle edges, and its thin filled
 /// rectangles, joined where they meet on one line (a table border is drawn
 /// one cell edge at a time), and kept when the joined rule is at least
 /// [`RULE`] long.
-pub fn horizontal_rule_heights(pdf: &Pdf, page: usize) -> Vec<f64> {
+pub fn horizontal_rule_spans(pdf: &Pdf, page: usize) -> Vec<Rule> {
     let content = pdf.doc.get_page_content(pdf.page_ids()[page]);
     let operations = Content::decode(&content)
         .expect("content stream decodes")
@@ -420,20 +424,22 @@ pub fn horizontal_rule_heights(pdf: &Pdf, page: usize) -> Vec<f64> {
     rules
         .iter()
         .filter(|(_, left, right)| right - left >= RULE)
-        .map(|(y, _, _)| *y)
+        .copied()
         .collect()
 }
 
 /// How many horizontal rules each table of a tagged PDF draws, its tables
-/// in reading order, a nested table counted with the table around it. A
-/// table's rules are those of each page it draws text on, between the text
-/// drawn just above its own and the text drawn just below: so the borders of
-/// its rows without text count, and those of another table do not while
-/// text stands between the two.
-pub fn table_rules(pdf: &Pdf) -> Vec<usize> {
+/// in reading order, a nested table counted with the table around it, or
+/// `None` for a table that draws no text, which nothing places on its page.
+/// A table's rules are those of each page it draws text on, across its text
+/// and between the text drawn just above it and just below it, of the text
+/// across it: so the borders of its rows without text count, those of a
+/// table beside it do not, and those of a table above or below it only when
+/// no text stands between the two.
+pub fn table_rules(pdf: &Pdf) -> Vec<Option<usize>> {
     let elements = pdf.structure();
-    let pages: Vec<(Vec<Drawn>, Vec<f64>)> = (0..pdf.page_count())
-        .map(|page| (pdf.drawn(page), horizontal_rule_heights(pdf, page)))
+    let pages: Vec<(Vec<Drawn>, Vec<Rule>)> = (0..pdf.page_count())
+        .map(|page| (pdf.drawn(page), horizontal_rule_spans(pdf, page)))
         .collect();
     let mut counts = Vec::new();
     let mut index = 0;
@@ -449,26 +455,39 @@ pub fn table_rules(pdf: &Pdf) -> Vec<usize> {
             own.extend(elements[end].3.iter().copied());
             end += 1;
         }
-        let mut count = 0;
+        let mut count = None;
         for (page, (drawn, rules)) in pages.iter().enumerate() {
             let (inside, outside): (Vec<&Drawn>, Vec<&Drawn>) = drawn
                 .iter()
                 .partition(|piece| piece.mcid.is_some_and(|mcid| own.contains(&(page, mcid))));
-            let Some(top) = inside.iter().map(|piece| piece.y).reduce(f64::max) else {
+            let Some(first) = inside.first() else {
                 continue;
             };
-            let bottom = inside.iter().map(|piece| piece.y).fold(top, f64::min);
-            let above = outside
+            let (mut top, mut bottom) = (first.y, first.y);
+            let (mut left, mut right) = (first.x, first.end);
+            for piece in &inside {
+                top = top.max(piece.y);
+                bottom = bottom.min(piece.y);
+                left = left.min(piece.x);
+                right = right.max(piece.end);
+            }
+            let across = |from: f64, to: f64| from < right && to > left;
+            let heights = outside
                 .iter()
-                .map(|piece| piece.y)
+                .filter(|piece| across(piece.x, piece.end))
+                .map(|piece| piece.y);
+            let above = heights
+                .clone()
                 .filter(|y| *y > top)
                 .fold(f64::INFINITY, f64::min);
-            let below = outside
-                .iter()
-                .map(|piece| piece.y)
+            let below = heights
                 .filter(|y| *y < bottom)
                 .fold(f64::NEG_INFINITY, f64::max);
-            count += rules.iter().filter(|y| below < **y && **y < above).count();
+            let drawn = rules
+                .iter()
+                .filter(|(y, from, to)| below < *y && *y < above && across(*from, *to))
+                .count();
+            *count.get_or_insert(0) += drawn;
         }
         counts.push(count);
         index = end;
