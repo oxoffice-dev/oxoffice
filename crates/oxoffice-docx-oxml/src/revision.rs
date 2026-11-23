@@ -2356,6 +2356,31 @@ fn optional_word_attribute(
 mod tests {
     use super::*;
 
+    #[test]
+    fn an_inserted_ruby_in_a_run_holds_its_base_runs() {
+        let xml = format!(
+            concat!(
+                r#"<w:document xmlns:w="{w}"><w:body><w:p>"#,
+                r#"<w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:ruby>"#,
+                r#"<w:rt><w:r><w:t>grnd</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>Ground</w:t></w:r>"#,
+                r#"</w:rubyBase></w:ruby></w:r></w:ins></w:p></w:body></w:document>"#,
+            ),
+            w = crate::namespace::W_NS,
+        );
+        let document = crate::CT_Document::from_xml(xml.as_bytes()).unwrap();
+        let Some(crate::document::BodyContent::Paragraph(paragraph)) =
+            document.body.content.first()
+        else {
+            panic!("one paragraph");
+        };
+        let revision = &paragraph.revisions.first().expect("one revision").2;
+        let RevisionContent::Runs(runs) = revision.content() else {
+            panic!("the insertion holds runs");
+        };
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text(), "Ground");
+    }
+
     /// The revision of a one-paragraph body whose root binds `x` to `uri`.
     fn revision(uri: &str, choice: &str) -> CT_Revision {
         let xml = format!(
