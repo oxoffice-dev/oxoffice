@@ -2030,6 +2030,49 @@ fn plain_paragraph(text: &str) -> String {
     format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
 }
 
+/// Check that a redline's part XML writes the bookmark `name` both versions
+/// hold as Word's Reject All keeps it: its start in an inserted paragraph,
+/// its end in a deleted one after it, or, for a point, both in the inserted
+/// paragraph.
+fn assert_shared_bookmark_layout(xml: &str, name: &str, point: bool) {
+    let paragraphs = xml.split("</w:p>").collect::<Vec<_>>();
+    // The revision marks on a paragraph's mark.
+    let marked = |paragraph: &str, kind: &str| {
+        paragraph.rfind("<w:pPr").is_some_and(|at| {
+            paragraph[at..at + paragraph[at..].find("</w:pPr>").unwrap()]
+                .contains(&format!("<w:{kind} "))
+        })
+    };
+    let named = format!(r#"w:name="{name}""#);
+    let start = paragraphs
+        .iter()
+        .position(|paragraph| paragraph.contains(&named))
+        .unwrap_or_else(|| panic!("no start of {name}: {xml}"));
+    let tag = &paragraphs[start][..paragraphs[start].find(&named).unwrap()];
+    let tag = &tag[tag.rfind("<w:bookmarkStart").unwrap()..];
+    let id = tag[tag.find(r#"w:id=""#).unwrap() + 6..]
+        .split('"')
+        .next()
+        .unwrap();
+    let end = paragraphs
+        .iter()
+        .position(|paragraph| paragraph.contains(&format!(r#"<w:bookmarkEnd w:id="{id}"/>"#)))
+        .unwrap_or_else(|| panic!("no end of {name}: {xml}"));
+    assert!(marked(paragraphs[start], "ins"), "{name} starts in: {xml}");
+    if point {
+        assert_eq!(end, start, "{name} is a point: {xml}");
+    } else {
+        // A story's last paragraph keeps its mark, unmarked: its deleted
+        // content holds the end then.
+        let ending = paragraphs[end];
+        assert!(end > start, "{name} ends after the insertion: {xml}");
+        assert!(
+            !marked(ending, "ins") && (marked(ending, "del") || ending.contains("<w:del ")),
+            "{name} ends in: {xml}"
+        );
+    }
+}
+
 /// The body index where each bookmark starts, by name.
 fn bookmark_starts(doc: &Document) -> Vec<(String, usize)> {
     doc.bookmarks()
@@ -2076,6 +2119,7 @@ fn a_heading_that_keeps_its_bookmark_and_gains_another_is_replaced_whole() {
         ["Added", "Kept"],
         "each bookmark is written once"
     );
+    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "Kept", false);
     let copy = accepted(&mut doc);
     assert_eq!(texts(&copy), texts(&edited));
     assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
@@ -2245,6 +2289,7 @@ fn a_header_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
         part_bookmark_counts(&mut doc, "header1.xml", &names),
         [1, 1]
     );
+    assert_shared_bookmark_layout(&part_xml(&mut doc, "header1.xml"), "Kept", false);
     let mut copy = accepted(&mut doc);
     assert_eq!(copy.header_text(), edited.header_text());
     assert_eq!(
@@ -2274,6 +2319,7 @@ fn a_footnote_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() 
         part_bookmark_counts(&mut doc, "footnotes.xml", &names),
         [1, 1]
     );
+    assert_shared_bookmark_layout(&part_xml(&mut doc, "footnotes.xml"), "Kept", false);
     let mut copy = accepted(&mut doc);
     assert_eq!(story_texts(&copy), story_texts(&edited));
     assert_eq!(
@@ -2451,6 +2497,97 @@ fn a_bookmark_ending_in_a_replaced_paragraph_still_covers_it_on_rejection() {
     let copy = rejected(&mut doc);
     assert_eq!(texts(&copy), texts(&original));
     assert_eq!(span(&copy), span(&original));
+}
+
+#[test]
+fn a_heading_that_keeps_its_point_bookmark_and_gains_another_is_compared() {
+    // Google writes its heading bookmarks as points before the text.
+    let heading = |added: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{added}<w:bookmarkStart w:id="1" w:name="_hjerlw5ntnls"/><w:bookmarkEnd w:id="1"/><w:r><w:t>Heading</w:t></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = heading(r#"<w:bookmarkStart w:id="2" w:name="_Toc2"/><w:bookmarkEnd w:id="2"/>"#);
+    let mut doc = redline(heading(""), &edited);
+    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "_hjerlw5ntnls", true);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&heading("")));
+    assert_eq!(bookmark_starts(&copy), [("_hjerlw5ntnls".to_owned(), 1)]);
+}
+
+#[test]
+fn a_point_bookmark_both_versions_hold_after_text_in_a_replaced_paragraph_is_refused() {
+    // Rejecting would leave it at the start of the restored paragraph, and
+    // its position is all a point has.
+    let paragraph = |added: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p>{added}<w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:bookmarkStart w:id="1" w:name="B"/><w:bookmarkEnd w:id="1"/><w:r><w:t>world</w:t></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited =
+        paragraph(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
+    let error = paragraph("")
+        .compare(&edited, AUTHOR, DATE)
+        .expect_err("the point cannot be kept after the text");
+    assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
+#[test]
+fn a_bookmark_both_versions_hold_that_would_cross_a_picture_is_refused() {
+    // The end after a line break and before the paragraph's text: accepting
+    // the deletion would move it after all of it, across no counted text
+    // but the break.
+    let paragraph = |added: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p>{added}<w:bookmarkStart w:id="1" w:name="B"/><w:r><w:br/></w:r><w:bookmarkEnd w:id="1"/><w:r><w:sym w:font="Symbol" w:char="F0B7"/></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited =
+        paragraph(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
+    let error = paragraph("")
+        .compare(&edited, AUTHOR, DATE)
+        .expect_err("the end cannot be kept before the symbol");
+    assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
+#[test]
+fn a_rewritten_heading_that_keeps_its_bookmark_goes_before_the_deletion_that_held_it() {
+    // A paragraph inserted before the heading takes its place in the pair,
+    // and the rewritten heading is inserted after the deletion: the
+    // comparison moves it before that deletion, so that the bookmark's start
+    // lands in it.
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}",
+            plain_paragraph("One"),
+            heading_with("Future work", &[(1, "Kept")]),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}",
+        plain_paragraph("One"),
+        plain_paragraph("Limitations"),
+        heading_with("Future work, revised", &[(1, "Kept")]),
+        plain_paragraph("Two")
+    ));
+    let mut doc = redline(original(), &edited);
+    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "Kept", false);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 2)]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original()));
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
 }
 
 #[test]

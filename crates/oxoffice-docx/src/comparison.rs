@@ -1095,7 +1095,7 @@ impl Document {
             {
                 return Err(Error::Other(format!(
                     "comparison {outcome} does not keep each bookmark both inputs hold once over the same text: \
-                     a paragraph replaced whole holds one that starts or ends inside its text"
+                     the paragraphs it replaces whole cannot carry one of them where it sits"
                 )));
             }
             Ok((

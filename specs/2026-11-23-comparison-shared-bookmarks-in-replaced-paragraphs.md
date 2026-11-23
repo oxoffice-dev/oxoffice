@@ -28,8 +28,11 @@ scope: docx
 - Rejecting leaves such a start at the restored paragraph's start; accepting leaves such an end just after the inserted
   paragraph's mark, as Word does. The text the bookmark covers does not change.
 - The postconditions accept that, and only that: for those bookmarks, each resolution holds each once under its name
-  and over the same text as the version it gives (`bookmark_coverage`), and the stories compare exactly without them.
-- Still refused, deliberately: a shared bookmark that starts or ends **inside** the replaced paragraph's text (no layout
+  and over the same text as the version it gives, after the same text of its paragraph (`bookmark_coverage`: a point
+  has no other position; a line break, picture, symbol or note reference counts as text there, so that a marker cannot
+  move across one unseen), and the stories compare exactly without them.
+- Still refused, deliberately: a shared bookmark that starts or ends **inside** the replaced paragraph's text, a point
+  after some of it included (no layout
   keeps it there through both resolutions), one under another id, or nested in a hyperlink or content control. The
   limitation `docx-compare-bookmark-change` is narrowed to these.
 - Not done: tracking bookmark changes (no markup exists), moving one-sided bookmarks (they go with their paragraph's

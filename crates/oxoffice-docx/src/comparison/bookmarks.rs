@@ -494,12 +494,15 @@ pub(super) fn zero_width_bookmark_ids(
     Ok(points)
 }
 
-/// The text each of these bookmarks covers in `document`, in the stories the
-/// comparison checks: the `w:t` and `w:tab` it holds, and a line feed for
-/// each paragraph mark, without a last one. `None` for a bookmark whose end
-/// comes first or is missing. Whole paragraphs that a comparison deletes and
-/// inserts move a shared bookmark's start or end to a paragraph edge (see
-/// `place_shared_bookmarks`); the text it covers must not change.
+/// Where each of these bookmarks sits in `document`, in the stories the
+/// comparison checks: the text of its paragraph before its start, then the
+/// text it covers. Text is the decoded `w:t`, `w:tab` as a tab, `w:br` and
+/// `w:cr` as a line feed, a drawing, symbol, hyphen or note reference as an
+/// object mark, and a line feed for each paragraph mark the bookmark covers,
+/// without a last one. `None` for a bookmark whose end comes first or is
+/// missing. Whole paragraphs that a comparison deletes and inserts move a
+/// shared bookmark's start or end to a paragraph edge (see
+/// `place_shared_bookmarks`); where it sits must not change.
 pub(super) fn bookmark_coverage(
     document: &Document,
     ids: &HashSet<i32>,
@@ -510,7 +513,8 @@ pub(super) fn bookmark_coverage(
             continue;
         };
         let tree = crate::revision::XmlTree::parse(xml)?;
-        // (position, event): 0 start, 1 end, 2 text, 3 paragraph mark.
+        // (position, event): 0 start, 1 end, 2 text, 3 paragraph mark,
+        // 4 paragraph opening.
         let mut events: Vec<(usize, u8, usize, Option<i32>)> = Vec::new();
         for (index, node) in tree.elements.iter().enumerate() {
             if !node.word || in_fallback(&tree, index) {
@@ -527,23 +531,32 @@ pub(super) fn bookmark_coverage(
                         events.push((node.start, kind, index, id));
                     }
                 }
-                "t" | "tab"
+                "t" | "tab" | "br" | "cr" | "drawing" | "pict" | "object" | "sym"
+                | "noBreakHyphen" | "softHyphen" | "footnoteReference" | "endnoteReference"
                     if node
                         .parent
                         .is_some_and(|parent| tree.elements[parent].local == "r") =>
                 {
                     events.push((node.start, 2, index, None))
                 }
-                "p" => events.push((node.close_start, 3, index, None)),
+                "p" => {
+                    events.push((node.start, 4, index, None));
+                    events.push((node.close_start, 3, index, None));
+                }
                 _ => {}
             }
         }
         events.sort_by_key(|event| event.0);
         let mut open: HashMap<i32, String> = HashMap::new();
+        // The text before here in each paragraph open around here.
+        let mut paragraphs: Vec<String> = Vec::new();
         for (_, kind, index, id) in events {
             match (kind, id) {
                 (0, Some(id)) => {
-                    if covered.contains_key(&id) || open.insert(id, String::new()).is_some() {
+                    let before = paragraphs.last().cloned().unwrap_or_default();
+                    if covered.contains_key(&id)
+                        || open.insert(id, format!("{before}\u{1}")).is_some()
+                    {
                         covered.insert(id, None);
                     }
                 }
@@ -557,22 +570,29 @@ pub(super) fn bookmark_coverage(
                 }
                 (2, _) => {
                     let node = &tree.elements[index];
-                    let text = if node.local == "tab" {
-                        "\t".to_owned()
-                    } else if node.empty {
-                        String::new()
-                    } else {
-                        String::from_utf8_lossy(&xml[node.open_end..node.close_start]).into_owned()
+                    let text = match node.local.as_str() {
+                        "tab" => "\t".to_owned(),
+                        "br" | "cr" => "\n".to_owned(),
+                        "t" if node.empty => String::new(),
+                        "t" => {
+                            let raw =
+                                String::from_utf8_lossy(&xml[node.open_end..node.close_start]);
+                            quick_xml::escape::unescape(&raw)
+                                .map_or_else(|_| raw.to_string(), |text| text.into_owned())
+                        }
+                        _ => "\u{fffc}".to_owned(),
                     };
-                    for covering in open.values_mut() {
+                    for covering in open.values_mut().chain(paragraphs.iter_mut()) {
                         covering.push_str(&text);
                     }
                 }
                 (3, _) => {
+                    paragraphs.pop();
                     for covering in open.values_mut() {
                         covering.push('\n');
                     }
                 }
+                (4, _) => paragraphs.push(String::new()),
                 _ => {}
             }
         }
@@ -1077,6 +1097,22 @@ mod tests {
         format!(
             r#"<w:p><w:bookmarkStart w:id="{id}" w:name="{name}"/><w:r><w:t>Text</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p>"#
         )
+    }
+
+    #[test]
+    fn a_bookmark_covers_the_same_text_however_its_characters_are_escaped() {
+        let heading = |text: &str| {
+            with_body(&format!(
+                r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>{text}</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#
+            ))
+        };
+        let ids = HashSet::from([1]);
+        let coverage = |text: &str| bookmark_coverage(&heading(text), &ids).unwrap();
+        assert_eq!(
+            coverage("Author's \"notes\""),
+            coverage("Author&apos;s &quot;notes&quot;")
+        );
+        assert_eq!(coverage("Author's"), coverage("Author&#x27;s"));
     }
 
     #[test]
