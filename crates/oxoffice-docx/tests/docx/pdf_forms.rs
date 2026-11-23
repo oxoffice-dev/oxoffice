@@ -1359,15 +1359,16 @@ fn controls_in_a_text_box_become_fields_where_the_box_is_anchored() {
         "",
     );
     let doc = doc_with_body(&format!(
-        r#"<w:p>{}<w:r><w:t xml:space="preserve"> and </w:t></w:r>{boxed}</w:p><w:p>{}</w:p>"#,
+        r#"<w:p>{boxed}<w:r><w:t xml:space="preserve">First and </w:t></w:r>{}</w:p><w:p>{}</w:p>"#,
         text_control("name", "First value"),
         text_control("name", "Body value"),
     ));
+    // The box is anchored before the paragraph's own control.
     assert_eq!(
         named_values(&doc),
         [
-            ("name".to_owned(), "First value".to_owned()),
-            ("name_2".to_owned(), "Box value".to_owned()),
+            ("name".to_owned(), "Box value".to_owned()),
+            ("name_2".to_owned(), "First value".to_owned()),
             ("name_3".to_owned(), "Body value".to_owned()),
         ]
     );
@@ -1457,4 +1458,27 @@ fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
         "{:?}",
         layout.layout.diagnostics
     );
+}
+
+#[test]
+fn a_text_box_in_a_block_control_or_with_a_description_still_gives_its_controls_fields() {
+    let control = |tag: &str| format!("<w:p>{}</w:p>", text_control(tag, "Value"));
+    let in_block = floating_text_box(75, &control("in_block"), "", "");
+    let described = floating_text_box(76, &control("described"), "", "").replace(
+        r#"name="Text Box 76""#,
+        r#"name="Text Box 76" descr="A stamp""#,
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="block"/><w:richText/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Block text</w:t></w:r>{in_block}</w:p></w:sdtContent></w:sdt><w:p>{described}</w:p>"#
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    // The block around the box stays static, as any control holding a
+    // floating drawing; the box's own control is still a field.
+    assert_eq!(field_names(&layout.layout), ["in_block", "described"]);
+    let mut texts: Vec<String> = fragment_texts(&layout.layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Value", "Value"]);
 }

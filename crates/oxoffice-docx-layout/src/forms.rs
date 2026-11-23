@@ -971,17 +971,24 @@ impl<'a> Inventory<'a> {
         if let Some(control) = block {
             if let Some(reason) = reason {
                 self.note_static(control, reason);
-                return;
+            } else {
+                let index = self.add(control, true, alignment, || block_text(control));
+                if let (Some(index), Some(node)) = (index, node) {
+                    self.keys.insert(
+                        oxoffice_layout::FormMark {
+                            node,
+                            field: BLOCK_FIELD,
+                        },
+                        index,
+                    );
+                }
             }
-            let index = self.add(control, true, alignment, || block_text(control));
-            if let (Some(index), Some(node)) = (index, node) {
-                self.keys.insert(
-                    oxoffice_layout::FormMark {
-                        node,
-                        field: BLOCK_FIELD,
-                    },
-                    index,
-                );
+            // A text box floats out of the block field: its controls are
+            // fields of their own, after the block's.
+            for (_, item) in Self::anchored_text_boxes(input, sources, paragraph, node) {
+                if let Inline::TextBox(anchor, shape, body, story) = item {
+                    self.text_box(input, sources, anchor, shape, body, &story, reason);
+                }
             }
             return;
         }
@@ -1069,30 +1076,7 @@ impl<'a> Inventory<'a> {
         }
         // Text boxes, at their anchoring run: a text box's controls sit in
         // that run in the document.
-        if let Some(owner) = node {
-            for (index, anchored) in
-                crate::engine::paragraph_anchors(paragraph, input.revision_view)
-                    .into_iter()
-                    .enumerate()
-            {
-                let (Some(shape), Some(story)) =
-                    (anchored.shape, sources.text_box_story(owner, index))
-                else {
-                    continue;
-                };
-                let Some(body) = shape.text_body.as_ref() else {
-                    continue;
-                };
-                let at = runs
-                    .iter()
-                    .position(|run| std::ptr::eq(*run, anchored.run))
-                    .unwrap_or(0);
-                inline.push((
-                    at,
-                    Inline::TextBox(anchored.anchor, shape, body, story.clone()),
-                ));
-            }
-        }
+        inline.extend(Self::anchored_text_boxes(input, sources, paragraph, node));
         inline.sort_by_key(|(at, _)| *at);
         for (_, item) in inline {
             if let Inline::TextBox(anchor, shape, body, story) = item {
@@ -1138,6 +1122,42 @@ impl<'a> Inventory<'a> {
                     .insert(oxoffice_layout::FormMark { node, field }, index);
             }
         }
+    }
+
+    /// The text boxes a paragraph anchors, each at the position of its
+    /// anchoring run among the paragraph's source runs.
+    fn anchored_text_boxes(
+        input: &'a crate::input::LayoutInput,
+        sources: &crate::engine::SourceRegistry,
+        paragraph: &'a CT_P,
+        node: Option<oxoffice_layout::SourceNodeId>,
+    ) -> Vec<(usize, Inline<'a>)> {
+        let Some(owner) = node else {
+            return Vec::new();
+        };
+        let runs = paragraph.source_runs();
+        let mut boxes = Vec::new();
+        for (index, anchored) in crate::engine::paragraph_anchors(paragraph, input.revision_view)
+            .into_iter()
+            .enumerate()
+        {
+            let (Some(shape), Some(story)) = (anchored.shape, sources.text_box_story(owner, index))
+            else {
+                continue;
+            };
+            let Some(body) = shape.text_body.as_ref() else {
+                continue;
+            };
+            let at = runs
+                .iter()
+                .position(|run| std::ptr::eq(*run, anchored.run))
+                .unwrap_or(0);
+            boxes.push((
+                at,
+                Inline::TextBox(anchored.anchor, shape, body, story.clone()),
+            ));
+        }
+        boxes
     }
 
     /// A text box's paragraphs and tables, as text box layout walks them,
@@ -1521,9 +1541,14 @@ fn gather(
     // An anchored drawing wraps each element it paints in marked content of
     // its own, a marker of its text box's lines included: the marker joins
     // its neighbours here, as a body line's does. It draws nothing, so the
-    // wrapper tags nothing.
-    for element in elements.iter_mut() {
-        if let E::MarkedContent { children, .. } = element
+    // wrapper tags nothing. A text box with a description is a figure: its
+    // marker may still gather what that figure paints, as its own.
+    let mut lifted: HashMap<usize, oxoffice_layout::StructureId> = HashMap::new();
+    for (index, element) in elements.iter_mut().enumerate() {
+        if let E::MarkedContent {
+            children,
+            structure,
+        } = element
             && let [
                 E::FormField(FormFieldFragment {
                     mark: Some(_),
@@ -1532,9 +1557,14 @@ fn gather(
                 }),
             ] = children.as_slice()
             && captured.is_empty()
-            && let Some(marker) = children.pop()
         {
-            *element = marker;
+            let structure = *structure;
+            if let Some(marker) = children.pop() {
+                if let Some(id) = structure {
+                    lifted.insert(index, id);
+                }
+                *element = marker;
+            }
         }
     }
     for element in elements.iter_mut() {
@@ -1585,13 +1615,14 @@ fn gather(
         return;
     }
     let mut owner: Vec<Option<usize>> = vec![None; elements.len()];
-    for (marker_index, (_, rect, field, _, node)) in markers.iter().enumerate() {
+    for (marker_index, (at, rect, field, _, node)) in markers.iter().enumerate() {
         if field.is_none() {
             continue;
         }
+        let own_figure = lifted.get(at).copied();
         for (index, element) in elements.iter().enumerate() {
-            let tagged_figure =
-                matches!(element, E::MarkedContent { structure: Some(id), .. } if figure(*id));
+            let tagged_figure = matches!(element, E::MarkedContent { structure: Some(id), .. }
+                    if figure(*id) && Some(*id) != own_figure);
             // A link stays on the page, bare or in its paragraph's marked
             // content, and so does a destination.
             let link = |element: &E| matches!(element, E::LinkAnnotation { .. });
