@@ -2340,11 +2340,107 @@ fn a_delimiter_shape_survives_an_rtf_round_trip() {
 }
 
 #[test]
+fn every_officemath_object_reaches_mathml_and_latex() {
+    let x = "<m:e><m:r><m:t>x</m:t></m:r></m:e>";
+    for (body, mathml, latex) in [
+        (
+            format!(r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{x}</m:func>"#),
+            "<mi mathvariant=\"normal\">log</mi></mrow><mo>\u{2061}</mo><mrow><mi>x</mi>",
+            "\\mathrm{log}\\,x",
+        ),
+        (
+            format!(r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{x}</m:bar>"#),
+            "<mover accent=\"true\"><mrow><mi>x</mi></mrow><mo>\u{203e}</mo></mover>",
+            "\\overline{x}",
+        ),
+        (
+            format!("<m:bar>{x}</m:bar>"),
+            "<munder accentunder=\"true\"><mrow><mi>x</mi></mrow><mo>_</mo></munder>",
+            "\\underline{x}",
+        ),
+        (
+            format!(r#"<m:box><m:boxPr><m:opEmu m:val="1"/></m:boxPr>{x}</m:box>"#),
+            "<mrow><mi>x</mi></mrow>",
+            "{x}",
+        ),
+        (
+            format!("<m:borderBox>{x}</m:borderBox>"),
+            "<menclose notation=\"box\"><mrow><mi>x</mi></mrow></menclose>",
+            "\\boxed{x}",
+        ),
+        (
+            format!("<m:groupChr>{x}</m:groupChr>"),
+            "<munder><mrow><mi>x</mi></mrow><mo stretchy=\"true\">\u{23df}</mo></munder>",
+            "\\underbrace{x}",
+        ),
+        (
+            format!(r#"<m:phant><m:phantPr><m:show m:val="0"/></m:phantPr>{x}</m:phant>"#),
+            "<mphantom><mrow><mi>x</mi></mrow></mphantom>",
+            "\\phantom{x}",
+        ),
+        (
+            "<m:eqArr><m:e><m:r><m:t>x&amp;=1</m:t></m:r></m:e><m:e><m:r><m:t>y&amp;=2</m:t></m:r></m:e></m:eqArr>".to_owned(),
+            "<mtable columnalign=\"right left\"><mtr><mtd><mi>x</mi></mtd><mtd>",
+            "\\begin{aligned}x&=1\\\\y&=2\\end{aligned}",
+        ),
+        (
+            "<m:eqArr><m:e><m:r><m:t>x</m:t></m:r></m:e><m:e><m:r><m:t>y</m:t></m:r></m:e></m:eqArr>".to_owned(),
+            "<mtable><mtr><mtd><mi>x</mi></mtd></mtr><mtr><mtd><mi>y</mi></mtd></mtr></mtable>",
+            "\\begin{gathered}x\\\\y\\end{gathered}",
+        ),
+    ] {
+        let equation = oxoffice_docx::CT_OMath::from_xml(
+            format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}">{body}</m:oMath>"#).as_bytes(),
+        )
+        .unwrap();
+        let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+        let converted = oxoffice_docx::equation_to_mathml(&argument);
+        assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
+        assert!(converted.value.contains(mathml), "{body}: {}", converted.value);
+        let converted = oxoffice_docx::equation_to_latex(&argument);
+        assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
+        assert_eq!(converted.value, latex, "{body}");
+    }
+}
+
+// A math run's own colour and size, which the layout draws, reach MathML as
+// its style; LaTeX says it leaves them out.
+#[test]
+fn a_math_run_colour_and_size_reach_mathml_and_are_reported_by_latex() {
+    let equation = oxoffice_docx::CT_OMath::from_xml(
+        format!(
+            r#"<m:oMath xmlns:m="{MATH_NAMESPACE}" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><m:r><w:rPr><w:color w:val="ff0000"/><w:sz w:val="32"/></w:rPr><m:t>x</m:t></m:r><m:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr><m:t>y</m:t></m:r></m:oMath>"#
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+    let mathml = oxoffice_docx::equation_to_mathml(&argument);
+    assert!(
+        mathml.value.contains(
+            r##"<mstyle mathcolor="#FF0000" mathsize="16pt"><mi>x</mi></mstyle><mi>y</mi>"##
+        ),
+        "{}",
+        mathml.value
+    );
+    let latex = oxoffice_docx::equation_to_latex(&argument);
+    assert!(
+        latex
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "OfficeMath run colour and size were discarded"),
+        "{:?}",
+        latex.diagnostics
+    );
+}
+
+#[test]
 fn equation_content_outside_the_supported_subset_is_reported() {
-    // m:func (sin x) is kept as preserved XML, not as a typed expression.
+    // A tracked insertion around a math run is kept as preserved XML, not as
+    // a typed expression.
     let func = concat!(
-        r#"<m:func><m:funcPr/><m:fName><m:r><m:t>sin</m:t></m:r></m:fName>"#,
-        r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func>"#
+        r#"<w:ins w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+        r#"<m:r><m:t>sin x</m:t></m:r></w:ins>"#
     );
     let doc = reopen(&mut doc_with_body(&format!(
         concat!(

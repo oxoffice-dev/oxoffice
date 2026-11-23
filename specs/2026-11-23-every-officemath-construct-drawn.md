@@ -37,9 +37,13 @@ content no reader understands.**
   `Bar` (`m:bar`: position top or bottom, base), `Box` (`m:box`: base and its `opEmu`, `noBreak`, `diff`, `aln`
   flags), `BorderBox` (`m:borderBox`: base and the hide and strike flags), `GroupCharacter` (`m:groupChr`: character,
   position, vertical justification, base), `EquationArray` (`m:eqArr`: rows, base justification, row spacing) and
-  `Phantom` (`m:phant`: show, zero width/ascent/descent, transparent, base). The matrix properties gain the column
-  justifications of `m:mcs` and the four spacing rules. Each reads and writes its XML byte for byte as the other
-  constructs do (rule 7): unknown attributes and children stay where they were.
+  `Phantom` (`m:phant`: show, zero width/ascent/descent, transparent, base), with `MathVerticalPosition` for
+  `ST_TopBot`. `MathMatrixProperties` gains `plcHide`, `rSpRule`, `cGpRule` and `cGp`; the column properties
+  `m:mcs` stay as read and are understood, read through `MathMatrix::column_justification`. An `m:nary` may have no
+  `m:e` (Google Docs) and is written back without one. Each construct writes back what it read, unknown attributes
+  and children where they were (rule 7); a property is written in its canonical form, as the other constructs do
+  (an on/off with no value gets `m:val="1"`). `MathExpression::arguments` and `arguments_mut` list any construct's
+  arguments, so a walk over the tree needs no arm per construct.
 - **Run formatting is understood.** The `w:rPr` of an `m:r` (one, tracking no insertion, deletion or move) and an
   `m:ctrlPr` holding only such a `w:rPr` are no longer unsupported content; `MathRun::word_properties` reads the
   first. The layout draws a math run in its colour (`w:color`, a theme colour, a text fill) and its size (`w:sz`,
@@ -54,15 +58,19 @@ content no reader understands.**
   re-exports it: the commit is marked `!`.
 - **Layout** (`oxoffice-docx-layout/src/math.rs`), following Word's drawing:
   - `Function`: name upright, a thin space, then the argument.
-  - `Bar`: a rule of the fraction rule's thickness above (top, the default) or below the base, with the
-    overbar/underbar gap of the MATH table or its fallback.
+  - `Bar`: a rule above or below the base, the gap and thickness of an accent bar. Without a position, or with
+    an `m:pos` that has no value as Google Docs writes it, the bar is below: Word 16.115 draws Google's
+    `<m:pos/>` below its base and writes no `m:pos` for a bar below (checked on the Mac,
+    `handoff/pcwe/word-checks/eqnm-bar-pos.md`).
   - `Box`: the base as is (the flags change line breaking and alignment only).
   - `BorderBox`: a rectangle around the base, sides hidden as the flags say, strikes drawn across.
   - `GroupCharacter`: the character (default U+23DF, bottom curly bracket) stretched to the base's width, below
     or above it.
-  - `EquationArray`: rows stacked with Word's row spacing, aligned on their `&` marks, centred on the math axis as
-    a matrix.
-  - `Phantom`: the base's box, ink drawn only when `show` is on, each dimension zeroed when asked.
+  - `EquationArray`: rows stacked with Word's row spacing rules, aligned on their first `&` (not drawn), a row
+    with no mark starting at that column; with no mark in any row, the rows are centred (`gathered` in LaTeX).
+    The array is centred on the math axis.
+  - `Phantom`: the base's box, ink drawn only when `show` is on, each dimension zeroed when asked; the ink keeps
+    its baseline (a shown phantom with no ascent is Word's smash).
   - Matrix columns: left, centre or right per `m:mcs`.
 - **Glyphs**: a math fallback face is bundled, a subset of Noto Sans Math (SIL OFL 1.1, as the other Noto faces)
   limited to the Mathematical Operators, Supplemental Mathematical Operators, Miscellaneous Technical, Arrows,
@@ -70,8 +78,14 @@ content no reader understands.**
   995 characters, 104 KB (`fonts/SUBSET-NotoSansMath.md`). The bundled fallback takes it only for characters the
   text faces lack. It is the last bundled face, so that adding it moves no other face; the PDF font resource
   names still move (no pixel does) in the documents whose text needs a fallback face.
-- **Exports**: MathML and LaTeX write the new constructs (`<mi>log</mi><mo>&#x2061;</mo>`, `\overline`,
-  `\underbrace`, `\boxed`, `\begin{aligned}`, `\phantom`, ...). Their readers keep producing what they produce today.
+- **Exports**: MathML and LaTeX write the new constructs (a function apply `U+2061`, `\overline` / `\underline`,
+  `menclose` / `\boxed`, `\underbrace` / `\overbrace`, `mphantom` / `\phantom`, `mtable` / `aligned`). What
+  they cannot carry (a border box's hidden sides, a phantom's zeroed dimensions, a group character LaTeX has no
+  command for) is reported. A math run's own colour and size (`w:color`, `w:sz`), which the layout draws since
+  step 1, reach MathML as an `mstyle` (`mathcolor`, `mathsize`), so the HTML and EPUB exports keep them; LaTeX,
+  and so the Markdown export, reports them as left out (the ODT export writes no equation today), and two runs
+  that differ in them are no longer joined. Their readers keep
+  producing what they produce today, and the existing constructs convert as before.
 
 **What we do not do**:
 
@@ -80,7 +94,9 @@ content no reader understands.**
   written back, not drawn; an `m:ctrlPr` is understood in a construct's properties and at the end of an argument.
 - The other properties of a math run's `w:rPr` (underline, highlight, `w:b`, `w:rFonts`) are kept and written
   back, not drawn.
-- Word's sizes of each construct are issue #405, a separate pull request on the same files.
+- Word's sizes of each construct are issue #405, a separate pull request on the same files. The matrix spacing
+  rules (`rSpRule`, `cGpRule`, `cGp`) are typed and written back, but the matrix keeps today's spacing until #405
+  sets its geometry.
 
 ## Plan
 
