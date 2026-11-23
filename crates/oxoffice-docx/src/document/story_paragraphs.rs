@@ -29,7 +29,10 @@ pub struct StoryParagraph {
     /// paragraph of a block content control has the control's index then its
     /// own index in the control; one of a block element the story model
     /// keeps verbatim, such as a block `w:customXml`, the element's index
-    /// then its own index in it. Story range calls refuse the latter.
+    /// then its own index in it; one of a text box that is no story of its
+    /// own, in a run inside an inline smart tag or custom XML element, the
+    /// anchoring paragraph's path then its own index among the paragraphs
+    /// of that anchor's boxes. Story range calls refuse the last two.
     pub location: ContentLocation,
     /// The style the paragraph names in its own properties (`w:pStyle`), or
     /// `None` when it names none and the default paragraph style applies.
@@ -41,10 +44,8 @@ pub struct StoryParagraph {
     /// text box is listed on its own, after the paragraph that anchors it:
     /// as a text box story, or, inside a block element the story model keeps
     /// verbatim, as a paragraph of that element. Its text is not in the
-    /// paragraph that anchors it. A box in a run inside an inline smart tag
-    /// or custom XML element is no story of its own: its paragraphs have the
-    /// anchoring paragraph's path then their own index among the boxes'
-    /// paragraphs of that anchor, and story range calls refuse them.
+    /// paragraph that anchors it, a box in a run inside an inline smart tag
+    /// or custom XML element too.
     pub text: String,
 }
 
@@ -436,9 +437,11 @@ fn field_char(
 }
 
 /// The text boxes (`w:txbxContent`) in `paragraph` that are no story owner,
-/// outermost first, but those of an `mc:Fallback` copy: a box in a run inside
-/// an inline smart tag or custom XML element, which the story scan keeps
-/// opaque. A box inside such a box is listed with it.
+/// outermost first: a box in a run inside an inline smart tag or custom XML
+/// element, which the story scan keeps opaque. A box inside such a box is
+/// listed with it. Left out, as the story scan leaves them out: what a box
+/// that is a story of its own holds, an `mc:Fallback` copy, and every
+/// `mc:Choice` after the first one that holds a box.
 fn unowned_text_boxes(
     xml: &[u8],
     paragraph: &Range<usize>,
@@ -458,8 +461,11 @@ fn unowned_text_boxes(
     let mut depth = 0usize;
     // The depth and start of the unowned box open here.
     let mut open: Option<(usize, usize)> = None;
-    // The depth of the `mc:Fallback` copy left out, while inside it.
-    let mut fallback: Option<usize> = None;
+    // The depth of the subtree left out, while inside it.
+    let mut skipped: Option<usize> = None;
+    // For each `mc:AlternateContent` open here, its depth and whether one of
+    // its choices held a box.
+    let mut alternates: Vec<(usize, bool)> = Vec::new();
     let mut buffer = Vec::new();
     loop {
         let before = reader.buffer_position() as usize;
@@ -470,29 +476,45 @@ fn unowned_text_boxes(
         match event {
             Event::Start(element) => {
                 let local = element.local_name();
-                if fallback.is_none() && open.is_none() {
-                    if kind == StoryNamespace::MarkupCompatibility && local.as_ref() == b"Fallback"
+                let local = local.as_ref();
+                if skipped.is_none() && open.is_none() {
+                    let markup = kind == StoryNamespace::MarkupCompatibility;
+                    if markup && local == b"AlternateContent" {
+                        alternates.push((depth, false));
+                    } else if markup
+                        && (local == b"Fallback"
+                            || (local == b"Choice"
+                                && alternates.last().is_some_and(|(_, held)| *held)))
                     {
-                        fallback = Some(depth);
-                    } else if kind == StoryNamespace::Word
-                        && local.as_ref() == b"txbxContent"
-                        && !owned.contains(&source(before))
-                    {
-                        open = Some((depth, before));
+                        skipped = Some(depth);
+                    } else if kind == StoryNamespace::Word && local == b"txbxContent" {
+                        if let Some((_, held)) = alternates.last_mut() {
+                            *held = true;
+                        }
+                        if owned.contains(&source(before)) {
+                            skipped = Some(depth);
+                        } else {
+                            open = Some((depth, before));
+                        }
                     }
                 }
                 depth += 1;
             }
             Event::End(_) => {
                 depth -= 1;
-                if fallback == Some(depth) {
-                    fallback = None;
+                if skipped == Some(depth) {
+                    skipped = None;
                 } else if let Some((at, start)) = open
                     && at == depth
                 {
                     open = None;
                     let after = reader.buffer_position() as usize;
                     boxes.push(source(start)..source(after));
+                } else if skipped.is_none()
+                    && open.is_none()
+                    && alternates.last().is_some_and(|(at, _)| *at == depth)
+                {
+                    alternates.pop();
                 }
             }
             Event::Eof => return Ok(boxes),

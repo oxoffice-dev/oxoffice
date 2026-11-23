@@ -181,3 +181,83 @@ fn a_text_box_in_a_run_inside_an_inline_smart_tag_or_custom_xml_is_listed_after_
         }
     }
 }
+
+#[test]
+fn a_smart_tag_text_box_inside_a_text_box_story_is_listed_once() {
+    let tag =
+        r#"<w:smartTag w:uri="urn:schemas-microsoft-com:office:smarttags" w:element="PersonName">"#;
+    let inner = crate::support::text_box_run(81, "<w:p><w:r><w:t>Acme nested</w:t></w:r></w:p>");
+    let outer = crate::support::text_box_run(
+        80,
+        &format!(r#"<w:p><w:r><w:t>inner anchor</w:t></w:r>{tag}{inner}</w:smartTag></w:p>"#),
+    );
+    let body = format!(r#"<w:p><w:r><w:t>outer anchor</w:t></w:r>{outer}</w:p>"#);
+    for producer in PRODUCERS {
+        let doc = body_with(producer, &body);
+        let paragraphs = doc.story_paragraphs().unwrap();
+        let anchor = position(&paragraphs, "inner anchor");
+        assert_eq!(
+            position(&paragraphs, "Acme nested"),
+            anchor + 1,
+            "{producer}"
+        );
+        assert_eq!(
+            paragraphs
+                .iter()
+                .filter(|paragraph| paragraph.text == "Acme nested")
+                .count(),
+            1,
+            "{producer}"
+        );
+        assert_eq!(
+            doc.count_text("Acme").unwrap(),
+            vec![(StoryKind::Body, 1)],
+            "{producer}"
+        );
+    }
+}
+
+#[test]
+fn a_text_cut_out_of_reach_in_a_smart_tag_text_box_is_refused_by_the_checked_replacement() {
+    let tag =
+        r#"<w:smartTag w:uri="urn:schemas-microsoft-com:office:smarttags" w:element="PersonName">"#;
+    let boxed = crate::support::text_box_run(
+        82,
+        r#"<w:p><w:r><w:t>AC</w:t></w:r><w:sdt><w:sdtContent><w:r><w:t>ME boxed</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let body = format!(r#"<w:p><w:r><w:t>ACME anchor</w:t></w:r>{tag}{boxed}</w:smartTag></w:p>"#);
+    let checked = oxoffice_docx::ReplaceOptions {
+        allow_unreached: false,
+    };
+    for producer in PRODUCERS {
+        let mut doc = body_with(producer, &body);
+        match doc
+            .try_replace_all_checked(&[("ACME", "ACNE", None)], checked)
+            .unwrap()
+        {
+            Err(oxoffice_docx::ReplacementRefusal::Unreached(unreached)) => {
+                assert_eq!(unreached.left, 1, "{producer}")
+            }
+            other => panic!("{producer}: expected an unreached refusal, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_smart_tag_text_box_is_read_from_the_first_choice_that_holds_it_only() {
+    let tag =
+        r#"<w:smartTag w:uri="urn:schemas-microsoft-com:office:smarttags" w:element="PersonName">"#;
+    let run = crate::support::text_box_run(83, "<w:p><w:r><w:t>Acme boxed</w:t></w:r></w:p>");
+    // A second choice holding the same box, as the story scan leaves out.
+    let choice = &run[run.find("<mc:Choice").unwrap()..run.find("<mc:Fallback").unwrap()];
+    let run = run.replacen("<mc:Fallback", &format!("{choice}<mc:Fallback"), 1);
+    let body = format!(r#"<w:p><w:r><w:t>anchor</w:t></w:r>{tag}{run}</w:smartTag></w:p>"#);
+    for producer in PRODUCERS {
+        let doc = body_with(producer, &body);
+        assert_eq!(
+            doc.count_text("Acme").unwrap(),
+            vec![(StoryKind::Body, 1)],
+            "{producer}"
+        );
+    }
+}
