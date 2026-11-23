@@ -206,8 +206,8 @@ cannot be read, `style` is `null` throughout and one warning goes to stderr.
 `count` counts a literal, case-sensitive text in every paragraph of every
 story, as `Document::count_text` does: the body with its table cells, text
 boxes and block content controls, each header and footer part, the footnotes,
-the endnotes and the comments, in the accepted view. A text box in a run inside
-an inline smart tag or custom XML element is not counted yet (#78). It prints one
+the endnotes and the comments, in the accepted view, a text box in a run inside
+an inline smart tag or custom XML element included. It prints one
 `kind: count` line per story kind that holds the text, in the order body,
 header, footer, footnote, endnote, comment, then `total: N` and
 `outside comments: N`, the count of what `replace` searches. With `--json`,

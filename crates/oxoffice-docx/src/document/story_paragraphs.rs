@@ -41,8 +41,10 @@ pub struct StoryParagraph {
     /// text box is listed on its own, after the paragraph that anchors it:
     /// as a text box story, or, inside a block element the story model keeps
     /// verbatim, as a paragraph of that element. Its text is not in the
-    /// paragraph that anchors it. One exception, not listed at all yet: a box
-    /// in a run inside an inline smart tag or custom XML element (#78).
+    /// paragraph that anchors it. A box in a run inside an inline smart tag
+    /// or custom XML element is no story of its own: its paragraphs have the
+    /// anchoring paragraph's path then their own index among the boxes'
+    /// paragraphs of that anchor, and story range calls refuse them.
     pub text: String,
 }
 
@@ -112,6 +114,60 @@ impl Document {
                 &inventories,
                 &control_scopes,
             )?;
+            // The paragraphs of a text box that is no story of its own, as one
+            // in a run inside an inline smart tag or custom XML element, after
+            // the paragraph that anchors it.
+            let owned_boxes = owners
+                .iter()
+                .filter(|(_, owner)| owner.kind == StoryKind::TextBox)
+                .map(|(_, owner)| owner.full.start)
+                .collect::<HashSet<_>>();
+            let anchors = spans
+                .iter()
+                .enumerate()
+                .flat_map(|(owner, paragraphs)| {
+                    paragraphs
+                        .iter()
+                        .filter(|(_, span)| {
+                            xml[span.clone()]
+                                .windows(b"txbxContent".len())
+                                .any(|window| window == b"txbxContent")
+                        })
+                        .map(move |(location, span)| (owner, location.clone(), span.clone()))
+                })
+                .collect::<Vec<_>>();
+            let anchor_scopes =
+                story_namespace_scopes_at(xml, anchors.iter().map(|(_, _, span)| span.start))?;
+            let mut boxes = Vec::new();
+            for (owner, location, span) in anchors {
+                let scope = anchor_scopes.get(&span.start).ok_or_else(|| {
+                    Error::Other("text box anchor namespace scope was not inventoried".to_owned())
+                })?;
+                for full in unowned_text_boxes(xml, &span, scope, &owned_boxes)? {
+                    boxes.push((owner, location.clone(), full));
+                }
+            }
+            let box_scopes =
+                story_namespace_scopes_at(xml, boxes.iter().map(|(_, _, full)| full.start))?;
+            let mut box_paragraphs: BTreeMap<(usize, Vec<usize>), usize> = BTreeMap::new();
+            for (owner, location, full) in boxes {
+                let scope = box_scopes.get(&full.start).ok_or_else(|| {
+                    Error::Other("text box namespace scope was not inventoried".to_owned())
+                })?;
+                let path = location.index_path.clone();
+                for span in preserved_paragraph_spans(xml, &full, scope)? {
+                    let next = box_paragraphs.entry((owner, path.clone())).or_default();
+                    let mut index_path = path.clone();
+                    index_path.push(*next);
+                    *next += 1;
+                    let location = ContentLocation::new(
+                        location.story.clone(),
+                        StoryItemKind::Paragraph,
+                        index_path,
+                    );
+                    spans[owner].push((location, span));
+                }
+            }
             // The paragraphs of a direct item the story model keeps verbatim.
             let preserved = inventories
                 .iter()
@@ -377,6 +433,73 @@ fn field_char(
         }
     }
     Ok(())
+}
+
+/// The text boxes (`w:txbxContent`) in `paragraph` that are no story owner,
+/// outermost first, but those of an `mc:Fallback` copy: a box in a run inside
+/// an inline smart tag or custom XML element, which the story scan keeps
+/// opaque. A box inside such a box is listed with it.
+fn unowned_text_boxes(
+    xml: &[u8],
+    paragraph: &Range<usize>,
+    scope: &BTreeMap<String, String>,
+    owned: &HashSet<usize>,
+) -> Result<Vec<Range<usize>>> {
+    let (closed, added) = scoped_story_fragment(xml, paragraph.clone(), scope)?;
+    let source = |local: usize| {
+        if local == 0 {
+            paragraph.start
+        } else {
+            paragraph.start + local - added
+        }
+    };
+    let mut reader = NsReader::from_reader(closed.as_slice());
+    let mut boxes = Vec::new();
+    let mut depth = 0usize;
+    // The depth and start of the unowned box open here.
+    let mut open: Option<(usize, usize)> = None;
+    // The depth of the `mc:Fallback` copy left out, while inside it.
+    let mut fallback: Option<usize> = None;
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("text box scan failed: {error}")))?;
+        let kind = story_namespace(&namespace);
+        match event {
+            Event::Start(element) => {
+                let local = element.local_name();
+                if fallback.is_none() && open.is_none() {
+                    if kind == StoryNamespace::MarkupCompatibility && local.as_ref() == b"Fallback"
+                    {
+                        fallback = Some(depth);
+                    } else if kind == StoryNamespace::Word
+                        && local.as_ref() == b"txbxContent"
+                        && !owned.contains(&source(before))
+                    {
+                        open = Some((depth, before));
+                    }
+                }
+                depth += 1;
+            }
+            Event::End(_) => {
+                depth -= 1;
+                if fallback == Some(depth) {
+                    fallback = None;
+                } else if let Some((at, start)) = open
+                    && at == depth
+                {
+                    open = None;
+                    let after = reader.buffer_position() as usize;
+                    boxes.push(source(start)..source(after));
+                }
+            }
+            Event::Eof => return Ok(boxes),
+            _ => {}
+        }
+        buffer.clear();
+    }
 }
 
 /// The paragraphs inside a block element the story model keeps verbatim, in

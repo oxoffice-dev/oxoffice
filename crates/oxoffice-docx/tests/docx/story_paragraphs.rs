@@ -119,3 +119,65 @@ fn a_text_box_inside_a_block_custom_xml_element_is_listed_after_its_anchor() {
         );
     }
 }
+
+#[test]
+fn a_text_box_in_a_run_inside_an_inline_smart_tag_or_custom_xml_is_listed_after_its_anchor() {
+    for wrapper in [
+        r#"<w:smartTag w:uri="urn:schemas-microsoft-com:office:smarttags" w:element="PersonName">"#,
+        r#"<w:customXml w:element="client">"#,
+    ] {
+        let close = if wrapper.starts_with("<w:smartTag") {
+            "</w:smartTag>"
+        } else {
+            "</w:customXml>"
+        };
+        let body = format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Acme anchor </w:t></w:r>{wrapper}{}{close}</w:p><w:p><w:r><w:t>after the anchor</w:t></w:r></w:p>"#,
+            crate::support::text_box_run(78, "<w:p><w:r><w:t>Acme boxed</w:t></w:r></w:p>"),
+        );
+        for producer in PRODUCERS {
+            let mut doc = body_with(producer, &body);
+            let paragraphs = doc.story_paragraphs().unwrap();
+            let anchor = position(&paragraphs, "Acme anchor ");
+            assert_eq!(
+                position(&paragraphs, "Acme boxed"),
+                anchor + 1,
+                "{producer} {wrapper}"
+            );
+            assert_eq!(
+                position(&paragraphs, "after the anchor"),
+                anchor + 2,
+                "{producer} {wrapper}"
+            );
+            assert_eq!(
+                paragraphs
+                    .iter()
+                    .filter(|paragraph| paragraph.text == "Acme boxed")
+                    .count(),
+                1,
+                "{producer} {wrapper}: the VML fallback is not read again"
+            );
+            let boxed = find(&paragraphs, "Acme boxed");
+            let mut path = paragraphs[anchor].location.index_path().to_vec();
+            path.push(0);
+            assert_eq!(boxed.location.index_path(), path, "{producer} {wrapper}");
+            assert_eq!(
+                doc.count_text("Acme").unwrap(),
+                vec![(StoryKind::Body, 2)],
+                "{producer} {wrapper}"
+            );
+            // Replacement reaches the box too, so the count it is checked
+            // against agrees.
+            assert_eq!(
+                doc.try_replace_text("Acme", "Globex").unwrap(),
+                2,
+                "{producer} {wrapper}"
+            );
+            assert_eq!(
+                doc.count_text("Acme").unwrap(),
+                vec![],
+                "{producer} {wrapper}"
+            );
+        }
+    }
+}
