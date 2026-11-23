@@ -107,11 +107,10 @@ channel is in [INSTALL.md](INSTALL.md).
 ## Changelog
 
 `CHANGELOG.md` is generated from the conventional commits of `main` by
-git-cliff (`cliff.toml`), under each release's highlights: the workflow's `highlights` input is stored
-in `changelog/highlights/X.Y.Z.md` with the version commit, and
-`scripts/release_highlights.py` puts every stored release's highlights first in
-its section of `CHANGELOG.md` (git-cliff rewrites the whole file) and in the
-GitHub release notes. Commit titles are the changelog, and pull requests
+git-cliff (`cliff.toml`): each release prepends its own section
+(`--unreleased --prepend`), so earlier sections are never rewritten, and
+`scripts/release_highlights.py` puts the workflow's `highlights` input first in
+that section and in the GitHub release notes. Commit titles are the changelog, and pull requests
 are squash merged under their title, which is why pull request titles are
 checked. Preview it locally with
 `uvx git-cliff --unreleased`.
