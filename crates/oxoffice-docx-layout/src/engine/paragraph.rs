@@ -857,6 +857,7 @@ fn layout_paragraph_with_source_and_table(
                 input,
                 fm,
                 source_node,
+                projected_run_start,
             )?;
         }
 
@@ -1037,6 +1038,7 @@ fn layout_paragraph_with_source_and_table(
                     font_id,
                     &mut inline_items,
                     &mut multilingual_styles,
+                    projected_run_start,
                 );
             }
         }
@@ -1389,6 +1391,7 @@ fn layout_paragraph_with_source_and_table(
                         font_id,
                         &mut inline_items,
                         &mut multilingual_styles,
+                        content_char_start,
                     );
                     let (computed_value, field_kind) = computed_fields
                         .get(&std::ptr::from_ref(field))
@@ -1899,6 +1902,7 @@ fn layout_paragraph_with_source_and_table(
         input,
         fm,
         source_node,
+        projection_char_offset,
     )?;
     drop_trailing_display_break(&mut inline_items, &mut multilingual_styles, display_break);
 
@@ -2279,6 +2283,7 @@ fn push_targeted_bookmark_markers(
     input: &LayoutInput,
     fm: &mut FontManager,
     source_node: Option<SourceNodeId>,
+    char_offset: usize,
 ) -> Result<()> {
     let mut font_id = None;
     for marker in markers.iter().filter(|marker| {
@@ -2308,6 +2313,7 @@ fn push_targeted_bookmark_markers(
                 resolved_font,
                 source_node,
                 None,
+                char_offset,
             );
         }
     }
@@ -2321,6 +2327,7 @@ fn push_sequence_context_markers(
     font_id: oxoffice_layout::FontId,
     items: &mut Vec<InlineItem>,
     styles: &mut HashMap<usize, WordMultilingualStyle>,
+    char_offset: usize,
 ) {
     let Some((snapshot, node)) = source else {
         return;
@@ -2337,6 +2344,7 @@ fn push_sequence_context_markers(
                     font_id,
                     Some(node),
                     Some(source),
+                    char_offset,
                 );
             }
         }
@@ -2344,6 +2352,10 @@ fn push_sequence_context_markers(
     }
 }
 
+/// Push a zero-width marker recording a structural field event at
+/// `char_offset`, the paragraph character the text after it starts at. Its
+/// source is an empty span there, so the paint keeps it, and any field
+/// result drawn after it, in reading order behind the text before it.
 fn push_structural_field_marker(
     items: &mut Vec<InlineItem>,
     styles: &mut HashMap<usize, WordMultilingualStyle>,
@@ -2351,6 +2363,7 @@ fn push_structural_field_marker(
     font_id: oxoffice_layout::FontId,
     source_node: Option<SourceNodeId>,
     field_source: Option<FieldSource>,
+    char_offset: usize,
 ) {
     styles.insert(
         items.len(),
@@ -2363,11 +2376,13 @@ fn push_structural_field_marker(
         form_mark: None,
         text: "\u{2060}".to_owned(),
         direction: TextDirection::Auto,
-        source: source_node.map(|node| oxoffice_layout::SourceSpan {
-            node,
-            char_start: 0,
-            char_end: 0,
-        }),
+        source: source_node
+            .zip(u32::try_from(char_offset).ok())
+            .map(|(node, offset)| oxoffice_layout::SourceSpan {
+                node,
+                char_start: offset,
+                char_end: offset,
+            }),
         font_id,
         font_size: 1.0,
         glyph_ids: vec![0],
