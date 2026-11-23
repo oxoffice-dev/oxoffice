@@ -518,6 +518,87 @@ fn a_long_form_page_break_between_a_reference_and_its_mark_is_passed_over() {
     assert_eq!(marked_text(&doc, 0), "Marked");
 }
 
+/// `doc` with the run of its footnote reference `id` replaced by `run`, where
+/// `{id}` stands for the note id.
+fn with_reference_run(doc: &mut Document, id: i32, run: &str) -> Document {
+    with_main_part(doc, |xml| {
+        let span = reference_run(xml, id);
+        format!(
+            "{}{}{}",
+            &xml[..span.start],
+            run.replace("{id}", &id.to_string()),
+            &xml[span.end..]
+        )
+    })
+}
+
+#[test]
+fn a_symbol_custom_mark_stays_with_its_reference_when_the_text_is_set() {
+    let marked = r#"<w:footnoteReference w:customMarkFollows="1" w:id="{id}"/><w:sym w:font="Symbol" w:char="F0A7"/>"#;
+    let source = format!("<w:r>{marked}<w:t>after</w:t></w:r>");
+    let mut doc = doc_with(&["Body"]);
+    let id = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Note", "*")
+        .unwrap();
+    // As the run writer writes it back.
+    let marked = format!(
+        r#"<w:footnoteReference w:id="{id}" w:customMarkFollows="1"/><w:sym w:font="Symbol" w:char="F0A7"/>"#
+    );
+    let mut doc = with_reference_run(&mut doc, id, &source);
+    assert_eq!(marked_text(&doc, 0), format!("Body[f{id}]after"));
+
+    // The whole paragraph: the text after the symbol is body text, replaced.
+    let mut paragraph_doc = reopen(&mut doc);
+    paragraph_doc
+        .paragraph_mut(0)
+        .unwrap()
+        .set_text("New")
+        .unwrap();
+    let paragraph_doc = reopen(&mut paragraph_doc);
+    assert_eq!(marked_text(&paragraph_doc, 0), format!("New[f{id}]"));
+    let main = paragraph_doc.part_xml("word/document.xml").unwrap();
+    assert!(main.contains(&marked), "{main}");
+
+    // One run: the symbol stays right after its reference.
+    let index = doc
+        .paragraph(0)
+        .unwrap()
+        .runs()
+        .position(|run| {
+            run.items()
+                .any(|item| matches!(item, RunItemRef::FootnoteReference(known) if known == id))
+        })
+        .unwrap();
+    doc.paragraph_mut(0)
+        .unwrap()
+        .run_mut(index)
+        .unwrap()
+        .set_text("later");
+    let doc = reopen(&mut doc);
+    assert_eq!(marked_text(&doc, 0), format!("Body[f{id}]later"));
+    let main = doc.part_xml("word/document.xml").unwrap();
+    assert!(main.contains(&marked), "{main}");
+}
+
+#[test]
+fn a_started_footnote_reference_is_a_reference_and_goes_with_its_mark() {
+    let mut doc = doc_with(&["Body"]);
+    let id = doc
+        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Note", "*")
+        .unwrap();
+    let mut doc = with_reference_run(
+        &mut doc,
+        id,
+        r#"<w:r><w:footnoteReference w:customMarkFollows="1" w:id="{id}"></w:footnoteReference><w:t>*</w:t></w:r>"#,
+    );
+    assert_eq!(references(&doc, 0), [(Footnote, id)]);
+    assert_eq!(texts(&doc), ["Body*"]);
+    doc.remove_footnote(id).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(references(&doc, 0), []);
+    assert_eq!(texts(&doc), ["Body"]);
+}
+
 /// `doc` saved, its part `name` rewritten by `edit`, and opened again.
 fn with_part(doc: &mut Document, name: &str, edit: impl FnOnce(&str) -> String) -> Document {
     let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();

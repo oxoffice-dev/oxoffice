@@ -3880,7 +3880,15 @@ fn qualify_constructor_failures(
                                 && (crate::text::comment_reference_has_payload_attributes(
                                     start, &aliases,
                                 ) || !empty);
-                            parent.known &= simple && !comment_raw;
+                            // A started note reference reads as the empty one
+                            // only once its content is known to be empty.
+                            let started_note = !empty
+                                && matches!(
+                                    action,
+                                    crate::text::RunChildAction::FootnoteReference
+                                        | crate::text::RunChildAction::EndnoteReference
+                                );
+                            parent.known &= simple && !comment_raw && !started_note;
                         }
                     }
                 }
@@ -4650,7 +4658,7 @@ pub(crate) fn control_has_property_measurement_failure_in(
     verdict.map_err(|failure| record_word_source_failure(failure, registry))
 }
 
-fn original_comment_reference_has_payload(input: WordXmlInput<'_>) -> Result<bool> {
+fn original_reference_has_payload(input: WordXmlInput<'_>) -> Result<bool> {
     let mut reader = Reader::from_reader(input);
     reader.config_mut().allow_unmatched_ends = true;
     reader.config_mut().check_end_names = false;
@@ -7919,12 +7927,24 @@ fn plan_capture_with_context(
                 {
                     let aliases = constructor_attribute_prefixes(start, namespace_state, pool)?;
                     crate::text::comment_reference_has_payload_attributes(start, &aliases)
-                        || (!empty && original_comment_reference_has_payload(*reader.get_ref())?)
+                        || (!empty && original_reference_has_payload(*reader.get_ref())?)
                 } else {
                     false
                 };
-                let modeled =
-                    direct_run_child && !action.retains_raw(special_typed) && !comment_raw;
+                // A started note reference that holds anything stays raw, as
+                // the run reader keeps it.
+                let note_raw = direct_run_child
+                    && !empty
+                    && matches!(
+                        action,
+                        crate::text::RunChildAction::FootnoteReference
+                            | crate::text::RunChildAction::EndnoteReference
+                    )
+                    && original_reference_has_payload(*reader.get_ref())?;
+                let modeled = direct_run_child
+                    && !action.retains_raw(special_typed)
+                    && !comment_raw
+                    && !note_raw;
                 let mut class = classify_original_capture(
                     empty,
                     word,
