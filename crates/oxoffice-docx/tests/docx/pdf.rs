@@ -1604,11 +1604,7 @@ fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_rend
 
 // ---- Corpus ----
 
-// Fails today: the number of a caption made with a SEQ field is drawn, and
-// tagged, before its label, so text extraction and screen readers read
-// "1Table : Notation". Issue: #158
 #[test]
-#[should_panic(expected = "in the tagged order")]
 fn a_caption_number_is_read_after_its_label() {
     let doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:t xml:space="preserve">Table </w:t></w:r>"#,
@@ -1634,4 +1630,58 @@ fn a_caption_number_is_read_after_its_label() {
         read, "Table 1: Notation",
         "the caption reads {read:?} in the tagged order"
     );
+}
+
+#[test]
+fn a_caption_number_drawn_from_its_stored_result_is_read_after_its_label() {
+    // A SEQ whose format the layout cannot apply keeps its stored result,
+    // drawn from the field's own runs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Table </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> SEQ Table \* Bogus </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve">: Notation</w:t></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .position(|element| element.0 == "P")
+        .unwrap();
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(read, "Table 7: Notation", "the caption reads {read:?}");
+}
+
+#[test]
+fn a_field_result_after_a_page_referenced_bookmark_is_read_in_place() {
+    // A bookmark a PAGEREF points at records where it starts; the field
+    // result right after that start is read after the text before it.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="source"/><w:r><w:t>Alpha</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r>"#,
+        r#"<w:bookmarkStart w:id="2" w:name="_Ref2"/>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> REF source </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkEnd w:id="2"/>"#,
+        r#"<w:r><w:t xml:space="preserve"> here</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Ref2 </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .enumerate()
+        .filter(|(_, element)| element.0 == "P")
+        .nth(1)
+        .unwrap()
+        .0;
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(read, "See Alpha here", "the paragraph reads {read:?}");
 }
