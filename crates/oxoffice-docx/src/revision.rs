@@ -17,6 +17,8 @@ const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/m
 type NamespaceScope = HashMap<String, String>;
 type NamespaceDeclarations = Vec<(String, String)>;
 type ResolvedStoryLeaves = (Vec<u8>, usize, Vec<Option<Range<usize>>>);
+/// A resolved story part and the ranges of each publication's roots.
+type ResolvedPublications = (Vec<u8>, Vec<Vec<Option<Range<usize>>>>);
 
 /// Whether a tracked revision takes its text out of the accepted view, as a
 /// deletion or a move away does. The exporters leave that text out.
@@ -817,7 +819,7 @@ pub(crate) fn resolve_story_xml_with_publications(
     resolution: Resolution,
     scope: RevisionScope<'_>,
     publications: &[(i32, Vec<Range<usize>>)],
-) -> Result<(Vec<u8>, Vec<Vec<Option<Range<usize>>>>)> {
+) -> Result<ResolvedPublications> {
     let mut tree = XmlTree::parse(source)?;
     tree.qualify_note_revisions()?;
     let mut selected = Vec::new();
