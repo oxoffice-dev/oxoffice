@@ -90,11 +90,10 @@ fn paragraph_signature(paragraph: &CT_P) -> String {
     )
 }
 
+/// A paragraph's `(w:numId, w:ilvl)`, a missing `w:ilvl` read at the level
+/// both inputs show, as [`super::numbering::numbering_key`] gives it.
 fn paragraph_numbering(paragraph: &CT_P) -> Option<(Option<u32>, Option<u32>)> {
-    paragraph.properties.as_ref().and_then(|properties| {
-        (properties.num_id.is_some() || properties.num_ilvl.is_some())
-            .then_some((properties.num_id, properties.num_ilvl))
-    })
+    super::numbering::numbering_key(paragraph.properties.as_ref())
 }
 
 pub(super) fn run_signature(run: &CT_R) -> String {
@@ -413,7 +412,9 @@ pub(super) fn postcondition_body(
         let mut properties = Vec::new();
         match content {
             BodyContent::Paragraph(paragraph) => {
-                properties.push(modeled_paragraph_properties(paragraph.properties.as_ref()));
+                properties.push(compared_paragraph_properties(modeled_paragraph_properties(
+                    paragraph.properties.as_ref(),
+                )));
             }
             BodyContent::Table(table) => table_paragraph_properties(table, &mut properties),
             BodyContent::ContentControl(control) => {
@@ -436,7 +437,9 @@ fn cell_paragraph_properties(cell: &CT_Tc, properties: &mut Vec<Option<CT_PPr>>)
     for content in &cell.content {
         match content {
             CellContent::Paragraph(paragraph) => {
-                properties.push(modeled_paragraph_properties(paragraph.properties.as_ref()));
+                properties.push(compared_paragraph_properties(modeled_paragraph_properties(
+                    paragraph.properties.as_ref(),
+                )));
             }
             CellContent::Table(table) => table_paragraph_properties(table, properties),
             CellContent::ContentControl(control) => {
@@ -450,7 +453,9 @@ fn control_paragraph_properties(control: &CT_Sdt, properties: &mut Vec<Option<CT
     for content in &control.content {
         match content {
             SdtContent::Paragraph(paragraph) => {
-                properties.push(modeled_paragraph_properties(paragraph.properties.as_ref()));
+                properties.push(compared_paragraph_properties(modeled_paragraph_properties(
+                    paragraph.properties.as_ref(),
+                )));
             }
             SdtContent::Table(table) => table_paragraph_properties(table, properties),
             SdtContent::Row(row) => {

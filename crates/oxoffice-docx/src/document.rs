@@ -270,6 +270,7 @@ pub(crate) use fragment_checks::{
 };
 pub(crate) use leading_bookmarks::is_block_bookmark_marker;
 use leading_bookmarks::{OwnedMarkers, leading_bookmark_start_item, owned_bookmark_marker_items};
+pub(crate) use numbering_types::effective_numbering_reference;
 use package_checks::{validate_fresh_word_compatible_package, validated_word_package_class};
 use story_fields::{admit_story_sdt_content_slot, complex_story_field_xml, modeled_story_event};
 use story_scan::{

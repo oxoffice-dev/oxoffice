@@ -1415,7 +1415,7 @@ impl Document {
 /// own, and level 0 when neither gives a `w:ilvl`. A level that names the
 /// style back does not set it: Word, LibreOffice and layout draw such a
 /// style at its own or inherited `w:ilvl`. `None` when it is not numbered.
-pub(super) fn effective_numbering_reference(
+pub(crate) fn effective_numbering_reference(
     styles: &CT_Styles,
     direct: &CT_PPr,
 ) -> Option<(u32, u32)> {
