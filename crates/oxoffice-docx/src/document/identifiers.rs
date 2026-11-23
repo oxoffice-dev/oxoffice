@@ -1036,7 +1036,7 @@ impl DocumentIdentifiers {
             } else {
                 format!("{stem}-merge-{ordinal}.{extension}")
             };
-            if self.part_names.insert(part_name_identity(&candidate)) {
+            if self.hold_part_name(part_name_identity(&candidate)) {
                 return Ok(candidate);
             }
             ordinal = ordinal.checked_add(1).ok_or_else(|| {

@@ -195,7 +195,7 @@ impl Document {
     /// and its part name, which cannot. The registry journals what the
     /// reservation adds to both, and a refusal removes it again, so a refused
     /// edit leaves no reserved name or relationship id and the edit copies
-    /// neither. A success leaves what [`Self::commit_staged_mutation`] leaves
+    /// neither; a panic is undone the same way. A success leaves what [`Self::commit_staged_mutation`] leaves
     /// for a staged clone: the derived layout is dropped and a signed package
     /// records a package mutation. Debug builds run the staged edit on a
     /// clone and compare. `edit` is `Fn` for that second run.
@@ -203,8 +203,15 @@ impl Document {
         #[cfg(debug_assertions)]
         let staged = self.clone_for_staging();
         self.identifiers.open_journal();
-        let result = edit(self);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(self)));
         let journal = self.identifiers.close_journal();
+        let result = match result {
+            Ok(result) => result,
+            Err(panic) => {
+                self.undo_reservations(journal);
+                std::panic::resume_unwind(panic)
+            }
+        };
         let signed = self
             .package
             .package_rels
