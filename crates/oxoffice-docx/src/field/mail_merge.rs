@@ -1228,7 +1228,7 @@ fn replace_rich_run(
             if let Some(character) = formatted
                 .text
                 .chars()
-                .find(|character| !valid_xml_character(*character))
+                .find(|character| !is_xml_1_0_character(*character))
             {
                 return Err(Error::Other(format!(
                     "rich mail merge field {field_name} contains invalid XML character U+{:04X}",

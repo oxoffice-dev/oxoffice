@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use oxoffice_core::xml::is_xml_1_0_character;
 use oxoffice_layout::{
     Color, Effect, FillRule, FontData, FontId, GlyphRun, GroupElement, LayoutResult, LineCap,
     LineJoin, Paint, Path, PathCommand, PathElement, PositionedElement, Rect, Stroke, Transform,
@@ -701,7 +702,8 @@ impl<'a> SvgState<'a> {
         group: &GroupElement,
         group_to_page: Transform,
     ) -> Result<Option<Rect>, ()> {
-        if let Some(region) = inverse_transform(group_to_page)
+        if let Some(region) = group_to_page
+            .inverse()
             .map(|page_to_group| {
                 page_to_group.transform_rect_bbox(Rect {
                     x: 0.0,
@@ -855,27 +857,6 @@ fn collect_used_fonts(
             _ => {}
         }
     }
-}
-
-fn inverse_transform(transform: Transform) -> Option<Transform> {
-    let determinant = transform.a * transform.d - transform.b * transform.c;
-    if !determinant.is_finite() || determinant == 0.0 {
-        return None;
-    }
-    let inverse = Transform {
-        a: transform.d / determinant,
-        b: -transform.b / determinant,
-        c: -transform.c / determinant,
-        d: transform.a / determinant,
-        e: (transform.c * transform.f - transform.d * transform.e) / determinant,
-        f: (transform.b * transform.e - transform.a * transform.f) / determinant,
-    };
-    [
-        inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f,
-    ]
-    .iter()
-    .all(|value| value.is_finite())
-    .then_some(inverse)
 }
 
 fn preserves_isotropic_blur(transform: Transform) -> bool {
@@ -1433,7 +1414,7 @@ fn is_safe_link(target: &str) -> bool {
     if target.is_empty()
         || target
             .chars()
-            .any(|character| character.is_control() || !is_xml_character(character))
+            .any(|character| character.is_control() || !is_xml_1_0_character(character))
     {
         return false;
     }
@@ -1481,7 +1462,7 @@ fn sanitize_xml_text(value: &str) -> (String, bool) {
     let text = value
         .chars()
         .map(|character| {
-            if is_xml_character(character) {
+            if is_xml_1_0_character(character) {
                 character
             } else {
                 replaced = true;
@@ -1490,11 +1471,6 @@ fn sanitize_xml_text(value: &str) -> (String, bool) {
         })
         .collect();
     (text, replaced)
-}
-
-fn is_xml_character(character: char) -> bool {
-    matches!(character, '\u{9}' | '\u{A}' | '\u{D}')
-        || matches!(character as u32, 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
 }
 
 fn escape_attribute(value: &str) -> String {
