@@ -628,7 +628,7 @@ pub(crate) fn update_bibliography_caches(
                 if !span.separator_wrapper_names.is_empty() || !span.end_wrapper_prefixes.is_empty()
                 {
                     return Err(Error::Other(
-                        "catalogued bibliography owner expansion is still being implemented".into(),
+                        "bibliography: a bibliography field whose separator or end is wrapped in other markup is not covered yet".into(),
                     ));
                 }
                 let Some(oxoffice_docx_oxml::document::BodyContent::Paragraph(first)) =

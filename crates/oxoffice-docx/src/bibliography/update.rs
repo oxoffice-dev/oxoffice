@@ -145,8 +145,8 @@ impl BibliographyUpdateState {
             }
         }
         if tags.len() > 1 {
-            return Err(bibliography_error(
-                "catalogued bibliography selection branch is still being implemented",
+            return Err(not_covered(
+                "a bibliography that selects more than one source",
             ));
         }
         let mut entries = Vec::new();
@@ -196,8 +196,11 @@ impl BibliographyUpdateState {
                         )
                     })))
             {
-                return Err(bibliography_error(
-                    "catalogued bibliography formatter branch is still being implemented",
+                return Err(source_not_covered(
+                    style,
+                    "bibliography entry",
+                    &source,
+                    &locale,
                 ));
             }
 
@@ -289,17 +292,12 @@ impl BibliographyUpdateState {
             ));
         }
         if entries.is_empty() {
-            return Err(bibliography_error(
-                "catalogued empty bibliography branch is still being implemented",
-            ));
+            return Err(not_covered("a bibliography with no source to show"));
         }
         entries.sort_by(|left, right| (left.0, &left.1).cmp(&(right.0, &right.1)));
         if style == BibliographyStyle::Ieee {
-            let text_width = text_width.ok_or_else(|| {
-                bibliography_error(
-                    "catalogued bibliography story geometry branch is still being implemented",
-                )
-            })?;
+            let text_width = text_width
+                .ok_or_else(|| not_covered("an IEEE bibliography whose text width is unknown"))?;
             let (fonts, font, size) = self
                 .label_metrics
                 .as_ref()
@@ -399,8 +397,8 @@ impl BibliographyUpdateState {
                     Some(FieldArgument::Text(value)) if value.eq_ignore_ascii_case("Upper"))
                 })
             {
-                return Err(bibliography_error(
-                    "catalogued late numeric general-format phase is still being implemented",
+                return Err(not_covered(
+                    r"a numeric citation with a late \* format switch",
                 ));
             }
             let mut effective = instruction.clone();
@@ -510,14 +508,10 @@ impl BibliographyUpdateState {
                 } else {
                     iso_numeric_run_profile(&locale)
                 }
-                .ok_or_else(|| {
-                    bibliography_error(
-                        "catalogued numeric citation locale branch is still being implemented",
-                    )
-                })?;
+                .ok_or_else(|| source_not_covered(style, "citation", &source, &locale))?;
                 if numeric_profile.is_some_and(|previous| previous != profile) {
-                    return Err(bibliography_error(
-                        "catalogued mixed-locale numeric citation branch is still being implemented",
+                    return Err(not_covered(
+                        "a numeric citation whose sources have different locales",
                     ));
                 }
                 numeric_profile = Some(profile);
@@ -527,8 +521,11 @@ impl BibliographyUpdateState {
                         if locale != BibliographyFormattingLocale::Numeric(1033)
                             && locale != BibliographyFormattingLocale::Numeric(1036)
                         {
-                            return Err(bibliography_error(
-                                "catalogued numeric page-label locale is still being implemented",
+                            return Err(source_not_covered(
+                                style,
+                                "citation page label",
+                                &source,
+                                &locale,
                             ));
                         }
                         let label = if pages.contains(['-', '–']) {
@@ -546,8 +543,11 @@ impl BibliographyUpdateState {
                     if locale != BibliographyFormattingLocale::Numeric(1033)
                         && locale != BibliographyFormattingLocale::Numeric(1036)
                     {
-                        return Err(bibliography_error(
-                            "catalogued numeric modifier locale is still being implemented",
+                        return Err(source_not_covered(
+                            style,
+                            "citation page or volume",
+                            &source,
+                            &locale,
                         ));
                     }
                     let pages = member.pages.as_deref().filter(|value| !value.is_empty());
@@ -577,7 +577,7 @@ impl BibliographyUpdateState {
                 continue;
             }
             // Additional style, locale and kind branches are implemented from their bound records.
-            // An unfinished catalogued branch fails the transaction instead of retaining it as unsupported.
+            // An uncovered branch fails the transaction instead of retaining a stale result.
             if style == BibliographyStyle::ApaSixthEdition
                 && source.kind == BibliographySourceKind::Patent
                 && members.len() == 1
@@ -633,8 +633,8 @@ impl BibliographyUpdateState {
                 && let Some(grammar) = chicago_run_grammar(&locale)
             {
                 if has_equivalent_creator(collection, *index, creator, style)? {
-                    return Err(bibliography_error(
-                        "catalogued creator-context disambiguation is still being implemented",
+                    return Err(not_covered(
+                        "telling apart two sources whose authors share a name",
                     ));
                 }
                 return Ok(Some(source_citation_runs(
@@ -699,8 +699,11 @@ impl BibliographyUpdateState {
                 if title
                     && first_source_property(&source, BibliographySourceField::Title).is_empty()
                 {
-                    return Err(bibliography_error(
-                        "catalogued missing-title citation branch is still being implemented",
+                    return Err(source_not_covered(
+                        style,
+                        "citation without a title",
+                        &source,
+                        &locale,
                     ));
                 }
                 if !title
@@ -710,15 +713,18 @@ impl BibliographyUpdateState {
                             && person.first.len() <= 1
                     })
                 {
-                    return Err(bibliography_error(
-                        "catalogued contributor citation branch is still being implemented",
+                    return Err(source_not_covered(
+                        style,
+                        "citation for these contributors",
+                        &source,
+                        &locale,
                     ));
                 }
                 if let Some(creator) = creator
                     && has_equivalent_creator(collection, *index, creator, style)?
                 {
-                    return Err(bibliography_error(
-                        "catalogued creator-context disambiguation is still being implemented",
+                    return Err(not_covered(
+                        "telling apart two sources whose authors share a name",
                     ));
                 }
                 let grammar = match style {
@@ -783,8 +789,11 @@ impl BibliographyUpdateState {
                     )
                     .is_empty()
                 {
-                    return Err(bibliography_error(
-                        "catalogued missing-title citation branch is still being implemented",
+                    return Err(source_not_covered(
+                        style,
+                        "citation without a title",
+                        &source,
+                        &locale,
                     ));
                 }
                 if !title
@@ -794,15 +803,18 @@ impl BibliographyUpdateState {
                             && person.first.len() <= 1
                     })
                 {
-                    return Err(bibliography_error(
-                        "catalogued contributor citation branch is still being implemented",
+                    return Err(source_not_covered(
+                        style,
+                        "citation for these contributors",
+                        &source,
+                        &locale,
                     ));
                 }
                 if let Some(creator) = creator
                     && has_equivalent_creator(collection, *index, creator, style)?
                 {
-                    return Err(bibliography_error(
-                        "catalogued creator-context disambiguation is still being implemented",
+                    return Err(not_covered(
+                        "telling apart two sources whose authors share a name",
                     ));
                 }
                 if let Some(grammar) = other_style_citation_run_grammar(style, &locale, title) {
@@ -831,9 +843,7 @@ impl BibliographyUpdateState {
                     || measured_french_plain
                     || measured_plain_patent)
             {
-                return Err(bibliography_error(
-                    "catalogued citation formatter branch is still being implemented",
-                ));
+                return Err(source_not_covered(style, "citation", &source, &locale));
             }
             fragments.push(apa_citation_member(&source, member, patent_punctuation));
         }
@@ -858,9 +868,7 @@ impl BibliographyUpdateState {
                     '\u{0000}'..='\u{00ff}' | '\u{0370}'..='\u{03ff}' |
                     '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}')
                 }) {
-                    return Err(bibliography_error(
-                        "catalogued numeric source-script run branch is still being implemented",
-                    ));
+                    return Err(not_covered("a numeric citation in this script"));
                 }
                 let mut runs = bibliography_display_runs(
                     &if separate { text } else { format!(" {text}") },

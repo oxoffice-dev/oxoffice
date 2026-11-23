@@ -77,9 +77,7 @@ pub(super) fn source_bibliography_paragraph(
                     .iter()
                     .any(|field| first_source_property(source, *field).is_empty())))
         {
-            return Err(bibliography_error(
-                "localized APA bibliography branch is still being implemented",
-            ));
+            return Err(not_covered("this localized APA bibliography entry"));
         }
         if grammar.semantic_rtl
             || grammar.numeric_cs_font.is_some()
@@ -177,13 +175,13 @@ pub(super) fn source_bibliography_paragraph(
     let Some(BibliographyAuthor::People(people)) =
         source.contributors.first().map(|value| &value.value)
     else {
-        return Err(bibliography_error(
-            "catalogued bibliography contributor branch is still being implemented",
+        return Err(not_covered(
+            "a bibliography entry whose first contributor is not a list of people",
         ));
     };
     let [person] = people.as_slice() else {
-        return Err(bibliography_error(
-            "catalogued bibliography contributor count branch is still being implemented",
+        return Err(not_covered(
+            "a bibliography entry with more than one author in this style",
         ));
     };
     let last = person.last.join(" ");
@@ -208,8 +206,8 @@ pub(super) fn source_bibliography_paragraph(
             .iter()
             .any(|value| value.is_empty())
     {
-        return Err(bibliography_error(
-            "catalogued bibliography source-variable branch is still being implemented",
+        return Err(not_covered(
+            "a bibliography entry with an empty or non-ASCII author, title, year, city or publisher in this style",
         ));
     }
     let given = if middle.is_empty() {
@@ -401,8 +399,11 @@ pub(super) fn source_bibliography_paragraph(
             ));
         }
         _ => {
-            return Err(bibliography_error(
-                "catalogued bibliography formatter branch is still being implemented",
+            return Err(source_not_covered(
+                style,
+                "bibliography entry",
+                source,
+                &locale,
             ));
         }
     }
@@ -2091,9 +2092,7 @@ pub(super) fn append_apa_semantic_run(
                 || (grammar.language_bidi == Some("ml-IN")
                     && matches!(character, '\u{200c}' | '\u{200d}'))
         }) {
-            return Err(bibliography_error(
-                "bibliography complex-script source operation is still being implemented",
-            ));
+            return Err(not_covered("this complex-script source text"));
         }
         // Preserve source XML whitespace. This operation normalizes only emitted cache text.
         let normalized = text.replace(['\t', '\n', '\r'], " ");
@@ -2165,9 +2164,7 @@ pub(super) fn append_apa_semantic_run(
             ) && !(grammar.language_bidi == Some("ml-IN")
                 && matches!(character, '\u{200c}' | '\u{200d}'))
             {
-                return Err(bibliography_error(
-                    "bibliography complex-script neutral operation is still being implemented",
-                ));
+                return Err(not_covered("this complex-script punctuation"));
             }
             let mut actual = properties.clone();
             if arabic {

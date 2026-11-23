@@ -412,8 +412,8 @@ pub(super) fn source_citation_runs(
             .any(|token| matches!(token, NativeCitationRun::Year(_)))
             && !year.chars().all(|character| character.is_ascii_digit()))
     {
-        return Err(bibliography_error(
-            "catalogued source-script citation run branch is still being implemented",
+        return Err(not_covered(
+            "a citation whose names or year are not in Latin letters and digits",
         ));
     }
     let mut leading = CT_R::new(" ");
@@ -758,8 +758,8 @@ pub(super) fn bibliography_sort_key(
         || !year.is_ascii()
         || !title.is_ascii()
     {
-        return Err(bibliography_error(
-            "catalogued bibliography source-key collation branch is still being implemented",
+        return Err(not_covered(
+            "sorting a bibliography whose names or titles are not ASCII",
         ));
     }
     Ok((people, year, title))
