@@ -1,11 +1,11 @@
 {
   "file": "word-google/record.docx",
-  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "3198ec19b693a1e68900094bb2509582df7c0913e84d8047857f34e5c7bcdd32",
-  "outline_and_tags": "061051d7a9d2e521de7a984870f9389c89df628f2ebc600861f41b57dc077cd2",
+  "outline_and_tags": "cbc0b84baab58d9af74dc9c0887efa48dc980a47c48c0987b689ee04b88f7538",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
-    {"page": 1, "pixels": "fba44c9e2bfc78b07d0585259575a58fbe329a341e1f256cd56d8791af093c62", "content": "2aa27520fa328118eba63fab832b02106ea70cb3231f31ab1c410f594a935eba", "annotations": "ac6a42c8f9271b1e35c4b112cba6759d94c076284a0c90ba1f0afc5cfa886eba", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
+    {"page": 1, "pixels": "fba44c9e2bfc78b07d0585259575a58fbe329a341e1f256cd56d8791af093c62", "content": "2aa27520fa328118eba63fab832b02106ea70cb3231f31ab1c410f594a935eba", "annotations": "06659071576fcd13563a8dbade11d7d44796def305f95e5c52c1feb22c96a4b9", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "5177d7b93a7a9a7f303db21c9de4821c1a3f083d58fab726a8d68351676b6b41", "content": "8a42e86b629ef0cbc6ca6da90cf1fbc802b215efef332fe08a24eb9994ed8aff", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "ed4099488d90c44dbd49475e88ac53ddb776b91c90689cac487f8cb01c0f1815", "content": "60a12f93b3f95cc3b1cc0d701aff2ac20fc32c1e06842a2f939f5c01f76d437f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]

@@ -1,12 +1,12 @@
 {
   "file": "google/contract.docx",
-  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "1931efd323be29f23f19e5bd64bbc7301bbb5216aa7b21fb705780be29fb1dce",
-  "outline_and_tags": "848d588555c4be8e1fe25627207e0a0e37dbb34f7d49bdd9f5599042bffc3cc0",
+  "outline_and_tags": "de9cdb6d42a5fa2bd4dd5bcd7650e432f060613148218dd7ca246c9c14ee9f24",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "e355e519ac5ac6afe642ed0eaafb7e65044a44e4de071eb72edaa726913e64d2", "content": "03132f66764a525a77708f28bb6ee3214520cdceaea2667b2af17a6b2b79598c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
-    {"page": 2, "pixels": "69344787ca91f3b2ea41aa801a6a44277f454c5b72afaef3c189ba1bf249347b", "content": "2adbca7c430accb293dcbdd53870155a265d184782f539a809a9f6a3f3eabc95", "annotations": "b178b5615333f26ae35a7b230aaeeeda6dfaa09afccdca14c400363e196b695a", "dictionary": "67f335298eb4fec63d4dc11b7fb927667b2f502097fc1ce00a9cad30407475b1"},
-    {"page": 3, "pixels": "b7374511f3c2d19d915423f8db855fb9d63ae3aed8d05767f2cc088a7fff42c0", "content": "821dfc5a5fd29706dd2ec33ede13a0484277b8ab7d05a1a60eb79a2fa7a65825", "annotations": "1244fc680baf666c7a2947ba91d4914ad5cf3d33e0cadd5cfa7d821f17c8959b", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
+    {"page": 2, "pixels": "69344787ca91f3b2ea41aa801a6a44277f454c5b72afaef3c189ba1bf249347b", "content": "2adbca7c430accb293dcbdd53870155a265d184782f539a809a9f6a3f3eabc95", "annotations": "2dd61183caf46bf2f90b514ec3cce2c0cb00a44da70ba0253fa87390aa5ad0e0", "dictionary": "67f335298eb4fec63d4dc11b7fb927667b2f502097fc1ce00a9cad30407475b1"},
+    {"page": 3, "pixels": "b7374511f3c2d19d915423f8db855fb9d63ae3aed8d05767f2cc088a7fff42c0", "content": "821dfc5a5fd29706dd2ec33ede13a0484277b8ab7d05a1a60eb79a2fa7a65825", "annotations": "c0f9bd843ef815dacd6c7b28bd8544f84d3897ce173c07a72124e539f2282de9", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
   ]
 }
