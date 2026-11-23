@@ -2126,6 +2126,35 @@ fn a_text_box_text_keeps_its_insets_from_the_box_edges() {
     }
 }
 
+/// A run holding a drawing placed in line with text, one inch square, written
+/// plainly (no `mc:AlternateContent`), whose graphic is `graphic`.
+fn inline_drawing_run(id: u32, graphic: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:r><w:drawing xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">"#,
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/>"#,
+            r#"<wp:docPr id="{id}" name="Shape {id}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"{graphic}</a:graphic></wp:inline></w:drawing></w:r>"#,
+        ),
+        id = id,
+        graphic = graphic
+    )
+}
+
+/// The `a:graphicData` of a Word text box holding `content`, filled with `fill`.
+fn text_box_graphic(content: &str, fill: &str) -> String {
+    format!(
+        concat!(
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+            r#"<wps:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="{fill}"/></a:solidFill></wps:spPr>"#,
+            r#"<wps:txbx><w:txbxContent>{content}</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData>"#,
+        ),
+        content = content,
+        fill = fill
+    )
+}
+
 // Word draws a text box placed in line with text (`wp:inline`, written in
 // `mc:AlternateContent` with a VML fallback) on the line that holds it: the
 // box stands on the baseline, the line is as tall as the box, and the box's
@@ -2164,6 +2193,72 @@ fn an_inline_text_box_draws_its_text_inside_its_extent_on_its_line() {
         boxed.y > before.y + 36.0 && boxed.y < before.y + 72.0,
         "{before:?} {boxed:?}"
     );
+}
+
+// Other producers write an inline text box as a plain `w:drawing`, without
+// the compatibility block: the same box, the same text.
+#[test]
+fn an_inline_text_box_written_without_its_fallback_draws_its_text() {
+    let body = format!(
+        "<w:p>{}</w:p>",
+        inline_drawing_run(
+            9,
+            &text_box_graphic("<w:p><w:r><w:t>Boxed</w:t></w:r></w:p>", "FFFFFF")
+        )
+    );
+    let pdf = pdf_of(&doc_with_body(&body));
+    let boxed = pdf
+        .drawn(0)
+        .into_iter()
+        .find(|piece| piece.text.contains("Boxed"))
+        .expect("the box's text is drawn");
+    assert!((boxed.x - (72.0 + 7.2)).abs() < 0.5, "{boxed:?}");
+}
+
+// The shapes of a group placed in line with text are not drawn yet; they
+// must not be drawn as one box over the whole group either.
+#[test]
+fn an_inline_group_of_shapes_is_not_drawn_as_one_text_box() {
+    let shape = text_box_graphic("<w:p><w:r><w:t>Grouped</w:t></w:r></w:p>", "0000FF")
+        .replace(
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            "",
+        )
+        .replace("</a:graphicData>", "");
+    let group = format!(
+        concat!(
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">"#,
+            r#"<wpg:wgp xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">"#,
+            r#"<wpg:cNvGrpSpPr/><wpg:grpSpPr/>{}</wpg:wgp></a:graphicData>"#,
+        ),
+        shape
+    );
+    let body = format!("<w:p>{}</w:p>", inline_drawing_run(9, &group));
+    let drawn = pdf_of(&doc_with_body(&body)).drawn(0);
+    assert!(
+        drawn.iter().all(|piece| !piece.text.contains("Grouped")),
+        "{drawn:?}"
+    );
+}
+
+// Text boxes nested in text boxes weigh 16 each against the limit of 256 on
+// nested Word owners, placed in line as when floating: a file that nests
+// more is refused when it opens, never read until the stack runs out.
+#[test]
+fn inline_text_boxes_nested_past_the_owner_limit_are_refused_on_open() {
+    let nested = |depth: u32| {
+        let mut content = "<w:p><w:r><w:t>Core</w:t></w:r></w:p>".to_owned();
+        for id in 0..depth {
+            content = format!(
+                "<w:p>{}</w:p>",
+                inline_drawing_run(id + 1, &text_box_graphic(&content, "FFFFFF"))
+            );
+        }
+        crate::support::docx_with_body(&content)
+    };
+    assert!(Document::from_bytes(&nested(15)).is_ok());
+    assert!(Document::from_bytes(&nested(17)).is_err());
+    assert!(Document::from_bytes(&nested(400)).is_err());
 }
 
 /// A paragraph that starts with a text box it must clear, Word's "top and

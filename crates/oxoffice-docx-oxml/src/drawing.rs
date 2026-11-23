@@ -471,6 +471,10 @@ pub struct CT_Anchor {
     pub shape: Option<CT_Shape>,
 }
 
+/// The `a:graphicData` URI of one Word shape (`wps:wsp`).
+const WORD_SHAPE_GRAPHIC_URI: &[u8] =
+    b"http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+
 /// A `wps:wsp` shape: preset geometry, an optional fill, and optional text.
 ///
 /// Word writes these inside `mc:AlternateContent`, with a VML fallback beside
@@ -1561,6 +1565,9 @@ impl CT_Inline {
         let mut source_rect = None;
         let mut doc_pr_id = None;
         let mut shape: Option<CT_Shape> = None;
+        // Only a `wps:wsp` graphic is one shape. The shapes of a group or a
+        // canvas placed in line are not drawn, as before.
+        let mut word_shape_graphic = false;
         let mut buf = Vec::new();
 
         loop {
@@ -1619,6 +1626,11 @@ impl CT_Inline {
                         canonical_wp_element(reader, e, b"docPr"),
                         is_word_text_box,
                     );
+                    if matches_local_name(ename.as_ref(), b"graphicData") {
+                        word_shape_graphic = e
+                            .try_get_attribute("uri")?
+                            .is_some_and(|uri| uri.value.as_ref() == WORD_SHAPE_GRAPHIC_URI);
+                    }
                     // A shape's `wps:bodyPr` follows its `wps:spPr`, which
                     // made the shape.
                     if matches_local_name(ename.as_ref(), b"bodyPr")
@@ -1689,7 +1701,7 @@ impl CT_Inline {
             source_rect,
             raw_xml: None, // Will be set by CT_Drawing::from_xml
             doc_pr_id_unallocated: false,
-            shape,
+            shape: shape.filter(|_| word_shape_graphic),
         })
     }
 
