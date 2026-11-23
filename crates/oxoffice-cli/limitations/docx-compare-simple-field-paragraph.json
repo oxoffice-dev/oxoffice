@@ -1,9 +1,0 @@
-{
-  "id": "docx-compare-simple-field-paragraph",
-  "format": "docx",
-  "area": "compare",
-  "title": "Comparison refuses to insert or delete a paragraph whose simple field sits in a hyperlink or in another simple field",
-  "symptom": "compare refuses with \"cannot track a whole paragraph's simple field outside a field it replaces\" (inside a hyperlink) or a simple-field conversion error (nested); other simple fields are written as complex fields with their paragraph",
-  "workaround": "add or remove the paragraph by hand on the redline",
-  "issue": 66
-}

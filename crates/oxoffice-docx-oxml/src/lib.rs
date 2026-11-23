@@ -45,7 +45,7 @@ pub use math::{CT_OMath, CT_OMathPara, MathArgument, MathExpression, MathPropert
 pub use numbering::{CT_AbstractNum, CT_Lvl, CT_Num, CT_NumLvl, CT_Numbering, ST_NumberFormat};
 pub use properties::{CT_FramePr, CT_PPr, CT_RPr};
 pub use revision::{CT_Revision, RevisionContent, RevisionKind};
-pub use ruby::{CT_Ruby, CT_RubyPr, ST_RubyAlign};
+pub use ruby::{CT_Ruby, CT_RubyPr, CT_RubyRun, ST_RubyAlign};
 pub use shared::{
     ST_Border, ST_Jc, ST_OnOff, ST_PageOrientation, ST_SectionType, ST_TabJc, ST_TabLeader,
 };

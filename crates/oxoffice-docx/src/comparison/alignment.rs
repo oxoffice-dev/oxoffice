@@ -154,6 +154,7 @@ pub(super) fn replace_changed_paragraph_runs(
     original_signatures: &[String],
     edited_signatures: &[String],
     options: &ComparisonOptions,
+    shared_bookmarks: &HashSet<i32>,
 ) -> Result<(Alignment, CarriedParagraphs)> {
     fn markers<'a>(paragraphs: impl Iterator<Item = &'a CT_P>) -> HashSet<String> {
         let mut markers = HashSet::new();
@@ -274,23 +275,87 @@ pub(super) fn replace_changed_paragraph_runs(
     let mut carried = CarriedParagraphs::default();
     // A pair that revising in place cannot express, and that the in-place
     // replacement of `compare_paragraph` cannot take either: its bookmarks
-    // differ, or it is the last owner, whose inserted paragraph mark no
-    // rejection can remove. It becomes a deleted and an inserted paragraph,
+    // differ or are shared with the other input, or it is the last owner,
+    // whose inserted paragraph mark no rejection can remove. It becomes a deleted and an inserted paragraph,
     // which the trailing-paragraph rule then closes on the mark before them.
-    // A bookmark or comment range of either side that the other input also
-    // holds would then be held twice, as when a producer renumbers its
-    // bookmarks, so such a pair keeps its refusal.
+    // A bookmark both inputs hold is written once, where the edited input
+    // has it (see `shared_bookmark_markers`), and the insertion then comes
+    // first, so that rejecting it leaves that bookmark on the restored
+    // paragraph. A comment range of either side that the other input also
+    // holds would be held twice, and so would a bookmark the other input
+    // holds that the emitters cannot write once (under another id, or
+    // inside a hyperlink or control), so such a pair keeps its refusal.
     let all_original = markers(original.iter().flatten().copied());
     let all_edited = markers(edited.iter().flatten().copied());
+    let comment_ranges = |markers: HashSet<String>| {
+        markers
+            .into_iter()
+            .filter(|marker| marker.starts_with("comment "))
+            .collect::<HashSet<_>>()
+    };
+    let shares = |left: &CT_P, right: &CT_P, comments: bool| {
+        let (mut left, mut right) = (markers([left].into_iter()), markers([right].into_iter()));
+        if comments {
+            (left, right) = (comment_ranges(left), comment_ranges(right));
+        }
+        !left.is_disjoint(&all_edited) || !right.is_disjoint(&all_original)
+    };
+    // Whether the other input, as `other`, holds this bookmark marker's
+    // bookmark, by id or by name.
+    let held = |marker: &oxoffice_docx_oxml::text::BookmarkMarker, other: &HashSet<String>| {
+        marker
+            .id()
+            .is_some_and(|id| other.contains(&format!("bookmark id {id}")))
+            || marker
+                .name()
+                .is_some_and(|name| other.contains(&format!("bookmark {name}")))
+    };
+    // Whether every bookmark marker of `paragraph` that the other input also
+    // holds is one `place_shared_bookmarks` writes once, start and end alike.
+    let movable = |paragraph: &CT_P, other: &HashSet<String>| -> Result<bool> {
+        if !paragraph
+            .bookmark_markers
+            .iter()
+            .any(|marker| held(marker, other))
+        {
+            return Ok(true);
+        }
+        let written_once = shared_bookmark_markers(&paragraph_xml(paragraph)?, shared_bookmarks)?
+            .into_iter()
+            .map(|(_, id, start)| (start, id))
+            .collect::<HashSet<_>>();
+        Ok(paragraph.bookmark_markers.iter().all(|marker| {
+            !held(marker, other)
+                || marker
+                    .id()
+                    .is_some_and(|id| written_once.contains(&(marker.is_start(), id)))
+        }))
+    };
+    // Whether the pair holds a bookmark marker the other input holds: its
+    // insertion then comes first, so that rejecting it leaves that start on
+    // the restored paragraph, and accepting leaves that end after the
+    // inserted one (see `place_shared_bookmarks`).
+    let shares_marker = |left: &CT_P, right: &CT_P| {
+        left.bookmark_markers
+            .iter()
+            .any(|marker| held(marker, &all_edited))
+            || right
+                .bookmark_markers
+                .iter()
+                .any(|marker| held(marker, &all_original))
+    };
     let unpaired = |position: usize, i: usize, j: usize| -> Result<bool> {
         let (Some(left), Some(right)) = (original[i], edited[j]) else {
             return Ok(false);
         };
         if original_signatures[i] == edited_signatures[j]
             || !paragraph_boundaries_differ(left, right, options)
-            || (left.bookmark_markers == right.bookmark_markers && position + 1 != aligned.len())
-            || !markers([left].into_iter()).is_disjoint(&all_edited)
-            || !markers([right].into_iter()).is_disjoint(&all_original)
+            || (left.bookmark_markers == right.bookmark_markers
+                && position + 1 != aligned.len()
+                && !shares(left, right, false))
+            || shares(left, right, true)
+            || !movable(left, &all_edited)?
+            || !movable(right, &all_original)?
         {
             return Ok(false);
         }
@@ -313,8 +378,16 @@ pub(super) fn replace_changed_paragraph_runs(
             if let (Some(i), Some(j)) = aligned[index]
                 && unpaired(index, i, j)?
             {
-                replaced.push((Some(i), None));
-                replaced.push((None, Some(j)));
+                let (Some(left), Some(right)) = (original[i], edited[j]) else {
+                    unreachable!("an unpaired entry holds two paragraphs")
+                };
+                if shares_marker(left, right) {
+                    replaced.push((None, Some(j)));
+                    replaced.push((Some(i), None));
+                } else {
+                    replaced.push((Some(i), None));
+                    replaced.push((None, Some(j)));
+                }
             } else {
                 replaced.push(aligned[index]);
             }
@@ -335,6 +408,47 @@ pub(super) fn replace_changed_paragraph_runs(
             }
         }
         index = range.end;
+    }
+    // A whole inserted paragraph that holds a bookmark marker a deleted
+    // paragraph before it held, among the deletions right before it, goes
+    // before that deletion: rejecting the insertion then leaves the start on
+    // the restored paragraph, and accepting the deletion leaves the end after
+    // the inserted one. Insertions keep their order, and so do deletions, and
+    // the story's last entry stays last.
+    let bookmarks = |paragraph: &CT_P| {
+        let mut held = HashSet::new();
+        for marker in &paragraph.bookmark_markers {
+            held.extend(marker.id().map(|id| format!("bookmark id {id}")));
+            held.extend(marker.name().map(|name| format!("bookmark {name}")));
+        }
+        held
+    };
+    for index in 0..replaced.len().saturating_sub(1) {
+        let (None, Some(j)) = replaced[index] else {
+            continue;
+        };
+        let Some(right) = edited[j].filter(|_| !carried.edited.contains(&j)) else {
+            continue;
+        };
+        let held = bookmarks(right);
+        if held.is_empty() {
+            continue;
+        }
+        let mut target = None;
+        for at in (0..index).rev() {
+            match replaced[at] {
+                (Some(i), None) if !carried.original.contains(&i) => {
+                    if original[i].is_some_and(|left| !bookmarks(left).is_disjoint(&held)) {
+                        target = Some(at);
+                    }
+                }
+                _ => break,
+            }
+        }
+        if let Some(target) = target {
+            let entry = replaced.remove(index);
+            replaced.insert(target, entry);
+        }
     }
     Ok((replaced, carried))
 }
@@ -370,25 +484,9 @@ pub(super) fn uncarried_field_owners(
     Ok(owners)
 }
 
-/// Whether this paragraph has a simple-field owner on the existing direct or
-/// hyperlink path that requires complete carriage for whole-paragraph changes.
+/// Whether this paragraph holds a simple field a whole-paragraph change must
+/// track: as its own child, or inside a hyperlink.
 fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
-    let paths = simple_field_paths(paragraph)?;
-    Ok(paths.direct || paths.linked)
-}
-
-/// Where a paragraph holds the simple fields a whole-paragraph change must
-/// track: as its own children, or inside a hyperlink.
-pub(super) struct SimpleFieldPaths {
-    direct: bool,
-    pub(super) linked: bool,
-}
-
-pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
-    let mut paths = SimpleFieldPaths {
-        direct: false,
-        linked: false,
-    };
     let xml = paragraph_xml(paragraph)?;
     let word_starts = word_element_starts(&xml)?;
     let mut reader = Reader::from_reader(xml.as_bytes());
@@ -408,7 +506,7 @@ pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
                 buffer.clear();
                 continue;
             }
-            Event::Eof => return Ok(paths),
+            Event::Eof => return Ok(false),
             _ => {
                 buffer.clear();
                 continue;
@@ -417,11 +515,7 @@ pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
         let local = element.local_name();
         let parent_wrapped = open.last().copied();
         if word && parent_wrapped == Some(true) && local.as_ref() == b"fldSimple" {
-            if open.len() == 1 {
-                paths.direct = true;
-            } else {
-                paths.linked = true;
-            }
+            return Ok(true);
         }
         if !empty {
             open.push(

@@ -68,16 +68,15 @@ pub use field_format::{
     format_numeric_field_general, format_numeric_field_picture, format_page_field_result,
     page_reference_keeps_stored_display, section_page_number_format,
 };
-pub(crate) use fonts_annotations::push_unique_diagnostic;
 pub use fonts_annotations::{
     WordFontSlot, automatic_text_color, resolve_font_family, run_fill, shading_color,
 };
 use fonts_annotations::{
     WordLanguageSlot, annotation_field_owner, emphasis_mark_glyph, is_east_asian,
     push_annotation_decorations, push_east_asian_layout_text, push_emphasis_marked_text,
-    push_empty_field_annotation, resolve_run_color, ruby_inline_item, word_font_slot_for_text,
-    word_language_slot,
+    push_empty_field_annotation, ruby_inline_item, word_font_slot_for_text, word_language_slot,
 };
+pub(crate) use fonts_annotations::{push_unique_diagnostic, resolve_run_color};
 use multilingual::{
     highlight_to_color, inferred_word_base_direction, multilingual_candidate,
     needs_word_multilingual_layout, shape_word_multilingual_items, word_character_advance_pt,
@@ -127,10 +126,10 @@ use field_substitution::{
 use header_footer::layout_header_footer;
 pub(crate) use input_scan::page_reference_names;
 use input_scan::{
-    bookmark_exists, bookmark_text, document_has_page_ref, document_has_ref_projection,
-    document_has_section_fields, document_has_sequence_fields, field_has_switch,
-    field_text_argument, input_uses_page_note_restart, note_labels, note_reference_pages,
-    numbered_ref_text, page_ref_id, visit_input_paragraphs,
+    bookmark_exists, bookmark_spelling, bookmark_text, document_has_page_ref,
+    document_has_ref_projection, document_has_section_fields, document_has_sequence_fields,
+    field_has_switch, field_link, field_text_argument, input_uses_page_note_restart, note_labels,
+    note_reference_pages, numbered_ref_text, page_ref_id, visit_input_paragraphs,
 };
 use note_cache::{
     body_note_references, content_note_references, paragraph_note_references,
@@ -398,6 +397,7 @@ struct ReusableEngineContext {
     revision_style: RevisionStyle,
     automatic_hyphenation: bool,
     mirror_margins: bool,
+    even_and_odd_headers: bool,
     gutter_at_top: bool,
     do_not_use_html_paragraph_auto_spacing: bool,
     default_tab_stop: Option<oxoffice_docx_oxml::units::Twips>,
@@ -456,6 +456,7 @@ impl ReusableEngineContext {
             revision_style: input.revision_style,
             automatic_hyphenation: input.automatic_hyphenation,
             mirror_margins: input.mirror_margins,
+            even_and_odd_headers: input.even_and_odd_headers,
             gutter_at_top: input.gutter_at_top,
             do_not_use_html_paragraph_auto_spacing: input.do_not_use_html_paragraph_auto_spacing,
             default_tab_stop: input.default_tab_stop,
@@ -551,6 +552,7 @@ impl ReusableEngineContext {
             && self.revision_style == input.revision_style
             && self.automatic_hyphenation == input.automatic_hyphenation
             && self.mirror_margins == input.mirror_margins
+            && self.even_and_odd_headers == input.even_and_odd_headers
             && self.gutter_at_top == input.gutter_at_top
             && self.do_not_use_html_paragraph_auto_spacing
                 == input.do_not_use_html_paragraph_auto_spacing
@@ -1079,6 +1081,8 @@ struct AnnotationLine {
     /// annotation halves when `w:hps` is absent.
     primary_font_size: f64,
     runs: Vec<GlyphRun>,
+    /// Each run's fill (highlight or shading), drawn behind it.
+    fills: Vec<Option<Color>>,
 }
 
 /// The paragraph context an annotation resolves its runs against.

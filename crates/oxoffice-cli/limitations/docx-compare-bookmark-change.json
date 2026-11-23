@@ -2,8 +2,8 @@
   "id": "docx-compare-bookmark-change",
   "format": "docx",
   "area": "compare",
-  "title": "Comparison refuses a paragraph that keeps one bookmark and gains or loses another",
-  "symptom": "compare refuses with \"comparison cannot revise paragraph boundary structures at\" a paragraph when two paragraphs it compares together hold different bookmarks and one of them is also held by the other version, for instance a heading that keeps its bookmark and gains a `_Toc` bookmark from a table of contents rebuilt in one version only, or a `_Ref` bookmark from a cross-reference added in Word (the paragraph the message names may be paired with another one)",
+  "title": "Comparison refuses a replaced paragraph whose shared bookmark starts or ends inside its text",
+  "symptom": "compare replaces a paragraph whose bookmarks differ whole, and writes each bookmark both versions hold once; it refuses with \"does not keep each bookmark both inputs hold once over the same text\" when such a bookmark starts or ends inside that paragraph's text (for instance a `_Ref` bookmark over a caption's label, in a caption that gains another bookmark), and with \"comparison cannot revise paragraph boundary structures at\" when the shared bookmark sits under another id or inside a hyperlink or content control",
   "workaround": "compare the versions before rebuilding their tables of contents (Rust and Python `rebuild_toc`, CLI `oxoffice docx toc rebuild`), then rebuild the contents of the accepted result; for a bookmark added another way, compare that pair in Word or remove the extra bookmark from one version first",
   "issue": 448
 }

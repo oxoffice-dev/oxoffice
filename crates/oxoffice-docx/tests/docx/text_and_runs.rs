@@ -1096,6 +1096,157 @@ fn ruby_sizes_written_with_a_unit_read_as_half_points() {
     assert_eq!(properties.hps_base_text.map(|hps| hps.0), Some(21));
 }
 
+/// A phonetic guide as Word writes it, inside a run that carries an rsid and
+/// its own properties, between two runs of text.
+const RUBY_IN_A_RUN: &str = concat!(
+    r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>"#,
+    r#"<w:r w:rsidR="00AB12CD"><w:rPr><w:b/></w:rPr><w:ruby><w:rubyPr><w:hps w:val="10"/>"#,
+    r#"<w:lid w:val="ja-JP"/></w:rubyPr><w:rt><w:r><w:t>ぐらうんど</w:t></w:r></w:rt>"#,
+    r#"<w:rubyBase><w:r><w:t>Ground</w:t></w:r></w:rubyBase></w:ruby></w:r>"#,
+    r#"<w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#,
+);
+
+#[test]
+fn a_ruby_inside_a_run_reads_its_base_text_and_is_written_back_in_its_run() {
+    let mut doc = crate::support::doc_with_body(RUBY_IN_A_RUN);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(paragraph.text(), "Before Ground after");
+    let ruby = paragraph.ruby(0).expect("the guide is read");
+    assert_eq!(
+        ruby.properties.as_ref().unwrap().hps.map(|hps| hps.0),
+        Some(10)
+    );
+    let run = ruby.run.as_ref().expect("the guide remembers its run");
+    assert_eq!(
+        run.attributes,
+        [("rsidR".to_owned(), "00AB12CD".to_owned())]
+    );
+    assert_eq!(run.properties.as_ref().and_then(|rpr| rpr.bold), Some(true));
+
+    // Written back in its run, base and phonetic line in place.
+    let mut doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:r w:rsidR="00AB12CD"><w:rPr><w:b/></w:rPr><w:ruby>"#)
+            && xml.contains("<w:rubyBase><w:r><w:t>Ground</w:t></w:r></w:rubyBase></w:ruby></w:r>"),
+        "{xml}"
+    );
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Ground after");
+
+    // An edit of the base text is kept in the guide.
+    assert_eq!(doc.replace_text("Ground", "Earth"), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Earth after");
+    assert!(
+        doc.part_xml("word/document.xml")
+            .unwrap()
+            .contains("<w:rubyBase><w:r><w:t>Earth</w:t></w:r></w:rubyBase></w:ruby></w:r>")
+    );
+}
+
+#[test]
+fn a_ruby_in_a_run_with_the_empty_properties_libreoffice_writes_reads_as_a_guide() {
+    for properties in ["<w:rPr></w:rPr>", "<w:rPr/>", ""] {
+        let body = RUBY_IN_A_RUN.replace(
+            "<w:rPr><w:b/></w:rPr><w:ruby>",
+            &format!("{properties}<w:ruby>"),
+        );
+        let mut doc = crate::support::doc_with_body(&body);
+        assert!(doc.paragraph(0).unwrap().ruby(0).is_some(), "{properties}");
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.paragraph(0).unwrap().text(),
+            "Before Ground after",
+            "{properties}"
+        );
+    }
+}
+
+#[test]
+fn a_ruby_run_whose_attribute_holds_a_greater_than_sign_keeps_its_properties() {
+    let body = RUBY_IN_A_RUN.replace(
+        r#"w:rsidR="00AB12CD""#,
+        r#"w:rsidR="00AB12CD" w:rsidRPr="a>b""#,
+    );
+    let doc = crate::support::doc_with_body(&body);
+    let ruby = doc
+        .paragraph(0)
+        .unwrap()
+        .ruby(0)
+        .cloned()
+        .expect("the guide is read");
+    let run = ruby.run.expect("the guide remembers its run");
+    assert_eq!(run.attributes[1], ("rsidRPr".to_owned(), "a>b".to_owned()));
+    assert_eq!(run.properties.and_then(|rpr| rpr.bold), Some(true));
+}
+
+#[test]
+fn a_ruby_read_in_its_paragraph_is_written_back_there() {
+    let body = RUBY_IN_A_RUN
+        .replace(
+            r#"<w:r w:rsidR="00AB12CD"><w:rPr><w:b/></w:rPr><w:ruby>"#,
+            "<w:ruby>",
+        )
+        .replace("</w:ruby></w:r>", "</w:ruby>");
+    let mut doc = crate::support::doc_with_body(&body);
+    assert!(doc.paragraph(0).unwrap().ruby(0).unwrap().run.is_none());
+    doc.replace_text("Ground", "Earth");
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(" </w:t></w:r><w:ruby>") && xml.contains("</w:rubyBase></w:ruby><w:r>"),
+        "{xml}"
+    );
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Earth after");
+}
+
+#[test]
+fn an_inserted_ruby_in_a_run_is_the_content_of_its_insertion() {
+    let body = RUBY_IN_A_RUN
+        .replace(
+            r#"<w:r w:rsidR="00AB12CD">"#,
+            r#"<w:ins w:id="7" w:author="A" w:date="2026-11-23T00:00:00Z"><w:r w:rsidR="00AB12CD">"#,
+        )
+        .replace("</w:ruby></w:r>", "</w:ruby></w:r></w:ins>");
+    let mut doc = crate::support::doc_with_body(&body);
+    let revisions = doc.story_revisions().unwrap();
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].text(), "Ground");
+    assert_eq!(doc.accept_all().unwrap(), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Ground after");
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("<w:ruby>") && !xml.contains("w:ins"), "{xml}");
+}
+
+#[test]
+fn a_run_holding_a_ruby_and_text_stays_a_run() {
+    let body = RUBY_IN_A_RUN.replace(
+        r#"<w:rPr><w:b/></w:rPr><w:ruby>"#,
+        r#"<w:rPr><w:b/></w:rPr><w:t>x</w:t><w:ruby>"#,
+    );
+    let doc = crate::support::doc_with_body(&body);
+    let paragraph = doc.paragraph(0).unwrap();
+    assert!(paragraph.ruby(0).is_none());
+    assert_eq!(paragraph.text(), "Before x after");
+}
+
+#[test]
+fn an_added_ruby_is_written_inside_a_run_as_word_writes_it() {
+    let mut doc = doc_with(&[]);
+    let mut paragraph = doc.add_paragraph("Before ");
+    paragraph.add_ruby("東京", "とうきょう");
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains("<w:r><w:ruby><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:r>"),
+        "{xml}"
+    );
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(paragraph.text(), "Before 東京");
+    assert!(paragraph.ruby(0).unwrap().run.is_some());
+}
+
 #[test]
 fn run_measures_with_a_unit_pass_the_checked_paragraph_route() {
     let mut doc = doc_with(&["Old"]);

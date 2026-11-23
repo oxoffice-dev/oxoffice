@@ -47,14 +47,15 @@ use comments::{
     extended_comment_snapshots_match, remap_comment_targets,
 };
 pub(crate) use footnotes::{
-    RawNoteType, raw_note_attribute_in_scope, raw_note_type_in_scope,
-    remove_selected_footnote_definitions, settle_footnote_custody, validate_footnote_custody,
+    NoteKind, RawNoteType, note_part_name, raw_note_attribute_in_scope, raw_note_type_in_scope,
+    remove_selected_note_definitions, resolved_note_kinds, settle_note_custody,
+    validate_note_custody,
 };
 use footnotes::{
-    compare_footnote_parts, footnote_custody_reserved_ids, normal_note_owner, note_markers,
-    preflight_footnote_inputs, reconcile_footnote_custody_inputs, reconcile_footnote_ids,
-    refuse_shared_note_references, renumbered_footnotes, retire_completed_footnote_inputs,
-    retire_note_markers, verify_footnote_destination,
+    RenumberedNotes, compare_note_parts, normal_note_owner, note_custody_reserved_ids,
+    note_markers, preflight_note_inputs, reconcile_note_custody_inputs, reconcile_note_ids,
+    refuse_shared_note_references, renumbered_notes, retire_completed_note_inputs,
+    retire_note_markers, verify_note_destination,
 };
 
 mod bookmarks;
@@ -69,7 +70,10 @@ mod source_scopes;
 mod stories;
 mod text_boxes;
 
-use bookmarks::{reconcile_body_bookmarks, rewritten_opening, word_attributes};
+use bookmarks::{
+    bookmark_coverage, holds_bookmarks_once, reconcile_body_bookmarks, rewritten_opening,
+    shared_bookmark_ids, without_bookmarks, word_attributes, zero_width_bookmark_ids,
+};
 use field_conversions::validate_field_conversion_role;
 use guard::{
     guard_mask_coordinates, guard_source_body_at, guard_story_owners, guard_story_part,
@@ -128,8 +132,8 @@ use run_source::{
 };
 
 use alignment::{
-    Alignment, align, pair_gaps_by_kind, replace_changed_paragraph_runs, simple_field_paths,
-    uncarried_field_owners, validate_field_alignment,
+    Alignment, align, pair_gaps_by_kind, replace_changed_paragraph_runs, uncarried_field_owners,
+    validate_field_alignment,
 };
 use leaf_publications::{
     complete_run_selection, emitted_fragment_leaves, preserve_run_source,
@@ -212,7 +216,7 @@ use paragraph_properties::{
     clear_default_orientation, deleted_paragraph, final_paragraph_properties_xml,
     inserted_paragraph, modeled_paragraph_properties, nonempty_paragraph_properties,
     paragraph_children_xml, paragraph_properties_differ, paragraph_properties_xml,
-    section_properties_xml,
+    place_shared_bookmarks, section_properties_xml, shared_bookmark_markers,
 };
 use paragraphs::{
     coalesced_held_owner_equal, coalesced_paragraphs_equal, compare_body_content,
@@ -315,6 +319,17 @@ struct Metadata<'a> {
     leaf_publications: Vec<LeafPublication>,
     field_conversions: Vec<FieldConversionWitness>,
     whole_field_conversions: Vec<WholeFieldWitness>,
+    /// The ids of the bookmarks both inputs hold (see
+    /// [`shared_bookmark_ids`]), which a whole deleted or inserted paragraph
+    /// writes once, untracked, where the edited input has them.
+    shared_bookmarks: HashSet<i32>,
+    /// Those of them the edited input holds as a point (see
+    /// [`zero_width_bookmark_ids`]), which a whole inserted paragraph writes
+    /// whole.
+    point_bookmarks: HashSet<i32>,
+    /// Those of them a whole paragraph wrote that way, whose start or end
+    /// the acceptance or the rejection leaves at a paragraph edge.
+    relocated_bookmarks: HashSet<i32>,
 }
 
 #[derive(Clone)]
@@ -478,10 +493,23 @@ impl Document {
     /// a body bookmark both documents hold keeps this document's id, a heading
     /// paired with one of this document's takes its `_Toc` name, a new heading
     /// takes a fresh one where this document uses its own, and the links and
-    /// page references of `edited` follow them. Footnote ids, which Word also
-    /// renumbers, take this document's, the notes paired in reference order. A
-    /// footnote whose reference moved is deleted with its old reference and
-    /// inserted again, under a new id, with the new one, as Word shows it.
+    /// page references of `edited` follow them. Footnote and endnote ids,
+    /// which Word also renumbers, take this document's, the notes of each kind
+    /// paired in reference order. A footnote or an endnote added or removed is
+    /// inserted or deleted whole with its reference, and one whose reference
+    /// moved is deleted with its old reference and inserted again, under a new
+    /// id, with the new one, as Word shows it.
+    ///
+    /// No tracked change records a bookmark: a paragraph whose bookmarks
+    /// differ is deleted and inserted whole, the insertion first, and a
+    /// bookmark both documents hold is written once, outside the revision
+    /// marks, its start in the insertion and its end in the deletion, as Word
+    /// resolves them. Accepting leaves such an end just after the inserted
+    /// paragraph, and rejecting such a start at the restored paragraph's
+    /// start, over the same text. Such a paragraph is still refused when a
+    /// bookmark both documents hold starts or ends inside its text, or sits
+    /// under another id or inside a hyperlink or control, or when it holds a
+    /// complex field or a comment range both documents hold.
     pub fn compare(
         &mut self,
         edited: &Document,
@@ -493,8 +521,9 @@ impl Document {
 
     /// Compare supported Word stories using an explicit granularity and ignore policy.
     ///
-    /// Bookmark ids and generated `_Toc` names are reconciled as for
-    /// [`Document::compare`].
+    /// Bookmark ids, generated `_Toc` names and footnote and endnote ids are
+    /// reconciled as for [`Document::compare`]. An ignored footnote or endnote
+    /// story keeps this document's notes of that kind whole.
     pub fn compare_with_options(
         &mut self,
         edited: &Document,
@@ -502,9 +531,10 @@ impl Document {
         timestamp: &str,
         options: &ComparisonOptions,
     ) -> Result<Vec<ComparisonDiagnostic>> {
-        // A pass that finds moved footnotes hands back the edited input with
-        // them under new ids, and the next one starts from it. Each pass gives
-        // at least one more note a new id, so the passes end.
+        // A pass that finds moved footnotes or endnotes hands back the edited
+        // input with them under new ids, kept per kind, and the next one starts
+        // from it. Each pass gives at least one more note a new id, so the
+        // passes end.
         let mut renumbered = Vec::new();
         let mut next: Option<Document> = None;
         loop {
@@ -529,28 +559,36 @@ impl Document {
         author: &str,
         timestamp: &str,
         options: &ComparisonOptions,
-        renumbered: &[i32],
-        again: &mut Option<(Document, Vec<i32>)>,
+        renumbered: &[(NoteKind, i32)],
+        again: &mut Option<(Document, RenumberedNotes)>,
     ) -> Result<Vec<ComparisonDiagnostic>> {
         validate_revision_timestamp(timestamp)?;
         validate_comparison_options(options)?;
         let edited_input = edited;
         let mut original = comparison_input(self)?;
         let mut edited = comparison_input(edited)?;
-        let mut footnote_ids = HashMap::new();
-        if !story_ignored(options, ComparisonStoryKind::Footnote) {
-            retire_completed_footnote_inputs(&mut original, &mut edited)?;
-            reconcile_footnote_custody_inputs(&original, &mut edited)?;
-            footnote_ids = reconcile_footnote_ids(&original, &mut edited, renumbered)?;
+        let mut note_ids = HashMap::new();
+        for kind in NoteKind::ALL {
+            if !story_ignored(options, kind.story_kind()) {
+                retire_completed_note_inputs(&mut original, &mut edited, kind)?;
+                reconcile_note_custody_inputs(&original, &mut edited, kind)?;
+                note_ids.insert(
+                    kind,
+                    reconcile_note_ids(&original, &mut edited, kind, renumbered)?,
+                );
+            }
         }
         if !story_ignored(options, ComparisonStoryKind::Main) {
             reconcile_body_bookmarks(&original, &mut edited, options)?;
         }
-        preflight_footnote_inputs(
-            &original,
-            &edited,
-            story_ignored(options, ComparisonStoryKind::Footnote),
-        )?;
+        for kind in NoteKind::ALL {
+            preflight_note_inputs(
+                &original,
+                &edited,
+                kind,
+                story_ignored(options, kind.story_kind()),
+            )?;
+        }
         if original.package.contains_part(COMMENT_COMPARISON_PART)
             || edited.package.contains_part(COMMENT_COMPARISON_PART)
         {
@@ -632,6 +670,9 @@ impl Document {
                     leaf_publications: Vec::new(),
                     field_conversions: Vec::new(),
                     whole_field_conversions: Vec::new(),
+                    shared_bookmarks: HashSet::new(),
+                    point_bookmarks: HashSet::new(),
+                    relocated_bookmarks: HashSet::new(),
                 },
                 &mut Vec::new(),
             )
@@ -694,8 +735,8 @@ impl Document {
             original_stories.retain(|story| story.kind != ComparisonStoryKind::Comment);
             edited_stories.retain(|story| story.kind != ComparisonStoryKind::Comment);
         }
-        original_stories.retain(|story| story.kind != ComparisonStoryKind::Footnote);
-        edited_stories.retain(|story| story.kind != ComparisonStoryKind::Footnote);
+        original_stories.retain(|story| NoteKind::of_story(story.kind).is_none());
+        edited_stories.retain(|story| NoteKind::of_story(story.kind).is_none());
         if original_stories != edited_stories {
             return Err(Error::Other(
                 "document comparison requires identical related-story shells".to_owned(),
@@ -727,11 +768,11 @@ impl Document {
                     break;
                 }
             }
-            if stories_unchanged
-                && !snapshot_comments
-                && FootnotePart::of(&original)?.map(|part| part.xml)
-                    == FootnotePart::of(&edited)?.map(|part| part.xml)
-            {
+            for kind in NoteKind::ALL {
+                stories_unchanged &= NotePart::of(&original, kind)?.map(|part| part.xml)
+                    == NotePart::of(&edited, kind)?.map(|part| part.xml);
+            }
+            if stories_unchanged && !snapshot_comments {
                 return Ok(Vec::new());
             }
         }
@@ -753,12 +794,16 @@ impl Document {
             used_ids.extend(word_ids_with_options(story_xml(&edited, story)?, options)?);
         }
         for document in [&original, &edited] {
-            if let Some(part) = FootnotePart::of(document)? {
-                used_ids.extend(word_ids_with_options(part.xml.as_bytes(), options)?);
+            for kind in NoteKind::ALL {
+                if let Some(part) = NotePart::of(document, kind)? {
+                    used_ids.extend(word_ids_with_options(part.xml.as_bytes(), options)?);
+                }
+                used_ids.extend(note_custody_reserved_ids(document, kind)?);
             }
-            used_ids.extend(footnote_custody_reserved_ids(document)?);
         }
         let input_ids = used_ids.clone();
+        let shared_bookmarks = shared_bookmark_ids(&original, &edited)?;
+        let point_bookmarks = zero_width_bookmark_ids(&edited, &shared_bookmarks)?;
         let mut metadata = Metadata {
             author,
             timestamp,
@@ -772,6 +817,9 @@ impl Document {
             leaf_publications: Vec::new(),
             field_conversions: Vec::new(),
             whole_field_conversions: Vec::new(),
+            shared_bookmarks,
+            point_bookmarks,
+            relocated_bookmarks: HashSet::new(),
         };
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
@@ -884,15 +932,19 @@ impl Document {
             let tracked_story = crate::document::uniquify_drawing_ids_in_xml(&tracked_story)?;
             candidate.package.set_part(&story.part_name, tracked_story);
         }
-        let moved = compare_footnote_parts(
-            &original,
-            &edited,
-            &mut candidate,
-            &mut metadata,
-            &mut diagnostics,
-        )?;
-        if !moved.is_empty() {
-            // A footnote whose reference moved to another site would be
+        for kind in NoteKind::ALL {
+            let moved = compare_note_parts(
+                &original,
+                &edited,
+                kind,
+                &mut candidate,
+                &mut metadata,
+                &mut diagnostics,
+            )?;
+            if moved.is_empty() {
+                continue;
+            }
+            // A note whose reference moved to another site would be
             // referenced twice, from the deleted original site and from the
             // inserted edited one. As Word does, the edited note becomes a
             // new note: the comparison runs again with it under a new id, so
@@ -903,15 +955,16 @@ impl Document {
             let moved = moved
                 .iter()
                 .map(|&id| {
-                    footnote_ids
-                        .iter()
-                        .find(|(_, to)| **to == id)
+                    note_ids
+                        .get(&kind)
+                        .and_then(|ids| ids.iter().find(|(_, to)| **to == id))
                         .map_or(id, |(&from, _)| from)
                 })
                 .collect::<Vec<_>>();
-            let Some((next, ids)) = renumbered_footnotes(&original, edited_input, &moved)? else {
+            let Some((next, ids)) = renumbered_notes(&original, edited_input, kind, &moved)? else {
                 return Err(Error::Other(format!(
-                    "comparison would give footnote {} more physical references than either input: its reference moved to another site",
+                    "comparison would give {} {} more physical references than either input: its reference moved to another site",
+                    kind.word(),
                     moved[0]
                 )));
             };
@@ -1029,24 +1082,28 @@ impl Document {
             .copied()
             .collect::<HashSet<_>>();
         let mut field_stories = original_stories.clone();
-        if !story_ignored(options, ComparisonStoryKind::Footnote)
-            && let Some(part) = FootnotePart::of(&original)?.or(FootnotePart::of(&edited)?)
-        {
-            field_stories.push(StoryPart {
-                kind: ComparisonStoryKind::Footnote,
-                part_name: part.name,
-            });
+        for kind in NoteKind::ALL {
+            if !story_ignored(options, kind.story_kind())
+                && let Some(part) = NotePart::of(&original, kind)?.or(NotePart::of(&edited, kind)?)
+            {
+                field_stories.push(StoryPart {
+                    kind: kind.story_kind(),
+                    part_name: part.name,
+                });
+            }
         }
 
         if existing_revisions {
             let mut prior_stories = original_stories.clone();
-            if !story_ignored(options, ComparisonStoryKind::Footnote)
-                && let Some(part) = FootnotePart::of(&original)?
-            {
-                prior_stories.push(StoryPart {
-                    kind: ComparisonStoryKind::Footnote,
-                    part_name: part.name,
-                });
+            for kind in NoteKind::ALL {
+                if !story_ignored(options, kind.story_kind())
+                    && let Some(part) = NotePart::of(&original, kind)?
+                {
+                    prior_stories.push(StoryPart {
+                        kind: kind.story_kind(),
+                        part_name: part.name,
+                    });
+                }
             }
             refuse_changed_existing_revisions(
                 &original,
@@ -1061,10 +1118,42 @@ impl Document {
             |document| document.accept_revision_ids(&new_ids),
             Some(&new_ids),
         )?;
-        let mut accepted_body =
-            normalized_package(&accepted, &original_stories, options, &text_box_markers)?;
-        let mut edited_package =
-            normalized_package(&edited, &edited_stories, options, &text_box_markers)?;
+        // A bookmark both inputs hold that a whole paragraph wrote once (see
+        // `place_shared_bookmarks`) is held once under its name and covers
+        // the same text after either resolution; its start or end may sit at
+        // the paragraph edge the resolution leaves it on, so the rest of the
+        // stories is compared without it.
+        let relocated = &metadata.relocated_bookmarks;
+        let relocated_views = |resolved: &Document, input: &Document, outcome: &str| {
+            if relocated.is_empty() {
+                return Ok((None, None));
+            }
+            if !holds_bookmarks_once(resolved, input, relocated)?
+                || bookmark_coverage(resolved, relocated)? != bookmark_coverage(input, relocated)?
+            {
+                return Err(Error::Other(format!(
+                    "comparison {outcome} does not keep each bookmark both inputs hold once over the same text: \
+                     the paragraphs it replaces whole cannot carry one of them where it sits"
+                )));
+            }
+            Ok((
+                Some(without_bookmarks(resolved, relocated)?),
+                Some(without_bookmarks(input, relocated)?),
+            ))
+        };
+        let (accepted_view, edited_view) = relocated_views(&accepted, &edited, "acceptance")?;
+        let mut accepted_body = normalized_package(
+            accepted_view.as_ref().unwrap_or(&accepted),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
+        let mut edited_package = normalized_package(
+            edited_view.as_ref().unwrap_or(&edited),
+            &edited_stories,
+            options,
+            &text_box_markers,
+        )?;
         let main_ignored = story_ignored(options, ComparisonStoryKind::Main);
         if main_ignored {
             edited_package.0 = accepted_body.0.clone();
@@ -1079,7 +1168,9 @@ impl Document {
             1,
             &new_ids,
         )?;
-        verify_footnote_destination(&accepted, &edited, true, options)?;
+        for kind in NoteKind::ALL {
+            verify_note_destination(&accepted, &edited, kind, true, options)?;
+        }
         if accepted_body != edited_package {
             return Err(comparison_postcondition_error(
                 "acceptance",
@@ -1102,10 +1193,19 @@ impl Document {
             |document| document.reject_revision_ids(&new_ids),
             Some(&new_ids),
         )?;
-        let mut rejected_package =
-            normalized_package(&rejected, &original_stories, options, &text_box_markers)?;
-        let mut original_package =
-            normalized_package(&original, &original_stories, options, &text_box_markers)?;
+        let (rejected_view, original_view) = relocated_views(&rejected, &original, "rejection")?;
+        let mut rejected_package = normalized_package(
+            rejected_view.as_ref().unwrap_or(&rejected),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
+        let mut original_package = normalized_package(
+            original_view.as_ref().unwrap_or(&original),
+            &original_stories,
+            options,
+            &text_box_markers,
+        )?;
         if main_ignored {
             original_package.0 = rejected_package.0.clone();
         }
@@ -1119,7 +1219,9 @@ impl Document {
             0,
             &new_ids,
         )?;
-        verify_footnote_destination(&rejected, &original, false, options)?;
+        for kind in NoteKind::ALL {
+            verify_note_destination(&rejected, &original, kind, false, options)?;
+        }
         if rejected_package != original_package {
             return Err(comparison_postcondition_error(
                 "rejection",
@@ -1197,7 +1299,7 @@ struct HeldRevisions {
 }
 
 #[derive(Clone)]
-struct FootnoteOwner {
+struct NoteOwner {
     id: Option<i32>,
     kind: RawNoteType,
     span: Range<usize>,
@@ -1206,10 +1308,11 @@ struct FootnoteOwner {
 }
 
 #[derive(Clone)]
-struct FootnotePart {
+struct NotePart {
     name: String,
     xml: String,
-    owners: Vec<FootnoteOwner>,
+    owners: Vec<NoteOwner>,
+    kind: NoteKind,
 }
 
 #[derive(Clone)]

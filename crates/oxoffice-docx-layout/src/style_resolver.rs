@@ -1119,7 +1119,7 @@ fn format_lvl_text(
 }
 
 /// Format a number according to ST_NumberFormat.
-pub(crate) fn format_number(n: u32, fmt: ST_NumberFormat) -> String {
+pub fn format_number(n: u32, fmt: ST_NumberFormat) -> String {
     match fmt {
         ST_NumberFormat::Decimal => n.to_string(),
         ST_NumberFormat::UpperRoman => to_roman(n, true),

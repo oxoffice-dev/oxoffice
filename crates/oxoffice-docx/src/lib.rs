@@ -132,7 +132,7 @@ pub use oxoffice_docx_oxml::math::{
 pub use oxoffice_docx_oxml::properties::{
     CT_EastAsianLayout, CT_FitText, CT_PPr, CT_RPr, ST_Em, ST_TextEffect,
 };
-pub use oxoffice_docx_oxml::ruby::{CT_Ruby, CT_RubyPr, ST_RubyAlign};
+pub use oxoffice_docx_oxml::ruby::{CT_Ruby, CT_RubyPr, CT_RubyRun, ST_RubyAlign};
 pub use oxoffice_docx_oxml::settings::{
     CharacterSpacingControl, CompatibilityOption, CompatibilitySetting, CryptAlgorithmClass,
     CryptAlgorithmType, CryptProviderType, DocumentProofState, DocumentProtection, DocumentView,
