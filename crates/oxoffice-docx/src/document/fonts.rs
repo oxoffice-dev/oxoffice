@@ -326,104 +326,112 @@ impl Document {
         Ok(())
     }
 
-    /// Add or replace one descriptive font-table record.
+    /// Add or replace one descriptive font-table record, found by its name.
+    /// A name several records carry is refused: `set_font_at` addresses one.
     pub fn set_font(&mut self, font: FontDefinition) -> Result<()> {
-        if font.name.trim().is_empty()
-            || std::iter::once(font.name.as_str())
-                .chain(font.alternate_name.as_deref())
-                .any(|value| {
-                    value.len() > 4096
-                        || value
-                            .chars()
-                            .any(|ch| ch < ' ' || ch == '\u{fffe}' || ch == '\u{ffff}')
-                })
-        {
-            return Err(Error::Other(
-                "font metadata is empty or unsupported".to_owned(),
-            ));
+        check_font_definition(&font)?;
+        let index = self
+            .font_table
+            .as_ref()
+            .map(|table| table.font_index(&font.name))
+            .transpose()?
+            .flatten();
+        self.set_font_record(index, font)
+    }
+
+    /// Replace the descriptive fields of the record at `index`, in
+    /// `try_fonts()` order, whose name must be `font.name`: the way to change
+    /// one of several records with the same name.
+    pub fn set_font_at(&mut self, index: usize, font: FontDefinition) -> Result<()> {
+        check_font_definition(&font)?;
+        let record = self.font_record_at(index)?;
+        if record.name != font.name {
+            return Err(Error::Other(format!(
+                "font record {index} is named {}, not {}: set_font_at does not rename",
+                record.name, font.name
+            )));
         }
-        if font.family.as_deref().is_some_and(|family| {
-            !matches!(
-                family,
-                "decorative" | "modern" | "roman" | "script" | "swiss" | "auto"
-            )
-        }) {
-            return Err(Error::Other(
-                "font family must be a valid OOXML family enumeration".to_owned(),
-            ));
+        self.set_font_record(Some(index), font)
+    }
+
+    /// The record at `index` in `try_fonts()` order.
+    fn font_record_at(&self, index: usize) -> Result<&FontRecord> {
+        match self.modeled_font_table()? {
+            Some(table) => Ok(table.font_at(index)?),
+            None => Err(Error::Other(format!(
+                "font record index {index} is out of range: the document has no font table"
+            ))),
         }
-        if font
-            .pitch
-            .as_deref()
-            .is_some_and(|pitch| !matches!(pitch, "default" | "fixed" | "variable"))
-        {
-            return Err(Error::Other(
-                "font pitch must be a valid OOXML pitch enumeration".to_owned(),
-            ));
-        }
-        if !font.embedded_fonts.is_empty() {
-            return Err(Error::Other(
-                "set_font does not accept embedded bytes, use embed_font".to_owned(),
-            ));
-        }
-        if let Some(table) = &self.font_table {
-            let mut matches = table
-                .fonts()
-                .iter()
-                .filter(|record| record.name == font.name);
-            if let Some(record) = matches.next() {
-                if matches.next().is_some() {
-                    return Err(Error::Other("ambiguous font record".to_owned()));
-                }
-                if record.alternate_name == font.alternate_name
-                    && record.family == font.family
-                    && record.pitch == font.pitch
-                {
-                    return Ok(());
-                }
-                table.can_set_font_fields(
-                    &font.name,
-                    font.alternate_name.is_some(),
-                    font.family.is_some(),
-                    font.pitch.is_some(),
-                )?;
-                table.can_clear_font_fields(
-                    &font.name,
-                    record.alternate_name.is_some() && font.alternate_name.is_none(),
-                    record.family.is_some() && font.family.is_none(),
-                    record.pitch.is_some() && font.pitch.is_none(),
-                )?;
+    }
+
+    /// Set the fields of the record at `index`, or of a new record when
+    /// `None`, from a checked definition.
+    fn set_font_record(&mut self, index: Option<usize>, font: FontDefinition) -> Result<()> {
+        if let (Some(index), Some(table)) = (index, &self.font_table) {
+            let record = table.font_at(index)?;
+            if record.alternate_name == font.alternate_name
+                && record.family == font.family
+                && record.pitch == font.pitch
+            {
+                return Ok(());
             }
+            table.can_set_font_fields(
+                index,
+                font.alternate_name.is_some(),
+                font.family.is_some(),
+                font.pitch.is_some(),
+            )?;
+            table.can_clear_font_fields(
+                index,
+                record.alternate_name.is_some() && font.alternate_name.is_none(),
+                record.family.is_some() && font.family.is_none(),
+                record.pitch.is_some() && font.pitch.is_none(),
+            )?;
         }
         let mut candidate = self.font_table_mutation_candidate()?;
-        candidate
+        let table = candidate
             .font_table
             .as_mut()
-            .expect("font-table mutation candidate has a model")
-            .set_font(font.name, font.alternate_name, font.family, font.pitch);
-        font_table_reads_back(
-            candidate
-                .font_table
-                .as_ref()
-                .expect("font-table mutation candidate has a model"),
-        )?;
+            .expect("font-table mutation candidate has a model");
+        let index = index.unwrap_or_else(|| table.add_font(font.name));
+        table.set_font_fields(index, font.alternate_name, font.family, font.pitch);
+        font_table_reads_back(table)?;
         candidate.font_table_dirty = true;
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
         Ok(())
     }
 
-    /// Remove one font-table record and every embedded face it owns.
+    /// Remove one font-table record, found by its name, and every embedded
+    /// face it owns. A name several records carry is refused:
+    /// `remove_font_at` addresses one.
     pub fn remove_font(&mut self, name: &str) -> Result<Option<FontDefinition>> {
-        let table = self.modeled_font_table()?;
-        if let Some(table) = table {
-            table.can_remove_font(name)?;
-        }
-        let Some(record) =
-            table.and_then(|table| table.fonts().iter().find(|font| font.name == name))
+        let Some(index) = self
+            .modeled_font_table()?
+            .map(|table| table.font_index(name))
+            .transpose()?
+            .flatten()
         else {
             return Ok(None);
         };
+        self.remove_font_record(index).map(Some)
+    }
+
+    /// Remove the record at `index`, in `try_fonts()` order, and every
+    /// embedded face it owns.
+    pub fn remove_font_at(&mut self, index: usize) -> Result<FontDefinition> {
+        self.font_record_at(index)?;
+        self.remove_font_record(index)
+    }
+
+    fn remove_font_record(&mut self, index: usize) -> Result<FontDefinition> {
+        let table = self
+            .font_table
+            .as_ref()
+            .expect("an indexed font record has a modelled table");
+        table.can_remove_font(index)?;
+        let record = table.font_at(index)?;
+        let name = &record.name;
         // The cleanup after the record removes only its modelled faces'
         // relationships, so one its kept XML names another way must still be
         // used by the rest of the table once the record is gone.
@@ -440,9 +448,7 @@ impl Document {
                             .embedded_fonts
                             .iter()
                             .any(|face| face.relationship_id == relationship.id)
-                            && self.font_table.as_ref().is_some_and(|table| {
-                                table.record_mentions_value(name, &relationship.id)
-                            })
+                            && table.record_mentions_value(index, &relationship.id)
                     })
                     .map(|relationship| relationship.id.clone())
                     .collect::<Vec<_>>()
@@ -454,8 +460,7 @@ impl Document {
             .font_table
             .as_mut()
             .expect("font-table mutation candidate has a model")
-            .remove_font(name)
-            .expect("font record existed before staging")
+            .remove_font(index)
             .embedded_fonts;
         let table = candidate
             .font_table
@@ -476,10 +481,12 @@ impl Document {
         candidate.font_table_dirty = true;
         candidate.invalidate_layout();
         self.commit_staged_mutation(candidate);
-        Ok(Some(removed))
+        Ok(removed)
     }
 
-    /// Embed caller-provided font bytes after explicit license authorization.
+    /// Embed caller-provided font bytes after explicit license authorization,
+    /// in the record named `font_name` (added when there is none). A name
+    /// several records carry is refused: `embed_font_at` addresses one.
     pub fn embed_font(&mut self, font_name: &str, embedded: EmbeddedFont) -> Result<()> {
         if font_name.trim().is_empty()
             || font_name.len() > 4096
@@ -489,6 +496,27 @@ impl Document {
         {
             return Err(Error::Other("font name is empty or unsupported".to_owned()));
         }
+        let index = self
+            .font_table
+            .as_ref()
+            .map(|table| table.font_index(font_name))
+            .transpose()?
+            .flatten();
+        self.embed_font_record(index, font_name, embedded)
+    }
+
+    /// Embed a face in the record at `index`, in `try_fonts()` order.
+    pub fn embed_font_at(&mut self, index: usize, embedded: EmbeddedFont) -> Result<()> {
+        let name = self.font_record_at(index)?.name.clone();
+        self.embed_font_record(Some(index), &name, embedded)
+    }
+
+    fn embed_font_record(
+        &mut self,
+        index: Option<usize>,
+        font_name: &str,
+        embedded: EmbeddedFont,
+    ) -> Result<()> {
         if !embedded.license.authorized {
             return Err(Error::Other(
                 "font embedding requires explicit caller authorization".to_owned(),
@@ -528,26 +556,11 @@ impl Document {
             .font_table
             .as_mut()
             .expect("font-table mutation candidate has a model");
-        if table
-            .fonts()
-            .iter()
-            .filter(|font| font.name == font_name)
-            .count()
-            > 1
-        {
-            return Err(Error::Other("font-table record is ambiguous".to_owned()));
-        }
-        if !table.fonts().iter().any(|font| font.name == font_name) {
-            table.set_font(font_name.to_owned(), None, None, None);
-        }
+        let index = index.unwrap_or_else(|| table.add_font(font_name.to_owned()));
         let table = candidate.font_table.as_ref().unwrap();
-        let font = table
-            .fonts()
-            .iter()
-            .find(|font| font.name == font_name)
-            .unwrap();
+        let font = table.font_at(index)?;
         let kind = FontFaceKind::from(embedded.kind);
-        table.can_embed_font(font_name, kind)?;
+        table.can_embed_font(index, kind)?;
         let existing = font
             .embedded_fonts
             .iter()
@@ -657,12 +670,11 @@ impl Document {
             Some(true),
             Some(embedded.license.identity),
         );
-        let inserted = candidate
+        candidate
             .font_table
             .as_mut()
             .expect("font-table mutation candidate has a model")
-            .set_embedded_font(font_name, reference);
-        debug_assert!(inserted);
+            .set_embedded_font(index, reference);
         if !can_reuse_existing && let Some(existing) = &existing {
             candidate.remove_embedded_font_part(existing)?;
         }
@@ -699,24 +711,51 @@ impl Document {
         Ok(())
     }
 
-    /// Remove one embedded face without removing its font-table record.
+    /// Remove one embedded face without removing its font-table record, found
+    /// by its name. A name several records carry is refused:
+    /// `remove_embedded_font_at` addresses one.
     pub fn remove_embedded_font(
         &mut self,
         font_name: &str,
         kind: EmbeddedFontKind,
     ) -> Result<Option<EmbeddedFont>> {
-        let table = self.modeled_font_table()?;
-        if let Some(table) = table {
-            table.can_remove_embedded_font(font_name, kind.into())?;
-        }
-        let Some(reference) = table
-            .and_then(|table| table.fonts().iter().find(|font| font.name == font_name))
-            .and_then(|font| {
-                font.embedded_fonts
-                    .iter()
-                    .find(|face| face.kind == kind.into())
-            })
+        let Some(index) = self
+            .modeled_font_table()?
+            .map(|table| table.font_index(font_name))
+            .transpose()?
+            .flatten()
         else {
+            return Ok(None);
+        };
+        self.remove_embedded_font_record(index, kind)
+    }
+
+    /// Remove one embedded face of the record at `index`, in `try_fonts()`
+    /// order, keeping the record. `None` when it has no face of that kind.
+    pub fn remove_embedded_font_at(
+        &mut self,
+        index: usize,
+        kind: EmbeddedFontKind,
+    ) -> Result<Option<EmbeddedFont>> {
+        self.font_record_at(index)?;
+        self.remove_embedded_font_record(index, kind)
+    }
+
+    fn remove_embedded_font_record(
+        &mut self,
+        index: usize,
+        kind: EmbeddedFontKind,
+    ) -> Result<Option<EmbeddedFont>> {
+        let table = self
+            .font_table
+            .as_ref()
+            .expect("an indexed font record has a modelled table");
+        table.can_remove_embedded_font(index, kind.into())?;
+        let Some(reference) = table.fonts().get(index).and_then(|font| {
+            font.embedded_fonts
+                .iter()
+                .find(|face| face.kind == kind.into())
+        }) else {
             return Ok(None);
         };
         let (part, data) = self.checked_embedded_font_source(reference)?;
@@ -748,7 +787,7 @@ impl Document {
             .font_table
             .as_mut()
             .expect("font-table mutation candidate has a model")
-            .remove_embedded_font(font_name, kind.into())
+            .remove_embedded_font(index, kind.into())
             .expect("embedded font existed before staging");
         candidate.remove_embedded_font_part(&reference)?;
         candidate.font_table_dirty = true;
@@ -834,6 +873,50 @@ impl Document {
         }
         Ok(())
     }
+}
+
+/// Refuse a font definition `set_font` cannot write: an empty or unsupported
+/// name, a family or pitch outside the schema, embedded bytes.
+fn check_font_definition(font: &FontDefinition) -> Result<()> {
+    if font.name.trim().is_empty()
+        || std::iter::once(font.name.as_str())
+            .chain(font.alternate_name.as_deref())
+            .any(|value| {
+                value.len() > 4096
+                    || value
+                        .chars()
+                        .any(|ch| ch < ' ' || ch == '\u{fffe}' || ch == '\u{ffff}')
+            })
+    {
+        return Err(Error::Other(
+            "font metadata is empty or unsupported".to_owned(),
+        ));
+    }
+    if font.family.as_deref().is_some_and(|family| {
+        !matches!(
+            family,
+            "decorative" | "modern" | "roman" | "script" | "swiss" | "auto"
+        )
+    }) {
+        return Err(Error::Other(
+            "font family must be a valid OOXML family enumeration".to_owned(),
+        ));
+    }
+    if font
+        .pitch
+        .as_deref()
+        .is_some_and(|pitch| !matches!(pitch, "default" | "fixed" | "variable"))
+    {
+        return Err(Error::Other(
+            "font pitch must be a valid OOXML pitch enumeration".to_owned(),
+        ));
+    }
+    if !font.embedded_fonts.is_empty() {
+        return Err(Error::Other(
+            "set_font does not accept embedded bytes, use embed_font".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn font_key_bytes(value: &str) -> Option<[u8; 16]> {
