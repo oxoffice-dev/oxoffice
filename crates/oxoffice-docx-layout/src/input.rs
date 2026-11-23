@@ -234,6 +234,10 @@ pub struct LayoutInput {
     /// Whether `w:mirrorMargins` makes even displayed pages swap their inside
     /// and outside margins.
     pub mirror_margins: bool,
+    /// Whether `w:evenAndOddHeaders` is on, which keeps odd page numbers on
+    /// right-hand pages: Word inserts an empty page before a section whose
+    /// first number would otherwise fall on the wrong side.
+    pub even_and_odd_headers: bool,
     /// Whether `w:gutterAtTop` puts the binding allowance on the top edge
     /// rather than the inside edge. Read only when mirroring is on.
     pub gutter_at_top: bool,

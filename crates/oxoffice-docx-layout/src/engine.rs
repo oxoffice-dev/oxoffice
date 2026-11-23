@@ -398,6 +398,7 @@ struct ReusableEngineContext {
     revision_style: RevisionStyle,
     automatic_hyphenation: bool,
     mirror_margins: bool,
+    even_and_odd_headers: bool,
     gutter_at_top: bool,
     do_not_use_html_paragraph_auto_spacing: bool,
     default_tab_stop: Option<oxoffice_docx_oxml::units::Twips>,
@@ -456,6 +457,7 @@ impl ReusableEngineContext {
             revision_style: input.revision_style,
             automatic_hyphenation: input.automatic_hyphenation,
             mirror_margins: input.mirror_margins,
+            even_and_odd_headers: input.even_and_odd_headers,
             gutter_at_top: input.gutter_at_top,
             do_not_use_html_paragraph_auto_spacing: input.do_not_use_html_paragraph_auto_spacing,
             default_tab_stop: input.default_tab_stop,
@@ -551,6 +553,7 @@ impl ReusableEngineContext {
             && self.revision_style == input.revision_style
             && self.automatic_hyphenation == input.automatic_hyphenation
             && self.mirror_margins == input.mirror_margins
+            && self.even_and_odd_headers == input.even_and_odd_headers
             && self.gutter_at_top == input.gutter_at_top
             && self.do_not_use_html_paragraph_auto_spacing
                 == input.do_not_use_html_paragraph_auto_spacing
