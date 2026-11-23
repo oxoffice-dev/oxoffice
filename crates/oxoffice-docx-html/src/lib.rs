@@ -489,7 +489,7 @@ fn linked_bookmarks(body: &CT_Body) -> HashMap<String, String> {
     ) {
         for block in blocks {
             match block {
-                Block::Paragraph(paragraph, _) => {
+                Block::Paragraph(paragraph, _, carried) => {
                     linked.extend(
                         paragraph
                             .hyperlinks
@@ -498,12 +498,8 @@ fn linked_bookmarks(body: &CT_Body) -> HashMap<String, String> {
                             .filter_map(|hyperlink| hyperlink.anchor.as_deref())
                             .map(bookmark_name_key),
                     );
-                    for marker in paragraph.current_bookmark_projection() {
-                        if let Some(name) = marker.name().filter(|_| marker.is_start()) {
-                            present
-                                .entry(bookmark_name_key(name))
-                                .or_insert_with(|| name.to_owned());
-                        }
+                    for (_, name) in bookmark_starts(&paragraph, &carried) {
+                        present.entry(bookmark_name_key(&name)).or_insert(name);
                     }
                 }
                 // The exports leave out a table or row that accepting the
@@ -528,18 +524,28 @@ fn linked_bookmarks(body: &CT_Body) -> HashMap<String, String> {
     present
 }
 
-/// The bookmarks that start in a paragraph and that a link targets, each at
-/// its run boundary in the accepted view.
-fn bookmark_anchors(paragraph: &CT_P, linked: &HashMap<String, String>) -> Vec<(usize, String)> {
-    paragraph
-        .current_bookmark_projection()
-        .iter()
-        .filter(|marker| marker.is_start())
-        .filter_map(|marker| {
-            let name = marker.name()?;
-            (linked.get(&bookmark_name_key(name))? == name)
-                .then(|| (marker.projected_run_index(), name.to_owned()))
-        })
+/// The bookmarks that start in a block's paragraph, each at its run
+/// boundary in the paragraph's accepted view: `carried`, those of the
+/// paragraphs a deleted mark joined to it (already in the view's axis), and
+/// those of the paragraph itself.
+fn bookmark_starts(paragraph: &CT_P, carried: &[(usize, String)]) -> Vec<(usize, String)> {
+    let mut starts = carried.to_vec();
+    starts.extend(
+        paragraph
+            .accepted_view_with_bookmarks(false)
+            .bookmark_starts,
+    );
+    starts
+}
+
+/// The bookmarks of `starts` that a link targets: those get an anchor.
+fn bookmark_anchors(
+    starts: Vec<(usize, String)>,
+    linked: &HashMap<String, String>,
+) -> Vec<(usize, String)> {
+    starts
+        .into_iter()
+        .filter(|(_, name)| linked.get(&bookmark_name_key(name)) == Some(name))
         .collect()
 }
 
@@ -583,7 +589,10 @@ fn paragraph_chart_ids(paragraph: &CT_P) -> Vec<String> {
 
 /// A paragraph or a table that the emitters write as one block.
 enum Block<'a> {
-    Paragraph(Box<Cow<'a, CT_P>>, Vec<usize>),
+    /// A paragraph, the run boundaries of its simple fields when it is
+    /// several paragraphs joined, and the bookmarks those joined paragraphs
+    /// start, by run boundary in its runs.
+    Paragraph(Box<Cow<'a, CT_P>>, Vec<usize>, Vec<(usize, String)>),
     Table(&'a CT_Tbl),
 }
 
@@ -593,28 +602,41 @@ enum Block<'a> {
 /// and `Document::text` read.
 fn body_blocks(body: &CT_Body, preserve_field_owners: bool) -> Vec<Block<'_>> {
     let mut blocks = Vec::new();
-    let mut carried: Option<(CT_P, Vec<usize>)> = None;
+    let mut carried: Option<Joined> = None;
     for (index, item) in body.content.iter().enumerate() {
         match item {
             BodyContent::Paragraph(paragraph) => {
-                let (paragraph, boundaries) = match carried.take() {
+                let (paragraph, boundaries, bookmarks) = match carried.take() {
                     Some(prefix) => {
-                        let (joined, boundaries) =
+                        let joined =
                             join_accepted_paragraphs(prefix, paragraph, preserve_field_owners);
-                        (Cow::Owned(joined), boundaries)
+                        (
+                            Cow::Owned(joined.paragraph),
+                            joined.boundaries,
+                            joined.bookmarks,
+                        )
                     }
-                    None => (Cow::Borrowed(paragraph.as_ref()), Vec::new()),
+                    None => (Cow::Borrowed(paragraph.as_ref()), Vec::new(), Vec::new()),
                 };
                 if body.accepted_paragraph_joins_next(index) {
-                    carried = Some(if preserve_field_owners {
-                        let (view, mut projected) = paragraph.accepted_view_with_field_owners();
-                        projected.extend(boundaries);
-                        (view.into_owned(), projected)
+                    // A paragraph the next one joins is carried as its view,
+                    // with the bookmarks it starts in that view's axis.
+                    let view = paragraph.accepted_view_with_bookmarks(preserve_field_owners);
+                    let mut projected = if preserve_field_owners {
+                        view.field_boundaries
                     } else {
-                        (paragraph.accepted_view().into_owned(), Vec::new())
+                        Vec::new()
+                    };
+                    projected.extend(boundaries);
+                    let mut starts = bookmarks;
+                    starts.extend(view.bookmark_starts);
+                    carried = Some(Joined {
+                        paragraph: view.paragraph.into_owned(),
+                        boundaries: projected,
+                        bookmarks: starts,
                     });
                 } else {
-                    blocks.push(Block::Paragraph(Box::new(paragraph), boundaries));
+                    blocks.push(Block::Paragraph(Box::new(paragraph), boundaries, bookmarks));
                 }
             }
             BodyContent::Table(table) => blocks.push(Block::Table(table.as_ref())),
@@ -625,20 +647,41 @@ fn body_blocks(body: &CT_Body, preserve_field_owners: bool) -> Vec<Block<'_>> {
     blocks
 }
 
+/// Paragraphs joined by deleted marks, as one accepted view: its runs, the
+/// run boundaries of their simple fields, and the bookmarks they start.
+struct Joined {
+    paragraph: CT_P,
+    boundaries: Vec<usize>,
+    bookmarks: Vec<(usize, String)>,
+}
+
 fn join_accepted_paragraphs(
-    prefix: (CT_P, Vec<usize>),
+    prefix: Joined,
     paragraph: &CT_P,
     preserve_field_owners: bool,
-) -> (CT_P, Vec<usize>) {
-    let (prefix, mut boundaries) = prefix;
-    let (mut result, projected) = if preserve_field_owners {
-        let (view, boundaries) = paragraph.accepted_view_with_field_owners();
-        (view.into_owned(), boundaries)
+) -> Joined {
+    let Joined {
+        paragraph: prefix,
+        mut boundaries,
+        mut bookmarks,
+    } = prefix;
+    let view = paragraph.accepted_view_with_bookmarks(preserve_field_owners);
+    let projected = if preserve_field_owners {
+        view.field_boundaries
     } else {
-        (paragraph.accepted_view().into_owned(), Vec::new())
+        Vec::new()
     };
+    let mut result = view.paragraph.into_owned();
+    // A view borrowed from a paragraph without owners keeps its markers:
+    // its bookmarks are carried in `bookmarks`, at their place in the join.
+    result.bookmark_markers.clear();
     let offset = prefix.runs.len();
     boundaries.extend(projected.into_iter().map(|at| offset + at));
+    bookmarks.extend(
+        view.bookmark_starts
+            .into_iter()
+            .map(|(at, name)| (offset + at, name)),
+    );
     for (at, _, _) in &mut result.equations {
         *at += offset;
     }
@@ -655,7 +698,11 @@ fn join_accepted_paragraphs(
     let mut runs = prefix.runs;
     runs.extend(result.runs);
     result.runs = runs;
-    (result, boundaries)
+    Joined {
+        paragraph: result,
+        boundaries,
+        bookmarks,
+    }
 }
 
 /// The paragraphs and nested tables of a table cell, as [`body_blocks`]
@@ -666,6 +713,7 @@ fn cell_blocks(cell: &CT_Tc) -> Vec<Block<'_>> {
         match item {
             CellContent::Paragraph(paragraph) => blocks.push(Block::Paragraph(
                 Box::new(Cow::Borrowed(paragraph)),
+                Vec::new(),
                 Vec::new(),
             )),
             CellContent::Table(table) => blocks.push(Block::Table(table)),
@@ -680,6 +728,7 @@ fn push_control_blocks<'a>(control: &'a CT_Sdt, blocks: &mut Vec<Block<'a>>) {
         match item {
             SdtContent::Paragraph(paragraph) => blocks.push(Block::Paragraph(
                 Box::new(Cow::Borrowed(paragraph)),
+                Vec::new(),
                 Vec::new(),
             )),
             SdtContent::Table(table) => blocks.push(Block::Table(table)),
