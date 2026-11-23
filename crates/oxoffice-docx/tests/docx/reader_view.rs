@@ -169,6 +169,7 @@ fn an_insertion_in_an_inline_control_reads_its_simple_field_in_text_and_html() {
         r#"<w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}"#
     )));
     assert_eq!(doc.paragraph(0).unwrap().text(), "AB12C");
+    assert_eq!(doc.content_controls()[0].text(), "B12C");
     let html = doc.to_html_fragment();
     assert!(html.contains("AB12C"), "{html}");
 }
