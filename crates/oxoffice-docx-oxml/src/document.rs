@@ -219,6 +219,14 @@ impl BodyContent {
                     if let Some(anchor) = &drawing.anchor {
                         pending.push(WordOwner::Anchor(anchor));
                     }
+                    if let Some(shape) = drawing.inline.as_ref().and_then(|i| i.shape.as_ref()) {
+                        if let Some(body) = &shape.text_body {
+                            pending.push(WordOwner::Body(body));
+                        }
+                        for paragraph in &shape.text {
+                            pending.push(WordOwner::Paragraph(paragraph));
+                        }
+                    }
                 }
                 WordOwner::Anchor(anchor) => {
                     if let Some(shape) = &anchor.shape
