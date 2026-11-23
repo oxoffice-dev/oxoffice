@@ -1388,7 +1388,10 @@ fn union_rect(boxes: &[oxoffice_layout::Rect]) -> oxoffice_layout::Rect {
 /// Whether a box starts strictly inside another.
 fn starts_inside(rect: oxoffice_layout::Rect, extent: oxoffice_layout::Rect) -> bool {
     const EPSILON: f64 = 0.01;
-    extent.x > rect.x + EPSILON
+    // Text that starts on the box's left edge is under it too: a list or
+    // note number on the first line of a block field that wraps, whose
+    // later lines start at the margin.
+    extent.x > rect.x - EPSILON
         && extent.x < rect.x + rect.width - EPSILON
         && extent.y > rect.y + EPSILON
         && extent.y < rect.y + rect.height - EPSILON

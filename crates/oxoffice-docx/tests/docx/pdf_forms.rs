@@ -1211,7 +1211,8 @@ fn a_block_control_around_a_note_leaves_the_note_number_on_the_page() {
             ("Legacy".to_owned(), "End value".to_owned()),
         ]
     );
-    assert!(page_text(&layout.pages).contains('1'));
+    // The note's number, beside the body's reference to it.
+    assert_eq!(page_text(&layout.pages).matches('1').count(), 2);
     assert!(
         layout
             .diagnostics
@@ -1219,5 +1220,37 @@ fn a_block_control_around_a_note_leaves_the_note_number_on_the_page() {
             .all(|diagnostic| !diagnostic.message.contains("stays static")),
         "{:?}",
         layout.diagnostics
+    );
+}
+
+#[test]
+fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
+    // The later lines start at the margin, so the widget reaches back over
+    // the number on the first line.
+    let long = "Foot value that runs on long enough to wrap onto a second line of the note area, and then on again for good measure, well past the right margin of the page";
+    let doc = doc_with_notes(|xml, marker, _| {
+        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
+        let start = xml[..end]
+            .rfind("<w:p>")
+            .or_else(|| xml[..end].rfind("<w:p "))
+            .unwrap();
+        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
+        let paragraph = xml[start..close].replace(marker, long);
+        format!(
+            r#"{}<w:sdt><w:sdtPr><w:tag w:val="note"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
+            &xml[..start],
+            &xml[close..]
+        )
+    });
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(
+        layout
+            .layout
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message
+                == "form control \"note\": other text on its lines sits under its box"),
+        "{:?}",
+        layout.layout.diagnostics
     );
 }
